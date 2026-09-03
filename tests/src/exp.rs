@@ -814,6 +814,96 @@ async fn expression_commands() {
     client.close().await.unwrap();
 }
 
+// ============================================================
+// AEL source text as a filter expression
+//
+// The client frames the text and sends it; the server compiles it. So these
+// exercise the round trip rather than any client-side parsing — which is also
+// the first live coverage this primitive has had.
+// ============================================================
+
+async fn server_supports_server_compiled_ael(client: &Client) -> bool {
+    let supported = match client.cluster.get_random_node() {
+        Ok(node) => node.version().supports_server_compiled_ael(),
+        Err(_) => false,
+    };
+
+    if !supported {
+        eprintln!("Skipping: server does not compile AEL text (requires >= 8.1.3)");
+    }
+
+    supported
+}
+
+#[aerospike_macro::test]
+async fn ael_text_as_a_filter_expression() {
+    let client = common::client().await;
+    if !server_supports_server_compiled_ael(&client).await {
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    let key_count = 10i64;
+
+    for i in 0..key_count {
+        let key = as_key!(namespace, &set_name, i);
+        common::delete_durably(&client, &wpolicy, &key)
+            .await
+            .unwrap();
+        client
+            .put(&wpolicy, &key, &[as_bin!("n", i)])
+            .await
+            .unwrap();
+    }
+
+    let key = as_key!(namespace, &set_name, 1i64);
+
+    // A matching filter lets the read through.
+    let mut rpolicy = ReadPolicy::default();
+    rpolicy.base_policy.filter_expression = Some(from_ael("$.n + 1 == 2").unwrap());
+
+    let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+    assert_eq!(rec.bins.get("n").unwrap(), &Value::Int(1));
+
+    // A non-matching one filters the record out.
+    let mut rpolicy = ReadPolicy::default();
+    rpolicy.base_policy.filter_expression = Some(from_ael("$.n + 1 == 3").unwrap());
+
+    let err = client
+        .get(&rpolicy, &key, Bins::All)
+        .await
+        .expect_err("the record should have been filtered out");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::FilteredOut),
+        "unexpected error: {err}"
+    );
+
+    // And it filters a query result set.
+    let rs = test_filter(&client, from_ael("$.n % 2 == 0").unwrap(), &set_name).await;
+    assert_eq!(count_results(rs).await, key_count as usize / 2);
+
+    // Invalid AEL is the server's to reject: the client sends whatever it is
+    // given, so this arrives as PARAMETER_ERROR from the round trip rather than
+    // as a client-side error.
+    let mut rpolicy = ReadPolicy::default();
+    rpolicy.base_policy.filter_expression = Some(from_ael("garbage @#$").unwrap());
+
+    let err = client
+        .get(&rpolicy, &key, Bins::All)
+        .await
+        .expect_err("invalid AEL must be rejected");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::ParameterError),
+        "unexpected error: {err}"
+    );
+
+    client.close().await.unwrap();
+}
+
 async fn test_filter(client: &Client, filter: Expression, set_name: &str) -> Arc<Recordset> {
     let namespace = common::namespace();
 

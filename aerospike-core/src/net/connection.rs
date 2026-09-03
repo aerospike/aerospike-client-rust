@@ -75,6 +75,17 @@ enum Liveness {
     Closed,
 }
 
+/// A pooled connection's position relative to its idle deadline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IdleStatus {
+    /// No deadline armed (`idle_timeout = 0`), or plenty of time left.
+    Fresh,
+    /// The deadline falls inside the caller's expiry horizon.
+    ExpiringSoon,
+    /// The deadline has passed.
+    Expired,
+}
+
 /// Underlying socket type for a connection (TCP or TLS).
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
@@ -334,6 +345,42 @@ impl Connection {
         };
         conn.refresh();
         Ok(conn)
+    }
+
+    /// Test-only: connection over a real TCP stream (`new`'s test shim
+    /// has no socket).
+    #[cfg(all(test, feature = "rt-tokio"))]
+    pub(crate) fn test_from_tcp_stream(
+        stream: aerospike_rt::net::TcpStream,
+        policy: &ClientPolicy,
+    ) -> Self {
+        let idle_timeout = if policy.idle_timeout > 0 {
+            Some(Duration::from_millis(u64::from(policy.idle_timeout)))
+        } else {
+            None
+        };
+        let mut conn = Connection {
+            addr: "127.0.0.1:0".into(),
+            buffer: Buffer::new(policy.buffer_reclaim_threshold),
+            bytes_read: 0,
+            conn: Netsocket::Tcp(stream),
+            socket_timeout: 5_000,
+            timeout_delay: 0,
+            deadline: None,
+            idle_timeout,
+            idle_deadline: idle_timeout.map(|timeout| Instant::now() + timeout),
+            state: ConnectionState::Ready,
+            can_recover_connection: false,
+            response_decompressed: false,
+            compressed_stream_body: false,
+            rnd: XorShift::new(),
+            // Far-future deadline; reset before each IO so this never fires first.
+            sleep: Box::pin(aerospike_rt::tokio::time::sleep(
+                aerospike_rt::time::Duration::from_secs(3600),
+            )),
+        };
+        conn.refresh();
+        conn
     }
 
     /// Returns the connection's per-connection random generator, used by the
@@ -713,6 +760,17 @@ impl Connection {
     pub fn is_idle(&self) -> bool {
         self.idle_deadline
             .is_some_and(|idle_dl| Instant::now() >= idle_dl)
+    }
+
+    /// Where this connection stands relative to its idle deadline. A deadline
+    /// within `expiry_horizon` counts as expiring.
+    pub(crate) fn idle_status(&self, now: Instant, expiry_horizon: Duration) -> IdleStatus {
+        match self.idle_deadline {
+            None => IdleStatus::Fresh,
+            Some(deadline) if now >= deadline => IdleStatus::Expired,
+            Some(deadline) if now + expiry_horizon >= deadline => IdleStatus::ExpiringSoon,
+            Some(_) => IdleStatus::Fresh,
+        }
     }
 
     /// What a one-byte peek says about a socket.
@@ -1460,6 +1518,59 @@ impl<'a> ConnectionRecovery<'a> {
 
         assert!(self.conn.bytes_read == total_size);
         Ok(last_record)
+    }
+}
+
+#[cfg(test)]
+mod idle_status_tests {
+    use super::*;
+
+    async fn conn_with_deadline(deadline: Option<Duration>) -> Connection {
+        let mut c = Connection::new(&Host::new("127.0.0.1", 0), &ClientPolicy::default(), None)
+            .await
+            .unwrap();
+        c.idle_deadline = deadline.map(|d| Instant::now() + d);
+        c
+    }
+
+    #[aerospike_macro::test]
+    async fn no_deadline_is_fresh() {
+        let c = conn_with_deadline(None).await;
+        let now = Instant::now();
+        assert_eq!(
+            c.idle_status(now, Duration::from_secs(100)),
+            IdleStatus::Fresh,
+            "idle_timeout = 0 arms no deadline, so nothing ever expires"
+        );
+    }
+
+    #[aerospike_macro::test]
+    async fn deadline_far_away_is_fresh() {
+        let c = conn_with_deadline(Some(Duration::from_secs(60))).await;
+        assert_eq!(
+            c.idle_status(Instant::now(), Duration::from_secs(2)),
+            IdleStatus::Fresh
+        );
+    }
+
+    #[aerospike_macro::test]
+    async fn deadline_inside_window_is_expiring() {
+        let c = conn_with_deadline(Some(Duration::from_secs(1))).await;
+        assert_eq!(
+            c.idle_status(Instant::now(), Duration::from_secs(2)),
+            IdleStatus::ExpiringSoon
+        );
+    }
+
+    #[aerospike_macro::test]
+    async fn deadline_in_the_past_is_expired() {
+        let c = conn_with_deadline(Some(Duration::from_secs(0))).await;
+        aerospike_rt::sleep(std::time::Duration::from_millis(5)).await;
+        assert_eq!(
+            c.idle_status(Instant::now(), Duration::from_secs(2)),
+            IdleStatus::Expired,
+            "the loose predicate must classify a missed deadline as Expired"
+        );
     }
 }
 

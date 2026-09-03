@@ -18,7 +18,14 @@
 //! instead of being sent as standalone operate ops.
 //!
 //! Each builder takes a source [`Expression`] that yields the string to
-//! operate on. Common sources:
+//! operate on. `src` comes **first** — after `policy` where there is one — and
+//! the operands follow it. That matches the order the
+//! [`crate::operations::string`] builders take their bin name in, rather than
+//! the bin-last order of the list, map and bitwise expression builders, whose
+//! trailing [`CdtContext`](crate::operations::cdt_context::CdtContext) these do
+//! not take.
+//!
+//! Common sources:
 //! - [`crate::expressions::string_bin`] — read a string bin.
 //! - [`crate::expressions::string_val`] — a string literal.
 //! - Another `expressions::string` expression — chains read/transform ops.
@@ -99,7 +106,7 @@ pub fn strlen(src: Expression) -> Expression {
 
 /// Expression that returns the substring of `src` from codepoint `start` to
 /// the end. Negative `start` counts from the end of the string.
-pub fn substr(start: Expression, src: Expression) -> Expression {
+pub fn substr(src: Expression, start: Expression) -> Expression {
     add_read(
         src,
         ExpType::STRING,
@@ -111,7 +118,7 @@ pub fn substr(start: Expression, src: Expression) -> Expression {
 /// range `[start, end)` — `start` inclusive, `end` exclusive. Negative
 /// indexes count from the end. If, after negative-index normalization,
 /// `start >= end`, the result is the empty string.
-pub fn substr_range(start: Expression, end: Expression, src: Expression) -> Expression {
+pub fn substr_range(src: Expression, start: Expression, end: Expression) -> Expression {
     add_read(
         src,
         ExpType::STRING,
@@ -125,7 +132,7 @@ pub fn substr_range(start: Expression, end: Expression, src: Expression) -> Expr
 
 /// Expression that returns the codepoint at `index` of `src` as a
 /// one-codepoint string. Negative indexes count from the end.
-pub fn char_at(index: Expression, src: Expression) -> Expression {
+pub fn char_at(src: Expression, index: Expression) -> Expression {
     add_read(
         src,
         ExpType::STRING,
@@ -135,7 +142,7 @@ pub fn char_at(index: Expression, src: Expression) -> Expression {
 
 /// Expression that returns the codepoint index of the first occurrence of
 /// `needle` in `src`, or -1 if not found.
-pub fn find(needle: Expression, src: Expression) -> Expression {
+pub fn find(src: Expression, needle: Expression) -> Expression {
     add_read(
         src,
         ExpType::INT,
@@ -145,7 +152,7 @@ pub fn find(needle: Expression, src: Expression) -> Expression {
 
 /// Expression that returns the codepoint index of the `occurrence`-th match
 /// of `needle` (1 = first, -1 = last), or -1 if not found.
-pub fn find_nth(needle: Expression, occurrence: Expression, src: Expression) -> Expression {
+pub fn find_nth(src: Expression, needle: Expression, occurrence: Expression) -> Expression {
     add_read(
         src,
         ExpType::INT,
@@ -158,7 +165,7 @@ pub fn find_nth(needle: Expression, occurrence: Expression, src: Expression) -> 
 }
 
 /// Expression that tests whether `src` contains `needle` as a substring.
-pub fn contains(needle: Expression, src: Expression) -> Expression {
+pub fn contains(src: Expression, needle: Expression) -> Expression {
     add_read(
         src,
         ExpType::BOOL,
@@ -167,7 +174,10 @@ pub fn contains(needle: Expression, src: Expression) -> Expression {
 }
 
 /// Expression that tests whether `src` begins with `prefix`.
-pub fn starts_with(prefix: Expression, src: Expression) -> Expression {
+///
+/// Matching is Unicode canonical, not byte-exact: a prefix in a different
+/// normalization form than the source still matches.
+pub fn starts_with(src: Expression, prefix: Expression) -> Expression {
     add_read(
         src,
         ExpType::BOOL,
@@ -179,7 +189,10 @@ pub fn starts_with(prefix: Expression, src: Expression) -> Expression {
 }
 
 /// Expression that tests whether `src` ends with `suffix`.
-pub fn ends_with(suffix: Expression, src: Expression) -> Expression {
+///
+/// Matching is Unicode canonical, not byte-exact: a suffix in a different
+/// normalization form than the source still matches.
+pub fn ends_with(src: Expression, suffix: Expression) -> Expression {
     add_read(
         src,
         ExpType::BOOL,
@@ -212,7 +225,7 @@ pub fn is_numeric(src: Expression) -> Expression {
 
 /// Expression that tests whether `src` parses as a number of the requested
 /// [`StringNumericType`].
-pub fn is_numeric_typed(numeric_type: StringNumericType, src: Expression) -> Expression {
+pub fn is_numeric_typed(src: Expression, numeric_type: StringNumericType) -> Expression {
     add_read(
         src,
         ExpType::BOOL,
@@ -247,7 +260,7 @@ pub fn split(src: Expression) -> Expression {
 /// Expression that splits `src` by the `separator` substring. If the
 /// separator is absent, the result is a singleton list containing the whole
 /// source.
-pub fn split_by_separator(separator: Expression, src: Expression) -> Expression {
+pub fn split_by_separator(src: Expression, separator: Expression) -> Expression {
     add_read(
         src,
         ExpType::LIST,
@@ -262,7 +275,7 @@ pub fn b64_decode(src: Expression) -> Expression {
 }
 
 /// Expression that tests whether `pattern` (ICU regex syntax) matches `src`.
-pub fn regex_compare(pattern: Expression, src: Expression) -> Expression {
+pub fn regex_compare(src: Expression, pattern: Expression) -> Expression {
     add_read(
         src,
         ExpType::BOOL,
@@ -276,9 +289,9 @@ pub fn regex_compare(pattern: Expression, src: Expression) -> Expression {
 /// Expression that tests whether `pattern` matches `src` under the supplied
 /// [`StringRegexFlags`]. Flags can be combined with bitwise OR.
 pub fn regex_compare_with_flags(
+    src: Expression,
     pattern: Expression,
     regex_flags: StringRegexFlags,
-    src: Expression,
 ) -> Expression {
     add_read(
         src,
@@ -299,9 +312,9 @@ pub fn regex_compare_with_flags(
 /// returns the resulting string. Does not modify the underlying bin.
 pub fn insert(
     policy: &StringPolicy,
+    src: Expression,
     index: Expression,
     value: Expression,
-    src: Expression,
 ) -> Expression {
     add_modify(
         src,
@@ -318,9 +331,9 @@ pub fn insert(
 /// `index` with `value`, returning the resulting string.
 pub fn overwrite(
     policy: &StringPolicy,
+    src: Expression,
     index: Expression,
     value: Expression,
-    src: Expression,
 ) -> Expression {
     add_modify(
         src,
@@ -335,7 +348,7 @@ pub fn overwrite(
 
 /// Expression that concatenates `values` (a list of strings) onto `src` in
 /// order, returning the resulting string.
-pub fn concat(policy: &StringPolicy, values: Expression, src: Expression) -> Expression {
+pub fn concat(policy: &StringPolicy, src: Expression, values: Expression) -> Expression {
     add_modify(
         src,
         vec![
@@ -349,7 +362,7 @@ pub fn concat(policy: &StringPolicy, values: Expression, src: Expression) -> Exp
 /// Expression that appends `value` to the end of `src` and returns the
 /// resulting string. Unicode/DBCS-aware counterpart to the legacy byte-level
 /// append; does not modify the underlying bin.
-pub fn append(policy: &StringPolicy, value: Expression, src: Expression) -> Expression {
+pub fn append(policy: &StringPolicy, src: Expression, value: Expression) -> Expression {
     add_modify(
         src,
         vec![
@@ -363,7 +376,7 @@ pub fn append(policy: &StringPolicy, value: Expression, src: Expression) -> Expr
 /// Expression that prepends `value` to the start of `src` and returns the
 /// resulting string. Unicode/DBCS-aware counterpart to the legacy byte-level
 /// prepend; does not modify the underlying bin.
-pub fn prepend(policy: &StringPolicy, value: Expression, src: Expression) -> Expression {
+pub fn prepend(policy: &StringPolicy, src: Expression, value: Expression) -> Expression {
     add_modify(
         src,
         vec![
@@ -374,13 +387,30 @@ pub fn prepend(policy: &StringPolicy, value: Expression, src: Expression) -> Exp
     )
 }
 
+/// Expression that removes codepoints from `src` starting at codepoint `start`
+/// through the end, returning the truncated string. Does not modify the
+/// underlying bin.
+///
+/// **This form carries no write flags, and cannot.** The server reads the snip
+/// arguments by position — `start`, `end`, then flags — so a two-argument
+/// payload of `[start, flags]` would land the flags in the `end` slot and
+/// silently snip the empty range `[start, 0)`. `policy` is accepted for
+/// signature parity with the other modify expressions and is ignored; use
+/// [`snip`] when the write flags have to be honored.
+pub fn snip_from(_policy: &StringPolicy, src: Expression, start: Expression) -> Expression {
+    add_modify(
+        src,
+        vec![sub(SNIP), ExpressionArgument::FilterExpression(start)],
+    )
+}
+
 /// Expression that removes the half-open codepoint range `[start, end)` from
 /// `src` and returns the resulting string.
 pub fn snip(
     policy: &StringPolicy,
+    src: Expression,
     start: Expression,
     end: Expression,
-    src: Expression,
 ) -> Expression {
     add_modify(
         src,
@@ -397,9 +427,9 @@ pub fn snip(
 /// `replacement` and returns the resulting string.
 pub fn replace(
     policy: &StringPolicy,
+    src: Expression,
     needle: Expression,
     replacement: Expression,
-    src: Expression,
 ) -> Expression {
     add_modify(
         src,
@@ -415,9 +445,9 @@ pub fn replace(
 /// `replacement` and returns the resulting string.
 pub fn replace_all(
     policy: &StringPolicy,
+    src: Expression,
     needle: Expression,
     replacement: Expression,
-    src: Expression,
 ) -> Expression {
     add_modify(
         src,
@@ -510,9 +540,9 @@ pub fn trim(policy: &StringPolicy, src: Expression) -> Expression {
 /// reaches `target_length` codepoints.
 pub fn pad_start(
     policy: &StringPolicy,
+    src: Expression,
     target_length: Expression,
     pad_string: Expression,
-    src: Expression,
 ) -> Expression {
     add_modify(
         src,
@@ -529,9 +559,9 @@ pub fn pad_start(
 /// reaches `target_length` codepoints.
 pub fn pad_end(
     policy: &StringPolicy,
+    src: Expression,
     target_length: Expression,
     pad_string: Expression,
-    src: Expression,
 ) -> Expression {
     add_modify(
         src,
@@ -545,7 +575,7 @@ pub fn pad_end(
 }
 
 /// Expression that returns `src` repeated `count` times.
-pub fn repeat(policy: &StringPolicy, count: Expression, src: Expression) -> Expression {
+pub fn repeat(policy: &StringPolicy, src: Expression, count: Expression) -> Expression {
     add_modify(
         src,
         vec![
@@ -560,15 +590,15 @@ pub fn repeat(policy: &StringPolicy, count: Expression, src: Expression) -> Expr
 /// with `replacement` and returns the resulting string. Pass
 /// [`StringRegexFlags::GLOBAL`] to replace every match.
 ///
-/// The `policy` parameter is kept for API symmetry with the other modify
-/// builders and is ignored — the server's `regex_replace` op table does not
-/// accept policy write flags.
+/// **Both flag arguments are positional, and the regex flags come first** — see
+/// [`crate::operations::string::regex_replace`] for why that matters and which
+/// write flags this op accepts.
 pub fn regex_replace(
-    _policy: &StringPolicy,
+    policy: &StringPolicy,
+    src: Expression,
     pattern: Expression,
     replacement: Expression,
     regex_flags: StringRegexFlags,
-    src: Expression,
 ) -> Expression {
     add_modify(
         src,
@@ -576,6 +606,7 @@ pub fn regex_replace(
             sub(REGEX_REPLACE),
             ExpressionArgument::QuotedExpressions(vec![pattern, replacement]),
             ExpressionArgument::Value(Value::Int(regex_flags.0)),
+            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
         ],
     )
 }

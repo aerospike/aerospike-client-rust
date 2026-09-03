@@ -385,6 +385,50 @@ pub fn size(bin: Expression, ctx: &[CdtContext]) -> Expression {
     add_read(bin, ExpType::INT, args)
 }
 
+/// Creates an expression that concatenates the string items of `bin`. The list
+/// must hold only strings. Requires Aerospike Server version 8.1.3 or later.
+///
+/// ```
+/// // The list bin "a" joins to "onetwothree"
+/// use aerospike::expressions::{eq, list_bin, string_val};
+/// use aerospike::expressions::lists::join;
+/// eq(join(list_bin("a".to_string()), &[]), string_val("onetwothree".to_string()));
+/// ```
+pub fn join(bin: Expression, ctx: &[CdtContext]) -> Expression {
+    let args = vec![
+        ExpressionArgument::Value(Value::from(CdtListOpType::StringJoin as i64)),
+        ExpressionArgument::Context(ctx.to_vec()),
+    ];
+    add_read(bin, ExpType::STRING, args)
+}
+
+/// Creates an expression that joins the string items of `bin` with a separator.
+///
+/// The inverse of
+/// [`expressions::string::split_by_separator`](crate::expressions::string::split_by_separator).
+/// Requires Aerospike Server version 8.1.3 or later.
+///
+/// ```
+/// // The list bin "a" joins to "one|two|three"
+/// use aerospike::expressions::{eq, list_bin, string_val};
+/// use aerospike::expressions::lists::join_by_separator;
+/// eq(
+///   join_by_separator(string_val("|".to_string()), list_bin("a".to_string()), &[]),
+///   string_val("one|two|three".to_string()));
+/// ```
+pub fn join_by_separator(
+    separator: Expression,
+    bin: Expression,
+    ctx: &[CdtContext],
+) -> Expression {
+    let args = vec![
+        ExpressionArgument::Value(Value::from(CdtListOpType::StringJoin as i64)),
+        ExpressionArgument::FilterExpression(separator),
+        ExpressionArgument::Context(ctx.to_vec()),
+    ];
+    add_read(bin, ExpType::STRING, args)
+}
+
 /// Creates expression that selects list items identified by value and returns selected
 /// data specified by returnType.
 ///

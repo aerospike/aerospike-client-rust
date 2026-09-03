@@ -3552,6 +3552,32 @@ mod tests {
     }
 
     #[test]
+    fn query_explain_header_carries_error_verbosity() {
+        for (level, want) in [(0u8, 0x00u8), (1, 0x20), (2, 0x40), (3, 0x60)] {
+            let policy = BasePolicy {
+                error_detail_verbosity: level,
+                ..BasePolicy::default()
+            };
+            let mut buf = Buffer::new(0);
+            buf.set_query_explain(
+                &policy,
+                "test",
+                Some("users"),
+                &[0x02, b'$', b'.', b'a'],
+                None,
+                7,
+                1_000,
+            )
+            .unwrap();
+            assert_eq!(
+                buf.data_buffer[12] & INFO4_ERROR_VERBOSITY_MASK,
+                want,
+                "query explain header level {level}"
+            );
+        }
+    }
+
+    #[test]
     fn write_header_carries_error_verbosity() {
         let mut policy = WritePolicy::default();
         policy.base_policy.error_detail_verbosity = 3;
@@ -3598,7 +3624,7 @@ mod tests {
             encode_field(FieldType::ErrorMessage as u8, &detail),
         ]);
         let d = parsed.error_detail.expect("detail parsed");
-        assert_eq!(d.message, "ok (subcode=1)");
+        assert_eq!(d.message, "ok");
     }
 
     #[test]

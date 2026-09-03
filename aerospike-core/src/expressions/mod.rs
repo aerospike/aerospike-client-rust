@@ -26,6 +26,7 @@ pub mod regex_flag;
 pub mod string;
 pub mod vector;
 
+pub use ael::from_ael;
 pub use ael::pack_ael_server_filter;
 pub use ael::SERVER_COMPILED_AEL_EXPRESSION_OP;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};

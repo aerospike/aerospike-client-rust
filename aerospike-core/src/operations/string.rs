@@ -75,11 +75,18 @@ const STR_OP_PREPEND: u8 = 68;
 /// `is_numeric` sub-op to restrict validation to integers or floats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StringNumericType {
-    /// Match either an integer or a floating-point number.
+    /// Match either an integer or a floating-point number — the union of
+    /// [`Int`](StringNumericType::Int) and [`Float`](StringNumericType::Float),
+    /// so it inherits `Float`'s fractional-digit requirement: `"1e5"` is a
+    /// valid `double` to `strtod` but matches neither branch, and is therefore
+    /// **not** numeric under `Any`.
     Any = 0,
-    /// Match only integers.
+    /// Match only integers, i.e. what fits an `i64`.
     Int = 1,
-    /// Match only floating-point numbers.
+    /// Match only floating-point numbers. **Stricter than "parses as a
+    /// float":** the string must contain a `.` followed by at least one digit,
+    /// so `"5"` and `"5."` are both false here while `"5"` is true under
+    /// [`Int`](StringNumericType::Int).
     Float = 2,
 }
 
@@ -117,12 +124,44 @@ pub struct StringWriteFlags(pub i64);
 impl StringWriteFlags {
     /// Allow create or update.
     pub const DEFAULT: StringWriteFlags = StringWriteFlags(0);
-    /// Do not raise an error if the operation cannot be applied to the bin.
-    /// The bin is left unchanged and a nil result is returned for that op.
-    /// Note that a missing bin is not an error path: additive ops (insert,
-    /// overwrite, concat, append, prepend, pad, repeat) create the bin from
-    /// an empty string, and the other modify ops are a silent no-op — with
-    /// or without this flag.
+
+    /// Apply the operation only if the bin does not already exist. A live bin
+    /// fails with `BIN_EXISTS_ERROR`.
+    ///
+    /// Only the additive operations that can create a bin from an empty string
+    /// accept this flag: [`insert`], [`overwrite`], [`concat`], [`concat_list`],
+    /// [`append`], [`prepend`], [`pad_start`], [`pad_end`] and [`repeat`], plus
+    /// their expression equivalents. Every other string modify operation
+    /// rejects it with `PARAMETER_ERROR`.
+    ///
+    /// It is also invalid combined with [`UPDATE_ONLY`](StringWriteFlags::UPDATE_ONLY),
+    /// and invalid on an operation carrying a [`CdtContext`]: both are
+    /// `PARAMETER_ERROR`. The server resolves all three of these while parsing
+    /// arguments, so [`NO_FAIL`](StringWriteFlags::NO_FAIL) does not suppress
+    /// them.
+    pub const CREATE_ONLY: StringWriteFlags = StringWriteFlags(1);
+
+    /// Apply the operation only to an existing bin, disabling bin creation. An
+    /// absent bin is a no-op rather than a create. Valid on every string modify
+    /// operation. Cannot be combined with
+    /// [`CREATE_ONLY`](StringWriteFlags::CREATE_ONLY).
+    pub const UPDATE_ONLY: StringWriteFlags = StringWriteFlags(2);
+
+    /// Suppress the failure if the operation cannot be applied, leaving the bin
+    /// unchanged. The bin — and the value a modify expression evaluates to —
+    /// keeps the unmodified source string.
+    ///
+    /// It covers argument and size validation, the operation itself, and a
+    /// [`CREATE_ONLY`](StringWriteFlags::CREATE_ONLY) conflict on a live bin. It
+    /// does not cover a malformed argument list, a non-string bin, invalid UTF-8
+    /// in either the source or the result, or the
+    /// [`CREATE_ONLY`](StringWriteFlags::CREATE_ONLY) validations described
+    /// above.
+    ///
+    /// An absent bin is not a failure and does not depend on this flag: the
+    /// create-capable operations listed under
+    /// [`CREATE_ONLY`](StringWriteFlags::CREATE_ONLY) create it, every other
+    /// operation is a no-op.
     pub const NO_FAIL: StringWriteFlags = StringWriteFlags(4);
 }
 
@@ -196,9 +235,14 @@ fn modify_op(sub_op: u8, bin: &str, args: Vec<Value>) -> Operation {
 // Build the msgpack payload for a string op. The layout matches the server's
 // particle_string.c `string_state_init`:
 //   - No CTX:   [SUBOP, args...]
-//   - With CTX: [0xFF, [ctx_id_1, ctx_value_1, ...], SUBOP, args...]
-// SUBOP and args sit at the outer level alongside the 0xFF sentinel — there is
-// no nested array around them (this is different from list/map/bitwise ops).
+//   - With CTX: [0xFF, [ctx_id_1, ctx_value_1, ...], [SUBOP, args...]]
+// The CTX form is the same CONTEXT_EVAL envelope the list/map/bitwise ops use:
+// a fixed outer count of three, with the op nested. Nesting makes the inner
+// op's arity self-describing, which is what keeps the trailing policy-flags
+// argument of a modify op unambiguous — flat, an element the server did not
+// expect was simply consumed as those flags instead of being rejected. The
+// server enforces the count: `string_state_init` fails a CTX op whose outer
+// element count is not 3.
 fn pack_string_op(
     buf: &mut Option<&mut Buffer>,
     sub_op: u8,
@@ -206,18 +250,13 @@ fn pack_string_op(
     ctx: &[CdtContext],
 ) -> Result<usize> {
     let mut size: usize = 0;
-    let has_ctx = !ctx.is_empty();
-    let inner_count = 1 + args.len();
-    let outer_count = if has_ctx {
-        2 + inner_count
-    } else {
-        inner_count
-    };
 
-    size += pack_array_begin(buf, outer_count);
-
-    if has_ctx {
+    if !ctx.is_empty() {
+        size += pack_array_begin(buf, 3);
         size += pack_integer(buf, 0xff);
+
+        // Each context contributes two elements, its id and its value, so the
+        // list count is twice the number of contexts.
         size += pack_array_begin(buf, ctx.len() * 2);
         for c in ctx {
             if c.id == 0 {
@@ -233,6 +272,7 @@ fn pack_string_op(
         }
     }
 
+    size += pack_array_begin(buf, 1 + args.len());
     size += pack_integer(buf, i64::from(sub_op));
     for a in args {
         size += pack_value(buf, a)?;
@@ -298,12 +338,18 @@ pub fn contains(bin: &str, needle: &str) -> Operation {
 
 /// `startsWith` operation. Returns true if the bin begins with `prefix`,
 /// false otherwise.
+///
+/// Matching is Unicode canonical, not byte-exact: a prefix stored in a
+/// different normalization form than the bin still matches.
 pub fn starts_with(bin: &str, prefix: &str) -> Operation {
     read_op(STR_OP_STARTS_WITH, bin, vec![Value::from(prefix)])
 }
 
 /// `endsWith` operation. Returns true if the bin ends with `suffix`,
 /// false otherwise.
+///
+/// Matching is Unicode canonical, not byte-exact: a suffix stored in a
+/// different normalization form than the bin still matches.
 pub fn ends_with(bin: &str, suffix: &str) -> Operation {
     read_op(STR_OP_ENDS_WITH, bin, vec![Value::from(suffix)])
 }
@@ -478,6 +524,20 @@ pub fn prepend(policy: &StringPolicy, bin: &str, value: &str) -> Operation {
     )
 }
 
+/// `snip` operation that removes codepoints starting at codepoint `start`
+/// through the end of the string, truncating the bin. `snip_from("hello world", 5)`
+/// leaves `"hello"`.
+///
+/// **This form carries no write flags, and cannot.** The server reads the snip
+/// arguments by position — `start`, `end`, then flags — so a two-argument
+/// payload of `[start, flags]` would land the flags in the `end` slot and
+/// silently snip the empty range `[start, 0)`. `policy` is accepted for
+/// signature parity with the other modify builders and is ignored; use [`snip`]
+/// when the write flags have to be honored.
+pub fn snip_from(_policy: &StringPolicy, bin: &str, start: i64) -> Operation {
+    modify_op(STR_OP_SNIP, bin, vec![Value::Int(start)])
+}
+
 /// `snip` operation that removes the half-open codepoint range
 /// `[start, end)` from the bin.
 pub fn snip(policy: &StringPolicy, bin: &str, start: i64, end: i64) -> Operation {
@@ -605,11 +665,13 @@ pub fn repeat(policy: &StringPolicy, bin: &str, count: i64) -> Operation {
 /// `replacement`. Pass [`StringRegexFlags::GLOBAL`] to replace every match.
 /// Flag values may be combined with bitwise OR.
 ///
-/// The server's `regex_replace` op table does not accept policy write flags,
-/// so `policy` is accepted only for API symmetry with the other modify ops
-/// and is ignored.
+/// **Both flag arguments are positional, and the regex flags come first.**
+///
+/// This op accepts [`StringWriteFlags::UPDATE_ONLY`] and
+/// [`StringWriteFlags::NO_FAIL`]; it is not create-capable, so
+/// [`StringWriteFlags::CREATE_ONLY`] is refused with `PARAMETER_ERROR`.
 pub fn regex_replace(
-    _policy: &StringPolicy,
+    policy: &StringPolicy,
     bin: &str,
     pattern: &str,
     replacement: &str,
@@ -621,6 +683,7 @@ pub fn regex_replace(
         vec![
             Value::List(vec![Value::from(pattern), Value::from(replacement)]),
             Value::Int(regex_flags.0),
+            Value::Int(policy.flags),
         ],
     )
 }
@@ -651,5 +714,267 @@ pub fn to_string(bin: &str) -> Operation {
         ctx: DEFAULT_CTX,
         bin: OperationBin::Name(bin.into()),
         data: OperationData::None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::operations::cdt_context::{ctx_list_index, ctx_map_key};
+
+    // Wire-shape assertions for the string-op CONTEXT_EVAL envelope,
+    // `[0xFF, ctx_list, [SUBOP, args...]]`. They pack the payload rather than
+    // talking to a server, so a regression to the older flat shape — where
+    // SUBOP and args sat at the outer level — fails here instead of surfacing
+    // as a PARAMETER_ERROR at runtime.
+
+    // Packs an operation's payload both in estimate mode (no buffer) and write
+    // mode, asserts the two sizes agree, and returns the written bytes. The
+    // agreement is the invariant that makes the buffer sizing safe: the same
+    // function fills a buffer measured by its own earlier pass.
+    fn payload(op: &Operation) -> Vec<u8> {
+        let OperationData::StringOp(ref string_op) = op.data else {
+            panic!("expected a StringOp payload");
+        };
+
+        let estimated = string_op.estimate_size(&op.ctx).unwrap();
+        let mut buffer = Buffer::new(usize::MAX);
+        buffer.resize_buffer(estimated).unwrap();
+        buffer.data_offset = 0;
+        let written = string_op.write_to(&mut buffer, &op.ctx).unwrap();
+
+        assert_eq!(estimated, written, "size pass and write pass disagree");
+        assert_eq!(
+            buffer.data_buffer.len(),
+            estimated,
+            "buffer holds a different number of bytes than the size pass returned"
+        );
+
+        buffer.data_buffer[..written].to_vec()
+    }
+
+    // A read op with no arguments: the inner array holds only the sub-op.
+    #[test]
+    fn read_op_with_ctx_nests_the_inner_op() {
+        assert_eq!(
+            payload(&strlen("b").context(vec![ctx_list_index(2)])),
+            vec![
+                0x93, // array(3): CONTEXT_EVAL envelope
+                0xcc, 0xff, // CONTEXT_EVAL sentinel
+                0x92, // array(2): one ctx pair
+                0x10, // ListIndex
+                0x02, // index 2
+                0x91, // array(1): the nested op
+                0x00, // STR_OP_STRLEN
+            ]
+        );
+    }
+
+    #[test]
+    fn read_op_with_args_and_map_key_ctx() {
+        assert_eq!(
+            payload(&starts_with("b", "Wor").context(vec![ctx_map_key(Value::from("b"))])),
+            vec![
+                0x93, // array(3)
+                0xcc, 0xff, // CONTEXT_EVAL sentinel
+                0x92, // array(2): one ctx pair
+                0x22, // MapKey
+                0xa2, 0x03, 0x62, // "b" as an Aerospike string
+                0x92, // array(2): sub-op + one arg
+                0x05, // STR_OP_STARTS_WITH
+                0xa4, 0x03, 0x57, 0x6f, 0x72, // "Wor"
+            ]
+        );
+    }
+
+    // A modify op always carries its policy flags as a trailing argument.
+    #[test]
+    fn modify_op_with_ctx_nests_the_flags_with_the_op() {
+        assert_eq!(
+            payload(&upper(&StringPolicy::default(), "b").context(vec![ctx_list_index(1)])),
+            vec![
+                0x93, // array(3)
+                0xcc, 0xff, // CONTEXT_EVAL sentinel
+                0x92, // array(2): one ctx pair
+                0x10, // ListIndex
+                0x01, // index 1
+                0x92, // array(2): sub-op + flags
+                0x38, // STR_OP_UPPER
+                0x00, // StringWriteFlags::DEFAULT
+            ]
+        );
+    }
+
+    // The case the nesting exists to make safe: flat, this trailing element was
+    // indistinguishable from an optional operand of the op.
+    #[test]
+    fn modify_op_with_non_default_trailing_flags() {
+        let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
+
+        assert_eq!(
+            payload(&append(&policy, "b", "!").context(vec![ctx_list_index(1)])),
+            vec![
+                0x93, // array(3)
+                0xcc, 0xff, // CONTEXT_EVAL sentinel
+                0x92, // array(2): one ctx pair
+                0x10, // ListIndex
+                0x01, // index 1
+                0x93, // array(3): sub-op + value + flags
+                0x43, // STR_OP_APPEND
+                0xa2, 0x03, 0x21, // "!"
+                0x04, // StringWriteFlags::NO_FAIL
+            ]
+        );
+    }
+
+    // Two contexts, so the ctx list holds four elements — the count the server
+    // reads is twice the number of contexts, not the number of contexts.
+    #[test]
+    fn nested_ctx_path_counts_two_elements_per_context() {
+        assert_eq!(
+            payload(
+                &upper(&StringPolicy::default(), "b")
+                    .context(vec![ctx_map_key(Value::from("items")), ctx_list_index(1)])
+            ),
+            vec![
+                0x93, // array(3)
+                0xcc, 0xff, // CONTEXT_EVAL sentinel
+                0x94, // array(4): two ctx pairs
+                0x22, // MapKey
+                0xa6, 0x03, 0x69, 0x74, 0x65, 0x6d, 0x73, // "items"
+                0x10, // ListIndex
+                0x01, // index 1
+                0x92, // array(2): sub-op + flags
+                0x38, // STR_OP_UPPER
+                0x00, // StringWriteFlags::DEFAULT
+            ]
+        );
+    }
+
+    // Without a context there is no envelope and no nesting: the payload is
+    // the op itself. This shape did not change, and must not.
+    #[test]
+    fn without_ctx_the_payload_is_the_bare_op() {
+        assert_eq!(payload(&strlen("b")), vec![0x91, 0x00]);
+    }
+
+    #[test]
+    fn without_ctx_trailing_flags_stay_in_the_only_array() {
+        let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
+
+        assert_eq!(
+            payload(&append(&policy, "b", "!")),
+            vec![
+                0x93, // array(3): sub-op + value + flags
+                0x43, // STR_OP_APPEND
+                0xa2, 0x03, 0x21, // "!"
+                0x04, // StringWriteFlags::NO_FAIL
+            ]
+        );
+    }
+
+    // The `snip` argument list is positional: start at slot 0, end at slot 1,
+    // flags at slot 2. So the one-argument form has to pack *exactly* two
+    // elements — a trailing flags element would land in the `end` slot and
+    // silently snip the empty range [start, 0) instead of truncating. This is
+    // why the one-argument builder ignores its policy, and the payload count is
+    // the only place that decision is visible.
+    #[test]
+    fn snip_from_packs_no_flags_element() {
+        assert_eq!(
+            payload(&snip_from(&StringPolicy::default(), "b", 5)),
+            vec![
+                0x92, // array(2): sub-op + start, and nothing else
+                0x35, // STR_OP_SNIP
+                0x05, // start 5
+            ]
+        );
+    }
+
+    #[test]
+    fn snip_from_ignores_a_non_default_policy() {
+        let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
+
+        assert_eq!(
+            payload(&snip_from(&policy, "b", 5)),
+            vec![0x92, 0x35, 0x05],
+            "a non-default policy must not add a third element"
+        );
+    }
+
+    // The two-argument form is unaffected: start, end, then flags.
+    #[test]
+    fn snip_still_packs_start_end_and_flags() {
+        assert_eq!(
+            payload(&snip(&StringPolicy::default(), "b", 5, 11)),
+            vec![
+                0x94, // array(4)
+                0x35, // STR_OP_SNIP
+                0x05, // start 5
+                0x0b, // end 11
+                0x00, // StringWriteFlags::DEFAULT
+            ]
+        );
+    }
+
+    // `regex_replace` carries two flag arguments, and their order is a protocol
+    // contract: the server parses [patterns, regex_flags, write_flags] by
+    // position, and several bits collide between the two flag sets (NO_FAIL and
+    // DOTALL are both 1 << 2). The payload therefore always has four elements —
+    // it had three before the write-flags slot existed server-side.
+    #[test]
+    fn regex_replace_packs_regex_flags_then_write_flags() {
+        let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
+
+        assert_eq!(
+            payload(&regex_replace(
+                &policy,
+                "b",
+                "a",
+                "x",
+                StringRegexFlags::GLOBAL
+            )),
+            vec![
+                0x94, // array(4): sub-op + patterns + regex flags + write flags
+                0x42, // STR_OP_REGEX_REPLACE
+                0x92, // array(2): the pattern/replacement pair
+                0xa2, 0x03, 0x61, // "a"
+                0xa2, 0x03, 0x78, // "x"
+                0x10, // StringRegexFlags::GLOBAL
+                0x04, // StringWriteFlags::NO_FAIL
+            ]
+        );
+    }
+
+    /// The default policy still occupies the slot: a three-element payload would
+    /// leave the server reading the *regex* flags as write flags on any client
+    /// that later omitted them.
+    #[test]
+    fn regex_replace_packs_a_zero_write_flags_slot_by_default() {
+        assert_eq!(
+            payload(&regex_replace(
+                &StringPolicy::default(),
+                "b",
+                "a",
+                "x",
+                StringRegexFlags::DEFAULT
+            )),
+            vec![0x94, 0x42, 0x92, 0xa2, 0x03, 0x61, 0xa2, 0x03, 0x78, 0x00, 0x00]
+        );
+    }
+
+    // Every shape the two passes have to agree on, including the multi-arg
+    // modify ops where the size pass has the most to get wrong.
+    #[test]
+    fn size_estimate_matches_write_for_every_shape() {
+        let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
+        let deep = vec![ctx_map_key(Value::from("items")), ctx_list_index(1)];
+
+        // `payload` asserts the agreement; this exercises it across shapes.
+        payload(&strlen("b"));
+        payload(&append(&policy, "b", "!"));
+        payload(&strlen("b").context(vec![ctx_list_index(2)]));
+        payload(&append(&policy, "b", "!").context(vec![ctx_list_index(2)]));
+        payload(&pad_end(&policy, "b", 10, ".").context(deep));
     }
 }

@@ -56,6 +56,7 @@ pub(crate) enum CdtBitwiseOpType {
     LScan = 52,
     RScan = 53,
     GetInt = 54,
+    B64Encode = 55,
 }
 
 /// [`BitwiseResizeFlags`] specifies the bitwise operation flags for resize.
@@ -745,6 +746,79 @@ pub fn get_int(bin: &str, bit_offset: i64, bit_size: i64, signed: bool) -> Opera
     }
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::GetInt as u8,
+        encoder: Arc::new(pack_cdt_bit_op),
+        args,
+    };
+
+    Operation {
+        op: OperationType::BitRead,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin.into()),
+        data: OperationData::CdtBitOp(cdt_op),
+    }
+}
+
+/// The `invert_size` flag for a "base64 encode" range: `byte_size` counts back
+/// from the end of the bitmap rather than forward from `byte_offset`.
+const B64_FLAGS_INVERT_SIZE: u8 = 1;
+
+/// Creates bit "base64 encode" operation.
+///
+/// Server returns the base64 text of the whole byte[] bin.
+///
+/// # Example
+/// ```text
+/// bin = [0b00000001, 0b01000010]
+/// returns "AUI="
+/// ```
+///
+/// Requires Aerospike Server version 8.1.3 or later.
+pub fn b64_encode(bin: &str) -> Operation {
+    let cdt_op = CdtOperation {
+        op: CdtBitwiseOpType::B64Encode as u8,
+        encoder: Arc::new(pack_cdt_bit_op),
+        args: vec![],
+    };
+
+    Operation {
+        op: OperationType::BitRead,
+        ctx: DEFAULT_CTX,
+        bin: OperationBin::Name(bin.into()),
+        data: OperationData::CdtBitOp(cdt_op),
+    }
+}
+
+/// Creates bit "base64 encode" operation on a byte range.
+///
+/// Server returns the base64 text of byte[] bin starting at `byte_offset` for
+/// `byte_size`. A negative `byte_offset` counts backwards from the end of the
+/// bitmap. When `invert_size` is true, `byte_size` counts back from the end of
+/// the bitmap instead, so an inverted `byte_size` of 0 encodes through to the
+/// end.
+///
+/// # Example
+/// ```text
+/// bin = [0b00000001, 0b01000010, 0b00000011]
+/// byte_offset = 1
+/// byte_size = 2
+/// invert_size = false
+/// returns "QgM="
+/// ```
+///
+/// Requires Aerospike Server version 8.1.3 or later.
+pub fn b64_encode_range(
+    bin: &str,
+    byte_offset: i64,
+    byte_size: i64,
+    invert_size: bool,
+) -> Operation {
+    let mut args = vec![CdtArgument::Int(byte_offset), CdtArgument::Int(byte_size)];
+    if invert_size {
+        args.push(CdtArgument::Byte(B64_FLAGS_INVERT_SIZE));
+    }
+
+    let cdt_op = CdtOperation {
+        op: CdtBitwiseOpType::B64Encode as u8,
         encoder: Arc::new(pack_cdt_bit_op),
         args,
     };

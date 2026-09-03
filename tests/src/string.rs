@@ -21,8 +21,12 @@ use crate::common;
 
 use aerospike::operations::cdt_context::{ctx_list_index, ctx_map_key};
 use aerospike::operations::string as str_op;
-use aerospike::operations::string::{StringPolicy, StringRegexFlags, StringWriteFlags};
-use aerospike::{as_bin, as_key, as_list, as_map, as_val, Bins, ReadPolicy, Value, WritePolicy};
+use aerospike::operations::string::{
+    StringNumericType, StringPolicy, StringRegexFlags, StringWriteFlags,
+};
+use aerospike::{
+    as_bin, as_key, as_list, as_map, as_val, Bins, ReadPolicy, ResultCode, Value, WritePolicy,
+};
 
 async fn server_supports_string_operations(client: &aerospike::Client) -> bool {
     let supported = match client.cluster.get_random_node() {
@@ -1098,6 +1102,73 @@ async fn modify_on_string_nested_in_map() {
     assert_eq!(rec.bins.get(BIN).unwrap(), &Value::HashMap(expected));
 }
 
+// A modify op under CTX carrying non-default write flags. The nested
+// CONTEXT_EVAL envelope exists to make this trailing element unambiguous: in
+// the older flat shape it sat at the outer level, where it was
+// indistinguishable from an optional operand of the op.
+#[aerospike_macro::test]
+async fn modify_with_write_flags_on_string_nested_in_list() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "ctx-mod-flags-list");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+    let list = as_list!("alpha", "beta", "gamma");
+    client
+        .put(&wpolicy, &key, &[as_bin!(BIN, list)])
+        .await
+        .unwrap();
+
+    let op = str_op::append(&policy, BIN, "!").context(vec![ctx_list_index(1)]);
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let rec = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+    assert_eq!(
+        rec.bins.get(BIN).unwrap(),
+        &Value::List(vec![
+            Value::from("alpha"),
+            Value::from("beta!"),
+            Value::from("gamma"),
+        ])
+    );
+}
+
+#[aerospike_macro::test]
+async fn modify_with_write_flags_on_string_nested_in_map() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "ctx-mod-flags-map");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+    let map = as_map!("a" => "hello world", "b" => "foo");
+    client
+        .put(&wpolicy, &key, &[as_bin!(BIN, map)])
+        .await
+        .unwrap();
+
+    // Three arguments plus the flags, so the inner array carries four elements.
+    let op = str_op::pad_end(&policy, BIN, 13, ".").context(vec![ctx_map_key(Value::from("a"))]);
+    client.operate(&wpolicy, &key, &[op]).await.unwrap();
+
+    let rec = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+    let mut expected = HashMap::new();
+    expected.insert(Value::from("a"), Value::from("hello world.."));
+    expected.insert(Value::from("b"), Value::from("foo"));
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::HashMap(expected));
+}
+
 #[aerospike_macro::test]
 async fn modify_on_string_deeply_nested_list_in_map() {
     let client = common::client().await;
@@ -1559,4 +1630,769 @@ async fn regex_replace_with_invalid_pattern_raises_parameter() {
         str_op::regex_replace(&policy, BIN, "[unclosed", "NUM", StringRegexFlags::DEFAULT),
     )
     .await;
+}
+
+// ============================================================
+// Write flags — CREATE_ONLY and UPDATE_ONLY
+// ============================================================
+
+#[aerospike_macro::test]
+async fn create_only_creates_a_missing_bin() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "co-create");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(StringWriteFlags::CREATE_ONLY);
+    put_other_bin_only(&client, &wpolicy, &key).await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::append(&policy, BIN, "hi")])
+        .await
+        .unwrap();
+
+    assert_eq!(get_string(&client, &key).await, "hi");
+}
+
+#[aerospike_macro::test]
+async fn create_only_on_a_live_bin_raises_bin_exists() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "co-live");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(StringWriteFlags::CREATE_ONLY);
+    put(&client, &wpolicy, &key, "hello").await;
+
+    let err = client
+        .operate(&wpolicy, &key, &[str_op::append(&policy, BIN, " there")])
+        .await
+        .expect_err("CREATE_ONLY on a live bin must fail");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::BinExistsError),
+        "unexpected error: {err}"
+    );
+
+    assert_eq!(get_string(&client, &key).await, "hello");
+}
+
+#[aerospike_macro::test]
+async fn create_only_with_no_fail_on_a_live_bin_is_a_silent_noop() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "co-nofail");
+    let wpolicy = WritePolicy::default();
+    let policy =
+        StringPolicy::new(StringWriteFlags::CREATE_ONLY | StringWriteFlags::NO_FAIL);
+    put(&client, &wpolicy, &key, "hello").await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::append(&policy, BIN, " there")])
+        .await
+        .unwrap();
+
+    assert_eq!(get_string(&client, &key).await, "hello");
+}
+
+/// Only the eight create-capable server ops accept CREATE_ONLY; the per-op
+/// `bad_flags` mask rejects it everywhere else.
+#[aerospike_macro::test]
+async fn create_only_on_a_non_create_op_raises_parameter_error() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "co-noncreate");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(StringWriteFlags::CREATE_ONLY);
+    put(&client, &wpolicy, &key, "hello").await;
+
+    let err = client
+        .operate(&wpolicy, &key, &[str_op::upper(&policy, BIN)])
+        .await
+        .expect_err("CREATE_ONLY on upper must fail");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::ParameterError),
+        "unexpected error: {err}"
+    );
+
+    assert_eq!(get_string(&client, &key).await, "hello");
+}
+
+/// The flag validations run while the server parses arguments, upstream of
+/// everything NO_FAIL covers — so NO_FAIL cannot mask them.
+#[aerospike_macro::test]
+async fn no_fail_does_not_mask_the_create_only_rejection() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "co-nofail-mask");
+    let wpolicy = WritePolicy::default();
+    let policy =
+        StringPolicy::new(StringWriteFlags::CREATE_ONLY | StringWriteFlags::NO_FAIL);
+    put(&client, &wpolicy, &key, "hello").await;
+
+    let err = client
+        .operate(&wpolicy, &key, &[str_op::upper(&policy, BIN)])
+        .await
+        .expect_err("NO_FAIL must not suppress the flag rejection");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::ParameterError),
+        "unexpected error: {err}"
+    );
+
+    assert_eq!(get_string(&client, &key).await, "hello");
+}
+
+#[aerospike_macro::test]
+async fn update_only_on_a_missing_bin_is_a_noop() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "uo-missing");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(StringWriteFlags::UPDATE_ONLY);
+    put_other_bin_only(&client, &wpolicy, &key).await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::append(&policy, BIN, "hi")])
+        .await
+        .unwrap();
+
+    // The additive op would have created the bin without this flag.
+    let rec = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+    assert!(rec.bins.get(BIN).is_none());
+    assert_eq!(rec.bins.get("other").unwrap(), &Value::from("untouched"));
+}
+
+#[aerospike_macro::test]
+async fn update_only_on_a_live_bin_applies() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "uo-live");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(StringWriteFlags::UPDATE_ONLY);
+    put(&client, &wpolicy, &key, "hello").await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::append(&policy, BIN, " there")])
+        .await
+        .unwrap();
+
+    assert_eq!(get_string(&client, &key).await, "hello there");
+}
+
+/// UPDATE_ONLY is valid on every modify op, unlike CREATE_ONLY.
+#[aerospike_macro::test]
+async fn update_only_is_accepted_by_a_non_create_op() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "uo-noncreate");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(StringWriteFlags::UPDATE_ONLY);
+    put(&client, &wpolicy, &key, "hello").await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::upper(&policy, BIN)])
+        .await
+        .unwrap();
+
+    assert_eq!(get_string(&client, &key).await, "HELLO");
+}
+
+#[aerospike_macro::test]
+async fn create_only_with_update_only_raises_parameter_error() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "co-uo");
+    let wpolicy = WritePolicy::default();
+    let policy =
+        StringPolicy::new(StringWriteFlags::CREATE_ONLY | StringWriteFlags::UPDATE_ONLY);
+    put(&client, &wpolicy, &key, "hello").await;
+
+    let err = client
+        .operate(&wpolicy, &key, &[str_op::append(&policy, BIN, " there")])
+        .await
+        .expect_err("CREATE_ONLY and UPDATE_ONLY are mutually exclusive");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::ParameterError),
+        "unexpected error: {err}"
+    );
+
+    assert_eq!(get_string(&client, &key).await, "hello");
+}
+
+#[aerospike_macro::test]
+async fn create_only_with_no_fail_still_raises_the_mutual_exclusion_error() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "co-uo-nofail");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(
+        StringWriteFlags::CREATE_ONLY | StringWriteFlags::UPDATE_ONLY | StringWriteFlags::NO_FAIL,
+    );
+    put(&client, &wpolicy, &key, "hello").await;
+
+    let err = client
+        .operate(&wpolicy, &key, &[str_op::append(&policy, BIN, " there")])
+        .await
+        .expect_err("NO_FAIL must not suppress the mutual-exclusion error");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::ParameterError),
+        "unexpected error: {err}"
+    );
+}
+
+/// CREATE_ONLY is refused on a context path: there is no bin to create when the
+/// target is a leaf inside a collection.
+///
+/// The Go client carries this test with a note that it cannot discriminate,
+/// because its flat CTX envelope failed with `PARAMETER_ERROR` whatever the
+/// policy said. This client nests the envelope (CLIENT-5308), so the control
+/// below is the point of the test: the identical operation *without*
+/// CREATE_ONLY succeeds, which is what makes the failure attributable to the
+/// flag.
+#[aerospike_macro::test]
+async fn create_only_on_a_ctx_path_raises_parameter_error() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "co-ctx");
+    let wpolicy = WritePolicy::default();
+    let _ = common::delete_durably(&client, &wpolicy, &key).await;
+    client
+        .put(&wpolicy, &key, &[as_bin!("lbin", as_list!("hello"))])
+        .await
+        .unwrap();
+
+    let create_only = StringPolicy::new(StringWriteFlags::CREATE_ONLY);
+    let err = client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::append(&create_only, "lbin", "hi").context(vec![ctx_list_index(0)])],
+        )
+        .await
+        .expect_err("CREATE_ONLY under a context must fail");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::ParameterError),
+        "unexpected error: {err}"
+    );
+
+    // The control: same op, same path, no CREATE_ONLY.
+    let default = StringPolicy::default();
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::append(&default, "lbin", "hi").context(vec![ctx_list_index(0)])],
+        )
+        .await
+        .expect("the same op without CREATE_ONLY must succeed");
+
+    let rec = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+    assert_eq!(
+        rec.bins.get("lbin").unwrap(),
+        &Value::List(vec![Value::from("hellohi")])
+    );
+}
+
+// ============================================================
+// snip_from — the one-argument snip
+// ============================================================
+
+#[aerospike_macro::test]
+async fn snip_from_truncates_to_the_end() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "snip-from");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+
+    for (start, expected) in [
+        (5i64, "hello"),
+        // Everything from 0 onward: the string empties.
+        (0, ""),
+        // Negative counts from the end.
+        (-5, "hello "),
+        // Past the end: nothing to remove.
+        (99, "hello world"),
+    ] {
+        put(&client, &wpolicy, &key, "hello world").await;
+        client
+            .operate(&wpolicy, &key, &[str_op::snip_from(&policy, BIN, start)])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            get_string(&client, &key).await,
+            expected,
+            "snip_from({start})"
+        );
+    }
+}
+
+/// Codepoints, not bytes: the accented characters are two bytes each.
+#[aerospike_macro::test]
+async fn snip_from_addresses_codepoints() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "snip-from-cp");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    put(&client, &wpolicy, &key, "héllo wörld").await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::snip_from(&policy, BIN, 5)])
+        .await
+        .unwrap();
+
+    assert_eq!(get_string(&client, &key).await, "héllo");
+}
+
+/// The reason the one-argument form drops the flags element: were the flags
+/// packed, the server would read them as `end` and snip the empty range
+/// `[5, 0)`, leaving the string untouched. A non-default policy is the case
+/// where that would show, since `DEFAULT` is zero either way.
+#[aerospike_macro::test]
+async fn snip_from_with_a_non_default_policy_still_truncates() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "snip-from-flags");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
+    put(&client, &wpolicy, &key, "hello world").await;
+
+    client
+        .operate(&wpolicy, &key, &[str_op::snip_from(&policy, BIN, 5)])
+        .await
+        .unwrap();
+
+    assert_eq!(get_string(&client, &key).await, "hello");
+}
+
+/// `is_numeric` with a [`StringNumericType::Float`] filter is `is_valid_double
+/// && has_decimal_fraction` on the server, not just "parses as a float". These
+/// four inputs pin each half of that, including the case that surprises: a
+/// valid `double` with no fractional digit is numeric under *neither* `Float`
+/// nor `Any`.
+#[aerospike_macro::test]
+async fn is_numeric_typed_float_requires_a_fractional_digit() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "num-typed");
+    let wpolicy = WritePolicy::default();
+
+    for (value, float, int, any) in [
+        ("3.14", true, false, true),
+        // An integer: not float-class, but numeric under Any via the int branch.
+        ("5", false, true, true),
+        // A '.' with no digit after it is not a fractional part.
+        ("5.", false, false, false),
+        // `strtod` accepts this; the server still refuses it, both as Float and
+        // as Any, because it has no '.' followed by a digit.
+        ("1e5", false, false, false),
+    ] {
+        put(&client, &wpolicy, &key, value).await;
+
+        for (numeric_type, expected) in [
+            (StringNumericType::Float, float),
+            (StringNumericType::Int, int),
+            (StringNumericType::Any, any),
+        ] {
+            let rec = client
+                .operate(
+                    &wpolicy,
+                    &key,
+                    &[str_op::is_numeric_typed(BIN, numeric_type)],
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(
+                rec.bins.get(BIN).unwrap(),
+                &Value::Bool(expected),
+                "is_numeric_typed({value:?}, {numeric_type:?})"
+            );
+        }
+    }
+}
+
+// ============================================================
+// Unicode canonical equivalence
+//
+// The literals are `\u{...}` escapes on purpose. Any tool that normalizes
+// source files would collapse a literal NFD sequence to NFC and leave every
+// assertion below comparing a string with itself.
+// ============================================================
+
+/// "café" composed — U+00E9.
+const NFC: &str = "caf\u{e9}";
+/// "café" decomposed — 'e' + U+0301 combining acute.
+const NFD: &str = "cafe\u{301}";
+
+/// `find` / `contains` take a binary `memmem` path only when both operands are
+/// ASCII or both are NFC, and otherwise route through an ICU `UStringSearch`
+/// whose collator has full normalization enabled — so the two forms of "café"
+/// are equal to the server.
+///
+/// **`#[ignore]`d because the server does not honour this for a needle that
+/// spans the whole bin.** A length precheck rejects the 5-codepoint NFD needle
+/// against the 4-codepoint NFC bin before the canonical search runs, so this
+/// fails on 8.1.3.0 exactly as the Java and Go reference tests do. It is kept,
+/// runnable with `--ignored`, rather than deleted: the mid-string case below
+/// passes, so dropping this one would hide a guarantee that is not actually met.
+#[aerospike_macro::test]
+#[ignore]
+async fn find_and_contains_match_across_normalization_forms() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "canon-whole");
+    let wpolicy = WritePolicy::default();
+    put(&client, &wpolicy, &key, NFC).await;
+
+    // Both NFC — the binary fast path.
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::find(BIN, NFC)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Int(0));
+
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::contains(BIN, NFC)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(true));
+
+    // Forms differ, so the canonical path should run and still match.
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::find(BIN, NFD)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Int(0));
+
+    let rec = client
+        .operate(&wpolicy, &key, &[str_op::contains(BIN, NFD)])
+        .await
+        .unwrap();
+    assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(true));
+}
+
+/// The same guarantee where the needle does not span the whole bin, which is the
+/// shape the server does honour — which is what isolates the length precheck as
+/// the cause of the failure above.
+#[aerospike_macro::test]
+async fn find_and_contains_match_across_normalization_forms_mid_string() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "canon-mid");
+    let wpolicy = WritePolicy::default();
+
+    for (haystack, needle) in [
+        (format!("x{NFC}y"), NFD),
+        (format!("x{NFD}y"), NFC),
+    ] {
+        put(&client, &wpolicy, &key, &haystack).await;
+
+        let rec = client
+            .operate(&wpolicy, &key, &[str_op::find(BIN, needle)])
+            .await
+            .unwrap();
+        assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Int(1), "find");
+
+        let rec = client
+            .operate(&wpolicy, &key, &[str_op::contains(BIN, needle)])
+            .await
+            .unwrap();
+        assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(true), "contains");
+    }
+}
+
+/// `replace` carries the same canonical-equivalence guarantee: its ICU path
+/// runs whenever the forms differ.
+#[aerospike_macro::test]
+async fn replace_matches_across_normalization_forms() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "canon-replace");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+
+    // Composed haystack with a decomposed needle, then the other way round.
+    for (stored, needle) in [(NFC, NFD), (NFD, NFC)] {
+        put(&client, &wpolicy, &key, &format!("{stored} au lait")).await;
+
+        client
+            .operate(
+                &wpolicy,
+                &key,
+                &[str_op::replace(&policy, BIN, needle, "tea")],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(get_string(&client, &key).await, "tea au lait");
+    }
+}
+
+/// Prefix and suffix matching are canonical too, so an affix in either form
+/// matches a bin stored in the other.
+#[aerospike_macro::test]
+async fn starts_with_and_ends_with_match_across_normalization_forms() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "canon-affix");
+    let wpolicy = WritePolicy::default();
+
+    for (stored, prefix) in [(NFC, NFD), (NFD, NFC)] {
+        put(&client, &wpolicy, &key, &format!("{stored} au lait")).await;
+
+        let rec = client
+            .operate(&wpolicy, &key, &[str_op::starts_with(BIN, prefix)])
+            .await
+            .unwrap();
+        assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(true), "starts_with");
+    }
+
+    for (stored, suffix) in [(NFC, NFD), (NFD, NFC)] {
+        put(&client, &wpolicy, &key, &format!("au lait {stored}")).await;
+
+        let rec = client
+            .operate(&wpolicy, &key, &[str_op::ends_with(BIN, suffix)])
+            .await
+            .unwrap();
+        assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(true), "ends_with");
+    }
+}
+
+// ============================================================
+// Result-size cap
+//
+// Modify ops bound their estimated result at prepare time, against the
+// server's `STRING_REPLACE_ALL_MAX`. Exceeding the bound is a
+// `PARAMETER_ERROR` with nothing written, which is a different failure from
+// the `RECORD_TOO_BIG` the same ops raise for a result that clears the cap but
+// outgrows the namespace's record limit. Asserting the code *equals*
+// `ParameterError` covers both halves at once.
+// ============================================================
+
+/// The server's ceiling on a modify op's estimated result size.
+const RESULT_SIZE_CAP: i64 = 8 * 1024 * 1024;
+
+#[aerospike_macro::test]
+async fn modify_past_the_result_size_cap_raises_parameter_error() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "cap");
+    let wpolicy = WritePolicy::default();
+    let policy = StringPolicy::default();
+    put(&client, &wpolicy, &key, "hello").await;
+
+    // One 8 MiB argument, built once and reused by the concat case.
+    let oversized = "x".repeat(RESULT_SIZE_CAP as usize);
+
+    for (label, op) in [
+        // Estimated as old_size * count.
+        ("repeat", str_op::repeat(&policy, BIN, RESULT_SIZE_CAP)),
+        // Estimated as target_length * 4 — worst-case UTF-8 expansion.
+        (
+            "pad_start",
+            str_op::pad_start(&policy, BIN, RESULT_SIZE_CAP / 4 + 1, "*"),
+        ),
+        (
+            "pad_end",
+            str_op::pad_end(&policy, BIN, RESULT_SIZE_CAP / 4 + 1, "*"),
+        ),
+        // Estimated as old_size + the argument, so only the argument can carry
+        // the result past the cap.
+        ("concat", str_op::concat(&policy, BIN, &oversized)),
+    ] {
+        let Err(err) = client.operate(&wpolicy, &key, &[op]).await else {
+            panic!("{label} past the cap must fail");
+        };
+
+        assert_eq!(
+            err.server_result_code(),
+            Some(ResultCode::ParameterError),
+            "{label}: unexpected error: {err}"
+        );
+
+        // Refused at prepare time, so the bin is untouched.
+        assert_eq!(get_string(&client, &key).await, "hello", "{label}");
+    }
+}
+
+// ============================================================
+// regex_replace write flags
+//
+// The op takes two positional flag arguments — regex flags, then write flags.
+// Until the server's op table grew the second slot the client could not send
+// them at all, so these are the first behaviours that distinguish a policy from
+// no policy on this op.
+// ============================================================
+
+/// An unbalanced group is a pattern ICU cannot compile. The compile happens in
+/// the *modify* stage, which is what `NO_FAIL` covers — so the same call is an
+/// error or a silent no-op depending only on the flag.
+#[aerospike_macro::test]
+async fn regex_replace_no_fail_suppresses_an_invalid_pattern() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "rx-nofail");
+    let wpolicy = WritePolicy::default();
+
+    // Without NO_FAIL: the failure surfaces.
+    put(&client, &wpolicy, &key, "hello world").await;
+    let err = client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::regex_replace(
+                &StringPolicy::default(),
+                BIN,
+                "(",
+                "x",
+                StringRegexFlags::DEFAULT,
+            )],
+        )
+        .await
+        .expect_err("an uncompilable pattern must fail");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::ParameterError),
+        "unexpected error: {err}"
+    );
+    assert_eq!(get_string(&client, &key).await, "hello world");
+
+    // With NO_FAIL: the same call succeeds and leaves the bin alone.
+    let no_fail = StringPolicy::new(StringWriteFlags::NO_FAIL);
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::regex_replace(
+                &no_fail,
+                BIN,
+                "(",
+                "x",
+                StringRegexFlags::DEFAULT,
+            )],
+        )
+        .await
+        .expect("NO_FAIL must suppress the failure");
+    assert_eq!(get_string(&client, &key).await, "hello world");
+}
+
+/// `regex_replace` is not create-capable, so the server's per-op flag mask
+/// refuses `CREATE_ONLY`. That refusal is only observable because the write
+/// flags now reach the server at all.
+#[aerospike_macro::test]
+async fn regex_replace_refuses_create_only() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "rx-createonly");
+    let wpolicy = WritePolicy::default();
+    put(&client, &wpolicy, &key, "hello world").await;
+
+    let create_only = StringPolicy::new(StringWriteFlags::CREATE_ONLY);
+    let err = client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::regex_replace(
+                &create_only,
+                BIN,
+                "world",
+                "earth",
+                StringRegexFlags::DEFAULT,
+            )],
+        )
+        .await
+        .expect_err("CREATE_ONLY is not valid for regex_replace");
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::ParameterError),
+        "unexpected error: {err}"
+    );
+    assert_eq!(get_string(&client, &key).await, "hello world");
+}
+
+/// `UPDATE_ONLY` is accepted, and a plain replace still works with a policy
+/// attached — the regression control for the new argument.
+#[aerospike_macro::test]
+async fn regex_replace_with_update_only_still_replaces() {
+    let client = common::client().await;
+    if !server_supports_string_operations(&client).await {
+        return;
+    }
+    let key = as_key!(common::namespace(), &common::rand_str(10), "rx-updateonly");
+    let wpolicy = WritePolicy::default();
+    put(&client, &wpolicy, &key, "a1b2c3").await;
+
+    let update_only = StringPolicy::new(StringWriteFlags::UPDATE_ONLY);
+    client
+        .operate(
+            &wpolicy,
+            &key,
+            &[str_op::regex_replace(
+                &update_only,
+                BIN,
+                "[0-9]",
+                "#",
+                StringRegexFlags::GLOBAL,
+            )],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(get_string(&client, &key).await, "a#b#c#");
 }

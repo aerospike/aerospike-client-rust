@@ -106,14 +106,23 @@ impl QueryPlan {
         })
     }
 
+    /// Which access path the server chose for this query: a secondary index, a
+    /// primary-index scan, or nothing at all because the filter cannot match.
+    ///
+    /// This is the answer explain exists to give; the predicates below
+    /// ([`is_secondary_index`](Self::is_secondary_index) and friends) are
+    /// shorthand for testing it.
     pub fn selection(&self) -> QuerySelection {
         self.selection
     }
 
+    /// The namespace this plan was explained against.
     pub fn namespace(&self) -> &str {
         &self.namespace
     }
 
+    /// The set this plan was explained against, or `None` for a query over the
+    /// whole namespace.
     pub fn set_name(&self) -> Option<&str> {
         self.set_name.as_deref()
     }
@@ -147,18 +156,31 @@ impl QueryPlan {
         self.index_range_bytes.as_deref()
     }
 
+    /// The collection type of the chosen secondary index — whether it indexes
+    /// the bin value itself or the keys or values of a collection.
+    ///
+    /// [`CollectionIndexType::Default`] on a primary-index or filtered-out plan,
+    /// where no index was chosen.
     pub fn index_type(&self) -> &CollectionIndexType {
         &self.index_type
     }
 
+    /// Whether execute will scan the primary index: the filter is satisfiable
+    /// but no secondary index serves it.
     pub fn is_primary_index(&self) -> bool {
         self.selection == QuerySelection::PrimaryIndex
     }
 
+    /// Whether execute will use a secondary index — the one named by
+    /// [`index_name`](Self::index_name), over the range in
+    /// [`index_range_bytes`](Self::index_range_bytes).
     pub fn is_secondary_index(&self) -> bool {
         self.selection == QuerySelection::SecondaryIndex
     }
 
+    /// Whether the server determined the filter can match nothing, so executing
+    /// the query would return no records. Answered by explain alone, without a
+    /// scan.
     pub fn is_filtered_out(&self) -> bool {
         self.selection == QuerySelection::FilteredOut
     }
@@ -222,8 +244,8 @@ mod tests {
     use crate::query::plan::{FLAG_EXPLAIN, FLAG_HARD_HINT, FLAG_REQUIRE_INDEX};
 
     const AEL: &str = "$.age > 30";
-    // n_ranges, bin-name length/name, then the particle type.
-    const RANGE: &[u8] = &[1, 3, b'a', b'g', b'e', 1];
+    // n_ranges, bin-name length/name, followed by the particle type and payload.
+    const RANGE: &[u8] = &[1, 3, b'a', b'g', b'e', 1, 9, 10, 11];
 
     fn fields_of(entries: &[(u8, &[u8])]) -> AsMsgFields {
         let mut body = Vec::new();

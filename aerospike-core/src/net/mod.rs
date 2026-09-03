@@ -17,6 +17,7 @@ pub use self::connection::BufferedConn;
 pub use self::connection::Connection;
 pub use self::connection::ConnectionState;
 pub use self::connection_pool::ConnectionPool;
+pub(crate) use self::connection_pool::TailVerdict;
 pub use self::connection_pool::PooledConnection;
 pub use self::host::Host;
 pub use self::host::ToHosts;

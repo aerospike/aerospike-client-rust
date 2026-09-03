@@ -217,7 +217,16 @@ impl<'a> Partition<'a> {
             return Err(invalid_node_error(self));
         }
 
-        let rack_ids = cluster.client_policy.load().rack_ids.clone();
+        // An empty list is treated as "not configured" rather than as a rack
+        // set that matches nothing: the loop below would run zero times, record
+        // no fallback, and fail node selection with an error the retry loop
+        // reports as a timeout. `ClientPolicy::validate` refuses `Some([])`, so
+        // this only catches a live policy that a dynamic-config reload emptied.
+        let policy = cluster.client_policy.load();
+        let rack_ids = policy
+            .rack_aware()
+            .then(|| policy.rack_ids.clone())
+            .flatten();
         let rack_ids = rack_ids.as_ref().ok_or_else(|| {
             Error::invalid_argument(
                 "Attempted to use Replica::PreferRack without configuring racks in client policy"
