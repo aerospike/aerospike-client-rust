@@ -34,7 +34,9 @@
 
 * **Bug Fixes**
   * [CLIENT-5266] Batch index field declared the wrong size when a filter expression was set.
-  * [CLIENT-5268] TLS writes were left in the session buffer instead of flushed.
+  * [CLIENT-5268] TLS writes were left in the session buffer instead of flushed — first in
+    `Connection::flush()` (commands), then in `Connection::write_all()` too, the path info and
+    tend requests take, which otherwise waited on a reply to a request the server never got.
   * [CLIENT-4966] Connection pool leaked a slot on every failed connect and refilled itself on
     every tend once busy; `authenticate()` left connections in `Writing` so they were dropped
     instead of returned (~36 opens/s of churn) (#219).

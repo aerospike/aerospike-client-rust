@@ -487,13 +487,24 @@ impl Connection {
         self.state = ConnectionState::Writing;
 
         let timeout = self.deadline();
+        // Flush after the write, exactly as `flush()` does (CLIENT-5268): on a
+        // rustls stream `write_all` can leave the encrypted records in the
+        // session buffer, and this is the info/tend path, which reads the reply
+        // straight after writing — so an unflushed request would wait on an
+        // answer the server never received. A no-op on plain TCP.
         let res = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
-                io_with_timeout!(self, timeout, conn.write_all(buf))
+                io_with_timeout!(self, timeout, async {
+                    conn.write_all(buf).await?;
+                    conn.flush().await
+                })
             }
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                io_with_timeout!(self, timeout, conn.write_all(buf))
+                io_with_timeout!(self, timeout, async {
+                    conn.write_all(buf).await?;
+                    conn.flush().await
+                })
             }
             #[cfg(test)]
             _ => unreachable!(),
