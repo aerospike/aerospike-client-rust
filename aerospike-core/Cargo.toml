@@ -25,7 +25,7 @@ lazy_static = "1.5"
 thiserror = "2.0.18"
 pwhash = "1.0"
 serde = { version = "1.0", features = ["derive"], optional = true }
-aerospike-rt = { path = "../aerospike-rt", version = "2.1.0" }
+aerospike-rt = { path = "../aerospike-rt", version = "2.2.0" }
 futures = { version = "0.3.32" }
 async-trait = "0.1.89"
 rhexdump = "0.2.0"
