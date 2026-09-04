@@ -210,10 +210,7 @@ impl Connection {
     ///
     /// Nagle withholds a small segment while earlier data is still unacked,
     /// which stalls against the peer's delayed ACK until Linux's
-    /// `TCP_DELACK_MIN` (40ms) expires. Every other Aerospike client sets this
-    /// option: Java `setTcpNoDelay(true)`, C `setsockopt(TCP_NODELAY)` in
-    /// `as_socket_create_fd`, C# `NoDelay`, Go via its stdlib. The C client
-    /// clears it *only* for fire-and-forget pipeline sockets (`as_pipe.c`).
+    /// `TCP_DELACK_MIN` (40ms) expires.
     ///
     /// Best-effort. A platform that refuses the option still yields a usable
     /// connection, so the error is dropped rather than failing the connect.
@@ -1637,10 +1634,10 @@ mod liveness_probe_tests {
         addr
     }
 
-    /// `TCP_NODELAY` must be set on every socket the client opens, matching
-    /// every other Aerospike client. Asserted through the real getsockopt
-    /// rather than by trusting the setter, so a platform that silently ignores
-    /// the option fails here instead of in production.
+    /// `TCP_NODELAY` must be set on every socket the client opens. Asserted
+    /// through the real getsockopt rather than by trusting the setter, so a
+    /// platform that silently ignores the option fails here instead of in
+    /// production.
     ///
     /// This covers [`Connection::set_nodelay`], not its call site: under
     /// `cfg(test)` `Connection::new` returns a `Netsocket::TestDummy` and never
