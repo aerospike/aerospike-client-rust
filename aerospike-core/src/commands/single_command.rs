@@ -22,7 +22,7 @@ use crate::net::Connection;
 use crate::policy::Policy;
 use crate::Key;
 use aerospike_rt::sleep;
-use aerospike_rt::time::{Duration, Instant};
+use aerospike_rt::time::Instant;
 
 pub struct SingleCommand<'a> {
     cluster: Arc<Cluster>,
@@ -81,19 +81,13 @@ impl<'a> SingleCommand<'a> {
         policy: &(dyn Policy + Send + Sync),
         cmd: &'a mut (dyn commands::Command + Send),
     ) -> Result<()> {
-        if policy.total_timeout() > 0 {
-            match aerospike_rt::timeout(
-                Duration::from_millis(u64::from(policy.total_timeout())),
-                Self::execute_command(policy, cmd),
-            )
-            .await
-            {
-                Ok(res) => res,
-                Err(_) => Err(Error::Timeout("Timeout".to_string())),
-            }
-        } else {
-            Self::execute_command(policy, cmd).await
-        }
+        // `total_timeout` is enforced inside the retry loop itself: per-IO
+        // via `Connection::deadline()`, on the inline connect and the
+        // pool-empty wait via the deadline passed to `Node::get_connection`,
+        // and on the retry sleep by the pre-sleep deadline check. An outer
+        // wrapper here would just duplicate that under the global runtime
+        // time-driver mutex, arming a timer-wheel entry for every command.
+        Self::execute_command(policy, cmd).await
     }
 
     pub async fn execute_command(
@@ -173,8 +167,7 @@ impl<'a> SingleCommand<'a> {
             let mut conn = match node.get_connection(cmd.hint(), deadline).await {
                 Ok(conn) => conn,
                 Err(err)
-                    if err.is_pool_empty()
-                        && pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS =>
+                    if err.is_pool_empty() && pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS =>
                 {
                     // Every connection this node is allowed exists and is in
                     // flight; one of the tasks holding them will return one.
@@ -276,6 +269,7 @@ mod tests {
     use crate::net::Host;
     use crate::policy::{BasePolicy, ClientPolicy};
     use crate::Version;
+    use aerospike_rt::time::Duration;
 
     fn test_node(policy: ClientPolicy) -> Arc<Node> {
         let nv = Arc::new(NodeValidator {
@@ -370,15 +364,18 @@ mod tests {
 
         assert!(
             matches!(err, Error::Timeout(_)),
-            "the wait must end in a clean timeout, got: {:?}", err
+            "the wait must end in a clean timeout, got: {:?}",
+            err
         );
         assert!(
             elapsed >= Duration::from_millis(150),
-            "must wait for the deadline, not fail instantly: {:?}", elapsed
+            "must wait for the deadline, not fail instantly: {:?}",
+            elapsed
         );
         assert!(
             elapsed < Duration::from_secs(2),
-            "must not overshoot the deadline: {:?}", elapsed
+            "must not overshoot the deadline: {:?}",
+            elapsed
         );
         // Paced at POOL_EMPTY_WAIT: ~200 passes in 200ms, not an unbounded
         // spin. The bound is deliberately loose to stay CI-safe.
@@ -425,12 +422,48 @@ mod tests {
 
         assert!(
             elapsed >= Duration::from_millis(40),
-            "should have waited for the release: {:?}", elapsed
+            "should have waited for the release: {:?}",
+            elapsed
         );
         assert_eq!(
             node.error_rate_count(),
             0,
             "a pool wait is not a node error"
+        );
+    }
+
+    /// With the outer timeout wrapper gone, `execute` (the public entry) must
+    /// still fail at roughly `total_timeout` when the command stalls inside
+    /// acquisition — proving the retry loop's own bounds enforce the deadline
+    /// end-to-end.
+    #[aerospike_macro::test]
+    async fn execute_without_wrapper_still_enforces_total_timeout() {
+        let (node, _held) = saturated_node(1).await;
+        let mut cmd = PoolWaitProbe {
+            node: node.clone(),
+            node_calls: 0,
+        };
+        let policy = BasePolicy {
+            total_timeout: 200,
+            max_retries: 2,
+            ..BasePolicy::default()
+        };
+
+        let start = Instant::now();
+        let err = SingleCommand::execute(&policy, &mut cmd)
+            .await
+            .expect_err("nothing ever returns a connection");
+        let elapsed = start.elapsed();
+
+        assert!(
+            matches!(err, Error::Timeout(_)),
+            "must fail with a timeout, got: {:?}",
+            err
+        );
+        assert!(
+            elapsed >= Duration::from_millis(150) && elapsed < Duration::from_secs(2),
+            "must fail at roughly the deadline: {:?}",
+            elapsed
         );
     }
 
@@ -458,15 +491,18 @@ mod tests {
 
         assert!(
             elapsed >= Duration::from_secs(3),
-            "the wait cap must be reached, not fail fast: {:?}", elapsed
+            "the wait cap must be reached, not fail fast: {:?}",
+            elapsed
         );
         assert!(
             elapsed < Duration::from_secs(30),
-            "the wait cap must terminate the wait: {:?}", elapsed
+            "the wait cap must terminate the wait: {:?}",
+            elapsed
         );
         assert!(
             err.is_pool_empty(),
-            "after the cap the pool state is the terminal error, got: {:?}", err
+            "after the cap the pool state is the terminal error, got: {:?}",
+            err
         );
     }
 }
