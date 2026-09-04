@@ -14,21 +14,24 @@
 // the License.
 
 use crate::batch::BatchOperation;
-use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
 use crate::commands::BatchOperateCommand;
 use crate::errors::Result;
 use crate::policy::{BatchPolicy, Concurrency};
 use crate::Error;
-use crate::Key;
 use crate::{BatchRecord, Policy, ResultCode};
 use aerospike_rt::time::Duration;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 pub struct BatchExecutor {
     cluster: Arc<Cluster>,
 }
+
+/// A batch operation paired with the index it had in the caller's input.
+type IndexedOp = (BatchOperation, usize);
+
+/// One node's share of a batch.
+type NodeGroup = (Arc<Node>, Vec<IndexedOp>);
 
 /// The per-node split of a batch, plus the keys the cluster could not route.
 ///
@@ -36,19 +39,20 @@ pub struct BatchExecutor {
 /// the results at their original index: a key that cannot be routed is a per-key
 /// outcome, not a reason to discard the whole batch.
 struct BatchSplit {
-    map: HashMap<Arc<Node>, Vec<(BatchOperation, usize)>>,
-    unroutable: Vec<(BatchOperation, usize)>,
+    /// One entry per node that has work, in first-seen order.
+    ///
+    /// A `HashMap<Arc<Node>, _>` keyed this split before, which hashed the
+    /// node's ~40-character name string once per key and cloned an `Arc` for
+    /// every lookup. A batch spans a handful of nodes at most, so a short
+    /// vector probed with `Arc::ptr_eq` — a pointer compare — beats hashing,
+    /// and it makes the grouping order deterministic as a side effect.
+    groups: Vec<NodeGroup>,
+    unroutable: Vec<IndexedOp>,
 }
 
 impl BatchExecutor {
     pub const fn new(cluster: Arc<Cluster>) -> Self {
         BatchExecutor { cluster }
-    }
-
-    fn node_for_key(&self, key: &Key, replica: crate::policy::Replica) -> Result<Arc<Node>> {
-        let partition = Partition::new_by_key(key);
-        let node = self.cluster.get_node(&partition, replica, None)?;
-        Ok(node)
     }
 
     #[allow(clippy::option_if_let_else)]
@@ -72,14 +76,13 @@ impl BatchExecutor {
         }
     }
 
-    #[allow(clippy::mutable_key_type)]
     pub async fn execute_batch_operate(
         &self,
         policy: &BatchPolicy,
         batch_ops: &[BatchOperation],
     ) -> Result<Vec<BatchRecord>> {
         let BatchSplit {
-            map: batch_nodes,
+            groups: batch_nodes,
             unroutable,
         } = self.get_batch_operate_nodes(batch_ops, policy.replica)?;
         let jobs = batch_nodes
@@ -89,15 +92,37 @@ impl BatchExecutor {
         let ops = self
             .execute_batch_operate_jobs(jobs, policy.concurrency)
             .await?;
-        let mut all_results: Vec<_> = ops.into_iter().flat_map(|cmd| cmd.batch_ops).collect();
+
+        // Restore the caller's order by writing each row straight into its own
+        // slot. Every operation carries the index it had on input, so the order
+        // is already known: the previous code instead gathered all the rows into
+        // one vector and `sort_by_key`'d it, an O(N log N) comparison sort whose
+        // every swap moved a 568-byte `BatchOperation`, and then cloned each
+        // result out with `batch_record()` — a second deep copy of the key, the
+        // record and its bin map, taken from rows that were about to be dropped.
+        // Placing by index is O(N), touches each row once, and moves the record
+        // rather than cloning it.
+        let mut slots: Vec<Option<BatchRecord>> = (0..batch_ops.len()).map(|_| None).collect();
+        let mut place = |(op, index): (BatchOperation, usize)| {
+            if let Some(slot) = slots.get_mut(index) {
+                *slot = Some(op.into_batch_record());
+            }
+        };
+        for cmd in ops {
+            cmd.batch_ops.into_iter().for_each(&mut place);
+        }
         // Rows that never left the client are results too, and they are already
         // marked.
-        all_results.extend(unroutable);
-        all_results.sort_by_key(|(_, i)| *i);
-        Ok(all_results
-            .into_iter()
-            .map(|(b, _)| b.batch_record())
-            .collect())
+        unroutable.into_iter().for_each(&mut place);
+
+        // Routable and unroutable rows together cover every input index, so no
+        // slot is left empty; `flatten` keeps the old behaviour of returning
+        // whatever rows exist rather than panicking if that ever stops holding.
+        debug_assert!(
+            slots.iter().all(Option::is_some),
+            "every batch index must be filled exactly once"
+        );
+        Ok(slots.into_iter().flatten().collect())
     }
 
     async fn execute_batch_operate_jobs(
@@ -128,21 +153,59 @@ impl BatchExecutor {
         }
     }
 
-    #[allow(clippy::mutable_key_type)]
     fn get_batch_operate_nodes(
         &self,
         batch_ops: &[BatchOperation],
         replica: crate::policy::Replica,
     ) -> Result<BatchSplit> {
-        #![allow(clippy::type_complexity)]
-        let mut map: HashMap<Arc<Node>, Vec<(BatchOperation, usize)>> = HashMap::new();
-        let mut unroutable: Vec<(BatchOperation, usize)> = Vec::new();
+        // Route the whole batch against one snapshot of the partition table
+        // instead of reloading it and re-hashing the namespace per key.
+        let mut routed: Vec<Result<Arc<Node>>> = Vec::with_capacity(batch_ops.len());
+        self.cluster.route_keys(
+            batch_ops.iter().map(|op| (op.key(), None)),
+            replica,
+            |node| routed.push(node),
+        );
+
+        // Count each node's share first so every bucket can be allocated at its
+        // exact size. Guessing instead either regrows the bucket repeatedly —
+        // each regrowth copying 568-byte operations — or over-allocates the
+        // whole batch to the first node of a wide fan-out. Both passes are
+        // pointer compares over a handful of nodes.
+        let mut counts: Vec<(Arc<Node>, usize)> = Vec::new();
+        let mut unroutable_count = 0;
+        for node in &routed {
+            match node {
+                Ok(node) => match counts
+                    .iter_mut()
+                    .find(|(existing, _)| Arc::ptr_eq(existing, node))
+                {
+                    Some((_, count)) => *count += 1,
+                    None => counts.push((node.clone(), 1)),
+                },
+                Err(_) => unroutable_count += 1,
+            }
+        }
+
+        let mut groups: Vec<NodeGroup> = counts
+            .into_iter()
+            .map(|(node, count)| (node, Vec::with_capacity(count)))
+            .collect();
+        let mut unroutable: Vec<IndexedOp> = Vec::with_capacity(unroutable_count);
         let mut first_err: Option<Error> = None;
 
-        for (index, batch_op) in batch_ops.iter().enumerate() {
-            match self.node_for_key(batch_op.key(), replica) {
+        for (index, (batch_op, node)) in batch_ops.iter().zip(routed).enumerate() {
+            match node {
                 Ok(node) => {
-                    map.entry(node).or_default().push((batch_op.clone(), index));
+                    // Linear probe by pointer. A batch touches few nodes, and
+                    // consecutive keys often repeat one, so the match is
+                    // usually the first entry examined.
+                    let bucket = groups
+                        .iter_mut()
+                        .find(|(existing, _)| Arc::ptr_eq(existing, &node))
+                        .map(|(_, bucket)| bucket)
+                        .expect("counting pass registered every routable node");
+                    bucket.push((batch_op.clone(), index));
                 }
                 Err(err) => {
                     // A key the cluster cannot route is a per-key outcome, like
@@ -166,12 +229,12 @@ impl BatchExecutor {
 
         // Only a batch with nothing routable at all fails outright; the routing
         // error is more specific than "empty batch".
-        if map.is_empty() {
+        if groups.is_empty() {
             if let Some(err) = first_err {
                 return Err(err);
             }
         }
 
-        Ok(BatchSplit { map, unroutable })
+        Ok(BatchSplit { groups, unroutable })
     }
 }

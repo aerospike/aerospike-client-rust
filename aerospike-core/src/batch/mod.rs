@@ -15,6 +15,8 @@
 
 pub mod batch_executor;
 pub mod batch_record;
+#[cfg(test)]
+mod encode_tests;
 
 use crate::commands::buffer::{FIELD_HEADER_SIZE, OPERATION_HEADER_SIZE};
 use crate::expressions::Expression;
@@ -528,6 +530,21 @@ impl BatchOperation {
             | Self::Write { br, .. }
             | Self::Delete { br, .. }
             | Self::UDF { br, .. } => br.clone(),
+        }
+    }
+
+    /// Take the resulting batch record, consuming the operation.
+    ///
+    /// The executor owns its per-node copies and drops them right after
+    /// harvesting the results, so it has no reason to pay for
+    /// [`Self::batch_record`]'s clone of the key, the record and the record's
+    /// whole bin map — it can move them out instead.
+    pub(crate) fn into_batch_record(self) -> BatchRecord {
+        match self {
+            Self::Read { br, .. }
+            | Self::Write { br, .. }
+            | Self::Delete { br, .. }
+            | Self::UDF { br, .. } => br,
         }
     }
 

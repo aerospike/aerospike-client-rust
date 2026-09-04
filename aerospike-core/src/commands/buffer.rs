@@ -525,10 +525,22 @@ impl Buffer {
             field_count += 1;
         }
 
+        // Whether each row repeats the previous row's header, decided once here
+        // and reused by the write loop below.
+        //
+        // `match_header` is a deep structural comparison — namespace and set
+        // strings, the whole per-record policy including its filter
+        // expression tree, the bin-name list and every operation — and the two
+        // loops used to each call it for every row, so a batch paid for 2N
+        // comparisons to answer N questions.
+        let mut repeats: Vec<bool> = Vec::with_capacity(batch_ops.len());
+
         let mut prev: Option<&BatchOperation> = None;
         for (batch_op, _) in batch_ops {
             self.data_offset += batch_op.key().digest.len() + 4;
-            if batch_op.match_header(prev) {
+            let repeat = batch_op.match_header(prev);
+            repeats.push(repeat);
+            if repeat {
                 self.data_offset += 1;
             } else {
                 // Must write full header and namespace/set/bin names.
@@ -557,12 +569,11 @@ impl Buffer {
         self.write_u8(Buffer::get_batch_flags(policy));
 
         let mut attr = BatchAttr::default();
-        prev = None;
         for (idx, (batch_op, _)) in batch_ops.iter().enumerate() {
             let key = batch_op.key();
             self.write_u32(idx as u32);
             self.write_bytes(&key.digest);
-            if batch_op.match_header(prev) {
+            if repeats[idx] {
                 self.write_u8(BATCH_MSG_REPEAT);
             } else {
                 match batch_op {
@@ -635,7 +646,6 @@ impl Buffer {
                     }
                 }
             }
-            prev = Some(batch_op);
         }
 
         // Measured from the field's own header, not from the end of the

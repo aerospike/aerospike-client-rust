@@ -749,6 +749,57 @@ impl Cluster {
         namespace.get_node(self, partition, replica, last_tried)
     }
 
+    /// Route many keys against a single snapshot of the partition table,
+    /// handing each key's outcome to `sink` in input order.
+    ///
+    /// [`Cluster::get_node`] reloads the partition map and re-hashes the key's
+    /// namespace on every call. A batch of N keys therefore paid N hazard-
+    /// pointer loads and N `HashMap<String, _>` lookups just to route, even
+    /// though every key in a batch almost always shares one namespace. This
+    /// takes the snapshot once and memoises the namespace, so the per-key cost
+    /// drops to the partition-id arithmetic and the replica walk.
+    ///
+    /// A routing failure is reported per key rather than returned, because one
+    /// unroutable key must not discard the rest of the batch.
+    ///
+    /// Each item pairs a key with the node it was last tried on, which is what
+    /// `Replica::Sequence` and `Replica::PreferRack` advance past on a retry;
+    /// pass `None` on a first attempt.
+    pub(crate) fn route_keys<'k, K, F>(&self, keys: K, replica: crate::policy::Replica, mut sink: F)
+    where
+        K: IntoIterator<Item = (&'k crate::Key, Option<Arc<Node>>)>,
+        F: FnMut(Result<Arc<Node>>),
+    {
+        let partitions = self.partition_map.load();
+        // The namespace resolved on the previous key. Holding the borrow is
+        // what removes the per-key hash; a batch spanning namespaces simply
+        // re-resolves when the name changes.
+        let mut cached: Option<(&'k str, &PartitionForNamespace)> = None;
+
+        for (key, last_tried) in keys {
+            let ns = key.namespace.as_str();
+            let resolved = match cached {
+                Some((name, pfn)) if name == ns => Some(pfn),
+                _ => {
+                    let found = partitions.get(ns);
+                    if let Some(pfn) = found {
+                        cached = Some((ns, pfn));
+                    }
+                    found
+                }
+            };
+
+            sink(resolved.map_or_else(
+                || {
+                    Err(Error::InvalidNode(format!(
+                        "Cannot get appropriate node for namespace: {ns}"
+                    )))
+                },
+                |pfn| pfn.get_node(self, &Partition::new_by_key(key), replica, last_tried),
+            ));
+        }
+    }
+
     pub fn get_random_node(&self) -> Result<Arc<Node>> {
         let node_array = self.nodes();
         let length = node_array.len() as isize;

@@ -19,7 +19,6 @@ use std::sync::Arc;
 
 use crate::batch::BatchOperation;
 use crate::batch::BatchRecordIndex;
-use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
 use crate::commands::StreamCommand;
 use crate::commands::{self};
@@ -30,12 +29,15 @@ use crate::{value, Record, ResultCode, Value};
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
 
+/// A batch operation paired with the index it had in the caller's input.
+type IndexedOp = (BatchOperation, usize);
+
+/// One node's operations, gathered while regrouping.
+type NodeBucket = (Arc<Node>, Vec<IndexedOp>);
+
 /// A batch split into contiguous per-node slices: the reordered `(op, index)`
 /// pairs, plus one `(node, range)` for every command that has to be sent.
-type NodeGroups = (
-    Vec<(BatchOperation, usize)>,
-    Vec<(Arc<Node>, std::ops::Range<usize>)>,
-);
+type NodeGroups = (Vec<IndexedOp>, Vec<(Arc<Node>, std::ops::Range<usize>)>);
 
 #[derive(Clone)]
 pub struct BatchOperateCommand {
@@ -94,7 +96,13 @@ impl BatchOperateCommand {
         // `last_tried`" rather than by an explicit sequence index, so advancing
         // the sequence means remembering where every key has just been. All
         // keys start on the node the executor picked for this command.
-        let mut last_tried: Vec<Arc<Node>> = vec![self.node.clone(); self.batch_ops.len()];
+        //
+        // Built on first use, not up front: only a Sequence/PreferRack re-split
+        // ever reads it, so filling it eagerly charged every batch — including
+        // the `Replica::Master` policy that never re-splits, and the common case
+        // where the first attempt succeeds — one `Arc` clone, and so one atomic
+        // increment, per key in the batch.
+        let mut last_tried: Option<Vec<Arc<Node>>> = None;
 
         // Execute command until successful, timed out or maximum iterations have been reached.
         loop {
@@ -119,23 +127,44 @@ impl BatchOperateCommand {
                 // round trips — always to the replica after the *original*
                 // node, so a third attempt never advanced past the second
                 // replica.
+                let previous = last_tried
+                    .get_or_insert_with(|| vec![self.node.clone(); self.batch_ops.len()]);
+
+                // One snapshot of the partition table for the whole re-split.
+                // Routing each key through `cluster.get_node` instead repeated
+                // a hazard-pointer load and a namespace hash per key, every
+                // retry.
                 let mut nodes: Vec<Arc<Node>> = Vec::with_capacity(self.batch_ops.len());
-                for ((op, _), previous) in self.batch_ops.iter().zip(&last_tried) {
-                    let partition = Partition::new_by_key(op.key());
-                    nodes.push(cluster.get_node(
-                        &partition,
-                        self.policy.replica,
-                        Some(previous.clone()),
-                    )?);
+                let mut route_err: Option<Error> = None;
+                cluster.route_keys(
+                    self.batch_ops
+                        .iter()
+                        .zip(previous.iter())
+                        .map(|((op, _), prev)| (op.key(), Some(prev.clone()))),
+                    self.policy.replica,
+                    |node| match node {
+                        Ok(node) => nodes.push(node),
+                        Err(err) => {
+                            route_err.get_or_insert(err);
+                        }
+                    },
+                );
+                if let Some(err) = route_err {
+                    return Err(err);
                 }
 
+                // `mem::take` hands the vector over by pointer; `drain(..)
+                // .collect()` built a second vector and moved every 568-byte
+                // operation into it first.
                 let (regrouped, ranges) =
-                    Self::group_by_node(self.batch_ops.drain(..).collect(), nodes);
+                    Self::group_by_node(std::mem::take(&mut self.batch_ops), nodes);
                 self.batch_ops = regrouped;
-                last_tried = ranges
-                    .iter()
-                    .flat_map(|(node, range)| range.clone().map(move |_| node.clone()))
-                    .collect();
+                last_tried = Some(
+                    ranges
+                        .iter()
+                        .flat_map(|(node, range)| range.clone().map(move |_| node.clone()))
+                        .collect(),
+                );
 
                 // Run every group this round even if one fails — Java's
                 // sub-batches are independent — and keep the first retriable
@@ -218,24 +247,49 @@ impl BatchOperateCommand {
     ///
     /// `nodes[i]` is where `pairs[i]` must go. One batch command covers one
     /// contiguous slice, so the keys have to be moved next to their peers
-    /// before they can be sent as a group; sorting by node name is what
-    /// achieves that, and it also keeps the grouping deterministic. Each pair
-    /// carries its original index, so the executor can still restore the
-    /// caller's order afterwards.
-    fn group_by_node(pairs: Vec<(BatchOperation, usize)>, nodes: Vec<Arc<Node>>) -> NodeGroups {
-        let mut routed: Vec<(Arc<Node>, (BatchOperation, usize))> =
-            nodes.into_iter().zip(pairs).collect();
-        routed.sort_by(|a, b| a.0.name().cmp(b.0.name()));
-
-        let mut regrouped: Vec<(BatchOperation, usize)> = Vec::with_capacity(routed.len());
-        let mut ranges: Vec<(Arc<Node>, std::ops::Range<usize>)> = Vec::new();
-        for (node, pair) in routed {
-            let pos = regrouped.len();
-            match ranges.last_mut() {
-                Some((last, range)) if Arc::ptr_eq(last, &node) => range.end = pos + 1,
-                _ => ranges.push((node, pos..pos + 1)),
+    /// before they can be sent as a group. Each pair carries its original
+    /// index, so the executor can still restore the caller's order afterwards.
+    ///
+    /// The grouping is by pointer into per-node buckets, which visits each pair
+    /// twice. Sorting the routed pairs by node name instead — as this did —
+    /// compared two ~40-character strings per comparison and moved a 576-byte
+    /// tuple per swap, O(N log N) of each, to arrive at the same contiguity.
+    ///
+    /// Nodes come out in first-seen order. The order is an implementation
+    /// detail either way: the `batch_index` on the wire is relative to the
+    /// slice handed to the encoder, and the caller's ordering is restored from
+    /// the index each pair carries.
+    fn group_by_node(pairs: Vec<IndexedOp>, nodes: Vec<Arc<Node>>) -> NodeGroups {
+        // Distinct nodes in first-seen order, each with its share counted, and
+        // the bucket every pair belongs to.
+        let mut counts: Vec<(Arc<Node>, usize)> = Vec::new();
+        let mut bucket_of: Vec<usize> = Vec::with_capacity(nodes.len());
+        for node in &nodes {
+            if let Some(pos) = counts.iter().position(|(e, _)| Arc::ptr_eq(e, node)) {
+                counts[pos].1 += 1;
+                bucket_of.push(pos);
+            } else {
+                bucket_of.push(counts.len());
+                counts.push((node.clone(), 1));
             }
-            regrouped.push(pair);
+        }
+
+        let mut buckets: Vec<NodeBucket> = counts
+            .into_iter()
+            .map(|(node, count)| (node, Vec::with_capacity(count)))
+            .collect();
+        for (pair, bucket) in pairs.into_iter().zip(&bucket_of) {
+            buckets[*bucket].1.push(pair);
+        }
+
+        let total: usize = buckets.iter().map(|(_, b)| b.len()).sum();
+        let mut regrouped: Vec<IndexedOp> = Vec::with_capacity(total);
+        let mut ranges: Vec<(Arc<Node>, std::ops::Range<usize>)> =
+            Vec::with_capacity(buckets.len());
+        for (node, bucket) in buckets {
+            let start = regrouped.len();
+            regrouped.extend(bucket);
+            ranges.push((node, start..regrouped.len()));
         }
         (regrouped, ranges)
     }
@@ -587,15 +641,17 @@ mod tests {
         let (regrouped, ranges) = BatchOperateCommand::group_by_node(pairs, nodes);
 
         assert_eq!(ranges.len(), 2, "one group per node");
-        // Sorted by node name, so A's keys come first.
-        assert!(Arc::ptr_eq(&ranges[0].0, &a));
+        // Grouped in first-seen order, so B — which key 0 routed to — leads.
+        // Which node comes first is not a guarantee; that each node's keys are
+        // contiguous, and that their relative order survives, is.
+        assert!(Arc::ptr_eq(&ranges[0].0, &b));
         assert_eq!(ranges[0].1, 0..2);
-        assert!(Arc::ptr_eq(&ranges[1].0, &b));
+        assert!(Arc::ptr_eq(&ranges[1].0, &a));
         assert_eq!(ranges[1].1, 2..4);
 
         // Nothing lost, and every key sits in its own node's range.
         let indices: Vec<usize> = regrouped.iter().map(|(_, i)| *i).collect();
-        assert_eq!(indices, vec![1, 3, 0, 2]);
+        assert_eq!(indices, vec![0, 2, 1, 3]);
     }
 
     /// The ranges must tile the whole vector: a gap or an overlap would drop or
@@ -621,6 +677,90 @@ mod tests {
         let mut indices: Vec<usize> = regrouped.iter().map(|(_, i)| *i).collect();
         indices.sort_unstable();
         assert_eq!(indices, vec![0, 1, 2, 3, 4, 5]);
+    }
+
+    /// Deterministic xorshift so a failing seed reproduces exactly.
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+    }
+
+    /// Random batch sizes (including 0 and 1) over random node assignments
+    /// drawn from a random number of nodes. Every property a caller relies on
+    /// is checked independently of how the grouping is implemented:
+    /// - the ranges tile `0..n` exactly, with no gap, overlap or empty range;
+    /// - every pair inside a range routed to that range's node;
+    /// - a node's pairs keep the relative order they had on input, which is
+    ///   what lets consecutive identical rows still compress into repeats;
+    /// - every original index appears exactly once;
+    /// - one range per node that actually received a key, and no node twice.
+    #[test]
+    fn group_by_node_random_assignments_keep_every_invariant() {
+        let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+        for round in 0..250 {
+            let seed = rng.next();
+            let mut r = Rng(seed | 1);
+            let n = r.below(48);
+            let k = 1 + r.below(5);
+            let nodes: Vec<Arc<Node>> = (0..k).map(|i| node(&format!("N{i}"))).collect();
+            let assign: Vec<usize> = (0..n).map(|_| r.below(k)).collect();
+
+            let pairs: Vec<_> = (0..n).map(pair).collect();
+            let routed: Vec<Arc<Node>> = assign.iter().map(|&a| nodes[a].clone()).collect();
+            let (regrouped, ranges) = BatchOperateCommand::group_by_node(pairs, routed);
+
+            let ctx = format!("round {round} seed {seed:#x} n={n} k={k} assign={assign:?}");
+            assert_eq!(regrouped.len(), n, "lost or duplicated pairs: {ctx}");
+
+            // Tiling.
+            let mut next_start = 0;
+            for (_, range) in &ranges {
+                assert_eq!(range.start, next_start, "gap or overlap: {ctx}");
+                assert!(!range.is_empty(), "empty range: {ctx}");
+                next_start = range.end;
+            }
+            assert_eq!(next_start, n, "ranges do not cover the batch: {ctx}");
+
+            // Membership and relative order, per range.
+            for (node, range) in &ranges {
+                let mut prev_index: Option<usize> = None;
+                for i in range.clone() {
+                    let original = regrouped[i].1;
+                    assert!(
+                        Arc::ptr_eq(&nodes[assign[original]], node),
+                        "pair {original} sits in another node's range: {ctx}"
+                    );
+                    if let Some(p) = prev_index {
+                        assert!(p < original, "relative order not preserved: {ctx}");
+                    }
+                    prev_index = Some(original);
+                }
+            }
+
+            // Completeness.
+            let mut indices: Vec<usize> = regrouped.iter().map(|(_, i)| *i).collect();
+            indices.sort_unstable();
+            assert_eq!(indices, (0..n).collect::<Vec<_>>(), "index multiset wrong: {ctx}");
+
+            // One range per node used, each node at most once.
+            let mut used: Vec<usize> = assign.clone();
+            used.sort_unstable();
+            used.dedup();
+            assert_eq!(ranges.len(), used.len(), "range count != nodes used: {ctx}");
+            for (a, (na, _)) in ranges.iter().enumerate() {
+                for (nb, _) in &ranges[a + 1..] {
+                    assert!(!Arc::ptr_eq(na, nb), "node appears in two ranges: {ctx}");
+                }
+            }
+        }
     }
 
     #[test]
