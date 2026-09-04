@@ -415,12 +415,16 @@ macro_rules! namespace_sc {
 #[derive(Clone, Copy, Debug)]
 pub struct ServerCapabilities {
     pub explicit_record_ttl_allowed: bool,
+    /// Whether the SC namespace allows non-durable ("expunge") deletes on existing
+    /// records. Only meaningful when the namespace is SC; `false` on AP namespaces.
+    pub sc_allow_expunge: bool,
 }
 
 impl ServerCapabilities {
     pub async fn detect(client: &aerospike::Client) -> Self {
         Self {
             explicit_record_ttl_allowed: explicit_record_ttl_probe(client).await,
+            sc_allow_expunge: sc_allow_expunge_probe(client).await,
         }
     }
 }
@@ -486,6 +490,24 @@ async fn explicit_record_ttl_probe(client: &aerospike::Client) -> bool {
             false
         }
         Err(e) => panic!("explicit TTL probe put: {}", e),
+    }
+}
+
+/// Reads `strong-consistency-allow-expunge` straight off the server's own
+/// `info namespace/{ns}` output -- it's a config value, not something worth a
+/// synthetic behavioral probe like `explicit_record_ttl_probe`.
+async fn sc_allow_expunge_probe(client: &aerospike::Client) -> bool {
+    let node = match client.cluster.get_random_node() {
+        Ok(n) => n,
+        Err(_) => return false,
+    };
+    let info_key = format!("namespace/{}", namespace());
+    match node.info(&AdminPolicy::default(), &[&info_key]).await {
+        Ok(map) => map
+            .get(&info_key)
+            .map(|info| info.contains("strong-consistency-allow-expunge=true"))
+            .unwrap_or(false),
+        Err(_) => false,
     }
 }
 
