@@ -141,6 +141,16 @@ impl PartitionForNamespace {
     }
 }
 
+/// `true` once the initial tend loop has something routable to hand back: the
+/// partition map is populated **and** every node has parsed partition data at
+/// least once (`partition_generation != -1`).
+///
+/// A node's partitions arrive a tend cycle after it joins, so a settled node
+/// count alone can still mean an empty — or partially filled — map.
+fn partitions_ready(nodes: &[Arc<Node>], partitions: &PartitionTable) -> bool {
+    !partitions.is_empty() && nodes.iter().all(|n| n.partition_generation() != -1)
+}
+
 // Cluster encapsulates the aerospike cluster nodes and manages
 // them.
 #[derive(Debug)]
@@ -163,6 +173,12 @@ pub struct Cluster {
     client_policy: AtomicArc<ClientPolicy>,
     hashed_pass: AtomicArc<Option<String>>,
 
+    // Number of completed tend cycles. Drives the per-node circuit-breaker
+    // window: every `error_rate_window` tends we walk the node list and
+    // call `node.reset_error_rate()`, mirroring Java's
+    // `if (tendCount % errorRateWindow == 0) … resetErrorRate()`.
+    tend_count: std::sync::atomic::AtomicUsize,
+
     tend_channel: Mutex<Sender<()>>,
     closed: AtomicBool,
 }
@@ -183,7 +199,7 @@ impl Cluster {
 
             partition_map: AtomicArc::from(HashMap::default()),
             node_index: AtomicIsize::new(0),
-
+            tend_count: std::sync::atomic::AtomicUsize::new(0),
             tend_channel: Mutex::new(tx),
             closed: AtomicBool::new(false),
         });
@@ -303,6 +319,21 @@ impl Cluster {
         // Remove nodes in a batch.
         let remove_list = self.find_nodes_to_remove(refresh_count).await;
         self.remove_nodes_and_aliases(remove_list);
+        // Bump the tend counter and, if the configured `error_rate_window`
+        // boundary lands here, roll every node's per-window error counter
+        // forward. Mirrors Java's
+        // `if (tendCount % errorRateWindow == 0) … resetErrorRate()`.
+        let tend_count = self
+            .tend_count
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_add(1);
+        let policy = self.client_policy.load();
+        let window = policy.error_rate_window;
+        if window > 0 && tend_count.is_multiple_of(window) {
+            for node in self.nodes() {
+                node.reset_error_rate();
+            }
+        }
 
         let aliases: Vec<String> = self
             .aliases
@@ -342,7 +373,26 @@ impl Cluster {
                 let old_count = count;
                 count = cluster.nodes().len() as isize;
                 if count == old_count {
-                    break;
+                    if count == 0 {
+                        // No reachable nodes: nothing further to wait for —
+                        // `fail_if_not_connected` decides what happens next.
+                        break;
+                    }
+                    // Node-count stability alone is not enough: on a
+                    // multi-node cluster the nodes materialize in the seed
+                    // pass but their partition maps land one tend later, so
+                    // breaking here would let commands race the first
+                    // partition fetch and die on "partition map empty"
+                    // before the tend thread fills it in. Java's tend parses
+                    // partitions synchronously for fresh nodes, so its
+                    // count-only check is safe; ours must wait until every
+                    // node has parsed a partition map at least once.
+                    //
+                    // The deadline above stays the upper bound if the map
+                    // never populates.
+                    if partitions_ready(&cluster.nodes(), &cluster.partition_map.load()) {
+                        break;
+                    }
                 }
 
                 aerospike_rt::sleep(sleep_between_tend).await;
@@ -399,7 +449,7 @@ impl Cluster {
         partition_map: &mut PartitionTable,
         node: &Arc<Node>,
     ) -> Result<()> {
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = node.get_connection(0, None).await?;
 
         let admin_policy = AdminPolicy {
             timeout: self.client_policy.load().timeout,
@@ -418,7 +468,7 @@ impl Cluster {
 
     pub async fn update_rack_ids(&self, node: &Arc<Node>) -> Result<()> {
         const RACK_IDS: &str = "rack-ids";
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = node.get_connection(0, None).await?;
         let admin_policy = AdminPolicy {
             timeout: self.client_policy.load().timeout,
         };
@@ -699,6 +749,57 @@ impl Cluster {
         namespace.get_node(self, partition, replica, last_tried)
     }
 
+    /// Route many keys against a single snapshot of the partition table,
+    /// handing each key's outcome to `sink` in input order.
+    ///
+    /// [`Cluster::get_node`] reloads the partition map and re-hashes the key's
+    /// namespace on every call. A batch of N keys therefore paid N hazard-
+    /// pointer loads and N `HashMap<String, _>` lookups just to route, even
+    /// though every key in a batch almost always shares one namespace. This
+    /// takes the snapshot once and memoises the namespace, so the per-key cost
+    /// drops to the partition-id arithmetic and the replica walk.
+    ///
+    /// A routing failure is reported per key rather than returned, because one
+    /// unroutable key must not discard the rest of the batch.
+    ///
+    /// Each item pairs a key with the node it was last tried on, which is what
+    /// `Replica::Sequence` and `Replica::PreferRack` advance past on a retry;
+    /// pass `None` on a first attempt.
+    pub(crate) fn route_keys<'k, K, F>(&self, keys: K, replica: crate::policy::Replica, mut sink: F)
+    where
+        K: IntoIterator<Item = (&'k crate::Key, Option<Arc<Node>>)>,
+        F: FnMut(Result<Arc<Node>>),
+    {
+        let partitions = self.partition_map.load();
+        // The namespace resolved on the previous key. Holding the borrow is
+        // what removes the per-key hash; a batch spanning namespaces simply
+        // re-resolves when the name changes.
+        let mut cached: Option<(&'k str, &PartitionForNamespace)> = None;
+
+        for (key, last_tried) in keys {
+            let ns = key.namespace.as_str();
+            let resolved = match cached {
+                Some((name, pfn)) if name == ns => Some(pfn),
+                _ => {
+                    let found = partitions.get(ns);
+                    if let Some(pfn) = found {
+                        cached = Some((ns, pfn));
+                    }
+                    found
+                }
+            };
+
+            sink(resolved.map_or_else(
+                || {
+                    Err(Error::InvalidNode(format!(
+                        "Cannot get appropriate node for namespace: {ns}"
+                    )))
+                },
+                |pfn| pfn.get_node(self, &Partition::new_by_key(key), replica, last_tried),
+            ));
+        }
+    }
+
     pub fn get_random_node(&self) -> Result<Arc<Node>> {
         let node_array = self.nodes();
         let length = node_array.len() as isize;
@@ -765,4 +866,31 @@ impl Cluster {
         self.tend_channel.lock().await.close_channel();
         Ok(())
     }
+}
+
+#[cfg(test)]
+mod cluster_tests {
+    use super::{partitions_ready, PartitionForNamespace, PartitionTable};
+
+    fn routable_map() -> PartitionTable {
+        let mut map = PartitionTable::new();
+        map.insert("test".to_string(), PartitionForNamespace::default());
+        map
+    }
+
+    #[test]
+    fn not_ready_while_partition_map_empty() {
+        // The join-then-fetch gap: the node count has settled but the map the
+        // first operation routes against is not there yet.
+        assert!(!partitions_ready(&[], &PartitionTable::new()));
+    }
+
+    #[test]
+    fn ready_once_the_map_covers_a_namespace() {
+        assert!(partitions_ready(&[], &routable_map()));
+    }
+
+    // The `partition_generation != -1` half needs real `Node`s, which need a
+    // `NodeValidator` and therefore a server; it is covered by
+    // `tests/src/cluster.rs::partition_map_ready_when_new_returns`.
 }

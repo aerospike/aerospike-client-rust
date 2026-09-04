@@ -106,6 +106,11 @@ pub enum Error {
     /// Server responded with a response code indicating an error condition.
     #[error("Server error: {0:?}, In Doubt: {1}, Node: {2}")]
     ServerError(ResultCode, bool, String),
+    /// Per-node circuit breaker has tripped: too many recent errors against
+    /// the node within the configured `error_rate_window`. The command was
+    /// *not* sent to the server. Mirrors Java's `AerospikeException.Backoff`.
+    #[error("Max error rate exceeded for node {0}; backing off")]
+    MaxErrorRate(String),
     /// Error returned when executing a User-Defined Function (UDF) resulted in an error.
     #[error("UDF Bad Response: {0}")]
     UdfBadResponse(String),
@@ -130,6 +135,15 @@ pub enum Error {
 }
 
 impl Error {
+    /// True when the error means the node's connection pool is exhausted:
+    /// every allowed connection exists and is currently in flight. This is a
+    /// transient shortage — another task returning its connection clears it —
+    /// so the retry loops treat it as a pacing wait rather than a failure.
+    #[must_use]
+    pub const fn is_pool_empty(&self) -> bool {
+        matches!(self, Error::NoMoreConnections)
+    }
+
     #[must_use]
     pub fn chain_error(self, e: &str) -> Error {
         Error::Chain(Box::new(Error::ClientError(e.into())), Box::new(self))

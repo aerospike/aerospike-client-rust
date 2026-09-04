@@ -13,6 +13,12 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
+// The timeout arms below match `Err(_)` because `io_with_timeout!` yields `()`
+// as its timeout error under rt-tokio and `Elapsed` under rt-async-std; naming
+// the unit explicitly, as `clippy::ignored_unit_patterns` asks, would not
+// compile for the async-std runtime.
+#![allow(clippy::ignored_unit_patterns)]
+
 #[cfg(feature = "tls")]
 use std::convert::TryFrom;
 #[cfg(feature = "tls")]
@@ -30,7 +36,7 @@ use aerospike_rt::io::{AsyncReadExt, AsyncWriteExt};
 use aerospike_rt::net::TcpStream;
 use aerospike_rt::time::{Duration, Instant};
 #[cfg(feature = "rt-async-std")]
-use futures::{AsyncReadExt, AsyncWriteExt, TryFutureExt};
+use futures::{AsyncReadExt, AsyncWriteExt};
 use std::cmp::min;
 use std::ops::Add;
 
@@ -58,8 +64,20 @@ pub enum ConnectionState {
     ReadingStreamBody(usize),
 }
 
+/// Result of a pool-checkout liveness peek.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Liveness {
+    /// Socket open with nothing pending.
+    Alive,
+    /// Socket open, but bytes are waiting that nobody asked for.
+    PendingBytes,
+    /// Peer closed the connection, or the socket is broken.
+    Closed,
+}
+
 /// Underlying socket type for a connection (TCP or TLS).
 #[derive(Debug)]
+#[cfg_attr(test, allow(dead_code))]
 #[allow(clippy::large_enum_variant)]
 pub enum Netsocket {
     /// Plain TCP stream.
@@ -70,6 +88,19 @@ pub enum Netsocket {
     /// Test double (tests only).
     #[cfg(test)]
     TestDummy,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Makes the next [`Connection::new`] fail once, then resets itself.
+    ///
+    /// The test double never fails, so error paths that only run when
+    /// connecting fails — notably the reservation bookkeeping in
+    /// [`crate::net::connection_pool::ConnectionPool::make_conn`] — would
+    /// otherwise be unreachable in unit tests. `Connection::new` is awaited
+    /// inline by its callers, so it runs on the thread that set this.
+    pub(crate) static FAIL_NEXT_CONNECT: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
 }
 
 #[derive(Debug)]
@@ -92,9 +123,51 @@ pub struct Connection {
 
     pub(crate) state: ConnectionState,
     can_recover_connection: bool,
+
+    /// Reusable per-IO timer, reset before each read/write and raced against the
+    /// IO future.
+    ///
+    /// `aerospike_rt::timeout` builds a fresh `Sleep` for every operation, which
+    /// allocates and then registers and removes an entry in tokio's timer wheel
+    /// — a per-slot lock that every connection on the runtime contends for. One
+    /// timer per connection, reset in place, does the same job without touching
+    /// the wheel's structure on the hot path.
+    #[cfg(feature = "rt-tokio")]
+    pub(crate) sleep: std::pin::Pin<Box<aerospike_rt::tokio::time::Sleep>>,
+}
+
+/// Races an IO future against the connection's timeout.
+///
+/// `$holder` owns the `sleep` field: `self` inside [`Connection`], `self.conn`
+/// inside [`BufferedConn`]. Yields `Ok(io_result)` or `Err(())` on timeout, so
+/// it substitutes for `aerospike_rt::timeout(..).await` at every call site.
+///
+/// `biased` polls the IO first: when data is already available the timer is not
+/// polled at all, and a completed read never loses a race to an expired timer.
+macro_rules! io_with_timeout {
+    ($holder:expr, $timeout:expr, $io:expr) => {{
+        #[cfg(feature = "rt-tokio")]
+        {
+            $holder
+                .sleep
+                .as_mut()
+                .reset(aerospike_rt::tokio::time::Instant::now() + $timeout);
+            let sleep = $holder.sleep.as_mut();
+            aerospike_rt::tokio::select! {
+                biased;
+                r = $io => Ok::<_, ()>(r),
+                _ = sleep => Err(()),
+            }
+        }
+        #[cfg(feature = "rt-async-std")]
+        {
+            aerospike_rt::timeout($timeout, $io).await
+        }
+    }};
 }
 
 impl Connection {
+    #[cfg_attr(test, allow(dead_code))]
     #[cfg(feature = "tls")]
     async fn get_netsocket(
         stream: TcpStream,
@@ -161,6 +234,10 @@ impl Connection {
             idle_deadline: idle_timeout.map(|timeout| Instant::now() + timeout),
             state: ConnectionState::Ready,
             can_recover_connection: false,
+            // Far-future deadline; every IO resets it before use, so it never
+            // fires first on its own.
+            #[cfg(feature = "rt-tokio")]
+            sleep: Box::pin(aerospike_rt::tokio::time::sleep(Duration::from_secs(3600))),
         };
         conn.authenticate(&policy.auth_mode, hashed_pass).await?;
         conn.refresh();
@@ -173,6 +250,12 @@ impl Connection {
         policy: &ClientPolicy,
         _hashed_pass: Option<&String>,
     ) -> Result<Self> {
+        if FAIL_NEXT_CONNECT.with(std::cell::Cell::take) {
+            return Err(crate::Error::Connection(
+                "forced connection failure (test)".to_string(),
+            ));
+        }
+
         let addr = host.address();
         let stream = Netsocket::TestDummy;
 
@@ -194,6 +277,10 @@ impl Connection {
             idle_deadline: idle_timeout.map(|timeout| Instant::now() + timeout),
             state: ConnectionState::Ready,
             can_recover_connection: false,
+            // Far-future deadline; every IO resets it before use, so it never
+            // fires first on its own.
+            #[cfg(feature = "rt-tokio")]
+            sleep: Box::pin(aerospike_rt::tokio::time::sleep(Duration::from_secs(3600))),
         };
         conn.refresh();
         Ok(conn)
@@ -224,13 +311,21 @@ impl Connection {
     pub async fn flush(&mut self) -> Result<()> {
         self.state = ConnectionState::Writing;
         let timeout = self.deadline();
+
+        let data = &self.buffer.data_buffer;
         let res = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
-                aerospike_rt::timeout(timeout, conn.write_all(&self.buffer.data_buffer)).await
+                io_with_timeout!(self, timeout, async {
+                    conn.write_all(data).await?;
+                    conn.flush().await
+                })
             }
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                aerospike_rt::timeout(timeout, conn.write_all(&self.buffer.data_buffer)).await
+                io_with_timeout!(self, timeout, async {
+                    conn.write_all(data).await?;
+                    conn.flush().await
+                })
             }
             #[cfg(test)]
             _ => unreachable!(),
@@ -238,7 +333,8 @@ impl Connection {
 
         match res {
             Ok(Ok(())) => (),
-            Ok(Err(e)) => return Err(e.into()),
+            // classify socket I/O errors as Connection err and hence command retries.
+            Ok(Err(e)) => return Err(Error::Connection(format!("flush: {e}"))),
             Err(_) => {
                 return Err(Error::Timeout(
                     "Timeout writing to network connection".to_string(),
@@ -352,31 +448,20 @@ impl Connection {
         let timeout = self.deadline();
         let read_result = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
-                #[cfg(feature = "rt-tokio")]
-                {
-                    aerospike_rt::timeout(
-                        timeout,
-                        conn.read_exact(&mut self.buffer.data_buffer[pos..]),
-                    )
-                    .await
-                }
-                #[cfg(feature = "rt-async-std")]
-                {
-                    aerospike_rt::timeout(
-                        timeout,
-                        conn.read_exact(&mut self.buffer.data_buffer[pos..]),
-                    )
-                    .await
-                }
+                io_with_timeout!(
+                    self,
+                    timeout,
+                    conn.read_exact(&mut self.buffer.data_buffer[pos..])
+                )
             }
 
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                aerospike_rt::timeout(
+                io_with_timeout!(
+                    self,
                     timeout,
-                    conn.read_exact(&mut self.buffer.data_buffer[pos..]),
+                    conn.read_exact(&mut self.buffer.data_buffer[pos..])
                 )
-                .await
             }
             #[cfg(test)]
             _ => unreachable!(),
@@ -384,12 +469,12 @@ impl Connection {
 
         match read_result {
             Ok(Ok(_)) => self.bytes_read += size,
+            Ok(Err(e)) => return Err(Error::Connection(format!("read: {e}"))),
             Err(_) => {
                 return Err(Error::Timeout(
                     "Timeout reading from the network connection".into(),
                 ))
             }
-            Ok(Err(e)) => return Err(e.into()),
         }
 
         self.buffer.reset_offset();
@@ -402,13 +487,24 @@ impl Connection {
         self.state = ConnectionState::Writing;
 
         let timeout = self.deadline();
+        // Flush after the write, exactly as `flush()` does (CLIENT-5268): on a
+        // rustls stream `write_all` can leave the encrypted records in the
+        // session buffer, and this is the info/tend path, which reads the reply
+        // straight after writing — so an unflushed request would wait on an
+        // answer the server never received. A no-op on plain TCP.
         let res = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
-                aerospike_rt::timeout(timeout, conn.write_all(buf)).await
+                io_with_timeout!(self, timeout, async {
+                    conn.write_all(buf).await?;
+                    conn.flush().await
+                })
             }
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                aerospike_rt::timeout(timeout, conn.write_all(buf)).await
+                io_with_timeout!(self, timeout, async {
+                    conn.write_all(buf).await?;
+                    conn.flush().await
+                })
             }
             #[cfg(test)]
             _ => unreachable!(),
@@ -417,12 +513,14 @@ impl Connection {
         match res {
             Ok(Ok(())) => (),
             Ok(Err(e)) => {
-                return Err(e.into());
+                return Err(Error::Connection(format!("write: {e}")));
             }
-            Err(e) => {
-                return Err(Error::Timeout(format!(
-                    "Timeout writing to the network connection: {e}"
-                )));
+            // The timer carries no detail worth printing, and the two runtimes
+            // report it as different types.
+            Err(_) => {
+                return Err(Error::Timeout(
+                    "Timeout writing to the network connection".to_string(),
+                ));
             }
         }
 
@@ -437,11 +535,11 @@ impl Connection {
         let timeout = self.deadline();
         let res = match self.conn {
             Netsocket::Tcp(ref mut conn) => {
-                aerospike_rt::timeout(timeout, conn.read_exact(buf)).await
+                io_with_timeout!(self, timeout, conn.read_exact(buf))
             }
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                aerospike_rt::timeout(timeout, conn.read_exact(buf)).await
+                io_with_timeout!(self, timeout, conn.read_exact(buf))
             }
             #[cfg(test)]
             _ => unreachable!(),
@@ -449,7 +547,7 @@ impl Connection {
 
         match res {
             Ok(Ok(_)) => (),
-            Ok(Err(e)) => return Err(e.into()),
+            Ok(Err(e)) => return Err(Error::Connection(format!("read_all: {e}"))),
             Err(_) => {
                 return Err(Error::Timeout(
                     "Timeout reading from the network connection".to_string(),
@@ -467,6 +565,70 @@ impl Connection {
             .is_some_and(|idle_dl| Instant::now() >= idle_dl)
     }
 
+    /// What a one-byte peek says about a socket.
+    fn peek_liveness(sock: &socket2::SockRef<'_>) -> Liveness {
+        // MSG_PEEK, so nothing is consumed: a byte seen here is still there for
+        // the command that follows. Both runtimes keep the fd non-blocking, so
+        // this never waits.
+        let mut probe = [std::mem::MaybeUninit::<u8>::uninit(); 1];
+        match sock.peek(&mut probe) {
+            // Nothing to read on an open socket: the healthy idle case.
+            Err(ref e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                ) =>
+            {
+                Liveness::Alive
+            }
+            // A peer that sent FIN reads as end-of-stream; an RST, EBADF or
+            // anything else is equally unusable.
+            Ok(0) | Err(_) => Liveness::Closed,
+            Ok(_) => Liveness::PendingBytes,
+        }
+    }
+
+    /// Non-blocking one-byte peek for pool checkout, so a socket the peer closed
+    /// while it sat in the pool is discarded instead of handed to a command that
+    /// would fail on its first read.
+    ///
+    /// This is the *only* mechanism that sheds dead pooled sockets — it is
+    /// deliberately independent of `idle_timeout`, because a socket can die long
+    /// before its idle deadline (a server restart kills sockets that were in use
+    /// a millisecond earlier).
+    pub(crate) fn is_alive(&self) -> bool {
+        match self.conn {
+            Netsocket::Tcp(ref s) => {
+                // Unsolicited bytes on a plain connection mean the stream is out
+                // of step with the protocol, which is not recoverable here.
+                !matches!(
+                    Self::peek_liveness(&socket2::SockRef::from(s)),
+                    Liveness::Closed | Liveness::PendingBytes
+                )
+            }
+            #[cfg(feature = "tls")]
+            Netsocket::Tls(ref s) => {
+                // Peek the TCP socket underneath the TLS session.
+                //
+                // Pending bytes are treated as ALIVE here, unlike the plain
+                // arm: post-handshake TLS control records (a TLS 1.3
+                // NewSessionTicket, a KeyUpdate) legitimately arrive while a
+                // connection sits idle in the pool, and they are not
+                // application data. Calling those dead would evict a healthy
+                // connection, reconnect, receive a fresh ticket and evict
+                // again — churn caused by the probe itself. Only a closed or
+                // broken socket is fatal.
+                let (tcp, _session) = s.get_ref();
+                !matches!(
+                    Self::peek_liveness(&socket2::SockRef::from(tcp)),
+                    Liveness::Closed
+                )
+            }
+            #[cfg(test)]
+            _ => true,
+        }
+    }
+
     fn refresh(&mut self) {
         self.idle_deadline = None;
         self.deadline = None;
@@ -475,6 +637,7 @@ impl Connection {
         }
     }
 
+    #[cfg_attr(test, allow(dead_code))]
     async fn authenticate(
         &mut self,
         auth_mode: &AuthMode,
@@ -482,7 +645,12 @@ impl Connection {
     ) -> Result<()> {
         self.state = ConnectionState::Writing;
         return match AdminCommand::authenticate(self, auth_mode, hashed_pass).await {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                // Restore Ready so PooledConnection::Drop puts the conn back
+                // in the pool instead of taking the non-recoverable close arm.
+                self.set_state(ConnectionState::Ready);
+                Ok(())
+            }
             Err(err) => {
                 self.close();
                 Err(err)
@@ -627,12 +795,12 @@ impl<'a> BufferedConn<'a> {
         let deadline = self.conn.deadline();
         let read_result = match self.conn.conn {
             Netsocket::Tcp(ref mut conn) => {
-                aerospike_rt::timeout(deadline, conn.read_exact(&mut self.cache)).await
+                io_with_timeout!(self.conn, deadline, conn.read_exact(&mut self.cache))
             }
 
             #[cfg(feature = "tls")]
             Netsocket::Tls(ref mut conn) => {
-                aerospike_rt::timeout(deadline, conn.read_exact(&mut self.cache)).await
+                io_with_timeout!(self.conn, deadline, conn.read_exact(&mut self.cache))
             }
             #[cfg(test)]
             _ => unreachable!(),
@@ -643,12 +811,12 @@ impl<'a> BufferedConn<'a> {
                 self.limit -= self.cache.len();
                 self.conn.bytes_read += self.cache.len();
             }
+            Ok(Err(e)) => return Err(Error::Connection(format!("buffered_read: {e}"))),
             Err(_) => {
                 return Err(Error::Timeout(
                     "Timeout reading from the network connection".into(),
                 ))
             }
-            Ok(Err(e)) => return Err(e.into()),
         }
 
         self.pos = 0;
@@ -974,5 +1142,432 @@ impl<'a> ConnectionRecovery<'a> {
 
         assert!(self.conn.bytes_read == total_size);
         Ok(last_record)
+    }
+}
+
+/// The pool-checkout liveness probe, on whichever runtime is compiled.
+///
+/// The larger `tests_eof_loopback` module below is tokio-only; these cases are
+/// runtime-agnostic on purpose, because the async-std arm of [`Connection::is_alive`]
+/// had no coverage at all while it was a hardcoded `true`.
+#[cfg(test)]
+mod liveness_probe_tests {
+    use super::*;
+    use aerospike_rt::net::{TcpListener, TcpStream};
+
+    /// Half-close the accepted socket, so the client side sees FIN.
+    async fn spawn_finning_peer() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        aerospike_rt::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                #[cfg(feature = "rt-tokio")]
+                {
+                    use aerospike_rt::io::AsyncWriteExt;
+                    let _ = sock.shutdown().await;
+                }
+                #[cfg(feature = "rt-async-std")]
+                {
+                    let _ = sock.shutdown(aerospike_rt::async_std::net::Shutdown::Both);
+                }
+                drop(sock);
+            }
+        });
+        addr
+    }
+
+    /// Accept and hold the socket open, saying nothing.
+    async fn spawn_quiet_peer() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        aerospike_rt::spawn(async move {
+            if let Ok((sock, _)) = listener.accept().await {
+                aerospike_rt::sleep(Duration::from_secs(30)).await;
+                drop(sock);
+            }
+        });
+        addr
+    }
+
+    /// Build a `Connection` around a real socket, bypassing the handshake.
+    fn conn_over(stream: TcpStream) -> Connection {
+        let mut conn = Connection {
+            addr: "127.0.0.1:0".into(),
+            buffer: Buffer::new(0),
+            bytes_read: 0,
+            conn: Netsocket::Tcp(stream),
+            socket_timeout: 5_000,
+            timeout_delay: 0,
+            deadline: None,
+            idle_timeout: None,
+            idle_deadline: None,
+            state: ConnectionState::Ready,
+            can_recover_connection: false,
+            #[cfg(feature = "rt-tokio")]
+            sleep: Box::pin(aerospike_rt::tokio::time::sleep(Duration::from_secs(3600))),
+        };
+        conn.refresh();
+        conn
+    }
+
+    #[aerospike_macro::test]
+    async fn probe_says_alive_for_an_open_idle_socket() {
+        let addr = spawn_quiet_peer().await;
+        let stream = TcpStream::connect(&*addr).await.unwrap();
+        aerospike_rt::sleep(Duration::from_millis(20)).await;
+        assert!(
+            conn_over(stream).is_alive(),
+            "an open socket with nothing pending must probe alive"
+        );
+    }
+
+    #[aerospike_macro::test]
+    async fn probe_says_dead_after_peer_fin() {
+        let addr = spawn_finning_peer().await;
+        let stream = TcpStream::connect(&*addr).await.unwrap();
+        // Let the FIN land in our kernel before probing.
+        aerospike_rt::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !conn_over(stream).is_alive(),
+            "a socket the peer closed must probe dead"
+        );
+    }
+
+    /// The peek must not consume: probing twice has to give the same answer, and
+    /// a command that follows still sees the pending byte.
+    #[aerospike_macro::test]
+    async fn probe_does_not_consume_pending_bytes() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        aerospike_rt::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                #[cfg(feature = "rt-tokio")]
+                {
+                    use aerospike_rt::io::AsyncWriteExt;
+                    let _ = sock.write_all(b"XY").await;
+                }
+                #[cfg(feature = "rt-async-std")]
+                {
+                    use futures::AsyncWriteExt;
+                    let _ = sock.write_all(b"XY").await;
+                }
+                aerospike_rt::sleep(Duration::from_secs(30)).await;
+            }
+        });
+
+        let stream = TcpStream::connect(&*addr).await.unwrap();
+        aerospike_rt::sleep(Duration::from_millis(50)).await;
+        let mut conn = conn_over(stream);
+
+        // Unsolicited bytes on a plain connection: not usable, twice over.
+        assert!(!conn.is_alive());
+        assert!(!conn.is_alive(), "the verdict must be stable, not consumed");
+
+        // And the bytes are still on the socket for whoever reads next.
+        let mut buf = [0_u8; 2];
+        conn.read_all(&mut buf).await.expect("bytes still readable");
+        assert_eq!(&buf, b"XY", "MSG_PEEK must leave the data in place");
+    }
+}
+
+///  socket-level liveness probe and the `Error::Connection` classification of socket I/O failures.
+#[cfg(all(test, feature = "rt-tokio"))]
+mod tests_eof_loopback {
+    use super::*;
+    use crate::commands::is_network_error;
+    use aerospike_rt::net::{TcpListener, TcpStream};
+    use std::net::SocketAddr;
+
+    /// Build a `Connection` over a real TCP stream. Local to this module —
+    /// inaccessible from other code, no API surface added.
+    fn conn_from_stream(stream: TcpStream) -> Connection {
+        let mut conn = Connection {
+            addr: "127.0.0.1:0".into(),
+            buffer: Buffer::new(0),
+            bytes_read: 0,
+            conn: Netsocket::Tcp(stream),
+            socket_timeout: 5_000,
+            timeout_delay: 0,
+            deadline: None,
+            idle_timeout: None,
+            idle_deadline: None,
+            state: ConnectionState::Ready,
+            can_recover_connection: false,
+            // Far-future deadline; every IO resets it before use, so it never
+            // fires first on its own.
+            #[cfg(feature = "rt-tokio")]
+            sleep: Box::pin(aerospike_rt::tokio::time::sleep(Duration::from_secs(3600))),
+        };
+        conn.refresh();
+        conn
+    }
+
+    /// Spawn a one-shot peer that accepts and immediately half-closes the
+    /// socket — simulates a server-side FIN like `asd` exiting.
+    async fn spawn_fin_peer() -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        aerospike_rt::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                use tokio::io::AsyncWriteExt;
+                let _ = sock.shutdown().await;
+                drop(sock);
+            }
+        });
+        addr
+    }
+
+    /// Spawn a peer that accepts and holds the socket open silently —
+    /// the live-and-idle case the liveness probe must accept.
+    async fn spawn_idle_peer() -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        aerospike_rt::spawn(async move {
+            if let Ok((sock, _)) = listener.accept().await {
+                aerospike_rt::sleep(std::time::Duration::from_secs(60)).await;
+                drop(sock);
+            }
+        });
+        addr
+    }
+
+    /// Spawn a peer that pushes some bytes at the client without being
+    /// asked — exercises the "stray bytes pending" branch of the probe.
+    async fn spawn_chatty_peer() -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        aerospike_rt::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                use tokio::io::AsyncWriteExt;
+                let _ = sock.write_all(b"unsolicited").await;
+                aerospike_rt::sleep(std::time::Duration::from_secs(60)).await;
+            }
+        });
+        addr
+    }
+
+    // ─── Reusable per-IO timer ────────────────────────────────────────────
+
+    /// A read against a peer that never answers must still time out. The timer
+    /// now lives on the connection and is reset per IO rather than built per
+    /// call, so this is the check that resetting actually arms it.
+    #[tokio::test(flavor = "current_thread")]
+    async fn read_times_out_against_a_silent_peer() {
+        let addr = spawn_idle_peer().await;
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut conn = conn_from_stream(stream);
+        conn.set_socket_timeout(None, 60);
+
+        let mut buf = [0_u8; 8];
+        let err = conn
+            .read_all(&mut buf)
+            .await
+            .expect_err("a silent peer must produce a timeout");
+        assert!(
+            matches!(err, Error::Timeout(_)),
+            "expected Timeout, got: {0:?}",
+            err
+        );
+    }
+
+    /// The timer is reused, so it must re-arm: an expired one has to be reset
+    /// for the *next* IO instead of firing immediately. Without a working
+    /// reset, the read after a timeout would fail even though data is waiting.
+    #[tokio::test(flavor = "current_thread")]
+    async fn timer_rearms_after_an_earlier_timeout() {
+        // Peer stays quiet long enough for the first read to expire, then
+        // sends exactly what the second read wants.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        aerospike_rt::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                use tokio::io::AsyncWriteExt;
+                aerospike_rt::sleep(std::time::Duration::from_millis(200)).await;
+                let _ = sock.write_all(b"abcd").await;
+                aerospike_rt::sleep(std::time::Duration::from_secs(60)).await;
+            }
+        });
+
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut conn = conn_from_stream(stream);
+
+        conn.set_socket_timeout(None, 50);
+        let mut buf = [0_u8; 4];
+        assert!(
+            conn.read_all(&mut buf).await.is_err(),
+            "first read must time out while the peer is quiet"
+        );
+
+        // Same connection, same timer: a generous timeout must now succeed.
+        conn.set_socket_timeout(None, 5_000);
+        conn.read_all(&mut buf)
+            .await
+            .expect("second read must succeed on the reused timer");
+        assert_eq!(&buf, b"abcd");
+    }
+
+    /// A write on a live socket must not be cut short by a leftover timer
+    /// state, and the connection must remain usable afterwards.
+    #[tokio::test(flavor = "current_thread")]
+    async fn repeated_writes_reuse_the_timer() {
+        let addr = spawn_idle_peer().await;
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut conn = conn_from_stream(stream);
+        conn.set_socket_timeout(None, 5_000);
+
+        for round in 0..5 {
+            conn.write_all(b"ping")
+                .await
+                .unwrap_or_else(|e| panic!("round {0} write failed: {1:?}", round, e));
+        }
+    }
+
+    // ─── Bug 2: liveness probe ────────────────────────────────────────────
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn is_alive_returns_true_for_idle_socket() {
+        let addr = spawn_idle_peer().await;
+        let stream = TcpStream::connect(addr).await.unwrap();
+        aerospike_rt::sleep(std::time::Duration::from_millis(20)).await;
+        let conn = conn_from_stream(stream);
+        assert!(conn.is_alive(), "idle live socket must probe alive");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn is_alive_returns_false_after_peer_fin() {
+        let addr = spawn_fin_peer().await;
+        let stream = TcpStream::connect(addr).await.unwrap();
+        // Give the peer's shutdown a moment to arrive at our kernel.
+        aerospike_rt::sleep(std::time::Duration::from_millis(50)).await;
+        let conn = conn_from_stream(stream);
+        assert!(!conn.is_alive(), "FIN'd socket must probe dead");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn is_alive_returns_false_when_stray_bytes_pending() {
+        let addr = spawn_chatty_peer().await;
+        let stream = TcpStream::connect(addr).await.unwrap();
+        aerospike_rt::sleep(std::time::Duration::from_millis(50)).await;
+        let conn = conn_from_stream(stream);
+        assert!(
+            !conn.is_alive(),
+            "socket with unread bytes (protocol desync) must probe dead"
+        );
+    }
+
+    // ─── Bug 1: socket I/O errors classified as Error::Connection ─────────
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn read_header_after_peer_fin_yields_error_connection() {
+        let addr = spawn_fin_peer().await;
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut conn = conn_from_stream(stream);
+
+        let err = conn
+            .read_header()
+            .await
+            .expect_err("read on FIN'd socket must fail");
+
+        assert!(
+            matches!(err, Error::Connection(_)),
+            "expected Error::Connection on peer FIN, got: {:?}",
+            err
+        );
+        assert!(
+            is_network_error(&err),
+            "is_network_error must accept this so the retry gate engages; err = {:?}",
+            err
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn write_all_after_peer_fin_yields_error_connection() {
+        let addr = spawn_fin_peer().await;
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut conn = conn_from_stream(stream);
+
+        // Wait for FIN to propagate so the next write surfaces ECONNRESET
+        // before the kernel send-buffer can absorb a small write.
+        aerospike_rt::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Force the failure with a write large enough that the kernel can't
+        // hide it inside the send buffer.
+        let mut last_err: Option<Error> = None;
+        for _ in 0..10 {
+            let big = vec![0u8; 256 * 1024];
+            if let Err(e) = conn.write_all(&big).await {
+                last_err = Some(e);
+                break;
+            }
+        }
+        let err = last_err.expect("a write must eventually fail after peer FIN");
+
+        assert!(
+            matches!(err, Error::Connection(_)),
+            "expected Error::Connection on peer-closed write, got: {:?}",
+            err
+        );
+        assert!(
+            is_network_error(&err),
+            "is_network_error must accept this; err = {:?}",
+            err
+        );
+    }
+
+    // ─── Bug 2 end-to-end: Queue::get evicts dead, returns live ───────────
+    //
+    // Lives here (rather than in connection_pool.rs) because the
+    // `conn_from_stream` helper needs access to `Connection`'s private
+    // fields, which are only visible from within `connection.rs`.
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn queue_get_evicts_peer_finned_socket() {
+        use crate::net::connection_pool::Queue;
+        use crate::net::Host;
+        use crate::policy::ClientPolicy;
+
+        let host = Host::new("127.0.0.1", 0);
+        let policy = ClientPolicy::default();
+        let q = Queue::with_capacity(1, host, policy);
+
+        let addr = spawn_fin_peer().await;
+        let stream = TcpStream::connect(addr).await.unwrap();
+        aerospike_rt::sleep(std::time::Duration::from_millis(50)).await;
+
+        let conn = conn_from_stream(stream);
+        assert!(q.reserve_capacity());
+        q.put_back(conn);
+
+        let result = q.get();
+        assert!(
+            result.is_err(),
+            "Queue::get() must not return a peer-FIN'd socket"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn queue_get_returns_live_socket() {
+        use crate::net::connection_pool::Queue;
+        use crate::net::Host;
+        use crate::policy::ClientPolicy;
+
+        let host = Host::new("127.0.0.1", 0);
+        let policy = ClientPolicy::default();
+        let q = Queue::with_capacity(1, host, policy);
+
+        let addr = spawn_idle_peer().await;
+        let stream = TcpStream::connect(addr).await.unwrap();
+        aerospike_rt::sleep(std::time::Duration::from_millis(50)).await;
+
+        let conn = conn_from_stream(stream);
+        assert!(q.reserve_capacity());
+        q.put_back(conn);
+
+        let result = q.get();
+        assert!(
+            result.is_ok(),
+            "Queue::get() must return a live socket; got Err({:?})",
+            result.err()
+        );
     }
 }

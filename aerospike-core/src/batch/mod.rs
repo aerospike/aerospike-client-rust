@@ -15,6 +15,8 @@
 
 pub mod batch_executor;
 pub mod batch_record;
+#[cfg(test)]
+mod encode_tests;
 
 use crate::commands::buffer::{FIELD_HEADER_SIZE, OPERATION_HEADER_SIZE};
 use crate::expressions::Expression;
@@ -431,16 +433,93 @@ impl BatchOperation {
         }
     }
 
-    pub(crate) const fn match_header(&self, _prev: Option<&BatchOperation>) -> bool {
-        false
+    /// `true` when this record's per-record header would be byte-identical to
+    /// `prev`'s, so the wire can carry the `BATCH_MSG_REPEAT` flag — offset and
+    /// digest only — instead of repeating the header.
+    ///
+    /// This is where the batch encoder's `REPEAT` support gets its answer; while
+    /// it returned a constant `false`, every record in every batch re-sent a
+    /// full header: the 12-byte header plus namespace, set and the whole bin/op
+    /// payload, against one byte.
+    ///
+    /// Conservative by construction. `send_key` forces a full header because the
+    /// user-key field differs per record, namespace/set must match because those
+    /// fields are what the repeat omits, and operation lists compare by content
+    /// with their opaque encoder closures compared by `Arc` identity — so the
+    /// natural "build the ops once, apply to N keys" pattern repeats, while
+    /// anything not provably identical writes a full header.
+    pub(crate) fn match_header(&self, prev: Option<&BatchOperation>) -> bool {
+        let Some(prev) = prev else { return false };
+
+        // Same namespace and set: a repeat omits both fields.
+        if self.key().namespace != prev.key().namespace
+            || self.key().set_name != prev.key().set_name
+        {
+            return false;
+        }
+
+        match (self, prev) {
+            (
+                Self::Read {
+                    policy: p,
+                    bins: b,
+                    ops: o,
+                    ..
+                },
+                Self::Read {
+                    policy: pp,
+                    bins: bp,
+                    ops: op,
+                    ..
+                },
+            ) => p == pp && b == bp && o == op,
+            (Self::Delete { policy: p, .. }, Self::Delete { policy: pp, .. }) => {
+                !p.send_key && !pp.send_key && p == pp
+            }
+            (
+                Self::Write {
+                    policy: p, ops: o, ..
+                },
+                Self::Write {
+                    policy: pp,
+                    ops: op,
+                    ..
+                },
+            ) => !p.send_key && !pp.send_key && p == pp && o == op,
+            (
+                Self::UDF {
+                    policy: p,
+                    udf_name: n,
+                    function_name: f,
+                    args: a,
+                    ..
+                },
+                Self::UDF {
+                    policy: pp,
+                    udf_name: np,
+                    function_name: fp,
+                    args: ap,
+                    ..
+                },
+            ) => !p.send_key && !pp.send_key && p == pp && n == np && f == fp && a == ap,
+            _ => false,
+        }
     }
 
-    pub(crate) fn key(&self) -> Key {
+    /// Borrow this record's key.
+    ///
+    /// Borrowed rather than cloned because every caller is per-record on a hot
+    /// path — the batch encoder's size and write passes, the executor's routing
+    /// split, the retry loop's re-split — and none of them needs ownership. A
+    /// `Key` clone allocates its namespace and set `String`s, so returning one
+    /// here cost a 1000-key batch thousands of allocations before a byte went
+    /// out.
+    pub(crate) const fn key(&self) -> &Key {
         match self {
             Self::Read { br, .. }
             | Self::Write { br, .. }
             | Self::Delete { br, .. }
-            | Self::UDF { br, .. } => br.key.clone(),
+            | Self::UDF { br, .. } => &br.key,
         }
     }
 
@@ -451,6 +530,21 @@ impl BatchOperation {
             | Self::Write { br, .. }
             | Self::Delete { br, .. }
             | Self::UDF { br, .. } => br.clone(),
+        }
+    }
+
+    /// Take the resulting batch record, consuming the operation.
+    ///
+    /// The executor owns its per-node copies and drops them right after
+    /// harvesting the results, so it has no reason to pay for
+    /// [`Self::batch_record`]'s clone of the key, the record and the record's
+    /// whole bin map — it can move them out instead.
+    pub(crate) fn into_batch_record(self) -> BatchRecord {
+        match self {
+            Self::Read { br, .. }
+            | Self::Write { br, .. }
+            | Self::Delete { br, .. }
+            | Self::UDF { br, .. } => br,
         }
     }
 
@@ -477,5 +571,163 @@ impl BatchOperation {
                 br.in_doubt = in_doubt;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod repeat_tests {
+    use super::*;
+    use crate::operations::{self, lists};
+    use crate::Bins;
+
+    fn key(n: i64) -> Key {
+        Key::new("ns", "set", crate::Value::from(n)).unwrap()
+    }
+
+    // Identical writes over one op list (built once, cloned per key) repeat —
+    // the Java client's `record.equals(prev)` batch compression.
+    #[test]
+    fn write_repeats_for_shared_op_list() {
+        let policy = BatchWritePolicy::default();
+        let ops = vec![
+            operations::put(&as_bin!("a", 1)),
+            lists::append(&lists::ListPolicy::default(), "l", crate::Value::from(1)),
+        ];
+        let w1 = BatchOperation::write(&policy, key(1), ops.clone());
+        let w2 = BatchOperation::write(&policy, key(2), ops);
+        assert!(w2.match_header(Some(&w1)));
+    }
+
+    // Scalar-only op lists compare fully by content, so even separately built
+    // identical lists repeat.
+    #[test]
+    fn write_repeats_for_equal_scalar_ops() {
+        let policy = BatchWritePolicy::default();
+        let w1 = BatchOperation::write(&policy, key(1), vec![operations::put(&as_bin!("a", 1))]);
+        let w2 = BatchOperation::write(&policy, key(2), vec![operations::put(&as_bin!("a", 1))]);
+        assert!(w2.match_header(Some(&w1)));
+    }
+
+    // Independently constructed CDT ops carry distinct encoder Arcs, so equality
+    // cannot be proven — conservatively no repeat.
+    #[test]
+    fn write_does_not_repeat_for_separately_built_cdt_ops() {
+        let policy = BatchWritePolicy::default();
+        let cdt = |v: i64| vec![lists::append(&lists::ListPolicy::default(), "l", crate::Value::from(v))];
+        let w1 = BatchOperation::write(&policy, key(1), cdt(1));
+        let w2 = BatchOperation::write(&policy, key(2), cdt(1));
+        assert!(!w2.match_header(Some(&w1)));
+    }
+
+    // send_key forces a full header: the user-key field differs per record.
+    #[test]
+    fn write_does_not_repeat_with_send_key() {
+        let policy = BatchWritePolicy {
+            send_key: true,
+            ..BatchWritePolicy::default()
+        };
+        let ops = vec![operations::put(&as_bin!("a", 1))];
+        let w1 = BatchOperation::write(&policy, key(1), ops.clone());
+        let w2 = BatchOperation::write(&policy, key(2), ops);
+        assert!(!w2.match_header(Some(&w1)));
+    }
+
+    // Different payloads, and different namespaces, never repeat.
+    #[test]
+    fn write_does_not_repeat_across_payload_or_namespace() {
+        let policy = BatchWritePolicy::default();
+        let w1 = BatchOperation::write(&policy, key(1), vec![operations::put(&as_bin!("a", 1))]);
+        let w2 = BatchOperation::write(&policy, key(2), vec![operations::put(&as_bin!("a", 2))]);
+        assert!(!w2.match_header(Some(&w1)));
+
+        let other_ns = Key::new("other", "set", crate::Value::from(3)).unwrap();
+        let ops = vec![operations::put(&as_bin!("a", 1))];
+        let w3 = BatchOperation::write(&policy, other_ns, ops.clone());
+        let w4 = BatchOperation::write(&policy, key(4), ops);
+        assert!(!w4.match_header(Some(&w3)));
+    }
+
+    // The first record of a batch has nothing to repeat.
+    #[test]
+    fn first_record_never_repeats() {
+        let policy = BatchReadPolicy::default();
+        let r1 = BatchOperation::read(&policy, key(1), Bins::All);
+        assert!(!r1.match_header(None));
+    }
+
+    // Plain reads over the same bins repeat.
+    #[test]
+    fn read_repeats_for_equal_bins() {
+        let policy = BatchReadPolicy::default();
+        let r1 = BatchOperation::read(&policy, key(1), Bins::All);
+        let r2 = BatchOperation::read(&policy, key(2), Bins::All);
+        assert!(r2.match_header(Some(&r1)));
+
+        let r3 = BatchOperation::read(&policy, key(3), Bins::from(["a"]));
+        assert!(!r3.match_header(Some(&r2)));
+    }
+
+    // Reads carrying op lists repeat too, and never against a different shape.
+    #[test]
+    fn read_ops_repeat_for_shared_op_list() {
+        let policy = BatchReadPolicy::default();
+        let ops = vec![operations::get_bin("a")];
+        let r1 = BatchOperation::read_ops(&policy, key(1), ops.clone());
+        let r2 = BatchOperation::read_ops(&policy, key(2), ops);
+        assert!(r2.match_header(Some(&r1)));
+
+        let r3 = BatchOperation::read(&policy, key(3), Bins::All);
+        assert!(!r3.match_header(Some(&r2)));
+    }
+
+    // Identical UDF invocations repeat; different args do not.
+    #[test]
+    fn udf_repeats_for_equal_invocations() {
+        let policy = BatchUDFPolicy::default();
+        let args = Some(vec![crate::Value::from(1)]);
+        let u1 = BatchOperation::udf(&policy, key(1), "pkg", "fun", args.clone());
+        let u2 = BatchOperation::udf(&policy, key(2), "pkg", "fun", args);
+        assert!(u2.match_header(Some(&u1)));
+
+        let u3 = BatchOperation::udf(
+            &policy,
+            key(3),
+            "pkg",
+            "fun",
+            Some(vec![crate::Value::from(2)]),
+        );
+        assert!(!u3.match_header(Some(&u2)));
+    }
+
+    // Deletes repeat unless send_key is set.
+    #[test]
+    fn delete_repeats_unless_send_key() {
+        let policy = BatchDeletePolicy::default();
+        let d1 = BatchOperation::delete(&policy, key(1));
+        let d2 = BatchOperation::delete(&policy, key(2));
+        assert!(d2.match_header(Some(&d1)));
+
+        let keyed = BatchDeletePolicy {
+            send_key: true,
+            ..BatchDeletePolicy::default()
+        };
+        let d3 = BatchOperation::delete(&keyed, key(3));
+        let d4 = BatchOperation::delete(&keyed, key(4));
+        assert!(!d4.match_header(Some(&d3)));
+    }
+
+    // Variants never repeat across each other, whatever their policies say.
+    #[test]
+    fn different_variants_never_repeat() {
+        let r = BatchOperation::read(&BatchReadPolicy::default(), key(1), Bins::All);
+        let d = BatchOperation::delete(&BatchDeletePolicy::default(), key(2));
+        let w = BatchOperation::write(
+            &BatchWritePolicy::default(),
+            key(3),
+            vec![operations::put(&as_bin!("a", 1))],
+        );
+        assert!(!d.match_header(Some(&r)));
+        assert!(!w.match_header(Some(&d)));
+        assert!(!r.match_header(Some(&w)));
     }
 }

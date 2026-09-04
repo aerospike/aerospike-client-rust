@@ -490,7 +490,14 @@ impl Buffer {
     }
 
     pub(crate) const fn get_batch_flags(policy: &BatchPolicy) -> u8 {
-        let mut flags: u8 = if policy.allow_inline { 1 } else { 0 };
+        // 0x8 instructs the server to return the key-specific error code when an
+        // error stops the batch response (Java CLIENT-1720); set
+        // unconditionally, like the Java client.
+        let mut flags: u8 = 0x8;
+
+        if policy.allow_inline {
+            flags |= 0x1;
+        }
 
         if policy.allow_inline_ssd {
             flags |= 0x2;
@@ -518,14 +525,26 @@ impl Buffer {
             field_count += 1;
         }
 
+        // Whether each row repeats the previous row's header, decided once here
+        // and reused by the write loop below.
+        //
+        // `match_header` is a deep structural comparison — namespace and set
+        // strings, the whole per-record policy including its filter
+        // expression tree, the bin-name list and every operation — and the two
+        // loops used to each call it for every row, so a batch paid for 2N
+        // comparisons to answer N questions.
+        let mut repeats: Vec<bool> = Vec::with_capacity(batch_ops.len());
+
         let mut prev: Option<&BatchOperation> = None;
         for (batch_op, _) in batch_ops {
             self.data_offset += batch_op.key().digest.len() + 4;
-            if batch_op.match_header(prev) {
+            let repeat = batch_op.match_header(prev);
+            repeats.push(repeat);
+            if repeat {
                 self.data_offset += 1;
             } else {
                 // Must write full header and namespace/set/bin names.
-                let key = &batch_op.key();
+                let key = batch_op.key();
                 self.data_offset += 12; // header(4) + ttl(4) + fiel_count(2) + op_count(2) = 12
                 self.data_offset += key.namespace.len() + FIELD_HEADER_SIZE as usize;
                 self.data_offset += key.set_name.len() + FIELD_HEADER_SIZE as usize;
@@ -550,12 +569,11 @@ impl Buffer {
         self.write_u8(Buffer::get_batch_flags(policy));
 
         let mut attr = BatchAttr::default();
-        prev = None;
         for (idx, (batch_op, _)) in batch_ops.iter().enumerate() {
-            let key = &batch_op.key();
+            let key = batch_op.key();
             self.write_u32(idx as u32);
             self.write_bytes(&key.digest);
-            if batch_op.match_header(prev) {
+            if repeats[idx] {
                 self.write_u8(BATCH_MSG_REPEAT);
             } else {
                 match batch_op {
@@ -628,10 +646,16 @@ impl Buffer {
                     }
                 }
             }
-            prev = Some(batch_op);
         }
 
-        let field_size = self.data_offset - MSG_TOTAL_HEADER_SIZE as usize - 4;
+        // Measured from the field's own header, not from the end of the
+        // message header. The two are the same only when nothing is written
+        // between them — and a filter expression is written between them, so
+        // the old form overstated the size by exactly the filter's length.
+        //
+        // The size an `as_msg_field` declares covers its type byte and its
+        // value, which is everything after the four size bytes: hence the -4.
+        let field_size = self.data_offset - field_size_offset - 4;
         NetworkEndian::write_u32(
             &mut self.data_buffer[field_size_offset..field_size_offset + 4],
             field_size as u32,
@@ -747,7 +771,12 @@ impl Buffer {
         }
         self.size_buffer()?;
 
-        self.write_header(&policy.base_policy, 0, INFO2_WRITE, field_count, 0);
+        // A UDF execute is a write, so it needs the write header: the base-policy
+        // header zeroes bytes 11..26, which drops record_exists_action,
+        // generation, commit_level and durable_delete, and puts `read_touch_ttl`
+        // in the TTL slot instead of the policy's `expiration` (Java
+        // `ExecuteCommand` uses writeHeaderWrite).
+        self.write_header_with_policy(policy, 0, INFO2_WRITE, field_count, 0);
         self.write_key(key, policy.send_key)?;
 
         if let Some(filter) = policy.filter_expression() {
@@ -1741,7 +1770,7 @@ impl Buffer {
 
     fn write_field_value(&mut self, value: &Value, ftype: FieldType) -> Result<()> {
         self.write_field_header(value.estimate_size()? + 1, ftype);
-        self.write_u8(value.particle_type() as u8);
+        self.write_u8(value.particle_type()? as u8);
         value.write_to(self)?;
         Ok(())
     }
@@ -1763,7 +1792,7 @@ impl Buffer {
 
         self.write_i32((name_length + value_length + 4) as i32);
         self.write_u8(op_type as u8);
-        self.write_u8(bin.value.particle_type() as u8);
+        self.write_u8(bin.value.particle_type()? as u8);
         self.write_u8(0);
         self.write_u8(name_length as u8);
         self.write_str(&bin.name);
@@ -1962,20 +1991,6 @@ impl Buffer {
         Ok(s.to_owned())
     }
 
-    pub(crate) fn read_str_until(&mut self, sep: u8, max_len: usize) -> Result<String> {
-        let mut len = 0;
-        for i in 0..max_len {
-            len += 1;
-            if self.data_buffer[self.data_offset + i] == sep {
-                break;
-            }
-        }
-
-        let s = str::from_utf8(&self.data_buffer[self.data_offset..self.data_offset + len])?;
-        self.data_offset += len;
-        Ok(s.to_owned())
-    }
-
     // pub(crate) fn read_bytes(&mut self, pos: usize, count: usize) -> &[u8] {
     //     &self.data_buffer[pos..pos + count]
     // }
@@ -2124,5 +2139,214 @@ impl Buffer {
     pub(crate) fn dump_buffer(&self) {
         rhexdump!(&self.data_buffer);
         println!();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::policy::{BatchPolicy, GenerationPolicy, RecordExistsAction, WritePolicy};
+    use crate::{Key, Value};
+
+    // 0x8 asks the server for the key-specific error code when an error stops a
+    // batch response (Java CLIENT-1720). Java sets it unconditionally; without
+    // it the batch reports a generic failure for the whole response.
+    #[test]
+    fn batch_flags_always_request_key_specific_errors() {
+        let mut policy = BatchPolicy {
+            allow_inline: false,
+            allow_inline_ssd: false,
+            respond_all_keys: false,
+            ..BatchPolicy::default()
+        };
+        assert_eq!(Buffer::get_batch_flags(&policy), 0x8);
+
+        policy.allow_inline = true;
+        assert_eq!(Buffer::get_batch_flags(&policy), 0x8 | 0x1);
+
+        policy.allow_inline_ssd = true;
+        policy.respond_all_keys = true;
+        assert_eq!(Buffer::get_batch_flags(&policy), 0x8 | 0x4 | 0x2 | 0x1);
+    }
+
+    // A UDF execute is a write and must use the write header: the base-policy
+    // header zeroes bytes 11..26 (dropping record_exists_action, generation,
+    // commit_level, durable_delete) and writes `read_touch_ttl` where the
+    // policy's `expiration` belongs.
+    #[test]
+    fn udf_execute_uses_the_write_header() {
+        let mut policy = WritePolicy::default();
+        policy.expiration = crate::policy::Expiration::Seconds(1234);
+        policy.durable_delete = true;
+        policy.record_exists_action = RecordExistsAction::UpdateOnly;
+        policy.generation_policy = GenerationPolicy::ExpectGenEqual;
+        policy.generation = 7;
+
+        let key = Key::new("ns", "set", Value::from(1)).unwrap();
+        let mut buf = Buffer::new(0);
+        buf.set_udf(&policy, &key, "pkg", "fun", None).unwrap();
+
+        assert_eq!(
+            buf.data_buffer[10] & (INFO2_WRITE | INFO2_DURABLE_DELETE | INFO2_GENERATION),
+            INFO2_WRITE | INFO2_DURABLE_DELETE | INFO2_GENERATION,
+            "info2 must carry the write policy's flags"
+        );
+        assert_eq!(
+            buf.data_buffer[11] & INFO3_UPDATE_ONLY,
+            INFO3_UPDATE_ONLY,
+            "info3 must carry record_exists_action"
+        );
+        assert_eq!(
+            NetworkEndian::read_u32(&buf.data_buffer[14..18]),
+            7,
+            "generation must be sent"
+        );
+        assert_eq!(
+            NetworkEndian::read_u32(&buf.data_buffer[18..22]),
+            1234,
+            "the TTL slot must carry the policy's expiration, not read_touch_ttl"
+        );
+    }
+
+    // Records whose per-record header repeats the previous one go on the wire as
+    // the REPEAT flag instead of a full header. Both batches below encode the
+    // same eight keys with the same op payload — only the *values* differ, so
+    // every per-record cost is identical and the whole size delta is the repeat
+    // saving. While `match_header` was stubbed to `false`, the two were equal.
+    #[test]
+    fn identical_batch_writes_encode_as_repeats() {
+        use crate::batch::{BatchOperation, BatchWritePolicy};
+        use crate::operations;
+
+        fn encode(values: &[i64]) -> usize {
+            let wpolicy = BatchWritePolicy::default();
+            let ops: Vec<(BatchOperation, usize)> = values
+                .iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    let key = Key::new("ns", "set", Value::from(i as i64)).unwrap();
+                    let bin = crate::Bin::new("a".to_string(), Value::from(*v));
+                    (
+                        BatchOperation::write(&wpolicy, key, vec![operations::put(&bin)]),
+                        i,
+                    )
+                })
+                .collect();
+
+            let mut buf = Buffer::new(0);
+            buf.set_batch_operate(&BatchPolicy::default(), &ops).unwrap();
+            // `end()` rewinds `data_offset`, so the command's size is the buffer
+            // `size_buffer()` sized for it.
+            buf.data_buffer.len()
+        }
+
+        let repeated = encode(&[1, 1, 1, 1, 1, 1, 1, 1]);
+        let distinct = encode(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert!(
+            repeated < distinct,
+            "identical records must compress: repeated={0} distinct={1}",
+            repeated,
+            distinct
+        );
+
+        // Seven of the eight records repeat. Each saves its full header — the
+        // 12-byte record header, the namespace and set fields with their 5-byte
+        // headers, and the bin payload — and pays one byte instead.
+        let saved_per_record = (distinct - repeated) / 7;
+        assert!(
+            saved_per_record >= 30,
+            "expected ~31+ bytes saved per repeated record, got {0}",
+            saved_per_record
+        );
+    }
+
+    // An f32 bin is stored as the 8-byte double particle, like every other
+    // float; this used to panic in `From<FloatValue> for f64`.
+    #[test]
+    fn f32_bin_writes_the_double_particle() {
+        let value = Value::from(1.5_f32);
+        let mut buf = Buffer::new(0);
+        buf.resize_buffer(value.estimate_size().unwrap()).unwrap();
+        buf.data_offset = 0;
+        value.write_to(&mut buf).unwrap();
+
+        assert_eq!(buf.data_buffer.len(), 8, "floats are 8-byte particles");
+        assert_eq!(
+            buf.data_buffer[0..8],
+            1.5_f64.to_be_bytes(),
+            "f32 must widen losslessly to the double particle"
+        );
+    }
+
+    /// Every `as_msg_field` declares a size that matches what follows it.
+    ///
+    /// A server walks fields by following each header to the next, so an
+    /// overstated size on any field but the last silently swallows the ones
+    /// after it — and on the last it runs off the end of the message. The C
+    /// server never notices the last one, which is why this went unseen: the
+    /// batch-index field is written last, and its size was computed from the
+    /// end of the *message header* rather than from the field's own offset.
+    /// Anything written in between — a filter expression — made it overstate
+    /// by exactly that much.
+    #[test]
+    fn a_batch_with_a_filter_declares_the_right_field_size() {
+        use crate::expressions as exp;
+        use crate::{BatchOperation, BatchReadPolicy, Bins};
+
+        let key = Key::new("test", "demo", Value::from(1)).unwrap();
+        let ops = vec![(
+            BatchOperation::read(&BatchReadPolicy::default(), key, Bins::All),
+            0usize,
+        )];
+
+        for filter in [
+            None,
+            Some(exp::ge(exp::int_bin("n".to_string()), exp::int_val(0))),
+        ] {
+            let described = if filter.is_some() {
+                "with a filter expression"
+            } else {
+                "without one"
+            };
+            let policy = BatchPolicy {
+                filter_expression: filter,
+                ..BatchPolicy::default()
+            };
+
+            let mut buf = Buffer::new(0);
+            buf.set_batch_operate(&policy, &ops).expect("encodes");
+
+            // `end()` rewinds `data_offset` to the proto header it just wrote,
+            // so the message runs from there for as far as that header says.
+            let proto = NetworkEndian::read_u64(&buf.data_buffer[..8]);
+            let msg_len = (proto & 0x0000_ffff_ffff_ffff) as usize;
+            let msg = &buf.data_buffer[8..8 + msg_len];
+
+            // Walk the fields the way a server does: each header says how far
+            // to the next one.
+            let n_fields = NetworkEndian::read_u16(&msg[18..20]) as usize;
+            let mut at = MSG_TOTAL_HEADER_SIZE as usize - 8;
+
+            for i in 0..n_fields {
+                assert!(at + 4 <= msg.len(), "{}", format!("field {i} header runs past the message, {described}"));
+                let sz = NetworkEndian::read_u32(&msg[at..at + 4]) as usize;
+                assert!(sz >= 1, "{}", format!("field {i} declares no room for its own type byte, {described}"));
+                at += 4 + sz;
+                assert!(
+                    at <= msg.len(),
+                    "field {i} declares {sz} bytes but only {} remain, {described}",
+                    msg.len().saturating_sub(at - sz),
+                );
+            }
+
+            // And the walk lands exactly on the end of the fields, which is
+            // where the operations would start. Overstating leaves it past the
+            // end; understating leaves it short.
+            assert_eq!(
+                at,
+                msg.len(),
+                "walking the fields did not land on the end of the message, {described}"
+            );
+        }
     }
 }

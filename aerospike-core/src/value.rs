@@ -46,27 +46,18 @@ pub enum FloatValue {
     F64(u64),
 }
 
+// `f32 -> f64` is lossless and is what the wire already does for an F32 bin,
+// so the conversion widens rather than refusing: the public `From`, the
+// public `TryFrom<Value>`, and the particle writer all agree on `as_f64`.
 impl From<FloatValue> for f64 {
     fn from(val: FloatValue) -> f64 {
-        match val {
-            FloatValue::F32(_) => panic!(
-                "This library does not automatically convert f32 -> f64 to be used in keys \
-                 or bins."
-            ),
-            FloatValue::F64(val) => f64::from_bits(val),
-        }
+        val.as_f64()
     }
 }
 
 impl From<&FloatValue> for f64 {
     fn from(val: &FloatValue) -> f64 {
-        match *val {
-            FloatValue::F32(_) => panic!(
-                "This library does not automatically convert f32 -> f64 to be used in keys \
-                 or bins."
-            ),
-            FloatValue::F64(val) => f64::from_bits(val),
-        }
+        val.as_f64()
     }
 }
 
@@ -90,11 +81,26 @@ impl From<&f64> for FloatValue {
     }
 }
 
+impl FloatValue {
+    /// Widen to `f64` for the wire, where every float is an 8-byte double
+    /// particle. `f32 -> f64` is lossless (matches the Java client, which
+    /// stores both Float and Double bins as doubles).
+    pub(crate) const fn as_f64(&self) -> f64 {
+        match *self {
+            FloatValue::F32(bits) => f32::from_bits(bits) as f64,
+            FloatValue::F64(bits) => f64::from_bits(bits),
+        }
+    }
+}
+
+// Narrowing an F64 is a numeric cast of the value, not of its bit pattern:
+// `f32::from_bits(bits as u32)` kept the low 32 bits of the double's encoding
+// and reinterpreted them as a float, which is unrelated to the number stored.
 impl From<FloatValue> for f32 {
     fn from(val: FloatValue) -> f32 {
         match val {
-            FloatValue::F32(val) => f32::from_bits(val),
-            FloatValue::F64(val) => f32::from_bits(val as u32),
+            FloatValue::F32(bits) => f32::from_bits(bits),
+            FloatValue::F64(bits) => f64::from_bits(bits) as f32,
         }
     }
 }
@@ -102,8 +108,8 @@ impl From<FloatValue> for f32 {
 impl From<&FloatValue> for f32 {
     fn from(val: &FloatValue) -> f32 {
         match *val {
-            FloatValue::F32(val) => f32::from_bits(val),
-            FloatValue::F64(val) => f32::from_bits(val as u32),
+            FloatValue::F32(bits) => f32::from_bits(bits),
+            FloatValue::F64(bits) => f64::from_bits(bits) as f32,
         }
     }
 }
@@ -239,8 +245,24 @@ impl Value {
 
     /// Return the particle type for the value used in the wire protocol.
     /// For internal use only.
-    pub fn particle_type(&self) -> ParticleType {
-        match *self {
+    /// # Errors
+    ///
+    /// [`Infinity`](Value::Infinity) and [`Wildcard`](Value::Wildcard) have no
+    /// particle type: they exist only inside msgpack payloads, as CDT and
+    /// expression bounds, where the encoder writes them directly and never asks
+    /// for a particle code. Reaching here means one was handed to the client as
+    /// an ordinary bin value or record key, which is a caller mistake — Java
+    /// reports the same case as `PARAMETER_ERROR` from `Value.getType()`.
+    ///
+    /// This used to be `unreachable!()`, so either value killed the process.
+    /// The panic is the return path here: there is no `ParticleType` that
+    /// safely means "has no particle type", and a placeholder would trade a
+    /// loud abort for a silent buffer-size mismatch, since `estimate_size`
+    /// reports 0 for these while `write_to` packs real bytes. Failing in
+    /// `particle_type`, which every particle path calls before `write_to`, is
+    /// what keeps that unreachable.
+    pub(crate) fn particle_type(&self) -> Result<ParticleType> {
+        let ptype = match *self {
             Value::Nil => ParticleType::NULL,
             Value::Int(_) => ParticleType::INTEGER,
             Value::Float(_) => ParticleType::FLOAT,
@@ -251,7 +273,47 @@ impl Value {
             Value::HashMap(_) | Value::OrderedMap(_) | Value::KeyValueList(_) => ParticleType::MAP,
             Value::GeoJSON(_) => ParticleType::GEOJSON,
             Value::HLL(_) => ParticleType::HLL,
-            Value::Infinity | Value::Wildcard => unreachable!(),
+            Value::Infinity => {
+                return Err(Error::InvalidArgument(
+                    "Invalid particle type: INF. Infinity is only valid inside a \
+                     collection or expression bound, not as a bin value or key."
+                        .to_string(),
+                ))
+            }
+            Value::Wildcard => {
+                return Err(Error::InvalidArgument(
+                    "Invalid particle type: wildcard. A wildcard is only valid inside \
+                     a collection or expression bound, not as a bin value or key."
+                        .to_string(),
+                ))
+            }
+        };
+
+        Ok(ptype)
+    }
+
+    /// Short label naming this value's type, for diagnostics.
+    ///
+    /// Unlike [`particle_type`](Self::particle_type) this never fails, so error
+    /// messages about an unexpected value can name it even when the value is one
+    /// that has no particle type at all.
+    pub(crate) const fn type_label(&self) -> &'static str {
+        match *self {
+            Value::Nil => "nil",
+            Value::Bool(_) => "bool",
+            Value::Int(_) => "int",
+            Value::Float(_) => "float",
+            Value::String(_) => "string",
+            Value::Blob(_) => "blob",
+            Value::List(_) => "list",
+            Value::MultiResult(_) => "multi-result",
+            Value::HashMap(_) => "map",
+            Value::OrderedMap(_) => "ordered map",
+            Value::KeyValueList(_) => "key-value list",
+            Value::GeoJSON(_) => "geo-json",
+            Value::HLL(_) => "hll",
+            Value::Infinity => "INF",
+            Value::Wildcard => "wildcard",
         }
     }
 
@@ -307,7 +369,7 @@ impl Value {
             Value::Nil => 0,
             Value::Int(ref val) => buf.write_i64(*val),
             Value::Bool(ref val) => buf.write_bool(*val),
-            Value::Float(ref val) => buf.write_f64(f64::from(val)),
+            Value::Float(ref val) => buf.write_f64(val.as_f64()),
             Value::String(ref val) => buf.write_str(val),
             Value::Blob(ref val) | Value::HLL(ref val) => buf.write_bytes(val),
             Value::MultiResult(_) => {
@@ -558,9 +620,25 @@ impl From<i64> for Value {
     }
 }
 
+/// The server has no native u64 type: values that fit in an `i64` are stored
+/// losslessly as `INTEGER`, but a value past `i64::MAX` would silently wrap to a
+/// negative integer (`u64::MAX` becomes `-1`), corrupting a key or bin. Reject
+/// that case rather than store the wrong value.
+fn u64_to_int_value(val: u64) -> Value {
+    assert!(
+        val <= i64::MAX as u64,
+        // Edition 2018: `assert!` does not capture `{val}`, so pass it positionally.
+        "Aerospike does not support u64 natively on server-side. Values up to \
+         i64::MAX store as INTEGER; {} is larger, so cast it explicitly or use a \
+         string/blob representation.",
+        val
+    );
+    Value::Int(val as i64)
+}
+
 impl From<u64> for Value {
     fn from(val: u64) -> Value {
-        Value::Int(val as i64)
+        u64_to_int_value(val)
     }
 }
 
@@ -620,7 +698,7 @@ impl<'a> From<&'a i64> for Value {
 
 impl<'a> From<&'a u64> for Value {
     fn from(val: &'a u64) -> Value {
-        Value::Int(*val as i64)
+        u64_to_int_value(*val)
     }
 }
 
@@ -667,7 +745,7 @@ impl TryFrom<Value> for String {
             Value::String(v) | Value::GeoJSON(v) => Ok(v),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
-                val.particle_type(),
+                val.type_label(),
                 std::any::type_name::<Self>()
             )),
         }
@@ -681,7 +759,7 @@ impl TryFrom<Value> for Vec<u8> {
             Value::Blob(v) | Value::HLL(v) => Ok(v),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
-                val.particle_type(),
+                val.type_label(),
                 std::any::type_name::<Self>()
             )),
         }
@@ -695,7 +773,7 @@ impl TryFrom<Value> for Vec<Value> {
             Value::List(v) | Value::MultiResult(v) => Ok(v),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
-                val.particle_type(),
+                val.type_label(),
                 std::any::type_name::<Self>()
             )),
         }
@@ -710,7 +788,7 @@ impl TryFrom<Value> for HashMap<Value, Value> {
             Value::HashMap(v) => Ok(v),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
-                val.particle_type(),
+                val.type_label(),
                 std::any::type_name::<Self>()
             )),
         }
@@ -724,7 +802,7 @@ impl TryFrom<Value> for BTreeMap<Value, Value> {
             Value::OrderedMap(v) => Ok(v),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
-                val.particle_type(),
+                val.type_label(),
                 std::any::type_name::<Self>()
             )),
         }
@@ -738,7 +816,7 @@ impl TryFrom<Value> for Vec<(Value, Value)> {
             Value::KeyValueList(v) => Ok(v),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
-                val.particle_type(),
+                val.type_label(),
                 std::any::type_name::<Self>()
             )),
         }
@@ -749,10 +827,10 @@ impl TryFrom<Value> for f64 {
     type Error = String;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
-            Value::Float(v) => Ok(f64::from(v)),
+            Value::Float(v) => Ok(v.as_f64()),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
-                val.particle_type(),
+                val.type_label(),
                 std::any::type_name::<Self>()
             )),
         }
@@ -1044,9 +1122,56 @@ impl<K: Eq + Hash, V> MapLike<K, V> for HashMap<K, V> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Narrowing an F64 to f32 must cast the number, not its bit pattern. The
+    /// old `f32::from_bits(bits as u32)` kept the low 32 bits of the double's
+    /// encoding: for 2.25 (0x4002_0000_0000_0000) those are all zero, so it
+    /// returned 0.0 for a value that is exactly representable in f32.
+    #[test]
+    fn f64_float_values_narrow_to_f32_by_value_not_by_bits() {
+        let exact = crate::value::FloatValue::from(2.25f64);
+        assert_eq!(f32::from(exact.clone()), 2.25f32);
+        assert_eq!(f32::from(&exact), 2.25f32);
+        // The bit-truncation the old code performed, shown to be a different answer.
+        assert_eq!(f32::from_bits(2.25f64.to_bits() as u32), 0.0f32);
+
+        // A value that is not exact in f32 rounds the way `as f32` does.
+        let inexact = crate::value::FloatValue::from(0.1f64);
+        assert_eq!(f32::from(&inexact), 0.1f64 as f32);
+
+        // F32 -> f32 is untouched.
+        let single = crate::value::FloatValue::from(1.5f32);
+        assert_eq!(f32::from(single.clone()), 1.5f32);
+        assert_eq!(f32::from(&single), 1.5f32);
+    }
+
+    /// `f32 -> f64` is lossless, and an F32 bin is already written to the
+    /// server as a double, so every public conversion must widen the same
+    /// way. The `From` impls used to panic on F32 while `TryFrom<Value>` and
+    /// the wire path widened.
+    #[test]
+    fn f32_float_values_widen_to_f64_on_every_path() {
+        let f32_val = crate::value::FloatValue::from(1.5f32);
+        let f64_val = crate::value::FloatValue::from(2.25f64);
+
+        assert_eq!(f64::from(f32_val.clone()), 1.5);
+        assert_eq!(f64::from(&f32_val), 1.5);
+        assert_eq!(f64::from(f64_val.clone()), 2.25);
+        assert_eq!(f64::from(&f64_val), 2.25);
+
+        // ...and agree with the fallible Value conversion and the wire helper.
+        assert_eq!(f64::try_from(crate::Value::Float(f32_val.clone())), Ok(1.5));
+        assert_eq!(f64::from(&f32_val), f32_val.as_f64());
+
+        // Widening is exact: the f32's value round-trips bit-for-bit through f64.
+        let x = 0.1f32;
+        assert_eq!(f64::from(crate::value::FloatValue::from(x)), f64::from(x));
+    }
     use super::Value;
+    use crate::commands::ParticleType;
+    use crate::errors::Error;
     use std::collections::{BTreeMap, HashMap};
-    use std::convert::TryInto;
+    use std::convert::{TryFrom, TryInto};
 
     #[test]
     fn try_into() {
@@ -1102,7 +1227,7 @@ mod tests {
         let json = serde_json::to_string(&val);
         assert_eq!(
             json.unwrap(),
-            "[null,\"0\",9,8,7,1,4611911198408756429,-1,[5,6,7,8,\"asd\"],true,false]",
+            "[null,\"0\",9,8,7,1,2.1,-1,[5,6,7,8,\"asd\"],true,false]",
             "List Serialization failed"
         );
 
@@ -1111,5 +1236,62 @@ mod tests {
         let json = serde_json::to_string(&val);
         // We only check for the len of the String because HashMap serialization does not keep the key order. Comparing like the list above is not possible.
         assert_eq!(json.unwrap().len(), 48, "Map Serialization failed");
+    }
+
+    #[test]
+    fn particle_type_rejects_infinity_and_wildcard() {
+        // These have no particle type: they are msgpack-only bounds. Asking for
+        // one used to abort the process through `unreachable!()`.
+        for value in [Value::Infinity, Value::Wildcard] {
+            let err = value
+                .particle_type()
+                .expect_err("INF/wildcard have no particle type");
+            assert!(
+                matches!(err, Error::InvalidArgument(_)),
+                "expected InvalidArgument for {:?}, got {:?}",
+                value,
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn particle_type_still_answers_for_every_storable_value() {
+        // The guard must not have swallowed the ordinary cases.
+        for (value, want) in [
+            (Value::Nil, ParticleType::NULL),
+            (Value::Bool(true), ParticleType::BOOL),
+            (Value::Int(1), ParticleType::INTEGER),
+            (Value::from(1.5_f64), ParticleType::FLOAT),
+            (Value::from("s"), ParticleType::STRING),
+            (Value::Blob(vec![1]), ParticleType::BLOB),
+            (Value::List(vec![Value::Int(1)]), ParticleType::LIST),
+            (Value::HLL(vec![1]), ParticleType::HLL),
+            (Value::GeoJSON("{}".to_string()), ParticleType::GEOJSON),
+        ] {
+            assert_eq!(
+                value.particle_type().unwrap() as u8,
+                want as u8,
+                "wrong particle type for {:?}",
+                value
+            );
+        }
+
+        let map: Value = as_map!("a" => 1);
+        assert_eq!(map.particle_type().unwrap() as u8, ParticleType::MAP as u8);
+    }
+
+    #[test]
+    fn type_label_names_every_variant_including_the_typeless_ones() {
+        // Used by the TryFrom error messages, which must be able to name a value
+        // that has no particle type at all.
+        assert_eq!(Value::Infinity.type_label(), "INF");
+        assert_eq!(Value::Wildcard.type_label(), "wildcard");
+        assert_eq!(Value::Int(1).type_label(), "int");
+        assert_eq!(Value::Nil.type_label(), "nil");
+
+        // And the messages themselves still render.
+        let err = String::try_from(Value::Infinity).expect_err("INF is not a string");
+        assert!(err.contains("INF"), "unhelpful message: {}", err);
     }
 }

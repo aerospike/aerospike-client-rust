@@ -169,6 +169,46 @@ async fn role_management() {
     assert_eq!(role.read_quota, 1000);
     assert_eq!(role.write_quota, 5000);
 
+    /* SET ALLOWLIST */
+    // A round trip through the server, which is what the four allowlist wire bugs
+    // needed to show up: a wrong field id, a leading comma, a read that ran past
+    // the field, and an empty list that could not clear. Two addresses, so the
+    // separator is exercised too.
+    let allowlist = vec!["10.0.0.1", "10.0.0.2"];
+    client
+        .set_allowlist(&admin_policy, ROLE, &allowlist)
+        .await
+        .unwrap();
+
+    sleep(Duration::from_secs(1)).await;
+
+    let roles = client.query_roles(&admin_policy, None).await.unwrap();
+    let role = roles.iter().find(|r| r.name == ROLE).unwrap();
+    assert_eq!(
+        role.allowlist, allowlist,
+        "the allowlist must survive the round trip, in order"
+    );
+    // Quotas are next to the allowlist on the wire; a mis-tagged allowlist field
+    // landed on READ_QUOTA, so check they are untouched.
+    assert_eq!(role.read_quota, 1000);
+    assert_eq!(role.write_quota, 5000);
+
+    /* CLEAR ALLOWLIST */
+    client
+        .set_allowlist(&admin_policy, ROLE, &[])
+        .await
+        .unwrap();
+
+    sleep(Duration::from_secs(1)).await;
+
+    let roles = client.query_roles(&admin_policy, None).await.unwrap();
+    let role = roles.iter().find(|r| r.name == ROLE).unwrap();
+    assert_eq!(
+        role.allowlist.len(),
+        0,
+        "an empty allowlist clears it rather than failing"
+    );
+
     /* REVOKE PRIVILEGES */
     client.drop_role(&admin_policy, ROLE).await.unwrap();
     sleep(Duration::from_secs(1)).await;

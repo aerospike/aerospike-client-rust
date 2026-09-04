@@ -20,11 +20,14 @@ use futures::stream::StreamExt;
 use aerospike_core::Recordset;
 
 mod admin;
+mod backoff;
 mod batch;
+mod batch_random;
 mod cdt_bitwise;
 mod cdt_list;
 mod cdt_map;
 mod cleanup;
+mod cluster;
 mod connection_seed;
 mod exp;
 mod exp_bitwise;
@@ -35,6 +38,7 @@ mod exp_op;
 mod hll;
 mod index;
 mod kv;
+mod perf_e2e;
 mod query;
 mod scan;
 #[cfg(feature = "serialization")]

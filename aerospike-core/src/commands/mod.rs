@@ -55,6 +55,7 @@ pub use self::write_command::WriteCommand;
 use crate::cluster::Node;
 use crate::errors::{Error, Result};
 use crate::net::Connection;
+use crate::ResultCode;
 
 // Command interface describes all commands available
 #[async_trait::async_trait]
@@ -69,10 +70,131 @@ pub trait Command {
     fn can_recover_connection(&mut self) -> bool;
 }
 
+/// Pacing sleep between acquisition attempts while the node's connection
+/// pool is exhausted (every allowed connection exists and is in flight).
+/// Connections are opened inline on this branch, so the wait is for another
+/// task to *return* a connection to the pool. Pool-empty waits consume
+/// neither the retry budget nor the node's error-rate breaker (see the retry
+/// loops), so this constant bounds how hot the wait loop runs; the wait
+/// itself is bounded by the command deadline plus [`POOL_EMPTY_MAX_WAITS`].
+pub const POOL_EMPTY_WAIT: std::time::Duration = std::time::Duration::from_millis(1);
+
+/// Upper bound on consecutive pool-empty waits for commands without a total
+/// timeout (`total_timeout == 0` means no deadline): ~5s at
+/// [`POOL_EMPTY_WAIT`] pacing. Beyond this the pool-empty error is handled
+/// like any other connection failure.
+pub const POOL_EMPTY_MAX_WAITS: usize = 5_000;
+
 pub const fn keep_connection(err: &Error) -> bool {
-    matches!(err, Error::ServerError(_, _, _) | Error::Timeout(_))
+    match err {
+        Error::ServerError(rc, _, _)
+        | Error::BatchError(_, rc, _, _)
+        | Error::BatchLastError(_, rc, _, _) => {
+            !matches!(rc, ResultCode::ScanAbort | ResultCode::QueryAborted)
+        }
+        Error::Timeout(_) => true,
+        _ => false,
+    }
 }
 
 pub const fn is_network_error(err: &Error) -> bool {
     matches!(err, Error::Connection(_) | Error::Timeout(_))
+}
+
+/// Server-reported result codes that are safe to retry on (TIMEOUT,
+/// `DEVICE_OVERLOAD`, `KEY_BUSY`). We also treat `PartitionUnavailable` as
+/// retriable so callers eventually see the partition recover from a
+/// transitional state.
+pub const fn is_retriable_server_error(err: &Error) -> bool {
+    match err {
+        Error::ServerError(rc, _, _)
+        | Error::BatchError(_, rc, _, _)
+        | Error::BatchLastError(_, rc, _, _) => matches!(
+            rc,
+            ResultCode::Timeout
+                | ResultCode::DeviceOverload
+                | ResultCode::KeyBusy
+                | ResultCode::PartitionUnavailable
+        ),
+        _ => false,
+    }
+}
+
+/// Overall retry gate: either a network failure or a retriable server error.
+pub const fn should_retry(err: &Error) -> bool {
+    is_network_error(err) || is_retriable_server_error(err)
+}
+
+/// Contract tests for the three predicates that gate retry + socket reuse.
+/// `Error::Connection` must be retriable 
+/// `Error::Io` must NOT be (regression guard — if someone re-introduces
+/// `Err(e.into())` at a socket site, the loopback tests catch the producer
+/// regression while these pin the predicate semantics).
+#[cfg(test)]
+mod tests_retry_predicates {
+    use super::*;
+    use crate::ResultCode;
+
+    fn conn_err() -> Error {
+        Error::Connection("read: early eof".into())
+    }
+    fn io_err() -> Error {
+        Error::Io(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "early eof",
+        ))
+    }
+    fn timeout_err() -> Error {
+        Error::Timeout("Timeout reading from the network connection".into())
+    }
+    fn server_err(rc: ResultCode) -> Error {
+        Error::ServerError(rc, false, String::new())
+    }
+
+    #[test]
+    fn is_network_error_contract() {
+        // (err, expected, label)
+        let cases: &[(Error, bool, &str)] = &[
+            (conn_err(),                              true,  "Error::Connection"),
+            (timeout_err(),                           true,  "Error::Timeout"),
+            (io_err(),                                false, "Error::Io — regression guard"),
+            (server_err(ResultCode::DeviceOverload),  false, "server error is not a network error"),
+        ];
+        for (err, expected, label) in cases {
+            assert_eq!(is_network_error(err), *expected, "{label}: err={err:?}");
+        }
+    }
+
+    #[test]
+    fn should_retry_contract() {
+        let cases: &[(Error, bool, &str)] = &[
+            (conn_err(),                                true,  "Connection retries"),
+            (timeout_err(),                             true,  "Timeout retries"),
+            (io_err(),                                  false, "Io does NOT retry"),
+            (server_err(ResultCode::Timeout),           true,  "server TIMEOUT retries"),
+            (server_err(ResultCode::DeviceOverload),    true,  "DEVICE_OVERLOAD retries"),
+            (server_err(ResultCode::KeyBusy),           true,  "KEY_BUSY retries"),
+            (server_err(ResultCode::PartitionUnavailable), true, "PARTITION_UNAVAILABLE retries"),
+            (server_err(ResultCode::KeyNotFoundError),  false, "KEY_NOT_FOUND does NOT retry"),
+            (server_err(ResultCode::ParameterError),    false, "PARAMETER_ERROR does NOT retry"),
+        ];
+        for (err, expected, label) in cases {
+            assert_eq!(should_retry(err), *expected, "{label}: err={err:?}");
+        }
+    }
+
+    #[test]
+    fn keep_connection_contract() {
+        // true = keep, false = drop (caller calls invalidate)
+        let cases: &[(Error, bool, &str)] = &[
+            (conn_err(),                               false, "Connection: socket broken — drop"),
+            (timeout_err(),                            true,  "Timeout: deadline elapsed, socket may recover — keep"),
+            (io_err(),                                 false, "Io: conservative drop"),
+            (server_err(ResultCode::KeyNotFoundError), true,  "ordinary server error: response complete — keep"),
+            (server_err(ResultCode::ScanAbort),        false, "ScanAbort: stream mid-frame — drop"),
+        ];
+        for (err, expected, label) in cases {
+            assert_eq!(keep_connection(err), *expected, "{label}: err={err:?}");
+        }
+    }
 }

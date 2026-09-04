@@ -185,6 +185,21 @@ pub struct ClientPolicy {
     /// Application id is used to identify an application so that client operations can be correlated
     /// with server side metrics.
     pub application_id: Option<String>,
+
+    /// Maximum number of errors (network errors + server-side `TIMEOUT`,
+    /// `DEVICE_OVERLOAD`, `KEY_BUSY`) tolerated against a single node
+    /// within one `error_rate_window`. Once the count exceeds this
+    /// threshold the client trips a per-node circuit breaker and rejects
+    /// further commands targeted at that node with `ResultCode::MaxErrorRate`
+    /// until the next reset. Set to `0` to disable the breaker entirely.
+    /// Mirrors Java `ClientPolicy.maxErrorRate` (default 100).
+    pub max_error_rate: usize,
+
+    /// Number of cluster tend iterations after which each node's error
+    /// counter is reset. Smaller values make the breaker more aggressive
+    /// (tighter recovery), larger values make it more lenient. Mirrors
+    /// Java `ClientPolicy.errorRateWindow` (default 1).
+    pub error_rate_window: usize,
 }
 
 impl Default for ClientPolicy {
@@ -204,6 +219,8 @@ impl Default for ClientPolicy {
             buffer_reclaim_threshold: 65536,
             rack_ids: None,
             application_id: None,
+            max_error_rate: 100,
+            error_rate_window: 1,
 
             #[cfg(feature = "tls")]
             tls_config: None,

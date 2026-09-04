@@ -36,7 +36,7 @@ use crate::operations::exp::ExpOperation;
 use crate::Result;
 use crate::Value;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OperationType {
     Read = 1,
     Write = 2,
@@ -55,7 +55,7 @@ pub(crate) enum OperationType {
     HllWrite = 16,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum OperationData {
     None,
     Value(Value),
@@ -66,7 +66,7 @@ pub(crate) enum OperationData {
     EXPOp(ExpOperation),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum OperationBin {
     None,
     All,
@@ -74,7 +74,7 @@ pub(crate) enum OperationBin {
 }
 
 /// Database operation definition. This data type is used in the client's `operate()` method.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Operation {
     // OpType determines type of operation.
     pub(crate) op: OperationType,
@@ -139,7 +139,7 @@ impl Operation {
                 size += self.write_op_header_to(buffer, ParticleType::NULL as u8);
             }
             OperationData::Value(value) => {
-                size += self.write_op_header_to(buffer, value.particle_type() as u8);
+                size += self.write_op_header_to(buffer, value.particle_type()? as u8);
                 size += value.write_to(buffer)?;
             }
             OperationData::CdtListOp(ref cdt_op)

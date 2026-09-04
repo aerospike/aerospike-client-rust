@@ -114,6 +114,58 @@ impl ToHosts for &str {
 mod tests {
     use super::{Host, ToHosts};
 
+    const CLOUD_TLS_NAME: &str = "6072bb5c-b902-4cbd-888c-cc63e71192f7.amstest.internal";
+
+    fn assert_tls_host(seed: &str, expected_name: &str, expected_tls: &str, expected_port: u16) {
+        let hosts = seed.to_hosts().unwrap_or_else(|e| {
+            panic!(
+                "expected `{}` to parse as host:tls_name:port, got: {:?}",
+                seed, e
+            )
+        });
+        assert_eq!(
+            hosts,
+            vec![Host::new_tls(expected_name, expected_tls, expected_port)],
+            "unexpected parse for `{seed}`"
+        );
+    }
+
+    /// Control: letter-first `tls_name` already parses (QE-1025 TEST 2).
+    #[test]
+    fn tls_name_letter_first_parses_host_tls_port() {
+        assert_tls_host(
+            "node.example.com:abc.example.com:4000",
+            "node.example.com",
+            "abc.example.com",
+            4000,
+        );
+    }
+
+    /// QE-1025 TEST 1: digit-first `tls_name` must not be mistaken for a port.
+    #[test]
+    fn tls_name_digit_first_parses_host_tls_port() {
+        assert_tls_host(
+            "node.example.com:6abc.example.com:4000",
+            "node.example.com",
+            "6abc.example.com",
+            4000,
+        );
+    }
+
+    /// QE-1025 TEST 3: Aerospike Cloud UUID-style `tls_name` (`host` == `tls_name`).
+    #[test]
+    fn tls_name_cloud_uuid_hostname_parses_host_tls_port() {
+        let seed = format!("{CLOUD_TLS_NAME}:{CLOUD_TLS_NAME}:4000");
+        assert_tls_host(&seed, CLOUD_TLS_NAME, CLOUD_TLS_NAME, 4000);
+    }
+
+    /// Bare host:port must still parse when the port starts with a digit.
+    #[test]
+    fn host_port_without_tls_name_still_parses() {
+        let hosts = "node.example.com:4000".to_hosts().unwrap();
+        assert_eq!(hosts, vec![Host::new("node.example.com", 4000)]);
+    }
+
     #[test]
     fn to_hosts() {
         assert_eq!(

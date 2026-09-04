@@ -1215,6 +1215,7 @@ impl Client {
 
         let recordset = Arc::new(Recordset::new(
             policy.record_queue_size,
+            policy.max_records,
             usize::MAX, // will be reset later
             tracker.clone(),
         ));
@@ -1400,6 +1401,9 @@ impl Client {
     ) {
         let namespace = statement.namespace.clone();
         loop {
+            // Only the tokio arm below can observe a timeout and set this; the
+            // async-std arm never writes it, so `mut` is unused there.
+            #[cfg_attr(feature = "rt-async-std", allow(unused_mut))]
             let mut timed_out = false;
             {
                 let mut tracker_locked = tracker.lock().await;
@@ -1478,7 +1482,8 @@ impl Client {
                         Ok(errs) => {
                             for err in errs {
                                 match err {
-                                    Err(Error::Timeout(_) | Error::Io(_)) => timed_out = true,
+                                    // Socket I/O errors now surface as Error::Connection (was Error::Io).
+                                    Err(Error::Timeout(_) | Error::Io(_) | Error::Connection(_)) => timed_out = true,
                                     Err(e) => {
                                         tracker.lock().await.partition_error().await;
                                         err_recordset.err(e).await;

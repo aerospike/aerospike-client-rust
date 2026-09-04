@@ -25,7 +25,7 @@ lazy_static = "1.5"
 thiserror = "2.0.18"
 pwhash = "1.0"
 serde = { version = "1.0", features = ["derive"], optional = true }
-aerospike-rt = { path = "../aerospike-rt", version = "2.1.0" }
+aerospike-rt = { path = "../aerospike-rt", version = "2.2.0" }
 futures = { version = "0.3.32" }
 async-trait = "0.1.89"
 rhexdump = "0.2.0"
@@ -33,12 +33,19 @@ regex = "1"
 tokio-rustls = { version = "0.26.4", optional = true }
 rustls = { version = "0.23.40", optional = true }
 async-channel = "2.5.0"
+# Borrowed, non-owning socket handle for the connection pool's liveness probe:
+# one implementation that works for tokio, async-std and the TLS inner stream,
+# with no `unsafe` and no fd ownership. Already in the tree via tokio.
+socket2 = "0.6"
 hazarc = "0.2.0"
 
 [features]
 serialization = ["serde"]
-rt-tokio = ["aerospike-rt/rt-tokio"]
-rt-async-std = ["aerospike-rt/rt-async-std"]
+# The aerospike-macro features pick the runtime for `#[aerospike_macro::test]`.
+# They used to come in via the `aerospike` facade dev-dependency, which also
+# forced rt-tokio and made rt-async-std test builds impossible.
+rt-tokio = ["aerospike-rt/rt-tokio", "aerospike-macro/rt-tokio"]
+rt-async-std = ["aerospike-rt/rt-async-std", "aerospike-macro/rt-async-std"]
 tls = ["rustls", "tokio-rustls"]
 sync = []
 
@@ -47,7 +54,10 @@ env_logger = "0.11"
 hex = "0.4"
 bencher = "0.1"
 serde_json = "1.0"
-aerospike = { path = "../" }
+# Do NOT dev-depend on the `aerospike` facade: its default features pull in
+# rt-tokio, and resolver-v1 unification then enables both runtimes on
+# aerospike-rt, so no rt-async-std test of this crate can compile. Doctests here
+# say `use aerospike::…` because this crate's own lib is named `aerospike`.
 aerospike-macro = {path = "../aerospike-macro"}
 lazy_static = "1.5"
 tokio = { version = "1.52.1", features = ["full"] }

@@ -320,6 +320,8 @@ pub fn pack_array_begin(buf: &mut Option<&mut Buffer>, length: usize) -> usize {
 pub fn pack_string_begin(buf: &mut Option<&mut Buffer>, length: usize) -> usize {
     if length < 32 {
         pack_half_byte(buf, 0xa0 | (length as u8))
+    } else if length < 256 {
+        pack_type_u8(buf, 0xd9, length as u8)
     } else if length < 1 << 16 {
         pack_type_u16(buf, 0xda, length as u16)
     } else {
@@ -405,6 +407,15 @@ pub fn pack_integer(buf: &mut Option<&mut Buffer>, value: i64) -> usize {
         9
     }
 }
+
+pub fn pack_type_u8(buf: &mut Option<&mut Buffer>, marker: u8, value: u8) -> usize {
+    if let Some(ref mut buf) = *buf {
+        buf.write_u8(marker);
+        buf.write_u8(value);
+    }
+    2
+}
+
 pub fn pack_type_u16(buf: &mut Option<&mut Buffer>, marker: u8, value: u16) -> usize {
     if let Some(ref mut buf) = *buf {
         buf.write_u8(marker);
