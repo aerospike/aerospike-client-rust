@@ -1,14 +1,22 @@
 //! Counts socket-level writes per request on the TLS path.
 //!
-//! `Connection::flush` does `write_all(buf).await?; flush().await` on a
-//! `tokio_rustls` stream. Nagle acts on kernel segments, so what matters is
-//! how many separate `write` syscalls rustls issues underneath that one
-//! logical request. One write is safe (measured: no stall). Two or more is
-//! the split-write shape that stalls for TCP_DELACK_MIN = 40ms.
+//! Evidence for `Connection::set_nodelay`. Nagle acts on kernel segments, so
+//! what matters is how many separate `write` syscalls rustls issues under one
+//! logical request. One write is safe; two or more consecutive writes with no
+//! read between them is the Nagle + delayed-ACK stall (`TCP_DELACK_MIN` =
+//! 40ms on Linux).
 //!
-//! This wraps the TcpStream in a counting adapter and reports the write
-//! sizes rustls actually emits, for payloads either side of the 16 KiB TLS
-//! record limit.
+//! The handshake is the smoking gun: rustls emits
+//! `change_cipher_spec` (6 bytes) and `Finished` (74 bytes) as consecutive
+//! socket writes — traced here as `W1460 R1803 W6 W74`. With Nagle on, the
+//! 6-byte segment goes out, the 74-byte one is pinned behind it, and the peer
+//! has nothing to answer yet, so both sides wait out the delayed-ACK timer.
+//! Every new TLS connection pays it (client init, pool growth, reconnect
+//! storms). Replay the latency half with `tools/nagle_probe.py`.
+//!
+//! This wraps the TcpStream in a counting adapter and reports the write sizes
+//! rustls actually emits, for payloads either side of the 16 KiB TLS record
+//! limit.
 //!
 //! Run:  cargo run --example tls_write_shape --features rt-tokio,tls
 

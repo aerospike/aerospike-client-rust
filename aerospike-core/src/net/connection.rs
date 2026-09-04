@@ -208,38 +208,12 @@ impl Connection {
 
     /// Sets `TCP_NODELAY` on a freshly opened socket (disables Nagle).
     ///
-    /// Nagle withholds a small segment while earlier small data is still
-    /// unacked, which deadlocks against the peer's delayed ACK: the server
-    /// holds its ACK waiting to piggyback a response it cannot produce until
-    /// the request arrives in full. Linux breaks the tie only when its
-    /// delayed-ACK timer expires — `TCP_DELACK_MIN`, 40ms.
-    ///
-    /// Every other Aerospike client sets it: Java `setTcpNoDelay(true)`,
-    /// C `setsockopt(TCP_NODELAY)` in `as_socket_create_fd`, C# `NoDelay`, Go
-    /// via its stdlib. The C client clears it *only* for fire-and-forget
-    /// pipeline sockets (`as_pipe.c`), so on is the protocol's intended
-    /// setting for request/response traffic rather than a tuning knob.
-    ///
-    /// Measured cost of leaving it unset, on Linux with a 1448-byte MSS:
-    ///
-    /// | path | Nagle on | `TCP_NODELAY` |
-    /// |------|----------|---------------|
-    /// | TLS connection setup | **41.4ms p50, 130/130 stalled** | 0.25ms |
-    /// | plain request, 64B–33KB | 0.05ms, 0 stalled | 0.05ms |
-    ///
-    /// TLS setup stalls because rustls writes `change_cipher_spec` (6 bytes)
-    /// and `Finished` (74 bytes) as two consecutive socket writes with no read
-    /// between them — traced as `W1460 R1803 W6 W74` by
-    /// `examples/tls_write_shape.rs`. The 6-byte segment goes out, then Nagle
-    /// pins the 74-byte one behind it, and the peer has nothing to answer yet,
-    /// so both sides wait out the delayed-ACK timer. Every new TLS connection
-    /// pays it: client init, pool growth, and reconnect storms after a
-    /// failover, which is the worst moment to add 41ms per socket.
-    ///
-    /// Plain-TCP commands are already safe and stay that way — a request goes
-    /// out as one contiguous `write_all` (see [`flush`](Self::flush)), and
-    /// Linux's Minshall variant of Nagle lets a trailing partial segment
-    /// follow full-size ones. Replay both halves with `tools/nagle_probe.py`.
+    /// Nagle withholds a small segment while earlier data is still unacked,
+    /// which stalls against the peer's delayed ACK until Linux's
+    /// `TCP_DELACK_MIN` (40ms) expires. Every other Aerospike client sets this
+    /// option: Java `setTcpNoDelay(true)`, C `setsockopt(TCP_NODELAY)` in
+    /// `as_socket_create_fd`, C# `NoDelay`, Go via its stdlib. The C client
+    /// clears it *only* for fire-and-forget pipeline sockets (`as_pipe.c`).
     ///
     /// Best-effort. A platform that refuses the option still yields a usable
     /// connection, so the error is dropped rather than failing the connect.
