@@ -39,6 +39,10 @@ type NodeBucket = (Arc<Node>, Vec<IndexedOp>);
 /// pairs, plus one `(node, range)` for every command that has to be sent.
 type NodeGroups = (Vec<IndexedOp>, Vec<(Arc<Node>, std::ops::Range<usize>)>);
 
+/// `NodeGroups` for a retry, plus the node each row (in the new order) was
+/// last sent to.
+type RetryGroups = (Vec<IndexedOp>, Vec<(Arc<Node>, std::ops::Range<usize>)>, Vec<Arc<Node>>);
+
 #[derive(Clone)]
 pub struct BatchOperateCommand {
     policy: BatchPolicy,
@@ -134,7 +138,7 @@ impl BatchOperateCommand {
                 // Routing each key through `cluster.get_node` instead repeated
                 // a hazard-pointer load and a namespace hash per key, every
                 // retry.
-                let mut nodes: Vec<Arc<Node>> = Vec::with_capacity(self.batch_ops.len());
+                let mut routed: Vec<Option<Arc<Node>>> = Vec::with_capacity(self.batch_ops.len());
                 let mut route_err: Option<Error> = None;
                 cluster.route_keys(
                     self.batch_ops
@@ -143,28 +147,34 @@ impl BatchOperateCommand {
                         .map(|((op, _), prev)| (op.key(), Some(prev.clone()))),
                     self.policy.replica,
                     |node| match node {
-                        Ok(node) => nodes.push(node),
+                        Ok(node) => routed.push(Some(node)),
                         Err(err) => {
+                            routed.push(None);
                             route_err.get_or_insert(err);
                         }
                     },
                 );
-                if let Some(err) = route_err {
-                    return Err(err);
+                // A key with no reachable replica is a per-key outcome, exactly
+                // as on the first-attempt split: it is stamped
+                // PARTITION_UNAVAILABLE and the rest of the group carries on.
+                // Failing the command here instead made the executor's `?`
+                // discard every other node's already-completed results — the
+                // whole batch lost, one level down and after the work was
+                // done, in precisely the disruption that caused the retry.
+                // Only a round with nothing routable at all fails outright.
+                if routed.iter().all(Option::is_none) {
+                    if let Some(err) = route_err {
+                        return Err(err);
+                    }
                 }
 
                 // `mem::take` hands the vector over by pointer; `drain(..)
                 // .collect()` built a second vector and moved every 568-byte
                 // operation into it first.
-                let (regrouped, ranges) =
-                    Self::group_by_node(std::mem::take(&mut self.batch_ops), nodes);
+                let (regrouped, ranges, tried) =
+                    Self::regroup_for_retry(std::mem::take(&mut self.batch_ops), routed, previous);
                 self.batch_ops = regrouped;
-                last_tried = Some(
-                    ranges
-                        .iter()
-                        .flat_map(|(node, range)| range.clone().map(move |_| node.clone()))
-                        .collect(),
-                );
+                last_tried = Some(tried);
 
                 // Run every group this round even if one fails — Java's
                 // sub-batches are independent — and keep the first retriable
@@ -292,6 +302,52 @@ impl BatchOperateCommand {
             ranges.push((node, start..regrouped.len()));
         }
         (regrouped, ranges)
+    }
+
+    /// Re-split a batch for a Sequence/PreferRack retry.
+    ///
+    /// `routed[i]` is where `ops[i]` goes this round, or `None` when no
+    /// replica could be reached for it; `previous[i]` is where it was last
+    /// sent. Routable rows are grouped per node exactly as on the first
+    /// attempt; unroutable rows are stamped `PARTITION_UNAVAILABLE` and placed
+    /// after the last range, so no group sends them, but they stay in the
+    /// command so the executor returns them at their input index.
+    ///
+    /// The returned `last_tried` is aligned to the new order. A stranded row
+    /// keeps its previous node, so if a later retry within the budget can
+    /// route it again the replica sequence resumes where it left off — and
+    /// the answer then overwrites the stamp, as any re-sent row's does.
+    fn regroup_for_retry(
+        ops: Vec<IndexedOp>,
+        routed: Vec<Option<Arc<Node>>>,
+        previous: &[Arc<Node>],
+    ) -> RetryGroups {
+        debug_assert_eq!(ops.len(), routed.len());
+        debug_assert_eq!(ops.len(), previous.len());
+
+        let mut routable: Vec<IndexedOp> = Vec::with_capacity(ops.len());
+        let mut nodes: Vec<Arc<Node>> = Vec::with_capacity(ops.len());
+        let mut stranded: Vec<(IndexedOp, Arc<Node>)> = Vec::new();
+        for (i, (mut pair, node)) in ops.into_iter().zip(routed).enumerate() {
+            if let Some(node) = node {
+                routable.push(pair);
+                nodes.push(node);
+            } else {
+                pair.0.set_result_code(ResultCode::PartitionUnavailable, false);
+                stranded.push((pair, previous[i].clone()));
+            }
+        }
+
+        let (mut regrouped, ranges) = Self::group_by_node(routable, nodes);
+        let mut tried: Vec<Arc<Node>> = ranges
+            .iter()
+            .flat_map(|(node, range)| range.clone().map(move |_| node.clone()))
+            .collect();
+        for (pair, prev) in stranded {
+            regrouped.push(pair);
+            tried.push(prev);
+        }
+        (regrouped, ranges, tried)
     }
 
     fn wrap_last_error(last_err: Option<Error>, timeout_err: Error) -> Error {
@@ -783,6 +839,80 @@ mod tests {
             .map(|k| BatchOperateCommand::queue_hint(&[pair(k)]))
             .collect();
         assert!(hints.len() > 1, "{}", format!("hint is constant across 63 distinct first keys: {hints:?}"));
+    }
+
+    /// On a retry re-split, a key with no reachable replica is stamped and set
+    /// aside instead of failing the command; the routable keys are grouped as
+    /// usual, and `last_tried` lines up with the new order.
+    #[test]
+    fn regroup_for_retry_strands_unroutable_keys_and_keeps_the_rest() {
+        let (a, b, old) = (node("A"), node("B"), node("OLD"));
+        let ops: Vec<_> = (0..5).map(pair).collect();
+        // 0 -> A, 1 -> unroutable, 2 -> B, 3 -> A, 4 -> unroutable
+        let routed = vec![Some(a.clone()), None, Some(b.clone()), Some(a.clone()), None];
+        let previous = vec![old.clone(); 5];
+
+        let (regrouped, ranges, tried) =
+            BatchOperateCommand::regroup_for_retry(ops, routed, &previous);
+
+        assert_eq!(regrouped.len(), 5, "every row is kept for the executor");
+        assert_eq!(tried.len(), 5, "last_tried aligned with the rows");
+
+        // The routable prefix is grouped per node and covered by the ranges.
+        let covered: usize = ranges.iter().map(|(_, r)| r.len()).sum();
+        assert_eq!(covered, 3, "ranges cover exactly the routable rows");
+        assert_eq!(ranges.last().unwrap().1.end, 3, "ranges stop before the stranded rows");
+        for (node, range) in &ranges {
+            for i in range.clone() {
+                let original = regrouped[i].1;
+                let expected = if original == 2 { &b } else { &a };
+                assert!(Arc::ptr_eq(node, expected), "row {original} in the wrong group");
+                assert!(Arc::ptr_eq(&tried[i], node), "last_tried must be the node the row went to");
+                assert!(regrouped[i].0.batch_record().result_code.is_none(), "routable rows are untouched");
+            }
+        }
+
+        // The stranded rows sit after every range, stamped, with their previous
+        // node carried so a later retry resumes the sequence.
+        let mut stranded: Vec<usize> = regrouped[3..].iter().map(|(_, i)| *i).collect();
+        stranded.sort_unstable();
+        assert_eq!(stranded, vec![1, 4]);
+        for i in 3..5 {
+            let br = regrouped[i].0.batch_record();
+            assert_eq!(br.result_code, Some(ResultCode::PartitionUnavailable));
+            assert!(!br.in_doubt, "an unsent row is never in doubt");
+            assert!(Arc::ptr_eq(&tried[i], &old));
+        }
+    }
+
+    #[test]
+    fn regroup_for_retry_with_everything_routable_matches_group_by_node() {
+        let (a, b) = (node("A"), node("B"));
+        let ops: Vec<_> = (0..4).map(pair).collect();
+        let nodes = vec![b.clone(), a.clone(), b.clone(), a.clone()];
+        let routed: Vec<_> = nodes.iter().cloned().map(Some).collect();
+        let previous = vec![node("OLD"); 4];
+
+        let (r1, ranges1, tried) = BatchOperateCommand::regroup_for_retry(ops, routed, &previous);
+        let (r2, ranges2) = BatchOperateCommand::group_by_node((0..4).map(pair).collect(), nodes);
+
+        let idx = |v: &Vec<(BatchOperation, usize)>| v.iter().map(|(_, i)| *i).collect::<Vec<_>>();
+        assert_eq!(idx(&r1), idx(&r2));
+        assert_eq!(ranges1.len(), ranges2.len());
+        assert_eq!(tried.len(), 4);
+        assert!(r1.iter().all(|(op, _)| op.batch_record().result_code.is_none()));
+    }
+
+    #[test]
+    fn regroup_for_retry_with_nothing_routable_strands_every_row() {
+        let old = node("OLD");
+        let ops: Vec<_> = (0..3).map(pair).collect();
+        let (regrouped, ranges, tried) =
+            BatchOperateCommand::regroup_for_retry(ops, vec![None, None, None], &vec![old.clone(); 3]);
+        assert!(ranges.is_empty(), "nothing to send");
+        assert_eq!(regrouped.len(), 3);
+        assert!(regrouped.iter().all(|(op, _)| op.batch_record().result_code == Some(ResultCode::PartitionUnavailable)));
+        assert!(tried.iter().all(|n| Arc::ptr_eq(n, &old)));
     }
 
     #[test]

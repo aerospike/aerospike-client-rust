@@ -8,9 +8,10 @@
     batch that exhausts its retries against a tripped node surfaces that cause (#209, #222).
   * [CLIENT-5129] Batch REPEAT header compression for every record type. Identical reads, writes,
     deletes and UDF calls now repeat with a one-byte flag (an 8-record write batch: 600 → 285 bytes).
-  * `BatchRecord` rows now carry per-key outcomes that used to fail the whole call: a key in an
-    unknown namespace comes back as `PartitionUnavailable` at its own index [CLIENT-5172], and a
-    per-key error on the last record of a response no longer discards its siblings.
+  * `BatchRecord` rows now carry per-key outcomes that used to fail the whole call: a key with no
+    reachable replica — on the first attempt or on a `Sequence`/`PreferRack` retry — comes back as
+    `PartitionUnavailable` at its own index [CLIENT-5172], and a per-key error on the last record
+    of a response no longer discards its siblings. Only a batch with nothing routable fails.
 
 * **Improvements**
   * Batch encoding: the per-key and O(N log N) work around the encoder is gone — one
