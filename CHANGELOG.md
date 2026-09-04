@@ -1,5 +1,85 @@
 # Changelog
 
+## [2.2.0]
+
+* **New Features**
+  * [CLIENT-2388] Per-node circuit breaker: `ClientPolicy.max_error_rate` and `error_rate_window`.
+    Commands to a node past its error-rate window fail fast with `Error::MaxErrorRate`, and a
+    batch that exhausts its retries against a tripped node surfaces that cause (#209, #222).
+  * [CLIENT-5129] Batch REPEAT header compression for every record type. Identical reads, writes,
+    deletes and UDF calls now repeat with a one-byte flag (an 8-record write batch: 600 → 285 bytes).
+  * `BatchRecord` rows now carry per-key outcomes that used to fail the whole call: a key in an
+    unknown namespace comes back as `PartitionUnavailable` at its own index [CLIENT-5172], and a
+    per-key error on the last record of a response no longer discards its siblings.
+
+* **Improvements**
+  * Batch encoding: the per-key and O(N log N) work around the encoder is gone — one
+    partition-table snapshot per batch, pointer-keyed grouping, index placement instead of a
+    sort, `match_header` computed once instead of twice, no key clones per record. Measured on a
+    4-node cluster: +9.5–16.5% batch throughput, −9% latency; +21% on a single node.
+  * [CLIENT-5351] Batch sub-requests pick their connection queue from the group's digest instead
+    of always queue 0, so `conn_pools_per_node` actually shards batch load.
+  * [CLIENT-3598] A command that finds the connection pool exhausted waits for a connection to
+    be returned (paced, bounded by the deadline) instead of failing fast.
+  * [CLIENT-4990] One timer per connection instead of one per IO, retries never sleep past the
+    command deadline, and the redundant per-command `total_timeout` wrapper is removed.
+  * Pool liveness probe now covers TLS and async-std connections, not only plain TCP on tokio.
+  * Query recordset channel is sized from `max_records` (the default 1024-slot queue cost
+    ~262 KB per query).
+  * msgpack: strings of 32–255 bytes use `str8`, matching the Java, Go and C clients byte for
+    byte; ext-type values no longer log a warning on every ordered map or list.
+  * `cargo check --features sync,rt-tokio` builds: the runtime features now forward to
+    `aerospike-sync`, and enabling both `async` and `sync` explains itself.
+  * Resolved compiler warnings across the tokio and async-std builds.
+
+* **Bug Fixes**
+  * [CLIENT-5266] Batch index field declared the wrong size when a filter expression was set.
+  * [CLIENT-5268] TLS writes were left in the session buffer instead of flushed.
+  * [CLIENT-4966] Connection pool leaked a slot on every failed connect and refilled itself on
+    every tend once busy; `authenticate()` left connections in `Writing` so they were dropped
+    instead of returned (~36 opens/s of churn) (#219).
+  * [CLIENT-4989] Socket I/O errors are classified as `Connection` errors and dead pooled sockets
+    are detected before use (#220).
+  * [CLIENT-5132] Batch retries alternated between the failed node and one wire command per key;
+    `Sequence`/`PreferRack` now advance one replica per key and re-split the batch. The retry
+    budget is `max_retries + 1` attempts (was `+ 2`, and unbounded for `max_retries = 0`).
+  * [CLIENT-5033] Sync client: blocking calls panicked ("no reactor running") from a plain
+    thread and hung from a current-thread runtime; they run on a dedicated runtime now.
+    `Recordset::close()` closes the channel, so the blocking iterator no longer spins.
+  * [CLIENT-5372] Scan/query streams could silently drop the last record: the stream ended when
+    the queue looked empty and the recordset was no longer active, but those two checks were not
+    atomic, so a record pushed and closed between them was lost (a short result, no error). The
+    channel's `Closed` is now the only end-of-stream signal, so buffered records always drain
+    (#249).
+  * [CLIENT-4865] Query and scan return a scalar for duplicate bin projections, as Java and C do
+    (#216).
+  * [CLIENT-5214] Role allowlists: wrong field id, leading comma, over-read of the reply, and an
+    allowlist that could never be cleared.
+  * [CLIENT-5173] `Value::Infinity` and `Value::Wildcard` used as a bin or key return
+    `InvalidArgument` instead of aborting the process.
+  * [CLIENT-5059] Seeds with a digit-first `tls_name` (Aerospike Cloud hostnames) parse.
+  * `Client::new` waits for a routable partition map, so the first command no longer fails on an
+    empty map and burns its retries.
+  * Batch requests set the key-specific-error flag so the server reports which key stopped a
+    batch; UDF execute uses the write header, honoring `record_exists_action`, `generation`,
+    `commit_level`, `durable_delete` and `expiration`.
+  * `FloatValue`: `From<FloatValue> for f64` widens an F32 instead of panicking, matching the wire
+    and `TryFrom<Value>`; `From<FloatValue> for f32` narrows an F64 by value instead of
+    reinterpreting the low 32 bits (2.25 became 0.0).
+  * `u64` key values above `i64::MAX` are rejected instead of silently wrapping to a negative key.
+
+* **Behavior Changes**
+  * A batch with an unroutable key, or a per-key error on its last record, returns `Ok` with the
+    affected rows marked instead of `Err` for the whole call (Java/Go parity).
+  * Using `Value::Infinity` or `Value::Wildcard` as a bin value or record key returns
+    `Error::InvalidArgument` instead of aborting the process. They are CDT range bounds only.
+  * `f64::from(FloatValue::F32(..))` returns the widened value instead of panicking.
+  * `Value::from(u64)` — and so `as_key!` with a `u64` — panics for values above `i64::MAX`
+    instead of silently wrapping to a negative integer.
+  * Batch retries stop after `max_retries + 1` attempts, and `max_retries = 0` means no retry.
+  * `Client::new` may take slightly longer to return while the partition map populates
+    (bounded by `ClientPolicy.timeout`).
+
 ## [2.1.0]
 
 * **Bug Fixes**
