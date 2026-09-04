@@ -29,6 +29,7 @@ pub(crate) use self::partition_tracker::PartitionTracker;
 pub use self::recordset::RecordStream;
 pub use self::recordset::Recordset;
 #[cfg(feature = "lua")]
+#[cfg_attr(docsrs, doc(cfg(feature = "lua")))]
 pub use self::result_set::{ResultSet, ResultStream};
 pub use self::statement::Statement;
 pub use self::udf::UDFLang;
