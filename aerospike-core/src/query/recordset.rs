@@ -140,6 +140,7 @@ impl Recordset {
     }
 
     #[cfg(feature = "sync")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "sync")))]
     /// Returns a result from the queue if it exists. Otherwise, returns None.
     pub fn next_record(&self) -> Option<Result<Record>> {
         self.rx.try_recv().ok()
@@ -153,6 +154,7 @@ impl Recordset {
 }
 
 #[cfg(feature = "sync")]
+#[cfg_attr(docsrs, doc(cfg(feature = "sync")))]
 impl Iterator for &Recordset {
     type Item = Result<Record>;
 

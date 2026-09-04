@@ -72,6 +72,7 @@ impl ResultSet {
     }
 
     #[cfg(feature = "sync")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "sync")))]
     /// Returns a result from the queue if one is available. Otherwise,
     /// returns None.
     pub fn next_value(&self) -> Option<Result<Value>> {
@@ -86,6 +87,7 @@ impl ResultSet {
 }
 
 #[cfg(feature = "sync")]
+#[cfg_attr(docsrs, doc(cfg(feature = "sync")))]
 impl Iterator for &ResultSet {
     type Item = Result<Value>;
 

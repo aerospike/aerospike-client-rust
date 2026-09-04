@@ -41,6 +41,11 @@
     clippy::use_self,
     clippy::missing_errors_doc
 )]
+// `doc_cfg` is nightly-only; gated so it only activates for the docsrs build
+// (docs.rs sets `--cfg docsrs`, see the root Cargo.toml's
+// `[package.metadata.docs.rs]`), letting feature-gated items render a
+// "Available on crate feature `x` only" badge instead of just disappearing.
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 //! A pure-rust client for the Aerospike `NoSQL` database.
 //!
@@ -178,6 +183,7 @@ pub use query::{
     FLAG_HARD_HINT, FLAG_KNOWN, FLAG_REQUIRE_INDEX,
 };
 #[cfg(feature = "lua")]
+#[cfg_attr(docsrs, doc(cfg(feature = "lua")))]
 pub use query::{ResultSet, ResultStream};
 // `CITRUSLEAF_EPOCH` comes along because it is the unit `Record::new`'s
 // `expiration` argument is counted from, and a caller building a record cannot
@@ -207,10 +213,12 @@ mod client;
 mod cluster;
 pub(crate) mod commands;
 #[cfg(feature = "dynamic-config")]
+#[cfg_attr(docsrs, doc(cfg(feature = "dynamic-config")))]
 pub mod config;
 mod common;
 pub mod expressions;
 #[cfg(feature = "lua")]
+#[cfg_attr(docsrs, doc(cfg(feature = "lua")))]
 pub mod lua;
 pub mod mapping;
 pub mod metrics;

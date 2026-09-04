@@ -37,6 +37,10 @@ readme = "README.md"
 travis-ci = { repository = "aerospike/aerospike-client-rust" }
 appveyor = { repository = "aerospike/aerospike-client-rust" }
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dependencies]
 aerospike-core = {path = "aerospike-core", optional = true, version = "3.0.0-alpha.2"}
 aerospike-sync = {path = "aerospike-sync", optional = true, version = "3.0.0-alpha.2"}

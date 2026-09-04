@@ -795,6 +795,29 @@ while let Some(value) = stream.next().await {
 See [`examples/query_aggregate.rs`](./examples/query_aggregate.rs) for a
 complete working example, including the Lua UDF source.
 
+## Known traps
+
+Behaviors that look like missing features or call for extra application code, but aren't. Each
+one is a confirmed gap between what the code does and what the docs used to say, recorded with
+the wrong behavior an agent actually produced before the docs were fixed.
+
+- **`Client::batch` already drops a single-key sub-batch to the single-record path.** After
+  routing, if a cluster node ends up responsible for exactly one key from a batch call, the
+  client already executes that node's share via the plain single-record command path instead of
+  the multi-key batch protocol — automatically, regardless of the batch's total size. An agent
+  has been observed reimplementing this optimization in application code. See
+  [`Client::batch`](./aerospike-core/src/client.rs).
+- **Reading or writing multiple keys? Use `Client::batch`, not a loop.** An agent has been
+  observed implementing a batch read as a for-loop of sequential single-record `get` calls
+  instead of one `batch` call. See the `batch` cross-reference on `get`, `put`, `delete`, and
+  `operate` in [`client.rs`](./aerospike-core/src/client.rs).
+- **`modify_by_path` / `exp_modify_by_path` can remove matching elements, not just replace
+  them.** Pass `exp_remove_result()` as the modify expression — or use the ready-made
+  `remove` / `exp_remove` convenience wrapper. An agent has been observed concluding this
+  removal functionality does not exist. See
+  [`operations/path.rs`](./aerospike-core/src/operations/path.rs) and
+  [`expressions/mod.rs`](./aerospike-core/src/expressions/mod.rs).
+
 ## Feedback wanted
 
 We need your help with:
