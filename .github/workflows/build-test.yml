@@ -7,6 +7,10 @@ on:
       - v3
   workflow_dispatch:
 
+permissions:
+  contents: read
+  id-token: write  # required by setup-aerospike-server's JFrog OIDC login
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -44,7 +48,12 @@ jobs:
           shared-key: ${{ matrix.runtime }}
 
       - name: Set up Aerospike Database
-        uses: reugn/github-action-aerospike@2065a9209cfd5ef88a3e07f3e7929e321d1e0067 # v1.1.0
+        uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
+        with:
+          enable-strong-consistency: "true"
+          features-content: ${{ secrets.AEROSPIKE_SERVER_FEATURES_CONF }}
+          oidc-provider: ${{ vars.JFROG_OIDC_PROVIDER }}
+          oidc-audience: ${{ vars.JFROG_OIDC_AUDIENCE }}
 
       - name: Build workspace
         run: |
@@ -99,7 +108,12 @@ jobs:
           shared-key: aerospike-core-coverage
 
       - name: Set up Aerospike Database
-        uses: reugn/github-action-aerospike@2065a9209cfd5ef88a3e07f3e7929e321d1e0067 # v1.1.0
+        uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
+        with:
+          enable-strong-consistency: "true"
+          features-content: ${{ secrets.AEROSPIKE_SERVER_FEATURES_CONF }}
+          oidc-provider: ${{ vars.JFROG_OIDC_PROVIDER }}
+          oidc-audience: ${{ vars.JFROG_OIDC_AUDIENCE }}
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
