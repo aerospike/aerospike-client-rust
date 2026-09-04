@@ -206,6 +206,18 @@ impl Connection {
         Ok(Netsocket::Tcp(stream))
     }
 
+    /// Sets `TCP_NODELAY` on a freshly opened socket (disables Nagle).
+    ///
+    /// Nagle withholds a small segment while earlier data is still unacked,
+    /// which stalls against the peer's delayed ACK until Linux's
+    /// `TCP_DELACK_MIN` (40ms) expires.
+    ///
+    /// Best-effort. A platform that refuses the option still yields a usable
+    /// connection, so the error is dropped rather than failing the connect.
+    fn set_nodelay(stream: &TcpStream) {
+        let _ = stream.set_nodelay(true);
+    }
+
     #[cfg(not(test))]
     pub async fn new(
         host: &Host,
@@ -238,6 +250,9 @@ impl Connection {
         }
 
         let stream = stream.unwrap()?;
+
+        Self::set_nodelay(&stream);
+
         let stream = Self::get_netsocket(stream, host, policy).await?;
 
         let idle_timeout = if policy.idle_timeout > 0 {
@@ -1617,6 +1632,35 @@ mod liveness_probe_tests {
             }
         });
         addr
+    }
+
+    /// `TCP_NODELAY` must be set on every socket the client opens. Asserted
+    /// through the real getsockopt rather than by trusting the setter, so a
+    /// platform that silently ignores the option fails here instead of in
+    /// production.
+    ///
+    /// This covers [`Connection::set_nodelay`], not its call site: under
+    /// `cfg(test)` `Connection::new` returns a `Netsocket::TestDummy` and never
+    /// opens a socket, so the real connect path is unreachable from a unit
+    /// test.
+    #[aerospike_macro::test]
+    async fn sockets_are_opened_with_tcp_nodelay() {
+        let addr = spawn_quiet_peer().await;
+        let stream = TcpStream::connect(&*addr).await.unwrap();
+
+        assert!(
+            !socket2::SockRef::from(&stream).tcp_nodelay().unwrap(),
+            "a fresh socket is expected to start with TCP_NODELAY unset; if the \
+             platform default changed, this test no longer proves anything"
+        );
+
+        Connection::set_nodelay(&stream);
+
+        assert!(
+            socket2::SockRef::from(&stream).tcp_nodelay().unwrap(),
+            "TCP_NODELAY must be set: Nagle deadlocks against the peer's \
+             delayed ACK for 40ms on any request written as more than one write"
+        );
     }
 
     /// Build a `Connection` around a real socket, bypassing the handshake.
