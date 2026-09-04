@@ -626,9 +626,25 @@ impl From<i64> for Value {
     }
 }
 
+/// The server has no native u64 type: values that fit in an `i64` are stored
+/// losslessly as `INTEGER`, but a value past `i64::MAX` would silently wrap to a
+/// negative integer (`u64::MAX` becomes `-1`), corrupting a key or bin. Reject
+/// that case rather than store the wrong value.
+fn u64_to_int_value(val: u64) -> Value {
+    assert!(
+        val <= i64::MAX as u64,
+        // Edition 2018: `assert!` does not capture `{val}`, so pass it positionally.
+        "Aerospike does not support u64 natively on server-side. Values up to \
+         i64::MAX store as INTEGER; {} is larger, so cast it explicitly or use a \
+         string/blob representation.",
+        val
+    );
+    Value::Int(val as i64)
+}
+
 impl From<u64> for Value {
     fn from(val: u64) -> Value {
-        Value::Int(val as i64)
+        u64_to_int_value(val)
     }
 }
 
@@ -688,7 +704,7 @@ impl<'a> From<&'a i64> for Value {
 
 impl<'a> From<&'a u64> for Value {
     fn from(val: &'a u64) -> Value {
-        Value::Int(*val as i64)
+        u64_to_int_value(*val)
     }
 }
 
@@ -1172,7 +1188,7 @@ mod tests {
         let json = serde_json::to_string(&val);
         assert_eq!(
             json.unwrap(),
-            "[null,\"0\",9,8,7,1,4611911198408756429,-1,[5,6,7,8,\"asd\"],true,false]",
+            "[null,\"0\",9,8,7,1,2.1,-1,[5,6,7,8,\"asd\"],true,false]",
             "List Serialization failed"
         );
 

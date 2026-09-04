@@ -320,4 +320,14 @@ mod tests {
     fn unsupported_u64_key() {
         as_key!("namespace", "set", u64::max_value());
     }
+
+    #[test]
+    fn u64_keys_within_i64_range_are_accepted() {
+        // The guard rejects only u64 values past i64::MAX; a value that fits
+        // still stores losslessly as INTEGER, so its digest matches the i64 of
+        // the same value — including at the boundary.
+        assert_eq!(digest!(1u64), digest!(1i64));
+        assert_eq!(digest!(&1u64), digest!(1i64));
+        assert_eq!(digest!(i64::max_value() as u64), digest!(i64::max_value()));
+    }
 }

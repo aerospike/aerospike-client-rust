@@ -868,7 +868,9 @@ mod tests {
         use crate::expressions;
         let exp = expressions::int_val(1);
         let f = Filter::equal("bin1", 42_i64).expression(exp);
-        assert_eq!(f.bin_name, "bin1");
+        // An expression-based secondary index is identified by the expression,
+        // not a bin name, so `.expression()` clears `bin_name` (CLIENT-4411).
+        assert!(f.bin_name.is_empty());
         assert!(f.expression.is_some());
     }
 
@@ -892,7 +894,9 @@ mod tests {
         use crate::expressions;
         let exp = expressions::int_val(1);
         let f = Filter::range("bin1", 0_i64, 100_i64).expression(exp);
-        assert_eq!(f.bin_name, "bin1");
+        // An expression-based secondary index is identified by the expression,
+        // not a bin name, so `.expression()` clears `bin_name` (CLIENT-4411).
+        assert!(f.bin_name.is_empty());
         assert!(f.expression.is_some());
     }
 
@@ -914,7 +918,9 @@ mod tests {
         use crate::expressions;
         let exp = expressions::int_val(1);
         let f = Filter::contains("bin1", 42_i64, CollectionIndexType::List).expression(exp);
-        assert_eq!(f.bin_name, "bin1");
+        // An expression-based secondary index is identified by the expression,
+        // not a bin name, so `.expression()` clears `bin_name` (CLIENT-4411).
+        assert!(f.bin_name.is_empty());
         assert!(f.expression.is_some());
     }
 
@@ -937,7 +943,9 @@ mod tests {
         let exp = expressions::int_val(1);
         let f = Filter::contains_range("bin1", 0_i64, 100_i64, CollectionIndexType::List)
             .expression(exp);
-        assert_eq!(f.bin_name, "bin1");
+        // An expression-based secondary index is identified by the expression,
+        // not a bin name, so `.expression()` clears `bin_name` (CLIENT-4411).
+        assert!(f.bin_name.is_empty());
         assert!(f.expression.is_some());
     }
 
