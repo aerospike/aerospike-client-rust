@@ -54,6 +54,10 @@
     atomic, so a record pushed and closed between them was lost (a short result, no error). The
     channel's `Closed` is now the only end-of-stream signal, so buffered records always drain
     (#249).
+  * The async record stream (`RecordStream`) busy-polled: whenever the queue was momentarily
+    empty it woke its own waker and returned `Pending`, so the task re-polled in a hot loop for as
+    long as the servers were slower than the consumer. It now parks on the channel until a record
+    arrives or the query closes, as the blocking iterator already did.
   * [CLIENT-4865] Query and scan return a scalar for duplicate bin projections, as Java and C do
     (#216).
   * [CLIENT-5214] Role allowlists: wrong field id, leading comma, over-read of the reply, and an

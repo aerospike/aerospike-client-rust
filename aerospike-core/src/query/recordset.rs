@@ -25,7 +25,15 @@ use crate::query::{PartitionFilter, PartitionTracker};
 use crate::Record;
 
 /// A stream over incoming records for a [`Recordset`] that can be iterated over either synchronously or asynchronously.
-pub struct RecordStream(Arc<Recordset>);
+pub struct RecordStream {
+    rs: Arc<Recordset>,
+    /// The stream's own handle on the record queue. `async_channel::Receiver`
+    /// implements `Stream` with real waker registration, so polling it parks
+    /// the task until a record is pushed or the channel is closed. Boxed and
+    /// pinned because the receiver pins its event listener (`!Unpin`); this
+    /// also keeps `RecordStream` itself `Unpin`.
+    rx: std::pin::Pin<Box<Receiver<Result<Record>>>>,
+}
 
 /// Virtual collection of records retrieved through queries and scans.
 ///
@@ -124,7 +132,7 @@ impl Recordset {
 
     /// Returns the task ID for the scan/query.
     pub(crate) fn task_id(&self) -> u64 {
-        self.task_id.load(Ordering::Relaxed) as u64
+        self.task_id.load(Ordering::Relaxed)
     }
 
     pub(crate) fn signal_end(&self) {
@@ -150,8 +158,9 @@ impl Recordset {
 
     /// Converts a reference to a [`Recordset`] into a [`RecordStream`] that can be used
     /// to iterate over records.
-    pub const fn into_stream(self: Arc<Self>) -> RecordStream {
-        RecordStream(self)
+    pub fn into_stream(self: Arc<Self>) -> RecordStream {
+        let rx = Box::pin(self.rx.clone());
+        RecordStream { rs: self, rx }
     }
 }
 
@@ -174,26 +183,22 @@ impl futures::Stream for RecordStream {
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
-        match self.0.rx.try_recv() {
-            Ok(r) => std::task::Poll::Ready(Some(r)),
-            // `Closed` is the only sound end-of-stream signal: `close()` shuts
-            // the channel, so buffered records still drain and this arm is
-            // reached only once the queue is genuinely spent. Ending the stream
-            // on `!is_active()` instead would pair the emptiness seen by the
-            // `try_recv` above with a liveness read taken after it, dropping a
-            // record pushed in between.
-            Err(e) if e.is_closed() => std::task::Poll::Ready(None),
-            Err(_) => {
-                cx.waker().wake_by_ref();
-                std::task::Poll::Pending
-            }
-        }
+        // Delegate to the channel's own `Stream`. On an empty, open queue it
+        // registers the waker and returns `Pending` — the task sleeps until a
+        // `push` or `close()` notifies it. The previous `try_recv` +
+        // `wake_by_ref()` returned `Pending` while waking itself, so the
+        // executor re-polled in a hot loop for as long as the servers were
+        // slower than the consumer. The end-of-stream rule is unchanged and
+        // now enforced by the library: `Ready(None)` only once the channel is
+        // closed *and* drained, so a record pushed just before `close()` is
+        // still delivered.
+        self.get_mut().rx.as_mut().poll_next(cx)
     }
 }
 
 impl AsRef<Recordset> for RecordStream {
     fn as_ref(&self) -> &Recordset {
-        &self.0
+        &self.rs
     }
 }
 
@@ -202,7 +207,7 @@ impl AsRef<Recordset> for RecordStream {
 impl RecordStream {
     /// Returns the partition filter from the recordset.
     pub async fn partition_filter(&self) -> Option<PartitionFilter> {
-        self.0.partition_filter().await
+        self.rs.partition_filter().await
     }
 }
 
@@ -333,6 +338,47 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .expect("parked iterator was not woken by close()");
         assert!(ended_clean, "expected None after close on empty set");
+    }
+
+    /// The async stream must park, not spin. Polling an empty, open queue has
+    /// to return `Pending` *without* waking its own waker — the old
+    /// `try_recv` + `wake_by_ref()` did exactly that and re-polled in a hot
+    /// loop for as long as the servers were slower than the consumer. A push
+    /// must be what wakes it, and `close()` must end it only after draining.
+    #[test]
+    fn stream_parks_on_an_empty_queue_instead_of_waking_itself() {
+        use futures::Stream;
+        use std::task::{Context, Poll, Wake, Waker};
+
+        struct Counter(AtomicUsize);
+        impl Wake for Counter {
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let counter = Arc::new(Counter(AtomicUsize::new(0)));
+        let waker = Waker::from(counter.clone());
+        let mut cx = Context::from_waker(&waker);
+
+        let rs = recordset(4);
+        let mut stream = rs.clone().into_stream();
+        let mut stream = std::pin::Pin::new(&mut stream);
+
+        // Empty and active: Pending, and the waker has not fired.
+        assert!(matches!(stream.as_mut().poll_next(&mut cx), Poll::Pending));
+        assert!(matches!(stream.as_mut().poll_next(&mut cx), Poll::Pending));
+        assert_eq!(counter.0.load(Ordering::SeqCst), 0, "a parked stream must not wake itself");
+
+        // A push is what wakes the parked consumer, and the record arrives.
+        block_on(rs.push(Ok(record()))).expect("push");
+        assert!(counter.0.load(Ordering::SeqCst) >= 1, "push must wake the parked stream");
+        assert!(matches!(stream.as_mut().poll_next(&mut cx), Poll::Ready(Some(Ok(_)))));
+
+        // A record buffered before close() still drains; only then does the stream end.
+        block_on(rs.push(Ok(record()))).expect("push before close");
+        rs.close();
+        assert!(matches!(stream.as_mut().poll_next(&mut cx), Poll::Ready(Some(Ok(_)))));
+        assert!(matches!(stream.as_mut().poll_next(&mut cx), Poll::Ready(None)));
     }
 
     #[test]
