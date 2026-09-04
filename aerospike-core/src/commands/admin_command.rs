@@ -442,7 +442,7 @@ impl AdminCommand {
         roles: &[&str],
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = node.get_connection(0, None).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -460,7 +460,7 @@ impl AdminCommand {
         user: &str,
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = node.get_connection(0, None).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -477,7 +477,7 @@ impl AdminCommand {
         password: &str,
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = node.get_connection(0, None).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -495,7 +495,7 @@ impl AdminCommand {
         password: &str,
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = node.get_connection(0, None).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -534,7 +534,7 @@ impl AdminCommand {
         write_quota: u32,
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = node.get_connection(0, None).await?;
 
         let mut field_count = 1;
         if !privileges.is_empty() {
@@ -583,7 +583,7 @@ impl AdminCommand {
         role_name: &str,
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = node.get_connection(0, None).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -600,7 +600,7 @@ impl AdminCommand {
         privileges: &[Privilege],
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = node.get_connection(0, None).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -618,7 +618,7 @@ impl AdminCommand {
         privileges: &[Privilege],
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = node.get_connection(0, None).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -636,7 +636,7 @@ impl AdminCommand {
         allowlist: &[&str],
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = node.get_connection(0, None).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -662,7 +662,7 @@ impl AdminCommand {
         write_quota: u32,
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = node.get_connection(0, None).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -681,7 +681,7 @@ impl AdminCommand {
         roles: &[&str],
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = node.get_connection(0, None).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -699,7 +699,7 @@ impl AdminCommand {
         roles: &[&str],
     ) -> Result<()> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = node.get_connection(0, None).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -716,7 +716,7 @@ impl AdminCommand {
         user: Option<&str>,
     ) -> Result<Vec<User>> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = node.get_connection(0, None).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
@@ -737,7 +737,7 @@ impl AdminCommand {
         role: Option<&str>,
     ) -> Result<Vec<Role>> {
         let node = cluster.get_random_node()?;
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = node.get_connection(0, None).await?;
 
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();

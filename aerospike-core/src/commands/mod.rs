@@ -70,6 +70,21 @@ pub trait Command {
     fn can_recover_connection(&mut self) -> bool;
 }
 
+/// Pacing sleep between acquisition attempts while the node's connection
+/// pool is exhausted (every allowed connection exists and is in flight).
+/// Connections are opened inline on this branch, so the wait is for another
+/// task to *return* a connection to the pool. Pool-empty waits consume
+/// neither the retry budget nor the node's error-rate breaker (see the retry
+/// loops), so this constant bounds how hot the wait loop runs; the wait
+/// itself is bounded by the command deadline plus [`POOL_EMPTY_MAX_WAITS`].
+pub const POOL_EMPTY_WAIT: std::time::Duration = std::time::Duration::from_millis(1);
+
+/// Upper bound on consecutive pool-empty waits for commands without a total
+/// timeout (`total_timeout == 0` means no deadline): ~5s at
+/// [`POOL_EMPTY_WAIT`] pacing. Beyond this the pool-empty error is handled
+/// like any other connection failure.
+pub const POOL_EMPTY_MAX_WAITS: usize = 5_000;
+
 pub const fn keep_connection(err: &Error) -> bool {
     match err {
         Error::ServerError(rc, _, _)

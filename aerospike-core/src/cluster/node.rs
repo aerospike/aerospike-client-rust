@@ -20,6 +20,7 @@ use std::result::Result as StdResult;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use aerospike_rt::time::Instant;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use hazarc::AtomicArc;
 
@@ -299,8 +300,16 @@ impl Node {
         Ok(())
     }
 
-    // Get a connection to the node from the connection pool
-    pub async fn get_connection(&self, hint: u8) -> Result<PooledConnection> {
+    // Get a connection to the node from the connection pool. When the pool
+    // has to open a new connection, the connect is bounded by `deadline`
+    // (the command's total-timeout deadline); pass `None` on paths without
+    // one — admin, info and tend traffic — to keep today's fail-fast
+    // semantics with the `ClientPolicy::timeout()` connect bound.
+    pub async fn get_connection(
+        &self,
+        hint: u8,
+        deadline: Option<Instant>,
+    ) -> Result<PooledConnection> {
         if !self.is_active() {
             return Err(Error::InvalidNode(format!(
                 "Cannot get a connection for node. The node `{self}` is inactive"
@@ -314,7 +323,9 @@ impl Node {
         // Honour the caller's hint on a pool miss too. Passing 0 sent every
         // miss to queue 0, which had to fill up before any other queue was
         // touched — the opposite of what `conn_pools_per_node` is for.
-        self.connection_pool.make_conn(usize::from(hint)).await
+        self.connection_pool
+            .make_conn(usize::from(hint), deadline)
+            .await
     }
 
     // Put a connection to the node back in the connection pool
@@ -377,7 +388,7 @@ impl Node {
         policy: &AdminPolicy,
         commands: &[&str],
     ) -> Result<HashMap<String, String>> {
-        let mut conn = self.get_connection(0).await?;
+        let mut conn = self.get_connection(0, None).await?;
         let res = Message::info(policy, &mut conn, commands).await;
 
         if let Err(e) = res {
@@ -509,7 +520,7 @@ impl Node {
                     .min_conns_per_node
                     .saturating_sub(self.connection_pool.total_reserved());
                 for _ in 0..to_fill {
-                    self.connection_pool.make_conn(count).await?;
+                    self.connection_pool.make_conn(count, None).await?;
                     count += 1;
                 }
             }
@@ -547,10 +558,12 @@ impl fmt::Display for Node {
 mod node_tests {
     use std::sync::Arc;
 
+    use aerospike_rt::time::Instant;
+
     use crate::cluster::node_validator::NodeValidator;
     use crate::errors::Error;
     use crate::net::Host;
-    use crate::policy::ClientPolicy;
+    use crate::policy::{AdminPolicy, ClientPolicy};
     use crate::Version;
 
     use super::Node;
@@ -574,7 +587,7 @@ mod node_tests {
         let node = test_node();
         let pconn = node
             .connection_pool
-            .make_conn(0)
+            .make_conn(0, None)
             .await
             .expect("make_conn uses test Connection");
         node.put_connection(pconn);
@@ -589,7 +602,7 @@ mod node_tests {
         node.close();
         assert!(!node.is_active());
 
-        let err = node.get_connection(0).await.unwrap_err();
+        let err = node.get_connection(0, None).await.unwrap_err();
         match err {
             Error::InvalidNode(msg) => assert!(msg.contains("inactive"), "unexpected: {}", msg),
             other => panic!("expected InvalidNode, got {:?}", other),
@@ -605,7 +618,7 @@ mod node_tests {
     async fn put_connection_does_not_return_conn_to_pool_when_inactive() {
         let node = create_node_with_connection().await;
         let pconn = node
-            .get_connection(0)
+            .get_connection(0, None)
             .await
             .expect("active node with one mock conn in pool");
         assert_eq!(node.connection_pool.num_conns(), 0);
@@ -642,10 +655,10 @@ mod node_tests {
         let node = Node::new(policy, nv);
 
         // Four misses with distinct hints; each should land on its own queue.
-        let _c0 = node.get_connection(0).await.expect("hint=0");
-        let _c1 = node.get_connection(1).await.expect("hint=1");
-        let _c2 = node.get_connection(2).await.expect("hint=2");
-        let _c3 = node.get_connection(3).await.expect("hint=3");
+        let _c0 = node.get_connection(0, None).await.expect("hint=0");
+        let _c1 = node.get_connection(1, None).await.expect("hint=1");
+        let _c2 = node.get_connection(2, None).await.expect("hint=2");
+        let _c3 = node.get_connection(3, None).await.expect("hint=3");
 
         for (i, queue) in node.connection_pool.queues().iter().enumerate() {
             assert_eq!(
@@ -681,7 +694,7 @@ mod node_tests {
         for i in 0..6 {
             drop(
                 node.connection_pool
-                    .make_conn(i)
+                    .make_conn(i, None)
                     .await
                     .expect("make_conn failed"),
             );
@@ -721,8 +734,8 @@ mod node_tests {
 
         // Hold both connections, so the queue itself is empty.
         let _held = [
-            node.connection_pool.make_conn(0).await.expect("conn 1"),
-            node.connection_pool.make_conn(0).await.expect("conn 2"),
+            node.connection_pool.make_conn(0, None).await.expect("conn 1"),
+            node.connection_pool.make_conn(0, None).await.expect("conn 2"),
         ];
         assert_eq!(node.connection_pool.num_conns(), 0, "both are in flight");
         assert_eq!(node.connection_pool.total_reserved(), 2);
@@ -739,7 +752,7 @@ mod node_tests {
         let arc = Arc::new(create_node_with_connection().await);
         let queue_witness = {
             let pconn = arc
-                .get_connection(0)
+                .get_connection(0, None)
                 .await
                 .expect("pool should have one connection");
             let q = pconn.queue.clone();
@@ -761,6 +774,48 @@ mod node_tests {
             queue_witness.num_conns(),
             0,
             "Node::drop should clear pooled connections"
+        );
+    }
+
+    /// Admin/info traffic must keep today's fail-fast semantics on an
+    /// exhausted pool: the tend thread can never wait behind user commands.
+    #[aerospike_macro::test]
+    async fn info_fails_fast_when_pool_is_exhausted() {
+        let policy = ClientPolicy {
+            max_conns_per_node: 1,
+            conn_pools_per_node: 1,
+            ..ClientPolicy::default()
+        };
+        let nv = Arc::new(NodeValidator {
+            name: "test-node".to_string(),
+            aliases: vec![Host::new("127.0.0.1", 3000)],
+            services: vec![],
+            address: "127.0.0.1:3000".to_string(),
+            client_policy: policy.clone(),
+            use_new_info: true,
+            version: Version::default(),
+        });
+        let node = Node::new(policy, nv);
+        let _held = node
+            .get_connection(0, None)
+            .await
+            .expect("first borrow saturates the pool");
+
+        let admin_policy = AdminPolicy { timeout: 30_000 };
+        let start = Instant::now();
+        let err = node
+            .info(&admin_policy, &["node"])
+            .await
+            .expect_err("exhausted pool must fail the info call");
+        let elapsed = start.elapsed();
+
+        assert!(
+            err.is_pool_empty(),
+            "info should surface the pool state, got: {:?}", err
+        );
+        assert!(
+            elapsed < std::time::Duration::from_millis(100),
+            "info must not wait behind user traffic: {:?}", elapsed
         );
     }
 }
