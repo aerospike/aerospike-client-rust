@@ -22,7 +22,7 @@ use crate::net::Connection;
 use crate::policy::Policy;
 use crate::Key;
 use aerospike_rt::sleep;
-use aerospike_rt::time::Instant;
+use aerospike_rt::time::{Duration, Instant};
 
 pub struct SingleCommand<'a> {
     cluster: Arc<Cluster>,
@@ -76,17 +76,24 @@ impl<'a> SingleCommand<'a> {
     // EXECUTE
     //
 
+    #[allow(clippy::option_if_let_else)]
     pub async fn execute(
         policy: &(dyn Policy + Send + Sync),
         cmd: &'a mut (dyn commands::Command + Send),
     ) -> Result<()> {
-        // `total_timeout` is enforced inside the retry loop itself: per-IO
-        // via `Connection::deadline()`, on the inline connect and the
-        // pool-empty wait via the deadline passed to `Node::get_connection`,
-        // and on the retry sleep by the pre-sleep deadline check. An outer
-        // wrapper here would just duplicate that under the global runtime
-        // time-driver mutex, arming a timer-wheel entry for every command.
-        Self::execute_command(policy, cmd).await
+        if policy.total_timeout() > 0 {
+            match aerospike_rt::timeout(
+                Duration::from_millis(u64::from(policy.total_timeout())),
+                Self::execute_command(policy, cmd),
+            )
+            .await
+            {
+                Ok(res) => res,
+                Err(_) => Err(Error::Timeout("Timeout".to_string())),
+            }
+        } else {
+            Self::execute_command(policy, cmd).await
+        }
     }
 
     pub async fn execute_command(
@@ -259,8 +266,6 @@ impl<'a> SingleCommand<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aerospike_rt::time::Duration;
-
     use crate::cluster::node_validator::NodeValidator;
     use crate::net::Host;
     use crate::policy::{BasePolicy, ClientPolicy};
@@ -420,41 +425,6 @@ mod tests {
             node.error_rate_count(),
             0,
             "a pool wait is not a node error"
-        );
-    }
-
-    /// With the outer timeout wrapper gone, `execute` (the public entry) must
-    /// still fail at roughly `total_timeout` when the command stalls inside
-    /// acquisition — proving the retry loop's own bounds enforce the deadline
-    /// end-to-end.
-    #[aerospike_macro::test]
-    async fn execute_without_wrapper_still_enforces_total_timeout() {
-        let (node, _held) = saturated_node(1).await;
-        let mut cmd = PoolWaitProbe {
-            node: node.clone(),
-            node_calls: 0,
-        };
-        let policy = BasePolicy {
-            total_timeout: 200,
-            max_retries: 2,
-            ..BasePolicy::default()
-        };
-
-        let start = Instant::now();
-        let err = SingleCommand::execute(&policy, &mut cmd)
-            .await
-            .expect_err("nothing ever returns a connection");
-        let elapsed = start.elapsed();
-
-        assert!(
-            matches!(err, Error::Timeout(_)),
-            "must fail with a timeout, got: {:?}",
-            err
-        );
-        assert!(
-            elapsed >= Duration::from_millis(150) && elapsed < Duration::from_secs(2),
-            "must fail at roughly the deadline: {:?}",
-            elapsed
         );
     }
 
