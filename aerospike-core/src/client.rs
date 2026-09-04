@@ -1401,6 +1401,9 @@ impl Client {
     ) {
         let namespace = statement.namespace.clone();
         loop {
+            // Only the tokio arm below can observe a timeout and set this; the
+            // async-std arm never writes it, so `mut` is unused there.
+            #[cfg_attr(feature = "rt-async-std", allow(unused_mut))]
             let mut timed_out = false;
             {
                 let mut tracker_locked = tracker.lock().await;

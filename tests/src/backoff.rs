@@ -91,10 +91,7 @@ async fn breaker_trips_when_exceeded() {
     assert!(!node.error_rate_within_limit());
 
     let err = node.validate_error_count().unwrap_err();
-    assert!(
-        matches!(err, Error::MaxErrorRate(_)),
-        "expected Error::MaxErrorRate, got: {err:?}"
-    );
+    assert!(matches!(err, Error::MaxErrorRate(_)), "{}", format!("expected Error::MaxErrorRate, got: {err:?}"));
 
     client.close().await.unwrap();
 }
@@ -210,10 +207,7 @@ async fn pipeline_returns_max_error_rate_when_breaker_open() {
 
     let err = result.expect_err("put should fail with the breaker open");
     let display = format!("{err}");
-    assert!(
-        display.contains("Max error rate exceeded"),
-        "expected MaxErrorRate in error chain, got: {display}"
-    );
+    assert!(display.contains("Max error rate exceeded"), "{}", format!("expected MaxErrorRate in error chain, got: {display}"));
 
     client.close().await.unwrap();
 }

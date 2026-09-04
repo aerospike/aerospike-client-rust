@@ -724,7 +724,7 @@ mod tests {
             let mut next_start = 0;
             for (_, range) in &ranges {
                 assert_eq!(range.start, next_start, "gap or overlap: {ctx}");
-                assert!(!range.is_empty(), "empty range: {ctx}");
+                assert!(!range.is_empty(), "{}", format!("empty range: {ctx}"));
                 next_start = range.end;
             }
             assert_eq!(next_start, n, "ranges do not cover the batch: {ctx}");
@@ -734,12 +734,9 @@ mod tests {
                 let mut prev_index: Option<usize> = None;
                 for i in range.clone() {
                     let original = regrouped[i].1;
-                    assert!(
-                        Arc::ptr_eq(&nodes[assign[original]], node),
-                        "pair {original} sits in another node's range: {ctx}"
-                    );
+                    assert!(Arc::ptr_eq(&nodes[assign[original]], node), "{}", format!("pair {original} sits in another node's range: {ctx}"));
                     if let Some(p) = prev_index {
-                        assert!(p < original, "relative order not preserved: {ctx}");
+                        assert!(p < original, "{}", format!("relative order not preserved: {ctx}"));
                     }
                     prev_index = Some(original);
                 }
@@ -757,7 +754,7 @@ mod tests {
             assert_eq!(ranges.len(), used.len(), "range count != nodes used: {ctx}");
             for (a, (na, _)) in ranges.iter().enumerate() {
                 for (nb, _) in &ranges[a + 1..] {
-                    assert!(!Arc::ptr_eq(na, nb), "node appears in two ranges: {ctx}");
+                    assert!(!Arc::ptr_eq(na, nb), "{}", format!("node appears in two ranges: {ctx}"));
                 }
             }
         }
@@ -785,10 +782,7 @@ mod tests {
         let hints: std::collections::HashSet<u8> = (1..64)
             .map(|k| BatchOperateCommand::queue_hint(&[pair(k)]))
             .collect();
-        assert!(
-            hints.len() > 1,
-            "hint is constant across 63 distinct first keys: {hints:?}"
-        );
+        assert!(hints.len() > 1, "{}", format!("hint is constant across 63 distinct first keys: {hints:?}"));
     }
 
     #[test]

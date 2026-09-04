@@ -2328,15 +2328,9 @@ mod tests {
             let mut at = MSG_TOTAL_HEADER_SIZE as usize - 8;
 
             for i in 0..n_fields {
-                assert!(
-                    at + 4 <= msg.len(),
-                    "field {i} header runs past the message, {described}"
-                );
+                assert!(at + 4 <= msg.len(), "{}", format!("field {i} header runs past the message, {described}"));
                 let sz = NetworkEndian::read_u32(&msg[at..at + 4]) as usize;
-                assert!(
-                    sz >= 1,
-                    "field {i} declares no room for its own type byte, {described}"
-                );
+                assert!(sz >= 1, "{}", format!("field {i} declares no room for its own type byte, {described}"));
                 at += 4 + sz;
                 assert!(
                     at <= msg.len(),

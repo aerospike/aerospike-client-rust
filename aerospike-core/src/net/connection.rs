@@ -36,7 +36,7 @@ use aerospike_rt::io::{AsyncReadExt, AsyncWriteExt};
 use aerospike_rt::net::TcpStream;
 use aerospike_rt::time::{Duration, Instant};
 #[cfg(feature = "rt-async-std")]
-use futures::{AsyncReadExt, AsyncWriteExt, TryFutureExt};
+use futures::{AsyncReadExt, AsyncWriteExt};
 use std::cmp::min;
 use std::ops::Add;
 

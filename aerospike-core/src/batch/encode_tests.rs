@@ -118,10 +118,7 @@ fn random_repeat_sequences_encode_to_the_predicted_size() {
         );
     }
 
-    assert!(
-        repeats_seen > 500 && breaks_seen > 500,
-        "the random mix must exercise both outcomes heavily (repeats {repeats_seen}, breaks {breaks_seen})"
-    );
+    assert!(repeats_seen > 500 && breaks_seen > 500, "{}", format!("the random mix must exercise both outcomes heavily (repeats {repeats_seen}, breaks {breaks_seen})"));
 }
 
 /// Bytes a repeated row costs: batch index (4) + digest (20) + the repeat
@@ -180,11 +177,8 @@ fn rows_with_different_bins_do_not_repeat() {
     ];
 
     let grew_by = encoded_len(&batch) - one;
-    assert!(
-        grew_by > REPEAT_ROW_SIZE,
-        "a row with its own bin list must write a full header, but it added only \
-         {grew_by} bytes — the cost of a repeat row"
-    );
+    assert!(grew_by > REPEAT_ROW_SIZE, "{}", format!("a row with its own bin list must write a full header, but it added only \
+         {grew_by} bytes — the cost of a repeat row"));
 }
 
 /// A repeat is only valid against the row immediately before it, which is what

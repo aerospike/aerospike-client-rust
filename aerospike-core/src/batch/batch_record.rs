@@ -40,6 +40,11 @@ pub struct BatchRecord {
     pub in_doubt: bool,
 
     /// Does this command contain a write operation. For internal use only.
+    ///
+    /// v2 derives a row's in-doubt outcome from the `BatchOperation` variant,
+    /// so nothing reads this field; it is kept because it is part of the
+    /// serialized `BatchRecord` shape, which released v2 must not change.
+    #[allow(dead_code)]
     has_write: bool,
 }
 
