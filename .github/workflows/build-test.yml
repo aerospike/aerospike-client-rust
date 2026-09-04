@@ -52,8 +52,8 @@ jobs:
         with:
           enable-strong-consistency: "true"
           features-content: ${{ secrets.AEROSPIKE_SERVER_FEATURES_CONF }}
-          oidc-provider: ${{ vars.JFROG_OIDC_PROVIDER }}
-          oidc-audience: ${{ vars.JFROG_OIDC_AUDIENCE }}
+          oidc-provider: ${{ vars.OIDC_PROVIDER_NAME }}
+          oidc-audience: ${{ vars.OIDC_AUDIENCE }}
 
       - name: Build workspace
         run: |
@@ -112,8 +112,8 @@ jobs:
         with:
           enable-strong-consistency: "true"
           features-content: ${{ secrets.AEROSPIKE_SERVER_FEATURES_CONF }}
-          oidc-provider: ${{ vars.JFROG_OIDC_PROVIDER }}
-          oidc-audience: ${{ vars.JFROG_OIDC_AUDIENCE }}
+          oidc-provider: ${{ vars.OIDC_PROVIDER_NAME }}
+          oidc-audience: ${{ vars.OIDC_AUDIENCE }}
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
