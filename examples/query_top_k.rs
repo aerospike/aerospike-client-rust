@@ -1,25 +1,8 @@
-//! `ORDER BY <bin> LIMIT k` ("Top-K") queries — client-side API and validation.
+//! `ORDER BY <bin> LIMIT k` ("Top-K") queries.
 //!
-//! # Work in progress — read before using
-//!
-//! This example demonstrates the parts of Top-K that are implemented today:
-//! `Statement::set_order_by`/`set_top_k`, client-side validation, and the
-//! wire encode. **The feature cannot actually run against a server yet**,
-//! though: the wire encode is capability-gated behind
-//! `Version::supports_query_top_k()`, which always evaluates to `false`
-//! against a real server for now (this feature has no assigned minimum
-//! server version — it's unreleased). So a well-formed statement still
-//! passes `Client::query`'s upfront validation (the `Recordset` is created
-//! successfully), but draining the resulting stream surfaces a per-node
-//! error instead of records, once each node's command actually tries to
-//! encode the request. What *is* real and tested today:
-//!
-//! * The builder methods themselves (`set_order_by`, `set_order_by_with_flags`, `set_top_k`).
-//! * `Statement::validate()` (invoked by `Client::query` before any network
-//!   I/O) rejecting invalid combinations client-side.
-//! * The wire-encode logic itself (`FieldType::OrderBy`/`FieldType::TopK`),
-//!   unit-tested byte-for-byte in `commands/buffer.rs`, but not reachable
-//!   against a real cluster until the capability gate above is updated.
+//! The client performs bounded reduction and merges the ordered top `k`
+//! records. The server supports wire-level pushdown; this client doesn't use
+//! it yet (TODO).
 //!
 //! Run with:
 //!
@@ -54,7 +37,7 @@ pub async fn run() {
 
     populate_test_data(&client).await;
 
-    valid_statement_passes_validation(&client).await;
+    top_k_query_returns_ordered_records(&client).await;
     top_k_without_order_by_is_rejected(&client).await;
     top_k_out_of_range_is_rejected(&client).await;
     order_by_bin_not_in_projection_is_rejected(&client).await;
@@ -65,7 +48,7 @@ pub async fn run() {
 }
 
 async fn connect_to_aerospike() -> Client {
-    let hosts = env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| String::from("127.0.0.1:3100"));
+    let hosts = env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| String::from("127.0.0.1:3000"));
 
     let mut policy = ClientPolicy::default();
     policy.use_services_alternate = std::env::var("AEROSPIKE_USE_SERVICES_ALTERNATE")
@@ -97,34 +80,30 @@ async fn populate_test_data(client: &Client) {
     }
 }
 
-/// A well-formed `order_by`/`top_k` statement passes `Statement::validate()`
-/// (called internally by `Client::query`), so the call itself succeeds and
-/// returns a `Recordset` — but draining it surfaces a capability error from
-/// each node's command instead of records, since no real server satisfies
-/// `Version::supports_query_top_k()` yet (see the module docs above).
-async fn valid_statement_passes_validation(client: &Client) {
-    println!("\n--- 1. Well-formed order_by + top_k passes validation, but can't run yet ---");
+/// A well-formed `order_by`/`top_k` statement returns the globally best
+/// results in the requested direction.
+async fn top_k_query_returns_ordered_records(client: &Client) {
+    println!("\n--- 1. Top three scores in descending order ---");
 
     let mut stmt = Statement::new(DEFAULT_NAMESPACE, DEFAULT_SET, Bins::All);
     stmt.set_order_by(SCORE_BIN, OrderByType::Integer, Order::Desc);
     stmt.set_top_k(3);
 
-    let rs = client
+    let scores = client
         .query(&QueryPolicy::default(), PartitionFilter::all(), stmt)
         .await
-        .expect("a well-formed statement must pass Client::query's upfront validation");
-    println!("Statement accepted by Client::query (Recordset created).");
-
-    let mut stream = rs.into_stream();
-    match stream.next().await {
-        Some(Err(err)) => println!(
-            "Draining the stream surfaces the expected per-node capability error: {err}"
-        ),
-        Some(Ok(rec)) => panic!(
-            "Expected a capability error (no server supports Top-K yet), got a record: {rec:?}"
-        ),
-        None => panic!("Expected at least one error result from the query stream"),
-    }
+        .expect("Top-K query should be accepted")
+        .into_stream()
+        .map(
+            |result| match result.expect("Top-K record").bins[SCORE_BIN] {
+                aerospike::Value::Int(score) => score,
+                ref value => panic!("expected integer score, got {value:?}"),
+            },
+        )
+        .collect::<Vec<_>>()
+        .await;
+    assert_eq!(scores, vec![99, 92, 88]);
+    println!("{scores:?}");
 }
 
 /// `set_top_k` without a preceding `set_order_by` is rejected client-side,

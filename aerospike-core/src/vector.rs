@@ -26,11 +26,8 @@
 //! 8       variable      data          Contiguous little-endian elements.
 //! ```
 //!
-//! # Server behavior
-//!
-//! The server validates the header on write (version, `reserved`, element type,
-//! dimensions, and size) and preserves element bits. Vector expressions in
-//! [`crate::expressions::vector`] are WIP pending `EXP_VECTOR_DIST`.
+//! [`Vector::wire_bytes`] returns the complete value used by vector-distance
+//! expressions.
 
 use std::cmp::Ordering;
 use std::convert::TryInto;
@@ -108,7 +105,7 @@ impl fmt::Display for VectorElementType {
     }
 }
 
-/// Wire metric for WIP vector-distance expressions.
+/// Vector-distance metric.
 ///
 /// Use the named builders in [`crate::expressions::vector`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -122,9 +119,13 @@ pub enum VectorDistanceMetric {
 }
 
 impl VectorDistanceMetric {
-    /// Wire-protocol code for this metric.
+    /// Wire-protocol expression opcode for this metric.
     pub const fn code(self) -> i64 {
-        self as i64
+        match self {
+            VectorDistanceMetric::EuclideanSquared => 52,
+            VectorDistanceMetric::DotProduct => 53,
+            VectorDistanceMetric::CosineSimilarity => 54,
+        }
     }
 }
 
@@ -161,7 +162,6 @@ impl VectorData {
             VectorData::Float64(d) => d.len(),
         }
     }
-
 }
 
 /// A dense numeric vector.
@@ -316,14 +316,34 @@ impl Vector {
         self.wire_size()
     }
 
-    /// Little-endian element bytes for WIP vector-distance expressions.
-    pub(crate) fn element_bytes(&self) -> Vec<u8> {
+    /// Returns the complete little-endian vector wire value, including its
+    /// 8-byte header. This is the literal form consumed by vector-distance
+    /// expressions.
+    pub fn wire_bytes(&self) -> Vec<u8> {
+        let mut buf = Buffer::new(usize::MAX);
+        buf.resize_buffer(self.wire_size())
+            .expect("validated vector wire size must fit the buffer");
+        buf.data_offset = 0;
+        self.write_to(&mut buf);
+        buf.data_buffer.clone()
+    }
+
+    /// Returns the little-endian element bytes without the 8-byte header.
+    pub fn element_bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.dimensions() * self.element_type().byte_size());
         match &self.data {
-            VectorData::Float16(d) => d.iter().for_each(|x| out.extend_from_slice(&x.to_le_bytes())),
-            VectorData::Int32(d) => d.iter().for_each(|x| out.extend_from_slice(&x.to_le_bytes())),
-            VectorData::Float32(d) => d.iter().for_each(|x| out.extend_from_slice(&x.to_le_bytes())),
-            VectorData::Float64(d) => d.iter().for_each(|x| out.extend_from_slice(&x.to_le_bytes())),
+            VectorData::Float16(d) => d
+                .iter()
+                .for_each(|x| out.extend_from_slice(&x.to_le_bytes())),
+            VectorData::Int32(d) => d
+                .iter()
+                .for_each(|x| out.extend_from_slice(&x.to_le_bytes())),
+            VectorData::Float32(d) => d
+                .iter()
+                .for_each(|x| out.extend_from_slice(&x.to_le_bytes())),
+            VectorData::Float64(d) => d
+                .iter()
+                .for_each(|x| out.extend_from_slice(&x.to_le_bytes())),
         }
         out
     }
@@ -527,7 +547,13 @@ mod tests {
     }
 
     /// Build a buffer holding a hand-crafted vector header + body, offset at 0.
-    fn craft(version: u8, type_code: u8, dimensions: u32, reserved: [u8; 2], body: &[u8]) -> Buffer {
+    fn craft(
+        version: u8,
+        type_code: u8,
+        dimensions: u32,
+        reserved: [u8; 2],
+        body: &[u8],
+    ) -> Buffer {
         let mut buf = Buffer::new(usize::MAX);
         buf.resize_buffer(VECTOR_HEADER_SIZE + body.len()).unwrap();
         buf.data_offset = 0;
@@ -558,9 +584,9 @@ mod tests {
 
     #[test]
     fn distance_metric_codes() {
-        assert_eq!(VectorDistanceMetric::EuclideanSquared.code(), 0);
-        assert_eq!(VectorDistanceMetric::DotProduct.code(), 1);
-        assert_eq!(VectorDistanceMetric::CosineSimilarity.code(), 2);
+        assert_eq!(VectorDistanceMetric::EuclideanSquared.code(), 52);
+        assert_eq!(VectorDistanceMetric::DotProduct.code(), 53);
+        assert_eq!(VectorDistanceMetric::CosineSimilarity.code(), 54);
     }
 
     #[test]
@@ -581,8 +607,25 @@ mod tests {
         // dimensions = 1, little-endian
         assert_eq!(&buf.data_buffer[2..6], &1u32.to_le_bytes());
         assert_eq!(&buf.data_buffer[6..8], &[0, 0]); // reserved
-        // the single float, little-endian
+                                                     // the single float, little-endian
         assert_eq!(&buf.data_buffer[8..12], &1.5f32.to_le_bytes());
+        assert_eq!(
+            vector.wire_bytes(),
+            [
+                VECTOR_VERSION,
+                VectorElementType::Float32.code(),
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0xc0,
+                0x3f,
+            ]
+        );
     }
 
     #[test]
@@ -682,10 +725,16 @@ mod tests {
         assert_ne!(Vector::float32(vec![1.0]), Vector::float64(vec![1.0]));
 
         // Same type, different data: not equal.
-        assert_ne!(Vector::float32(vec![1.0, 2.0]), Vector::float32(vec![1.0, 3.0]));
+        assert_ne!(
+            Vector::float32(vec![1.0, 2.0]),
+            Vector::float32(vec![1.0, 3.0])
+        );
 
         // Same type and data: equal.
-        assert_eq!(Vector::float32(vec![1.0, 2.0]), Vector::float32(vec![1.0, 2.0]));
+        assert_eq!(
+            Vector::float32(vec![1.0, 2.0]),
+            Vector::float32(vec![1.0, 2.0])
+        );
     }
 
     #[test]
@@ -780,7 +829,13 @@ mod tests {
         // Header claims 4 float32 elements (16 body bytes) but only 8 are given.
         let body = [0u8; 8];
         let len = VECTOR_HEADER_SIZE + body.len();
-        let mut buf = craft(VECTOR_VERSION, VectorElementType::Float32.code(), 4, [0, 0], &body);
+        let mut buf = craft(
+            VECTOR_VERSION,
+            VectorElementType::Float32.code(),
+            4,
+            [0, 0],
+            &body,
+        );
         assert!(
             Vector::from_bytes(&mut buf, len).is_err(),
             "declared dimensions exceed available bytes"
@@ -795,7 +850,13 @@ mod tests {
         full.extend_from_slice(&trailing);
         let len = VECTOR_HEADER_SIZE + full.len();
 
-        let mut buf = craft(VECTOR_VERSION, VectorElementType::Float32.code(), 1, [0xAB, 0xCD], &full);
+        let mut buf = craft(
+            VECTOR_VERSION,
+            VectorElementType::Float32.code(),
+            1,
+            [0xAB, 0xCD],
+            &full,
+        );
         let vector = Vector::from_bytes(&mut buf, len).unwrap();
         assert_eq!(vector.reserved(), u16::from_le_bytes([0xAB, 0xCD]));
         assert_eq!(vector.data(), &VectorData::Float32(vec![7.0]));
@@ -885,7 +946,11 @@ mod tests {
         buf.data_offset = lead;
         let written = v.write_to(&mut buf);
         assert_eq!(written, size);
-        assert_eq!(&buf.data_buffer[..lead], &[0xEE; 4], "leading bytes untouched");
+        assert_eq!(
+            &buf.data_buffer[..lead],
+            &[0xEE; 4],
+            "leading bytes untouched"
+        );
         assert_eq!(buf.data_buffer[lead], VECTOR_VERSION);
 
         buf.data_offset = lead;

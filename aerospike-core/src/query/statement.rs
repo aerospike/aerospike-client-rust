@@ -65,10 +65,11 @@ pub struct Statement {
     /// reads as well.
     pub operations: Option<Vec<Operation>>,
 
-    /// Top-K order-by clause. Requires server 8.1.3 or later.
+    /// Top-K order-by clause. Requires `top_k`; reduction is performed
+    /// client-side over the query response stream.
     pub order_by: Option<OrderBy>,
 
-    /// Top-K limit (`k`), in `[1, 1000]`. Must be preceded by `set_order_by`.
+    /// Top-K limit (`k`), in `[1, 1000]`. Must be paired with `order_by`.
     pub top_k: Option<u32>,
 }
 
@@ -154,7 +155,7 @@ impl Statement {
     /// direction. Equivalent to calling
     /// `set_order_by_with_flags(bin_name, order_type, direction, OrderByFlags::None)`.
     ///
-    /// Must be set before `set_top_k`.
+    /// Must be paired with `set_top_k` before execution.
     pub fn set_order_by(&mut self, bin_name: &str, order_type: OrderByType, direction: Order) {
         self.set_order_by_with_flags(bin_name, order_type, direction, OrderByFlags::None);
     }
@@ -176,11 +177,8 @@ impl Statement {
         });
     }
 
-    /// Sets the Top-K limit. `k` must be in `[1, 1000]`. Must be preceded by
-    /// `set_order_by`/`set_order_by_with_flags` (checked by `validate()`, not
-    /// here, so builder calls can happen in either order relative to other
-    /// statement setup as long as `order_by` is set before the statement is
-    /// executed).
+    /// Sets the Top-K limit. `k` must be in `[1, 1000]` and must be paired
+    /// with `set_order_by`/`set_order_by_with_flags` before execution.
     pub const fn set_top_k(&mut self, k: u32) {
         self.top_k = Some(k);
     }
@@ -196,7 +194,9 @@ impl Statement {
 
         if let Some(ref agg) = self.aggregation {
             if agg.package_name.is_empty() {
-                return Err(Error::invalid_argument("Empty UDF package name".to_string()));
+                return Err(Error::invalid_argument(
+                    "Empty UDF package name".to_string(),
+                ));
             }
 
             if agg.function_name.is_empty() {
@@ -211,11 +211,16 @@ impl Statement {
         Ok(())
     }
 
-    /// Validation rules specific to `order_by`/`top_k`, including which
-    /// rules the server also enforces as defense-in-depth.
+    /// Validates `order_by` and `top_k` options.
     fn validate_top_k(&self) -> Result<()> {
         if self.order_by.is_none() && self.top_k.is_none() {
             return Ok(());
+        }
+
+        if self.order_by.is_some() != self.top_k.is_some() {
+            return Err(Error::invalid_argument(
+                "orderBy and topK must be set together".to_string(),
+            ));
         }
 
         if self.aggregation.is_some() {
@@ -266,12 +271,7 @@ impl Statement {
                     )));
                 }
             }
-        } else if self.top_k.is_some() {
-            return Err(Error::invalid_argument(
-                "topK requires orderBy to be set".to_string(),
-            ));
         }
-
         if let Some(k) = self.top_k {
             if !(TOP_K_MIN..=TOP_K_MAX).contains(&k) {
                 return Err(Error::invalid_argument(format!(
@@ -299,10 +299,11 @@ mod tests {
     }
 
     #[test]
-    fn order_by_alone_is_valid() {
+    fn order_by_without_top_k_is_rejected() {
         let mut stmt = base_statement();
         stmt.set_order_by("score", OrderByType::Integer, Order::Desc);
-        assert!(stmt.validate().is_ok());
+        let err = stmt.validate().unwrap_err();
+        assert!(err.to_string().contains("must be set together"));
     }
 
     #[test]
@@ -310,7 +311,7 @@ mod tests {
         let mut stmt = base_statement();
         stmt.set_top_k(10);
         let err = stmt.validate().unwrap_err();
-        assert!(err.to_string().contains("topK requires orderBy"));
+        assert!(err.to_string().contains("must be set together"));
     }
 
     #[test]
@@ -343,6 +344,7 @@ mod tests {
     fn order_by_incompatible_with_aggregation() {
         let mut stmt = base_statement();
         stmt.set_order_by("score", OrderByType::Integer, Order::Desc);
+        stmt.set_top_k(10);
         stmt.set_aggregate_function("pkg", "func", None);
         let err = stmt.validate().unwrap_err();
         assert!(err.to_string().contains("aggregate UDF"));
@@ -357,6 +359,7 @@ mod tests {
             Order::Desc,
             OrderByFlags::CaseInsensitive,
         );
+        stmt.set_top_k(10);
         let err = stmt.validate().unwrap_err();
         assert!(err.to_string().contains("CASE_INSENSITIVE"));
     }
@@ -370,13 +373,19 @@ mod tests {
             Order::Asc,
             OrderByFlags::CaseInsensitive,
         );
+        stmt.set_top_k(10);
         assert!(stmt.validate().is_ok());
     }
 
     #[test]
     fn order_by_bin_name_too_long_is_rejected() {
         let mut stmt = base_statement();
-        stmt.set_order_by("this_bin_name_is_too_long", OrderByType::Integer, Order::Desc);
+        stmt.set_order_by(
+            "this_bin_name_is_too_long",
+            OrderByType::Integer,
+            Order::Desc,
+        );
+        stmt.set_top_k(10);
         let err = stmt.validate().unwrap_err();
         assert!(err.to_string().contains("14-character limit"));
     }
@@ -385,6 +394,7 @@ mod tests {
     fn order_by_bin_missing_from_bins_projection_is_rejected() {
         let mut stmt = Statement::new("ns", "set", Bins::from(["a", "b"]));
         stmt.set_order_by("c", OrderByType::Integer, Order::Desc);
+        stmt.set_top_k(10);
         let err = stmt.validate().unwrap_err();
         assert!(err.to_string().contains("is not in projection"));
     }
@@ -393,6 +403,7 @@ mod tests {
     fn order_by_bin_present_in_bins_projection_is_valid() {
         let mut stmt = Statement::new("ns", "set", Bins::from(["a", "b"]));
         stmt.set_order_by("b", OrderByType::Integer, Order::Desc);
+        stmt.set_top_k(10);
         assert!(stmt.validate().is_ok());
     }
 
@@ -401,6 +412,7 @@ mod tests {
         let mut stmt = base_statement();
         stmt.set_operations(vec![operations::get_bin("a")]);
         stmt.set_order_by("dist", OrderByType::Double, Order::Asc);
+        stmt.set_top_k(10);
         let err = stmt.validate().unwrap_err();
         assert!(err.to_string().contains("is not in projection"));
     }
@@ -410,6 +422,7 @@ mod tests {
         let mut stmt = base_statement();
         stmt.set_operations(vec![operations::get_bin("dist")]);
         stmt.set_order_by("dist", OrderByType::Double, Order::Asc);
+        stmt.set_top_k(10);
         assert!(stmt.validate().is_ok());
     }
 
@@ -419,6 +432,7 @@ mod tests {
         // allowed since the full record (whatever it contains) comes back.
         let mut stmt = Statement::new("ns", "set", Bins::All);
         stmt.set_order_by("anything", OrderByType::Integer, Order::Desc);
+        stmt.set_top_k(10);
         assert!(stmt.validate().is_ok());
     }
 }

@@ -22,17 +22,17 @@ pub(crate) use self::node_partitions::NodePartitions;
 pub use self::order_by::{Order, OrderBy, OrderByFlags, OrderByType};
 pub use self::partition_filter::PartitionFilter;
 pub use self::partition_status::PartitionStatus;
+pub(crate) use self::partition_tracker::PartitionTracker;
 pub use self::plan::{
     QueryPlan, QuerySelection, QueryWhereWire, FLAG_ENC_VARINT, FLAG_EXPLAIN, FLAG_HARD_HINT,
     FLAG_KNOWN, FLAG_REQUIRE_INDEX,
 };
-pub(crate) use self::partition_tracker::PartitionTracker;
 pub use self::recordset::RecordStream;
 pub use self::recordset::Recordset;
 #[cfg(feature = "lua")]
 pub use self::result_set::{ResultSet, ResultStream};
 pub use self::statement::Statement;
-pub(crate) use self::top_k_merge::TopKMerger;
+pub(crate) use self::top_k_merge::{TopKAccumulator, TopKMerger};
 pub use self::udf::UDFLang;
 
 /// Query filter definitions and filter value traits.

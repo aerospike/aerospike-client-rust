@@ -64,6 +64,8 @@ pub enum ExpType {
     GEO = 8,
     /// HLL Expression Type
     HLL = 9,
+    /// VECTOR Expression Type
+    VECTOR = 10,
 }
 
 #[allow(clippy::upper_case_acronyms)]
@@ -107,9 +109,12 @@ pub(crate) enum ExpOp {
     IntRscan = 41,
     Min = 50,
     Max = 51,
-    // WIP: opcode/layout are unverified until a server build exposes
-    // EXP_VECTOR_DIST.
-    VectorDist = 52,
+    /// Squared Euclidean distance between two VECTOR operands.
+    VectorEuclideanDistance = 52,
+    /// Dot product between two VECTOR operands.
+    VectorDotProduct = 53,
+    /// Cosine similarity between two VECTOR operands.
+    VectorCosineSimilarity = 54,
     DigestModulo = 64,
     DeviceSize = 65,
     LastUpdate = 66,
@@ -369,13 +374,14 @@ impl Expression {
                 // The name - Raw String is needed instead of the msgpack String that the pack_value method would use.
                 size += pack_raw_string(buf, &self.val.clone().unwrap().to_string());
             }
-            ExpOp::VectorDist => {
-                // Layout: array[4] = [VECTOR_DIST, metric, query BLOB, bin]
-                size += pack_array_begin(buf, 4);
+            ExpOp::VectorEuclideanDistance
+            | ExpOp::VectorDotProduct
+            | ExpOp::VectorCosineSimilarity => {
+                // Layout: array[3] = [VECTOR_*_DIST, vector-bin, full-vector BLOB].
+                size += pack_array_begin(buf, 3);
                 size += pack_integer(buf, cmd as i64);
-                size += pack_integer(buf, self.flags.unwrap());
-                size += pack_value(buf, self.val.as_ref().unwrap())?;
                 size += self.bin.clone().unwrap().pack(buf)?;
+                size += pack_value(buf, self.val.as_ref().unwrap())?;
             }
             ExpOp::BinType | ExpOp::Var => {
                 // BinType/Var encoder
@@ -724,16 +730,17 @@ pub fn hll_bin(name: String) -> Expression {
     )
 }
 
-/// Creates a vector-bin expression for WIP vector-distance expressions.
+/// Creates a VECTOR-bin expression for vector-distance expressions.
 ///
-/// Encoded as a blob; requires `EXP_VECTOR_DIST`.
+/// The explicit vector result type is required: a BLOB declaration evaluates
+/// to unknown for a stored VECTOR particle.
 pub fn vector_bin(name: String) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
         Some(Value::from(name)),
         None,
         None,
-        Some(ExpType::BLOB),
+        Some(ExpType::VECTOR),
         None,
     )
 }
@@ -1881,18 +1888,13 @@ pub const fn unknown() -> Expression {
 mod tests {
     use super::*;
 
-    // A plain `vector_bin` read is wire-identical to `blob_bin`: both are a
-    // BLOB-typed bin read (ExpOp::Bin + ExpType::BLOB). The client therefore
-    // sends an ordinary, well-formed bin-read expression when reading a vector
-    // bin. Any node crash on such a read is a server-side defect, not a
-    // malformed client payload. (Server bug: `rt_bin_translate` in
-    // as/src/exp/exp_rt.c has no AS_PARTICLE_TYPE_VECTOR case and falls through
-    // to `cf_crash`, unlike `rt_value_translate`, which safely yields UNK.)
+    // VECTOR and BLOB bin expressions differ in their declared result type.
+    // The server uses this declaration to enforce the stored particle type.
     #[test]
-    fn vector_bin_packs_identically_to_blob_bin() {
-        assert_eq!(
+    fn vector_bin_declares_vector_result_type() {
+        assert_ne!(
             vector_bin("embedding".to_string()).base64().unwrap(),
-            blob_bin("embedding".to_string()).base64().unwrap(),
+            blob_bin("embedding".to_string()).base64().unwrap()
         );
     }
 
