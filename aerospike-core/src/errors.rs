@@ -135,6 +135,15 @@ pub enum Error {
 }
 
 impl Error {
+    /// True when the error means the node's connection pool is exhausted:
+    /// every allowed connection exists and is currently in flight. This is a
+    /// transient shortage — another task returning its connection clears it —
+    /// so the retry loops treat it as a pacing wait rather than a failure.
+    #[must_use]
+    pub const fn is_pool_empty(&self) -> bool {
+        matches!(self, Error::NoMoreConnections)
+    }
+
     #[must_use]
     pub fn chain_error(self, e: &str) -> Error {
         Error::Chain(Box::new(Error::ClientError(e.into())), Box::new(self))

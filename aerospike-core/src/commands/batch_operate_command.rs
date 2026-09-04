@@ -76,9 +76,10 @@ impl BatchOperateCommand {
 
     pub async fn execute_command(mut self, cluster: Arc<Cluster>) -> Result<Self> {
         let mut iterations = 0;
+        let mut pool_empty_waits = 0;
         // Remember the most recent per-attempt error so retry exhaustion can
         // return a timeout that still displays the last failure.
-        let mut last_err: Option<Error>;
+        let mut last_err: Option<Error> = None;
 
         // set timeout outside the loop
         let deadline = self.policy.deadline();
@@ -152,6 +153,28 @@ impl BatchOperateCommand {
             };
 
             if let Some(err) = error {
+                // Pool exhaustion is a pacing wait, not a failure: another
+                // task returning its connection clears it. It consumes
+                // neither the retry budget (`iterations` is not bumped) nor
+                // `last_err` (thousands of waits must not bury the terminal
+                // error), and `request_group` did not count it against the
+                // node's error-rate breaker. The loop's deadline check sits
+                // below `iterations += 1`, which this arm skips, so the wait
+                // is deadline-checked here; `POOL_EMPTY_MAX_WAITS` bounds
+                // deadline-less commands.
+                if err.is_pool_empty() && pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS {
+                    if let Some(deadline) = deadline {
+                        if Instant::now() + commands::POOL_EMPTY_WAIT > deadline {
+                            return Err(Self::wrap_last_error(
+                                last_err,
+                                Error::Timeout(format!("Command timed out after {iterations} tries")),
+                            ));
+                        }
+                    }
+                    pool_empty_waits += 1;
+                    sleep(commands::POOL_EMPTY_WAIT).await;
+                    continue;
+                }
                 warn!("Node {}: {err}", self.node);
                 last_err = Some(err);
             } else {
@@ -251,11 +274,18 @@ impl BatchOperateCommand {
             return Ok(Some(err));
         }
 
-        let mut conn = match node.get_connection(Self::queue_hint(batch_ops)).await {
+        let mut conn = match node.get_connection(Self::queue_hint(batch_ops), None).await {
             Ok(conn) => conn,
             Err(err) => {
-                warn!("Node {node}: {err}");
-                node.incr_error_rate();
+                // An exhausted pool is a transient shortage the retry loop
+                // waits out, not a node failure: it must not warn (a paced
+                // wait would flood the log) and must not trip the error-rate
+                // breaker, which would turn the shortage into instant
+                // `MaxErrorRate` refusals.
+                if !err.is_pool_empty() {
+                    warn!("Node {node}: {err}");
+                    node.incr_error_rate();
+                }
                 return Ok(Some(err));
             }
         };
@@ -624,5 +654,96 @@ mod tests {
     #[test]
     fn queue_hint_of_an_empty_group_does_not_panic() {
         assert_eq!(BatchOperateCommand::queue_hint(&[]), 0);
+    }
+}
+
+#[cfg(test)]
+mod pool_wait_tests {
+    use super::*;
+    use crate::batch::BatchOperation;
+    use crate::cluster::node_validator::NodeValidator;
+    use crate::net::Host;
+    use crate::policy::ClientPolicy;
+    use crate::{BatchReadPolicy, Bins, Key, Version};
+
+    /// A batch that cannot get a connection waits for its deadline instead of
+    /// failing instantly, and the wait feeds neither the retry budget nor the
+    /// node's error-rate breaker.
+    #[aerospike_macro::test]
+    async fn batch_pool_empty_wait_is_deadline_bounded_and_not_a_node_error() {
+        // max_error_rate 1: a single stray incr_error_rate trips the breaker
+        // and changes the outcome, failing this test.
+        let client_policy = ClientPolicy {
+            max_conns_per_node: 1,
+            conn_pools_per_node: 1,
+            max_error_rate: 1,
+            ..ClientPolicy::default()
+        };
+        let nv = Arc::new(NodeValidator {
+            name: "test-node".to_string(),
+            aliases: vec![Host::new("127.0.0.1", 3000)],
+            services: vec![],
+            address: "127.0.0.1:3000".to_string(),
+            client_policy: client_policy.clone(),
+            use_new_info: true,
+            version: Version::default(),
+        });
+        let node = Arc::new(Node::new(client_policy, nv));
+        let _held = node
+            .get_connection(0, None)
+            .await
+            .expect("first borrow saturates the pool");
+
+        // The retry loop only consults the cluster when re-splitting the
+        // batch, which a Replica::Master policy never does; an empty cluster
+        // satisfies the signature.
+        let cluster = Cluster::new(
+            ClientPolicy {
+                timeout: 100,
+                fail_if_not_connected: false,
+                ..ClientPolicy::default()
+            },
+            &[],
+        )
+        .await
+        .expect("empty cluster");
+
+        let mut policy = BatchPolicy::default();
+        policy.base_policy.total_timeout = 200;
+        policy.base_policy.max_retries = 0;
+        policy.replica = Replica::Master;
+
+        let key = Key::new("test", "set", 1.into()).expect("key");
+        let ops = vec![(
+            BatchOperation::read(&BatchReadPolicy::default(), key, Bins::All),
+            0,
+        )];
+        let cmd = BatchOperateCommand::new(policy, node.clone(), ops);
+
+        let start = Instant::now();
+        let err = cmd
+            .execute_command(cluster)
+            .await
+            .err()
+            .expect("nothing ever returns a connection");
+        let elapsed = start.elapsed();
+
+        assert!(
+            matches!(err, Error::Timeout(_)),
+            "the wait must end in a clean timeout, got: {:?}", err
+        );
+        assert!(
+            elapsed >= Duration::from_millis(150),
+            "must wait for the deadline, not fail instantly: {:?}", elapsed
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "must not overshoot the deadline: {:?}", elapsed
+        );
+        assert_eq!(
+            node.error_rate_count(),
+            0,
+            "a pool wait must not count toward the node error rate"
+        );
     }
 }

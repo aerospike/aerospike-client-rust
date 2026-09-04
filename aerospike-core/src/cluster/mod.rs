@@ -449,7 +449,7 @@ impl Cluster {
         partition_map: &mut PartitionTable,
         node: &Arc<Node>,
     ) -> Result<()> {
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = node.get_connection(0, None).await?;
 
         let admin_policy = AdminPolicy {
             timeout: self.client_policy.load().timeout,
@@ -468,7 +468,7 @@ impl Cluster {
 
     pub async fn update_rack_ids(&self, node: &Arc<Node>) -> Result<()> {
         const RACK_IDS: &str = "rack-ids";
-        let mut conn = node.get_connection(0).await?;
+        let mut conn = node.get_connection(0, None).await?;
         let admin_policy = AdminPolicy {
             timeout: self.client_policy.load().timeout,
         };
