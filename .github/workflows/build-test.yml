@@ -50,6 +50,7 @@ jobs:
       - name: Set up Aerospike Database
         uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
         with:
+          server-tag: "8.1.2.0"
           enable-strong-consistency: "true"
           features-content: ${{ secrets.AEROSPIKE_SERVER_FEATURES_CONF }}
           oidc-provider: ${{ vars.OIDC_PROVIDER_NAME }}
@@ -110,6 +111,7 @@ jobs:
       - name: Set up Aerospike Database
         uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
         with:
+          server-tag: "8.1.2.0"
           enable-strong-consistency: "true"
           features-content: ${{ secrets.AEROSPIKE_SERVER_FEATURES_CONF }}
           oidc-provider: ${{ vars.OIDC_PROVIDER_NAME }}
