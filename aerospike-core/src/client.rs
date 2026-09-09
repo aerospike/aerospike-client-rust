@@ -1501,6 +1501,7 @@ impl Client {
 
         let policy = self.cluster.resolve_query(policy);
         let policy = policy.as_ref();
+        Self::validate_top_k_policy(policy, &statement)?;
         let nodes: Vec<Arc<Node>> = self.cluster.nodes();
         let t_policy = policy.clone();
         let tracker = Arc::new(Mutex::new(
@@ -1517,10 +1518,8 @@ impl Client {
         let t_recordset = recordset.clone();
         let defer_recordset = recordset.clone();
         let cluster = self.cluster.clone();
-        // Top-K (`ORDER BY <bin> LIMIT k`) statements go through a dedicated
-        // executor: each node reduces its normal query response stream to a
-        // bounded local Top-K, and the client merges those local results once
-        // the whole job completes.
+        // Top-K statements use server-side per-node reduction when available,
+        // then merge candidates globally in the client.
         let is_top_k = statement.order_by.is_some();
         aerospike_rt::spawn(async move {
             if is_top_k {
@@ -2098,6 +2097,7 @@ impl Client {
                                 cluster,
                                 None,
                                 execute_where,
+                                false,
                             )
                             .await;
                             let result = cmd.execute().await;
@@ -2192,7 +2192,7 @@ impl Client {
         }
     }
 
-    /// Executes a Top-K query with bounded client-side reduction.
+    /// Executes an ordered Top-K query.
     async fn execute_top_k_query(
         cluster: Arc<Cluster>,
         policy: &QueryPolicy,
@@ -2204,9 +2204,7 @@ impl Client {
         let sleep_multiplier = policy.base_policy.sleep_multiplier();
         let mut sleep_interval = policy.base_policy.sleep_between_retries();
 
-        // Accumulates every node's bounded local Top-K across retry rounds.
-        // Cleared whenever a round has an error, since Top-K cannot safely
-        // resume a partially reduced result.
+        // Candidate results accumulated for this attempt.
         let mut all_node_results: Vec<Vec<Record>> = Vec::new();
 
         loop {
@@ -2232,6 +2230,7 @@ impl Client {
                 recordset.set_instances(node_list.len() + 1); // +1 is for the async executor
 
                 if recordset.is_active() {
+                    let send_top_k = Self::nodes_support_top_k_pushdown(&node_list).await;
                     let semaphore = Arc::new(Semaphore::new(if policy.max_concurrent_nodes == 0 {
                         MAX_PERMITS
                     } else {
@@ -2265,6 +2264,7 @@ impl Client {
                                 cluster,
                                 Some(buffer.clone()),
                                 None,
+                                send_top_k,
                             )
                             .await
                             .execute()
@@ -2281,17 +2281,7 @@ impl Client {
 
                     drop(tracker_locked);
 
-                    // `JoinHandle<T>`'s `Future::Output` differs by runtime:
-                    // tokio wraps it as `Result<T, JoinError>` (so a single
-                    // node's `Result<Vec<Record>>` surfaces inside the `Ok`
-                    // arm below and is inspected one by one), while
-                    // async-std's is `T` directly (so `try_join_all` itself
-                    // treats each node's `Result<Vec<Record>>` as its own
-                    // `TryFuture` output and short-circuits on the first
-                    // per-node error). Both arms apply the same three
-                    // outcomes — fatal capability error, timeout-ish
-                    // transient error, or generic transient error — just at
-                    // different match depths.
+                    // JoinHandle result types differ by runtime.
                     #[cfg(feature = "rt-tokio")]
                     match futures::future::try_join_all(handles).await {
                         Err(e) => {
@@ -2356,9 +2346,7 @@ impl Client {
             if round_had_error {
                 tracker.lock().await.mark_all_for_retry().await;
                 all_node_results.clear();
-                // Guarantee `is_complete` below sees this round as
-                // incomplete (rather than relying solely on `timed_out`,
-                // which isn't set for every error kind).
+                // Mark this round incomplete.
                 if let Some(np) = node_list.first() {
                     np.lock().await.parts_unavailable += 1;
                 }
@@ -2411,6 +2399,38 @@ impl Client {
         Ok(())
     }
 
+    fn validate_top_k_policy(policy: &QueryPolicy, statement: &Statement) -> Result<()> {
+        if statement.top_k.is_none() {
+            return Ok(());
+        }
+        if !policy.include_bin_data || statement.bins.is_none() {
+            return Err(Error::invalid_argument(
+                "Top-K is incompatible with queries that do not return bin data".to_string(),
+            ));
+        }
+        if policy.max_records != 0 {
+            return Err(Error::invalid_argument(
+                "Top-K is incompatible with max_records".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn nodes_support_top_k_pushdown(node_partitions: &[Arc<Mutex<NodePartitions>>]) -> bool {
+        for node_partition in node_partitions {
+            if !node_partition
+                .lock()
+                .await
+                .node
+                .version()
+                .supports_query_top_k()
+            {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Merges per-node reductions and pushes the final records to `recordset`.
     async fn merge_and_push_top_k_results(
         statement: &Statement,
@@ -2418,8 +2438,6 @@ impl Client {
         recordset: &Recordset,
     ) {
         let Some(order_by) = statement.order_by.clone() else {
-            // Should be unreachable: only called from `execute_top_k_query`,
-            // which only ever runs for statements with `order_by` set.
             return;
         };
         let limit = statement.top_k.map_or(usize::MAX, |k| k as usize);
@@ -3629,9 +3647,7 @@ impl Client {
 mod top_k_execution_tests {
     //! Tests for Top-K reduction and result merging.
     use super::Client;
-    use crate::query::{
-        Order, OrderByFlags, OrderByType, PartitionFilter, PartitionTracker, Recordset,
-    };
+    use crate::query::{NodePartitions, Order, OrderByFlags, OrderByType, PartitionFilter, PartitionTracker, Recordset};
     use crate::{Bins, IndexMap, Key, Record, Result, Statement, Value};
     use aerospike_rt::Mutex;
     use futures::executor::block_on;
@@ -3672,8 +3688,7 @@ mod top_k_execution_tests {
         Arc::new(Recordset::new(8, 0, 1, Arc::new(Mutex::new(tracker))))
     }
 
-    /// Closes `rs` (mirroring what `execute_top_k_query`'s caller does once
-    /// the whole job finishes) and drains every buffered record.
+    /// Closes and drains a recordset.
     fn close_and_drain(rs: &Arc<Recordset>) -> Vec<Result<Record>> {
         rs.close();
         let mut stream = rs.clone().into_stream();
@@ -3688,9 +3703,6 @@ mod top_k_execution_tests {
 
     #[test]
     fn merges_and_pushes_bounded_ordered_results_then_leaves_stream_open() {
-        // `merge_and_push_top_k_results` only pushes; closing the
-        // `Recordset` is `execute_top_k_query`'s (and its caller's)
-        // responsibility, exactly like the non-Top-K path.
         let rs = empty_recordset();
         let stmt = top_k_statement("score", Order::Desc, 2);
 
@@ -3744,8 +3756,7 @@ mod top_k_execution_tests {
 
     #[test]
     fn order_by_without_top_k_merges_unbounded() {
-        // `top_k` is optional; without it the merge still sorts but
-        // doesn't truncate.
+        // Without `top_k`, merging sorts without truncating.
         let rs = empty_recordset();
         let mut stmt = Statement::new("ns", "set", Bins::All);
         stmt.set_order_by("score", OrderByType::Integer, Order::Asc);
@@ -3821,10 +3832,39 @@ mod top_k_execution_tests {
     }
 
     #[test]
+    fn top_k_pushdown_requires_every_target_node_to_support_it() {
+        fn node_partitions(version: crate::Version) -> Arc<Mutex<NodePartitions>> {
+            Arc::new(Mutex::new(NodePartitions::new(
+                Arc::new(crate::cluster::node::test_node_with_version(version)),
+                0,
+                Arc::new(Vec::new()),
+            )))
+        }
+
+        let capable = vec![node_partitions(crate::Version::new(8, 1, 3, 0))];
+        assert!(block_on(Client::nodes_support_top_k_pushdown(&capable)));
+
+        let mixed = vec![
+            node_partitions(crate::Version::new(8, 1, 3, 0)),
+            node_partitions(crate::Version::new(8, 1, 2, 0)),
+        ];
+        assert!(!block_on(Client::nodes_support_top_k_pushdown(&mixed)));
+    }
+
+    #[test]
+    fn top_k_rejects_no_bin_data_and_max_records() {
+        let statement = top_k_statement("score", Order::Desc, 5);
+        let mut no_bin_data = crate::policy::QueryPolicy::default();
+        no_bin_data.include_bin_data = false;
+        assert!(Client::validate_top_k_policy(&no_bin_data, &statement).is_err());
+
+        let mut max_records = crate::policy::QueryPolicy::default();
+        max_records.max_records = 1;
+        assert!(Client::validate_top_k_policy(&max_records, &statement).is_err());
+    }
+
+    #[test]
     fn merge_uses_order_by_clone_not_the_original_reference() {
-        // Regression for a borrow/lifetime mistake: `merge_and_push_top_k_results`
-        // takes `&Statement`, not an owned one, so the statement must still be
-        // usable by the caller afterward (e.g. across retry rounds).
         let rs = empty_recordset();
         let stmt = top_k_statement("score", Order::Desc, 1);
         block_on(Client::merge_and_push_top_k_results(
@@ -3832,7 +3872,6 @@ mod top_k_execution_tests {
             vec![vec![record(1, 1, 1)]],
             &rs,
         ));
-        // `stmt` is still valid to read here.
         assert_eq!(stmt.top_k, Some(1));
     }
 }

@@ -30,6 +30,7 @@ pub struct QueryCommand<'a> {
     policy: &'a QueryPolicy,
     statement: Arc<Statement>,
     execute_where: Option<Arc<[u8]>>,
+    send_top_k: bool,
 }
 
 impl<'a> QueryCommand<'a> {
@@ -41,6 +42,7 @@ impl<'a> QueryCommand<'a> {
         cluster: Arc<Cluster>,
         top_k_buffer: Option<Arc<Mutex<TopKAccumulator>>>,
         execute_where: Option<Arc<[u8]>>,
+        send_top_k: bool,
     ) -> Self {
         let node = {
             let node_partitions = node_partitions.lock().await;
@@ -59,6 +61,7 @@ impl<'a> QueryCommand<'a> {
             policy,
             statement,
             execute_where,
+            send_top_k,
         }
     }
 
@@ -92,6 +95,7 @@ impl Command for QueryCommand<'_> {
             &node,
             Some(&node_partitions),
             execute_where,
+            self.send_top_k,
         )
     }
 

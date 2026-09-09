@@ -24,26 +24,23 @@ use crate::expressions::{ExpOp, Expression};
 use crate::vector::Vector;
 use crate::Value;
 
-/// Creates a squared-Euclidean-distance expression (not square-rooted). Smaller is closer.
+/// Creates a squared-Euclidean-distance expression. Smaller is closer.
 ///
-/// If the bin is not a VECTOR or its element type or dimensions differ from
-/// `query`, the server evaluates the expression as unknown.
+/// Incompatible vectors evaluate as unknown.
 pub fn euclidean_squared_distance(query: &Vector, bin: Expression) -> Expression {
     build_distance(ExpOp::VectorEuclideanDistance, query, bin)
 }
 
 /// Creates a dot-product expression. Larger is more similar.
 ///
-/// If the bin is not a VECTOR or its element type or dimensions differ from
-/// `query`, the server evaluates the expression as unknown.
+/// Incompatible vectors evaluate as unknown.
 pub fn dot_product(query: &Vector, bin: Expression) -> Expression {
     build_distance(ExpOp::VectorDotProduct, query, bin)
 }
 
 /// Creates a cosine-similarity expression. Larger is more similar.
 ///
-/// If the bin is not a VECTOR or its element type or dimensions differ from
-/// `query`, the server evaluates the expression as unknown.
+/// Incompatible vectors evaluate as unknown.
 pub fn cosine_similarity(query: &Vector, bin: Expression) -> Expression {
     build_distance(ExpOp::VectorCosineSimilarity, query, bin)
 }

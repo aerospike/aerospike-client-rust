@@ -1,8 +1,7 @@
 //! `ORDER BY <bin> LIMIT k` ("Top-K") queries.
 //!
-//! The client performs bounded reduction and merges the ordered top `k`
-//! records. The server supports wire-level pushdown; this client doesn't use
-//! it yet (TODO).
+//! When every target node supports it, the server reduces each node's
+//! candidates before the client performs the final merge.
 //!
 //! Run with:
 //!
@@ -28,9 +27,7 @@ async fn main() {
     run().await;
 }
 
-/// Example body. Standalone via `cargo run --example`, and also driven by
-/// the integration test suite (`tests/src/examples.rs`) so the example stays
-/// compiling and working as the API evolves.
+/// Runs the example.
 pub async fn run() {
     let client = connect_to_aerospike().await;
     println!("Connected to Aerospike!");

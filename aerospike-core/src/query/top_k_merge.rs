@@ -54,8 +54,7 @@ impl RankValue {
                 }
             }
             (OrderByType::Bytes, Value::Blob(b)) => RankValue::Bytes(b.clone()),
-            // Type mismatch (e.g. declared Integer but the bin holds a String) is
-            // treated the same as a missing bin: NIL.
+            // Missing or mismatched values rank as NIL.
             _ => RankValue::Nil,
         }
     }
@@ -261,10 +260,7 @@ impl TopKMerger {
     }
 }
 
-/// Synthesizes a unique map key for a record with no digest, so it doesn't
-/// collide with (or get silently dropped by) real digest-keyed entries. Only
-/// reachable if a caller feeds this merger records that didn't come from a
-/// normal query stream.
+/// Synthesizes a map key for a record without a digest.
 fn fallback_key(record: &Record) -> [u8; 20] {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -379,9 +375,7 @@ mod tests {
     #[test]
     fn dedup_prefers_higher_generation_even_if_worse_ranked() {
         let merger = TopKMerger::new(order_by(Order::Desc), 10);
-        // Same digest, two "reads" of the same record: an older, better-ranked
-        // read (gen 1, score 9) and a newer, worse-ranked read (gen 2, score 1).
-        // The server's generation-first rule must keep the newer one.
+        // The newer generation wins even with a worse rank.
         let stale_but_better = record(1, 1, Some(("score", Value::Int(9))));
         let fresh_but_worse = record(1, 2, Some(("score", Value::Int(1))));
 
@@ -430,8 +424,7 @@ mod tests {
             flags: OrderByFlags::CaseInsensitive,
         };
         let merger = TopKMerger::new(order_by, 10);
-        // UTF-8 bytes C3 84 (Ä) sort before C3 A4 (ä). Unicode case folding
-        // would make them compare equal and incorrectly use digest instead.
+        // ASCII-only folding retains UTF-8 byte ordering.
         let upper = record(9, 1, Some(("name", Value::String("Ä".into()))));
         let lower = record(1, 1, Some(("name", Value::String("ä".into()))));
 
@@ -490,7 +483,6 @@ mod tests {
         let records: Vec<Record> = (0..5)
             .map(|i| record(i, 1, Some(("score", Value::Int(i as i64)))))
             .collect();
-        // Split across two "node buffers" to mirror real per-node input.
         let (first, second) = records.split_at(3);
         let merged = merger.merge(vec![first.to_vec(), second.to_vec()]);
 
@@ -515,8 +507,7 @@ mod tests {
         }
     }
 
-    // Simulate multiple node tasks observing the same digest at different
-    // generations and values, arriving in every possible order.
+    // Deduplication is independent of arrival order.
     #[test]
     fn dedup_is_order_independent_for_racing_duplicate_digests() {
         let merger = TopKMerger::new(order_by(Order::Desc), 10);
@@ -526,8 +517,6 @@ mod tests {
             record(7, 2, Some(("score", Value::Int(50)))),  // gen 2, mid rank
         ];
 
-        // Every permutation of "arrival order" (as if fed by racing node
-        // tasks / partition re-scans) must converge on the same answer.
         use itertools_like_permutations::permutations;
         for perm in permutations(&candidates) {
             let buffers: Vec<Vec<Record>> = perm.into_iter().map(|r| vec![r]).collect();
@@ -541,7 +530,7 @@ mod tests {
         }
     }
 
-    // Minimal permutation helper so this test doesn't need an extra dev-dependency.
+    // Minimal permutation helper.
     mod itertools_like_permutations {
         use crate::Record;
 

@@ -20,11 +20,10 @@ use crate::query::Filter;
 use crate::Bins;
 use crate::Value;
 
-/// Maximum length, in bytes, of an order-by bin name (`AS_BIN_NAME_MAX_SZ - 1`
-/// on the server).
-const MAX_ORDER_BY_BIN_NAME_LEN: usize = 14;
+/// Maximum length, in bytes, of an order-by bin name.
+const MAX_ORDER_BY_BIN_NAME_LEN: usize = 15;
 
-/// Inclusive bounds for `Statement::set_top_k`'s `k` (`TOP_K_MAX` on the server).
+/// Inclusive bounds for `Statement::set_top_k`'s `k`.
 const TOP_K_MIN: u32 = 1;
 const TOP_K_MAX: u32 = 1000;
 
@@ -65,8 +64,7 @@ pub struct Statement {
     /// reads as well.
     pub operations: Option<Vec<Operation>>,
 
-    /// Top-K order-by clause. Requires `top_k`; reduction is performed
-    /// client-side over the query response stream.
+    /// Top-K order-by clause. Requires `top_k`.
     pub order_by: Option<OrderBy>,
 
     /// Top-K limit (`k`), in `[1, 1000]`. Must be paired with `order_by`.
@@ -150,12 +148,10 @@ impl Statement {
         self.aggregation = Some(agg);
     }
 
-    /// Sets the Top-K order-by clause: the order key's bin name (as it
-    /// appears in the *returned* record), its scalar type, and sort
-    /// direction. Equivalent to calling
-    /// `set_order_by_with_flags(bin_name, order_type, direction, OrderByFlags::None)`.
+    /// Sets the Top-K order key and direction.
     ///
-    /// Must be paired with `set_top_k` before execution.
+    /// The key must appear in the returned record and be paired with
+    /// `set_top_k` before execution.
     pub fn set_order_by(&mut self, bin_name: &str, order_type: OrderByType, direction: Order) {
         self.set_order_by_with_flags(bin_name, order_type, direction, OrderByFlags::None);
     }
@@ -177,8 +173,7 @@ impl Statement {
         });
     }
 
-    /// Sets the Top-K limit. `k` must be in `[1, 1000]` and must be paired
-    /// with `set_order_by`/`set_order_by_with_flags` before execution.
+    /// Sets the Top-K limit. Must be paired with `set_order_by`.
     pub const fn set_top_k(&mut self, k: u32) {
         self.top_k = Some(k);
     }
@@ -234,6 +229,11 @@ impl Statement {
             if order_by.bin_name.is_empty() {
                 return Err(Error::invalid_argument(
                     "orderBy bin name must not be empty".to_string(),
+                ));
+            }
+            if order_by.bin_name.contains('\0') {
+                return Err(Error::invalid_argument(
+                    "orderBy bin name must not contain NUL".to_string(),
                 ));
             }
 
@@ -387,7 +387,24 @@ mod tests {
         );
         stmt.set_top_k(10);
         let err = stmt.validate().unwrap_err();
-        assert!(err.to_string().contains("14-character limit"));
+        assert!(err.to_string().contains("15-character limit"));
+    }
+
+    #[test]
+    fn fifteen_byte_order_by_bin_name_is_valid() {
+        let mut stmt = base_statement();
+        stmt.set_order_by("fifteen-byte!!!", OrderByType::Integer, Order::Desc);
+        stmt.set_top_k(10);
+        assert!(stmt.validate().is_ok());
+    }
+
+    #[test]
+    fn order_by_bin_name_with_nul_is_rejected() {
+        let mut stmt = base_statement();
+        stmt.set_order_by("bad\0name", OrderByType::Integer, Order::Desc);
+        stmt.set_top_k(10);
+        let err = stmt.validate().unwrap_err();
+        assert!(err.to_string().contains("must not contain NUL"));
     }
 
     #[test]

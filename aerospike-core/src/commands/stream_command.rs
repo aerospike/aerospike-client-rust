@@ -37,9 +37,7 @@ pub struct StreamCommand {
     cluster: Arc<Cluster>,
     pub(crate) recordset: Arc<Recordset>,
     pub(crate) node_partitions: Arc<Mutex<NodePartitions>>,
-    /// Set only for Top-K (`ORDER BY <bin> LIMIT k`) queries: parsed records
-    /// are reduced in this bounded client-side accumulator instead of being
-    /// streamed directly into `recordset`.
+    /// Bounded accumulator for Top-K query results.
     pub(crate) top_k_buffer: Option<Arc<Mutex<TopKAccumulator>>>,
 }
 
@@ -168,11 +166,6 @@ impl StreamCommand {
                     }
 
                     if let Some(buffer) = &self.top_k_buffer {
-                        // Top-K: reduce into the node's bounded client-side
-                        // accumulator instead of streaming directly to the
-                        // consumer. Resume cursors are deliberately skipped:
-                        // a retry restarts the complete reduction so results
-                        // from differently scoped attempts never mix.
                         node_partitions.record_count += 1;
                         buffer.lock().await.accept(rec);
                     } else {

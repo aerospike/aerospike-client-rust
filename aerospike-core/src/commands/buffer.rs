@@ -1425,6 +1425,7 @@ impl Buffer {
         node: &Node,
         node_partitions: Option<&NodePartitions>,
         execute_where: Option<&[u8]>,
+        send_top_k: bool,
     ) -> Result<()> {
         let filter = statement.filters.as_ref().map(|filters| &filters[0]);
         let is_background = direction.is_background();
@@ -1459,6 +1460,25 @@ impl Buffer {
         // TaskId.
         self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
+
+        // Top-K pushdown fields.
+        let order_by_size = if send_top_k {
+            let order_by = statement.order_by.as_ref().ok_or_else(|| {
+                Error::invalid_argument("Top-K pushdown requires orderBy".to_string())
+            })?;
+            if statement.top_k.is_none() {
+                return Err(Error::invalid_argument(
+                    "Top-K pushdown requires topK".to_string(),
+                ));
+            }
+            let size = 4 + order_by.bin_name.len();
+            self.data_offset += size + FIELD_HEADER_SIZE as usize;
+            self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
+            field_count += 2;
+            size
+        } else {
+            0
+        };
 
         // ---------- estimation: filter block ----------
         if let Some(filter) = filter {
@@ -1616,7 +1636,7 @@ impl Buffer {
             }
         }
 
-        // ---------- write phase, in Java's exact order ----------
+        // ---------- write phase ----------
         if !statement.namespace.is_empty() {
             self.write_field_string(&statement.namespace, FieldType::Namespace);
         }
@@ -1632,6 +1652,21 @@ impl Buffer {
 
         self.write_field_header(8, FieldType::QueryId);
         self.write_u64(task_id);
+
+        if send_top_k {
+            let order_by = statement
+                .order_by
+                .as_ref()
+                .expect("Top-K pushdown requires orderBy");
+            let limit = statement.top_k.expect("Top-K pushdown requires topK");
+            self.write_field_header(order_by_size, FieldType::OrderBy);
+            self.write_u8(order_by.order_type as u8);
+            self.write_u8(order_by.direction as u8);
+            self.write_u8(order_by.flags.to_wire_bits());
+            self.write_u8(order_by.bin_name.len() as u8);
+            self.write_bytes(order_by.bin_name.as_bytes());
+            self.write_field_u32(limit, FieldType::TopK);
+        }
 
         if let Some(filter) = filter {
             let idx_type = filter.collection_index_type.clone();
@@ -3714,7 +3749,7 @@ mod tests {
     }
 
     #[test]
-    fn order_by_and_top_k_are_client_side_and_need_no_server_capability() {
+    fn top_k_fallback_omits_pushdown_fields() {
         use crate::query::{Order, OrderByType};
         use crate::{Bins, QueryPolicy, Statement};
 
@@ -3731,17 +3766,26 @@ mod tests {
             &node,
             None,
             None,
+            false,
         )
         .unwrap();
+
+        let fields = read_wire_fields(&buf);
+        assert!(fields
+            .iter()
+            .all(|(field_type, _)| *field_type != FieldType::OrderBy as u8));
+        assert!(fields
+            .iter()
+            .all(|(field_type, _)| *field_type != FieldType::TopK as u8));
     }
 
     #[test]
-    fn order_by_and_top_k_do_not_add_server_wire_fields() {
+    fn order_by_and_top_k_encode_to_the_documented_wire_format() {
         use crate::query::order_by::{Order, OrderByFlags, OrderByType};
         use crate::{Bins, QueryPolicy, Statement};
 
         let mut buf = Buffer::new(4096);
-        let node = crate::cluster::node::test_node_with_version(crate::Version::default());
+        let node = crate::cluster::node::test_node_with_version(crate::Version::new(8, 1, 3, 0));
         let mut stmt = Statement::new("test", "test", Bins::All);
         stmt.set_order_by_with_flags(
             "score",
@@ -3758,22 +3802,35 @@ mod tests {
             &node,
             None,
             None,
+            true,
         )
         .unwrap();
 
         let fields = read_wire_fields(&buf);
 
-        assert!(
+        assert_eq!(
             fields
                 .iter()
-                .all(|(field_type, _)| *field_type != FieldType::OrderBy as u8),
-            "Top-K must be reduced client-side, without an ORDER_BY wire field"
+                .find(|(field_type, _)| *field_type == FieldType::OrderBy as u8)
+                .map(|(_, payload)| payload),
+            Some(&vec![
+                OrderByType::String as u8,
+                Order::Desc as u8,
+                OrderByFlags::CaseInsensitive.to_wire_bits(),
+                5,
+                b's',
+                b'c',
+                b'o',
+                b'r',
+                b'e',
+            ])
         );
-        assert!(
+        assert_eq!(
             fields
                 .iter()
-                .all(|(field_type, _)| *field_type != FieldType::TopK as u8),
-            "Top-K must be reduced client-side, without a TOP_K wire field"
+                .find(|(field_type, _)| *field_type == FieldType::TopK as u8)
+                .map(|(_, payload)| payload),
+            Some(&5u32.to_be_bytes().to_vec())
         );
     }
 
