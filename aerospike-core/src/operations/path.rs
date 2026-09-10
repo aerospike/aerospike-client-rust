@@ -80,11 +80,9 @@ pub fn select_by_path(bin: &str, flag: SelectFlag, ctx: impl AsRef<[CdtContext]>
 /// Like [`select_by_path`] this accepts anything convertible to
 /// `&[CdtContext]`.
 ///
-/// `exp` is not limited to producing a replacement value — passing
-/// [`exp_remove_result`](crate::expressions::exp_remove_result) as `exp`
-/// **removes** every leaf the path resolves to, instead of replacing it. The
-/// [`remove`] convenience wrapper packages exactly this:
-///
+/// While `exp` typically updates values, passing [`exp_remove_result`](crate::expressions::exp_remove_result) as `exp`
+/// **removes** every leaf node matching the path instead of overwriting it.
+/// You can also use the [`remove`] wrapper, which encapsulates this exact behavior:
 /// ```rust
 /// use aerospike::expressions::exp_remove_result;
 /// use aerospike::operations::cdt_context::Path;

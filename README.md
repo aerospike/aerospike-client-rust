@@ -795,30 +795,14 @@ while let Some(value) = stream.next().await {
 See [`examples/query_aggregate.rs`](./examples/query_aggregate.rs) for a
 complete working example, including the Lua UDF source.
 
-## Known traps
+## Good to Know
 
-Behaviors that look like missing features or call for extra application code, but aren't. Each
-one is a confirmed gap between what the code does and what the docs used to say, recorded with
-the wrong behavior an agent actually produced before the docs were fixed.
+These patterns appear to require custom application logic or missing library features, but are already handled natively by the client.
 
-- **`Client::batch` already drops a single-key sub-batch to the single-record path.** After
-  routing, if a cluster node ends up responsible for exactly one key from a batch call, the
-  client already executes that node's share via the plain single-record command path instead of
-  the multi-key batch protocol — automatically, regardless of the batch's total size. An agent
-  has been observed reimplementing this optimization in application code. See
-  [`Client::batch`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/struct.Client.html#method.batch).
-- **Reading or writing multiple keys? Use `Client::batch`, not a loop.** An agent has been
-  observed implementing a batch read as a for-loop of sequential single-record `get` calls
-  instead of one `batch` call. See the `batch` cross-reference on
-  [`get`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/struct.Client.html#method.get),
-  `put`, `delete`, and `operate`.
-- **`modify_by_path` / `exp_modify_by_path` can remove matching elements, not just replace
-  them.** Pass `exp_remove_result()` as the modify expression — or use the ready-made
-  `remove` / `exp_remove` convenience wrapper. An agent has been observed concluding this
-  removal functionality does not exist. See
-  [`modify_by_path`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/operations/path/fn.modify_by_path.html)
-  and
-  [`exp_modify_by_path`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/expressions/fn.exp_modify_by_path.html).
+* **Single-key batch operations automatically fall back to single-record calls.** If routing assigns 
+* only one key to a given node within a batch, the client uses the single-record protocol for that node automatically—no manual routing checks or single-record fallbacks needed. See [`Client::batch`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/struct.Client.html#method.batch).
+* **Use `Client::batch` for multi-key operations instead of sequential loops.** Multi-key reads and writes should always go through `Client::batch` rather than looping individual calls like `get` or `put`. See the cross-references on [`get`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/struct.Client.html#method.get), `put`, `delete`, and `operate`.
+* **Path-based modifications support deletion out of the box.** You can delete path targets using `modify_by_path` or `exp_modify_by_path` by passing `exp_remove_result()`, or simply use the [`remove`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/operations/path/fn.modify_by_path.html) and [`exp_remove`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/expressions/fn.exp_modify_by_path.html) wrappers.
 
 ## Feedback wanted
 

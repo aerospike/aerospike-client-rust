@@ -41,17 +41,15 @@
     clippy::use_self,
     clippy::missing_errors_doc
 )]
-// `doc_cfg` is nightly-only; gated so it only activates for the docsrs build
-// (docs.rs sets `--cfg docsrs` per this crate's own
-// `[package.metadata.docs.rs]` table in aerospike-core/Cargo.toml — each
-// crate in this workspace is built by docs.rs independently, steered only
-// by its own table). This alone renders "Available on crate feature `x`
-// only" badges automatically for every `#[cfg(feature = "...")]` item —
-// `doc_auto_cfg`'s behavior was merged into `doc_cfg` itself (removed as a
-// separate feature in nightly 1.92.0). No per-item `#[doc(cfg(...))]` is
-// needed or should be added: it would be redundant with what this already
-// infers, and hand-written annotations are exactly what drifted out of
-// sync with the actual `#[cfg]`s here before this was discovered.
+
+// The `doc_cfg` feature requires nightly Rust and only runs during docs.rs builds,
+// triggered via `--cfg docsrs` in `aerospike-core/Cargo.toml`. When active, it
+// automatically generates "Available on crate feature `x` only" badges for all
+// `#[cfg(feature = "...")]` items.
+//
+// Note: As of nightly 1.92.0, `doc_auto_cfg` was merged into `doc_cfg`. Do not add
+// manual `#[doc(cfg(...))]` attributes—they duplicate what `doc_cfg` infers and
+// risk drifting out of sync with actual `#[cfg]` attributes.
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 //! A pure-rust client for the Aerospike `NoSQL` database.

@@ -2439,11 +2439,10 @@ pub fn exp_select_by_path(
 /// Like [`exp_select_by_path`] this accepts anything convertible to
 /// `&[CdtContext]`.
 ///
-/// `modify_exp` is not limited to producing a replacement value — passing
-/// [`exp_remove_result`] as `modify_exp` **removes** every leaf the path
-/// resolves to, instead of replacing it. The [`exp_remove`] convenience
-/// wrapper packages exactly this:
+/// Beyond updating values, `modify_exp` can also delete them. Passing [`exp_remove_result`]
+/// **removes** every leaf node matching the path instead of overwriting it.
 ///
+/// If you prefer a simpler API, the [`exp_remove`] wrapper handles this for you:
 /// ```rust
 /// use aerospike::expressions::{exp_modify_by_path, exp_remove, exp_remove_result, ExpType};
 /// use aerospike::operations::cdt_context::Path;
