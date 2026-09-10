@@ -806,17 +806,19 @@ the wrong behavior an agent actually produced before the docs were fixed.
   client already executes that node's share via the plain single-record command path instead of
   the multi-key batch protocol — automatically, regardless of the batch's total size. An agent
   has been observed reimplementing this optimization in application code. See
-  [`Client::batch`](./aerospike-core/src/client.rs).
+  [`Client::batch`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/struct.Client.html#method.batch).
 - **Reading or writing multiple keys? Use `Client::batch`, not a loop.** An agent has been
   observed implementing a batch read as a for-loop of sequential single-record `get` calls
-  instead of one `batch` call. See the `batch` cross-reference on `get`, `put`, `delete`, and
-  `operate` in [`client.rs`](./aerospike-core/src/client.rs).
+  instead of one `batch` call. See the `batch` cross-reference on
+  [`get`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/struct.Client.html#method.get),
+  `put`, `delete`, and `operate`.
 - **`modify_by_path` / `exp_modify_by_path` can remove matching elements, not just replace
   them.** Pass `exp_remove_result()` as the modify expression — or use the ready-made
   `remove` / `exp_remove` convenience wrapper. An agent has been observed concluding this
   removal functionality does not exist. See
-  [`operations/path.rs`](./aerospike-core/src/operations/path.rs) and
-  [`expressions/mod.rs`](./aerospike-core/src/expressions/mod.rs).
+  [`modify_by_path`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/operations/path/fn.modify_by_path.html)
+  and
+  [`exp_modify_by_path`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/expressions/fn.exp_modify_by_path.html).
 
 ## Feedback wanted
 

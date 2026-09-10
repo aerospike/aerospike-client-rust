@@ -38,7 +38,9 @@ travis-ci = { repository = "aerospike/aerospike-client-rust" }
 appveyor = { repository = "aerospike/aerospike-client-rust" }
 
 [package.metadata.docs.rs]
-all-features = true
+# defaults already cover async, rt-tokio, tls, dynamic-config, serialization.
+# Never all-features: async+sync and the two runtimes are mutually exclusive.
+features = ["lua"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]

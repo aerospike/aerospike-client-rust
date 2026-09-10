@@ -110,7 +110,6 @@ pub struct ClientPolicy {
     ///     .with_no_client_auth();
     /// ```
     #[cfg(feature = "tls")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub tls_config: Option<ClientConfig>,
 

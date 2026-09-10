@@ -230,7 +230,6 @@ impl Client {
     /// discovery failures. A provider that fails its initial load does not fail
     /// construction — it is logged and retried on the next watch tick.
     #[cfg(feature = "dynamic-config")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "dynamic-config")))]
     pub async fn new_with_config(
         policy: &ClientPolicy,
         hosts: &(dyn ToHosts + Send + Sync),
@@ -1723,7 +1722,6 @@ impl Client {
     /// # }
     /// ```
     #[cfg(feature = "lua")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "lua")))]
     pub async fn query_aggregate(
         &self,
         policy: &QueryPolicy,

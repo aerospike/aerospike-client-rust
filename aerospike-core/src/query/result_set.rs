@@ -72,9 +72,8 @@ impl ResultSet {
     }
 
     #[cfg(feature = "sync")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "sync")))]
     /// Returns a result from the queue if one is available. Otherwise,
-    /// returns None.
+    /// returns None. Available via the blocking `aerospike-sync` client.
     pub fn next_value(&self) -> Option<Result<Value>> {
         self.rx.try_recv().ok()
     }
@@ -87,12 +86,12 @@ impl ResultSet {
 }
 
 #[cfg(feature = "sync")]
-#[cfg_attr(docsrs, doc(cfg(feature = "sync")))]
 impl Iterator for &ResultSet {
     type Item = Result<Value>;
 
     /// Blocking iterator: parks the calling thread until the next value
-    /// arrives; ends once the result set is closed and drained.
+    /// arrives; ends once the result set is closed and drained. Available
+    /// via the blocking `aerospike-sync` client.
     fn next(&mut self) -> Option<Result<Value>> {
         self.rx.recv_blocking().ok()
     }

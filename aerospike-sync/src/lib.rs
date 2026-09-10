@@ -25,6 +25,11 @@
 //! Select this client through the facade crate's `sync` feature; `async` and
 //! `sync` are mutually exclusive there.
 #![warn(missing_docs)]
+// See this crate's own `[package.metadata.docs.rs]` table, which sets
+// `--cfg docsrs` for this crate's docs.rs build specifically. This alone
+// auto-badges every `#[cfg(feature = "...")]` item — no per-item
+// `#[doc(cfg(...))]` needed (see aerospike-core/src/lib.rs for why).
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod client;
 

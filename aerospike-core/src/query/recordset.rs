@@ -140,8 +140,8 @@ impl Recordset {
     }
 
     #[cfg(feature = "sync")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "sync")))]
     /// Returns a result from the queue if it exists. Otherwise, returns None.
+    /// Available via the blocking `aerospike-sync` client.
     pub fn next_record(&self) -> Option<Result<Record>> {
         self.rx.try_recv().ok()
     }
@@ -154,14 +154,13 @@ impl Recordset {
 }
 
 #[cfg(feature = "sync")]
-#[cfg_attr(docsrs, doc(cfg(feature = "sync")))]
 impl Iterator for &Recordset {
     type Item = Result<Record>;
 
     /// Blocking iterator: parks the calling thread until the next record
     /// arrives; ends once the recordset is closed and drained. No
     /// spinning — the channel wakes the thread exactly when there is
-    /// something to do.
+    /// something to do. Available via the blocking `aerospike-sync` client.
     fn next(&mut self) -> Option<Result<Record>> {
         self.rx.recv_blocking().ok()
     }

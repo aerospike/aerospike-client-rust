@@ -42,9 +42,16 @@
     clippy::missing_errors_doc
 )]
 // `doc_cfg` is nightly-only; gated so it only activates for the docsrs build
-// (docs.rs sets `--cfg docsrs`, see the root Cargo.toml's
-// `[package.metadata.docs.rs]`), letting feature-gated items render a
-// "Available on crate feature `x` only" badge instead of just disappearing.
+// (docs.rs sets `--cfg docsrs` per this crate's own
+// `[package.metadata.docs.rs]` table in aerospike-core/Cargo.toml — each
+// crate in this workspace is built by docs.rs independently, steered only
+// by its own table). This alone renders "Available on crate feature `x`
+// only" badges automatically for every `#[cfg(feature = "...")]` item —
+// `doc_auto_cfg`'s behavior was merged into `doc_cfg` itself (removed as a
+// separate feature in nightly 1.92.0). No per-item `#[doc(cfg(...))]` is
+// needed or should be added: it would be redundant with what this already
+// infers, and hand-written annotations are exactly what drifted out of
+// sync with the actual `#[cfg]`s here before this was discovered.
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 //! A pure-rust client for the Aerospike `NoSQL` database.
@@ -183,7 +190,6 @@ pub use query::{
     FLAG_HARD_HINT, FLAG_KNOWN, FLAG_REQUIRE_INDEX,
 };
 #[cfg(feature = "lua")]
-#[cfg_attr(docsrs, doc(cfg(feature = "lua")))]
 pub use query::{ResultSet, ResultStream};
 // `CITRUSLEAF_EPOCH` comes along because it is the unit `Record::new`'s
 // `expiration` argument is counted from, and a caller building a record cannot
@@ -213,12 +219,10 @@ mod client;
 mod cluster;
 pub(crate) mod commands;
 #[cfg(feature = "dynamic-config")]
-#[cfg_attr(docsrs, doc(cfg(feature = "dynamic-config")))]
 pub mod config;
 mod common;
 pub mod expressions;
 #[cfg(feature = "lua")]
-#[cfg_attr(docsrs, doc(cfg(feature = "lua")))]
 pub mod lua;
 pub mod mapping;
 pub mod metrics;

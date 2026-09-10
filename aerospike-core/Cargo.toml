@@ -67,6 +67,12 @@ rt-async-std = ["aerospike-rt/rt-async-std", "aerospike-macro?/rt-async-std"]
 tls = ["rustls", "tokio-rustls"]
 sync = []
 
+[package.metadata.docs.rs]
+# No default features here, so this table is the only thing that gets this
+# crate's own docs.rs build past aerospike-rt's runtime-selection guard.
+features = ["rt-tokio", "tls", "dynamic-config", "sync", "serialization", "lua"]
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dev-dependencies]
 env_logger = "0.11"
 hex = "0.4"
