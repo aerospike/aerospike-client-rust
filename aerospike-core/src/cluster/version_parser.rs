@@ -111,17 +111,12 @@ impl Version {
         self >= &Version::new(8, 1, 3, 0)
     }
 
-    /// Server accepts server-compiled textual AEL on filter field 43 (`[128, <utf-8 bin>]`).
-    ///
-    /// Aligns with Java fluent `Cluster.supportsServerCompiledFilterExpression()` (≥ 8.1.3).
+    /// Server accepts server-compiled textual AEL on filter field 43.
     pub fn supports_server_compiled_ael(&self) -> bool {
         self >= &Version::new(8, 1, 3, 0)
     }
 
     /// Returns whether the server supports wire-level Top-K pushdown.
-    ///
-    /// TODO: not yet used by the client's Top-K path, which reduces results
-    /// client-side instead.
     pub fn supports_query_top_k(&self) -> bool {
         self >= &Version::new(8, 1, 3, 0)
     }

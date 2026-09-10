@@ -1887,7 +1887,7 @@ mod tests {
         );
     }
 
-    // The header's reserved bits (always zero) survive both serde paths.
+    // New vectors use zero reserved header bytes.
     #[test]
     fn vector_reserved_bits_round_trip_through_both_serde_paths() {
         use crate::Vector;
@@ -1897,7 +1897,7 @@ mod tests {
         assert_eq!(particle_round_trip(&value), value);
         assert_eq!(cdt_list_round_trip(value.clone()), value);
         if let Value::Vector(v) = particle_round_trip(&value) {
-            assert_eq!(v.reserved(), 0);
+            assert_eq!(&v.wire_bytes()[6..8], &[0, 0]);
         }
     }
 

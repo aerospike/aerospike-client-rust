@@ -16,8 +16,6 @@
 //! Types for `ORDER BY <bin> LIMIT k` ("Top-K") queries.
 //!
 //! See `Statement::set_order_by`/`Statement::set_top_k` for the client API.
-//! The server supports wire-level pushdown; this client reduces results
-//! client-side instead (TODO: use pushdown).
 //!
 /// Scalar comparator type for a Top-K order-by key.
 ///
@@ -55,12 +53,20 @@ pub enum OrderByFlags {
     CaseInsensitive,
 }
 
+impl OrderByFlags {
+    pub(crate) const fn to_wire_bits(self) -> u8 {
+        match self {
+            OrderByFlags::None => 0,
+            OrderByFlags::CaseInsensitive => 1,
+        }
+    }
+}
+
 /// The order-by clause of a Top-K query: the order key's bin name, scalar
 /// type, sort direction, and optional flags.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OrderBy {
-    /// Name of the bin (as it appears in the *returned* record — a physical
-    /// bin or one produced by a read-op/read-expression projection) to sort by.
+    /// Name of the returned bin to sort by.
     pub bin_name: String,
     /// Scalar type of the order-key bin.
     pub order_type: OrderByType,

@@ -193,7 +193,7 @@ pub use txn::{AbortStatus, CommitErrorType, CommitStatus, Txn, TxnState};
 pub use user::User;
 pub use indexmap::IndexMap;
 pub use value::{FloatValue, MapCollection, MapLike, Value};
-pub use vector::{Vector, VectorData, VectorDistanceMetric, VectorElementType};
+pub use vector::{Vector, VectorData, VectorElementType};
 pub use xor_shift::XorShift;
 
 #[macro_use]

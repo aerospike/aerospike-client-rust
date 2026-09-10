@@ -66,38 +66,128 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
 }
 
 #[aerospike_macro::test]
-async fn query_top_k_uses_client_side_reduction() {
+async fn query_top_k_pushdown_returns_ordered_results() {
     let client = common::client().await;
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let write_policy = WritePolicy::default();
 
-    for (key_value, score) in [(1, 20), (2, 10), (3, 40), (4, 30)] {
-        let key = as_key!(namespace, &set_name, key_value);
+    const COUNT: i64 = 100;
+    for score in 1..=COUNT {
+        let key = as_key!(namespace, &set_name, score);
         client
             .put(&write_policy, &key, &[as_bin!("score", score)])
             .await
             .unwrap();
     }
 
-    let mut statement = Statement::new(namespace, &set_name, Bins::from(["score"]));
-    statement.set_order_by("score", OrderByType::Integer, Order::Asc);
-    statement.set_top_k(3);
+    assert!(
+        client
+            .nodes()
+            .iter()
+            .all(|node| node.version().supports_query_top_k()),
+        "Top-K pushdown test requires every node to support query-order-by"
+    );
 
-    let recordset = client
-        .query(&QueryPolicy::default(), PartitionFilter::all(), statement)
+    async fn query_scores(
+        client: &Client,
+        namespace: &str,
+        set_name: &str,
+        direction: Order,
+        k: u32,
+    ) -> Vec<i64> {
+        let mut statement = Statement::new(namespace, set_name, Bins::from(["score"]));
+        statement.set_order_by("score", OrderByType::Integer, direction);
+        statement.set_top_k(k);
+
+        client
+            .query(&QueryPolicy::default(), PartitionFilter::all(), statement)
+            .await
+            .unwrap()
+            .into_stream()
+            .map(|result| match result.unwrap().bins["score"] {
+                Value::Int(score) => score,
+                ref value => panic!("expected integer score, got {value:?}"),
+            })
+            .collect()
+            .await
+    }
+
+    for direction in [Order::Asc, Order::Desc] {
+        for k in [1u32, 5, 25] {
+            let scores = query_scores(&client, namespace, &set_name, direction, k).await;
+
+            let expected: Vec<i64> = match direction {
+                Order::Asc => (1..=k as i64).collect(),
+                Order::Desc => (COUNT - k as i64 + 1..=COUNT).rev().collect(),
+            };
+
+            assert_eq!(scores, expected, "pushdown {direction:?} k={k}");
+            assert_eq!(scores.len(), k as usize);
+        }
+    }
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn query_top_k_pushdown_handles_nan_and_nil_double_keys() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let write_policy = WritePolicy::default();
+
+    if !client
+        .nodes()
+        .iter()
+        .all(|node| node.version().supports_query_top_k())
+    {
+        client.close().await.unwrap();
+        return;
+    }
+
+    for (id, score) in [
+        (0i64, Some(1.0f64)),
+        (1, Some(2.0)),
+        (2, Some(3.0)),
+        (3, Some(f64::NAN)),
+    ] {
+        let key = as_key!(namespace, &set_name, id);
+        client
+            .put(
+                &write_policy,
+                &key,
+                &[as_bin!("id", id), as_bin!("score", score.unwrap())],
+            )
+            .await
+            .unwrap();
+    }
+    let key = as_key!(namespace, &set_name, 4i64);
+    client
+        .put(&write_policy, &key, &[as_bin!("id", 4i64)])
         .await
         .unwrap();
-    let scores = recordset
-        .into_stream()
-        .map(|result| match result.unwrap().bins["score"] {
-            Value::Int(score) => score,
-            ref value => panic!("expected integer score, got {value:?}"),
-        })
-        .collect::<Vec<_>>()
-        .await;
 
-    assert_eq!(scores, vec![10, 20, 30]);
+    async fn query_ids(client: &Client, namespace: &str, set_name: &str) -> Vec<i64> {
+        let mut statement = Statement::new(namespace, set_name, Bins::from(["id", "score"]));
+        statement.set_order_by("score", OrderByType::Double, Order::Asc);
+        statement.set_top_k(5);
+
+        client
+            .query(&QueryPolicy::default(), PartitionFilter::all(), statement)
+            .await
+            .unwrap()
+            .into_stream()
+            .map(|result| match result.unwrap().bins["id"] {
+                Value::Int(id) => id,
+                ref value => panic!("expected integer id, got {value:?}"),
+            })
+            .collect()
+            .await
+    }
+
+    let ids = query_ids(&client, namespace, &set_name).await;
+
+    assert_eq!(ids, vec![0, 1, 2, 3, 4]);
     client.close().await.unwrap();
 }
 

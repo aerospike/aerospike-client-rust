@@ -51,8 +51,6 @@ async fn vectors_round_trip_through_server() {
     let set_name = common::rand_str(10);
     let key = as_key!(namespace, &set_name, "round-trip");
     let write_policy = WritePolicy::default();
-    // Non-finite element values are valid vector data. Invalid dimensions and
-    // reserved values are rejected by the typed constructors.
     let expected = vec![
         ("f16", Vector::float16(vec![0x3c00, 0x4000])),
         ("i32", Vector::int32(vec![-1, 0, 1])),
@@ -122,8 +120,6 @@ async fn vector_bin_can_be_absent_without_being_an_empty_vector() {
     client.close().await.unwrap();
 }
 
-// A record may hold several vector bins of differing element types and
-// dimensions alongside ordinary scalar bins; every bin round-trips.
 #[aerospike_macro::test]
 async fn multiple_vector_and_scalar_bins_in_one_record() {
     let client = common::client().await;
@@ -164,8 +160,6 @@ async fn multiple_vector_and_scalar_bins_in_one_record() {
     client.close().await.unwrap();
 }
 
-// Overwriting a vector bin fully replaces its element type and dimensions -
-// there is no in-place merge; the last write wins.
 #[aerospike_macro::test]
 async fn overwriting_a_vector_bin_replaces_element_type_and_dimensions() {
     let client = common::client().await;
@@ -207,8 +201,6 @@ async fn overwriting_a_vector_bin_replaces_element_type_and_dimensions() {
     client.close().await.unwrap();
 }
 
-// A vector bin can be overwritten with a scalar and then a vector again -
-// the bin's type is not pinned to VECTOR once written.
 #[aerospike_macro::test]
 async fn a_vector_bin_can_be_replaced_by_a_scalar_and_back() {
     let client = common::client().await;
@@ -251,7 +243,6 @@ async fn a_vector_bin_can_be_replaced_by_a_scalar_and_back() {
     client.close().await.unwrap();
 }
 
-// A selective read (`Bins::Some`) returns only the requested vector bin.
 #[aerospike_macro::test]
 async fn reading_selected_bins_returns_only_the_requested_vector() {
     let client = common::client().await;
@@ -284,7 +275,6 @@ async fn reading_selected_bins_returns_only_the_requested_vector() {
     client.close().await.unwrap();
 }
 
-// A single-dimension vector (header + one element) round-trips.
 #[aerospike_macro::test]
 async fn single_dimension_vector_round_trips_through_server() {
     let client = common::client().await;
@@ -312,9 +302,6 @@ async fn single_dimension_vector_round_trips_through_server() {
     client.close().await.unwrap();
 }
 
-// Same numeric value, four different element types, stored side by side: the
-// server preserves each element type distinctly (it is not coalesced to a
-// single representation). This guards the element-type byte on the round trip.
 #[aerospike_macro::test]
 async fn element_type_is_preserved_distinctly_through_the_server() {
     let client = common::client().await;
@@ -327,8 +314,7 @@ async fn element_type_is_preserved_distinctly_through_the_server() {
         .await
         .unwrap();
 
-    // All four encode the value "one".
-    let f16 = Vector::float16(vec![0x3c00]); // 1.0 in IEEE-754 binary16
+    let f16 = Vector::float16(vec![0x3c00]);
     let i32v = Vector::int32(vec![1]);
     let f32v = Vector::float32(vec![1.0]);
     let f64v = Vector::float64(vec![1.0]);
@@ -354,7 +340,6 @@ async fn element_type_is_preserved_distinctly_through_the_server() {
     assert_eq!(element_type("f32"), VectorElementType::Float32);
     assert_eq!(element_type("f64"), VectorElementType::Float64);
 
-    // And the values compare unequal across types even though they all mean 1.
     assert_eq!(record.bins.get("f32"), Some(&Value::Vector(f32v.clone())));
     assert_eq!(record.bins.get("f64"), Some(&Value::Vector(f64v.clone())));
     assert_ne!(Value::Vector(f32v), Value::Vector(f64v));
@@ -362,9 +347,6 @@ async fn element_type_is_preserved_distinctly_through_the_server() {
     client.close().await.unwrap();
 }
 
-// Non-finite and signed-zero float bits survive the server bit-exact (Value
-// equality for vectors compares by IEEE-754 bit pattern), including the
-// -0.0 / +0.0 distinction that a naive numeric copy could clobber.
 #[aerospike_macro::test]
 async fn signed_zero_and_non_finite_survive_the_server_bit_exact() {
     let client = common::client().await;
@@ -379,7 +361,7 @@ async fn signed_zero_and_non_finite_survive_the_server_bit_exact() {
 
     let f32v = Vector::float32(vec![-0.0, 0.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY]);
     let f64v = Vector::float64(vec![-0.0, 0.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY]);
-    let f16v = Vector::float16(vec![0x8000, 0x0000, 0x7e00, 0x7c00, 0xfc00]); // -0, +0, NaN, +Inf, -Inf
+    let f16v = Vector::float16(vec![0x8000, 0x0000, 0x7e00, 0x7c00, 0xfc00]);
     client
         .put(
             &write_policy,
@@ -401,7 +383,6 @@ async fn signed_zero_and_non_finite_survive_the_server_bit_exact() {
     assert_eq!(record.bins.get("f64"), Some(&Value::Vector(f64v)));
     assert_eq!(record.bins.get("f16"), Some(&Value::Vector(f16v)));
 
-    // -0.0 must not be flattened to +0.0 by the round trip.
     assert_ne!(
         Value::Vector(Vector::float32(vec![-0.0])),
         Value::Vector(Vector::float32(vec![0.0]))
@@ -410,7 +391,6 @@ async fn signed_zero_and_non_finite_survive_the_server_bit_exact() {
     client.close().await.unwrap();
 }
 
-// int32 vectors preserve the full signed 32-bit range through the server.
 #[aerospike_macro::test]
 async fn int32_vector_preserves_full_signed_range() {
     let client = common::client().await;
@@ -438,8 +418,6 @@ async fn int32_vector_preserves_full_signed_range() {
     client.close().await.unwrap();
 }
 
-// A vector large enough to exceed the 16-bit msgpack length boundary
-// round-trips as a top-level bin.
 #[aerospike_macro::test]
 async fn large_vector_crossing_16bit_length_boundary_round_trips() {
     let client = common::client().await;
@@ -452,7 +430,6 @@ async fn large_vector_crossing_16bit_length_boundary_round_trips() {
         .await
         .unwrap();
 
-    // 9000 f64 elements => 8 + 9000*8 = 72008 bytes, well past 65_535.
     let data: Vec<f64> = (0..9000).map(|i| i as f64 * 0.5).collect();
     let v = Vector::float64(data);
     client
@@ -469,10 +446,6 @@ async fn large_vector_crossing_16bit_length_boundary_round_trips() {
     client.close().await.unwrap();
 }
 
-// A vector nested inside a CDT list bin round-trips through the server. The
-// server treats the nested vector as an opaque msgpack byte string (the same
-// scheme as a nested BLOB), so this exercises the CDT path, not the expression
-// path.
 #[aerospike_macro::test]
 async fn vector_nested_in_a_list_bin_round_trips_through_server() {
     let client = common::client().await;
@@ -505,7 +478,6 @@ async fn vector_nested_in_a_list_bin_round_trips_through_server() {
     client.close().await.unwrap();
 }
 
-// A vector nested as a map value round-trips through the server.
 #[aerospike_macro::test]
 async fn vector_nested_in_a_map_bin_round_trips_through_server() {
     let client = common::client().await;
@@ -534,14 +506,11 @@ async fn vector_nested_in_a_map_bin_round_trips_through_server() {
         .get(&Default::default(), &key, Bins::All)
         .await
         .unwrap();
-    // Value equality treats HashMap/OrderedMap with matching entries as equal,
-    // so this holds regardless of how the server returns the map.
     assert_eq!(record.bins.get("by_key"), Some(&map_value));
 
     client.close().await.unwrap();
 }
 
-// A batch read returns records that contain vector bins.
 #[aerospike_macro::test]
 async fn batch_read_returns_records_with_vector_bins() {
     let client = common::client().await;
@@ -593,7 +562,6 @@ async fn batch_read_returns_records_with_vector_bins() {
     client.close().await.unwrap();
 }
 
-// A filter expression can safely inspect a VECTOR bin's presence.
 #[aerospike_macro::test]
 async fn filter_expression_referencing_a_vector_bin_matches_the_record() {
     let client = common::client().await;
@@ -722,7 +690,6 @@ async fn euclidean_squared_distance_is_sum_of_squared_differences() {
         .await
         .unwrap();
 
-    // Squared L2: 3^2 + 4^2 = 25.
     assert!(
         (float_bin(&rec, "dist") - 25.0).abs() < 1e-6,
         "squared Euclidean distance between [0, 0] and [3, 4] should be 25"
