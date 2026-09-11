@@ -64,6 +64,34 @@ mod tests {
     use crate::expressions::vector_bin;
 
     #[test]
+    fn packing_vector_expressions_flags_the_buffer() {
+        use crate::expressions::{float_val, ge, int_bin, int_val, list_val};
+
+        fn packed_has_vector(exp: &Expression) -> bool {
+            let size = exp.size().expect("expr should size");
+            let mut buf = Buffer::new(usize::MAX);
+            buf.resize_buffer(size).unwrap();
+            buf.data_offset = 0;
+            exp.pack(&mut Some(&mut buf)).expect("expr should pack");
+            buf.contains_vector()
+        }
+
+        let query = Vector::float32(vec![1.0]);
+
+        // Vector-distance queries are encoded as BLOB literals.
+        let dist = euclidean_squared_distance(&query, vector_bin("v".to_string()));
+        assert!(packed_has_vector(&dist));
+        assert!(packed_has_vector(&ge(dist, float_val(0.5))));
+
+        assert!(packed_has_vector(&vector_bin("v".to_string())));
+        assert!(packed_has_vector(&list_val(vec![Value::Vector(query)])));
+        assert!(!packed_has_vector(&ge(
+            int_bin("a".to_string()),
+            int_val(7)
+        )));
+    }
+
+    #[test]
     fn distance_builders_can_be_packed() {
         let query = Vector::float32(vec![1.0]);
         for exp in [
@@ -101,5 +129,39 @@ mod tests {
                 .expect("vector distance expr should pack");
             assert_eq!(&buf.data_buffer[..expected.len()], &expected);
         }
+    }
+
+    fn packed_has_vector(exp: &Expression) -> bool {
+        let size = exp.size().expect("expr should size");
+        let mut buf = Buffer::new(size);
+        buf.resize_buffer(size).unwrap();
+        buf.data_offset = 0;
+        exp.pack(&mut Some(&mut buf)).expect("expr should pack");
+        buf.contains_vector()
+    }
+
+    #[test]
+    fn every_distance_op_flags_the_buffer() {
+        let query = Vector::float32(vec![1.0]);
+        for exp in [
+            euclidean_squared_distance(&query, vector_bin("v".to_string())),
+            dot_product(&query, vector_bin("v".to_string())),
+            cosine_similarity(&query, vector_bin("v".to_string())),
+        ] {
+            assert!(packed_has_vector(&exp));
+        }
+    }
+
+    // Prepacked/base64 expressions are opaque bytes and are intentionally not
+    // parsed for vectors — this pins that escape-hatch behavior.
+    #[test]
+    fn prepacked_vector_expression_is_not_flagged() {
+        use crate::expressions::from_base64;
+        let query = Vector::float32(vec![1.0]);
+        let original = euclidean_squared_distance(&query, vector_bin("v".to_string()));
+        assert!(packed_has_vector(&original));
+
+        let opaque = from_base64(&original.base64().unwrap()).unwrap();
+        assert!(!packed_has_vector(&opaque));
     }
 }

@@ -66,6 +66,13 @@ pub type PartitionTable = HashMap<String, Partitions>;
 
 impl Partitions {}
 
+/// Atomically published nodes and vector capability.
+#[derive(Debug)]
+struct NodeSnapshot {
+    nodes: Vec<Arc<Node>>,
+    all_nodes_support_vector: bool,
+}
+
 // Cluster encapsulates the aerospike cluster nodes and manages
 // them.
 #[derive(Debug)]
@@ -77,7 +84,7 @@ pub struct Cluster {
     aliases: AtomicArc<HashMap<Host, Arc<Node>>>,
 
     // Active nodes in cluster.
-    nodes: AtomicArc<Vec<Arc<Node>>>,
+    nodes: AtomicArc<NodeSnapshot>,
 
     // Which partition contains the key.
     pub(crate) partition_map: AtomicArc<PartitionTable>,
@@ -182,7 +189,11 @@ impl Cluster {
 
             seeds: AtomicArc::from(hosts.to_vec()),
             aliases: AtomicArc::from(HashMap::new()),
-            nodes: AtomicArc::from(vec![]),
+            // Let disconnected clusters return the normal connection error.
+            nodes: AtomicArc::from(NodeSnapshot {
+                nodes: vec![],
+                all_nodes_support_vector: true,
+            }),
 
             partition_map: AtomicArc::from(HashMap::default()),
             node_index: AtomicIsize::new(0),
@@ -1997,11 +2008,22 @@ impl Cluster {
     }
 
     pub fn nodes(&self) -> Vec<Arc<Node>> {
-        (*self.nodes.load().clone()).clone()
+        self.nodes.load().nodes.clone()
+    }
+
+    /// Whether every known node supports VECTOR.
+    pub(crate) fn all_nodes_support_vector(&self) -> bool {
+        self.nodes.load().all_nodes_support_vector
     }
 
     fn set_nodes(&self, new_nodes: Vec<Arc<Node>>) {
-        self.nodes.store(Arc::new(new_nodes));
+        let all_nodes_support_vector = new_nodes
+            .iter()
+            .all(|node| node.version().supports_vector());
+        self.nodes.store(Arc::new(NodeSnapshot {
+            nodes: new_nodes,
+            all_nodes_support_vector,
+        }));
     }
 
     pub fn get_node(&self, partition: &mut Partition<'_>) -> Result<Arc<Node>> {

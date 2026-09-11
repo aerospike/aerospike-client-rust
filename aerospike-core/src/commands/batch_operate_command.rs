@@ -146,6 +146,7 @@ impl BatchOperateCommand {
                     cmd_type,
                     &mut sampled,
                     &mut commands_sent,
+                    &cluster,
                 )
                 .await
                 {
@@ -230,6 +231,7 @@ impl BatchOperateCommand {
                         cmd_type,
                         &mut sampled,
                         &mut commands_sent,
+                        &cluster,
                     )
                     .await
                     {
@@ -394,6 +396,7 @@ impl BatchOperateCommand {
         cmd_type: crate::metrics::CommandType,
         sampled: &mut Option<bool>,
         commands_sent: &mut u32,
+        cluster: &Cluster,
     ) -> Result<Option<Error>> {
         // Per-node circuit breaker: don't even open a socket if the node
         // is currently outside its error-rate window. Mirrors Java's
@@ -464,6 +467,11 @@ impl BatchOperateCommand {
                     e.chain_error("Failed to prepare send buffer")
                 }
             })?;
+
+        commands::check_vector_support(
+            conn.buffer.contains_vector(),
+            cluster.all_nodes_support_vector(),
+        )?;
 
         conn.buffer.write_timeout(policy.server_timeout());
 

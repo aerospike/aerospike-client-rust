@@ -116,6 +116,11 @@ impl Version {
         self >= &Version::new(8, 1, 3, 0)
     }
 
+    /// Server supports VECTOR values and expressions.
+    pub fn supports_vector(&self) -> bool {
+        self >= &Version::new(8, 1, 3, 0)
+    }
+
     /// Returns whether the server supports wire-level Top-K pushdown.
     pub fn supports_query_top_k(&self) -> bool {
         self >= &Version::new(8, 1, 3, 0)
@@ -194,6 +199,12 @@ mod tests {
         assert!(Version::new(4, 3, 2, 1) == Version::new(4, 3, 2, 1));
         assert!(Version::new(4, 3, 2, 1) <= Version::new(4, 3, 2, 1));
         assert!(Version::new(4, 3, 2, 1) >= Version::new(4, 3, 2, 1));
+    }
+
+    #[test]
+    fn vector_support_requires_server_8_1_3() {
+        assert!(!Version::new(8, 1, 2, 99).supports_vector());
+        assert!(Version::new(8, 1, 3, 0).supports_vector());
     }
 
     #[test]
