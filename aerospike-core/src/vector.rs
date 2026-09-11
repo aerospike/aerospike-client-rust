@@ -239,6 +239,7 @@ impl Vector {
 
     /// Serializes this vector in the little-endian wire format.
     pub(crate) fn write_to(&self, buf: &mut Buffer) -> usize {
+        buf.mark_vector();
         buf.write_u8(self.version);
         buf.write_u8(self.element_type().code());
         buf.write_u32_little_endian(self.dimensions() as u32);

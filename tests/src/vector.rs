@@ -799,3 +799,53 @@ async fn vector_distance_projection_supports_top_k_nearest_query() {
     assert_eq!(results, vec![(0, 0.0), (1, 1.0), (2, 4.0)]);
     client.close().await.unwrap();
 }
+
+// A vector reaches the wire nested inside a CDT operation, not just as a
+// top-level bin. On a supporting cluster the client-side safeguard must let
+// this through and the values must round-trip.
+#[aerospike_macro::test]
+async fn vector_written_through_a_cdt_list_operation_round_trips() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "cdt-list-vector");
+    let write_policy = WritePolicy::default();
+
+    common::delete_durably(&client, &write_policy, &key)
+        .await
+        .unwrap();
+
+    let v1 = Vector::float32(vec![1.0, 2.0, 3.0]);
+    let v2 = Vector::int32(vec![7, 8]);
+    let list_policy = aerospike::operations::lists::ListPolicy::default();
+    client
+        .operate(
+            &write_policy,
+            &key,
+            &[
+                aerospike::operations::lists::append(
+                    &list_policy,
+                    "items",
+                    Value::Vector(v1.clone()),
+                ),
+                aerospike::operations::lists::append(
+                    &list_policy,
+                    "items",
+                    Value::Vector(v2.clone()),
+                ),
+            ],
+        )
+        .await
+        .unwrap();
+
+    let record = client
+        .get(&Default::default(), &key, Bins::All)
+        .await
+        .unwrap();
+    assert_eq!(
+        record.bins.get("items"),
+        Some(&Value::List(vec![Value::Vector(v1), Value::Vector(v2)]))
+    );
+
+    client.close().await.unwrap();
+}

@@ -1885,7 +1885,6 @@ impl Client {
         statement.operations = Some(operations.to_vec());
         statement.validate()?;
         Self::reject_top_k_on_background_query(&statement)?;
-
         let nodes = self.cluster.nodes();
         if nodes.is_empty() {
             return Err(Error::connection("No connections available".to_string()));
@@ -1960,7 +1959,6 @@ impl Client {
         Self::reject_top_k_on_background_query(&statement)?;
         statement.set_aggregate_function(package_name, function_name, args);
         statement.validate()?;
-
         let nodes = self.cluster.nodes();
         if nodes.is_empty() {
             return Err(Error::connection("No connections available".to_string()));

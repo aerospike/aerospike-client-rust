@@ -227,6 +227,8 @@ pub struct Buffer {
     /// [`DEFAULT_COMPRESS_THRESHOLD`] but is configurable via
     /// `BasePolicy.compression_threshold`.
     compress_threshold: usize,
+    /// Whether the current command contains a vector.
+    has_vector: bool,
 }
 
 impl Drop for Buffer {
@@ -246,6 +248,7 @@ impl Buffer {
             pool: None,
             compress_offset: 0,
             compress_threshold: DEFAULT_COMPRESS_THRESHOLD,
+            has_vector: false,
         }
     }
 
@@ -281,6 +284,15 @@ impl Buffer {
 
     const fn begin(&mut self) {
         self.data_offset = self.compress_offset + MSG_TOTAL_HEADER_SIZE as usize;
+        self.has_vector = false;
+    }
+
+    pub(crate) const fn contains_vector(&self) -> bool {
+        self.has_vector
+    }
+
+    pub(crate) const fn mark_vector(&mut self) {
+        self.has_vector = true;
     }
 
     pub(crate) fn size_buffer(&mut self) -> Result<()> {
@@ -3910,5 +3922,259 @@ mod tests {
                 "walking the fields did not land on the end of the message, {described}"
             );
         }
+    }
+
+    // ---- encode-pass VECTOR detection (Buffer::contains_vector) ----
+    //
+    // The client-side vector safeguard keys off a single bit set while the
+    // write pass serializes a command. These tests drive real command
+    // builders and assert the bit tracks vectors anywhere in the payload:
+    // top-level bins, CDT-nested values, filter expressions, and vector
+    // distance expressions.
+
+    fn q_vector() -> crate::Vector {
+        crate::Vector::float32(vec![1.0, 2.0, 3.0])
+    }
+
+    fn vector_value() -> Value {
+        Value::Vector(q_vector())
+    }
+
+    fn vector_filter() -> crate::expressions::Expression {
+        crate::expressions::ge(
+            crate::expressions::vector::euclidean_squared_distance(
+                &q_vector(),
+                crate::expressions::vector_bin("embedding".to_string()),
+            ),
+            crate::expressions::float_val(0.0),
+        )
+    }
+
+    fn vector_distance_read_op() -> crate::operations::Operation {
+        crate::operations::exp::read_exp(
+            "dist",
+            crate::expressions::vector::euclidean_squared_distance(
+                &q_vector(),
+                crate::expressions::vector_bin("embedding".to_string()),
+            ),
+            crate::operations::exp::ExpReadFlags::Default,
+        )
+    }
+
+    fn write_policy_with_filter(filter: crate::expressions::Expression) -> WritePolicy {
+        let mut policy = WritePolicy::default();
+        policy.base_policy.filter_expression = Some(filter);
+        policy
+    }
+
+    #[test]
+    fn set_write_flags_vectors_anywhere_in_the_bins() {
+        let key = test_key();
+
+        let plain = [crate::Bin::new("b".to_string(), Value::from(1))];
+        let top_level = [crate::Bin::new("b".to_string(), vector_value())];
+        let in_list = [crate::Bin::new(
+            "b".to_string(),
+            Value::List(vec![Value::from(1), vector_value()]),
+        )];
+        let mut map = std::collections::HashMap::new();
+        map.insert(Value::from("k"), vector_value());
+        let in_map = [crate::Bin::new("b".to_string(), Value::HashMap(map))];
+
+        // (bins, expected)
+        let cases: [(&[crate::Bin], bool); 4] = [
+            (&plain, false),
+            (&top_level, true),
+            (&in_list, true),
+            (&in_map, true),
+        ];
+        for (bins, expected) in cases {
+            let mut buf = Buffer::new(0);
+            buf.set_write(&WritePolicy::default(), OperationType::Write, &key, bins)
+                .unwrap();
+            assert_eq!(buf.contains_vector(), expected);
+        }
+    }
+
+    #[test]
+    fn set_write_flags_a_vector_filter_expression() {
+        let key = test_key();
+        let bins = [crate::Bin::new("b".to_string(), Value::from(1))];
+        let mut buf = Buffer::new(0);
+        buf.set_write(
+            &write_policy_with_filter(vector_filter()),
+            OperationType::Write,
+            &key,
+            &bins,
+        )
+        .unwrap();
+        assert!(buf.contains_vector());
+    }
+
+    #[test]
+    fn set_operate_flags_cdt_nested_and_distance_vectors() {
+        use crate::operations::{lists, scalar};
+        let key = test_key();
+
+        let plain = vec![scalar::get_bin("b")];
+        let cdt_nested = vec![lists::append(&lists::ListPolicy::default(), "b", vector_value())];
+        let distance = vec![vector_distance_read_op()];
+
+        for (ops, expected) in [(plain, false), (cdt_nested, true), (distance, true)] {
+            let mut buf = Buffer::new(0);
+            buf.set_operate(&WritePolicy::default(), &key, &ops).unwrap();
+            assert_eq!(buf.contains_vector(), expected);
+        }
+    }
+
+    #[test]
+    fn set_udf_flags_a_vector_argument() {
+        let key = test_key();
+        for (args, expected) in [
+            (vec![Value::from(1)], false),
+            (vec![vector_value()], true),
+        ] {
+            let mut buf = Buffer::new(0);
+            buf.set_udf(&WritePolicy::default(), &key, "m", "f", Some(&args))
+                .unwrap();
+            assert_eq!(buf.contains_vector(), expected);
+        }
+    }
+
+    #[test]
+    fn set_query_flags_projection_and_filter_vectors() {
+        let node = crate::cluster::node::test_node_with_version(crate::Version::new(8, 1, 3, 0));
+
+        let plain = Statement::new("ns", "set", Bins::All);
+
+        let mut projection = Statement::new("ns", "set", Bins::All);
+        projection.set_operations(vec![vector_distance_read_op()]);
+
+        for (stmt, filter, expected) in [
+            (&plain, None, false),
+            (&projection, None, true),
+            (&plain, Some(vector_filter()), true),
+        ] {
+            let mut policy = QueryPolicy::default();
+            policy.base_policy.filter_expression = filter;
+            let mut buf = Buffer::new(4096);
+            buf.set_query(
+                QueryDirection::Foreground(&policy),
+                stmt,
+                1,
+                &node,
+                None,
+                None,
+                false,
+            )
+            .unwrap();
+            assert_eq!(buf.contains_vector(), expected);
+        }
+    }
+
+    #[test]
+    fn set_batch_operate_flags_vector_payload_and_filter() {
+        let key = crate::Key::new("ns", "set", Value::from(1)).unwrap();
+
+        let read_op = (
+            BatchOperation::read(&crate::BatchReadPolicy::default(), key.clone(), Bins::All),
+            0usize,
+        );
+        let write_op = (
+            BatchOperation::write(
+                &crate::BatchWritePolicy::default(),
+                key.clone(),
+                vec![crate::operations::put(&crate::Bin::new(
+                    "b".to_string(),
+                    vector_value(),
+                ))],
+            ),
+            0usize,
+        );
+
+        // Plain read: no vector.
+        let mut buf = Buffer::with_pool(64 * 1024, test_pool());
+        buf.set_batch_operate(&BatchPolicy::default(), std::slice::from_ref(&read_op))
+            .unwrap();
+        assert!(!buf.contains_vector());
+
+        // Vector in a batched write op.
+        let mut buf = Buffer::with_pool(64 * 1024, test_pool());
+        buf.set_batch_operate(&BatchPolicy::default(), std::slice::from_ref(&write_op))
+            .unwrap();
+        assert!(buf.contains_vector());
+
+        // Vector only in the shared batch filter expression.
+        let policy = BatchPolicy {
+            filter_expression: Some(vector_filter()),
+            ..Default::default()
+        };
+        let mut buf = Buffer::with_pool(64 * 1024, test_pool());
+        buf.set_batch_operate(&policy, std::slice::from_ref(&read_op))
+            .unwrap();
+        assert!(buf.contains_vector());
+    }
+
+    #[test]
+    fn read_family_flags_a_vector_filter_expression() {
+        let key = test_key();
+        let read_policy = {
+            let mut p = ReadPolicy::default();
+            p.base_policy.filter_expression = Some(vector_filter());
+            p
+        };
+
+        let mut buf = Buffer::new(0);
+        buf.set_read(
+            &read_policy.base_policy,
+            &key,
+            &Bins::Some(vec!["b".to_string()]),
+        )
+        .unwrap();
+        assert!(buf.contains_vector(), "set_read");
+
+        let mut buf = Buffer::new(0);
+        buf.set_exists(&read_policy, &key).unwrap();
+        assert!(buf.contains_vector(), "set_exists");
+
+        let mut buf = Buffer::new(0);
+        buf.set_delete(&write_policy_with_filter(vector_filter()), &key)
+            .unwrap();
+        assert!(buf.contains_vector(), "set_delete");
+
+        let mut buf = Buffer::new(0);
+        buf.set_touch(&write_policy_with_filter(vector_filter()), &key)
+            .unwrap();
+        assert!(buf.contains_vector(), "set_touch");
+    }
+
+    // begin() clears the bit, so reusing a buffer across (re)sent commands —
+    // as batch retries do — never carries a stale vector flag either way.
+    #[test]
+    fn rebuilding_a_command_resets_the_vector_flag() {
+        let key = test_key();
+        let vector_bin = [crate::Bin::new("b".to_string(), vector_value())];
+        let plain_bin = [crate::Bin::new("b".to_string(), Value::from(1))];
+
+        let mut buf = Buffer::new(0);
+        buf.set_write(&WritePolicy::default(), OperationType::Write, &key, &vector_bin)
+            .unwrap();
+        assert!(buf.contains_vector());
+
+        buf.set_write(&WritePolicy::default(), OperationType::Write, &key, &plain_bin)
+            .unwrap();
+        assert!(!buf.contains_vector(), "a plain rebuild must clear the flag");
+
+        buf.set_operate(
+            &WritePolicy::default(),
+            &key,
+            &[crate::operations::lists::append(
+                &crate::operations::lists::ListPolicy::default(),
+                "b",
+                vector_value(),
+            )],
+        )
+        .unwrap();
+        assert!(buf.contains_vector(), "a vector rebuild must set the flag");
     }
 }

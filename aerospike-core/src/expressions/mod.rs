@@ -426,6 +426,21 @@ impl Expression {
 
     /// Packs the expression.
     pub(crate) fn pack(&self, buf: &mut Option<&mut Buffer>) -> Result<usize> {
+        // Vector expressions encode their query as a BLOB.
+        if let Some(buf) = buf.as_deref_mut() {
+            if self.module == Some(ExpType::VECTOR)
+                || matches!(
+                    self.cmd,
+                    Some(
+                        ExpOp::VectorEuclideanDistance
+                            | ExpOp::VectorDotProduct
+                            | ExpOp::VectorCosineSimilarity
+                    )
+                )
+            {
+                buf.mark_vector();
+            }
+        }
         if let Some(bytes) = &self.bytes {
             if let Some(buf) = buf {
                 return Ok(buf.write_bytes(bytes));

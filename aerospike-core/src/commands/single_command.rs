@@ -299,17 +299,20 @@ impl<'a> SingleCommand<'a> {
             conn.buffer
                 .set_compress(policy.use_compression(), policy.compression_threshold());
             cmd.prepare_buffer(&mut conn).await.map_err(|e| {
-                // An argument the client refuses to encode is the caller's
-                // mistake, not a buffer problem: surface it as-is so the
-                // result code stays PARAMETER_ERROR, the way Java throws it
-                // straight out of the command. Anything else (I/O, sizing)
-                // gets the buffer context, which is where it is useful.
+                // Preserve client-side argument errors.
                 if matches!(e.kind(), crate::ErrorKind::InvalidArgument) {
                     e
                 } else {
                     e.chain_error("Failed to prepare send buffer")
                 }
             })?;
+
+            // Reject VECTOR payloads before sending.
+            commands::check_vector_support(
+                conn.buffer.contains_vector(),
+                cmd.cluster().is_none_or(Cluster::all_nodes_support_vector),
+            )?;
+
             cmd.write_timeout(&mut conn)
                 .await
                 .map_err(|e| e.chain_error("Failed to set timeout for send buffer"))?;
