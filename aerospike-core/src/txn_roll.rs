@@ -144,12 +144,20 @@ impl TxnRoll {
         self.txn.set_state(TxnState::Committed);
         self.txn.set_in_doubt(false);
 
-        if self
-            .roll(roll_policy, INFO4_MRT_ROLL_FORWARD)
-            .await
-            .is_err()
-        {
-            return Ok(CommitStatus::RollForwardAbandoned);
+        // Roll-forward failure used to return Ok(RollForwardAbandoned) and
+        // drop the error. Convenience wrappers then treated that Ok as a
+        // successful commit while the writes were still provisional. Raise
+        // instead so the cause (timeout, server code, node) reaches the
+        // caller; CLOSE_ABANDONED below stays a success.
+        if let Err(err) = self.roll(roll_policy, INFO4_MRT_ROLL_FORWARD).await {
+            let in_doubt = self.txn.in_doubt()
+                || err.in_doubt()
+                || matches!(err.kind(), crate::ErrorKind::Timeout);
+            return Err(self.make_commit_error(
+                CommitErrorType::RollForwardAbandoned,
+                in_doubt,
+                Some(err),
+            ));
         }
 
         if self.txn.close_monitor() {
