@@ -143,6 +143,157 @@ async fn scan_single_consumer_with_cancel() {
     assert_eq!(count, EXPECTED);
 }
 
+/// The no-loss contract under a genuine mid-stream cancel: unlike
+/// `scan_single_consumer_with_cancel` (whose `take()` equals `max_records`,
+/// so its channel buffer is empty when it closes), this consumes only half of
+/// each round and closes with records still buffered. The resume cursor must
+/// point at the last record *consumed*, not the last one fetched, so the
+/// union of all rounds is every record exactly once — buffered-but-unseen
+/// records are re-fetched, never skipped.
+#[aerospike_macro::test]
+async fn scan_cancel_midway_resumes_without_loss() {
+    let client = common::singleton_client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+
+    let mut qpolicy = QueryPolicy::default();
+    qpolicy.max_records = 200;
+
+    let mut pf = PartitionFilter::all();
+    let mut seen = std::collections::HashSet::new();
+    let mut consumed = 0usize;
+    let mut rounds = 0usize;
+    while !pf.done() {
+        rounds += 1;
+        assert!(rounds <= 100, "resume loop did not converge");
+
+        let stmt = Statement::new(namespace, &set_name, Bins::None);
+        let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
+        let mut stream = rs.clone().into_stream();
+        let mut got = 0usize;
+        while got < 100 {
+            match stream.next().await {
+                Some(Ok(rec)) => {
+                    seen.insert(rec.key.as_ref().unwrap().digest);
+                    got += 1;
+                }
+                Some(Err(err)) => panic!("{err:?}"),
+                None => break,
+            }
+        }
+        consumed += got;
+        drop(stream);
+        rs.close();
+        pf = rs.partition_filter().await.unwrap();
+    }
+
+    // The contract is at-least-once: every record seen, duplicates
+    // permitted. A quiet run delivers exactly once, but under load a
+    // mid-query retry can re-deliver records whose cursor commit went
+    // stale with the retry's new delivery round.
+    assert_eq!(seen.len(), EXPECTED, "records lost across cancel/resume");
+    assert!(consumed >= seen.len());
+}
+
+/// The multi-consumer flavour of the no-loss contract: two concurrent
+/// streams drain one recordset, so a partition's records are consumed out of
+/// order across them. The delivery-sequence watermark must keep the cursor on
+/// the contiguously consumed prefix — cancelling and resuming may re-deliver
+/// (at-least-once) but must never skip a record a consumer left unconsumed.
+#[aerospike_macro::test]
+async fn scan_multi_consumer_cancel_resumes_without_loss() {
+    let client = common::singleton_client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+
+    let mut qpolicy = QueryPolicy::default();
+    qpolicy.max_records = 200;
+
+    let mut pf = PartitionFilter::all();
+    let seen = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+    let mut consumed = 0usize;
+    let mut rounds = 0usize;
+    while !pf.done() {
+        rounds += 1;
+        assert!(rounds <= 300, "resume loop did not converge");
+
+        let stmt = Statement::new(namespace, &set_name, Bins::None);
+        let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
+
+        let consume = |n: usize| {
+            let rs = rs.clone();
+            let seen = seen.clone();
+            async move {
+                let mut stream = rs.into_stream();
+                let mut got = 0usize;
+                while got < n {
+                    match stream.next().await {
+                        Some(Ok(rec)) => {
+                            seen.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
+                            got += 1;
+                        }
+                        Some(Err(err)) => panic!("{err:?}"),
+                        None => break,
+                    }
+                }
+                got
+            }
+        };
+        let (a, b) = futures::join!(consume(50), consume(50));
+        consumed += a + b;
+        rs.close();
+        pf = rs.partition_filter().await.unwrap();
+    }
+
+    let distinct = seen.lock().unwrap().len();
+    assert_eq!(distinct, EXPECTED, "records lost across multi-consumer cancel/resume");
+    // At-least-once: duplicates are permitted (a resume may re-deliver
+    // records consumed beyond the contiguous prefix), never required.
+    assert!(consumed >= distinct);
+}
+
+/// Cleanup contract: dropping the stream and recordset mid-scan — no explicit
+/// close, no cursor read — must wind the query down (`Drop` closes, node
+/// tasks unblock and end, half-read connections are invalidated rather than
+/// pooled) and leave the client fully usable.
+#[aerospike_macro::test]
+async fn scan_drop_midway_leaves_client_usable() {
+    let client = common::singleton_client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, EXPECTED).await;
+
+    for _ in 0..3 {
+        let stmt = Statement::new(namespace, &set_name, Bins::All);
+        let rs = client
+            .query(&QueryPolicy::default(), PartitionFilter::all(), stmt)
+            .await
+            .unwrap();
+        let mut stream = rs.into_stream();
+        for _ in 0..50 {
+            if stream.next().await.is_none() {
+                break;
+            }
+        }
+        // Drop stream and recordset mid-flight.
+    }
+
+    // The same client must still serve single commands and a full scan.
+    let key = as_key!(namespace, &set_name, 0);
+    client.get(&ReadPolicy::default(), &key, Bins::All).await.unwrap();
+
+    let stmt = Statement::new(namespace, &set_name, Bins::None);
+    let rs = client
+        .query(&QueryPolicy::default(), PartitionFilter::all(), stmt)
+        .await
+        .unwrap();
+    let count = rs
+        .into_stream()
+        .filter(|res| futures::future::ready(res.is_ok()))
+        .count()
+        .await;
+    assert_eq!(count, EXPECTED);
+}
+
 #[aerospike_macro::test]
 async fn scan_single_consumer_with_cursor() {
     let client = common::singleton_client().await;

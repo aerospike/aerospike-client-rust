@@ -285,7 +285,8 @@ async fn batch_read_with_compression() {
         ops.push(BatchOperation::read(&brp, key, Bins::All));
     }
 
-    let results = client.batch(&bpolicy, &ops).await.unwrap();
+    client.batch(&bpolicy, &mut ops).await.unwrap();
+    let results: Vec<BatchRecord> = ops.iter().map(|op| op.batch_record().clone()).collect();
     assert_eq!(results.len(), 50);
 
     for result in &results {
@@ -324,7 +325,7 @@ async fn batch_write_with_compression() {
         ops.push(BatchOperation::write(&bwp, key, wops));
     }
 
-    client.batch(&bpolicy, &ops).await.unwrap();
+    client.batch(&bpolicy, &mut ops).await.unwrap();
 
     // Verify with compressed reads
     let mut rpolicy = ReadPolicy::default();
@@ -716,7 +717,7 @@ async fn recovery_batch_compressed() {
     }
 
     // This should timeout while reading the large batch response.
-    let result = client.batch(&bpolicy, &ops).await;
+    let result = client.batch(&bpolicy, &mut ops).await;
     assert!(result.is_err(), "Expected timeout error on batch");
 
     // Allow recovery to complete.
@@ -737,15 +738,15 @@ async fn recovery_batch_compressed() {
     }
 
     for _ in 0..30 {
-        let results = client.batch(&bpolicy_normal, &ops).await;
+        let results = client.batch(&bpolicy_normal, &mut ops).await;
         if results.is_err() {
             continue;
         }
 
-        let results = results.unwrap();
-        assert_eq!(results.len(), count);
-        for result in &results {
-            assert!(result.record.is_some());
+        results.unwrap();
+        assert_eq!(ops.len(), count);
+        for op in &ops {
+            assert!(op.record().is_some());
         }
     }
 
@@ -839,11 +840,12 @@ async fn put_get_compression_size_sweep() {
     bpolicy.base_policy.total_timeout = 30000;
     let brp = BatchReadPolicy::default();
 
-    let ops: Vec<BatchOperation> = keys
+    let mut ops: Vec<BatchOperation> = keys
         .iter()
         .map(|(key, _)| BatchOperation::read(&brp, key.clone(), Bins::All))
         .collect();
-    let results = client.batch(&bpolicy, &ops).await.unwrap();
+    client.batch(&bpolicy, &mut ops).await.unwrap();
+    let results: Vec<BatchRecord> = ops.iter().map(|op| op.batch_record().clone()).collect();
     assert_eq!(results.len(), keys.len());
     for (result, (_, payload)) in results.iter().zip(&keys) {
         let record = result.record.as_ref().expect("batch record present");

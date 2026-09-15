@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::batch::BatchOperation;
+use crate::batch::{BatchHook, BatchOperation};
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
 use crate::commands::{
@@ -21,10 +21,7 @@ use crate::commands::{
 };
 use crate::errors::Result;
 use crate::policy::{BatchPolicy, Concurrency};
-use crate::{BatchRecord, Error, Key, Policy, ResultCode};
-use aerospike_rt::time::Duration;
-use futures::channel::mpsc;
-use futures::Stream;
+use crate::{Error, Key, ResultCode};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -59,59 +56,100 @@ impl BatchExecutor {
         partition.get_node(&self.cluster)
     }
 
-    #[allow(clippy::option_if_let_else)]
+    /// Batch execution: results are written into the caller's operations —
+    /// no result vector, no clone in either direction. Prior results are
+    /// cleared on entry. Returns the first per-node failure, if any; per-key
+    /// outcomes (not-found, filtered-out, routing failures) live on the rows.
+    ///
+    /// Rows are moved out of the slice and back, so timeouts must not cancel
+    /// the in-flight future — the per-command policy deadlines already bound
+    /// the wait and stamp unanswered rows, which also means rows answered
+    /// before a timeout keep their real results.
+    #[allow(clippy::mutable_key_type)]
     pub async fn execute(
         &self,
         policy: &BatchPolicy,
-        batch_ops: &[BatchOperation],
-    ) -> Result<Vec<BatchRecord>> {
-        if policy.total_timeout() > 0 {
-            match aerospike_rt::timeout(
-                Duration::from_millis(u64::from(policy.total_timeout())),
-                self.execute_batch_operate(policy, batch_ops),
-            )
-            .await
-            {
-                Ok(res) => res,
-                Err(_) => {
-                    // The batch deadline elapsed with commands possibly on the
-                    // wire: surface a per-row TIMEOUT outcome and mark write
-                    // rows in-doubt (Java `BatchRecordArray` timeout parity)
-                    // instead of dropping the record set.
-                    let mut any_write = false;
-                    let records: Vec<BatchRecord> = batch_ops
-                        .iter()
-                        .map(|op| {
-                            let mut row = op.batch_record();
-                            row.result_code = Some(ResultCode::Timeout);
-                            row.in_doubt = row.has_write();
-                            any_write |= row.has_write();
-                            row
-                        })
-                        .collect();
-                    let source = Error::timeout("Timeout".to_string()).set_in_doubt(any_write, 1);
-                    Err(Error::batch_failed(records, source))
-                }
-            }
-        } else {
-            self.execute_batch_operate(policy, batch_ops).await
+        ops: &mut [BatchOperation],
+    ) -> Result<()> {
+        let rows: Vec<(BatchOperation, usize)> = ops
+            .iter_mut()
+            .enumerate()
+            .map(|(i, op)| {
+                op.clear_result();
+                (std::mem::replace(op, BatchOperation::placeholder()), i)
+            })
+            .collect();
+        let (rows, first_err) = self.run_rows(policy, rows, None).await?;
+        for (op, idx) in rows {
+            ops[idx] = op;
+        }
+        match first_err {
+            None => Ok(()),
+            Some(e) => Err(e),
         }
     }
 
+    /// Hook-driven execution: rows are owned by the call and every row's
+    /// outcome reaches `hook` exactly once — answered rows as they are
+    /// parsed, everything else in a final sweep. `false` from the hook, or
+    /// the caller dropping the future, stops the batch.
     #[allow(clippy::mutable_key_type)]
-    pub async fn execute_batch_operate(
+    pub async fn execute_foreach(
         &self,
         policy: &BatchPolicy,
-        batch_ops: &[BatchOperation],
-    ) -> Result<Vec<BatchRecord>> {
+        ops: Vec<BatchOperation>,
+        hook: Arc<BatchHook>,
+    ) -> Result<()> {
+        let rows: Vec<(BatchOperation, usize)> = ops
+            .into_iter()
+            .enumerate()
+            .map(|(i, op)| (op, i))
+            .collect();
+        let (rows, first_err) = self.run_rows(policy, rows, Some(hook.clone())).await?;
+        // Whatever never fired — unanswered, unroutable, or abandoned by an
+        // abort — fires now with the outcome it carries, so the hook is the
+        // complete record of the batch.
+        for (op, idx) in &rows {
+            if hook.is_cancelled() {
+                break;
+            }
+            hook.fire(*idx, op.batch_record()).await;
+        }
+        match first_err {
+            None => Ok(()),
+            Some(e) => Err(e),
+        }
+    }
+
+    /// The shared batch engine: split by node, run the per-node commands and
+    /// the single-key fast paths, and hand every row back — in arbitrary
+    /// order, each tagged with its original input index and carrying its
+    /// result — together with the first per-node failure. Callers place rows
+    /// by index, which is O(n); sorting here would be needless work.
+    #[allow(clippy::mutable_key_type)]
+    async fn run_rows(
+        &self,
+        policy: &BatchPolicy,
+        rows: Vec<(BatchOperation, usize)>,
+        hook: Option<Arc<BatchHook>>,
+    ) -> Result<(Vec<(BatchOperation, usize)>, Option<Error>)> {
+        let row_count = rows.len();
         let BatchSplit {
             map: batch_nodes,
             unroutable,
-        } = self.get_batch_operate_nodes(
-            batch_ops,
-            policy.replica,
-            policy.base_policy.read_mode_sc,
-        )?;
+        } = self.get_batch_operate_nodes(rows, policy.replica, policy.base_policy.read_mode_sc)?;
+
+        // Unroutable keys are decided already: report them now rather than
+        // making the hook wait on the nodes that can answer.
+        if let Some(hook) = &hook {
+            for (op, idx) in &unroutable {
+                if hook.is_cancelled() {
+                    break;
+                }
+                hook.fire(*idx, op.batch_record()).await;
+            }
+        }
+        let active = || hook.as_ref().is_none_or(|h| h.is_active());
 
         // Per-node fast path: when a node has only one key, route it
         // through a regular single-key command instead of the batch
@@ -132,11 +170,11 @@ impl BatchExecutor {
                 let mut parent = policy.clone();
                 let mut ops = ops;
                 self.cluster.patch_batch_wire(&mut parent, &mut ops);
-                multi_jobs.push(BatchOperateCommand::new(parent, node, ops));
+                multi_jobs.push(BatchOperateCommand::new(parent, node, ops).with_hook(hook.clone()));
             }
         }
 
-        let mut all_results: Vec<(BatchOperation, usize)> = Vec::with_capacity(batch_ops.len());
+        let mut all_results: Vec<(BatchOperation, usize)> = Vec::with_capacity(row_count);
         // Rows that never left the client are results too, and they are
         // already marked. They do not feed `first_err`: a key the cluster
         // could not route is a per-key outcome, exactly like a server
@@ -149,12 +187,24 @@ impl BatchExecutor {
         // parity) instead of being dropped.
         let mut first_err: Option<Error> = None;
 
+        if !active() {
+            // Aborted before the groups ran: their rows come back untouched.
+            for cmd in multi_jobs.drain(..) {
+                all_results.extend(cmd.batch_ops);
+            }
+        }
         if !multi_jobs.is_empty() {
             let cmds = self
                 .execute_batch_operate_jobs(multi_jobs, policy.concurrency)
                 .await?;
             for mut cmd in cmds {
                 if let Some(e) = cmd.terminal_error.take() {
+                    // A hook abort tears a group down through this path; it
+                    // is the caller's decision, not a failure.
+                    if matches!(e.kind(), crate::ErrorKind::StreamTerminated) {
+                        all_results.extend(cmd.batch_ops);
+                        continue;
+                    }
                     // Mark this node's unanswered rows with the failure
                     // (Java parity): a client timeout stamps TIMEOUT and
                     // makes writes in-doubt — they may have been applied;
@@ -192,10 +242,18 @@ impl BatchExecutor {
         // Singles honor the batch concurrency policy just like the
         // multi-key groups: running N per-node singles sequentially would
         // stack their latencies against the shared total_timeout budget.
+        let hook_ref = hook.clone();
         let single_futures = single_groups.into_iter().map(|(_node, mut op, idx)| {
             let cluster = self.cluster.clone();
+            let hook = hook_ref.clone();
             async move {
+                if hook.as_ref().is_some_and(|h| !h.is_active()) {
+                    return (Ok(()), op, idx);
+                }
                 let res = Self::execute_single_op(cluster, policy, &mut op).await;
+                if let Some(hook) = &hook {
+                    hook.fire(idx, op.batch_record()).await;
+                }
                 (res, op, idx)
             }
         });
@@ -216,126 +274,10 @@ impl BatchExecutor {
             all_results.push((op, idx));
         }
 
-        all_results.sort_by_key(|(_, i)| *i);
-        let records: Vec<BatchRecord> = all_results
-            .into_iter()
-            .map(|(b, _)| b.batch_record())
-            .collect();
-        match first_err {
-            None => Ok(records),
-            Some(e) => Err(Error::batch_failed(records, e)),
-        }
+        Ok((all_results, first_err))
     }
 
-    /// Streaming variant of `execute_batch_operate`.
-    ///
-    /// Splits per node (same as the buffered path) and applies the
-    /// same single-key fast path, but instead of waiting for every
-    /// per-node command to finish and returning a sorted vector, each
-    /// per-node group is spawned on its own task and pushes
-    /// `(original_index, BatchRecord)` tuples onto an mpsc channel as
-    /// soon as it completes. The returned receiver is an
-    /// `impl Stream<Item = (usize, BatchRecord)>` — items arrive
-    /// interleaved by node-completion timing, **not** sorted by input
-    /// index, and each carries the original input index so callers can
-    /// match results back to their `ops` slice.
-    ///
-    /// Whole-per-node-group failures (e.g. socket error after retries)
-    /// do not abort the stream — the group's records are still emitted,
-    /// carrying their per-key result codes and in-doubt marks (unanswered
-    /// keys have no result code). Only a client-side total-timeout
-    /// cancellation omits keys. Per-key results (`KEY_NOT_FOUND`,
-    /// `FILTERED_OUT`, etc.) ride on each emitted `BatchRecord` just as
-    /// they do for `batch`.
-    #[allow(clippy::mutable_key_type)]
-    pub async fn execute_stream(
-        &self,
-        policy: &BatchPolicy,
-        batch_ops: Vec<BatchOperation>,
-    ) -> Result<impl Stream<Item = (usize, BatchRecord)>> {
-        let BatchSplit {
-            map: batch_nodes,
-            unroutable,
-        } = self.get_batch_operate_nodes(
-            &batch_ops,
-            policy.replica,
-            policy.base_policy.read_mode_sc,
-        )?;
-        // The splitter already cloned each op into the per-node map;
-        // the original `batch_ops` is no longer needed.
-        drop(batch_ops);
-
-        let (tx, rx) = mpsc::unbounded::<(usize, BatchRecord)>();
-
-        // Unroutable keys are already decided, so emit them immediately
-        // rather than making the consumer wait on the nodes that can answer.
-        for (op, idx) in unroutable {
-            let _ = tx.unbounded_send((idx, op.batch_record()));
-        }
-
-        for (node, ops) in batch_nodes {
-            let cluster = self.cluster.clone();
-            let policy = policy.clone();
-            let tx = tx.clone();
-
-            if ops.len() == 1 {
-                // Single-key fast path: route through a non-batch
-                // single-record command and emit the resulting record
-                // when it returns.
-                aerospike_rt::spawn(async move {
-                    let (mut op, idx) = ops
-                        .into_iter()
-                        .next()
-                        .expect("one element in fast-path group");
-                    // Errors are either captured on the BatchRecord
-                    // (KEY_NOT_FOUND / FILTERED_OUT) or signal a real
-                    // failure for this key; either way we still emit
-                    // the BatchRecord so the consumer sees the
-                    // outcome.
-                    let _ = Self::execute_single_op(cluster, &policy, &mut op).await;
-                    let _ = tx.unbounded_send((idx, op.batch_record()));
-                });
-            } else {
-                // Regular per-node batch path.
-                let mut policy = policy;
-                let mut ops = ops;
-                cluster.patch_batch_wire(&mut policy, &mut ops);
-                let cmd = BatchOperateCommand::new(policy, node, ops);
-                aerospike_rt::spawn(async move {
-                    match cmd.execute(cluster).await {
-                        // Group-level failures come back as `Ok` with
-                        // `terminal_error` set, so per-key outcomes (and
-                        // in-doubt marks) are emitted either way.
-                        Ok(done) => {
-                            for (op, idx) in done.batch_ops {
-                                let _ = tx.unbounded_send((idx, op.batch_record()));
-                            }
-                        }
-                        // Only a client-side total-timeout cancellation lands
-                        // here — the command future was dropped mid-flight, so
-                        // there are no records to emit. The stream just yields
-                        // fewer items than the input had keys.
-                        Err(_) => {}
-                    }
-                });
-            }
-        }
-
-        // Drop the original sender so the stream ends as soon as the
-        // last spawned task completes (and drops its `Sender` clone).
-        drop(tx);
-
-        Ok(rx)
-    }
-
-    /// Single-key fast path. Translates the per-record policy onto a
-    /// `ReadPolicy` / `WritePolicy`, dispatches the matching non-batch
-    /// command, and writes the outcome back into the
-    /// `BatchOperation`'s `BatchRecord`. Per-key errors that are
-    /// expected in batch results (`KeyNotFoundError`, `FilteredOut`)
-    /// are recorded on the `BatchRecord` and don't bubble up; other
-    /// server errors propagate so the caller sees them.
-    async fn execute_single_op(
+   async fn execute_single_op(
         cluster: Arc<Cluster>,
         parent: &BatchPolicy,
         batch_op: &mut BatchOperation,
@@ -497,7 +439,7 @@ impl BatchExecutor {
     /// "empty batch".
     fn get_batch_operate_nodes(
         &self,
-        batch_ops: &[BatchOperation],
+        rows: Vec<(BatchOperation, usize)>,
         replica: crate::policy::Replica,
         read_mode_sc: crate::policy::ReadModeSC,
     ) -> Result<BatchSplit> {
@@ -506,18 +448,25 @@ impl BatchExecutor {
         let mut unroutable: Vec<(BatchOperation, usize)> = Vec::new();
         let mut first_err: Option<Error> = None;
 
-        for (index, batch_op) in batch_ops.iter().enumerate() {
-            match self.node_for_key(&batch_op.key(), batch_op.has_write(), replica, read_mode_sc) {
+        for (mut batch_op, index) in rows {
+            // Route by borrowing the key: `key()` clones its two Strings, and
+            // a routing lookup has no business allocating per row.
+            let routed = self.node_for_key(
+                &batch_op.batch_record().key,
+                batch_op.has_write(),
+                replica,
+                read_mode_sc,
+            );
+            match routed {
                 Ok(node) => {
                     map.entry(node)
                         .or_insert_with(Vec::new)
-                        .push((batch_op.clone(), index));
+                        .push((batch_op, index));
                 }
                 Err(err) => {
-                    let mut op = batch_op.clone();
                     // Never in-doubt: nothing was sent for this key.
-                    op.set_result_code(routing_result_code(&err), false);
-                    unroutable.push((op, index));
+                    batch_op.set_result_code(routing_result_code(&err), false);
+                    unroutable.push((batch_op, index));
                     first_err.get_or_insert(err);
                 }
             }

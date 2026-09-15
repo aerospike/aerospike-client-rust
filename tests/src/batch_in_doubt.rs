@@ -28,7 +28,7 @@ use crate::common;
 
 use aerospike::{
     as_bin, as_key, AdminPolicy, BatchOperation, BatchPolicy, BatchReadPolicy, BatchUDFPolicy,
-    Bins, Client, ErrorKind, Key, ResultCode, Task, UDFLang, Value, WritePolicy,
+    Bins, Client, Key, ResultCode, Task, UDFLang, Value, WritePolicy,
 };
 
 // A UDF that occupies the server for at least `secs` before writing. `os.clock()`
@@ -144,64 +144,36 @@ async fn batch_udf_client_timeout_marks_in_doubt() {
         })
         .collect();
 
+    let mut ops = ops;
     let err = client
-        .batch(&bpolicy, &ops)
+        .batch(&bpolicy, &mut ops)
         .await
         .expect_err("the UDF outruns the socket timeout");
 
-    // The defect this pins: the aggregate error must say in-doubt. The rows were
-    // always marked; the error that carries them was not, so a caller checking
-    // the error saw `false` for an in-doubt batch write.
+    // The defect this pins: the error must say in-doubt. The rows were
+    // always marked; the error a caller checks must agree with them.
     assert!(
         err.in_doubt(),
         "batch writes that reached the wire and never answered are in doubt: {err}"
     );
     assert!(
         err.is_client_timeout(),
-        "expected a client timeout in the chain, got {err:?}"
+        "expected a client timeout, got {err:?}"
     );
 
-    // The aggregate code stays BATCH_FAILED: Java core wraps every batch failure
-    // - timeouts included - in `AerospikeException.BatchRecordArray`
-    // (`ResultCode.BATCH_FAILED`). The timeout is reachable through the cause
-    // chain rather than by parsing the message.
-    assert_eq!(
-        err.result_code(),
-        i32::from(aerospike::ClientResultCode::BatchFailed),
-        "expected BATCH_FAILED at the top, got {err}"
-    );
-    let timeout_code = i32::from(u8::from(ResultCode::Timeout));
-    let mut link = err.cause();
-    let mut found_timeout = false;
-    while let Some(e) = link {
-        found_timeout |= e.result_code() == timeout_code;
-        link = e.cause();
-    }
+    // Per-row outcomes live on the operations themselves: each unanswered
+    // write marked in-doubt and stamped TIMEOUT. This is what a wrapper maps
+    // to its own exception, as the Java SDK does with its per-row records.
+    assert_eq!(ops.len(), 50);
     assert!(
-        found_timeout,
-        "the underlying TIMEOUT must be reachable structurally: {err}"
+        ops.iter().all(|op| op.in_doubt()),
+        "every unanswered write row is in doubt"
     );
-
-    // Per-row outcomes travel with the error, each unanswered write marked
-    // in-doubt and stamped TIMEOUT. This is what a wrapper maps to its own
-    // exception, exactly as the Java SDK does
-    // (`OperationSpecExecutor` -> `resultCodeToException(br.resultCode, .., br.inDoubt)`).
-    match err.kind() {
-        ErrorKind::BatchFailed { records } => {
-            assert_eq!(records.len(), 50);
-            assert!(
-                records.iter().all(|r| r.in_doubt),
-                "every unanswered write row is in doubt"
-            );
-            assert!(
-                records
-                    .iter()
-                    .all(|r| r.result_code == Some(ResultCode::Timeout)),
-                "every unanswered row is stamped TIMEOUT"
-            );
-        }
-        other => panic!("expected BatchFailed carrying the records, got {other:?}"),
-    }
+    assert!(
+        ops.iter()
+            .all(|op| op.result_code() == Some(ResultCode::Timeout)),
+        "every unanswered row is stamped TIMEOUT"
+    );
 
     client.close().await.unwrap();
 }
@@ -237,8 +209,9 @@ async fn batch_read_client_timeout_is_not_in_doubt() {
         .map(|key| BatchOperation::read(&bpr, key, Bins::All))
         .collect();
 
-    match client.batch(&bpolicy, &ops).await {
-        Ok(_) => {
+    let mut ops = ops;
+    match client.batch(&bpolicy, &mut ops).await {
+        Ok(()) => {
             // 1ms was enough on this machine; nothing to assert.
         }
         Err(err) => {

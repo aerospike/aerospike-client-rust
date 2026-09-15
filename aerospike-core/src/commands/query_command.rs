@@ -20,10 +20,8 @@ use crate::commands::{Command, SingleCommand, StreamCommand};
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::QueryPolicy;
-use crate::query::NodePartitions;
-use crate::{Recordset, Statement};
-
-use aerospike_rt::Mutex;
+use crate::query::{NodePartitions, QuerySink};
+use crate::Statement;
 
 pub struct QueryCommand<'a> {
     stream_command: StreamCommand,
@@ -33,21 +31,18 @@ pub struct QueryCommand<'a> {
 }
 
 impl<'a> QueryCommand<'a> {
-    pub async fn new(
+    pub fn new(
         policy: &'a QueryPolicy,
         statement: Arc<Statement>,
-        recordset: Arc<Recordset>,
-        node_partitions: Arc<Mutex<NodePartitions>>,
+        sink: QuerySink,
+        node_partitions: NodePartitions,
         cluster: Arc<Cluster>,
         execute_where: Option<Arc<[u8]>>,
     ) -> Self {
-        let node = {
-            let node_partitions = node_partitions.lock().await;
-            node_partitions.node.clone()
-        };
+        let node = node_partitions.node.clone();
 
         QueryCommand {
-            stream_command: StreamCommand::new(node, recordset, node_partitions, false, cluster),
+            stream_command: StreamCommand::new(node, sink, node_partitions, cluster),
             policy,
             statement,
             execute_where,
@@ -56,6 +51,12 @@ impl<'a> QueryCommand<'a> {
 
     pub async fn execute(&mut self) -> Result<()> {
         SingleCommand::execute(self.policy, self).await
+    }
+
+    /// Returns this node's partition set to the executor once the command has
+    /// run, error or not.
+    pub(crate) fn into_node_partitions(self) -> NodePartitions {
+        self.stream_command.into_node_partitions()
     }
 }
 
@@ -74,20 +75,16 @@ impl Command for QueryCommand<'_> {
     }
 
     async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        let node_partitions = self.stream_command.node_partitions.lock().await;
-        let node = node_partitions.node.clone();
-        let execute_where = self
-            .execute_where
-            .as_deref();
-        conn.buffer
-            .set_query(
-                QueryDirection::Foreground(self.policy),
-                &self.statement,
-                self.stream_command.recordset.task_id(),
-                &node,
-                Some(&node_partitions),
-                execute_where,
-            )
+        let node_partitions = self.stream_command.node_partitions();
+        let execute_where = self.execute_where.as_deref();
+        conn.buffer.set_query(
+            QueryDirection::Foreground(self.policy),
+            &self.statement,
+            self.stream_command.sink.task_id(),
+            &node_partitions.node,
+            Some(node_partitions),
+            execute_where,
+        )
     }
 
     fn get_node(&mut self) -> Result<Arc<Node>> {

@@ -240,12 +240,12 @@ async fn batch_sequence_retry_resplits_when_breaker_open() {
     bpolicy.base_policy.socket_timeout = 500;
 
     let brp = BatchReadPolicy::default();
-    let ops: Vec<BatchOperation> = (0..4_i64)
+    let mut ops: Vec<BatchOperation> = (0..4_i64)
         .map(|i| BatchOperation::read(&brp, as_key!(namespace, "breaker_batch", i), Bins::All))
         .collect();
 
     let err = client
-        .batch(&bpolicy, &ops)
+        .batch(&bpolicy, &mut ops)
         .await
         .expect_err("batch should fail with the breaker open");
 
@@ -266,12 +266,12 @@ async fn batch_sequence_retry_resplits_when_breaker_open() {
         3,
         "one breaker rejection per attempt: {display}"
     );
-    // Multi-key batches surface per-record results on failure.
-    if let ErrorKind::BatchFailed { records } = err.kind() {
-        assert_eq!(records.len(), 4);
-    } else {
-        panic!("expected BatchFailed, got: {err:?}");
-    }
+    // Per-record outcomes live on the operations themselves, failure or not.
+    assert_eq!(ops.len(), 4);
+    assert!(
+        ops.iter().all(|op| op.record().is_none()),
+        "no row was answered while the breaker was open"
+    );
 
     client.close().await.unwrap();
 }

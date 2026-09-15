@@ -350,18 +350,18 @@ async fn metrics_batch_histograms() {
     let bpr = BatchReadPolicy::default();
 
     // Batch containing writes -> BatchWrite.
-    let writes: Vec<_> = keys
+    let mut writes: Vec<_> = keys
         .iter()
         .map(|k| BatchOperation::write(&bpw, k.clone(), vec![operations::put(&bin)]))
         .collect();
-    client.batch(&bpolicy, &writes).await.unwrap();
+    client.batch(&bpolicy, &mut writes).await.unwrap();
 
     // Read-only batch -> BatchRead.
-    let reads: Vec<_> = keys
+    let mut reads: Vec<_> = keys
         .iter()
         .map(|k| BatchOperation::read(&bpr, k.clone(), Bins::All))
         .collect();
-    client.batch(&bpolicy, &reads).await.unwrap();
+    client.batch(&bpolicy, &mut reads).await.unwrap();
 
     let metrics = client.metrics();
     let agg = &metrics.cluster_aggregated;
