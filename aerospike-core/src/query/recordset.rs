@@ -164,24 +164,6 @@ impl Recordset {
         let _ = self.tx.clone().send(vec![entry]).await;
     }
 
-    /// Sends one record (or error) as a batch of one. The record hot path
-    /// goes through [`push_batch`](Self::push_batch) instead; this remains
-    /// for the cold paths — timeouts and errors.
-    pub(crate) async fn push(&self, record: Result<Record>) -> Result<()> {
-        match record {
-            // Do not emit stream termination errors; they are used as signals only.
-            Err(e) if matches!(e.kind(), crate::ErrorKind::StreamTerminated) => Ok(()),
-            _ => {
-                self.push_batch(vec![StreamEntry {
-                    result: record,
-                    bval: None,
-                    stamp: None,
-                }])
-                .await
-            }
-        }
-    }
-
     /// Hands a batch of records to the consumer in one channel send.
     pub(crate) async fn push_batch(&self, batch: Vec<StreamEntry>) -> Result<()> {
         match self.tx.send(batch).await {
@@ -349,6 +331,15 @@ mod tests {
 
     fn record() -> Record {
         Record::new(None, IndexMap::new(), None, 0, 0)
+    }
+
+    /// One record as a batch of one — the shape the cold paths use.
+    fn push(rs: &Recordset, record: Record) -> impl std::future::Future<Output = Result<()>> + '_ {
+        rs.push_batch(vec![StreamEntry {
+            result: Ok(record),
+            bval: None,
+            stamp: None,
+        }])
     }
 
     /// Keys with pairwise-distinct partition ids, so per-partition cursor
@@ -520,7 +511,7 @@ mod tests {
     fn blocking_iterator_drains_buffered_records_after_close() {
         let rs = recordset(8);
         for _ in 0..3 {
-            block_on(rs.push(Ok(record()))).unwrap();
+            block_on(push(&rs, record())).unwrap();
         }
         rs.close();
 
@@ -568,7 +559,7 @@ mod tests {
     fn push_fails_fast_after_close() {
         let rs = recordset(8);
         rs.close();
-        let err = block_on(rs.push(Ok(record()))).unwrap_err();
+        let err = block_on(push(&rs, record())).unwrap_err();
         assert!(
             matches!(err.kind(), crate::ErrorKind::StreamTerminated),
             "unexpected error: {err}"
@@ -581,13 +572,13 @@ mod tests {
         // full queue whose consumer went away used to wait forever. With
         // the channel closed, the pending send must fail promptly.
         let rs = recordset(1);
-        block_on(rs.push(Ok(record()))).unwrap(); // fill the queue
+        block_on(push(&rs, record())).unwrap(); // fill the queue
 
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let producer_rs = rs.clone();
         std::thread::spawn(move || {
             // Blocks: queue is full and nobody is consuming.
-            let result = block_on(producer_rs.push(Ok(record())));
+            let result = block_on(push(&producer_rs, record()));
             let _ = done_tx.send(result.is_err());
         });
 
@@ -606,7 +597,7 @@ mod tests {
         // Pending forever.
         let rs = recordset(8);
         for _ in 0..2 {
-            block_on(rs.push(Ok(record()))).unwrap();
+            block_on(push(&rs, record())).unwrap();
         }
         rs.close();
 

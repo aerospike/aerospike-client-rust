@@ -220,25 +220,27 @@ async fn dynamic_config_batch_sub_policies_apply() {
         .iter()
         .map(|k| BatchOperation::write(&bwp, k.clone(), wops.clone()))
         .collect();
-    let write_results = client
-        .batch(&BatchPolicy::default(), &writes)
+    let mut writes = writes;
+    client
+        .batch(&BatchPolicy::default(), &mut writes)
         .await
         .expect("batch write with batch_write sub-section config");
-    assert_eq!(write_results.len(), 3);
+    assert_eq!(writes.len(), 3);
 
     let brp = BatchReadPolicy::default();
     let reads: Vec<BatchOperation> = keys
         .iter()
         .map(|k| BatchOperation::read(&brp, k.clone(), Bins::All))
         .collect();
-    let read_results = client
-        .batch(&BatchPolicy::default(), &reads)
+    let mut reads = reads;
+    client
+        .batch(&BatchPolicy::default(), &mut reads)
         .await
         .expect("batch read with batch_read sub-section config");
-    assert_eq!(read_results.len(), 3);
-    for br in &read_results {
+    assert_eq!(reads.len(), 3);
+    for op in &reads {
         assert_eq!(
-            br.record.as_ref().and_then(|r| r.bins.get("v")).map(ToString::to_string),
+            op.record().and_then(|r| r.bins.get("v")).map(ToString::to_string),
             Some("1".to_string())
         );
     }
@@ -248,8 +250,9 @@ async fn dynamic_config_batch_sub_policies_apply() {
         .iter()
         .map(|k| BatchOperation::delete(&bdp, k.clone()))
         .collect();
+    let mut deletes = deletes;
     client
-        .batch(&BatchPolicy::default(), &deletes)
+        .batch(&BatchPolicy::default(), &mut deletes)
         .await
         .expect("batch delete with batch_delete sub-section config");
 

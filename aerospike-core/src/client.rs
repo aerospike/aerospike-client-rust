@@ -521,89 +521,61 @@ impl Client {
         Ok(command.record.unwrap())
     }
 
-    /// Read multiple record for specified batch keys in one batch call. This method allows
-    /// different namespaces/bins to be requested for each key in the batch. If the `BatchRead` key
-    /// field is not found, the corresponding record field will be `None`. The policy can be used
-    /// to specify timeouts and maximum concurrent threads. This method requires Aerospike Server
-    /// version >= 3.6.0.
+    /// Execute a batch of operations (read, write, delete, UDF — one per
+    /// [`Key`]) in one call, writing each operation's result **into the
+    /// operation itself**. Read results back through
+    /// [`BatchOperation::record`]/[`take_record`](BatchOperation::take_record)/
+    /// [`result_code`](BatchOperation::result_code)/[`in_doubt`](BatchOperation::in_doubt),
+    /// or borrow the whole row via [`BatchOperation::batch_record`].
+    ///
+    /// No result vector is allocated, the operations are not cloned into the
+    /// engine, and parsed records are never deep-copied — they are parsed
+    /// straight into the caller's rows (the C client's `as_batch_read_record`
+    /// shape). The slice is reusable across calls; prior results are cleared
+    /// on entry. Ordering is untouched, so result-to-operation correlation is
+    /// positional.
     ///
     /// # Arguments
     ///
     /// * `policy` — Batch policy (timeouts, max concurrent nodes).
-    /// * `batch` — Slice of [`BatchOperation`] items (read, write, delete, UDF) keyed by [`Key`].
-    ///
-    /// # Returns
-    ///
-    /// `Ok(Vec<BatchRecord>)` with one [`BatchRecord`] per operation; each record field is `Some` if the key was found, `None` otherwise. Order matches the input batch.
+    /// * `ops` — Slice of [`BatchOperation`] items keyed by [`Key`]; results
+    ///   land on these.
     ///
     /// # Errors
     ///
-    /// * Returns an error if the batch request fails (e.g. timeout, cluster error). Individual key-not-found is indicated by `record: None` in the corresponding [`BatchRecord`].
-    ///
-    /// # See also
-    ///
-    /// * [`BatchOperation`], [`BatchRecord`], [`get`](Self::get)
+    /// Per-key outcomes (key not found, filtered out, a key the cluster
+    /// cannot route) are **not** errors — they live on each row's result
+    /// code, with `record()` returning `None`. An `Err` is returned for the
+    /// first whole-node failure; every row still carries its own outcome,
+    /// and rows a timeout left unanswered have `result_code() == None`. Rows
+    /// answered before a timeout struck keep their results — the per-command
+    /// policy deadlines bound the wait.
     ///
     /// # Examples
     ///
-    /// Fetch multiple records in a single client request
-    ///
     /// ```rust,edition2021
+    /// # extern crate aerospike;
     /// # use aerospike::*;
     ///
     /// # #[tokio::main]
     /// # async fn main() {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or(String::from("127.0.0.1:3000"));
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
-    /// let bins = Bins::from(["name", "age"]);
-    /// let bin1 = as_bin!("a", "a value");
-    /// let bin2 = as_bin!("b", "another value");
-    /// let bin3 = as_bin!("c", 42);
-    ///
-    /// let key1 = as_key!("test", "test", 1);
-    /// let key2 = as_key!("test", "test", 2);
-    /// let key3 = as_key!("test", "test", 3);
-    ///
-    /// let key4 = as_key!("test", "test", -1);
-    /// // key does not exist
-    ///
-    /// let selected = Bins::from(["a"]);
-    /// let all = Bins::All;
-    /// let none = Bins::None;
-    ///
-    /// let wops = vec![
-    ///     operations::put(&bin1),
-    ///     operations::put(&bin2),
-    ///     operations::put(&bin3),
-    /// ];
-    ///
-    /// let rops = vec![
-    ///     operations::get_bin(&bin1.name),
-    ///     operations::get_bin(&bin2.name),
-    ///     operations::get_header(),
-    /// ];
-    ///
     /// let bpolicy = BatchPolicy::default();
-    /// let bpr = BatchReadPolicy::default();
-    /// let bpw = BatchWritePolicy::default();
-    /// let bpd = BatchDeletePolicy::default();
-    /// let bpu = BatchUDFPolicy::default();
+    /// let brp = BatchReadPolicy::default();
+    /// let key1 = as_key!("test", "test", "key1");
+    /// let key2 = as_key!("test", "test", "key2");
     ///
-    /// let batch = vec![
-    ///     BatchOperation::write(&bpw, key1.clone(), wops.clone()),
-    ///     BatchOperation::read(&bpr, key1.clone(), selected),
-    ///     BatchOperation::read(&bpr, key2.clone(), all),
-    ///     BatchOperation::read(&bpr, key3.clone(), none.clone()),
-    ///     BatchOperation::read_ops(&bpr, key3.clone(), rops),
-    ///     BatchOperation::delete(&bpd, key1.clone()),
-    ///     BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", None),
+    /// let mut ops = vec![
+    ///     BatchOperation::read(&brp, key1, Bins::All),
+    ///     BatchOperation::read(&brp, key2, Bins::from(["a", "b"])),
     /// ];
-    /// match client.batch(&bpolicy, &batch).await {
-    ///     Ok(results) => {
-    ///         for result in results {
-    ///             match result.record {
-    ///                 Some(record) => println!("{:?} => {:?}", result.key, record.bins),
-    ///                 None => println!("No such record: {:?}", result.key),
+    /// match client.batch(&bpolicy, &mut ops).await {
+    ///     Ok(()) => {
+    ///         for op in &ops {
+    ///             match op.record() {
+    ///                 Some(record) => println!("{:?} => {:?}", op.batch_record().key, record.bins),
+    ///                 None => println!("No such record: {:?}", op.batch_record().key),
     ///             }
     ///         }
     ///     }
@@ -614,8 +586,8 @@ impl Client {
     pub async fn batch(
         &self,
         policy: &BatchPolicy,
-        ops: &[BatchOperation],
-    ) -> Result<Vec<BatchRecord>> {
+        ops: &mut [BatchOperation],
+    ) -> Result<()> {
         let policy = self.cluster.resolve_batch(policy);
         let policy = policy.as_ref();
         if let Some(txn) = &policy.base_policy.txn {
@@ -631,48 +603,41 @@ impl Client {
         executor.execute(policy, ops).await
     }
 
-    /// Execute multiple batch operations and return results as an async stream.
+    /// Execute a batch of operations, reporting each row to `on_row` as its
+    /// result arrives — the reactive sibling of [`batch`](Self::batch).
     ///
-    /// Unlike [`batch`](Self::batch), results arrive in the order they are received from each
-    /// server node rather than the order of `ops`. Each item is a pair of
-    /// `(original_index, BatchRecord)` so the caller can match results back to their input
-    /// operations. The stream ends automatically once all server nodes have responded.
+    /// The batch owns `ops`. Every row's outcome reaches the hook **exactly
+    /// once**: answered rows as they are parsed, on the node task, before
+    /// the rest of the response is read; rows the server never answers
+    /// (unroutable keys, a failed node, rows an abort left behind) once at
+    /// the end, carrying the result code they were stamped with — or `None`
+    /// if they were never sent. `on_row(index, row)` receives the row's
+    /// position in `ops` and the row itself; return `false` to abort the
+    /// remaining work.
     ///
-    /// Ownership of `ops` is taken so it can be shared cheaply across per-node tasks without
-    /// cloning the operations themselves.
+    /// The hook is async and awaited inline, so it may do I/O — but while
+    /// it runs, that node's response is not being read; keep per-row awaits
+    /// short. Invocations run concurrently across nodes and serially within
+    /// one. The hook must not panic. Dropping the returned future stops the
+    /// batch: nothing fires afterwards, and running groups tear down.
     ///
-    /// # Examples
+    /// # Errors
     ///
-    /// ```rust,edition2021
-    /// # use aerospike::*;
-    /// use futures::StreamExt;
-    ///
-    /// # #[tokio::main]
-    /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
-    /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
-    /// let key = as_key!("test", "test", 1);
-    /// let batch = vec![BatchOperation::read(&BatchReadPolicy::default(), key, Bins::All)];
-    ///
-    /// let mut stream = client.batch_stream(&BatchPolicy::default(), batch).await.unwrap();
-    /// while let Some((idx, br)) = stream.next().await {
-    ///     println!("op[{}]: {:?}", idx, br.record);
-    /// }
-    /// # }
-    /// ```
-    pub async fn batch_stream(
+    /// Per-key outcomes are not errors; they reach the hook on each row. An
+    /// `Err` is the first whole-node failure. An abort from the hook is the
+    /// caller's decision and returns `Ok(())`.
+    pub async fn batch_foreach<F, Fut>(
         &self,
         policy: &BatchPolicy,
         ops: Vec<BatchOperation>,
-    ) -> Result<impl futures::Stream<Item = (usize, BatchRecord)>> {
+        on_row: F,
+    ) -> Result<()>
+    where
+        F: Fn(usize, &BatchRecord) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = bool> + Send + 'static,
+    {
         let policy = self.cluster.resolve_batch(policy);
         let policy = policy.as_ref();
-        // Mirror `batch`'s TXN preamble — when a transaction is
-        // attached to the policy, each key in the batch needs to be
-        // registered with the MRT monitor before any per-node command
-        // runs. The streaming variant takes ownership of `ops` so we
-        // pass a borrow into the monitor before handing ownership
-        // through to the executor.
         if let Some(txn) = &policy.base_policy.txn {
             crate::txn_monitor::add_keys_from_records(
                 self.cluster.clone(),
@@ -682,8 +647,23 @@ impl Client {
             )
             .await?;
         }
+
+        let hook = Arc::new(crate::batch::BatchHook::new(
+            Box::new(move |idx, row| Box::pin(on_row(idx, row))),
+            ops.len(),
+        ));
+        // Dropping this future — the caller lost interest — stops the hook
+        // from firing again and lets running groups wind down.
+        struct CancelOnDrop(Arc<crate::batch::BatchHook>);
+        impl Drop for CancelOnDrop {
+            fn drop(&mut self) {
+                self.0.cancel();
+            }
+        }
+        let _guard = CancelOnDrop(Arc::clone(&hook));
+
         let executor = BatchExecutor::new(self.cluster.clone());
-        executor.execute_stream(policy, ops).await
+        executor.execute_foreach(policy, ops, hook).await
     }
 
     /// Write record bin(s). The policy specifies the transaction timeout, record expiration, and

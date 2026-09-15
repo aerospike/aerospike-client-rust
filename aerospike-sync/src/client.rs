@@ -14,7 +14,6 @@
 // the License.
 
 use std::future::Future;
-use std::pin::Pin;
 use std::str;
 use std::sync::Arc;
 #[cfg(feature = "rt-tokio")]
@@ -34,7 +33,6 @@ use aerospike_core::{
     ReadPolicy, Record, Recordset, RegisterTask, Role, Statement, ToHosts, TxnRollPolicy,
     TxnVerifyPolicy, UDFLang, User, Value, WritePolicy,
 };
-use futures::Stream;
 
 #[cfg(feature = "rt-tokio")]
 static SYNC_RT: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
@@ -99,29 +97,6 @@ where
 #[cfg(feature = "rt-async-std")]
 fn block_on<F: Future>(f: F) -> F::Output {
     async_std::task::block_on(f)
-}
-
-/// Blocking iterator over the items emitted by
-/// [`Client::batch_stream`]. Each [`Iterator::next`] call returns the
-/// next `(original_index, BatchRecord)` as soon as some per-node task
-/// produces one; iteration ends once every per-node task has
-/// finished and the underlying stream is closed.
-///
-/// Each `next()` drives the underlying stream through the crate's
-/// [`block_on`] bridge: the calling thread parks with a real waker and
-/// is woken exactly when an item (or the end of the stream) arrives —
-/// no polling loop, no busy CPU while waiting.
-pub struct BatchStream {
-    inner: Pin<Box<dyn Stream<Item = (usize, BatchRecord)> + Send>>,
-}
-
-impl Iterator for BatchStream {
-    type Item = (usize, BatchRecord);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        use futures::StreamExt;
-        block_on(self.inner.next())
-    }
 }
 
 /// Instantiate a Client instance to access an Aerospike database cluster and perform database
@@ -324,12 +299,12 @@ impl Client {
     ///   let key = as_key!("test", "test", i);
     ///   batch_ops.push(BatchOperation::read(&bpr, key, bins.clone()));
     /// }
-    /// match client.batch(&BatchPolicy::default(), &batch_ops) {
-    ///     Ok(results) => {
-    ///       for result in results {
-    ///         match result.record {
-    ///           Some(record) => println!("{:?} => {:?}", result.key, record.bins),
-    ///           None => println!("No such record: {:?}", result.key),
+    /// match client.batch(&BatchPolicy::default(), &mut batch_ops) {
+    ///     Ok(()) => {
+    ///       for op in &batch_ops {
+    ///         match op.record() {
+    ///           Some(record) => println!("{:?} => {:?}", op.batch_record().key, record.bins),
+    ///           None => println!("No such record: {:?}", op.batch_record().key),
     ///         }
     ///       }
     ///     }
@@ -337,52 +312,33 @@ impl Client {
     ///         => println!("Error executing batch request: {}", err),
     /// }
     /// ```
+    ///
+    /// Results are written into the operations themselves; see the async
+    /// `Client::batch` for the full contract.
     pub fn batch(
         &self,
         policy: &BatchPolicy,
-        batch_records: &[BatchOperation],
-    ) -> Result<Vec<BatchRecord>> {
+        batch_records: &mut [BatchOperation],
+    ) -> Result<()> {
         block_on(self.async_client.batch(policy, batch_records))
     }
 
-    /// Execute multiple batch operations and return results as a
-    /// blocking [`Iterator`]. Sync equivalent of the async
-    /// `Client::batch_stream`.
-    ///
-    /// Unlike [`batch`](Self::batch), items arrive in the order they
-    /// are received from each server node rather than the order of
-    /// `ops`. Each item is `(original_index, BatchRecord)` so callers
-    /// can match results back to their input vec. Iteration ends once
-    /// every per-node task has completed.
-    ///
-    /// Internally this drives the async streaming variant: the
-    /// per-node tasks are spawned on the underlying tokio runtime,
-    /// each emits its `(idx, BatchRecord)` onto a channel as soon as
-    /// it returns, and the [`BatchStream`] iterator pulls those items
-    /// without ever blocking the runtime — it follows the same
-    /// `try_recv` + `yield` pattern used by [`Recordset`].
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// # use aerospike_sync::*;
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
-    /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
-    /// let key = as_key!("test", "test", 1);
-    /// let batch = vec![BatchOperation::read(&BatchReadPolicy::default(), key, Bins::All)];
-    /// for (idx, br) in client.batch_stream(&BatchPolicy::default(), batch).unwrap() {
-    ///     println!("op[{}]: {:?}", idx, br.record);
-    /// }
-    /// ```
-    pub fn batch_stream(
+    /// Execute a batch, reporting each row to `on_row` as its result
+    /// arrives. Blocking equivalent of the async `Client::batch_foreach`:
+    /// same exactly-once-per-row contract, same abort-on-`false`. The hook
+    /// is async on the wire side; a plain closure returns
+    /// `std::future::ready(true)`.
+    pub fn batch_foreach<F, Fut>(
         &self,
         policy: &BatchPolicy,
         ops: Vec<BatchOperation>,
-    ) -> Result<BatchStream> {
-        let stream = block_on(self.async_client.batch_stream(policy, ops))?;
-        Ok(BatchStream {
-            inner: Box::pin(stream),
-        })
+        on_row: F,
+    ) -> Result<()>
+    where
+        F: Fn(usize, &BatchRecord) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = bool> + Send + 'static,
+    {
+        block_on(self.async_client.batch_foreach(policy, ops, on_row))
     }
 
     /// Write record bin(s). The policy specifies the transaction timeout, record expiration and
@@ -1070,47 +1026,5 @@ impl Client {
     /// Snapshot of the cluster-wide metrics.
     pub fn metrics(&self) -> aerospike_core::ClusterMetrics {
         self.async_client.metrics()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Duration;
-
-    /// A BatchStream over a hand-built stream (no server, no items
-    /// needed): the empty stream must terminate immediately and stay
-    /// terminated.
-    #[test]
-    fn batch_stream_over_empty_stream_ends_immediately() {
-        let mut bs = BatchStream {
-            inner: Box::pin(futures::stream::iter(Vec::<(usize, BatchRecord)>::new())),
-        };
-        assert!(bs.next().is_none());
-        assert!(bs.next().is_none());
-    }
-
-    /// The parked-consumer edge case: `next()` must genuinely park (not
-    /// spin) and be woken when the producing side closes the channel.
-    /// Uses an async_channel receiver as the stream — the same channel
-    /// family the real batch executor uses.
-    #[test]
-    fn batch_stream_parked_next_wakes_when_producer_closes() {
-        let (tx, rx) = async_channel::bounded::<(usize, BatchRecord)>(4);
-        let mut bs = BatchStream { inner: Box::pin(rx) };
-
-        let (done_tx, done_rx) = std::sync::mpsc::channel();
-        let consumer = std::thread::spawn(move || {
-            let item = bs.next(); // parks: channel empty, still open
-            let _ = done_tx.send(item.is_none());
-        });
-
-        std::thread::sleep(Duration::from_millis(100));
-        drop(tx); // producer goes away -> channel closes -> stream ends
-        let ended_clean = done_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("parked BatchStream::next was not woken by channel close");
-        assert!(ended_clean, "expected None once the producer closed");
-        consumer.join().unwrap();
     }
 }
