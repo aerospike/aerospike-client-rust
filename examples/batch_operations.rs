@@ -1,7 +1,7 @@
 use aerospike::{as_bin, as_key, as_val};
 
 use aerospike::operations;
-use aerospike::{BatchPolicy, Bins, Client, ClientPolicy, UDFLang};
+use aerospike::{BatchPolicy, BatchRecord, Bins, Client, ClientPolicy, UDFLang};
 use aerospike_core::{
     AdminPolicy, BatchDeletePolicy, BatchOperation, BatchReadPolicy, BatchUDFPolicy,
     BatchWritePolicy, Task,
@@ -85,25 +85,27 @@ end
 
     // WRITE Operations
     println!("\n--- Batch WRITE operations ---");
-    let batch = vec![
+    let mut batch = vec![
         BatchOperation::write(&bpw, key1.clone(), wops.clone()),
         BatchOperation::write(&bpw, key2.clone(), wops.clone()),
         BatchOperation::write(&bpw, key3.clone(), wops.clone()),
     ];
-    let results = client.batch(&bpolicy, &batch).await.unwrap();
+    client.batch(&bpolicy, &mut batch).await.unwrap();
+    let results: Vec<&BatchRecord> = batch.iter().map(BatchOperation::batch_record).collect();
     println!("Write results:");
     dbg!(&results);
 
     // READ Operations
     println!("\n--- Batch READ operations ---");
-    let batch = vec![
+    let mut batch = vec![
         BatchOperation::read(&bpr, key1.clone(), selected),
         BatchOperation::read(&bpr, key2.clone(), all),
         BatchOperation::read(&bpr, key3.clone(), none.clone()),
         BatchOperation::read_ops(&bpr, key3.clone(), rops),
         BatchOperation::read(&bpr, key4.clone(), none.clone()),
     ];
-    let results = client.batch(&bpolicy, &batch).await.unwrap();
+    client.batch(&bpolicy, &mut batch).await.unwrap();
+    let results: Vec<&BatchRecord> = batch.iter().map(BatchOperation::batch_record).collect();
     println!("Read results:");
     dbg!(&results);
 
@@ -113,25 +115,27 @@ end
     let args2 = vec![as_val!(2)];
     let args3 = vec![as_val!(3)];
     let args4 = vec![as_val!(4)];
-    let batch = vec![
+    let mut batch = vec![
         BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", Some(args1)),
         BatchOperation::udf(&bpu, key2.clone(), "test_udf", "echo", Some(args2)),
         BatchOperation::udf(&bpu, key3.clone(), "test_udf", "echo", Some(args3)),
         BatchOperation::udf(&bpu, key4.clone(), "test_udf", "echo", Some(args4)),
     ];
-    let results = client.batch(&bpolicy, &batch).await.unwrap();
+    client.batch(&bpolicy, &mut batch).await.unwrap();
+    let results: Vec<&BatchRecord> = batch.iter().map(BatchOperation::batch_record).collect();
     println!("UDF results:");
     dbg!(&results);
 
     // DELETE Operations
     println!("\n--- Batch DELETE operations ---");
-    let batch = vec![
+    let mut batch = vec![
         BatchOperation::delete(&bpd, key1.clone()),
         BatchOperation::delete(&bpd, key2.clone()),
         BatchOperation::delete(&bpd, key3.clone()),
         BatchOperation::delete(&bpd, key4.clone()),
     ];
-    let results = client.batch(&bpolicy, &batch).await.unwrap();
+    client.batch(&bpolicy, &mut batch).await.unwrap();
+    let results: Vec<&BatchRecord> = batch.iter().map(BatchOperation::batch_record).collect();
     println!("Delete results:");
     dbg!(&results);
 

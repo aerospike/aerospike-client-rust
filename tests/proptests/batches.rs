@@ -86,7 +86,13 @@ proptest_async::proptest! {
             as_ops.push(as_op);
         }
 
-        let res = client.batch(&batch_policy, &as_ops).await;
+        let mut as_ops = as_ops;
+        let res = client
+            .batch(&batch_policy, &mut as_ops)
+            .await
+            .map(|()| -> Vec<BatchRecord> {
+                as_ops.iter().map(|op| op.batch_record().clone()).collect()
+            });
 
         match res {
             Err(e) => panic!("{}", e),
@@ -177,7 +183,13 @@ proptest_async::proptest! {
 
         // Invoke the batch operation.
 
-        let res = client.batch(&batch_policy, &as_ops).await;
+        let mut as_ops = as_ops;
+        let res = client
+            .batch(&batch_policy, &mut as_ops)
+            .await
+            .map(|()| -> Vec<BatchRecord> {
+                as_ops.iter().map(|op| op.batch_record().clone()).collect()
+            });
 
         match res {
             Err(e) => panic!("ERR: {}", e),
@@ -305,7 +317,13 @@ proptest_async::proptest! {
             as_ops.push(as_op);
         }
 
-        let res = client.batch(&BatchPolicy::default(), &as_ops).await;
+        let mut as_ops = as_ops;
+        let res = client
+            .batch(&BatchPolicy::default(), &mut as_ops)
+            .await
+            .map(|()| -> Vec<BatchRecord> {
+                as_ops.iter().map(|op| op.batch_record().clone()).collect()
+            });
 
         match res {
             Err(e) => panic!("ERR: {}", e),

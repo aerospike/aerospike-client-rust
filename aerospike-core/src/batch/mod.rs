@@ -14,6 +14,8 @@
 // the License.
 
 pub mod batch_executor;
+pub(crate) mod hook;
+pub(crate) use hook::BatchHook;
 pub mod batch_record;
 
 use crate::commands::buffer::{FIELD_HEADER_SIZE, OPERATION_HEADER_SIZE};
@@ -671,15 +673,65 @@ impl BatchOperation {
         }
     }
 
-    /// Return the resulting batch record.
-    pub fn batch_record(&self) -> BatchRecord {
+    /// The parsed record for this operation, if the call found one.
+    pub fn record(&self) -> Option<&Record> {
+        self.batch_record().record.as_ref()
+    }
+
+    /// Moves the parsed record out of this operation, leaving `None`.
+    pub fn take_record(&mut self) -> Option<Record> {
+        self.record_mut().record.take()
+    }
+
+    /// The per-key result code, `None` if the operation was never executed.
+    pub fn result_code(&self) -> Option<ResultCode> {
+        self.batch_record().result_code
+    }
+
+    /// Whether a write may have been applied despite an error.
+    pub fn in_doubt(&self) -> bool {
+        self.batch_record().in_doubt
+    }
+
+
+
+    /// Clears any result from a previous execution, so a reused operation
+    /// starts a call with a clean row.
+    pub(crate) fn clear_result(&mut self) {
+        let br = self.record_mut();
+        br.record = None;
+        br.result_code = None;
+        br.in_doubt = false;
+        br.set_error_detail(None);
+    }
+
+    /// A cheap, allocation-free stand-in swapped into a caller's slice while
+    /// its row is travelling through the batch engine.
+    pub(crate) fn placeholder() -> Self {
+        let key = Key {
+            namespace: String::new(),
+            set_name: String::new(),
+            user_key: None,
+            digest: [0; 20],
+        };
+        Self::Read {
+            br: BatchRecord::new(key, false),
+            policy: BatchReadPolicy::default(),
+            bins: Bins::None,
+            ops: None,
+        }
+    }
+
+    /// The operation's batch record: its key, and after execution its
+    /// result. Borrowed — the record lives inside the operation.
+    pub const fn batch_record(&self) -> &BatchRecord {
         match self {
             Self::Read { br, .. }
             | Self::Write { br, .. }
             | Self::Delete { br, .. }
             | Self::UDF { br, .. }
             | Self::TxnVerify { br, .. }
-            | Self::TxnRoll { br, .. } => br.clone(),
+            | Self::TxnRoll { br, .. } => br,
         }
     }
 
@@ -738,7 +790,7 @@ impl BatchOperation {
 mod repeat_tests {
     use super::*;
     use crate::operations::{self, lists};
-    use crate::{as_bin, Bins};
+    use crate::Bins;
 
     fn key(n: i64) -> Key {
         Key::new("ns", "set", crate::Value::from(n)).unwrap()

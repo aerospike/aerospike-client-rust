@@ -40,10 +40,11 @@ pub struct BatchOperateCommand {
     /// Set when the command failed after per-key processing began (retries
     /// exhausted, deadline elapsed, unrecoverable request error). The command
     /// still returns `Ok(self)` so `batch_ops` — carrying every per-key
-    /// outcome and in-doubt mark — survives for the executor to surface via
-    /// [`ErrorKind::BatchFailed`](crate::ErrorKind::BatchFailed) (Java
-    /// `AerospikeException.BatchRecordArray` parity).
+    /// outcome and in-doubt mark — survives for the executor to stamp and
+    /// hand back to the caller's rows.
     pub(crate) terminal_error: Option<Error>,
+    /// `batch_foreach`'s per-row hook, fired as each row's result lands.
+    hook: Option<Arc<crate::batch::BatchHook>>,
 }
 
 impl BatchOperateCommand {
@@ -57,11 +58,22 @@ impl BatchOperateCommand {
             node,
             batch_ops,
             terminal_error: None,
+            hook: None,
         }
+    }
+
+    pub(crate) fn with_hook(mut self, hook: Option<Arc<crate::batch::BatchHook>>) -> Self {
+        self.hook = hook;
+        self
     }
 
     #[allow(clippy::option_if_let_else)]
     pub async fn execute(self, cluster: Arc<Cluster>) -> Result<Self> {
+        // An aborted or cancelled batch_foreach: don't start work nobody
+        // wants; the rows come back untouched for the final sweep.
+        if self.hook.as_ref().is_some_and(|h| !h.is_active()) {
+            return Ok(self);
+        }
         if self.policy.total_timeout() > 0 {
             let res = aerospike_rt::timeout(
                 Duration::from_millis(u64::from(self.policy.total_timeout())),
@@ -135,6 +147,10 @@ impl BatchOperateCommand {
 
         // Execute command until successful, timed out or maximum iterations have been reached.
         loop {
+            // A hook abort or a dropped batch_foreach: no further attempts.
+            if self.hook.as_ref().is_some_and(|h| !h.is_active()) {
+                return Ok(self);
+            }
             let retry_err = if iterations == 0 || same_node_retry {
                 // First attempt, and every retry for non-sequence replicas:
                 // the whole group goes to the originally selected node.
@@ -146,6 +162,7 @@ impl BatchOperateCommand {
                     cmd_type,
                     &mut sampled,
                     &mut commands_sent,
+                self.hook.as_deref(),
                 )
                 .await
                 {
@@ -230,7 +247,8 @@ impl BatchOperateCommand {
                         cmd_type,
                         &mut sampled,
                         &mut commands_sent,
-                    )
+                    self.hook.as_deref(),
+                )
                     .await
                     {
                         Ok(Some(e)) => {
@@ -394,6 +412,7 @@ impl BatchOperateCommand {
         cmd_type: crate::metrics::CommandType,
         sampled: &mut Option<bool>,
         commands_sent: &mut u32,
+        hook: Option<&crate::batch::BatchHook>,
     ) -> Result<Option<Error>> {
         // Per-node circuit breaker: don't even open a socket if the node
         // is currently outside its error-rate window. Mirrors Java's
@@ -503,7 +522,8 @@ impl BatchOperateCommand {
             &mut conn,
             policy.base_policy.txn.as_ref(),
             *commands_sent,
-        )
+        hook,
+                )
         .await;
         if metrics_on && parse_outcome.is_ok() {
             let parse_elapsed = parse_start.elapsed();
@@ -544,6 +564,7 @@ impl BatchOperateCommand {
         size: usize,
         txn: Option<&Arc<crate::txn::Txn>>,
         commands_sent: u32,
+        hook: Option<&crate::batch::BatchHook>,
     ) -> Result<bool> {
         while conn.bytes_read() < size {
             conn.read_buffer(commands::buffer::MSG_REMAINING_HEADER_SIZE as usize)
@@ -567,6 +588,14 @@ impl BatchOperateCommand {
 
                     batch_op.0.set_record(batch_record.record);
                     batch_op.0.set_result_code(batch_record.result_code, false);
+                    // Fire as the row lands; `false` (or a cancelled batch)
+                    // tears this group down — the connection is mid-stream
+                    // and is invalidated, not pooled.
+                    if let Some(hook) = hook {
+                        if !hook.fire(batch_op.1, batch_op.0.batch_record()).await {
+                            return Err(Error::stream_terminated(None));
+                        }
+                    }
                 }
                 Err(err) => match *err.kind() {
                     // Per-key row error. Record it on the individual
@@ -588,6 +617,11 @@ impl BatchOperateCommand {
                             .expect("Invalid batch index");
                         batch_op.0.set_result_code(rc, commands_sent > 1);
                         batch_op.0.set_error_detail(detail.clone());
+                        if let Some(hook) = hook {
+                            if !hook.fire(batch_op.1, batch_op.0.batch_record()).await {
+                                return Err(Error::stream_terminated(None));
+                            }
+                        }
                         if last {
                             return Ok(false);
                         }
@@ -718,6 +752,7 @@ impl BatchOperateCommand {
         conn: &mut Connection,
         txn: Option<&Arc<crate::txn::Txn>>,
         commands_sent: u32,
+        hook: Option<&crate::batch::BatchHook>,
     ) -> Result<()> {
         let mut status = true;
 
@@ -768,7 +803,7 @@ impl BatchOperateCommand {
                     let mut inner_conn =
                         BufferedConn::new_with_decoder(conn.conn, decoder, body_decompressed_size);
 
-                    match Self::parse_group(batch_ops, &mut inner_conn, inner_size, txn, commands_sent)
+                    match Self::parse_group(batch_ops, &mut inner_conn, inner_size, txn, commands_sent, hook)
                         .await
                     {
                         Ok(stat) => status = stat,
@@ -786,7 +821,7 @@ impl BatchOperateCommand {
                 status = false;
                 if size > 0 {
                     conn.set_limit_body(size)?;
-                    match Self::parse_group(batch_ops, &mut conn, size, txn, commands_sent).await {
+                    match Self::parse_group(batch_ops, &mut conn, size, txn, commands_sent, hook).await {
                         Ok(stat) => status = stat,
                         Err(e) if matches!(e.kind(), ErrorKind::Server { .. }) => {
                             conn.drain(conn.conn.deadline()).await?;

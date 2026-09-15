@@ -345,9 +345,8 @@ impl ReadUpdateTask {
                     &self.args.batch_namespaces,
                     batch_ops,
                 );
-                let ops = batch_ops.as_slice();
                 let (status, duration) = self
-                    .timed_execution(self.client.batch(&self.args.batch_policy, ops))
+                    .timed_execution(self.client.batch(&self.args.batch_policy, batch_ops))
                     .await;
                 results.push((status, duration, OpType::Read));
             }
@@ -403,10 +402,9 @@ impl ReadUpdateTask {
                     batch_ops,
                     bins_buffer,
                 );
-                let ops = batch_ops.as_slice();
                 let policy = self.args.batch_policy.clone();
                 let (status, duration) = self
-                    .timed_execution(self.client.batch(&policy, ops))
+                    .timed_execution(self.client.batch(&policy, batch_ops))
                     .await;
                 results.push((status, duration, OpType::Write));
             }
@@ -560,7 +558,7 @@ impl TransactionTask {
                     batch_ops,
                 );
                 let (status, duration) = self
-                    .timed_execution(self.client.batch(&self.args.batch_policy, batch_ops.as_slice()))
+                    .timed_execution(self.client.batch(&self.args.batch_policy, batch_ops))
                     .await;
                 results.push((status, duration, OpType::Read));
             }

@@ -36,7 +36,8 @@ proptest_async::proptest! {
 
         // Invoke the batch operation.
 
-        let res = client.batch(&batch_policy, &as_ops).await;
+        let mut as_ops = as_ops;
+        let res = client.batch(&batch_policy, &mut as_ops).await;
 
         match res {
             Err(e)

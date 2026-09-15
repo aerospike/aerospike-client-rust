@@ -22,145 +22,352 @@ use crate::policy::StreamPolicy;
 use crate::query::NodePartitions;
 use crate::query::PartitionFilter;
 use crate::query::PartitionStatus;
-use parking_lot::Mutex as PartMutex;
-use crate::Key;
 use crate::Node;
+use parking_lot::Mutex as PartMutex;
 
-use aerospike_rt::{
-    time::{Duration, Instant},
-    Mutex,
-};
+use aerospike_rt::time::{Duration, Instant};
 
 use std::cmp::max;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+
+/// The slice of tracker state a node's record stream touches.
+///
+/// Everything here is either fixed for the life of the query or an atomic, so
+/// the per-record path takes **no** lock: the partition statuses carry their
+/// own `parking_lot` locks, and those are the ones that actually protect the
+/// data. The coordinator's planning state lives in [`PartitionTracker`],
+/// which owns this by `Arc` and hands clones to the recordset.
+#[derive(Debug)]
+pub struct TrackerShared {
+    /// Status of every partition in the query's range, indexed by offset from
+    /// `partition_begin`. The same allocation the `PartitionFilter` and each
+    /// `NodePartitions` refer to.
+    partitions: Arc<Vec<PartMutex<PartitionStatus>>>,
+    /// The resume cursor, shared rather than handed over at the end: a
+    /// consumer that cancels mid-scan asks for it the moment it closes the
+    /// recordset, long before the coordinator has wound down. Everything
+    /// either side does to it after construction goes through `&self` —
+    /// two atomics and the per-partition locks — so sharing costs no lock.
+    partition_filter: Arc<PartitionFilter>,
+    partition_begin: usize,
+    /// Records still allowed. The coordinator lowers it between rounds; the
+    /// streams only read it.
+    max_records: AtomicU64,
+    /// Records handed out this round, across all nodes.
+    record_count: AtomicUsize,
+    socket_timeout: AtomicU32,
+    total_timeout: AtomicU32,
+}
+
+impl TrackerShared {
+    /// Whether this record fits under `max_records`, counting it if so.
+    ///
+    /// The budget is global to the query, so the counter is an atomic rather
+    /// than per-node state; `np` only records the rejections.
+    pub(crate) fn allow_record(&self, np: &mut NodePartitions) -> bool {
+        let max_records = self.max_records.load(Ordering::Relaxed);
+        if max_records == 0 {
+            return true;
+        }
+
+        let record_count = self.record_count.fetch_add(1, Ordering::SeqCst) + 1;
+        if record_count as u64 <= max_records {
+            return true;
+        }
+
+        // Record was returned, but would exceed max_records.
+        // Discard record and increment disallowed_count.
+        np.disallowed_count += 1;
+        false
+    }
+
+    /// Marks a partition the server could not serve, so the next round asks
+    /// another node for it.
+    pub(crate) fn partition_unavailable(
+        &self,
+        node_partitions: &mut NodePartitions,
+        partition_id: u16,
+    ) {
+        if let Some(ps) = self
+            .partitions
+            .get(partition_id as usize - self.partition_begin)
+        {
+            let mut ps = ps.lock();
+            ps.retry = true;
+            if let Some(ref mut seq) = ps.sequence {
+                *seq += 1;
+            }
+        }
+        node_partitions.parts_unavailable += 1;
+    }
+
+    /// Advances the resume cursor for a record whose delivery is inherently
+    /// in order: callback mode invokes the user inline on the node task, so
+    /// delivery and commit are atomic and per-partition order is total — no
+    /// stamp, no watermark. The channel path must not use this; it goes
+    /// through [`commit_cursor`](Self::commit_cursor).
+    pub(crate) fn commit_direct(&self, partition_id: usize, digest: [u8; 20], bval: Option<u64>) {
+        let Some(offset) = partition_id.checked_sub(self.partition_begin) else {
+            debug_assert!(false, "record partition {partition_id} below tracker range");
+            return;
+        };
+        if let Some(ps) = self.partitions.get(offset) {
+            let mut ps = ps.lock();
+            ps.digest = Some(digest);
+            if bval.is_some() {
+                ps.bval = bval;
+            }
+        } else {
+            debug_assert!(false, "record partition {partition_id} beyond tracker range");
+        }
+    }
+
+    /// Stamps one record of `partition_id` as delivered to the record
+    /// channel, returning its `(epoch, seq)`. A node stream delivers each
+    /// partition's records in digest order, so the sequence numbers order
+    /// them; the consumer edge uses the stamp to advance the resume cursor
+    /// only along the contiguously consumed prefix.
+    pub(crate) fn stamp_delivery(&self, partition_id: usize) -> Option<(u32, u32)> {
+        let offset = partition_id.checked_sub(self.partition_begin)?;
+        let ps = self.partitions.get(offset)?;
+        let mut ps = ps.lock();
+        ps.delivered += 1;
+        Some((ps.epoch, ps.delivered))
+    }
+
+    /// Advances the resume cursor for a record the consumer has actually
+    /// taken out of the stream.
+    ///
+    /// Called from the consumer edge — not the node stream — so the cursor
+    /// never runs ahead of what the user has seen. Records that were parsed
+    /// and buffered but never consumed stay in front of the cursor, and a
+    /// resume re-fetches them: this is what makes an early `close()` lose
+    /// nothing. (The C client gets the same guarantee by committing after
+    /// the user callback returns.) `bval` accompanies the digest for
+    /// secondary-index queries, whose cursor needs both to resume in order.
+    ///
+    /// Concurrent consumers take a partition's records out of order, and a
+    /// cursor must never advance past a record a sibling consumer still
+    /// holds unconsumed. The delivery stamp makes this safe: the cursor
+    /// moves only along the longest *contiguously* consumed prefix of the
+    /// delivery sequence — an out-of-order consume parks in `pending` until
+    /// the gap beneath it closes. A stamp from an earlier round is stale
+    /// and ignored; an unstamped entry (error and timeout paths) never
+    /// moves the cursor.
+    pub(crate) fn commit_cursor(
+        &self,
+        partition_id: usize,
+        digest: [u8; 20],
+        bval: Option<u64>,
+        stamp: Option<(u32, u32)>,
+    ) {
+        let Some((epoch, seq)) = stamp else {
+            return;
+        };
+        let Some(offset) = partition_id.checked_sub(self.partition_begin) else {
+            debug_assert!(false, "record partition {partition_id} below tracker range");
+            return;
+        };
+        let Some(ps) = self.partitions.get(offset) else {
+            debug_assert!(false, "record partition {partition_id} beyond tracker range");
+            return;
+        };
+
+        let mut ps = ps.lock();
+        if epoch != ps.epoch {
+            return; // a leftover from an earlier round; its range was re-queried
+        }
+
+        if seq == ps.consumed + 1 {
+            ps.consumed = seq;
+            ps.digest = Some(digest);
+            if bval.is_some() {
+                ps.bval = bval;
+            }
+            // Anything parked contiguously above this seq commits with it.
+            while ps.pending.first().is_some_and(|&(s, ..)| s == ps.consumed + 1) {
+                let (s, d, b) = ps.pending.remove(0);
+                ps.consumed = s;
+                ps.digest = Some(d);
+                if b.is_some() {
+                    ps.bval = b;
+                }
+            }
+        } else if seq > ps.consumed {
+            // Out of order: park until the gap beneath it closes.
+            let at = ps.pending.partition_point(|&(s, ..)| s < seq);
+            ps.pending.insert(at, (seq, digest, bval));
+        }
+        // seq <= consumed cannot happen: each entry is delivered exactly once.
+    }
+
+    /// The cursor as it stands, for a caller resuming a later scan/query.
+    ///
+    /// A stream closed early can leave records delivered but never consumed;
+    /// their partitions are marked for retry here and the returned cursor is
+    /// not `done`, so a resume re-queries them from the consumed watermark.
+    /// Without this, the `done` flag — computed from what the server
+    /// *delivered* — could claim completion while a closing consumer dropped
+    /// a buffered tail.
+    pub(crate) fn partition_filter(&self) -> PartitionFilter {
+        let pf = (*self.partition_filter).clone();
+        let mut lagging = false;
+        for ps in self.partitions.iter() {
+            let mut ps = ps.lock();
+            if ps.delivered > ps.consumed {
+                ps.retry = true;
+                lagging = true;
+            }
+        }
+        if lagging {
+            pf.done.store(false, Ordering::Relaxed);
+        }
+        pf
+    }
+
+    /// The timeout written into a stream request's header.
+    pub(crate) fn server_timeout(&self) -> u32 {
+        if self.total_timeout.load(Ordering::Relaxed) > 0 {
+            self.socket_timeout.load(Ordering::Relaxed)
+        } else {
+            0
+        }
+    }
+}
+
+/// The coordinator's half of the tracker: partition assignment, retry
+/// planning and completion.
+///
+/// Owned outright by the executor future — never shared, never locked. Each
+/// round it *moves* the per-node partition sets into their node tasks and
+/// takes them back from the join values, so single-writer access to
+/// [`NodePartitions`] is a property the compiler checks rather than one the
+/// protocol merely promises.
 #[derive(Debug)]
 pub struct PartitionTracker {
+    shared: Arc<TrackerShared>,
     partitions_capacity: usize,
-    partition_begin: usize,
     node_capacity: usize,
     node_filter: Option<Arc<Node>>,
-    partition_filter: Option<Arc<Mutex<PartitionFilter>>>,
-    #[allow(dead_code)]
     replica: Replica,
-    node_partitions_list: Vec<Arc<Mutex<NodePartitions>>>,
-    record_count: AtomicUsize,
-    max_records: u64,
+    node_partitions_list: Vec<NodePartitions>,
     sleep_between_retries: Option<Duration>,
-    socket_timeout: u32,
-    total_timeout: u32,
-    iteration: AtomicUsize, //= 1
+    iteration: usize,
     deadline: Option<Instant>,
 }
 
 impl PartitionTracker {
-    #[allow(clippy::significant_drop_tightening)]
-    pub(crate) async fn new(
+    pub(crate) fn new(
         policy: impl StreamPolicy,
-        partition_filter: Arc<Mutex<PartitionFilter>>,
-        nodes: Vec<Arc<Node>>,
+        mut partition_filter: PartitionFilter,
+        nodes: &[Arc<Node>],
     ) -> Result<Self> {
-        let mut pt = {
-            let mut partition_filter = partition_filter.lock().await;
+        // Validate here instead of initial PartitionFilter constructor because total number of
+        // cluster partitions may change on the server and PartitionFilter will never have access
+        // to Cluster instance. Use fixed number of partitions for now.
+        if partition_filter.begin >= node::PARTITIONS {
+            return Err(Error::invalid_argument(format!(
+                "Invalid partition begin {} . Valid range: 0-{}",
+                partition_filter.begin,
+                node::PARTITIONS - 1
+            )));
+        }
 
-            // Validate here instead of initial PartitionFilter constructor because total number of
-            // cluster partitions may change on the server and PartitionFilter will never have access
-            // to Cluster instance. Use fixed number of partitions for now.
-            if partition_filter.begin >= node::PARTITIONS {
-                return Err(Error::invalid_argument(format!(
-                    "Invalid partition begin {} . Valid range: 0-{}",
-                    partition_filter.begin,
-                    node::PARTITIONS - 1
-                )));
-            }
+        if partition_filter.count == 0 {
+            return Err(Error::invalid_argument(format!(
+                "Invalid partition count {}",
+                partition_filter.count
+            )));
+        }
 
-            if partition_filter.count == 0 {
-                return Err(Error::invalid_argument(format!(
-                    "Invalid partition count {}",
-                    partition_filter.count
-                )));
-            }
+        if (partition_filter.begin + partition_filter.count) > node::PARTITIONS {
+            return Err(Error::invalid_argument(format!(
+                "Invalid partition range ({},{})",
+                partition_filter.begin,
+                partition_filter.begin + partition_filter.count
+            )));
+        }
 
-            if (partition_filter.begin + partition_filter.count) > node::PARTITIONS {
-                return Err(Error::invalid_argument(format!(
-                    "Invalid partition range ({},{})",
-                    partition_filter.begin,
-                    partition_filter.begin + partition_filter.count
-                )));
-            }
-
-            // This is required for proxy server since there are no nodes represented there
-            let node_capacity = max(1, nodes.len());
-            let pt = PartitionTracker {
-                // partitions: None,
-                partitions_capacity: partition_filter.count,
-                partition_begin: partition_filter.begin,
-                node_capacity,
-                node_filter: None,
-                partition_filter: None,
-                replica: policy.replica(),
-                node_partitions_list: vec![],
-                record_count: AtomicUsize::new(0),
-                max_records: policy.max_records().unwrap_or(0),
-                sleep_between_retries: None,
-                socket_timeout: 0,
-                total_timeout: 0,
-                iteration: AtomicUsize::new(1),
-                deadline: None,
-            };
-
-            if partition_filter.partitions.is_none() {
-                let begin = partition_filter.begin;
-                let count = partition_filter.count;
-                let digest = partition_filter.digest;
-                partition_filter
-                    .set_partitions(PartitionTracker::init_partitions(begin, count, digest));
+        if partition_filter.partitions.is_none() {
+            let begin = partition_filter.begin;
+            let count = partition_filter.count;
+            let digest = partition_filter.digest;
+            partition_filter.set_partitions(Self::init_partitions(begin, count, digest));
+            partition_filter.retry.store(true, Ordering::Relaxed);
+        } else {
+            // retry all partitions when max_records not specified.
+            if policy.max_records().is_none() {
                 partition_filter.retry.store(true, Ordering::Relaxed);
-            } else {
-                // retry all partitions when max_records not specified.
-                if policy.max_records().is_none() {
-                    partition_filter.retry.store(true, Ordering::Relaxed);
-                }
-
-                partition_filter.reset_partition_status();
             }
-            pt
-        };
 
-        pt.partition_filter = Some(partition_filter);
-        pt.init(policy);
-        Ok(pt)
+            partition_filter.reset_partition_status();
+        }
+
+        let partitions = Arc::clone(
+            partition_filter
+                .partitions
+                .as_ref()
+                .expect("partitions were just initialised"),
+        );
+
+        let partitions_capacity = partition_filter.count;
+        let partition_begin = partition_filter.begin;
+        let shared = Arc::new(TrackerShared {
+            partitions,
+            partition_begin,
+            partition_filter: Arc::new(partition_filter),
+            max_records: AtomicU64::new(policy.max_records().unwrap_or(0)),
+            record_count: AtomicUsize::new(0),
+            socket_timeout: AtomicU32::new(policy.socket_timeout()),
+            total_timeout: AtomicU32::new(policy.total_timeout()),
+        });
+
+        // This is required for proxy server since there are no nodes represented there
+        let node_capacity = max(1, nodes.len());
+
+        Ok(PartitionTracker {
+            shared,
+            partitions_capacity,
+            node_capacity,
+            node_filter: None,
+            replica: policy.replica(),
+            node_partitions_list: vec![],
+            sleep_between_retries: policy.sleep_between_retries(),
+            iteration: 1,
+            deadline: policy.deadline(),
+        })
     }
 
-    // pub(crate) fn set_sleep_between_retries(&mut self, duration: Option<Duration>) {
-    //     self.sleep_between_retries = duration;
-    // }
-
-    pub(crate) fn node_partitions_list(&self) -> &[Arc<Mutex<NodePartitions>>] {
-        &self.node_partitions_list
+    /// The handle the recordset and every node stream share.
+    pub(crate) fn shared(&self) -> Arc<TrackerShared> {
+        Arc::clone(&self.shared)
     }
 
-    #[allow(clippy::significant_drop_tightening)]
-    pub(crate) async fn assign_partitions_to_nodes(
+    /// Hands this round's per-node sets to the caller, which moves each into
+    /// its node's task. They come back through
+    /// [`restore_node_partitions`](Self::restore_node_partitions).
+    pub(crate) fn take_node_partitions(&mut self) -> Vec<NodePartitions> {
+        std::mem::take(&mut self.node_partitions_list)
+    }
+
+    /// Takes back the sets the node tasks returned, so completion and retry
+    /// planning can read what each node actually did.
+    pub(crate) fn restore_node_partitions(&mut self, list: Vec<NodePartitions>) {
+        self.node_partitions_list = list;
+    }
+
+    pub(crate) fn assign_partitions_to_nodes(
         &mut self,
-        cluster: Arc<Cluster>,
+        cluster: &Arc<Cluster>,
         namespace: &str,
     ) -> Result<()> {
-        let mut list = Vec::<Arc<Mutex<NodePartitions>>>::with_capacity(self.node_capacity);
+        let mut list = Vec::<NodePartitions>::with_capacity(self.node_capacity);
+        let partitions = Arc::clone(&self.shared.partitions);
 
-        let retry = self.partition_filter.is_none()
-            || self
-                .partition_filter
-                .as_ref()
-                .unwrap()
-                .lock()
-                .await
-                .retry
-                .load(Ordering::Relaxed)
-                && (self.iteration() == 1);
+        let retry = self.shared.partition_filter.retry.load(Ordering::Relaxed)
+            && self.iteration == 1;
 
-        let partition_filter = self.partition_filter.as_mut().unwrap().lock().await;
-        let partitions = partition_filter.partitions.as_ref().unwrap();
         for (offset, part) in partitions.iter().enumerate() {
             let (part_retry, part_id) = {
                 let part = part.lock();
@@ -180,10 +387,12 @@ impl PartitionTracker {
                     }
                 }
 
+                // The partition is being (re)queried: open a new delivery
+                // round so stale entries stop moving its cursor.
+                part.lock().begin_delivery_round();
+
                 let index = offset as u16;
-                let np = Self::find_node(&list, node.clone()).await;
-                if let Some(np) = np {
-                    let mut np = np.lock().await;
+                if let Some(np) = Self::find_node(&mut list, &node) {
                     np.add_partition(index);
                 } else {
                     // If the partition map is in a transitional state, multiple
@@ -192,10 +401,10 @@ impl PartitionTracker {
                     let mut np = NodePartitions::new(
                         node.clone(),
                         self.partitions_capacity,
-                        Arc::clone(partitions),
+                        Arc::clone(&partitions),
                     );
                     np.add_partition(index);
-                    list.push(Arc::new(Mutex::new(np)));
+                    list.push(np);
                 }
             }
         }
@@ -209,18 +418,21 @@ impl PartitionTracker {
         // will need to be retried if the PartitionFilter instance is reused in a new scan/query.
         // Global retry will be set to false if the scan/query completes normally and max_records
         // is specified.
-        partition_filter.retry.store(true, Ordering::Relaxed);
+        self.shared
+            .partition_filter
+            .retry
+            .store(true, Ordering::Relaxed);
 
-        self.record_count.store(0, Ordering::Relaxed);
+        self.shared.record_count.store(0, Ordering::Relaxed);
 
-        if self.max_records > 0 {
-            if self.max_records >= node_size as u64 {
+        let max_records = self.shared.max_records.load(Ordering::Relaxed);
+        if max_records > 0 {
+            if max_records >= node_size as u64 {
                 // Distribute max_records across nodes.
-                let max = self.max_records / node_size as u64;
-                let rem = self.max_records - (max * node_size as u64);
+                let max = max_records / node_size as u64;
+                let rem = max_records - (max * node_size as u64);
 
-                for (i, np) in list.iter().enumerate() {
-                    let mut np = np.lock().await;
+                for (i, np) in list.iter_mut().enumerate() {
                     if (i as u64) < rem {
                         np.record_max = max + 1;
                     } else {
@@ -230,172 +442,58 @@ impl PartitionTracker {
             } else {
                 // If max_records < nodeSize, the retry = true, ensure each node receives at least one max record
                 // allocation and filter out excess records when receiving records from the server.
-                for np in &list {
-                    let mut np = np.lock().await;
+                for np in &mut list {
                     np.record_max = 1;
                 }
 
                 // Track records returned for this iteration.
-                self.record_count.store(0, Ordering::Relaxed);
+                self.shared.record_count.store(0, Ordering::Relaxed);
             }
         }
 
-        // let list = Arc::new(Mutex::new(list));
         self.node_partitions_list = list;
         Ok(())
     }
 
-    fn init(&mut self, policy: impl StreamPolicy) {
-        self.sleep_between_retries = policy.sleep_between_retries();
-        self.socket_timeout = policy.socket_timeout();
-        self.total_timeout = policy.total_timeout();
-        self.deadline = policy.deadline();
-
-        // if self.replica == RANDOM {
-        //     panic(newError(ResultCode::ParameterError, "Invalid replica: RANDOM"))
-        // }
+    fn find_node<'a>(
+        list: &'a mut Vec<NodePartitions>,
+        node: &Arc<Node>,
+    ) -> Option<&'a mut NodePartitions> {
+        list.iter_mut().find(|np| np.node == *node)
     }
 
-    pub(crate) async fn find_node(
-        list: &Vec<Arc<Mutex<NodePartitions>>>,
-        node: Arc<Node>,
-    ) -> Option<Arc<Mutex<NodePartitions>>> {
-        for node_partition in list {
-            // Use pointer equality for performance.
-            if node_partition.lock().await.node == node {
-                return Some(node_partition.clone());
-            }
-        }
-        None
-    }
-
-    #[allow(clippy::significant_drop_tightening)]
-    pub(crate) async fn partition_unavailable(
-        &self,
-        node_partitions: &mut NodePartitions,
-        partition_id: u16,
-    ) {
-        let pf = self.partition_filter.as_ref().unwrap().lock().await;
-        let partitions = pf.partitions.as_ref().unwrap();
-
-        // let mut partitions = partitions.write();
-        if let Some(ps) = partitions.get(partition_id as usize - self.partition_begin) {
-            let mut ps = ps.lock();
-            ps.retry = true;
-            if let Some(ref mut seq) = ps.sequence {
-                *seq += 1;
-            }
-        }
-        node_partitions.parts_unavailable += 1;
-    }
-
-    #[allow(clippy::significant_drop_tightening)]
-    pub(crate) async fn set_digest(
-        &self,
-        node_partitions: &mut NodePartitions,
-        key: &Key,
-    ) -> Result<()> {
-        let pf = self.partition_filter.as_ref().unwrap().lock().await;
-        let partitions = pf.partitions.as_ref();
-
-        let partition_id = key.partition_id();
-        if let Some(partitions) = partitions {
-            // let mut partitions = partitions.write();
-            if let Some(ps) = partitions.get(partition_id - self.partition_begin) {
-                let mut ps = ps.lock();
-                ps.digest = Some(key.digest);
-            } else {
-                return Err(Error::client_error(format!(
-                    "Partition mismatch: key.partition_id: {}, partition_begin: {}",
-                    partition_id, self.partition_begin
-                )));
-            }
-        }
-
-        node_partitions.record_count += 1;
-        Ok(())
-    }
-
-    #[allow(clippy::significant_drop_tightening)]
-    pub(crate) async fn set_last(
-        &self,
-        node_partitions: &mut NodePartitions,
-        key: &Key,
-        bval: Option<u64>,
-    ) -> Result<()> {
-        let partition_id = key.partition_id();
-        if (partition_id as i64) - (self.partition_begin as i64) < 0 {
-            return Err(Error::client_error(format!(
-                "Partition mismatch: key.partition_id: {}, partition_begin: {}",
-                partition_id, self.partition_begin
-            )));
-        }
-
-        let pf = self.partition_filter.as_ref().unwrap().lock().await;
-        let partitions = pf.partitions.as_ref();
-
-        if let Some(partitions) = partitions {
-            if let Some(ps) = partitions.get(partition_id - self.partition_begin) {
-                let mut ps = ps.lock();
-                ps.digest = Some(key.digest);
-                if bval.is_some() {
-                    ps.bval = bval;
-                }
-            }
-        }
-
-        node_partitions.record_count += 1;
-        Ok(())
-    }
-
-    pub(crate) fn allow_record(&self, np: &mut NodePartitions) -> bool {
-        if self.max_records == 0 {
-            return true;
-        }
-
-        let record_count = self.record_count.fetch_add(1, Ordering::SeqCst) + 1;
-        if self.max_records > 0 && record_count as u64 <= self.max_records {
-            return true;
-        }
-
-        // Record was returned, but would exceed max_records.
-        // Discard record and increment disallowed_count.
-        np.disallowed_count += 1;
-        false
-    }
-
-    #[allow(clippy::significant_drop_tightening)]
-    pub(crate) async fn is_complete(
+    pub(crate) fn is_complete(
         &mut self,
         policy: impl StreamPolicy,
         timed_out: bool,
+        faulted: bool,
     ) -> Result<bool> {
         let mut record_count: u64 = 0;
         let mut parts_unavailable = 0;
 
         for np in &self.node_partitions_list {
-            let np = np.lock().await;
             record_count += np.record_count;
             parts_unavailable += np.parts_unavailable;
         }
 
-        if !timed_out && parts_unavailable == 0 {
-            if self.max_records == 0 {
-                if let Some(pf) = &self.partition_filter {
-                    let pf = pf.lock().await;
-                    pf.retry.store(false, Ordering::Relaxed);
-                    pf.done.store(true, Ordering::Relaxed);
-                }
-            } else if self.iteration() > 1 {
-                if let Some(pf) = &self.partition_filter {
-                    // If errors occurred on a node, only that node's partitions are retried in the
-                    // next iteration. If that node finally succeeds, the other original nodes still
-                    // need to be retried if partition state is reused in the next scan/query command.
-                    // Force retry on all node partitions.
-                    let pf = pf.lock().await;
-                    pf.retry.store(true, Ordering::Relaxed);
-                    pf.done.store(false, Ordering::Relaxed);
-                }
+        let max_records = self.shared.max_records.load(Ordering::Relaxed);
+
+        // A round where a node stream failed or was cancelled must not
+        // declare the scan done: its partitions still hold undelivered
+        // records, and the cursor's `done` flag is a promise that a resume
+        // has nothing left to fetch.
+        if !timed_out && !faulted && parts_unavailable == 0 {
+            let pf = &self.shared.partition_filter;
+            if max_records == 0 {
+                pf.retry.store(false, Ordering::Relaxed);
+                pf.done.store(true, Ordering::Relaxed);
+            } else if self.iteration > 1 {
+                // If errors occurred on a node, only that node's partitions are retried in the
+                // next iteration. If that node finally succeeds, the other original nodes still
+                // need to be retried if partition state is reused in the next scan/query command.
+                // Force retry on all node partitions.
+                pf.retry.store(true, Ordering::Relaxed);
+                pf.done.store(false, Ordering::Relaxed);
             } else {
                 // Server version >= 6.0 will return all records for each node up to
                 // that node's max. If node's record count reached max, there still
@@ -403,28 +501,24 @@ impl PartitionTracker {
                 let mut done = true;
 
                 for np in &self.node_partitions_list {
-                    let np = np.lock().await;
                     if np.record_count + np.disallowed_count >= np.record_max {
-                        self.mark_retry(&np);
+                        Self::mark_retry(np);
                         done = false;
                     }
                 }
 
-                if let Some(pf) = &self.partition_filter {
-                    let pf = pf.lock().await;
-                    pf.retry.store(false, Ordering::Relaxed);
-                    pf.done.store(done, Ordering::Relaxed);
-                }
+                pf.retry.store(false, Ordering::Relaxed);
+                pf.done.store(done, Ordering::Relaxed);
             }
             return Ok(true);
         }
 
-        if self.max_records > 0 && record_count >= self.max_records {
+        if max_records > 0 && record_count >= max_records {
             return Ok(true);
         }
 
         // Check if limits have been reached.
-        if policy.max_retries() > 0 && self.iteration() > policy.max_retries() {
+        if policy.max_retries() > 0 && self.iteration > policy.max_retries() {
             return Err(Error::client_error(format!(
                 "Max retries exceeded: {}",
                 policy.max_retries()
@@ -444,24 +538,27 @@ impl PartitionTracker {
 
             let total_timeout = u64::from(policy.total_timeout());
             if deadline < Instant::now() + Duration::from_millis(total_timeout) {
-                self.total_timeout = (deadline - Instant::now()).as_millis() as u32;
+                let remaining = (deadline - Instant::now()).as_millis() as u32;
+                self.shared.total_timeout.store(remaining, Ordering::Relaxed);
 
-                if self.socket_timeout > self.total_timeout {
-                    self.socket_timeout = self.total_timeout;
+                if self.shared.socket_timeout.load(Ordering::Relaxed) > remaining {
+                    self.shared.socket_timeout.store(remaining, Ordering::Relaxed);
                 }
             }
         }
 
         // Prepare for next iteration.
-        if self.max_records > 0 {
-            self.max_records -= record_count;
+        if max_records > 0 {
+            self.shared
+                .max_records
+                .store(max_records - record_count, Ordering::Relaxed);
         }
 
-        self.iteration.fetch_add(1, Ordering::Relaxed);
+        self.iteration += 1;
         Ok(false)
     }
 
-    pub(crate) fn mark_retry(&self, node_partitions: &NodePartitions) {
+    fn mark_retry(node_partitions: &NodePartitions) {
         // Mark retry for same replica.
         for &index in &node_partitions.parts_full {
             node_partitions.status(index).retry = true;
@@ -472,12 +569,12 @@ impl PartitionTracker {
         }
     }
 
-    pub(crate) async fn partition_error(&self) {
+    pub(crate) fn partition_error(&self) {
         // Mark all partitions for retry on fatal errors.
-        if let Some(ref pf) = self.partition_filter {
-            let pf = pf.lock().await;
-            pf.retry.store(true, Ordering::Relaxed);
-        }
+        self.shared
+            .partition_filter
+            .retry
+            .store(true, Ordering::Relaxed);
     }
 
     /// Builds the partition status array: one allocation for the whole range,
@@ -498,23 +595,5 @@ impl PartitionTracker {
         }
 
         Arc::new(parts_all)
-    }
-
-    pub(crate) fn extract_partition_filter(&mut self) -> Option<PartitionFilter> {
-        self.partition_filter
-            .take()
-            .and_then(|pf| Arc::try_unwrap(pf).ok().map(Mutex::into_inner))
-    }
-
-    pub(crate) const fn server_timeout(&self) -> u32 {
-        if self.total_timeout > 0 {
-            self.socket_timeout
-        } else {
-            0
-        }
-    }
-
-    pub(crate) fn iteration(&self) -> usize {
-        self.iteration.load(std::sync::atomic::Ordering::Relaxed)
     }
 }

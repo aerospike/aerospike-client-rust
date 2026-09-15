@@ -21,6 +21,7 @@
 //! - rack-ids parser (Java parity: `<= 0 || >= 32` chars rejected)
 
 use aerospike::policy::AdminPolicy;
+use aerospike::BatchRecord;
 use aerospike::Client;
 
 use crate::common;
@@ -588,7 +589,7 @@ async fn prefer_rack_read_routing() {
     let mut bpolicy = BatchPolicy::default();
     bpolicy.replica = Replica::PreferRack;
     let wkey = as_key!(namespace, &set_name, "rack_batch_write");
-    let batch = vec![
+    let mut batch = vec![
         BatchOperation::write(
             &BatchWritePolicy::default(),
             wkey.clone(),
@@ -597,7 +598,8 @@ async fn prefer_rack_read_routing() {
         BatchOperation::read(&BatchReadPolicy::default(), key.clone(), B::All),
         BatchOperation::read(&BatchReadPolicy::default(), wkey.clone(), B::All),
     ];
-    let results = client.batch(&bpolicy, &batch).await.unwrap();
+    client.batch(&bpolicy, &mut batch).await.unwrap();
+    let results: Vec<BatchRecord> = batch.iter().map(|op| op.batch_record().clone()).collect();
     assert_eq!(results.len(), 3);
     let rec = client.get(&rpolicy, &wkey, Bins::All).await.unwrap();
     assert_eq!(rec.bins.get("b"), Some(&as_val!(2)));
