@@ -276,10 +276,13 @@ async fn query_foreach_delivers_all_exactly_once() {
     let stmt = Statement::new(namespace, &set_name, Bins::All);
     let mut handle = client
         .query_foreach(&QueryPolicy::default(), PartitionFilter::all(), stmt, move |res| {
-            let rec = res.unwrap();
-            s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
-            c.fetch_add(1, Ordering::Relaxed);
-            true
+            let (s, c) = (s.clone(), c.clone());
+            async move {
+                let rec = res.unwrap();
+                s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
+                c.fetch_add(1, Ordering::Relaxed);
+                true
+            }
         })
         .await
         .unwrap();
@@ -313,10 +316,16 @@ async fn query_foreach_abort_and_resume_exactly_once() {
         let stmt = Statement::new(namespace, &set_name, Bins::All);
         let mut handle = client
             .query_foreach(&QueryPolicy::default(), pf, stmt, move |res| {
-                let rec = res.unwrap();
-                s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
-                // Abort after every 100th record of this attempt.
-                c.fetch_add(1, Ordering::Relaxed) % 100 != 99
+                let (s, c) = (s.clone(), c.clone());
+                async move {
+                    let rec = res.unwrap();
+                    s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
+                    // Yield once so the callback really does suspend the
+                    // node stream mid-record before the commit.
+                    aerospike_rt::task::yield_now().await;
+                    // Abort after every 100th record of this attempt.
+                    c.fetch_add(1, Ordering::Relaxed) % 100 != 99
+                }
             })
             .await
             .unwrap();
@@ -348,10 +357,13 @@ async fn query_foreach_cancel_and_resume_exactly_once() {
     let stmt = Statement::new(namespace, &set_name, Bins::All);
     let mut handle = client
         .query_foreach(&QueryPolicy::default(), PartitionFilter::all(), stmt, move |res| {
-            let rec = res.unwrap();
-            s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
-            c.fetch_add(1, Ordering::Relaxed);
-            true
+            let (s, c) = (s.clone(), c.clone());
+            async move {
+                let rec = res.unwrap();
+                s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
+                c.fetch_add(1, Ordering::Relaxed);
+                true
+            }
         })
         .await
         .unwrap();
@@ -372,10 +384,13 @@ async fn query_foreach_cancel_and_resume_exactly_once() {
         let stmt = Statement::new(namespace, &set_name, Bins::All);
         let mut handle = client
             .query_foreach(&QueryPolicy::default(), pf, stmt, move |res| {
-                let rec = res.unwrap();
-                s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
-                c.fetch_add(1, Ordering::Relaxed);
-                true
+                let (s, c) = (s.clone(), c.clone());
+                async move {
+                    let rec = res.unwrap();
+                    s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
+                    c.fetch_add(1, Ordering::Relaxed);
+                    true
+                }
             })
             .await
             .unwrap();

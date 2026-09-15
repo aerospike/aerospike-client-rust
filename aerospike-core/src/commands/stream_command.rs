@@ -230,13 +230,13 @@ impl StreamCommand {
                         }
                         QuerySink::Callback(ctx) => {
                             // Inline, C-style: the callback runs here on the
-                            // node task and the cursor commits the moment it
-                            // returns — delivery and commit are atomic, which
-                            // is what makes this mode exactly-once, cancel and
-                            // resume included.
+                            // node task and the cursor commits the moment its
+                            // future resolves — delivery and commit are
+                            // atomic, which is what makes this mode
+                            // exactly-once, cancel and resume included.
                             let key = rec.key.as_ref().unwrap();
                             let (pid, digest) = (key.partition_id(), key.digest);
-                            let keep_going = (ctx.callback)(Ok(rec));
+                            let keep_going = (ctx.callback)(Ok(rec)).await;
                             ctx.tracker.commit_direct(pid, digest, bval);
                             self.node_partitions.record_count += 1;
                             if !keep_going {

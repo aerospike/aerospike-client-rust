@@ -16,6 +16,8 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use futures::future::BoxFuture;
+
 use crate::errors::{Error, Result};
 use crate::query::{PartitionFilter, Recordset, TrackerShared};
 use crate::Record;
@@ -23,9 +25,13 @@ use crate::Record;
 /// The user closure of [`Client::query_foreach`](crate::Client::query_foreach).
 ///
 /// Invoked inline from the node streams — concurrently, one invocation per
-/// node at a time — hence `Send + Sync`. Returning `false` aborts the query,
-/// like the C client's callback contract.
-pub(crate) type QueryCallback = Box<dyn Fn(Result<Record>) -> bool + Send + Sync>;
+/// node at a time — hence `Send + Sync`. Async so the user can await inside
+/// (a write, a channel send); the node stream awaits the returned future
+/// before committing the record's cursor. Type-erased so the stream engine
+/// stays non-generic: one small future allocation per record. Resolving to
+/// `false` aborts the query, like the C client's callback contract.
+pub(crate) type QueryCallback =
+    Box<dyn Fn(Result<Record>) -> BoxFuture<'static, bool> + Send + Sync>;
 
 /// Where a query's records go: the channel behind a [`Recordset`], or a
 /// user callback invoked inline from the node streams.
@@ -39,8 +45,8 @@ pub(crate) enum QuerySink {
     /// the resume cursor is committed at the consumer edge.
     Channel(Arc<Recordset>),
     /// Inline delivery: the callback runs on the node task and the resume
-    /// cursor commits the moment it returns — delivery and commit are
-    /// atomic, so this mode is exactly-once by construction.
+    /// cursor commits the moment its future resolves — delivery and commit
+    /// are atomic, so this mode is exactly-once by construction.
     Callback(Arc<CallbackCtx>),
 }
 
@@ -111,7 +117,7 @@ impl QuerySink {
         match self {
             QuerySink::Channel(rs) => rs.err(e).await,
             QuerySink::Callback(ctx) => {
-                if !(ctx.callback)(Err(e)) {
+                if !(ctx.callback)(Err(e)).await {
                     ctx.active.store(false, Ordering::Relaxed);
                 }
             }

@@ -1525,23 +1525,25 @@ impl Client {
     /// C client's `aerospike_query_foreach` shape — instead of a
     /// [`Recordset`] stream.
     ///
-    /// The callback is invoked **inline on the node streams, concurrently
-    /// from up to one task per node**, with each record (or stream error) as
-    /// a `Result<Record>`; returning `false` aborts the query. There is no
-    /// channel and no buffering: the resume cursor is committed the moment an
-    /// invocation returns, so delivery is **exactly-once** — a cancelled
-    /// query resumed from [`QueryHandle::partition_filter`] neither loses nor
-    /// repeats a record. (The stream API, [`query`](Self::query), is
-    /// at-least-once: loss-free, with bounded duplicates possible on retries
-    /// and multi-consumer resumes.) Keep the callback brief and non-blocking;
-    /// it runs on runtime worker threads, a slow callback backpressures the
-    /// server directly, and invocations run concurrently — one at a time per
-    /// node, in parallel across nodes.
+    /// The callback is `async`, invoked **inline on the node streams,
+    /// concurrently from up to one task per node**, with each record (or
+    /// stream error) as a `Result<Record>`; its future resolving to `false`
+    /// aborts the query. There is no channel and no buffering: the resume
+    /// cursor is committed the moment an invocation's future resolves, so
+    /// delivery is **exactly-once** — a cancelled query resumed from
+    /// [`QueryHandle::partition_filter`] neither loses nor repeats a record.
+    /// (The stream API, [`query`](Self::query), is at-least-once: loss-free,
+    /// with bounded duplicates possible on retries and multi-consumer
+    /// resumes.) The callback may await freely — a write, a channel send —
+    /// but it runs on the node task: while its future is pending that node's
+    /// stream does not read, so a slow callback backpressures the server
+    /// directly. Never block the thread inside it. Invocations run
+    /// concurrently — one at a time per node, in parallel across nodes.
     ///
     /// The returned [`QueryHandle`] can [`wait`](QueryHandle::wait) for
     /// completion or [`cancel`](QueryHandle::cancel); dropping it detaches,
     /// leaving the query running.
-    pub async fn query_foreach<F>(
+    pub async fn query_foreach<F, Fut>(
         &self,
         policy: &QueryPolicy,
         partition_filter: PartitionFilter,
@@ -1549,7 +1551,8 @@ impl Client {
         callback: F,
     ) -> Result<QueryHandle>
     where
-        F: Fn(Result<Record>) -> bool + Send + Sync + 'static,
+        F: Fn(Result<Record>) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = bool> + Send + 'static,
     {
         statement.validate()?;
         let statement = Arc::new(statement);
@@ -1560,7 +1563,10 @@ impl Client {
         let t_policy = policy.clone();
         let tracker = PartitionTracker::new(&t_policy, partition_filter, &nodes)?;
 
-        let ctx = Arc::new(CallbackCtx::new(Box::new(callback), tracker.shared()));
+        let ctx = Arc::new(CallbackCtx::new(
+            Box::new(move |res| Box::pin(callback(res))),
+            tracker.shared(),
+        ));
         let sink = QuerySink::Callback(Arc::clone(&ctx));
         let defer_sink = sink.clone();
         let cluster = self.cluster.clone();
