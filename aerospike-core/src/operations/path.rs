@@ -79,6 +79,22 @@ pub fn select_by_path(bin: &str, flag: SelectFlag, ctx: impl AsRef<[CdtContext]>
 ///
 /// Like [`select_by_path`] this accepts anything convertible to
 /// `&[CdtContext]`.
+///
+/// While `exp` typically updates values, passing [`exp_remove_result`](crate::expressions::exp_remove_result) as `exp`
+/// **removes** every leaf node matching the path instead of overwriting it.
+/// You can also use the [`remove`] wrapper, which encapsulates this exact behavior:
+/// ```rust
+/// use aerospike::expressions::exp_remove_result;
+/// use aerospike::operations::cdt_context::Path;
+/// use aerospike::operations::path::{modify_by_path, remove, ModifyFlag};
+///
+/// let path = Path::new().map_key("book").all_children().map_key("price");
+///
+/// // Remove every matching "price" entry...
+/// let op = modify_by_path("myBin", ModifyFlag::DEFAULT, exp_remove_result(), &path);
+/// // ...equivalently, via the ready-made wrapper:
+/// let op = remove("myBin", &path);
+/// ```
 pub fn modify_by_path(
     bin: &str,
     flag: ModifyFlag,

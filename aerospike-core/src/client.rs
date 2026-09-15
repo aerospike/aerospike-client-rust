@@ -457,7 +457,9 @@ impl Client {
     ///
     /// # See also
     ///
-    /// * [`put`](Self::put), [`operate`](Self::operate), [`exists`](Self::exists)
+    /// * [`put`](Self::put), [`operate`](Self::operate), [`exists`](Self::exists),
+    ///   [`batch`](Self::batch) (fetching many keys at once, prefer this over a loop of
+    ///   individual [`get`](Self::get) calls)
     ///
     /// # Examples
     ///
@@ -543,6 +545,9 @@ impl Client {
     ///
     /// # Errors
     ///
+    /// * Returns an error if the batch request fails (e.g. timeout, cluster error). 
+    /// Individual key-not-found is indicated by `record: None` in the corresponding [`BatchRecord`].
+    ///
     /// Per-key outcomes (key not found, filtered out, a key the cluster
     /// cannot route) are **not** errors — they live on each row's result
     /// code, with `record()` returning `None`. An `Err` is returned for the
@@ -550,6 +555,17 @@ impl Client {
     /// and rows a timeout left unanswered have `result_code() == None`. Rows
     /// answered before a timeout struck keep their results — the per-command
     /// policy deadlines bound the wait.
+    ///
+    /// # Performance
+    ///
+    /// If key routing assigns only a single key to a specific cluster node, the client automatically
+    /// sends that request using the single-record protocol rather than the batch protocol.
+    /// This optimization happens per node behind the scenes, so you don't need to manually check
+    /// key counts or fall back to single-record calls like [`get`](Self::get) or [`put`](Self::put).
+    ///
+    /// # See also
+    ///
+    /// * [`BatchOperation`], [`BatchRecord`], [`get`](Self::get)
     ///
     /// # Examples
     ///
@@ -685,7 +701,9 @@ impl Client {
     ///
     /// # See also
     ///
-    /// * [`get`](Self::get), [`operate`](Self::operate), [`add`](Self::add), [`delete`](Self::delete)
+    /// * [`get`](Self::get), [`operate`](Self::operate), [`add`](Self::add), [`delete`](Self::delete),
+    ///   [`batch`](Self::batch) (writing many keys at once, prefer this over a loop of
+    ///   individual [`put`](Self::put) calls)
     ///
     /// # Examples
     ///
@@ -922,7 +940,9 @@ impl Client {
     ///
     /// # See also
     ///
-    /// * [`put`](Self::put), [`get`](Self::get), [`touch`](Self::touch)
+    /// * [`put`](Self::put), [`get`](Self::get), [`touch`](Self::touch),
+    ///   [`batch`](Self::batch) (deleting many keys at once, prefer this over a loop of
+    ///   individual [`delete`](Self::delete) calls)
     ///
     /// # Examples
     ///
@@ -1073,7 +1093,9 @@ impl Client {
     ///
     /// # See also
     ///
-    /// * [`get`](Self::get), [`put`](Self::put), [`operations`](crate::operations)
+    /// * [`get`](Self::get), [`put`](Self::put), [`operations`](crate::operations),
+    ///   [`batch`](Self::batch) (running per-key operations across many keys at once, prefer
+    ///   this over a loop of individual [`operate`](Self::operate) calls)
     ///
     /// # Examples
     ///

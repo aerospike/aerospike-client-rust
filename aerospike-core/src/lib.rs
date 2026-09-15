@@ -42,6 +42,16 @@
     clippy::missing_errors_doc
 )]
 
+// The `doc_cfg` feature requires nightly Rust and only runs during docs.rs builds,
+// triggered via `--cfg docsrs` in `aerospike-core/Cargo.toml`. When active, it
+// automatically generates "Available on crate feature `x` only" badges for all
+// `#[cfg(feature = "...")]` items.
+//
+// Note: As of nightly 1.92.0, `doc_auto_cfg` was merged into `doc_cfg`. Do not add
+// manual `#[doc(cfg(...))]` attributes—they duplicate what `doc_cfg` infers and
+// risk drifting out of sync with actual `#[cfg]` attributes.
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 //! A pure-rust client for the Aerospike `NoSQL` database.
 //!
 //! Aerospike is an enterprise-class, `NoSQL` database solution for real-time operational

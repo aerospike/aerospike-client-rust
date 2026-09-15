@@ -26,6 +26,12 @@
 //! `sync` are mutually exclusive there.
 #![warn(missing_docs)]
 
+// `docsrs` activates the nightly `doc_cfg` feature during docs.rs builds,
+// configured via `[package.metadata.docs.rs]` in `Cargo.toml`.
+// This automatically adds feature badges to all `#[cfg(feature = "...")]` items,
+// so manual `#[doc(cfg(...))]` attributes aren't needed (see `aerospike-core/src/lib.rs`).
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 mod client;
 
 pub use crate::client::Client;
