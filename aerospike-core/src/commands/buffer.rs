@@ -933,7 +933,6 @@ impl Buffer {
         }
 
         self.end();
-        // self.dump_buffer();
 
         Ok(())
     }
@@ -2133,12 +2132,6 @@ impl Buffer {
 
     pub(crate) fn write_timeout(&mut self, millis: u32) {
         NetworkEndian::write_u32(&mut self.data_buffer[22..22 + 4], millis);
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn dump_buffer(&self) {
-        rhexdump!(&self.data_buffer);
-        println!();
     }
 }
 
