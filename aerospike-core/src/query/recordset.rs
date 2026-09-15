@@ -174,17 +174,16 @@ impl futures::Stream for RecordStream {
     ) -> std::task::Poll<Option<Self::Item>> {
         match self.0.rx.try_recv() {
             Ok(r) => std::task::Poll::Ready(Some(r)),
-            // Channel closed and drained: the stream has ended. (`close()`
-            // closes the channel; `is_empty()` alone would spin forever on
-            // the `Closed` error.)
+            // `Closed` is the only sound end-of-stream signal: `close()` shuts
+            // the channel, so buffered records still drain and this arm is
+            // reached only once the queue is genuinely spent. Ending the stream
+            // on `!is_active()` instead would pair the emptiness seen by the
+            // `try_recv` above with a liveness read taken after it, dropping a
+            // record pushed in between.
             Err(e) if e.is_closed() => std::task::Poll::Ready(None),
-            Err(e) => {
-                if !self.0.is_active() && e.is_empty() {
-                    std::task::Poll::Ready(None)
-                } else {
-                    cx.waker().wake_by_ref();
-                    std::task::Poll::Pending
-                }
+            Err(_) => {
+                cx.waker().wake_by_ref();
+                std::task::Poll::Pending
             }
         }
     }
@@ -331,5 +330,94 @@ mod tests {
         assert!(block_on(stream.next()).is_some());
         assert!(block_on(stream.next()).is_some());
         assert!(block_on(stream.next()).is_none());
+    }
+
+    /// A record delivered in the instant before `close()` must still reach the
+    /// consumer.
+    ///
+    /// Each trial parks the consumer in the empty-and-polling state, then
+    /// pushes one last record and closes immediately behind it. A consumer that
+    /// pairs the emptiness it observed *before* that push with an `is_active()`
+    /// read from *after* the close ends the stream with the record still in the
+    /// queue — no error, just a short result.
+    ///
+    /// Probabilistic: the window is a couple of instructions wide, so losses
+    /// only appear when the consumer is descheduled inside it. `RACE_TRIALS`
+    /// sets the attempt count and `RACE_BURNERS` adds spinning threads to
+    /// create the CPU contention that widens the window.
+    #[test]
+    #[ignore = "stress test; run explicitly with --ignored"]
+    fn final_record_survives_a_close_racing_the_poll() {
+        let trials: usize = std::env::var("RACE_TRIALS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(20_000);
+        let burners: usize = std::env::var("RACE_BURNERS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let burner_handles: Vec<_> = (0..burners)
+            .map(|_| {
+                let stop = stop.clone();
+                std::thread::spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        std::hint::spin_loop();
+                    }
+                })
+            })
+            .collect();
+
+        let mut lost = 0usize;
+        for _ in 0..trials {
+            let rs = recordset(8);
+
+            let consumer_rs = rs.clone();
+            let polling = Arc::new(AtomicBool::new(false));
+            let polling_signal = polling.clone();
+            let consumer = std::thread::spawn(move || {
+                let mut stream = consumer_rs.into_stream();
+                block_on(async move {
+                    let mut seen = 0usize;
+                    while stream.next().await.is_some() {
+                        seen += 1;
+                        // The warm-up record is in hand, so from here the
+                        // consumer is polling an empty, still-active channel.
+                        if seen == 1 {
+                            polling_signal.store(true, Ordering::Release);
+                        }
+                    }
+                    seen
+                })
+            });
+
+            block_on(rs.push(Ok(record()))).expect("warm-up push");
+            while !polling.load(Ordering::Acquire) {
+                std::hint::spin_loop();
+            }
+
+            // Land the final push at a random phase of the consumer's poll
+            // loop rather than always the same one.
+            for _ in 0..(rand::random::<u32>() % 4096) {
+                std::hint::spin_loop();
+            }
+            block_on(rs.push(Ok(record()))).expect("final push before close");
+            rs.close();
+
+            if consumer.join().expect("consumer thread") != 2 {
+                lost += 1;
+            }
+        }
+
+        stop.store(true, Ordering::Relaxed);
+        for handle in burner_handles {
+            let _ = handle.join();
+        }
+
+        assert_eq!(
+            lost, 0,
+            "{lost} of {trials} trials ended the stream with a record still queued",
+        );
     }
 }
