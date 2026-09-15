@@ -23,7 +23,7 @@ parking_lot = "0.12"
 log = "0.4"
 byteorder = "1.5"
 ripemd = "0.2"
-base64 = "0.22"
+base64 = "0.23"
 rand = "0.10"
 lazy_static = "1.5"
 pwhash = "1.0"
@@ -33,13 +33,12 @@ aerospike-macro = { path = "../aerospike-macro", version = "3.0.0-alpha.2", opti
 aerospike-rt = { path = "../aerospike-rt", version = "3.0.0-alpha.2" }
 # `tokio::select!` macro needs a direct dep; runtime features come via aerospike-rt.
 tokio = { version = "1", default-features = false, features = ["macros"] }
-futures = { version = "0.3.33" }
-async-trait = "0.1.91"
-rhexdump = "0.2.0"
+futures = { version = "0.3.34" }
+async-trait = "0.1.92"
 flate2 = "1"
 regex = "1"
-tokio-rustls = { version = "0.26.4", optional = true }
-rustls = { version = "0.23.42", optional = true }
+tokio-rustls = { version = "0.26.5", optional = true }
+rustls = { version = "0.23.45", optional = true }
 async-channel = "2.5.0"
 # Borrowed, non-owning socket handle for the connection pool liveness probe:
 # one implementation covering tokio, async-std and the TLS inner stream, with no
@@ -50,7 +49,7 @@ indexmap = "2"
 # `async` so stream reads/writes are await points on the client executor
 # (no dedicated OS thread per aggregation); `send` because the pipeline
 # future must be Send to run on the multi-threaded runtimes.
-mlua = { version = "0.12", features = ["lua54", "vendored", "async", "send"], optional = true }
+mlua = { version = "0.11", features = ["lua54", "vendored", "async", "send"], optional = true }
 
 [features]
 serialization = ["serde", "indexmap/serde"]
@@ -84,5 +83,5 @@ serde_bytes = "0.11"
 aerospike = { path = "../", default-features = false, features = ["async"] }
 aerospike-macro = {path = "../aerospike-macro"}
 lazy_static = "1.5"
-tokio = { version = "1.53.0", features = ["full"] }
+tokio = { version = "1.53.1", features = ["full"] }
 webpki-roots = "1"

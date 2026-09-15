@@ -2892,12 +2892,6 @@ impl Buffer {
         self.end();
         Ok(())
     }
-
-    #[allow(dead_code)]
-    pub(crate) fn dump_buffer(&self) {
-        rhexdump!(&self.data_buffer);
-        println!();
-    }
 }
 
 #[cfg(test)]

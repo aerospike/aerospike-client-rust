@@ -133,8 +133,6 @@
 extern crate base64;
 extern crate byteorder;
 #[macro_use]
-extern crate rhexdump;
-#[macro_use]
 extern crate log;
 extern crate pwhash;
 extern crate rand;
@@ -182,6 +180,7 @@ pub use query::{ResultSet, ResultStream};
 // `CITRUSLEAF_EPOCH` comes along because it is the unit `Record::new`'s
 // `expiration` argument is counted from, and a caller building a record cannot
 // state one without it.
+pub use indexmap::IndexMap;
 pub use record::{Record, CITRUSLEAF_EPOCH};
 pub use result_code::{ClientResultCode, ResultCode};
 pub use role::Role;
@@ -190,7 +189,6 @@ pub use server_error::{ExpressionTrace, ServerErrorDetail};
 pub use task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, Task, UdfRemoveTask};
 pub use txn::{AbortStatus, CommitErrorType, CommitStatus, Txn, TxnState};
 pub use user::User;
-pub use indexmap::IndexMap;
 pub use value::{FloatValue, MapCollection, MapLike, Value};
 pub use xor_shift::XorShift;
 
@@ -206,9 +204,9 @@ mod batch;
 mod client;
 mod cluster;
 pub(crate) mod commands;
+mod common;
 #[cfg(feature = "dynamic-config")]
 pub mod config;
-mod common;
 pub mod expressions;
 #[cfg(feature = "lua")]
 pub mod lua;

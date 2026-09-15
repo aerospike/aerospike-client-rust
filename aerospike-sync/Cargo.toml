@@ -20,7 +20,7 @@ publish = true
 # The core `sync` feature enables the blocking iterators (`Iterator for
 # &Recordset` / `&ResultSet`) this facade's API is built around.
 aerospike-core = {path = "../aerospike-core", version = "3.0.0-alpha.2", features = ["sync"]}
-futures = { version = "0.3.33" }
+futures = { version = "0.3.34" }
 # The blocking wrappers drive client futures on the runtime selected by
 # the rt-* feature: a dedicated tokio runtime (`SYNC_RT`) or async-std's
 # global executor. Never a third-party executor — a foreign `block_on`
