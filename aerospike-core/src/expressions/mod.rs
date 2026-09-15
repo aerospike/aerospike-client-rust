@@ -2438,6 +2438,24 @@ pub fn exp_select_by_path(
 ///
 /// Like [`exp_select_by_path`] this accepts anything convertible to
 /// `&[CdtContext]`.
+///
+/// Beyond updating values, `modify_exp` can also delete them. Passing [`exp_remove_result`]
+/// **removes** every leaf node matching the path instead of overwriting it.
+///
+/// If you prefer a simpler API, the [`exp_remove`] wrapper handles this for you:
+/// ```rust
+/// use aerospike::expressions::{exp_modify_by_path, exp_remove, exp_remove_result, ExpType};
+/// use aerospike::operations::cdt_context::Path;
+/// use aerospike::operations::path::ModifyFlag;
+///
+/// let path = Path::new().map_key("book").all_children().map_key("price");
+/// let bin_exp = aerospike::expressions::map_bin("myBin".into());
+///
+/// // Remove every matching "price" entry...
+/// let exp = exp_modify_by_path(ExpType::MAP, ModifyFlag::DEFAULT, bin_exp.clone(), exp_remove_result(), &path);
+/// // ...equivalently, via the ready-made wrapper:
+/// let exp = exp_remove(ExpType::MAP, bin_exp, &path);
+/// ```
 pub fn exp_modify_by_path(
     return_type: ExpType,
     flag: crate::operations::path::ModifyFlag,

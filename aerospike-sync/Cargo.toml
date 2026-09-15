@@ -38,6 +38,10 @@ serialization = ["aerospike-core/serialization"]
 tls = ["aerospike-core/tls"]
 lua = ["aerospike-core/lua"]
 
+[package.metadata.docs.rs]
+features = ["rt-tokio", "serialization", "tls", "dynamic-config", "lua"]
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dev-dependencies]
 # Used only by the rt-tokio-gated "call from inside a caller-owned tokio
 # runtime" regression test. NOTE: do not dev-depend on the `aerospike`

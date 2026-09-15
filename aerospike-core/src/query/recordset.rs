@@ -222,6 +222,7 @@ impl Recordset {
 
     #[cfg(feature = "sync")]
     /// Returns a result from the queue if it exists. Otherwise, returns None.
+    /// Available via the blocking `aerospike-sync` client.
     pub fn next_record(&self) -> Option<Result<Record>> {
         let entry = {
             let mut buf = self.sync_buf.lock();
@@ -251,7 +252,7 @@ impl Iterator for &Recordset {
     /// Blocking iterator: parks the calling thread until the next record
     /// arrives; ends once the recordset is closed and drained. No
     /// spinning — the channel wakes the thread exactly when there is
-    /// something to do.
+    /// something to do. Available via the blocking `aerospike-sync` client.
     fn next(&mut self) -> Option<Result<Record>> {
         loop {
             // Never hold the buffer lock across the blocking receive.
