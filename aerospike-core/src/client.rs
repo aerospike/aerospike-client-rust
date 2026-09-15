@@ -3335,9 +3335,10 @@ impl Client {
     /// * `txn` - The transaction to commit (wrapped in `Arc`).
     ///
     /// # Returns
-    /// `CommitStatus` indicating the outcome of the commit operation on success,
-    /// or `ErrorKind::Commit` with per-key records and an `in_doubt` flag on
-    /// failure.
+    /// `CommitStatus` indicating the outcome of the commit operation on success
+    /// (`Ok`, `AlreadyCommitted`, `CloseAbandoned`), or `ErrorKind::Commit` with
+    /// per-key records and an `in_doubt` flag on failure — including an
+    /// abandoned roll-forward, whose writes are not yet visible.
     pub async fn commit(&self, txn: &Arc<Txn>) -> Result<CommitStatus> {
         self.commit_with_policies(
             &TxnVerifyPolicy::default(),

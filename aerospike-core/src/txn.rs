@@ -77,6 +77,10 @@ pub enum CommitStatus {
     /// Already committed.
     AlreadyCommitted,
     /// Transaction client roll forward abandoned. Server will eventually commit.
+    ///
+    /// `Client::commit` no longer returns this variant: it fails with
+    /// [`CommitErrorType::RollForwardAbandoned`] so the underlying cause is
+    /// not dropped. Kept so existing matches on this enum continue to compile.
     RollForwardAbandoned,
     /// Transaction has been rolled forward, but client close was abandoned.
     CloseAbandoned,
@@ -106,6 +110,8 @@ pub enum CommitErrorType {
     VerifyFailAbortAbandoned,
     /// Transaction client mark roll forward abandoned.
     MarkRollForwardAbandoned,
+    /// Transaction client roll forward abandoned. Writes are not yet visible.
+    RollForwardAbandoned,
 }
 
 impl std::fmt::Display for CommitErrorType {
@@ -123,6 +129,10 @@ impl std::fmt::Display for CommitErrorType {
             Self::MarkRollForwardAbandoned => write!(
                 f,
                 "Transaction client mark roll forward abandoned. Server will eventually abort the Transaction."
+            ),
+            Self::RollForwardAbandoned => write!(
+                f,
+                "Transaction client roll forward abandoned. The writes are not yet visible. Server will eventually commit the Transaction."
             ),
         }
     }
