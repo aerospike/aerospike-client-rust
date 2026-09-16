@@ -52,7 +52,13 @@ pub struct PartitionStatus {
 }
 
 impl PartitionStatus {
-    pub(crate) const fn new(partition_id: usize) -> Self {
+    /// A fresh status for one partition: retry pending, no cursor, and the
+    /// delivery accounting zeroed. The cursor fields (`retry`, `bval`,
+    /// `digest`, `node`, `sequence`) are public and may be assigned after
+    /// construction — a consumer rebuilding a persisted cursor relies on
+    /// this, and a (re)query round resets the private accounting before
+    /// first use regardless.
+    pub const fn new(partition_id: usize) -> Self {
         PartitionStatus {
             bval: None,
             id: partition_id as u16,
