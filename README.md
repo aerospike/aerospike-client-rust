@@ -795,6 +795,14 @@ while let Some(value) = stream.next().await {
 See [`examples/query_aggregate.rs`](./examples/query_aggregate.rs) for a
 complete working example, including the Lua UDF source.
 
+## Good to Know
+
+These patterns appear to require custom application logic or missing library features, but are already handled natively by the client.
+
+* **Single-key batch operations automatically fall back to single-record calls.** If routing assigns only one key to a given node within a batch, the client uses the single-record protocol for that node automatically—no manual routing checks or single-record fallbacks needed. See [`Client::batch`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/struct.Client.html#method.batch).
+* **Use `Client::batch` for multi-key operations instead of sequential loops.** Multi-key reads and writes should always go through `Client::batch` rather than looping individual calls like `get` or `put`. See the cross-references on [`get`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/struct.Client.html#method.get), `put`, `delete`, and `operate`.
+* **Path-based modifications support deletion out of the box.** You can delete path targets using `modify_by_path` or `exp_modify_by_path` by passing `exp_remove_result()`, or simply use the [`remove`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/operations/path/fn.modify_by_path.html) and [`exp_remove`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/expressions/fn.exp_modify_by_path.html) wrappers.
+
 ## Feedback wanted
 
 We need your help with:
