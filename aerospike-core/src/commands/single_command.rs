@@ -401,7 +401,7 @@ impl<'a> SingleCommand<'a> {
                         ns,
                         cmd_type,
                         parse_start.elapsed(),
-                        conn.bytes_read() as u64,
+                        conn.bytes_received() as u64,
                     );
                 }
                 node.metrics()

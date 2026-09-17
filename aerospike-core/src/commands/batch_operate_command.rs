@@ -527,7 +527,7 @@ impl BatchOperateCommand {
         .await;
         if metrics_on && parse_outcome.is_ok() {
             let parse_elapsed = parse_start.elapsed();
-            let received = conn.bytes_read() as u64;
+            let received = conn.bytes_received() as u64;
             for ns in &namespaces {
                 node.metrics()
                     .record_parse(ns, cmd_type, parse_elapsed, received);
