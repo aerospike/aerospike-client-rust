@@ -56,6 +56,13 @@
   * [CLIENT-4979] CI workflows, [CLIENT-3858] more examples, `AEROSPIKE_CLEANUP` for tests.
 
 * **Bug Fixes**
+  * `Error::base_message` for a server failure is the result code's descriptive string (`Key already exists`),
+    not the variant name. Info-command failures (`FAIL:<code>:<message>`) keep the server's text as the base
+    message under the server's code (`Error::info_command_failure`) instead of filing the text as the node and
+    wrapping the code in a client error; an out-of-range code no longer panics. `BinNameTooLong` reads
+    "greater than 15 characters", the server's actual limit, and `FailForbidden` reads "Operation not
+    allowed at this time" (a stray rename had produced "OperationType").
+    `Display` labels prior attempts `sub-exceptions:`, the Java client's label.
   * [CLIENT-4966] Connection churn with `min_conn_per_node` > 0.
   * [CLIENT-4989] Socket I/O errors are Connection errors, so commands retry.
   * [CLIENT-5268] TLS writes are flushed, not left in the session buffer.
