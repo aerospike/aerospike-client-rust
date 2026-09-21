@@ -1,0 +1,226 @@
+name: Nightly branch tests (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      branch:
+        description: 'Branch to test (e.g. v2, v3)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write  # required by setup-aerospike-server's JFrog OIDC login
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  AEROSPIKE_HOSTS: 127.0.0.1:3000
+  AEROSPIKE_NAMESPACE: test
+  PROPTEST_CASES: 25
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────────
+  # Leg 1 — Enterprise Edition, Strong Consistency, no TLS, no security
+  # ────────────────────────────────────────────────────────────────────────
+  test-ee-sc:
+    name: test-ee-sc (${{ inputs.branch }}, ${{ matrix.runtime }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [rt-tokio, rt-async-std]
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.branch }}
+      - name: Install Rust 1.87 (MSRV)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.87
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: nightly-ee-sc-${{ inputs.branch }}-${{ matrix.runtime }}
+      - name: Set up Aerospike Database (EE + SC)
+        uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
+        with:
+          server-tag: "8.1.2.0"
+          enable-strong-consistency: "true"
+          features-content: ${{ secrets.AEROSPIKE_SERVER_FEATURES_CONF }}
+          oidc-provider: ${{ vars.OIDC_PROVIDER_NAME }}
+          oidc-audience: ${{ vars.OIDC_AUDIENCE }}
+      - name: Run integration tests
+        run: |
+          cargo test --verbose -p aerospike \
+            --no-default-features \
+            --features serialization,async,${{ matrix.runtime }} \
+            -- --test-threads=1
+
+  # ────────────────────────────────────────────────────────────────────────
+  # Leg 2 — Enterprise Edition, TLS + Security
+  # Only rt-tokio: tokio-rustls (the TLS backend) requires the tokio runtime.
+  # Exercises tls_client_no_auth, AuthMode::Internal over TLS, admin paths.
+  # ────────────────────────────────────────────────────────────────────────
+  test-ee-tls-security:
+    name: test-ee-tls-security (${{ inputs.branch }})
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.branch }}
+      - name: Install Rust 1.87 (MSRV)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.87
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: nightly-ee-tls-security-${{ inputs.branch }}
+      - name: Set up Aerospike Database (EE + TLS + security)
+        id: setup-server
+        uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
+        with:
+          server-tag: "8.1.2.0"
+          enable-tls: "true"
+          enable-security: "true"
+          enable-strong-consistency: "true"
+          features-content: ${{ secrets.AEROSPIKE_SERVER_FEATURES_CONF }}
+          oidc-provider: ${{ vars.OIDC_PROVIDER_NAME }}
+          oidc-audience: ${{ vars.OIDC_AUDIENCE }}
+      - name: Run integration tests (TLS + security)
+        env:
+          AEROSPIKE_HOSTS: 127.0.0.1:aerospike-tls:4333
+          AEROSPIKE_CACERT_FILE: ${{ steps.setup-server.outputs.tls-cert-dir }}/ca.crt
+          AEROSPIKE_USER: admin
+          AEROSPIKE_PASSWORD: admin
+        run: |
+          cargo test --verbose -p aerospike \
+            --no-default-features \
+            --features serialization,async,rt-tokio,tls \
+            -- --test-threads=1
+
+  # ────────────────────────────────────────────────────────────────────────
+  # Leg 3 — Enterprise Edition, AP mode (no strong consistency)
+  # Only EE+AP leg — catches replica policy, batch/scan regressions in AP.
+  # ────────────────────────────────────────────────────────────────────────
+  test-ee-ap:
+    name: test-ee-ap (${{ inputs.branch }}, ${{ matrix.runtime }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [rt-tokio, rt-async-std]
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.branch }}
+      - name: Install Rust 1.87 (MSRV)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.87
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: nightly-ee-ap-${{ inputs.branch }}-${{ matrix.runtime }}
+      - name: Set up Aerospike Database (EE + AP)
+        uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
+        with:
+          server-tag: "8.1.2.0"
+          # No enable-strong-consistency — AP is the Aerospike default
+          features-content: ${{ secrets.AEROSPIKE_SERVER_FEATURES_CONF }}
+          oidc-provider: ${{ vars.OIDC_PROVIDER_NAME }}
+          oidc-audience: ${{ vars.OIDC_AUDIENCE }}
+      - name: Run integration tests
+        run: |
+          cargo test --verbose -p aerospike \
+            --no-default-features \
+            --features serialization,async,${{ matrix.runtime }} \
+            -- --test-threads=1
+
+  # ────────────────────────────────────────────────────────────────────────
+  # Leg 4 — Community Edition, no TLS, no security
+  # Validates the client against the open-source server build.
+  # ────────────────────────────────────────────────────────────────────────
+  test-ce:
+    name: test-ce (${{ inputs.branch }}, ${{ matrix.runtime }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [rt-tokio, rt-async-std]
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.branch }}
+      - name: Install Rust 1.87 (MSRV)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.87
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: nightly-ce-${{ inputs.branch }}-${{ matrix.runtime }}
+      - name: Set up Aerospike Database (Community Edition)
+        uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
+        with:
+          server-tag: "8.1.2.0"
+          server-container-repo: database-docker-virtual/aerospike-server
+          server-edition: community
+          oidc-provider: ${{ vars.OIDC_PROVIDER_NAME }}
+          oidc-audience: ${{ vars.OIDC_AUDIENCE }}
+      - name: Run integration tests
+        run: |
+          cargo test --verbose -p aerospike \
+            --no-default-features \
+            --features serialization,async,${{ matrix.runtime }} \
+            -- --test-threads=1
+
+  # ────────────────────────────────────────────────────────────────────────
+  # Leg 5 — lua feature compile check (no live server needed)
+  # ────────────────────────────────────────────────────────────────────────
+  lua-feature-build:
+    name: lua-feature-build (${{ inputs.branch }})
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.branch }}
+      - name: Install Rust 1.87 (MSRV)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.87
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: nightly-lua-build-${{ inputs.branch }}
+      - name: Build with lua feature
+        run: |
+          cargo build -p aerospike \
+            --no-default-features \
+            --features async,rt-tokio,lua

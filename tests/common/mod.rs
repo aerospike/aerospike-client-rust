@@ -95,7 +95,7 @@ lazy_static! {
             policy.cluster_name = AEROSPIKE_CLUSTER.clone();
         }
         policy.use_services_alternate = AEROSPIKE_USE_SERVICES_ALTERNATE.clone();
-        if !no_tls() {
+        if !no_server_tls() {
             policy.tls_config = Some(tls_config_no_client_auth());
         }
         policy
@@ -105,8 +105,20 @@ lazy_static! {
     static ref AEROSPIKE_KEY_FILE: String = env::var("AEROSPIKE_KEY_FILE").unwrap_or_default();
 }
 
+/// True when no TLS server is available at all (CA cert not set).
+/// Use this to skip tests that require any TLS connection.
 #[cfg(feature = "tls")]
-pub fn no_tls() -> bool {
+pub fn no_server_tls() -> bool {
+    AEROSPIKE_CACERT_FILE.is_empty()
+}
+
+/// True when mutual TLS (client certificate auth) is not available.
+/// Use this to skip tests that require the client to present a certificate.
+/// Satisfied only when both AEROSPIKE_CACERT_FILE and AEROSPIKE_KEY_FILE are
+/// set AND the server is started with enable-tls-client-auth: "true".
+/// Auto-activates tls_client_auth the moment shared-workflows gains that flag.
+#[cfg(feature = "tls")]
+pub fn no_mutual_tls() -> bool {
     AEROSPIKE_CACERT_FILE.is_empty() || AEROSPIKE_KEY_FILE.is_empty()
 }
 

@@ -1,0 +1,14 @@
+name: Aerospike Rust Client Nightly (v3)
+
+on:
+  schedule:
+    - cron: '30 2 * * *'  # 02:30 UTC daily — 30 min after v2
+  workflow_dispatch:
+
+jobs:
+  v3:
+    name: nightly (v3)
+    uses: ./.github/workflows/nightly-branch.yml
+    with:
+      branch: v3
+    secrets: inherit

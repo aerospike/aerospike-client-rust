@@ -46,17 +46,23 @@ jobs:
       - name: Set up Aerospike Database
         uses: reugn/github-action-aerospike@2065a9209cfd5ef88a3e07f3e7929e321d1e0067 # v1.1.0
 
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        with:
+          tool: cargo-llvm-cov
+
       - name: Build workspace
         run: |
           cargo build --verbose --workspace --exclude aerospike-client-rust-benchmark \
             --no-default-features \
             --features serialization,async,${{ matrix.runtime }}
 
-      - name: Run integration tests
+      - name: Run integration tests (with coverage)
         run: |
-          cargo test --verbose -p aerospike \
+          cargo llvm-cov -p aerospike \
             --no-default-features \
             --features serialization,async,${{ matrix.runtime }} \
+            --lcov --output-path coverage-${{ matrix.runtime }}.lcov \
             -- --test-threads=1
 
       - name: Run aerospike-sync doctests
@@ -70,14 +76,23 @@ jobs:
           sed -i 's/features = \["async"\]/features = ["async", "rt-tokio"]/' aerospike-core/Cargo.toml
           cargo test --doc -p aerospike-core --features rt-tokio,serialization
 
-  aerospike-core-coverage:
-    name: aerospike-core-coverage
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.sha }}-${{ matrix.runtime }}
+          path: coverage-${{ matrix.runtime }}.lcov
+          if-no-files-found: warn
+          retention-days: 1
+
+  test-security:
+    name: test-security (${{ matrix.runtime }})
     runs-on: ubuntu-22.04
 
-    env:
-      # Lowered from 75% pending a follow-up ticket to add Enterprise Edition
-      # server testing (transactions, strong consistency) 
-      COVERAGE_THRESHOLD: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [rt-tokio, rt-async-std]
 
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -96,41 +111,190 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: aerospike-core-coverage
+          shared-key: security-${{ matrix.runtime }}
 
-      - name: Set up Aerospike Database
-        uses: reugn/github-action-aerospike@2065a9209cfd5ef88a3e07f3e7929e321d1e0067 # v1.1.0
+      - name: Set up Aerospike Database (security enabled)
+        uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
+        with:
+          server-tag: "8.1.2.0"
+          enable-strong-consistency: "true"
+          enable-security: "true"
+          features-content: ${{ secrets.AEROSPIKE_SERVER_FEATURES_CONF }}
+          oidc-provider: ${{ vars.OIDC_PROVIDER_NAME }}
+          oidc-audience: ${{ vars.OIDC_AUDIENCE }}
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
         with:
           tool: cargo-llvm-cov
 
-      - name: Coverage - aerospike-core unit tests
-        env:
-          PROPTEST_MAX_SHRINK_ITERS: 0
+      - name: Build workspace
         run: |
-          cargo llvm-cov clean --workspace
-          cargo llvm-cov -p aerospike-core \
-            --no-default-features --features serialization,rt-tokio \
-            --ignore-run-fail --no-report
+          cargo build --verbose --workspace --exclude aerospike-client-rust-benchmark \
+            --no-default-features \
+            --features serialization,async,${{ matrix.runtime }}
 
-      - name: Coverage - aerospike integration and property tests
+      - name: Run integration tests (with coverage)
         env:
-          PROPTEST_MAX_SHRINK_ITERS: 0
+          AEROSPIKE_USER: admin
+          AEROSPIKE_PASSWORD: admin
         run: |
           cargo llvm-cov -p aerospike \
-            --no-default-features --features serialization,async,rt-tokio \
-            --ignore-run-fail --no-report -- --test-threads=1
+            --no-default-features \
+            --features serialization,async,${{ matrix.runtime }} \
+            --lcov --output-path coverage-security-${{ matrix.runtime }}.lcov \
+            -- --test-threads=1
 
-      - name: Coverage report (aerospike-core)
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.sha }}-security-${{ matrix.runtime }}
+          path: coverage-security-${{ matrix.runtime }}.lcov
+          if-no-files-found: warn
+          retention-days: 1
+
+  test-ap:
+    name: test-ap (${{ matrix.runtime }})
+    runs-on: ubuntu-22.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [rt-tokio, rt-async-std]
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Install Rust 1.87 (MSRV)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.87
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ap-${{ matrix.runtime }}
+
+      - name: Set up Aerospike Database (EE + AP)
+        uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
+        with:
+          server-tag: "8.1.2.0"
+          # No enable-strong-consistency — AP is the Aerospike default
+          features-content: ${{ secrets.AEROSPIKE_SERVER_FEATURES_CONF }}
+          oidc-provider: ${{ vars.OIDC_PROVIDER_NAME }}
+          oidc-audience: ${{ vars.OIDC_AUDIENCE }}
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Build workspace
         run: |
-          cargo llvm-cov report -p aerospike-core
-          PCT=$(cargo llvm-cov report -p aerospike-core --json --summary-only | jq -r '.data[0].totals.lines.percent')
-          PCT_FMT=$(printf '%.2f' "$PCT")
-          if awk -v p="$PCT" -v t="$COVERAGE_THRESHOLD" 'BEGIN{exit !(p >= t)}'; then
-            echo "PASS: aerospike-core line coverage is ${PCT_FMT}%, threshold is ${COVERAGE_THRESHOLD}% -- coverage meets the threshold."
-          else
-            echo "FAIL: aerospike-core line coverage is ${PCT_FMT}%, threshold is ${COVERAGE_THRESHOLD}% -- coverage is below the threshold."
+          cargo build --verbose --workspace --exclude aerospike-client-rust-benchmark \
+            --no-default-features \
+            --features serialization,async,${{ matrix.runtime }}
+
+      - name: Run integration tests (with coverage)
+        run: |
+          cargo llvm-cov -p aerospike \
+            --no-default-features \
+            --features serialization,async,${{ matrix.runtime }} \
+            --lcov --output-path coverage-ap-${{ matrix.runtime }}.lcov \
+            -- --test-threads=1
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.sha }}-ap-${{ matrix.runtime }}
+          path: coverage-ap-${{ matrix.runtime }}.lcov
+          if-no-files-found: warn
+          retention-days: 1
+
+  merge-coverage:
+    name: merge-coverage
+    runs-on: ubuntu-22.04
+    needs: [test, test-security, test-ap]
+
+    env:
+      # Threshold covers all code reachable without TLS or LDAP.
+      # Raise toward 75%+ once the nightly TLS leg feeds into this job.
+      COVERAGE_THRESHOLD: 60
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+
+      - name: Download all coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-${{ github.sha }}-*
+          merge-multiple: true
+          path: coverage-artifacts/
+
+      - name: Merge lcov files
+        run: |
+          # Collect every .lcov file emitted by the three test legs.
+          # lcov --add-tracefile merges hit counts for lines present in
+          # multiple reports, giving a union view across all legs.
+          FILES=$(find coverage-artifacts/ -name '*.lcov' | sort)
+          echo "Merging the following coverage files:"
+          echo "$FILES"
+
+          MERGED_CMD="lcov"
+          for f in $FILES; do
+            MERGED_CMD="$MERGED_CMD --add-tracefile $f"
+          done
+          MERGED_CMD="$MERGED_CMD --output-file merged.lcov"
+          eval "$MERGED_CMD"
+
+      - name: Filter to aerospike-core source only
+        run: |
+          # Strip any paths that are not inside aerospike-core/src so the
+          # threshold applies only to the core library, not proc-macros or
+          # integration-test helpers.
+          lcov --extract merged.lcov '*/aerospike-core/src/*' \
+               --output-file aerospike-core.lcov
+
+      - name: Report and gate coverage (aerospike-core)
+        run: |
+          lcov --summary aerospike-core.lcov
+
+          PCT=$(lcov --summary aerospike-core.lcov 2>&1 \
+                | grep -E 'lines\.\.\.' \
+                | grep -oP '[0-9]+\.[0-9]+(?=%)' \
+                | head -1)
+
+          if [ -z "$PCT" ]; then
+            echo "::error::Could not parse line coverage percentage from lcov --summary output."
+            exit 1
           fi
-          cargo llvm-cov report -p aerospike-core --fail-under-lines "$COVERAGE_THRESHOLD"
+
+          PCT_FMT=$(printf '%.2f' "$PCT")
+
+          echo "aerospike-core line coverage across all legs: ${PCT_FMT}%  (threshold: ${COVERAGE_THRESHOLD}%)"
+
+          if awk -v p="$PCT" -v t="$COVERAGE_THRESHOLD" 'BEGIN{exit !(p >= t)}'; then
+            echo "PASS: aerospike-core line coverage is ${PCT_FMT}%, threshold is ${COVERAGE_THRESHOLD}%."
+            echo "## ✅ Coverage: ${PCT_FMT}% (threshold ${COVERAGE_THRESHOLD}%)" >> "$GITHUB_STEP_SUMMARY"
+            echo "aerospike-core line coverage is **${PCT_FMT}%** — meets the ${COVERAGE_THRESHOLD}% threshold." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::aerospike-core line coverage is ${PCT_FMT}%, below the ${COVERAGE_THRESHOLD}% threshold."
+            {
+              echo "## ❌ Coverage: ${PCT_FMT}% (threshold ${COVERAGE_THRESHOLD}%)"
+              echo ""
+              echo "> [!WARNING]"
+              echo "> aerospike-core line coverage is **${PCT_FMT}%**, which is below the **${COVERAGE_THRESHOLD}%** threshold."
+              echo "> Coverage has likely regressed — investigate before merging."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
