@@ -137,7 +137,7 @@ jobs:
             aerospike/aerospike-tools \
             asadm -h ${{ steps.setup-aerospike-server.outputs.container-names }} \
             -U admin -P admin --enable --execute \
-            "manage acl grant user admin roles read-write-udf,sys-admin,user-admin,data-admin"
+            "manage acl grant user admin roles read-write-udf sys-admin user-admin data-admin"
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
