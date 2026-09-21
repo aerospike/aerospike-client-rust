@@ -256,6 +256,9 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Install lcov
+        run: sudo apt-get update && sudo apt-get install -y lcov
+
       - name: Download all coverage artifacts
         uses: actions/download-artifact@v4
         with:
