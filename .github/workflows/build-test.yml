@@ -155,11 +155,16 @@ jobs:
           AEROSPIKE_USER: admin
           AEROSPIKE_PASSWORD: admin
         run: |
+          # examples::* are skipped here: they're customer-facing demo programs
+          # (ClientPolicy::default(), no credentials) and were never written to
+          # be security-aware. This job is about the real client working under
+          # auth, not about every unrelated demo also handling a login -- that
+          # coverage already comes from the plain `test` job.
           cargo llvm-cov -p aerospike \
             --no-default-features \
             --features serialization,async,${{ matrix.runtime }} \
             --lcov --output-path coverage-security-${{ matrix.runtime }}.lcov \
-            -- --test-threads=1
+            -- --test-threads=1 --skip src::examples::
 
       - name: Upload coverage artifact
         if: always()
