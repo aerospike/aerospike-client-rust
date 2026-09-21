@@ -63,6 +63,7 @@ jobs:
 
       - name: Run integration tests (with coverage)
         run: |
+          cargo llvm-cov clean --workspace
           cargo llvm-cov -p aerospike \
             --no-default-features \
             --features serialization,async,${{ matrix.runtime }} \
@@ -160,6 +161,7 @@ jobs:
           # be security-aware. This job is about the real client working under
           # auth, not about every unrelated demo also handling a login -- that
           # coverage already comes from the plain `test` job.
+          cargo llvm-cov clean --workspace
           cargo llvm-cov -p aerospike \
             --no-default-features \
             --features serialization,async,${{ matrix.runtime }} \
@@ -225,6 +227,7 @@ jobs:
 
       - name: Run integration tests (with coverage)
         run: |
+          cargo llvm-cov clean --workspace
           cargo llvm-cov -p aerospike \
             --no-default-features \
             --features serialization,async,${{ matrix.runtime }} \
