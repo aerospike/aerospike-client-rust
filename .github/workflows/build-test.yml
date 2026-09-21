@@ -63,12 +63,19 @@ jobs:
 
       - name: Run integration tests (with coverage)
         run: |
+          # -p aerospike selects which tests to run; the report step needs its
+          # own -p aerospike-core to scope which package's *source* is
+          # reported on. Without it, reporting defaults to the collection
+          # package (aerospike, an 11-line re-export facade with nothing
+          # substantive of its own) and silently produces an empty .lcov.
           cargo llvm-cov clean --workspace
           cargo llvm-cov -p aerospike \
             --no-default-features \
             --features serialization,async,${{ matrix.runtime }} \
-            --lcov --output-path coverage-${{ matrix.runtime }}.lcov \
+            --no-report \
             -- --test-threads=1
+          cargo llvm-cov report -p aerospike-core \
+            --lcov --output-path coverage-${{ matrix.runtime }}.lcov
 
       - name: Run aerospike-sync doctests
         if: matrix.runtime == 'rt-tokio'
@@ -165,8 +172,10 @@ jobs:
           cargo llvm-cov -p aerospike \
             --no-default-features \
             --features serialization,async,${{ matrix.runtime }} \
-            --lcov --output-path coverage-security-${{ matrix.runtime }}.lcov \
+            --no-report \
             -- --test-threads=1 --skip src::examples::
+          cargo llvm-cov report -p aerospike-core \
+            --lcov --output-path coverage-security-${{ matrix.runtime }}.lcov
 
       - name: Upload coverage artifact
         if: always()
@@ -231,8 +240,10 @@ jobs:
           cargo llvm-cov -p aerospike \
             --no-default-features \
             --features serialization,async,${{ matrix.runtime }} \
-            --lcov --output-path coverage-ap-${{ matrix.runtime }}.lcov \
+            --no-report \
             -- --test-threads=1
+          cargo llvm-cov report -p aerospike-core \
+            --lcov --output-path coverage-ap-${{ matrix.runtime }}.lcov
 
       - name: Upload coverage artifact
         if: always()
