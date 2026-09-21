@@ -7,6 +7,10 @@ on:
       - v3
   workflow_dispatch:
 
+permissions:
+  contents: read
+  id-token: write  # required by setup-aerospike-server's JFrog OIDC login
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
