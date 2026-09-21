@@ -118,6 +118,7 @@ jobs:
           shared-key: security-${{ matrix.runtime }}
 
       - name: Set up Aerospike Database (security enabled)
+        id: setup-aerospike-server
         uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
         with:
           server-tag: "8.1.2.0"
@@ -126,6 +127,17 @@ jobs:
           features-content: ${{ secrets.AEROSPIKE_SERVER_FEATURES_CONF }}
           oidc-provider: ${{ vars.OIDC_PROVIDER_NAME }}
           oidc-audience: ${{ vars.OIDC_AUDIENCE }}
+
+      - name: Grant admin the roles needed to run tests
+        # The built-in admin/admin account can log in once security is
+        # enabled, but has no read-write privileges by default -- every
+        # client test hits RoleViolation on its first put/get otherwise.
+        run: |
+          docker run --rm --network ${{ steps.setup-aerospike-server.outputs.network-name }} \
+            aerospike/aerospike-tools \
+            asadm -h ${{ steps.setup-aerospike-server.outputs.container-names }} \
+            -U admin -P admin --enable --execute \
+            "manage acl grant user admin roles read-write-udf,sys-admin,user-admin,data-admin"
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2

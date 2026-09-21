@@ -27,6 +27,8 @@
 //! The examples read `AEROSPIKE_HOSTS` themselves — the same variable the
 //! test suite uses — and target the default `test` namespace.
 
+use crate::common;
+
 #[path = "../../examples/crud.rs"]
 #[allow(dead_code)]
 mod crud_example;
@@ -101,6 +103,19 @@ async fn example_timeout_configuration() {
 
 #[aerospike_macro::test]
 async fn example_record_operations() {
+    // The example writes an explicit record TTL, which SC namespaces commonly
+    // reject (see ServerCapabilities' doc comment) -- keep the example itself
+    // unguarded (it's customer-facing demo code) and skip here instead.
+    let client = common::client().await;
+    if !common::ServerCapabilities::detect(&client)
+        .await
+        .explicit_record_ttl_allowed
+    {
+        eprintln!(
+            "example_record_operations: skipped — explicit client TTL not allowed on this namespace"
+        );
+        return;
+    }
     record_operations_example::run().await;
 }
 
