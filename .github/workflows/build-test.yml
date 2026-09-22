@@ -65,8 +65,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
-  test-sc:
-    name: test-sc (${{ matrix.runtime }})
+  test-ce:
+    name: test-ce (${{ matrix.runtime }})
     runs-on: ubuntu-22.04
 
     strategy:
@@ -138,8 +138,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
-  test-security:
-    name: test-security (${{ matrix.runtime }})
+  test-ee-security:
+    name: test-ee-security (${{ matrix.runtime }})
     runs-on: ubuntu-22.04
 
     strategy:
@@ -223,8 +223,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
-  test-ap:
-    name: test-ap (${{ matrix.runtime }})
+  test-ee-ap:
+    name: test-ee-ap (${{ matrix.runtime }})
     runs-on: ubuntu-22.04
 
     strategy:
@@ -294,7 +294,7 @@ jobs:
   merge-coverage:
     name: merge-coverage
     runs-on: ubuntu-22.04
-    needs: [unit-test-coverage, test-sc, test-security, test-ap]
+    needs: [unit-test-coverage, test-ce, test-ee-security, test-ee-ap]
 
     env:
       # Threshold covers all code reachable without TLS or LDAP.
