@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '30 2 * * *'  # 02:30 UTC daily — 30 min after v2
   workflow_dispatch:
+  # TEMP: validate the nightly TLS leg on this PR before merge -- revert before merging.
+  pull_request:
+    branches:
+      - main
+      - v3
 
 jobs:
   v3:
