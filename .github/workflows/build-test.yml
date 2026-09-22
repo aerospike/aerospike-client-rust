@@ -19,8 +19,54 @@ env:
   PROPTEST_CASES: 25
 
 jobs:
-  test:
-    name: test (${{ matrix.runtime }})
+  unit-test-coverage:
+    name: unit-test-coverage
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Install Rust 1.87 (MSRV)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.87
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: unit-test-coverage
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Run aerospike-core unit tests (with coverage)
+        run: |
+          # Pure Rust logic tests — no live server required.
+          # lua excluded: vendored Lua 5.4 compile cost not worth 12 tests here.
+          cargo llvm-cov -p aerospike-core \
+            --no-default-features \
+            --features serialization,dynamic-config,rt-tokio \
+            --lcov --output-path coverage-unit.lcov
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.sha }}-unit
+          path: coverage-unit.lcov
+          if-no-files-found: warn
+          retention-days: 1
+
+  test-sc:
+    name: test-sc (${{ matrix.runtime }})
     runs-on: ubuntu-22.04
 
     strategy:
@@ -63,11 +109,6 @@ jobs:
 
       - name: Run integration tests (with coverage)
         run: |
-          # -p aerospike selects which tests to run; the report step needs its
-          # own -p aerospike-core to scope which package's *source* is
-          # reported on. Without it, reporting defaults to the collection
-          # package (aerospike, an 11-line re-export facade with nothing
-          # substantive of its own) and silently produces an empty .lcov.
           cargo llvm-cov clean --workspace
           cargo llvm-cov -p aerospike \
             --no-default-features \
@@ -163,12 +204,8 @@ jobs:
           AEROSPIKE_USER: admin
           AEROSPIKE_PASSWORD: admin
         run: |
-          # examples::* are skipped here: they're customer-facing demo programs
-          # (ClientPolicy::default(), no credentials) and were never written to
-          # be security-aware. This job is about the real client working under
-          # auth, not about every unrelated demo also handling a login -- that
-          # coverage already comes from the plain `test` job.
           cargo llvm-cov clean --workspace
+          # examples::* are skipped: demo programs not written to handle auth.
           cargo llvm-cov -p aerospike \
             --no-default-features \
             --features serialization,async,${{ matrix.runtime }} \
@@ -257,7 +294,7 @@ jobs:
   merge-coverage:
     name: merge-coverage
     runs-on: ubuntu-22.04
-    needs: [test, test-security, test-ap]
+    needs: [unit-test-coverage, test-sc, test-security, test-ap]
 
     env:
       # Threshold covers all code reachable without TLS or LDAP.
