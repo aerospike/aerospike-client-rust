@@ -593,9 +593,16 @@ impl BatchOperateCommand {
         conn.set_timeout_delay(true, policy.timeout_delay());
 
         // Send command.
-        let bytes_sent = conn.buffer.data_buffer.len() as u64;
-        let write_start = Instant::now();
-        if let Err(err) = conn.flush().await {
+        let write_result = conn.flush().await;
+        // Bytes are accounted for whatever the outcome: the socket layer
+        // counted exactly what left the client, including a partial write.
+        if metrics_on {
+            let sent = conn.bytes_sent() as u64;
+            for ns in &namespaces {
+                node.metrics().record_bytes_sent(ns, cmd_type, sent);
+            }
+        }
+        if let Err(err) = write_result {
             // IO errors are considered temporary anomalies. Retry.
             // Close socket to flush out possible garbage. Do not put back in pool.
             conn.invalidate();
@@ -604,13 +611,6 @@ impl BatchOperateCommand {
             return Ok(Some(err));
         }
         *commands_sent += 1;
-        if metrics_on {
-            let write_elapsed = write_start.elapsed();
-            for ns in &namespaces {
-                node.metrics()
-                    .record_write(ns, cmd_type, bytes_sent, write_elapsed);
-            }
-        }
 
         // Parse results.
         let parse_start = Instant::now();
@@ -622,12 +622,21 @@ impl BatchOperateCommand {
         hook,
                 )
         .await;
-        if metrics_on && parse_outcome.is_ok() {
-            let parse_elapsed = parse_start.elapsed();
+        if metrics_on {
+            // Read side, same rule: exact bytes whatever the outcome.
             let received = conn.bytes_received() as u64;
             for ns in &namespaces {
-                node.metrics()
-                    .record_parse(ns, cmd_type, parse_elapsed, received);
+                node.metrics().record_bytes_received(ns, cmd_type, received);
+            }
+            if parse_outcome.is_ok() {
+                // One sample per successful node sub-batch RPC: latency spans
+                // connection acquire → response parsed (metrics.md §4.6).
+                let rpc_elapsed = aq_start.elapsed();
+                let parse_elapsed = parse_start.elapsed();
+                for ns in &namespaces {
+                    node.metrics().record_latency(ns, cmd_type, rpc_elapsed);
+                    node.metrics().record_parse(ns, cmd_type, parse_elapsed);
+                }
             }
         }
         if let Err(err) = parse_outcome {

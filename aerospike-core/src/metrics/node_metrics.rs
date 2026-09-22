@@ -125,14 +125,18 @@ pub struct CommandMetric {
     /// Time spent acquiring a connection from the pool.
     #[cfg_attr(feature = "serialization", serde(rename = "connection_aq"))]
     pub connection_aq: SyncHistogram,
-    /// Round-trip command latency.
+    /// Latency of one successful RPC attempt: connection acquire start →
+    /// response parsed (includes the pool wait, the socket write and the
+    /// read/parse; excludes retry backoff and earlier failed attempts).
     pub latency: SyncHistogram,
     /// Time spent parsing the response.
     pub parsing: SyncHistogram,
-    /// Bytes written to the wire.
+    /// Bytes actually written to the wire per RPC attempt, successful or
+    /// not (exact socket-layer count; `sum` is the total sent).
     #[cfg_attr(feature = "serialization", serde(rename = "bytes_sent"))]
     pub bytes_sent: SyncHistogram,
-    /// Bytes read from the wire.
+    /// Bytes actually read from the wire per RPC attempt, successful or not
+    /// (exact socket-layer count; `sum` is the total received).
     #[cfg_attr(feature = "serialization", serde(rename = "bytes_received"))]
     pub bytes_received: SyncHistogram,
 }
@@ -588,36 +592,40 @@ impl NodeMetrics {
         self.with_command_metric(namespace, ct, |cm| cm.connection_aq.add(ticks));
     }
 
-    /// Records write latency and bytes-sent for the detailed metrics. Only the
-    /// latency is unit-converted; the byte count is a size, not a time.
-    pub fn record_write(
-        &self,
-        namespace: &str,
-        ct: CommandType,
-        bytes_sent: u64,
-        latency: Duration,
-    ) {
+    /// Records the latency of one **successful RPC attempt** for the detailed
+    /// metrics: measured from the start of the connection acquire to the end
+    /// of response parsing (`metrics.md` §4.6, "pool acquire → response
+    /// parsed"; Java `SyncCommand.executeCommand` `begin` → `addLatency`).
+    /// Failed attempts record nothing here; a retried attempt that then
+    /// succeeds records its own sample.
+    pub fn record_latency(&self, namespace: &str, ct: CommandType, latency: Duration) {
         let ticks = self.ticks(latency);
-        self.with_command_metric(namespace, ct, |cm| {
-            cm.bytes_sent.add(bytes_sent);
-            cm.latency.add(ticks);
-        });
+        self.with_command_metric(namespace, ct, |cm| cm.latency.add(ticks));
     }
 
-    /// Records parse time and bytes-received for the detailed metrics. Only the
-    /// parse time is unit-converted.
-    pub fn record_parse(
-        &self,
-        namespace: &str,
-        ct: CommandType,
-        parsing: Duration,
-        bytes_received: u64,
-    ) {
+    /// Records the response-parse time of one successful RPC attempt.
+    pub fn record_parse(&self, namespace: &str, ct: CommandType, parsing: Duration) {
         let ticks = self.ticks(parsing);
-        self.with_command_metric(namespace, ct, |cm| {
-            cm.parsing.add(ticks);
-            cm.bytes_received.add(bytes_received);
-        });
+        self.with_command_metric(namespace, ct, |cm| cm.parsing.add(ticks));
+    }
+
+    /// Records the bytes one RPC attempt put on the wire — whatever its
+    /// outcome. Callers pass the socket layer's exact count (a write cut
+    /// short by a timeout still sent what it sent); a zero is skipped
+    /// because nothing crossed the wire. Sizes are never unit-converted.
+    pub fn record_bytes_sent(&self, namespace: &str, ct: CommandType, bytes: u64) {
+        if bytes > 0 {
+            self.with_command_metric(namespace, ct, |cm| cm.bytes_sent.add(bytes));
+        }
+    }
+
+    /// Records the bytes one RPC attempt read off the wire — whatever its
+    /// outcome (a server error reply, a parse failure or a partial read
+    /// before a timeout all count what actually arrived). Zero is skipped.
+    pub fn record_bytes_received(&self, namespace: &str, ct: CommandType, bytes: u64) {
+        if bytes > 0 {
+            self.with_command_metric(namespace, ct, |cm| cm.bytes_received.add(bytes));
+        }
     }
 
     /// Increments the count for a `(namespace, command type, result code)`
@@ -1298,8 +1306,10 @@ mod tests {
     #[test]
     fn detailed_and_result_codes_roundtrip() {
         let metrics = NodeMetrics::new(MetricsPolicy::default());
-        metrics.record_write("test", CommandType::Put, 128, Duration::from_millis(250));
-        metrics.record_parse("test", CommandType::Put, Duration::from_millis(30), 64);
+        metrics.record_bytes_sent("test", CommandType::Put, 128);
+        metrics.record_latency("test", CommandType::Put, Duration::from_millis(250));
+        metrics.record_parse("test", CommandType::Put, Duration::from_millis(30));
+        metrics.record_bytes_received("test", CommandType::Put, 64);
         metrics.record_result_code("test", CommandType::Put, ResultCode::KeyNotFoundError);
         metrics.record_result_code("test", CommandType::Put, ResultCode::KeyNotFoundError);
 
@@ -1494,13 +1504,17 @@ mod tests {
         metrics.set_enabled(true);
 
         // Two namespaces, two command types, repeated result codes.
-        metrics.record_write("ns1", CommandType::Put, 100, Duration::from_millis(200));
-        metrics.record_parse("ns1", CommandType::Put, Duration::from_millis(10), 50);
+        metrics.record_bytes_sent("ns1", CommandType::Put, 100);
+        metrics.record_latency("ns1", CommandType::Put, Duration::from_millis(200));
+        metrics.record_parse("ns1", CommandType::Put, Duration::from_millis(10));
+        metrics.record_bytes_received("ns1", CommandType::Put, 50);
         metrics.record_result_code("ns1", CommandType::Put, ResultCode::Ok);
         metrics.record_result_code("ns2", CommandType::Get, ResultCode::KeyNotFoundError);
         let a = metrics.get_and_reset();
 
-        metrics.record_write("ns1", CommandType::Put, 300, Duration::from_millis(400));
+        metrics.record_bytes_sent("ns1", CommandType::Put, 300);
+
+        metrics.record_latency("ns1", CommandType::Put, Duration::from_millis(400));
         metrics.record_result_code("ns1", CommandType::Put, ResultCode::Ok);
         let b = metrics.get_and_reset();
 
@@ -1557,8 +1571,10 @@ mod tests {
     #[test]
     fn detailed_recorders_convert_times_but_not_sizes() {
         let metrics = NodeMetrics::new(MetricsPolicy::micros());
-        metrics.record_write("ns", CommandType::Put, 64, Duration::from_millis(2));
-        metrics.record_parse("ns", CommandType::Put, Duration::from_millis(3), 128);
+        metrics.record_bytes_sent("ns", CommandType::Put, 64);
+        metrics.record_latency("ns", CommandType::Put, Duration::from_millis(2));
+        metrics.record_parse("ns", CommandType::Put, Duration::from_millis(3));
+        metrics.record_bytes_received("ns", CommandType::Put, 128);
         metrics.record_connection_aq("ns", CommandType::Put, Duration::from_micros(7));
 
         let snap = metrics.get_and_reset();
@@ -1580,7 +1596,8 @@ mod tests {
 
         // Detail created after the reshape must take the applied 7-column
         // shape, not the construction-time 24-column one.
-        metrics.record_write("ns", CommandType::Put, 64, Duration::from_millis(5));
+        metrics.record_bytes_sent("ns", CommandType::Put, 64);
+        metrics.record_latency("ns", CommandType::Put, Duration::from_millis(5));
         let snapshot = metrics.get_and_reset();
         let cm = snapshot.detailed_metric("ns", CommandType::Put).unwrap();
         assert_eq!(cm.latency.buckets().len(), crate::metrics::MILLIS_LATENCY_COLUMNS);
@@ -1615,7 +1632,9 @@ mod tests {
         node.set_enabled(true);
         node.reshape(&MetricsPolicy::millis()); // enable_metrics(millis()) does this
 
-        node.record_write("test", CommandType::Put, 64, Duration::from_millis(5));
+        node.record_bytes_sent("test", CommandType::Put, 64);
+
+        node.record_latency("test", CommandType::Put, Duration::from_millis(5));
 
         let per_node = node.get_and_reset();
         let mut cluster_agg = NodeMetricsSnapshot::new(MetricsPolicy::millis());
@@ -1636,8 +1655,10 @@ mod tests {
         let metrics = NodeMetrics::new(MetricsPolicy::micros());
         metrics.set_enabled(true);
         metrics.record_command(CommandType::Get, Duration::from_millis(5));
-        metrics.record_write("ns", CommandType::Put, 64, Duration::from_millis(5));
-        metrics.record_parse("ns", CommandType::Put, Duration::from_millis(5), 128);
+        metrics.record_bytes_sent("ns", CommandType::Put, 64);
+        metrics.record_latency("ns", CommandType::Put, Duration::from_millis(5));
+        metrics.record_parse("ns", CommandType::Put, Duration::from_millis(5));
+        metrics.record_bytes_received("ns", CommandType::Put, 128);
 
         // Same shape, different unit: microsecond samples cannot share buckets
         // with millisecond ones.
@@ -1676,7 +1697,8 @@ mod tests {
         metrics.set_enabled(true);
         metrics.incr_connections_attempt();
         metrics.record_command(CommandType::Get, Duration::from_millis(1));
-        metrics.record_write("ns", CommandType::Put, 64, Duration::from_millis(1));
+        metrics.record_bytes_sent("ns", CommandType::Put, 64);
+        metrics.record_latency("ns", CommandType::Put, Duration::from_millis(1));
         metrics.record_result_code("ns", CommandType::Put, ResultCode::Ok);
 
         let mut snap = metrics.get_and_reset();
@@ -1738,7 +1760,8 @@ mod tests {
             .store(4, Ordering::Relaxed);
         metrics.counters.tends_total.fetch_add(2, Ordering::Relaxed);
         metrics.record_command(CommandType::Put, Duration::from_millis(123));
-        metrics.record_write("test", CommandType::Put, 64, Duration::from_millis(90));
+        metrics.record_bytes_sent("test", CommandType::Put, 64);
+        metrics.record_latency("test", CommandType::Put, Duration::from_millis(90));
         metrics.record_result_code("test", CommandType::Put, ResultCode::KeyNotFoundError);
 
         let snap = metrics.get_and_reset();

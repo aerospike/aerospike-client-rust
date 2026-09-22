@@ -338,9 +338,17 @@ impl<'a> SingleCommand<'a> {
             }
 
             // Send command.
-            let bytes_sent = conn.buffer.data_buffer.len() as u64;
-            let write_start = Instant::now();
-            if let Err(err) = cmd.write_buffer(&mut conn).await {
+            let write_result = cmd.write_buffer(&mut conn).await;
+            // Bytes are accounted for whatever the outcome: the socket layer
+            // counted exactly what left the client, including a partial write
+            // before a timeout or I/O error.
+            if metrics_on {
+                if let Some(ns) = cmd_namespace.as_deref() {
+                    node.metrics()
+                        .record_bytes_sent(ns, cmd_type, conn.bytes_sent() as u64);
+                }
+            }
+            if let Err(err) = write_result {
                 // IO errors are considered temporary anomalies. Retry.
                 // Close socket to flush out possible garbage. Do not put back in pool.
                 conn.invalidate();
@@ -353,16 +361,20 @@ impl<'a> SingleCommand<'a> {
                 continue;
             }
             commands_sent += 1;
-            if metrics_on {
-                if let Some(ns) = cmd_namespace.as_deref() {
-                    node.metrics()
-                        .record_write(ns, cmd_type, bytes_sent, write_start.elapsed());
-                }
-            }
 
             // Parse results.
             let parse_start = Instant::now();
-            if let Err(err) = cmd.parse_result(&mut conn).await {
+            let parse_result = cmd.parse_result(&mut conn).await;
+            // Same rule on the read side: a server error reply, a parse
+            // failure or a partial read before a timeout all count exactly
+            // the bytes that arrived.
+            if metrics_on {
+                if let Some(ns) = cmd_namespace.as_deref() {
+                    node.metrics()
+                        .record_bytes_received(ns, cmd_type, conn.bytes_received() as u64);
+                }
+            }
+            if let Err(err) = parse_result {
                 // close the connection if the error is not safe to pool
                 if !commands::keep_connection(&err) {
                     conn.invalidate();
@@ -407,18 +419,18 @@ impl<'a> SingleCommand<'a> {
                 ));
             }
 
-            // Command completed successfully. Record the OK result code, the
-            // parse cost / bytes received, and the overall command latency.
+            // Command completed successfully. Record the OK result code, this
+            // attempt's RPC latency (connection acquire → response parsed,
+            // metrics.md §4.6), the parse cost, and the overall command
+            // latency. Bytes were recorded above, outcome-independent.
             if metrics_on {
                 if let Some(ns) = cmd_namespace.as_deref() {
                     node.metrics()
                         .record_result_code(ns, cmd_type, ResultCode::Ok);
-                    node.metrics().record_parse(
-                        ns,
-                        cmd_type,
-                        parse_start.elapsed(),
-                        conn.bytes_received() as u64,
-                    );
+                    node.metrics()
+                        .record_latency(ns, cmd_type, aq_start.elapsed());
+                    node.metrics()
+                        .record_parse(ns, cmd_type, parse_start.elapsed());
                 }
                 node.metrics()
                     .record_command(cmd_type, trans_start.elapsed());

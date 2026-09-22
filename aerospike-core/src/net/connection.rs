@@ -99,6 +99,100 @@ pub enum Netsocket {
     TestDummy,
 }
 
+/// Scratch size for [`Netsocket::discard_counted`].
+const DISCARD_CHUNK: usize = 4096;
+
+impl Netsocket {
+    /// Writes all of `buf`, then flushes. Every byte the socket accepts is
+    /// added to `progress` **as it is accepted**, so the count is exact even
+    /// when the future fails partway or is dropped by a timeout: whatever
+    /// left the client is in `progress`, whatever did not is not.
+    ///
+    /// The flush matters on TLS: tokio-rustls can accept plaintext into the
+    /// session's outgoing buffer and report success with ciphertext unsent
+    /// (see `TlsStream::poll_write`); on plain TCP it is a no-op.
+    async fn write_counted(&mut self, buf: &[u8], progress: &mut usize) -> std::io::Result<()> {
+        let mut written = 0;
+        while written < buf.len() {
+            let n = match self {
+                Netsocket::Tcp(conn) => conn.write(&buf[written..]).await?,
+                #[cfg(feature = "tls")]
+                Netsocket::Tls(conn) => conn.write(&buf[written..]).await?,
+                #[cfg(test)]
+                Netsocket::TestDummy => unreachable!(),
+            };
+            if n == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "failed to write whole buffer",
+                ));
+            }
+            written += n;
+            *progress += n;
+        }
+        match self {
+            Netsocket::Tcp(conn) => conn.flush().await,
+            #[cfg(feature = "tls")]
+            Netsocket::Tls(conn) => conn.flush().await,
+            #[cfg(test)]
+            Netsocket::TestDummy => unreachable!(),
+        }
+    }
+
+    /// Fills all of `buf`, adding every byte read to `progress` as it lands
+    /// — the read-side twin of [`write_counted`](Self::write_counted). A
+    /// peer that closes early yields `UnexpectedEof` with the bytes received
+    /// so far already counted.
+    async fn read_counted(&mut self, buf: &mut [u8], progress: &mut usize) -> std::io::Result<()> {
+        let mut filled = 0;
+        while filled < buf.len() {
+            let n = match self {
+                Netsocket::Tcp(conn) => conn.read(&mut buf[filled..]).await?,
+                #[cfg(feature = "tls")]
+                Netsocket::Tls(conn) => conn.read(&mut buf[filled..]).await?,
+                #[cfg(test)]
+                Netsocket::TestDummy => unreachable!(),
+            };
+            if n == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "failed to fill whole buffer",
+                ));
+            }
+            filled += n;
+            *progress += n;
+        }
+        Ok(())
+    }
+
+    /// Reads and throws away exactly `len` bytes, counting them into
+    /// `progress` chunk by chunk (same exactness contract as
+    /// [`read_counted`](Self::read_counted)).
+    async fn discard_counted(&mut self, len: usize, progress: &mut usize) -> std::io::Result<()> {
+        let mut scratch = [0u8; DISCARD_CHUNK];
+        let mut remaining = len;
+        while remaining > 0 {
+            let want = min(remaining, DISCARD_CHUNK);
+            let n = match self {
+                Netsocket::Tcp(conn) => conn.read(&mut scratch[..want]).await?,
+                #[cfg(feature = "tls")]
+                Netsocket::Tls(conn) => conn.read(&mut scratch[..want]).await?,
+                #[cfg(test)]
+                Netsocket::TestDummy => unreachable!(),
+            };
+            if n == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "peer closed while draining",
+                ));
+            }
+            remaining -= n;
+            *progress += n;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 #[allow(clippy::struct_field_names)]
 pub struct Connection {
@@ -119,10 +213,17 @@ pub struct Connection {
     /// [`bytes_received`](Self::bytes_received) for that.
     bytes_read: usize,
 
-    /// Bytes read from the socket since the current command started (its
-    /// `flush`), across all read phases. Reported to the bytes-received
-    /// metrics; reset only when the next command starts writing.
+    /// Bytes actually read from the socket since the current command started
+    /// (its `flush`), across all read phases, **including** bytes read before
+    /// a timeout or I/O error cut a phase short. Reported to the
+    /// bytes-received metrics; reset only when the next command starts
+    /// writing.
     bytes_received: usize,
+
+    /// Bytes actually accepted by the socket for the current command,
+    /// including a partial write before a timeout or I/O error. Reported to
+    /// the bytes-sent metrics; reset when the command starts writing.
+    bytes_sent: usize,
 
     pub buffer: Buffer,
 
@@ -322,6 +423,7 @@ impl Connection {
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
             bytes_read: 0,
             bytes_received: 0,
+            bytes_sent: 0,
             conn: stream,
             // Governs the login/authenticate I/O below (the only I/O before a
             // command runs); commands overwrite it via `set_socket_timeout`
@@ -404,6 +506,7 @@ impl Connection {
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
             bytes_read: 0,
             bytes_received: 0,
+            bytes_sent: 0,
             conn: stream,
             socket_timeout: policy.login_timeout().as_millis() as u32,
             timeout_delay: 0,
@@ -441,6 +544,7 @@ impl Connection {
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
             bytes_read: 0,
             bytes_received: 0,
+            bytes_sent: 0,
             conn: Netsocket::Tcp(stream),
             socket_timeout: 5_000,
             timeout_delay: 0,
@@ -484,33 +588,21 @@ impl Connection {
 
     pub async fn flush(&mut self) -> Result<()> {
         self.state = ConnectionState::Writing;
+        // A new command starts on the wire: both per-command byte counters
+        // restart here.
         self.bytes_received = 0;
+        self.bytes_sent = 0;
         let timeout = self.deadline();
-        let buf = &self.buffer.data_buffer;
-        let res = match self.conn {
-            Netsocket::Tcp(ref mut conn) => {
-                io_with_timeout!(self, timeout, async {
-                    conn.write_all(buf).await?;
-                    conn.flush().await
-                })
-            }
-            #[cfg(feature = "tls")]
-            Netsocket::Tls(ref mut conn) => {
-                // `write_all` alone is not enough on a TLS stream: when the
-                // socket is not writable, tokio-rustls accepts the plaintext
-                // into the session's outgoing buffer and reports success with
-                // ciphertext still unsent. Nothing on the read path drives
-                // those bytes out, so the command would wait for a reply to a
-                // request the server never fully received. See the note on
-                // `tokio_rustls::client::TlsStream::poll_write`.
-                io_with_timeout!(self, timeout, async {
-                    conn.write_all(buf).await?;
-                    conn.flush().await
-                })
-            }
-            #[cfg(test)]
-            _ => unreachable!(),
-        };
+        let mut sent = 0usize;
+        let res = io_with_timeout!(
+            self,
+            timeout,
+            self.conn
+                .write_counted(&self.buffer.data_buffer, &mut sent)
+        );
+        // Counted before looking at the outcome: a partial write is still
+        // bytes the server may have received.
+        self.bytes_sent += sent;
 
         match res {
             Ok(Ok(())) => (),
@@ -728,31 +820,21 @@ impl Connection {
         self.buffer.resize_buffer(size + pos)?;
 
         let timeout = self.deadline();
-        let read_result = match self.conn {
-            Netsocket::Tcp(ref mut conn) => {
-                io_with_timeout!(
-                    self,
-                    timeout,
-                    conn.read_exact(&mut self.buffer.data_buffer[pos..])
-                )
-            }
-            #[cfg(feature = "tls")]
-            Netsocket::Tls(ref mut conn) => {
-                io_with_timeout!(
-                    self,
-                    timeout,
-                    conn.read_exact(&mut self.buffer.data_buffer[pos..])
-                )
-            }
-            #[cfg(test)]
-            _ => unreachable!(),
-        };
+        let mut got = 0usize;
+        let read_result = io_with_timeout!(
+            self,
+            timeout,
+            self.conn
+                .read_counted(&mut self.buffer.data_buffer[pos..], &mut got)
+        );
+        // Exact on every outcome. `bytes_read` advancing by the partial count
+        // is also what lets timeout recovery resume from the right offset
+        // (`ConnectionRecovery` reads `total - bytes_read` more).
+        self.bytes_read += got;
+        self.bytes_received += got;
 
         match read_result {
-            Ok(Ok(_)) => {
-                self.bytes_read += size;
-                self.bytes_received += size;
-            }
+            Ok(Ok(())) => (),
             Ok(Err(e)) => return Err(Error::connection(format!("read: {e}"))),
             Err(_) => {
                 return Err(Error::timeout(
@@ -770,23 +852,12 @@ impl Connection {
     pub async fn write_all(&mut self, buf: &[u8]) -> Result<()> {
         self.state = ConnectionState::Writing;
         self.bytes_received = 0;
+        self.bytes_sent = 0;
 
         let timeout = self.deadline();
-        let res = match self.conn {
-            Netsocket::Tcp(ref mut conn) => {
-                io_with_timeout!(self, timeout, conn.write_all(buf))
-            }
-            #[cfg(feature = "tls")]
-            Netsocket::Tls(ref mut conn) => {
-                // See `flush`: a TLS write is only on the wire once flushed.
-                io_with_timeout!(self, timeout, async {
-                    conn.write_all(buf).await?;
-                    conn.flush().await
-                })
-            }
-            #[cfg(test)]
-            _ => unreachable!(),
-        };
+        let mut sent = 0usize;
+        let res = io_with_timeout!(self, timeout, self.conn.write_counted(buf, &mut sent));
+        self.bytes_sent += sent;
 
         match res {
             Ok(Ok(())) => (),
@@ -809,20 +880,13 @@ impl Connection {
         self.state = ConnectionState::ReadingBody(buf.len());
 
         let timeout = self.deadline();
-        let res = match self.conn {
-            Netsocket::Tcp(ref mut conn) => {
-                io_with_timeout!(self, timeout, conn.read_exact(buf))
-            }
-            #[cfg(feature = "tls")]
-            Netsocket::Tls(ref mut conn) => {
-                io_with_timeout!(self, timeout, conn.read_exact(buf))
-            }
-            #[cfg(test)]
-            _ => unreachable!(),
-        };
+        let mut got = 0usize;
+        let res = io_with_timeout!(self, timeout, self.conn.read_counted(buf, &mut got));
+        self.bytes_read += got;
+        self.bytes_received += got;
 
         match res {
-            Ok(Ok(_)) => (),
+            Ok(Ok(())) => (),
             Ok(Err(e)) => return Err(Error::connection(format!("read_all: {e}"))),
             Err(_) => {
                 return Err(Error::timeout(
@@ -831,8 +895,6 @@ impl Connection {
             }
         }
 
-        self.bytes_read += buf.len();
-        self.bytes_received += buf.len();
         self.refresh();
         Ok(())
     }
@@ -990,59 +1052,35 @@ impl Connection {
         self.bytes_received
     }
 
+    /// Bytes the socket accepted for the current command so far — the
+    /// per-command total the bytes-sent metrics report. Exact on every
+    /// outcome: a write cut short by a timeout or I/O error leaves the bytes
+    /// that did go out counted here. Reset when the next command begins
+    /// writing (`flush` / `write_all`).
+    pub const fn bytes_sent(&self) -> usize {
+        self.bytes_sent
+    }
+
     pub(crate) const fn should_attempt_recovery(&self) -> bool {
         self.can_recover_connection && self.timeout_delay > 0
     }
 
     // reads the rest of the message to empty the connection buffer
     // before returning the connection back to the pool.
-    async fn drain(&mut self, mut limit: usize, timeout: Duration) -> Result<()> {
-        while limit > 0 {
-            let count = match self.conn {
-                Netsocket::Tcp(ref mut conn) => {
-                    let mut reader = conn.take(limit as u64);
-                    let mut sink = aerospike_rt::io::sink();
-                    io_with_timeout!(
-                        self,
-                        timeout,
-                        aerospike_rt::io::copy(&mut reader, &mut sink)
-                    )
-                    .unwrap_or_else(|_| {
-                        Err(std::io::Error::new(
-                            std::io::ErrorKind::TimedOut,
-                            "Timeout draining the connection",
-                        ))
-                    })
-                    .map_err(|e| Error::timeout(format!("Timeout draining the connection {e}")))?
-                }
-
-                #[cfg(feature = "tls")]
-                Netsocket::Tls(ref mut conn) => {
-                    let mut reader = conn.take(limit as u64);
-                    let mut sink = aerospike_rt::io::sink();
-                    io_with_timeout!(
-                        self,
-                        timeout,
-                        aerospike_rt::io::copy(&mut reader, &mut sink)
-                    )
-                    .unwrap_or_else(|_| {
-                        Err(std::io::Error::new(
-                            std::io::ErrorKind::TimedOut,
-                            "Timeout draining the connection",
-                        ))
-                    })
-                    .map_err(|e| Error::timeout(format!("Timeout draining the connection {e}")))?
-                }
-                #[cfg(test)]
-                _ => unreachable!(),
-            };
-
-            limit -= count as usize;
-            self.bytes_read += count as usize;
-            self.bytes_received += count as usize;
+    async fn drain(&mut self, limit: usize, timeout: Duration) -> Result<()> {
+        let mut got = 0usize;
+        let res = io_with_timeout!(self, timeout, self.conn.discard_counted(limit, &mut got));
+        self.bytes_read += got;
+        self.bytes_received += got;
+        match res {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(Error::timeout(format!(
+                "Timeout draining the connection {e}"
+            ))),
+            Err(_) => Err(Error::timeout(
+                "Timeout draining the connection".to_string(),
+            )),
         }
-
-        Ok(())
     }
 }
 
@@ -1186,25 +1224,19 @@ impl<'a> BufferedConn<'a> {
         self.conn.refresh();
 
         let deadline = self.conn.deadline();
-        let read_result = match self.conn.conn {
-            Netsocket::Tcp(ref mut conn) => {
-                io_with_timeout!(self.conn, deadline, conn.read_exact(&mut self.cache))
-            }
-
-            #[cfg(feature = "tls")]
-            Netsocket::Tls(ref mut conn) => {
-                io_with_timeout!(self.conn, deadline, conn.read_exact(&mut self.cache))
-            }
-            #[cfg(test)]
-            _ => unreachable!(),
-        };
+        let mut got = 0usize;
+        let read_result = io_with_timeout!(
+            self.conn,
+            deadline,
+            self.conn.conn.read_counted(&mut self.cache, &mut got)
+        );
+        // Exact on every outcome (see `Netsocket::read_counted`).
+        self.limit -= got;
+        self.conn.bytes_read += got;
+        self.conn.bytes_received += got;
 
         match read_result {
-            Ok(Ok(_)) => {
-                self.limit -= self.cache.len();
-                self.conn.bytes_read += self.cache.len();
-                self.conn.bytes_received += self.cache.len();
-            }
+            Ok(Ok(())) => (),
             Ok(Err(e)) => return Err(Error::connection(format!("buffered_read: {e}"))),
             Err(_) => {
                 return Err(Error::timeout(
@@ -1236,49 +1268,28 @@ impl<'a> BufferedConn<'a> {
             return Ok(());
         }
 
-        while self.limit > 0 {
-            let count = match self.conn.conn {
-                Netsocket::Tcp(ref mut conn) => {
-                    let mut reader = conn.take(self.limit as u64);
-                    let mut sink = aerospike_rt::io::sink();
-                    io_with_timeout!(
-                        self.conn,
-                        timeout,
-                        aerospike_rt::io::copy(&mut reader, &mut sink)
-                    )
-                    .unwrap_or_else(|_| {
-                        Err(std::io::Error::new(
-                            std::io::ErrorKind::TimedOut,
-                            "Timeout draining the connection",
-                        ))
-                    })
-                    .map_err(|e| Error::timeout(format!("Timeout draining the connection {e}")))?
-                }
-                #[cfg(feature = "tls")]
-                Netsocket::Tls(ref mut conn) => {
-                    let mut reader = conn.take(self.limit as u64);
-                    let mut sink = aerospike_rt::io::sink();
-                    io_with_timeout!(
-                        self.conn,
-                        timeout,
-                        aerospike_rt::io::copy(&mut reader, &mut sink)
-                    )
-                    .unwrap_or_else(|_| {
-                        Err(std::io::Error::new(
-                            std::io::ErrorKind::TimedOut,
-                            "Timeout draining the connection",
-                        ))
-                    })
-                    .map_err(|e| Error::timeout(format!("Timeout draining the connection {e}")))?
-                }
-                #[cfg(test)]
-                _ => unreachable!(),
-            };
-
-            self.limit -= count as usize;
-            self.bytes_read += count as usize;
-            self.conn.bytes_read += count as usize;
-            self.conn.bytes_received += count as usize;
+        let mut got = 0usize;
+        let res = io_with_timeout!(
+            self.conn,
+            timeout,
+            self.conn.conn.discard_counted(self.limit, &mut got)
+        );
+        self.limit -= got;
+        self.bytes_read += got;
+        self.conn.bytes_read += got;
+        self.conn.bytes_received += got;
+        match res {
+            Ok(Ok(())) => (),
+            Ok(Err(e)) => {
+                return Err(Error::timeout(format!(
+                    "Timeout draining the connection {e}"
+                )))
+            }
+            Err(_) => {
+                return Err(Error::timeout(
+                    "Timeout draining the connection".to_string(),
+                ))
+            }
         }
 
         let _ = self.resize_cache(0);
@@ -1751,6 +1762,7 @@ mod liveness_probe_tests {
             buffer: Buffer::new(0),
             bytes_read: 0,
             bytes_received: 0,
+            bytes_sent: 0,
             conn: Netsocket::Tcp(stream),
             socket_timeout: 5_000,
             timeout_delay: 0,
@@ -1843,6 +1855,7 @@ mod tests_eof_loopback {
             buffer: Buffer::new(0),
             bytes_read: 0,
             bytes_received: 0,
+            bytes_sent: 0,
             conn: Netsocket::Tcp(stream),
             socket_timeout: 5_000,
             timeout_delay: 0,
@@ -1904,6 +1917,62 @@ mod tests_eof_loopback {
             }
         });
         addr
+    }
+
+    /// Spawn a peer that sends exactly `n` bytes and then half-closes —
+    /// a response cut short.
+    async fn spawn_short_peer(n: usize) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        aerospike_rt::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                use tokio::io::AsyncWriteExt;
+                let _ = sock.write_all(&vec![7u8; n]).await;
+                let _ = sock.shutdown().await;
+                aerospike_rt::sleep(std::time::Duration::from_secs(60)).await;
+                drop(sock);
+            }
+        });
+        addr
+    }
+
+    // ─── Exact byte accounting on every outcome ───────────────────────────
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn partial_read_before_eof_is_counted_exactly() {
+        let addr = spawn_short_peer(10).await;
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut conn = conn_from_stream(stream);
+
+        let err = conn
+            .read_buffer(100)
+            .await
+            .expect_err("peer sent 10 of the 100 requested bytes");
+        assert!(
+            matches!(err.kind(), crate::ErrorKind::Connection),
+            "short read must surface as a connection error, got: {:?}",
+            err
+        );
+        // The failed read still accounts for exactly what arrived, on both
+        // the metrics total and the recovery offset.
+        assert_eq!(conn.bytes_received(), 10);
+        assert_eq!(conn.bytes_read(), 10);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn writes_count_every_byte_and_restart_per_command() {
+        let addr = spawn_idle_peer().await;
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut conn = conn_from_stream(stream);
+
+        conn.write_all(&[1u8; 1234]).await.unwrap();
+        assert_eq!(conn.bytes_sent(), 1234);
+
+        // `flush` writes the command buffer and starts a new count.
+        conn.buffer.data_buffer = vec![2u8; 77];
+        conn.flush().await.unwrap();
+        assert_eq!(conn.bytes_sent(), 77, "flush restarts the per-command count");
+        assert_eq!(conn.bytes_received(), 0, "a new command starts with nothing read");
     }
 
     // ─── Bug 1: socket I/O errors classified as Error::Connection ─────────
@@ -2218,6 +2287,7 @@ giXBCqFUdjj6IPPzkDZtMO1fU3lfoCm6z5EGqRhWg8An6dxdhFCdc2AZ
             buffer: Buffer::new(0),
             bytes_read: 0,
             bytes_received: 0,
+            bytes_sent: 0,
             conn: Netsocket::Tls(tls),
             socket_timeout: 30_000,
             timeout_delay: 0,

@@ -154,6 +154,32 @@ async fn metrics_latency_unit_changes_resolution() {
         "a Put took {}µs - microsecond metrics should not round a real command to 0",
         us.max()
     );
+    // The per-RPC detailed latency spans connection acquire → response
+    // parsed, so it contains both the acquire and the parse phases and can
+    // never be shorter than either; and the whole-call latency contains the
+    // RPC. Microseconds make the ordering observable.
+    let put = agg
+        .detailed_metric(namespace, CommandType::Put)
+        .expect("detailed Put metrics");
+    assert!(put.latency.count() >= 1);
+    assert!(
+        put.latency.max() >= put.parsing.max(),
+        "rpc latency {}µs must cover parsing {}µs",
+        put.latency.max(),
+        put.parsing.max()
+    );
+    assert!(
+        put.latency.max() >= put.connection_aq.max(),
+        "rpc latency {}µs must cover connection acquire {}µs",
+        put.latency.max(),
+        put.connection_aq.max()
+    );
+    assert!(
+        us.max() >= put.latency.max(),
+        "whole-call latency {}µs must cover the rpc {}µs",
+        us.max(),
+        put.latency.max()
+    );
     client.close().await.unwrap();
 
     // Milliseconds (the default): the same work, coarser buckets. The unit
@@ -248,7 +274,38 @@ async fn metrics_detailed_and_result_codes() {
         .detailed_metric(namespace, CommandType::Get)
         .expect("expected detailed Get metrics for namespace");
     assert!(get_metric.parsing.count() >= 1);
-    assert!(get_metric.bytes_received.count() >= 1);
+
+    // Byte accounting is exact and outcome-independent: one Put and two
+    // Gets went on the wire (the second Get failed with KEY_NOT_FOUND, but
+    // its request was sent and its error reply was read), so each side
+    // holds exactly that many samples, every one at least a wire header.
+    assert_eq!(put_metric.bytes_sent.count(), 1);
+    assert_eq!(put_metric.bytes_received.count(), 1);
+    assert_eq!(
+        get_metric.bytes_sent.count(),
+        2,
+        "the failed Get's request bytes must be counted"
+    );
+    assert_eq!(
+        get_metric.bytes_received.count(),
+        2,
+        "the failed Get's error reply bytes must be counted"
+    );
+    for (label, h) in [
+        ("put sent", &put_metric.bytes_sent),
+        ("put received", &put_metric.bytes_received),
+        ("get sent", &get_metric.bytes_sent),
+        ("get received", &get_metric.bytes_received),
+    ] {
+        assert!(
+            h.min() >= MSG_HEADER,
+            "{label}: smallest sample {} is below a wire header",
+            h.min()
+        );
+    }
+    // Only the successful attempts carry a latency / parse sample.
+    assert_eq!(get_metric.latency.count(), 1);
+    assert_eq!(get_metric.parsing.count(), 1);
 
     // Result codes recorded per (namespace, command, code): a successful Get
     // (OK) and the missing-key Get (KEY_NOT_FOUND_ERROR).

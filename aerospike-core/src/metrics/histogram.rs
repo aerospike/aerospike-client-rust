@@ -137,7 +137,13 @@ impl HistogramInner {
             return;
         }
 
-        if other.min < self.min || self.min == 0 {
+        // An empty histogram contributes nothing — in particular not its
+        // zero `min`, which used to clobber a real minimum every time a
+        // per-tend drain with no new samples was merged in.
+        if other.count == 0 {
+            return;
+        }
+        if self.count == 0 || other.min < self.min {
             self.min = other.min;
         }
         if other.max > self.max {
@@ -375,6 +381,30 @@ mod tests {
         assert_eq!(a.max(), 100);
         let total: u64 = a.buckets().iter().sum();
         assert_eq!(total, 4);
+    }
+
+    /// Merging an empty histogram must be a no-op: a per-tend drain that
+    /// recorded nothing used to reset `min` to 0 on the accumulator.
+    #[test]
+    fn merge_of_empty_histogram_keeps_min() {
+        let a = SyncHistogram::new(1, 4);
+        a.add(40);
+        a.add(90);
+        let empty = SyncHistogram::new(1, 4);
+        a.merge(&empty);
+        assert_eq!(a.min(), 40);
+        assert_eq!(a.max(), 90);
+        assert_eq!(a.count(), 2);
+
+        // And an empty accumulator takes the other side's min verbatim,
+        // including a genuine 0 sample.
+        let acc = SyncHistogram::new(1, 4);
+        let zero = SyncHistogram::new(1, 4);
+        zero.add(0);
+        zero.add(5);
+        acc.merge(&zero);
+        assert_eq!(acc.min(), 0);
+        assert_eq!(acc.count(), 2);
     }
 
     #[test]
