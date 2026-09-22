@@ -67,7 +67,24 @@ pub enum TxnState {
     Committed,
     /// Transaction has been aborted.
     Aborted,
+    /// A commit attempt failed with an **in-doubt** outcome: the request to
+    /// mark the transaction roll-forward may or may not have reached the
+    /// server, which may therefore still be rolling the transaction forward.
+    ///
+    /// From here [`Client::abort`](crate::Client::abort) is refused (a
+    /// rollback could discard writes the server is committing) and
+    /// [`Client::commit`](crate::Client::commit) may be retried; a retry is
+    /// the only way to resolve the transaction from the client side. A clean,
+    /// not-in-doubt commit failure never enters this state — it stays
+    /// [`Verified`](Self::Verified) and abortable.
+    CommitFailed,
 }
+
+/// Message carried by the error [`Client::abort`](crate::Client::abort)
+/// returns for a transaction in [`TxnState::CommitFailed`]. Verbatim from the
+/// C and legacy Java clients.
+pub const COMMIT_FAILED_ABORT_MESSAGE: &str =
+    "Abort not allowed because a commit already failed on this transaction with an in-doubt outcome";
 
 /// Transaction commit status code.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +114,12 @@ pub enum AbortStatus {
     RollBackAbandoned,
     /// Transaction has been rolled back, but client close was abandoned.
     CloseAbandoned,
+    /// Abort was refused because a commit already failed on this transaction
+    /// with an in-doubt outcome ([`TxnState::CommitFailed`]); see
+    /// [`COMMIT_FAILED_ABORT_MESSAGE`]. [`Client::abort`](crate::Client::abort)
+    /// reports this as an error with `ClientResultCode::TxnFailed`; the
+    /// variant exists for API parity with the other Aerospike clients.
+    CommitFailed,
 }
 
 /// Transaction commit error status.
@@ -214,6 +237,17 @@ impl Txn {
     /// Set the transaction state.
     pub fn set_state(&self, state: TxnState) {
         *self.state.write().unwrap() = state;
+    }
+
+    /// Records that a commit attempt failed with an in-doubt outcome: the
+    /// state becomes [`TxnState::CommitFailed`] unless the transaction has
+    /// already reached a terminal state ([`Committed`](TxnState::Committed) or
+    /// [`Aborted`](TxnState::Aborted)), which are left untouched.
+    pub fn mark_commit_failed(&self) {
+        let mut state = self.state.write().unwrap();
+        if !matches!(*state, TxnState::Committed | TxnState::Aborted) {
+            *state = TxnState::CommitFailed;
+        }
     }
 
     /// Process the results of a record read. For internal use only.
@@ -385,4 +419,55 @@ pub(crate) fn get_txn_monitor_key(txn: &Txn) -> Option<Key> {
         Key::new(ns, "<ERO~MRT".to_string(), crate::Value::Int(txn.id()))
             .expect("Failed to create transaction monitor key")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mark_commit_failed_transitions_from_open_and_verified() {
+        let txn = Txn::new();
+        assert_eq!(txn.state(), TxnState::Open);
+        txn.mark_commit_failed();
+        assert_eq!(txn.state(), TxnState::CommitFailed);
+
+        let txn = Txn::new();
+        txn.set_state(TxnState::Verified);
+        txn.mark_commit_failed();
+        assert_eq!(txn.state(), TxnState::CommitFailed);
+
+        // Idempotent.
+        txn.mark_commit_failed();
+        assert_eq!(txn.state(), TxnState::CommitFailed);
+    }
+
+    #[test]
+    fn mark_commit_failed_preserves_terminal_states() {
+        for terminal in [TxnState::Committed, TxnState::Aborted] {
+            let txn = Txn::new();
+            txn.set_state(terminal);
+            txn.mark_commit_failed();
+            assert_eq!(txn.state(), terminal, "{terminal:?} must stay terminal");
+        }
+    }
+
+    #[test]
+    fn commit_failed_rejects_further_commands() {
+        let txn = Txn::new();
+        txn.mark_commit_failed();
+        let err = txn
+            .verify_command()
+            .expect_err("a CommitFailed transaction must not accept commands");
+        assert!(err.to_string().contains("ended by a commit or abort"));
+        assert!(txn.prepare_read("test").is_err());
+    }
+
+    #[test]
+    fn abort_refusal_message_is_verbatim_from_sibling_clients() {
+        assert_eq!(
+            COMMIT_FAILED_ABORT_MESSAGE,
+            "Abort not allowed because a commit already failed on this transaction with an in-doubt outcome"
+        );
+    }
 }

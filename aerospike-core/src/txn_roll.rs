@@ -101,42 +101,63 @@ impl TxnRoll {
         let roll_policy = &roll_policy.batch_policy;
         let wp = write_policy_from_base(roll_policy);
 
+        // Whether the server told us the transaction had already been marked
+        // roll-forward — by an earlier attempt whose in-doubt outcome turned
+        // out to have landed. The commit then resolves as ALREADY_COMMITTED
+        // (the C client's refinement) rather than as a failure.
+        let mut already_committed = false;
+
         if self.txn.monitor_exists() {
             if let Some(txn_key) = get_txn_monitor_key(&self.txn) {
-                if let Err(err) = self.mark_roll_forward(&wp, &txn_key).await {
-                    // MRT_ABORTED from the server means it already aborted
-                    // this transaction. Flip the client state to Aborted and
-                    // clear the in-doubt flag so callers don't treat the
-                    // failure as ambiguous.
-                    let is_aborted =
-                        err.server_result_code() == Some(ResultCode::MrtAborted);
+                match self.mark_roll_forward(&wp, &txn_key).await {
+                    Ok(ResultCode::MrtCommitted) => already_committed = true,
+                    Ok(_) => (),
+                    Err(err) => {
+                        // MRT_ABORTED from the server means it already aborted
+                        // this transaction. Flip the client state to Aborted and
+                        // clear the in-doubt flag so callers don't treat the
+                        // failure as ambiguous.
+                        let is_aborted =
+                            err.server_result_code() == Some(ResultCode::MrtAborted);
 
-                    if is_aborted {
-                        self.txn.set_in_doubt(false);
-                        self.txn.set_state(TxnState::Aborted);
+                        if is_aborted {
+                            self.txn.set_in_doubt(false);
+                            self.txn.set_state(TxnState::Aborted);
+                            return Err(self.make_commit_error(
+                                CommitErrorType::MarkRollForwardAbandoned,
+                                false,
+                                Some(err),
+                            ));
+                        }
+
+                        // Propagate in-doubt: if the txn or this attempt was
+                        // already in doubt, keep that flag on the commit failure.
+                        let in_doubt = if self.txn.in_doubt() {
+                            true
+                        } else if err.in_doubt()
+                            || matches!(err.kind(), crate::ErrorKind::Timeout)
+                        {
+                            self.txn.set_in_doubt(true);
+                            true
+                        } else {
+                            false
+                        };
+
+                        // In doubt means the server may still roll this
+                        // transaction forward: lock the state so `abort` is
+                        // refused and only a commit retry can resolve it. A
+                        // clean failure stays Verified — abortable, releasing
+                        // its record locks right away.
+                        if in_doubt {
+                            self.txn.mark_commit_failed();
+                        }
+
                         return Err(self.make_commit_error(
                             CommitErrorType::MarkRollForwardAbandoned,
-                            false,
+                            in_doubt,
                             Some(err),
                         ));
                     }
-
-                    // Propagate in-doubt: if the txn or this attempt was
-                    // already in doubt, keep that flag on the commit failure.
-                    let in_doubt = if self.txn.in_doubt() {
-                        true
-                    } else if matches!(err.kind(), crate::ErrorKind::Timeout) {
-                        self.txn.set_in_doubt(true);
-                        true
-                    } else {
-                        false
-                    };
-
-                    return Err(self.make_commit_error(
-                        CommitErrorType::MarkRollForwardAbandoned,
-                        in_doubt,
-                        Some(err),
-                    ));
                 }
             }
         }
@@ -149,10 +170,18 @@ impl TxnRoll {
         // successful commit while the writes were still provisional. Raise
         // instead so the cause (timeout, server code, node) reaches the
         // caller; CLOSE_ABANDONED below stays a success.
+        //
+        // The state stays Committed here — the commit point (the roll-forward
+        // mark) is behind us and the server will finish the roll — so `abort`
+        // is already refused as "already committed"; `mark_commit_failed`
+        // would be a no-op on a terminal state and is not called.
         if let Err(err) = self.roll(roll_policy, INFO4_MRT_ROLL_FORWARD).await {
             let in_doubt = self.txn.in_doubt()
                 || err.in_doubt()
                 || matches!(err.kind(), crate::ErrorKind::Timeout);
+            if in_doubt {
+                self.txn.set_in_doubt(true);
+            }
             return Err(self.make_commit_error(
                 CommitErrorType::RollForwardAbandoned,
                 in_doubt,
@@ -168,6 +197,9 @@ impl TxnRoll {
             }
         }
 
+        if already_committed {
+            return Ok(CommitStatus::AlreadyCommitted);
+        }
         Ok(CommitStatus::Ok)
     }
 
@@ -314,10 +346,13 @@ impl TxnRoll {
         }
     }
 
-    /// Mark the transaction monitor record as roll-forward.
-    async fn mark_roll_forward(&self, policy: &WritePolicy, txn_key: &Key) -> Result<()> {
+    /// Mark the transaction monitor record as roll-forward. On success returns
+    /// the server's result code: `Ok`, or `MrtCommitted` when the monitor was
+    /// already marked by an earlier attempt (the command accepts both).
+    async fn mark_roll_forward(&self, policy: &WritePolicy, txn_key: &Key) -> Result<ResultCode> {
         let mut cmd = TxnMarkRollForwardCommand::new(policy, self.cluster.clone(), txn_key);
-        cmd.execute().await
+        cmd.execute().await?;
+        Ok(cmd.result_code.unwrap_or(ResultCode::Ok))
     }
 
     /// Roll forward or back all written keys concurrently. Populates

@@ -3356,6 +3356,13 @@ impl Client {
     /// (`Ok`, `AlreadyCommitted`, `CloseAbandoned`), or `ErrorKind::Commit` with
     /// per-key records and an `in_doubt` flag on failure — including an
     /// abandoned roll-forward, whose writes are not yet visible.
+    ///
+    /// A failure with `in_doubt() == true` leaves the transaction in
+    /// [`TxnState::CommitFailed`]: the server may still be rolling it
+    /// forward, so [`abort`](Self::abort) is refused and the only recovery is
+    /// to call `commit` again. If the retry finds the server already marked
+    /// the transaction roll-forward, it completes the roll and returns
+    /// `AlreadyCommitted`.
     pub async fn commit(&self, txn: &Arc<Txn>) -> Result<CommitStatus> {
         self.commit_with_policies(
             &TxnVerifyPolicy::default(),
@@ -3386,6 +3393,10 @@ impl Client {
                 tr.commit(roll_policy).await
             }
             TxnState::Verified => tr.commit(roll_policy).await,
+            // Retrying the commit is the only recovery path after an in-doubt
+            // commit failure: the verify already passed, so go straight to the
+            // roll-forward mark again.
+            TxnState::CommitFailed => tr.commit(roll_policy).await,
             TxnState::Committed => Ok(CommitStatus::AlreadyCommitted),
             TxnState::Aborted => Err(Error::server_error(
                 ResultCode::MrtAborted,
@@ -3401,6 +3412,12 @@ impl Client {
     /// Uses a default policy for the roll. Use
     /// [`abort_with_policy`](Self::abort_with_policy) to control timeouts and
     /// retries.
+    ///
+    /// Abort is **refused** with `ClientResultCode::TxnFailed` after a commit
+    /// failed with an in-doubt outcome ([`TxnState::CommitFailed`]): the
+    /// server may still be rolling the transaction forward, and a rollback
+    /// could discard writes it is committing. Retry [`commit`](Self::commit)
+    /// instead.
     ///
     /// # Arguments
     /// * `txn` - The transaction to abort (wrapped in `Arc`).
@@ -3422,6 +3439,12 @@ impl Client {
 
         match txn.state() {
             TxnState::Open | TxnState::Verified => tr.abort(roll_policy).await,
+            // The roll-forward mark may have reached the server: rolling back
+            // now could discard writes it is committing. Only a commit retry
+            // can resolve the transaction from here.
+            TxnState::CommitFailed => Err(Error::txn_failed(
+                crate::txn::COMMIT_FAILED_ABORT_MESSAGE,
+            )),
             TxnState::Committed => Err(Error::server_error(
                 ResultCode::MrtCommitted,
                 "Transaction already committed".to_string(),
