@@ -4,11 +4,6 @@ on:
   schedule:
     - cron: '30 2 * * *'  # 02:30 UTC daily — 30 min after v2
   workflow_dispatch:
-  # TEMP: re-validating the mlua MSRV fix on this PR -- revert before merging.
-  pull_request:
-    branches:
-      - main
-      - v3
 
 jobs:
   v3:
