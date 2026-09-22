@@ -429,7 +429,7 @@ mod tests {
 
         // Three records of ONE partition, delivered (stamped) in order.
         let key = distinct_partition_keys(1).remove(0);
-        let mut entry = |bval: u64| StreamEntry {
+        let entry = |bval: u64| StreamEntry {
             result: Ok(Record::new(Some(key.clone()), IndexMap::new(), None, 0, 0)),
             bval: Some(bval),
             stamp: shared.stamp_delivery(key.partition_id()),

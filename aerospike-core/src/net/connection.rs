@@ -116,7 +116,16 @@ pub struct Connection {
     // connection object
     pub(crate) conn: Netsocket,
 
+    /// Bytes read in the *current read phase* (header, body, one stream
+    /// segment). Timeout recovery resumes from this offset, so every state
+    /// transition resets it. Not a per-command total — see
+    /// [`bytes_received`](Self::bytes_received) for that.
     bytes_read: usize,
+
+    /// Bytes read from the socket since the current command started (its
+    /// `flush`), across all read phases. Reported to the bytes-received
+    /// metrics; reset only when the next command starts writing.
+    bytes_received: usize,
 
     pub buffer: Buffer,
 
@@ -265,6 +274,7 @@ impl Connection {
             addr,
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
             bytes_read: 0,
+            bytes_received: 0,
             conn: stream,
             // Governs the login/authenticate I/O below (the only I/O before a
             // command runs); commands overwrite it via `set_socket_timeout`
@@ -341,6 +351,7 @@ impl Connection {
             addr: addr.into(),
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
             bytes_read: 0,
+            bytes_received: 0,
             conn: stream,
             socket_timeout: policy.login_timeout().as_millis() as u32,
             timeout_delay: 0,
@@ -378,6 +389,7 @@ impl Connection {
             addr: "127.0.0.1:0".into(),
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
             bytes_read: 0,
+            bytes_received: 0,
             conn: Netsocket::Tcp(stream),
             socket_timeout: 5_000,
             timeout_delay: 0,
@@ -428,6 +440,7 @@ impl Connection {
 
     pub async fn flush(&mut self) -> Result<()> {
         self.state = ConnectionState::Writing;
+        self.bytes_received = 0;
         let timeout = self.deadline();
         let buf = &self.buffer.data_buffer;
         let res = match self.conn {
@@ -478,6 +491,9 @@ impl Connection {
     pub(crate) const fn reset_state(&mut self) {
         self.state = ConnectionState::Ready;
         self.bytes_read = 0;
+        // `bytes_received` is deliberately left alone: parsers call this as
+        // their last step and the metrics code reads the total *after* the
+        // parse returns. The next command's `flush` clears it.
         self.response_decompressed = false;
         self.compressed_stream_body = false;
     }
@@ -689,7 +705,10 @@ impl Connection {
         };
 
         match read_result {
-            Ok(Ok(_)) => self.bytes_read += size,
+            Ok(Ok(_)) => {
+                self.bytes_read += size;
+                self.bytes_received += size;
+            }
             Ok(Err(e)) => return Err(Error::connection(format!("read: {e}"))),
             Err(_) => {
                 return Err(Error::timeout(
@@ -706,6 +725,7 @@ impl Connection {
     /// Writes to the connection until done or timeout has been reached.
     pub async fn write_all(&mut self, buf: &[u8]) -> Result<()> {
         self.state = ConnectionState::Writing;
+        self.bytes_received = 0;
 
         let timeout = self.deadline();
         let res = match self.conn {
@@ -768,6 +788,7 @@ impl Connection {
         }
 
         self.bytes_read += buf.len();
+        self.bytes_received += buf.len();
         self.refresh();
         Ok(())
     }
@@ -915,6 +936,16 @@ impl Connection {
         self.bytes_read
     }
 
+    /// Bytes read from the socket by the current command so far — the
+    /// per-command total the bytes-received metrics report. Unlike
+    /// [`bytes_read`](Self::bytes_read) it survives the header/body/segment
+    /// state transitions inside a response, and the parser's closing
+    /// `reset_state`; it is cleared only when the next command begins
+    /// writing (`flush` / `write_all`).
+    pub const fn bytes_received(&self) -> usize {
+        self.bytes_received
+    }
+
     pub(crate) const fn should_attempt_recovery(&self) -> bool {
         self.can_recover_connection && self.timeout_delay > 0
     }
@@ -964,6 +995,7 @@ impl Connection {
 
             limit -= count as usize;
             self.bytes_read += count as usize;
+            self.bytes_received += count as usize;
         }
 
         Ok(())
@@ -1127,6 +1159,7 @@ impl<'a> BufferedConn<'a> {
             Ok(Ok(_)) => {
                 self.limit -= self.cache.len();
                 self.conn.bytes_read += self.cache.len();
+                self.conn.bytes_received += self.cache.len();
             }
             Ok(Err(e)) => return Err(Error::connection(format!("buffered_read: {e}"))),
             Err(_) => {
@@ -1201,6 +1234,7 @@ impl<'a> BufferedConn<'a> {
             self.limit -= count as usize;
             self.bytes_read += count as usize;
             self.conn.bytes_read += count as usize;
+            self.conn.bytes_received += count as usize;
         }
 
         let _ = self.resize_cache(0);
@@ -1672,6 +1706,7 @@ mod liveness_probe_tests {
             addr: "127.0.0.1:0".into(),
             buffer: Buffer::new(0),
             bytes_read: 0,
+            bytes_received: 0,
             conn: Netsocket::Tcp(stream),
             socket_timeout: 5_000,
             timeout_delay: 0,
@@ -1764,6 +1799,7 @@ mod tests_eof_loopback {
             addr: "127.0.0.1:0".into(),
             buffer: Buffer::new(0),
             bytes_read: 0,
+            bytes_received: 0,
             conn: Netsocket::Tcp(stream),
             socket_timeout: 5_000,
             timeout_delay: 0,
@@ -2139,6 +2175,7 @@ giXBCqFUdjj6IPPzkDZtMO1fU3lfoCm6z5EGqRhWg8An6dxdhFCdc2AZ
             addr: addr.to_string(),
             buffer: Buffer::new(0),
             bytes_read: 0,
+            bytes_received: 0,
             conn: Netsocket::Tls(tls),
             socket_timeout: 30_000,
             timeout_delay: 0,

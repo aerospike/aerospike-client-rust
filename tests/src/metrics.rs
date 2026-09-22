@@ -18,11 +18,13 @@
 
 use std::collections::HashMap;
 
-use aerospike::query::PartitionFilter;
+use aerospike::metrics::CommandMetric;
+use aerospike::query::{Filter, PartitionFilter};
 use aerospike::{
-    as_bin, as_key, operations, BatchOperation, BatchPolicy, BatchReadPolicy, BatchWritePolicy,
-    Bins, Client, CommandType, LatencyUnit, MetricsPolicy, QueryPolicy, ReadPolicy, Statement,
-    WritePolicy,
+    as_bin, as_key, as_val, operations, AdminPolicy, BatchDeletePolicy, BatchOperation,
+    BatchPolicy, BatchReadPolicy, BatchUDFPolicy, BatchWritePolicy, Bins, Client,
+    CollectionIndexType, CommandType, IndexType, LatencyUnit, MetricsPolicy, QueryPolicy,
+    ReadPolicy, Statement, Task, UDFLang, WritePolicy,
 };
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
@@ -542,5 +544,267 @@ async fn min_conns_no_churn_across_tends() {
          connections-idle-dropped={idle_dropped}"
     );
 
+    client.close().await.unwrap();
+}
+
+// --- bytes-received accounting -------------------------------------------
+//
+// Regression coverage for the detailed `bytes_received` histogram, whose sum
+// used to stay at zero: the connection's read counter was reset by the
+// header→body→ready state transitions before the metrics code read it, so
+// every sample recorded 0 (the count advanced, the sum did not). Each test
+// below reads back a payload large enough that a correct sum is
+// unmistakable and asserts against it — not merely against `count`.
+
+/// Payload large enough that any response carrying it dwarfs the protocol
+/// header, so `sum >= PAYLOAD` cannot be satisfied by header bytes alone.
+const PAYLOAD: usize = 4096;
+
+/// Every wire response carries at least the 30-byte proto + message header.
+const MSG_HEADER: u64 = 30;
+
+/// Asserts that `cm.bytes_received` has samples and that their sum is at
+/// least `min_sum` bytes — the invariant the sum-stays-zero bug violated.
+fn assert_bytes_received(cm: &CommandMetric, label: &str, min_sum: u64) {
+    let count = cm.bytes_received.count();
+    let sum = cm.bytes_received.sum();
+    assert!(count >= 1, "{label}: no bytes-received samples");
+    assert!(
+        sum >= min_sum as f64,
+        "{label}: bytes-received sum {sum} < {min_sum} over {count} samples"
+    );
+    // Every response is at least a header; the sum must be consistent with
+    // the count, not a lone stray value.
+    assert!(
+        sum >= (count * MSG_HEADER) as f64,
+        "{label}: bytes-received sum {sum} smaller than {count} headers"
+    );
+    // Sanity: the sent side, which never regressed, must also be populated.
+    assert!(
+        cm.bytes_sent.sum() > 0.0,
+        "{label}: bytes-sent sum unexpectedly zero"
+    );
+}
+
+fn payload() -> String {
+    "x".repeat(PAYLOAD)
+}
+
+/// Registers a Lua UDF that echoes its argument, so a UDF response can be
+/// made as large as the caller wants.
+async fn register_echo_udf(client: &Client) -> &'static str {
+    const NAME: &str = "metrics_echo";
+    let body = r#"
+function echo(rec, val)
+  return val
+end
+"#;
+    let task = client
+        .register_udf(
+            &AdminPolicy::default(),
+            body.as_bytes(),
+            &format!("{NAME}.lua"),
+            UDFLang::Lua,
+        )
+        .await
+        .expect("register udf");
+    task.wait_till_complete(None).await.unwrap();
+    NAME
+}
+
+/// get / put / delete / udf: single-key commands each record a per-command
+/// received-byte total, and a read of a 4 KiB record sums to at least that.
+#[aerospike_macro::test]
+async fn metrics_bytes_received_single_key_commands() {
+    let client = common::client().await;
+    client.enable_metrics(MetricsPolicy::default());
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "bytes-received");
+    let wpolicy = WritePolicy::default();
+    let rpolicy = ReadPolicy::default();
+    let blob = payload();
+    let bins = [as_bin!("blob", blob.as_str())];
+
+    client.put(&wpolicy, &key, &bins).await.unwrap();
+    const READS: u64 = 3;
+    for _ in 0..READS {
+        let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
+        assert_eq!(rec.bins.len(), 1);
+    }
+    let udf = register_echo_udf(&client).await;
+    let echoed = client
+        .execute_udf(&wpolicy, &key, udf, "echo", Some(&[as_val!(blob.as_str())]))
+        .await
+        .unwrap();
+    assert_eq!(echoed, Some(as_val!(blob.as_str())));
+    client.delete(&wpolicy, &key).await.unwrap();
+
+    let metrics = client.metrics();
+    let agg = &metrics.cluster_aggregated;
+    let detailed = |ct: CommandType| {
+        agg.detailed_metric(namespace, ct)
+            .unwrap_or_else(|| panic!("no detailed {ct:?} metrics for {namespace}"))
+    };
+
+    // Each get returns the whole 4 KiB record.
+    assert_bytes_received(detailed(CommandType::Get), "Get", READS * PAYLOAD as u64);
+    // The UDF echoes the 4 KiB argument back in its response.
+    assert_bytes_received(detailed(CommandType::Udf), "Udf", PAYLOAD as u64);
+    // Put and delete responses are header-only; they must still count.
+    assert_bytes_received(detailed(CommandType::Put), "Put", MSG_HEADER);
+    assert_bytes_received(detailed(CommandType::Delete), "Delete", MSG_HEADER);
+    client.close().await.unwrap();
+}
+
+/// Batch read / write / delete / udf: the batch parser drives the connection
+/// through many header/body segments per response and bookmarks between
+/// records; the received total must survive all of that.
+#[aerospike_macro::test]
+async fn metrics_bytes_received_batch_commands() {
+    let client = common::client().await;
+    client.enable_metrics(MetricsPolicy::default());
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let blob = payload();
+    let bin = as_bin!("blob", blob.as_str());
+
+    // See `metrics_batch_histograms`: a node holding a single key takes the
+    // single-key fast path and is recorded as Get/Put, not BatchRead/Write.
+    // With 2 * nodes keys at least one node holds >= 2 keys, so at least two
+    // 4 KiB records flow through the batch protocol proper.
+    let key_count = client.nodes().len() * 2;
+    let keys: Vec<_> = (0..key_count)
+        .map(|i| as_key!(namespace, &set_name, i as i64))
+        .collect();
+
+    let mut bpolicy = BatchPolicy::default();
+    bpolicy.base_policy.total_timeout = 5000;
+    let bpw = BatchWritePolicy::default();
+    let bpr = BatchReadPolicy::default();
+    let bpu = BatchUDFPolicy::default();
+    let bpd = BatchDeletePolicy::default();
+
+    let mut writes: Vec<_> = keys
+        .iter()
+        .map(|k| BatchOperation::write(&bpw, k.clone(), vec![operations::put(&bin)]))
+        .collect();
+    client.batch(&bpolicy, &mut writes).await.unwrap();
+
+    let mut reads: Vec<_> = keys
+        .iter()
+        .map(|k| BatchOperation::read(&bpr, k.clone(), Bins::All))
+        .collect();
+    client.batch(&bpolicy, &mut reads).await.unwrap();
+    for op in &reads {
+        assert!(op.record().is_some(), "batch read returned no record");
+    }
+
+    let udf = register_echo_udf(&client).await;
+    let mut udfs: Vec<_> = keys
+        .iter()
+        .map(|k| {
+            BatchOperation::udf(&bpu, k.clone(), udf, "echo", Some(vec![as_val!(blob.as_str())]))
+        })
+        .collect();
+    client.batch(&bpolicy, &mut udfs).await.unwrap();
+
+    let mut deletes: Vec<_> = keys
+        .iter()
+        .map(|k| BatchOperation::delete(&bpd, k.clone()))
+        .collect();
+    client.batch(&bpolicy, &mut deletes).await.unwrap();
+
+    let metrics = client.metrics();
+    let agg = &metrics.cluster_aggregated;
+    let read_metric = agg
+        .detailed_metric(namespace, CommandType::BatchRead)
+        .expect("no detailed BatchRead metrics");
+    let write_metric = agg
+        .detailed_metric(namespace, CommandType::BatchWrite)
+        .expect("no detailed BatchWrite metrics");
+
+    // At least two 4 KiB records came back over the batch protocol.
+    assert_bytes_received(read_metric, "BatchRead", 2 * PAYLOAD as u64);
+    // Writes, deletes and UDFs all land in BatchWrite; the UDF echo alone
+    // returns at least two 4 KiB values.
+    assert_bytes_received(write_metric, "BatchWrite", 2 * PAYLOAD as u64);
+    client.close().await.unwrap();
+}
+
+/// Scan and secondary-index query: a stream response is parsed through the
+/// buffered reader across many segments and bookmarks; the received total
+/// for the command must cover every record it delivered.
+#[aerospike_macro::test]
+async fn metrics_bytes_received_query_commands() {
+    let client = common::client().await;
+    client.enable_metrics(MetricsPolicy::default());
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    let blob = payload();
+    const RECORDS: usize = 5;
+    for i in 0..RECORDS as i64 {
+        let key = as_key!(namespace, &set_name, i);
+        client
+            .put(&wpolicy, &key, &[as_bin!("bin", i), as_bin!("blob", blob.as_str())])
+            .await
+            .unwrap();
+    }
+
+    let index_name = format!("{}_{}_{}", namespace, set_name, "bin");
+    let _index_guard = common::lock_index_ops().await;
+    let task = client
+        .create_index_on_bin(
+            &AdminPolicy::default(),
+            namespace,
+            &set_name,
+            "bin",
+            &index_name,
+            IndexType::Numeric,
+            CollectionIndexType::Default,
+            None,
+        )
+        .await
+        .expect("create index");
+    task.wait_till_complete(None).await.unwrap();
+
+    use futures::StreamExt;
+
+    // Filter-less statement: a scan.
+    let stmt = Statement::new(namespace, &set_name, Bins::All);
+    let rs = client
+        .query(&QueryPolicy::default(), PartitionFilter::all(), stmt)
+        .await
+        .unwrap();
+    let scanned = rs.into_stream().count().await;
+    assert_eq!(scanned, RECORDS);
+
+    // Secondary-index filter: a query.
+    let mut stmt = Statement::new(namespace, &set_name, Bins::All);
+    stmt.add_filter(Filter::range("bin", 0, RECORDS as i64));
+    let rs = client
+        .query(&QueryPolicy::default(), PartitionFilter::all(), stmt)
+        .await
+        .unwrap();
+    let queried = rs.into_stream().count().await;
+    assert_eq!(queried, RECORDS);
+
+    let metrics = client.metrics();
+    let agg = &metrics.cluster_aggregated;
+    let scan_metric = agg
+        .detailed_metric(namespace, CommandType::Scan)
+        .expect("no detailed Scan metrics");
+    let query_metric = agg
+        .detailed_metric(namespace, CommandType::Query)
+        .expect("no detailed Query metrics");
+
+    // Every record carries a 4 KiB bin; the per-node command totals are
+    // aggregated across the cluster, so the sum covers all of them.
+    assert_bytes_received(scan_metric, "Scan", (RECORDS * PAYLOAD) as u64);
+    assert_bytes_received(query_metric, "Query", (RECORDS * PAYLOAD) as u64);
     client.close().await.unwrap();
 }
