@@ -338,7 +338,7 @@ pub fn register(lua: &Lua) -> mlua::Result<()> {
     bytes.set(
         "set_string",
         lua.create_function(
-            |_, (ud, offset, value): (mlua::AnyUserData, i64, mlua::prelude::LuaString)| {
+            |_, (ud, offset, value): (mlua::AnyUserData, i64, mlua::LuaString)| {
                 let Some(o) = offset0(offset) else {
                     return Ok(false);
                 };
@@ -413,7 +413,7 @@ pub fn register(lua: &Lua) -> mlua::Result<()> {
 
     bytes.set(
         "append_string",
-        lua.create_function(|_, (ud, value): (mlua::AnyUserData, mlua::prelude::LuaString)| {
+        lua.create_function(|_, (ud, value): (mlua::AnyUserData, mlua::LuaString)| {
             let mut b = ud.borrow_mut::<LuaBytes>()?;
             let end = b.bytes.len();
             b.write(end, &value.as_bytes());
