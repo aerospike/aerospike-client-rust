@@ -30,8 +30,8 @@
 //! # Tiers
 //!
 //! Enabling metrics turns on **Tier 0**: connection-pool gauges read at
-//! snapshot time (`open-connections`, `connections-in-use`,
-//! `connections-in-pool`, `connections-recovering`), connection opened/closed
+//! snapshot time (`open_connections`, `connections_in_use`,
+//! `connections_in_pool`, `connections_recovering`), connection opened/closed
 //! counts, and tend / node add-remove counts. None of it touches the command
 //! hot path. The per-command instruments — latency histograms, bytes, result
 //! codes, retry/error counters — and the connection failure / close-reason
@@ -55,7 +55,7 @@
 //! [`histogram`].
 //!
 //! The unit is reported by every snapshot ([`NodeMetricsSnapshot::latency_unit`],
-//! serialized as `latency-unit`), because bucket counts cannot be read without
+//! serialized as `latency_unit`), because bucket counts cannot be read without
 //! it. Changing it while collecting discards the samples already recorded, which
 //! were measured in the other unit — exactly as a `latency_columns` change does.
 //! With the `dynamic-config` feature the histogram keys live under

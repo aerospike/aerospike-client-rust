@@ -434,7 +434,7 @@ impl Node {
         self.increase_failures();
     }
 
-    /// Parses `peers-generation` from `info_map` and compares with the
+    /// Parses `peers_generation` from `info_map` and compares with the
     /// stored value. Sets `peers.gen_changed = true` if they differ.
     ///
     /// When the server's reported generation goes *backward* (`stored > gen`)

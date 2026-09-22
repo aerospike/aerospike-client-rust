@@ -1730,8 +1730,8 @@ impl Cluster {
         self.total_timeout_exceeded_count.load(Ordering::Relaxed)
     }
 
-    /// Builds the per-node reserved labels (node/host/cluster/app-id) merged
-    /// with the user-provided labels.
+    /// Builds the per-node reserved labels (`node`, `host`, `cluster`,
+    /// `app_id`) merged with the user-provided labels.
     pub fn node_labels(&self) -> Labels {
         let policy = self.metrics_policy();
         let user_labels = &policy.labels;
@@ -1750,7 +1750,7 @@ impl Cluster {
             entries.insert("node".to_string(), node.name().to_string());
             entries.insert("host".to_string(), node.host().to_string());
             entries.insert("cluster".to_string(), cluster_name.clone());
-            entries.insert("app-id".to_string(), app_id.clone());
+            entries.insert("app_id".to_string(), app_id.clone());
             labels.push(entries);
         }
         labels

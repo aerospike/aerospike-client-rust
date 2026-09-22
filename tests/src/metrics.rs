@@ -317,7 +317,7 @@ async fn metrics_labels_include_reserved_and_custom() {
         assert!(entry.contains_key("node"), "missing reserved 'node' label");
         assert!(entry.contains_key("host"), "missing reserved 'host' label");
         assert!(entry.contains_key("cluster"));
-        assert!(entry.contains_key("app-id"));
+        assert!(entry.contains_key("app_id"));
         // Custom labels are merged in.
         assert_eq!(entry.get("env").map(String::as_str), Some("test"));
         assert_eq!(entry.get("team").map(String::as_str), Some("client"));
@@ -407,29 +407,29 @@ async fn metrics_json_serialization_layout() {
     let v = serde_json::to_value(&metrics).expect("serialize ClusterMetrics");
 
     // Synthetic top-level keys are present in the serialized map.
-    assert!(v.get("cluster-aggregated-metrics").is_some());
-    assert!(v.get("total-nodes").is_some());
-    assert!(v.get("open-connections").is_some());
-    assert!(v.get("connections-in-use").is_some());
-    assert!(v.get("connections-in-pool").is_some());
-    assert!(v.get("recover-queue-size").is_some());
-    assert!(v.get("nodes-invalid").is_some());
-    assert!(v.get("exceeded-max-retries").is_some());
-    assert!(v.get("exceeded-total-timeout").is_some());
+    assert!(v.get("cluster_aggregated_metrics").is_some());
+    assert!(v.get("total_nodes").is_some());
+    assert!(v.get("open_connections").is_some());
+    assert!(v.get("connections_in_use").is_some());
+    assert!(v.get("connections_in_pool").is_some());
+    assert!(v.get("recover_queue_size").is_some());
+    assert!(v.get("nodes_invalid").is_some());
+    assert!(v.get("exceeded_max_retries").is_some());
+    assert!(v.get("exceeded_total_timeout").is_some());
 
-    let agg = &v["cluster-aggregated-metrics"];
+    let agg = &v["cluster_aggregated_metrics"];
     // Stable counter and histogram field names.
-    assert!(agg.get("connections-attempts").is_some());
-    assert!(agg.get("connections-error-tls").is_some());
-    assert!(agg.get("connections-error-auth").is_some());
-    assert!(agg.get("connections-closed-error").is_some());
-    assert!(agg.get("connections-closed-node-removed").is_some());
-    assert!(agg.get("connections-recovering").is_some());
-    assert!(agg.get("error-rate").is_some());
-    assert!(agg.get("put-metrics").is_some());
-    assert!(agg["put-metrics"].get("buckets").unwrap().is_array());
-    assert!(agg.get("detailed-metrics").is_some());
-    assert!(agg.get("detailed-resultcode-counts").is_some());
+    assert!(agg.get("connections_attempts").is_some());
+    assert!(agg.get("connections_error_tls").is_some());
+    assert!(agg.get("connections_error_auth").is_some());
+    assert!(agg.get("connections_closed_error").is_some());
+    assert!(agg.get("connections_closed_node_removed").is_some());
+    assert!(agg.get("connections_recovering").is_some());
+    assert!(agg.get("error_rate").is_some());
+    assert!(agg.get("put_metrics").is_some());
+    assert!(agg["put_metrics"].get("buckets").unwrap().is_array());
+    assert!(agg.get("detailed_metrics").is_some());
+    assert!(agg.get("detailed_resultcode_counts").is_some());
     client.close().await.unwrap();
 }
 

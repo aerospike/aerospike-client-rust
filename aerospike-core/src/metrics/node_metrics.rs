@@ -123,17 +123,17 @@ impl CommandType {
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 pub struct CommandMetric {
     /// Time spent acquiring a connection from the pool.
-    #[cfg_attr(feature = "serialization", serde(rename = "connection-aq"))]
+    #[cfg_attr(feature = "serialization", serde(rename = "connection_aq"))]
     pub connection_aq: SyncHistogram,
     /// Round-trip command latency.
     pub latency: SyncHistogram,
     /// Time spent parsing the response.
     pub parsing: SyncHistogram,
     /// Bytes written to the wire.
-    #[cfg_attr(feature = "serialization", serde(rename = "bytes-sent"))]
+    #[cfg_attr(feature = "serialization", serde(rename = "bytes_sent"))]
     pub bytes_sent: SyncHistogram,
     /// Bytes read from the wire.
-    #[cfg_attr(feature = "serialization", serde(rename = "bytes-received"))]
+    #[cfg_attr(feature = "serialization", serde(rename = "bytes_received"))]
     pub bytes_received: SyncHistogram,
 }
 
@@ -202,56 +202,56 @@ macro_rules! define_counters {
 }
 
 define_counters! {
-    connections_attempts => "connections-attempts",
-    connections_successful => "connections-successful",
-    connections_failed => "connections-failed",
-    connections_timeout_errors => "connections-error-timeout",
-    connections_other_errors => "connections-error-other",
-    connections_tls_errors => "connections-error-tls",
-    connections_auth_errors => "connections-error-auth",
-    circuit_breaker_hits => "circuit-breaker-hits",
-    connections_pool_empty => "connections-pool-empty",
-    connections_pool_overflow => "connections-pool-overflow",
-    connections_idle_dropped => "connections-idle-dropped",
-    connections_open => "open-connections",
-    connections_in_use => "connections-in-use",
-    connections_in_pool => "connections-in-pool",
-    connections_recovering => "connections-recovering",
-    connections_closed => "closed-connections",
-    connections_closed_error => "connections-closed-error",
-    connections_closed_node_removed => "connections-closed-node-removed",
-    tends_total => "tends-total",
-    tends_successful => "tends-successful",
-    tends_failed => "tends-failed",
-    partition_map_updates => "partition-map-updates",
-    node_added => "node-added-count",
-    node_removed => "node-removed-count",
-    transaction_retry_count => "transaction-retry-count",
-    transaction_error_count => "transaction-error-count",
-    error_rate => "error-rate",
+    connections_attempts => "connections_attempts",
+    connections_successful => "connections_successful",
+    connections_failed => "connections_failed",
+    connections_timeout_errors => "connections_error_timeout",
+    connections_other_errors => "connections_error_other",
+    connections_tls_errors => "connections_error_tls",
+    connections_auth_errors => "connections_error_auth",
+    circuit_breaker_hits => "circuit_breaker_hits",
+    connections_pool_empty => "connections_pool_empty",
+    connections_pool_overflow => "connections_pool_overflow",
+    connections_idle_dropped => "connections_idle_dropped",
+    connections_open => "open_connections",
+    connections_in_use => "connections_in_use",
+    connections_in_pool => "connections_in_pool",
+    connections_recovering => "connections_recovering",
+    connections_closed => "closed_connections",
+    connections_closed_error => "connections_closed_error",
+    connections_closed_node_removed => "connections_closed_node_removed",
+    tends_total => "tends_total",
+    tends_successful => "tends_successful",
+    tends_failed => "tends_failed",
+    partition_map_updates => "partition_map_updates",
+    node_added => "node_added_count",
+    node_removed => "node_removed_count",
+    transaction_retry_count => "transaction_retry_count",
+    transaction_error_count => "transaction_error_count",
+    error_rate => "error_rate",
 }
 
 /// The 11 per-command-type latency histograms, in declaration order.
 macro_rules! command_histograms {
     () => {
         [
-            ("get-metrics", CommandType::Get),
-            ("get-header-metrics", CommandType::GetHeader),
-            ("exists-metrics", CommandType::Exists),
-            ("put-metrics", CommandType::Put),
-            ("delete-metrics", CommandType::Delete),
-            ("operate-metrics", CommandType::Operate),
-            ("query-metrics", CommandType::Query),
-            ("scan-metrics", CommandType::Scan),
-            ("udf-metrics", CommandType::Udf),
-            ("batch-read-metrics", CommandType::BatchRead),
-            ("batch-write-metrics", CommandType::BatchWrite),
+            ("get_metrics", CommandType::Get),
+            ("get_header_metrics", CommandType::GetHeader),
+            ("exists_metrics", CommandType::Exists),
+            ("put_metrics", CommandType::Put),
+            ("delete_metrics", CommandType::Delete),
+            ("operate_metrics", CommandType::Operate),
+            ("query_metrics", CommandType::Query),
+            ("scan_metrics", CommandType::Scan),
+            ("udf_metrics", CommandType::Udf),
+            ("batch_read_metrics", CommandType::BatchRead),
+            ("batch_write_metrics", CommandType::BatchWrite),
         ]
     };
 }
 
 /// Phase at which opening a new connection failed. Breaks the
-/// `connections-failed` rollup down into the spec's `connection.open.failure`
+/// `connections_failed` rollup down into the spec's `connection.open.failure`
 /// family (`metrics.md` §4.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpenFailure {
@@ -265,7 +265,7 @@ pub enum OpenFailure {
     Auth,
 }
 
-/// Why a connection was closed. Every close bumps `closed-connections`; the
+/// Why a connection was closed. Every close bumps `closed_connections`; the
 /// reason feeds the operational `connection.closed.*` counters
 /// (`metrics.md` §4.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -448,7 +448,7 @@ impl NodeMetrics {
     }
 
     /// Records a failed connection open (Tier 1 operational): the rollup
-    /// `connections-failed` plus one phase-specific counter.
+    /// `connections_failed` plus one phase-specific counter.
     pub fn incr_connections_failed(&self, phase: OpenFailure) {
         if self.is_operational() {
             self.counters
@@ -464,7 +464,7 @@ impl NodeMetrics {
         }
     }
 
-    /// Records a closed connection (Tier 0 `closed-connections`) together with
+    /// Records a closed connection (Tier 0 `closed_connections`) together with
     /// the reason it was closed (Tier 1 operational close-reason counters).
     pub fn incr_connections_closed(&self, reason: CloseReason) {
         if !self.is_enabled() {
@@ -798,7 +798,7 @@ pub struct NodeMetricsSnapshot {
     ///
     /// Bucket counts cannot be interpreted without it, so it travels with the
     /// data rather than being something the consumer has to know.
-    #[cfg_attr(feature = "serialization", serde(rename = "latency-unit"))]
+    #[cfg_attr(feature = "serialization", serde(rename = "latency_unit"))]
     pub latency_unit: LatencyUnit,
 
     #[cfg_attr(
@@ -812,33 +812,33 @@ pub struct NodeMetricsSnapshot {
     /// Scalar counters.
     pub counters: Counters,
 
-    #[cfg_attr(feature = "serialization", serde(rename = "get-metrics"))]
+    #[cfg_attr(feature = "serialization", serde(rename = "get_metrics"))]
     get_metrics: SyncHistogram,
-    #[cfg_attr(feature = "serialization", serde(rename = "get-header-metrics"))]
+    #[cfg_attr(feature = "serialization", serde(rename = "get_header_metrics"))]
     get_header_metrics: SyncHistogram,
-    #[cfg_attr(feature = "serialization", serde(rename = "exists-metrics"))]
+    #[cfg_attr(feature = "serialization", serde(rename = "exists_metrics"))]
     exists_metrics: SyncHistogram,
-    #[cfg_attr(feature = "serialization", serde(rename = "put-metrics"))]
+    #[cfg_attr(feature = "serialization", serde(rename = "put_metrics"))]
     put_metrics: SyncHistogram,
-    #[cfg_attr(feature = "serialization", serde(rename = "delete-metrics"))]
+    #[cfg_attr(feature = "serialization", serde(rename = "delete_metrics"))]
     delete_metrics: SyncHistogram,
-    #[cfg_attr(feature = "serialization", serde(rename = "operate-metrics"))]
+    #[cfg_attr(feature = "serialization", serde(rename = "operate_metrics"))]
     operate_metrics: SyncHistogram,
-    #[cfg_attr(feature = "serialization", serde(rename = "query-metrics"))]
+    #[cfg_attr(feature = "serialization", serde(rename = "query_metrics"))]
     query_metrics: SyncHistogram,
-    #[cfg_attr(feature = "serialization", serde(rename = "scan-metrics"))]
+    #[cfg_attr(feature = "serialization", serde(rename = "scan_metrics"))]
     scan_metrics: SyncHistogram,
-    #[cfg_attr(feature = "serialization", serde(rename = "udf-metrics"))]
+    #[cfg_attr(feature = "serialization", serde(rename = "udf_metrics"))]
     udf_metrics: SyncHistogram,
-    #[cfg_attr(feature = "serialization", serde(rename = "batch-read-metrics"))]
+    #[cfg_attr(feature = "serialization", serde(rename = "batch_read_metrics"))]
     batch_read_metrics: SyncHistogram,
-    #[cfg_attr(feature = "serialization", serde(rename = "batch-write-metrics"))]
+    #[cfg_attr(feature = "serialization", serde(rename = "batch_write_metrics"))]
     batch_write_metrics: SyncHistogram,
 
     #[cfg_attr(
         feature = "serialization",
         serde(
-            rename = "detailed-resultcode-counts",
+            rename = "detailed_resultcode_counts",
             serialize_with = "serialize_result_codes"
         )
     )]
@@ -846,7 +846,7 @@ pub struct NodeMetricsSnapshot {
 
     #[cfg_attr(
         feature = "serialization",
-        serde(rename = "detailed-metrics", serialize_with = "serialize_detailed")
+        serde(rename = "detailed_metrics", serialize_with = "serialize_detailed")
     )]
     detailed_metrics: HashMap<String, MetricSlots>,
 }
@@ -879,17 +879,17 @@ impl NodeMetricsSnapshot {
 
     fn command_histogram_mut(&mut self, name: &str) -> &mut SyncHistogram {
         match name {
-            "get-metrics" => &mut self.get_metrics,
-            "get-header-metrics" => &mut self.get_header_metrics,
-            "exists-metrics" => &mut self.exists_metrics,
-            "put-metrics" => &mut self.put_metrics,
-            "delete-metrics" => &mut self.delete_metrics,
-            "operate-metrics" => &mut self.operate_metrics,
-            "query-metrics" => &mut self.query_metrics,
-            "scan-metrics" => &mut self.scan_metrics,
-            "udf-metrics" => &mut self.udf_metrics,
-            "batch-read-metrics" => &mut self.batch_read_metrics,
-            "batch-write-metrics" => &mut self.batch_write_metrics,
+            "get_metrics" => &mut self.get_metrics,
+            "get_header_metrics" => &mut self.get_header_metrics,
+            "exists_metrics" => &mut self.exists_metrics,
+            "put_metrics" => &mut self.put_metrics,
+            "delete_metrics" => &mut self.delete_metrics,
+            "operate_metrics" => &mut self.operate_metrics,
+            "query_metrics" => &mut self.query_metrics,
+            "scan_metrics" => &mut self.scan_metrics,
+            "udf_metrics" => &mut self.udf_metrics,
+            "batch_read_metrics" => &mut self.batch_read_metrics,
+            "batch_write_metrics" => &mut self.batch_write_metrics,
             other => unreachable!("unknown command histogram: {other}"),
         }
     }
@@ -900,17 +900,17 @@ impl NodeMetricsSnapshot {
 
     fn command_histograms(&self) -> [(&'static str, &SyncHistogram); 11] {
         [
-            ("get-metrics", &self.get_metrics),
-            ("get-header-metrics", &self.get_header_metrics),
-            ("exists-metrics", &self.exists_metrics),
-            ("put-metrics", &self.put_metrics),
-            ("delete-metrics", &self.delete_metrics),
-            ("operate-metrics", &self.operate_metrics),
-            ("query-metrics", &self.query_metrics),
-            ("scan-metrics", &self.scan_metrics),
-            ("udf-metrics", &self.udf_metrics),
-            ("batch-read-metrics", &self.batch_read_metrics),
-            ("batch-write-metrics", &self.batch_write_metrics),
+            ("get_metrics", &self.get_metrics),
+            ("get_header_metrics", &self.get_header_metrics),
+            ("exists_metrics", &self.exists_metrics),
+            ("put_metrics", &self.put_metrics),
+            ("delete_metrics", &self.delete_metrics),
+            ("operate_metrics", &self.operate_metrics),
+            ("query_metrics", &self.query_metrics),
+            ("scan_metrics", &self.scan_metrics),
+            ("udf_metrics", &self.udf_metrics),
+            ("batch_read_metrics", &self.batch_read_metrics),
+            ("batch_write_metrics", &self.batch_write_metrics),
         ]
     }
 
@@ -971,8 +971,8 @@ impl NodeMetricsSnapshot {
     }
 
     /// Stamps every pool gauge from a point-in-time pool walk:
-    /// `open-connections` (the total), `connections-in-use`,
-    /// `connections-in-pool` and `connections-recovering`.
+    /// `open_connections` (the total), `connections_in_use`,
+    /// `connections_in_pool` and `connections_recovering`.
     pub const fn set_pool_gauges(&mut self, gauges: PoolGauges) {
         self.counters.connections_open = gauges.total;
         self.counters.connections_in_use = gauges.in_use();
@@ -1014,14 +1014,14 @@ impl NodeMetricsSnapshot {
         self.counters.connections_recovering
     }
 
-    /// Stamps the node's circuit-breaker gauge (`error-rate`): the number of
+    /// Stamps the node's circuit-breaker gauge (`error_rate`): the number of
     /// command failures counted against the node in the **current**
     /// `error_rate_window`. Read live when the snapshot is taken.
     pub const fn set_error_rate(&mut self, count: u64) {
         self.counters.error_rate = count;
     }
 
-    /// Current circuit-breaker window error count (`error-rate` gauge).
+    /// Current circuit-breaker window error count (`error_rate` gauge).
     ///
     /// Two caveats the number carries with it: it only moves while the
     /// breaker is on (`ClientPolicy::max_error_rate > 0`; otherwise it is a
@@ -1059,17 +1059,17 @@ impl NodeMetricsSnapshot {
 
         // Merge per-command-type histograms by name (shape is identical).
         let names: [&str; 11] = [
-            "get-metrics",
-            "get-header-metrics",
-            "exists-metrics",
-            "put-metrics",
-            "delete-metrics",
-            "operate-metrics",
-            "query-metrics",
-            "scan-metrics",
-            "udf-metrics",
-            "batch-read-metrics",
-            "batch-write-metrics",
+            "get_metrics",
+            "get_header_metrics",
+            "exists_metrics",
+            "put_metrics",
+            "delete_metrics",
+            "operate_metrics",
+            "query_metrics",
+            "scan_metrics",
+            "udf_metrics",
+            "batch_read_metrics",
+            "batch_write_metrics",
         ];
         for name in names {
             let src = other.command_histogram_ref(name).clone();
@@ -1745,24 +1745,24 @@ mod tests {
         let v = serde_json::to_value(&snap).unwrap();
 
         // Counter field names (JSON tags).
-        assert_eq!(v["open-connections"], 4);
-        assert_eq!(v["tends-total"], 2);
-        assert!(v.get("transaction-retry-count").is_some());
+        assert_eq!(v["open_connections"], 4);
+        assert_eq!(v["tends_total"], 2);
+        assert!(v.get("transaction_retry_count").is_some());
 
         // Histogram object shape.
-        let put = &v["put-metrics"];
+        let put = &v["put_metrics"];
         assert_eq!(put["count"], 1);
         assert!(put.get("buckets").unwrap().is_array());
         assert!(put.get("min").is_some() && put.get("max").is_some() && put.get("sum").is_some());
 
         // Detailed metrics nested by namespace -> command -> histograms.
-        let detailed = &v["detailed-metrics"]["test"]["Put"];
-        assert_eq!(detailed["bytes-sent"]["count"], 1);
-        assert!(detailed.get("connection-aq").is_some());
-        assert!(detailed.get("bytes-received").is_some());
+        let detailed = &v["detailed_metrics"]["test"]["Put"];
+        assert_eq!(detailed["bytes_sent"]["count"], 1);
+        assert!(detailed.get("connection_aq").is_some());
+        assert!(detailed.get("bytes_received").is_some());
 
         // Result-code counts nested by namespace -> command -> code string.
-        let rc = &v["detailed-resultcode-counts"]["test"]["Put"];
+        let rc = &v["detailed_resultcode_counts"]["test"]["Put"];
         assert_eq!(rc[ResultCode::KeyNotFoundError.into_string()], 1);
     }
 }

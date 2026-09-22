@@ -35,7 +35,7 @@ struct SharedQueue {
     reserved: Mutex<usize>,
     /// Connections currently handed to a background timeout-recovery task
     /// (they keep their `reserved` slot meanwhile). Read at snapshot time as
-    /// the `connections-recovering` gauge.
+    /// the `connections_recovering` gauge.
     recovering: AtomicUsize,
     capacity: usize,
     host: Host,
@@ -266,7 +266,7 @@ impl Queue {
 
     /// Removes and closes every idle connection in the queue, releasing their
     /// slots. Used when the node leaves the cluster: each close is counted as
-    /// `closed-connections` with the node-removed reason. Connections out on
+    /// `closed_connections` with the node-removed reason. Connections out on
     /// loan are untouched; they settle through `PooledConnection::drop`.
     pub fn clear(&self) {
         let drained: Vec<Connection> = {
@@ -427,7 +427,7 @@ impl ConnectionPool {
     }
 
     /// Idle connections sitting in the queues right now (the
-    /// `connections-in-pool` gauge). Not atomic with
+    /// `connections_in_pool` gauge). Not atomic with
     /// [`reserved_conns`](Self::reserved_conns): a checkout between the two
     /// reads can make idle exceed total by one for that snapshot.
     pub fn idle_conns(&self) -> usize {
@@ -435,7 +435,7 @@ impl ConnectionPool {
     }
 
     /// Connections across all queues currently in background timeout
-    /// recovery (the `connections-recovering` gauge).
+    /// recovery (the `connections_recovering` gauge).
     pub fn recovering_conns(&self) -> usize {
         self.queues.iter().map(Queue::recovering_count).sum()
     }
