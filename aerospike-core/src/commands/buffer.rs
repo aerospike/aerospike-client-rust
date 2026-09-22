@@ -958,12 +958,24 @@ impl Buffer {
             Vec::new()
         };
 
+        // Whether each row repeats the previous row's header, decided once here
+        // and reused by the write loop below. `match_header` is a deep
+        // structural comparison — namespace and set strings, the per-record
+        // policy including its filter expression, the bin list, every op, and
+        // the transaction version — and the two loops each called it for every
+        // row, so a batch paid 2N comparisons to answer N questions.
+        let mut repeats: Vec<bool> = Vec::with_capacity(batch_ops.len());
+
         let mut prev: Option<&BatchOperation> = None;
         let mut ver_prev: Option<u64> = None;
         for (i, (batch_op, _)) in batch_ops.iter().enumerate() {
             let ver = versions.get(i).copied().flatten();
-            self.data_offset += batch_op.key().digest.len() + 4;
-            if batch_op.match_header(prev, ver, ver_prev) {
+            // The digest is always 20 bytes; `key()` would clone two Strings
+            // to say so.
+            self.data_offset += 20 + 4;
+            let repeat = batch_op.match_header(prev, ver, ver_prev);
+            repeats.push(repeat);
+            if repeat {
                 self.data_offset += 1;
             } else {
                 // Must write full header and namespace/set/bin names.
@@ -1001,14 +1013,12 @@ impl Buffer {
         self.write_u8(Buffer::get_batch_flags(policy));
 
         let mut attr = BatchAttr::default();
-        prev = None;
-        ver_prev = None;
         for (idx, (batch_op, _)) in batch_ops.iter().enumerate() {
             let key = &batch_op.key();
             let ver = versions.get(idx).copied().flatten();
             self.write_u32(idx as u32);
             self.write_bytes(&key.digest);
-            if batch_op.match_header(prev, ver, ver_prev) {
+            if repeats[idx] {
                 self.write_u8(BATCH_MSG_REPEAT);
             } else {
                 match batch_op {
@@ -1119,8 +1129,6 @@ impl Buffer {
                     }
                 }
             }
-            prev = Some(batch_op);
-            ver_prev = ver;
         }
 
         let field_size = self.data_offset - field_size_offset - 4;

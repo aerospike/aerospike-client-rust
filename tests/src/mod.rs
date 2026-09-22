@@ -23,6 +23,7 @@ mod admin;
 mod backoff;
 mod batch;
 mod batch_in_doubt;
+mod batch_random;
 mod cdt_bitwise;
 mod cdt_list;
 mod cdt_map;
@@ -44,6 +45,7 @@ mod index;
 mod kv;
 mod metrics;
 mod path_expressions;
+mod perf_e2e;
 mod query;
 mod query_selection;
 #[cfg(feature = "lua")]

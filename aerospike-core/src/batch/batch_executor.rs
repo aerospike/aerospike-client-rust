@@ -22,7 +22,6 @@ use crate::commands::{
 use crate::errors::Result;
 use crate::policy::{BatchPolicy, Concurrency};
 use crate::{Error, Key, ResultCode};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 pub struct BatchExecutor {
@@ -135,7 +134,7 @@ impl BatchExecutor {
     ) -> Result<(Vec<(BatchOperation, usize)>, Option<Error>)> {
         let row_count = rows.len();
         let BatchSplit {
-            map: batch_nodes,
+            groups: batch_nodes,
             unroutable,
         } = self.get_batch_operate_nodes(rows, policy.replica, policy.base_policy.read_mode_sc)?;
 
@@ -444,7 +443,12 @@ impl BatchExecutor {
         read_mode_sc: crate::policy::ReadModeSC,
     ) -> Result<BatchSplit> {
         #![allow(clippy::type_complexity)]
-        let mut map: HashMap<Arc<Node>, Vec<(BatchOperation, usize)>> = HashMap::new();
+        // Grouped by node in first-seen order. A `HashMap<Arc<Node>, _>` did
+        // this before, hashing the node's ~40-character name string once per
+        // row; a batch spans a handful of nodes, so a short vector probed with
+        // `Arc::ptr_eq` — a pointer compare, and usually a hit on the entry
+        // just used, since consecutive rows often share a node — is cheaper.
+        let mut groups: Vec<(Arc<Node>, Vec<(BatchOperation, usize)>)> = Vec::new();
         let mut unroutable: Vec<(BatchOperation, usize)> = Vec::new();
         let mut first_err: Option<Error> = None;
 
@@ -459,9 +463,10 @@ impl BatchExecutor {
             );
             match routed {
                 Ok(node) => {
-                    map.entry(node)
-                        .or_insert_with(Vec::new)
-                        .push((batch_op, index));
+                    match groups.iter_mut().find(|(n, _)| Arc::ptr_eq(n, &node)) {
+                        Some((_, bucket)) => bucket.push((batch_op, index)),
+                        None => groups.push((node, vec![(batch_op, index)])),
+                    }
                 }
                 Err(err) => {
                     // Never in-doubt: nothing was sent for this key.
@@ -472,20 +477,20 @@ impl BatchExecutor {
             }
         }
 
-        if map.is_empty() {
+        if groups.is_empty() {
             if let Some(err) = first_err {
                 return Err(err);
             }
         }
 
-        Ok(BatchSplit { map, unroutable })
+        Ok(BatchSplit { groups, unroutable })
     }
 }
 
 /// The outcome of splitting a batch across nodes.
 struct BatchSplit {
-    /// Keys that resolved to a node, grouped by that node.
-    map: HashMap<Arc<Node>, Vec<(BatchOperation, usize)>>,
+    /// Keys that resolved to a node, grouped by that node in first-seen order.
+    groups: Vec<(Arc<Node>, Vec<(BatchOperation, usize)>)>,
     /// Keys that resolved to nothing, each already marked with its result code
     /// and carrying its original input index.
     unroutable: Vec<(BatchOperation, usize)>,

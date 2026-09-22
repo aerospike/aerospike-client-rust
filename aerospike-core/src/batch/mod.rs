@@ -14,6 +14,8 @@
 // the License.
 
 pub mod batch_executor;
+#[cfg(test)]
+mod encode_tests;
 pub(crate) mod hook;
 pub(crate) use hook::BatchHook;
 pub mod batch_record;

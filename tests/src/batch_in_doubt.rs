@@ -36,10 +36,17 @@ use aerospike::{
 // seconds. Stopping once the clock *reaches* `stop` would end at the next second
 // boundary and wait anywhere from 0 to `secs` seconds, so the spin runs until the
 // clock moves past it.
+// The stall must outlive the 250 ms socket timeout without touching the
+// clock: since AER-6914 (server 8.2) the UDF sandbox drops `os`, `io`,
+// `debug` and `load*` to prevent escapes, so `os.time()` is a nil index and
+// the UDF would fail instantly instead of stalling. A pure-Lua loop works on
+// every server; measured ~14 ns per iteration on 8.2, so `secs` is scaled to
+// ~200 M iterations per requested second — over ten times the timeout.
 const WAIT_UDF: &str = r#"
 function wait_and_update(rec, secs)
-  local stop = os.time() + secs
-  while os.time() <= stop do end
+  local n = secs * 200000000
+  local x = 0
+  for i = 1, n do x = (x + i) % 7 end
   if aerospike:exists(rec) then
     rec['bin'] = 1
     aerospike:update(rec)
