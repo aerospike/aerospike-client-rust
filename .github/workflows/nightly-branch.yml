@@ -105,10 +105,14 @@ jobs:
           AEROSPIKE_USER: admin
           AEROSPIKE_PASSWORD: admin
         run: |
+          # AEROSPIKE_HOSTS points at the TLS-only port for this whole run, but
+          # only tls_client_auth/tls_client_no_auth set policy.tls_config -- every
+          # other test would try a plaintext connection here and fail with an
+          # early EOF. Scope the run to just the TLS-aware tests.
           cargo test --verbose -p aerospike \
             --no-default-features \
             --features serialization,async,rt-tokio,tls \
-            -- --test-threads=1
+            -- --test-threads=1 tls_client
 
   # ────────────────────────────────────────────────────────────────────────
   # Leg 3 — Enterprise Edition, AP mode (no strong consistency)
