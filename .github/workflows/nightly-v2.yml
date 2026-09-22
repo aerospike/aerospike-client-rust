@@ -4,11 +4,6 @@ on:
   schedule:
     - cron: '0 2 * * *'   # 02:00 UTC daily
   workflow_dispatch:
-  # TEMP: validating this against v2 for the first time -- revert before merging.
-  pull_request:
-    branches:
-      - main
-      - v3
 
 jobs:
   v2:
