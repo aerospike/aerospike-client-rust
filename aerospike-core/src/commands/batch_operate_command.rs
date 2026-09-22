@@ -964,6 +964,7 @@ mod tests {
             client_policy: policy.clone(),
             use_new_info: true,
             version: Version::default(),
+            cluster_name: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(

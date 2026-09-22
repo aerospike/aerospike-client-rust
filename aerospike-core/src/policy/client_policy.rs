@@ -348,6 +348,10 @@ pub struct ClientPolicy {
     /// Expected cluster name. If not `None`, server nodes must return this cluster name in order
     /// to join the client's view of the cluster. Should only be set when connecting to servers
     /// that support the "cluster-name" info command.
+    ///
+    /// This is a *validation* knob only. The name the servers actually report
+    /// is discovered on every tend regardless of this setting and is available
+    /// through `Client::server_cluster_name`.
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub cluster_name: Option<String>,
 

@@ -34,11 +34,24 @@ pub struct NodeValidator {
     pub client_policy: ClientPolicy,
     pub use_new_info: bool,
     pub version: Version,
+    /// Cluster name the node reported in its `cluster-name` info response,
+    /// normalized by [`normalize_cluster_name`]. Captured unconditionally so
+    /// the discovered name is available even when
+    /// `ClientPolicy::cluster_name` is unset and no validation runs.
+    pub cluster_name: Option<String>,
     /// Whether this validator was created for a seed host. When true,
     /// `validate_alias` queries `service-{tls,clear}-{std,alt}` and, if the
     /// seed isn't listed in the response, treats the seed as a load
     /// balancer and rewrites `aliases` to the first reachable real backend.
     pub detect_load_balancer: bool,
+}
+
+/// Normalizes a `cluster-name` info value: a server without a configured
+/// cluster name answers `null` (or nothing), which is "no name", not a name.
+pub(crate) fn normalize_cluster_name(raw: Option<&String>) -> Option<String> {
+    raw.map(|s| s.trim())
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("null"))
+        .map(str::to_owned)
 }
 
 // Generates a node validator
@@ -51,6 +64,7 @@ impl NodeValidator {
             client_policy,
             use_new_info: true,
             version: Version::default(),
+            cluster_name: None,
             detect_load_balancer: false,
         }
     }
@@ -181,6 +195,12 @@ impl NodeValidator {
                 }
             }
         }
+
+        // Discovery is separate from validation: the server's name is kept
+        // whatever the policy says, so callers can select per-cluster
+        // settings from it; the configured name, when present, is asserted
+        // below exactly as before.
+        self.cluster_name = normalize_cluster_name(info_map.get("cluster-name"));
 
         if let Some(ref cluster_name) = cluster.cluster_name() {
             match info_map.get("cluster-name") {
@@ -313,4 +333,22 @@ fn host_is_loopback(host: &Host) -> bool {
         return ip.is_loopback();
     }
     matches!(host.name.as_str(), "localhost" | "::1")
+}
+
+#[cfg(test)]
+mod cluster_name_tests {
+    use super::normalize_cluster_name;
+
+    #[test]
+    fn normalize_treats_null_and_empty_as_no_name() {
+        assert_eq!(normalize_cluster_name(None), None);
+        assert_eq!(normalize_cluster_name(Some(&String::new())), None);
+        assert_eq!(normalize_cluster_name(Some(&"  ".to_string())), None);
+        assert_eq!(normalize_cluster_name(Some(&"null".to_string())), None);
+        assert_eq!(normalize_cluster_name(Some(&"NULL".to_string())), None);
+        assert_eq!(
+            normalize_cluster_name(Some(&" production ".to_string())),
+            Some("production".to_string())
+        );
+    }
 }

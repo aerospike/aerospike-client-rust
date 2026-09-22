@@ -1027,4 +1027,10 @@ impl Client {
     pub fn metrics(&self) -> aerospike_core::ClusterMetrics {
         self.async_client.metrics()
     }
+
+    /// The cluster name reported by the servers, discovered during tend.
+    /// See [`aerospike_core::Client::server_cluster_name`].
+    pub fn server_cluster_name(&self) -> Option<String> {
+        self.async_client.server_cluster_name()
+    }
 }

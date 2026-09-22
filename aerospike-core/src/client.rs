@@ -387,6 +387,19 @@ impl Client {
         self.cluster.nodes()
     }
 
+    /// The cluster name the connected servers report (`cluster-name` info),
+    /// discovered during tend regardless of whether
+    /// `ClientPolicy::cluster_name` is set. `None` when the servers have no
+    /// cluster name configured (or no node has been tended yet).
+    ///
+    /// Setting `ClientPolicy::cluster_name` still only *validates* nodes
+    /// against a name; this accessor is how a caller learns the name without
+    /// opting into that validation, for example to pick a per-cluster
+    /// configuration block and fall back to a default when it is `None`.
+    pub fn server_cluster_name(&self) -> Option<String> {
+        self.cluster.server_cluster_name()
+    }
+
     /// Enables periodic client metrics collection, (re)shaping per-node
     /// histograms to `policy`. While enabled the client records the Tier 0
     /// instruments (pool gauges, connection opened/closed, tend and node

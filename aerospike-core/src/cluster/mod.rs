@@ -915,8 +915,22 @@ impl Cluster {
         };
     }
 
+    /// The cluster name the client was **configured** to validate against
+    /// (`ClientPolicy::cluster_name`). `None` unless the user set one. For the
+    /// name the servers actually report, see
+    /// [`server_cluster_name`](Self::server_cluster_name).
     pub fn cluster_name(&self) -> Option<String> {
         self.client_policy().cluster_name
+    }
+
+    /// The cluster name **reported by the servers** on the last tend, or
+    /// `None` when no active node reports one (no name configured on the
+    /// server, or no node yet). Discovered unconditionally, so it is
+    /// available without setting `ClientPolicy::cluster_name`; use it to
+    /// select per-cluster settings, and fall back to a default block when it
+    /// is `None`. Validation behaviour is unchanged and still opt-in.
+    pub fn server_cluster_name(&self) -> Option<String> {
+        self.nodes().iter().find_map(|node| node.cluster_name())
     }
 
     pub fn client_policy(&self) -> ClientPolicy {
@@ -1736,7 +1750,15 @@ impl Cluster {
         let policy = self.metrics_policy();
         let user_labels = &policy.labels;
         let client_policy = self.client_policy();
-        let cluster_name = client_policy.cluster_name.clone().unwrap_or_default();
+        // The `cluster` label prefers the configured name and otherwise uses
+        // the one the servers report, so an unvalidated cluster is still
+        // labelled (metrics.md §4.1: "from the server, or from explicit
+        // client config").
+        let cluster_name = client_policy
+            .cluster_name
+            .clone()
+            .or_else(|| self.server_cluster_name())
+            .unwrap_or_default();
         let app_id = client_policy.application_id.clone().unwrap_or_default();
 
         let mut labels = Labels::new();

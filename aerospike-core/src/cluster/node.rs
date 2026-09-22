@@ -20,14 +20,14 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::result::Result as StdResult;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use aerospike_rt::Mutex as AsyncMutex;
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use hazarc::AtomicArc;
 
-use crate::cluster::node_validator::NodeValidator;
+use crate::cluster::node_validator::{normalize_cluster_name, NodeValidator};
 use crate::cluster::peers::Peers;
 use crate::cluster::peers_parser::PeersParser;
 use crate::cluster::CLIENT_VERSION;
@@ -80,6 +80,11 @@ pub struct Node {
     responded: AtomicBool,
     active: AtomicBool,
     version: Version,
+    /// Cluster name **as reported by the server** (`cluster-name` info),
+    /// refreshed every tend. Distinct from `ClientPolicy::cluster_name`,
+    /// which is what the user asked to validate against. `None` when the
+    /// server has no cluster name configured.
+    server_cluster_name: RwLock<Option<String>>,
     /// Per-`error_rate_window` circuit breaker state. `error_rate_count`
     /// is bumped on every retriable failure (network error, server
     /// `TIMEOUT` / `DEVICE_OVERLOAD` / `KEY_BUSY`, connection-close-on-error)
@@ -182,6 +187,7 @@ impl Node {
             reference_count: AtomicUsize::new(0),
             responded: AtomicBool::new(false),
             active: AtomicBool::new(true),
+            server_cluster_name: RwLock::new(nv.cluster_name.clone()),
             version: nv.version.clone(),
             rack_ids: AtomicArc::from(HashMap::new()),
             hostname: std::sync::OnceLock::new(),
@@ -469,8 +475,37 @@ impl Node {
 
     fn validate_node(&self, info_map: &IndexMap<String, String>) -> Result<()> {
         self.verify_node_name(info_map)?;
+        // Record what the server reports before deciding whether it matches
+        // what was configured: discovery must not depend on validation.
+        self.record_cluster_name(info_map);
         self.verify_cluster_name(info_map)?;
         Ok(())
+    }
+
+    /// Stores the server-reported cluster name from a tend response.
+    fn record_cluster_name(&self, info_map: &IndexMap<String, String>) {
+        let reported = normalize_cluster_name(info_map.get("cluster-name"));
+        let mut current = self
+            .server_cluster_name
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *current != reported {
+            *current = reported;
+        }
+    }
+
+    /// Cluster name as reported by this node's server on the last tend
+    /// (`cluster-name` info), or `None` when the server has none configured.
+    ///
+    /// This is the *discovered* name, independent of
+    /// [`ClientPolicy::cluster_name`], which only sets what to validate
+    /// against. Use it to select per-cluster settings (`system.<name>`
+    /// blocks) without opting into validation.
+    pub fn cluster_name(&self) -> Option<String> {
+        self.server_cluster_name
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     fn verify_node_name(&self, info_map: &IndexMap<String, String>) -> Result<()> {
@@ -1127,6 +1162,7 @@ mod node_tests {
             client_policy: policy.clone(),
             use_new_info: true,
             version: Version::default(),
+            cluster_name: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
@@ -1237,6 +1273,7 @@ mod node_tests {
             client_policy: policy.clone(),
             use_new_info: true,
             version: Version::default(),
+            cluster_name: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
@@ -1316,6 +1353,7 @@ mod node_tests {
             client_policy: policy.clone(),
             use_new_info: true,
             version: Version::default(),
+            cluster_name: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
@@ -1358,6 +1396,7 @@ mod node_tests {
             client_policy: policy.clone(),
             use_new_info: true,
             version: Version::default(),
+            cluster_name: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
@@ -1465,6 +1504,7 @@ mod pool_health_tests {
             client_policy: policy.clone(),
             use_new_info: true,
             version: Version::default(),
+            cluster_name: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
