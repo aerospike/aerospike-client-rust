@@ -50,7 +50,7 @@ indexmap = "2"
 # `async` so stream reads/writes are await points on the client executor
 # (no dedicated OS thread per aggregation); `send` because the pipeline
 # future must be Send to run on the multi-threaded runtimes.
-mlua = { version = "0.12", features = ["lua54", "vendored", "async", "send"], optional = true }
+mlua = { version = "0.11", features = ["lua54", "vendored", "async", "send"], optional = true }
 
 [features]
 serialization = ["serde", "indexmap/serde"]
