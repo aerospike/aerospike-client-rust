@@ -33,7 +33,7 @@ use crate::cluster::peers_parser::PeersParser;
 use crate::cluster::CLIENT_VERSION;
 use crate::commands::Message;
 use crate::errors::{Error, Result};
-use crate::metrics::NodeMetrics;
+use crate::metrics::{CloseReason, NodeMetrics, PoolGauges};
 use crate::net::{Connection, ConnectionPool, Host, PooledConnection, TailVerdict};
 use crate::policy::{AdminPolicy, ClientPolicy};
 use crate::Version;
@@ -671,6 +671,26 @@ impl Node {
         self.connection_pool.reserved_conns() as u64
     }
 
+    /// Point-in-time connection-pool gauges (metrics Tier 0, read at snapshot
+    /// time by walking the pool): total owned, idle in the pool, and in
+    /// background timeout recovery. `total` counts reserved slots, so a
+    /// connection still being opened is already "in use".
+    pub fn pool_gauges(&self) -> PoolGauges {
+        PoolGauges {
+            total: self.connection_pool.reserved_conns() as u64,
+            in_pool: self.connection_pool.idle_conns() as u64,
+            recovering: self.connection_pool.recovering_conns() as u64,
+        }
+    }
+
+    /// Closes every idle pooled connection, counting each as closed because
+    /// the node left the cluster. Called by the cluster when it removes the
+    /// node, before the node's final metrics drain, so the closes are not
+    /// lost to the deferred pool teardown in `Drop`.
+    pub(crate) fn close_idle_connections(&self) {
+        self.connection_pool.clear_all();
+    }
+
     // Put a connection to the node back in the connection pool
     pub fn put_connection(&self, mut pconn: PooledConnection) {
         if self.is_active() {
@@ -988,8 +1008,7 @@ impl Node {
                     drop(conn);
                     queue.reduce_capacity();
                     droppable = droppable.saturating_sub(1);
-                    self.metrics.incr_connections_idle_dropped();
-                    self.metrics.incr_connections_closed();
+                    self.metrics.incr_connections_closed(CloseReason::Idle);
                     total_processed += 1;
                     queues_without_work = 0;
                 }
@@ -1029,7 +1048,7 @@ impl Node {
                 Some(conn) => queue.put_back(conn),
                 None => {
                     queue.reduce_capacity();
-                    self.metrics.incr_connections_closed();
+                    self.metrics.incr_connections_closed(CloseReason::Error);
                 }
             }
             total_processed += 1;

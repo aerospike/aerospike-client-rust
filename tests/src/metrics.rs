@@ -77,11 +77,11 @@ async fn metrics_disabled_by_default() {
 async fn metrics_enable_disable_toggle() {
     let client = common::client().await;
     assert!(!client.metrics_enabled());
-    client.enable_metrics(MetricsPolicy::default());
+    client.enable_metrics(MetricsPolicy::default().with_operational(true));
     assert!(client.metrics_enabled());
     client.disable_metrics();
     assert!(!client.metrics_enabled());
-    client.enable_metrics(MetricsPolicy::default());
+    client.enable_metrics(MetricsPolicy::default().with_operational(true));
     assert!(client.metrics_enabled());
     client.close().await.unwrap();
 }
@@ -89,7 +89,7 @@ async fn metrics_enable_disable_toggle() {
 #[aerospike_macro::test]
 async fn metrics_single_key_command_histograms() {
     let client = common::client().await;
-    client.enable_metrics(MetricsPolicy::default());
+    client.enable_metrics(MetricsPolicy::default().with_operational(true));
 
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
@@ -138,10 +138,10 @@ async fn metrics_single_key_command_histograms() {
 async fn metrics_latency_unit_changes_resolution() {
     let namespace = common::namespace();
 
-    // Microseconds (the default): sub-millisecond latency is measurable, so the
-    // recorded maximum is in the hundreds-or-more range rather than 0.
+    // Microseconds: sub-millisecond latency is measurable, so the recorded
+    // maximum is in the hundreds-or-more range rather than 0.
     let client = common::client().await;
-    client.enable_metrics(MetricsPolicy::micros());
+    client.enable_metrics(MetricsPolicy::micros().with_operational(true));
     let set_name = common::rand_str(10);
     exercise_single_key(&client, namespace, &set_name).await;
 
@@ -156,10 +156,10 @@ async fn metrics_latency_unit_changes_resolution() {
     );
     client.close().await.unwrap();
 
-    // Milliseconds: the same work, coarser buckets. The unit travels with the
-    // snapshot so a consumer can tell the two apart.
+    // Milliseconds (the default): the same work, coarser buckets. The unit
+    // travels with the snapshot so a consumer can tell the two apart.
     let client = common::client().await;
-    client.enable_metrics(MetricsPolicy::millis());
+    client.enable_metrics(MetricsPolicy::millis().with_operational(true));
     let set_name = common::rand_str(10);
     exercise_single_key(&client, namespace, &set_name).await;
 
@@ -188,7 +188,7 @@ async fn metrics_unit_switch_discards_earlier_samples() {
     let client = common::client().await;
     let namespace = common::namespace();
 
-    client.enable_metrics(MetricsPolicy::micros());
+    client.enable_metrics(MetricsPolicy::micros().with_operational(true));
     let set_name = common::rand_str(10);
     exercise_single_key(&client, namespace, &set_name).await;
     assert!(
@@ -202,7 +202,7 @@ async fn metrics_unit_switch_discards_earlier_samples() {
     );
 
     // Re-enable with the other unit; the accumulated microsecond samples go.
-    client.enable_metrics(MetricsPolicy::millis());
+    client.enable_metrics(MetricsPolicy::millis().with_operational(true));
     let agg = client.metrics().cluster_aggregated;
     assert_eq!(agg.latency_unit, LatencyUnit::Milliseconds);
     assert_eq!(
@@ -217,7 +217,7 @@ async fn metrics_unit_switch_discards_earlier_samples() {
 #[aerospike_macro::test]
 async fn metrics_detailed_and_result_codes() {
     let client = common::client().await;
-    client.enable_metrics(MetricsPolicy::default());
+    client.enable_metrics(MetricsPolicy::default().with_operational(true));
 
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
@@ -270,7 +270,7 @@ async fn metrics_detailed_and_result_codes() {
 #[aerospike_macro::test]
 async fn metrics_connection_and_tend_counters() {
     let client = common::client().await;
-    client.enable_metrics(MetricsPolicy::default());
+    client.enable_metrics(MetricsPolicy::default().with_operational(true));
 
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
@@ -328,7 +328,7 @@ async fn metrics_labels_include_reserved_and_custom() {
 #[aerospike_macro::test]
 async fn metrics_batch_histograms() {
     let client = common::client().await;
-    client.enable_metrics(MetricsPolicy::default());
+    client.enable_metrics(MetricsPolicy::default().with_operational(true));
 
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
@@ -397,7 +397,7 @@ async fn metrics_batch_histograms() {
 #[aerospike_macro::test]
 async fn metrics_json_serialization_layout() {
     let client = common::client().await;
-    client.enable_metrics(MetricsPolicy::default());
+    client.enable_metrics(MetricsPolicy::default().with_operational(true));
 
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
@@ -410,12 +410,22 @@ async fn metrics_json_serialization_layout() {
     assert!(v.get("cluster-aggregated-metrics").is_some());
     assert!(v.get("total-nodes").is_some());
     assert!(v.get("open-connections").is_some());
+    assert!(v.get("connections-in-use").is_some());
+    assert!(v.get("connections-in-pool").is_some());
+    assert!(v.get("recover-queue-size").is_some());
+    assert!(v.get("nodes-invalid").is_some());
     assert!(v.get("exceeded-max-retries").is_some());
     assert!(v.get("exceeded-total-timeout").is_some());
 
     let agg = &v["cluster-aggregated-metrics"];
     // Stable counter and histogram field names.
     assert!(agg.get("connections-attempts").is_some());
+    assert!(agg.get("connections-error-tls").is_some());
+    assert!(agg.get("connections-error-auth").is_some());
+    assert!(agg.get("connections-closed-error").is_some());
+    assert!(agg.get("connections-closed-node-removed").is_some());
+    assert!(agg.get("connections-recovering").is_some());
+    assert!(agg.get("error-rate").is_some());
     assert!(agg.get("put-metrics").is_some());
     assert!(agg["put-metrics"].get("buckets").unwrap().is_array());
     assert!(agg.get("detailed-metrics").is_some());
@@ -426,7 +436,7 @@ async fn metrics_json_serialization_layout() {
 #[aerospike_macro::test]
 async fn metrics_scan_histogram_records_filterless_query() {
     let client = common::client().await;
-    client.enable_metrics(MetricsPolicy::default());
+    client.enable_metrics(MetricsPolicy::default().with_operational(true));
 
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
@@ -469,11 +479,11 @@ async fn metrics_scan_histogram_records_filterless_query() {
 async fn metrics_never_sampler_records_no_commands() {
     let client = common::client().await;
 
-    // Metrics enabled, but `Sampler::never()` means no command is ever
-    // recorded even though collection is "on".
+    // Metrics and the operational tier enabled, but `Sampler::never()` means
+    // no command is ever recorded even though collection is "on".
     let policy = MetricsPolicy {
         sampler: aerospike::Sampler::never(),
-        ..MetricsPolicy::default()
+        ..MetricsPolicy::default().with_operational(true)
     };
     client.enable_metrics(policy);
     assert!(client.metrics_enabled());
@@ -503,6 +513,173 @@ async fn metrics_never_sampler_records_no_commands() {
     client.close().await.unwrap();
 }
 
+/// Tier 0 only (metrics.md §3): enabling metrics with the default policy —
+/// operational group off — records the lifecycle instruments (pool gauges,
+/// opened connections, tends) but nothing on the command path: no latency
+/// samples, no detailed per-namespace metrics, no result codes.
+#[aerospike_macro::test]
+async fn metrics_tier0_only_records_lifecycle_not_commands() {
+    let client = common::client().await;
+    client.enable_metrics(MetricsPolicy::default());
+    assert!(client.metrics_enabled());
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    exercise_single_key(&client, namespace, &set_name).await;
+    // Client start-up already opened one pooled connection per node (before
+    // metrics were on), and sequential commands reuse it. Run a burst of
+    // concurrent reads so the pool has to open fresh sockets under metrics:
+    // those opens are Tier 0 events, the pool-empty waits that trigger them
+    // are Tier 1 and must not be counted.
+    let key = as_key!(namespace, &set_name, "tier0-burst");
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("bin", 1)])
+        .await
+        .unwrap();
+    let rpolicy = ReadPolicy::default();
+    let burst = (0..16).map(|_| client.get(&rpolicy, &key, Bins::All));
+    for res in futures::future::join_all(burst).await {
+        res.unwrap();
+    }
+    // A missing-key read fails the command; its error/result code is Tier 1
+    // and must not be counted either.
+    let missing = as_key!(namespace, &set_name, "tier0-missing");
+    assert!(client
+        .get(&ReadPolicy::default(), &missing, Bins::All)
+        .await
+        .is_err());
+
+    let metrics = client.metrics();
+    let agg = &metrics.cluster_aggregated;
+    assert!(metrics.open_connections >= 2, "the burst must have grown the pool");
+    assert!(
+        agg.counters.connections_successful >= 1,
+        "Tier 0 opened-connections counter must move"
+    );
+    assert_eq!(
+        agg.counters.connections_pool_empty, 0,
+        "pool-empty is an operational counter and must stay 0 under Tier 0"
+    );
+    for ct in [
+        CommandType::Put,
+        CommandType::Get,
+        CommandType::GetHeader,
+        CommandType::Exists,
+        CommandType::Operate,
+        CommandType::Delete,
+    ] {
+        assert_eq!(
+            agg.command_histogram(ct).unwrap().count(),
+            0,
+            "operational off: no latency samples for {ct:?}"
+        );
+    }
+    assert!(agg.detailed_metric(namespace, CommandType::Put).is_none());
+    assert_eq!(
+        agg.result_code_count(
+            namespace,
+            CommandType::Get,
+            aerospike::ResultCode::KeyNotFoundError
+        ),
+        0
+    );
+    assert_eq!(agg.counters.transaction_error_count, 0);
+
+    // Turning the group on live (re-enable with the flag) unlocks the command
+    // path without touching the Tier 0 counters already accumulated.
+    client.enable_metrics(MetricsPolicy::default().with_operational(true));
+    exercise_single_key(&client, namespace, &set_name).await;
+    let agg = client.metrics().cluster_aggregated;
+    assert!(agg.command_histogram(CommandType::Put).unwrap().count() >= 1);
+    assert!(agg.counters.connections_successful >= 1);
+    client.close().await.unwrap();
+}
+
+/// The pool gauges are a live pool walk (metrics.md §4.3 / §5.5.3): in-use
+/// plus in-pool is the open total, an idle client has its connections in the
+/// pool, and the walk still runs while collection is disabled.
+#[aerospike_macro::test]
+async fn metrics_pool_gauges_are_a_live_pool_walk() {
+    let client = common::client().await;
+
+    // Disabled: counters are frozen but the gauges are still read live.
+    assert!(!client.metrics_enabled());
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    exercise_single_key(&client, namespace, &set_name).await;
+    let disabled = client.metrics();
+    assert!(
+        disabled.open_connections >= 1,
+        "pool gauges must be readable while metrics are disabled"
+    );
+    assert_eq!(
+        disabled.connections_in_use + disabled.connections_in_pool,
+        disabled.open_connections,
+        "in_use + in_pool must equal the open total"
+    );
+    assert_eq!(disabled.cluster_aggregated.counters.connections_successful, 0);
+
+    client.enable_metrics(MetricsPolicy::default());
+    exercise_single_key(&client, namespace, &set_name).await;
+    let metrics = client.metrics();
+    assert_eq!(
+        metrics.connections_in_use + metrics.connections_in_pool,
+        metrics.open_connections
+    );
+    // Nothing is in flight now, so every connection is back in the pool.
+    assert!(
+        metrics.connections_in_pool >= 1,
+        "an idle client keeps its connections in the pool"
+    );
+    assert_eq!(metrics.recover_queue_size, 0, "no timeouts, nothing recovering");
+    // Per-node and cluster views agree.
+    let mut in_use = 0;
+    let mut in_pool = 0;
+    for node in metrics.nodes.values() {
+        let g = node.pool_gauges();
+        assert_eq!(g.in_use(), node.connections_in_use());
+        in_use += node.connections_in_use();
+        in_pool += node.connections_in_pool();
+    }
+    assert_eq!(in_use, metrics.connections_in_use);
+    assert_eq!(in_pool, metrics.connections_in_pool);
+    assert_eq!(metrics.cluster_aggregated.connections_in_pool(), in_pool);
+    client.close().await.unwrap();
+}
+
+/// The circuit-breaker gauge (`error-rate`) is stamped per node from the
+/// live window count, the cluster view is its sum, and a healthy run counts
+/// no failed peer validations.
+#[aerospike_macro::test]
+async fn metrics_error_rate_and_nodes_invalid_gauges() {
+    let client = common::client().await;
+    client.enable_metrics(MetricsPolicy::default());
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    exercise_single_key(&client, namespace, &set_name).await;
+
+    let metrics = client.metrics();
+    // Every node reports the same value the breaker itself holds right now.
+    let mut sum = 0;
+    for node in client.nodes() {
+        let snapshot = metrics
+            .nodes
+            .get(&node.host().to_string())
+            .expect("every active node has a snapshot");
+        assert_eq!(snapshot.error_rate(), node.error_rate_count() as u64);
+        sum += snapshot.error_rate();
+    }
+    assert_eq!(metrics.cluster_aggregated.error_rate(), sum);
+    // Only successful commands were issued, so the window holds nothing.
+    assert_eq!(sum, 0, "no command failed, the breaker window must be empty");
+    assert_eq!(
+        metrics.nodes_invalid, 0,
+        "a healthy cluster has no failed peer validations"
+    );
+    client.close().await.unwrap();
+}
+
 /// Regression test for connection churn when `min_conns_per_node` is not a
 /// multiple of `conn_pools_per_node`.
 ///
@@ -527,7 +704,7 @@ async fn min_conns_no_churn_across_tends() {
     let client = Client::new(&policy, &hosts)
         .await
         .expect("connect with min/max conns configured");
-    client.enable_metrics(MetricsPolicy::default());
+    client.enable_metrics(MetricsPolicy::default().with_operational(true));
 
     // No traffic: let the minimum connections go idle and several tend cycles
     // run. A churning pool accumulates idle-drops here; a healthy pool does not.
@@ -617,7 +794,7 @@ end
 #[aerospike_macro::test]
 async fn metrics_bytes_received_single_key_commands() {
     let client = common::client().await;
-    client.enable_metrics(MetricsPolicy::default());
+    client.enable_metrics(MetricsPolicy::default().with_operational(true));
 
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
@@ -664,7 +841,7 @@ async fn metrics_bytes_received_single_key_commands() {
 #[aerospike_macro::test]
 async fn metrics_bytes_received_batch_commands() {
     let client = common::client().await;
-    client.enable_metrics(MetricsPolicy::default());
+    client.enable_metrics(MetricsPolicy::default().with_operational(true));
 
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
@@ -740,7 +917,7 @@ async fn metrics_bytes_received_batch_commands() {
 #[aerospike_macro::test]
 async fn metrics_bytes_received_query_commands() {
     let client = common::client().await;
-    client.enable_metrics(MetricsPolicy::default());
+    client.enable_metrics(MetricsPolicy::default().with_operational(true));
 
     let namespace = common::namespace();
     let set_name = common::rand_str(10);

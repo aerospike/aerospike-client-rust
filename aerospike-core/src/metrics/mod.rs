@@ -27,21 +27,40 @@
 //!
 //! Metrics are controlled only through the explicit [`crate::Client`] methods.
 //!
+//! # Tiers
+//!
+//! Enabling metrics turns on **Tier 0**: connection-pool gauges read at
+//! snapshot time (`open-connections`, `connections-in-use`,
+//! `connections-in-pool`, `connections-recovering`), connection opened/closed
+//! counts, and tend / node add-remove counts. None of it touches the command
+//! hot path. The per-command instruments — latency histograms, bytes, result
+//! codes, retry/error counters — and the connection failure / close-reason
+//! counters are **Tier 1 operational**, opt-in through
+//! [`MetricsPolicy::operational`] and subject to [`MetricsPolicy::sampler`].
+//! The sampler is consulted **once per user call**, before the first attempt,
+//! so a retried call is recorded whole or not at all.
+//!
+//! [`crate::Client::metrics`] can be called while collection is disabled; the
+//! pool gauges are still walked live, the counters simply stop moving.
+//!
 //! # Time resolution
 //!
 //! Every elapsed time — command latency, connection-acquire time, parse time —
 //! is bucketed in the [`MetricsPolicy::latency_unit`] resolution. The default is
-//! [`LatencyUnit::Microseconds`] with 24 columns
-//! ([`MetricsPolicy::micros`], Go-client parity); [`MetricsPolicy::millis`]
-//! selects milliseconds with 7 columns (Java-client parity). Unit and column
-//! count belong together — 7 columns of microseconds top out at `>=64µs`.
+//! [`LatencyUnit::Milliseconds`] with 7 columns ([`MetricsPolicy::millis`], the
+//! cross-client default); [`MetricsPolicy::micros`] selects microseconds with
+//! 24 columns (Go-client parity). Unit and column count belong together — 7
+//! columns of microseconds top out at `>32µs`. Bucket boundaries are
+//! `<=1, >1, >2, >4, ...` (upper-closed, spaced by `2^latency_shift`); see
+//! [`histogram`].
 //!
 //! The unit is reported by every snapshot ([`NodeMetricsSnapshot::latency_unit`],
 //! serialized as `latency-unit`), because bucket counts cannot be read without
 //! it. Changing it while collecting discards the samples already recorded, which
 //! were measured in the other unit — exactly as a `latency_columns` change does.
-//! With the `dynamic-config` feature all three are `dynamic.metrics` keys
-//! (`latency_unit`, `latency_columns`, `latency_base`).
+//! With the `dynamic-config` feature the histogram keys live under
+//! `dynamic.metrics.extended.operational` (`enabled`, `latency_unit`,
+//! `latency_columns`, `latency_shift`).
 
 pub mod cluster;
 pub mod histogram;
@@ -49,13 +68,14 @@ pub mod node_metrics;
 pub mod policy;
 
 pub use cluster::ClusterMetrics;
-pub use histogram::{HistogramType, SyncHistogram};
+pub use histogram::SyncHistogram;
 pub use node_metrics::{
-    CommandMetric, CommandType, NodeMetrics, NodeMetricsSnapshot, COMMAND_TYPE_COUNT,
+    CloseReason, CommandMetric, CommandType, NodeMetrics, NodeMetricsSnapshot, OpenFailure,
+    PoolGauges, COMMAND_TYPE_COUNT,
 };
 #[cfg(feature = "dynamic-config")]
 pub(crate) use policy::MetricsPolicyConfig;
 pub use policy::{
-    Labels, LatencyUnit, MetricsPolicy, DEFAULT_LATENCY_BASE, DEFAULT_LATENCY_COLUMNS,
-    MILLIS_LATENCY_COLUMNS,
+    Labels, LatencyUnit, MetricsPolicy, DEFAULT_LATENCY_COLUMNS, DEFAULT_LATENCY_SHIFT,
+    MICROS_LATENCY_COLUMNS, MILLIS_LATENCY_COLUMNS,
 };

@@ -119,6 +119,15 @@ impl<'a> SingleCommand<'a> {
         // Elapsed times go to the recorders as `Duration`; the resolution they
         // are bucketed in is the metrics policy's `latency_unit`, applied inside
         // `NodeMetrics` so no call site has to know it.
+        //
+        // The sampler is drawn ONCE for the whole call, here, before the retry
+        // loop — never re-rolled per attempt (metrics.md §3.1.1). The draw comes
+        // from the thread-local generator because no connection exists yet; the
+        // decision itself (`metrics_on`) is derived from it against whichever
+        // node serves an attempt, so a call whose retries move between nodes
+        // gets one consistent answer.
+        let sample_draw: u64 = rand::random();
+        let mut metrics_on = false;
 
         // set timeout outside the loop
         let deadline = policy.deadline();
@@ -152,11 +161,13 @@ impl<'a> SingleCommand<'a> {
             // check for max retries
             if iterations > effective_attempt {
                 // first attempt isn't a retry
-                if let Some(n) = &last_node {
-                    n.metrics().incr_transaction_error();
-                }
-                if let Some(cluster) = cmd.cluster() {
-                    cluster.incr_max_retries_exceeded();
+                if metrics_on {
+                    if let Some(n) = &last_node {
+                        n.metrics().incr_transaction_error();
+                    }
+                    if let Some(cluster) = cmd.cluster() {
+                        cluster.incr_max_retries_exceeded();
+                    }
                 }
                 let err = Error::timeout(format!("Timeout after {iterations} tries"));
                 let tail = match last_err.take() {
@@ -177,8 +188,10 @@ impl<'a> SingleCommand<'a> {
                 // DO NOT retry for streaming commands here. They retry in their own execution logic.
                 // DO NOT retry for any error other than network errors.
                 if !cmd.can_retry() {
-                    if let Some(n) = &last_node {
-                        n.metrics().incr_transaction_error();
+                    if metrics_on {
+                        if let Some(n) = &last_node {
+                            n.metrics().incr_transaction_error();
+                        }
                     }
                     let err = Error::timeout("Timeout".to_string());
                     let tail = match last_err.take() {
@@ -241,6 +254,10 @@ impl<'a> SingleCommand<'a> {
             };
             last_node_addr = Some(node.to_string());
             last_node = Some(node.clone());
+            // Whether this call's operational metrics are recorded: the
+            // call-level draw evaluated against this node's (cluster-wide)
+            // sampler and tier flags. Same draw every attempt.
+            metrics_on = node.metrics().should_sample_draw(sample_draw);
 
             // Per-node circuit breaker: if this node has tripped its
             // error-rate window, refuse the command outright (no socket
@@ -248,7 +265,9 @@ impl<'a> SingleCommand<'a> {
             // Mirrors Java `SyncCommand.executeCommand` calling
             // `node.validateErrorCount()` before `getConnection`.
             if let Err(err) = node.validate_error_count() {
-                node.metrics().incr_circuit_breaker_hits();
+                if metrics_on {
+                    node.metrics().incr_circuit_breaker_hits();
+                }
                 last_err = Some(err);
                 continue;
             }
@@ -283,9 +302,6 @@ impl<'a> SingleCommand<'a> {
                     continue;
                 }
             };
-            // Decide once per attempt whether to record metrics for this
-            // command: collection enabled AND the policy's sampler selects it.
-            let metrics_on = node.metrics().should_sample(conn.rng());
             if metrics_on {
                 if let Some(ns) = cmd_namespace.as_deref() {
                     node.metrics()
@@ -415,11 +431,13 @@ impl<'a> SingleCommand<'a> {
             return Ok(());
         }
 
-        if let Some(n) = &last_node {
-            n.metrics().incr_transaction_error();
-        }
-        if let Some(cluster) = cmd.cluster() {
-            cluster.incr_total_timeout_exceeded();
+        if metrics_on {
+            if let Some(n) = &last_node {
+                n.metrics().incr_transaction_error();
+            }
+            if let Some(cluster) = cmd.cluster() {
+                cluster.incr_total_timeout_exceeded();
+            }
         }
         let err = Error::timeout(format!("Command timed out after {iterations} tries"));
         let tail = match last_err.take() {

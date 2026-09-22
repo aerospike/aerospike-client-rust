@@ -43,9 +43,32 @@ pub struct ClusterMetrics {
     #[cfg_attr(feature = "serialization", serde(rename = "total-nodes"))]
     pub total_nodes: usize,
 
-    /// Total number of open connections across all nodes.
+    /// Total number of open connections across all nodes (idle, checked out,
+    /// opening or recovering).
     #[cfg_attr(feature = "serialization", serde(rename = "open-connections"))]
     pub open_connections: u64,
+
+    /// Connections checked out, opening or recovering across all nodes
+    /// (`open_connections - connections_in_pool`). Read live from the pools
+    /// when the snapshot is taken, so it moves in either direction.
+    #[cfg_attr(feature = "serialization", serde(rename = "connections-in-use"))]
+    pub connections_in_use: u64,
+
+    /// Idle connections sitting in the pools across all nodes, read live when
+    /// the snapshot is taken.
+    #[cfg_attr(feature = "serialization", serde(rename = "connections-in-pool"))]
+    pub connections_in_pool: u64,
+
+    /// Connections currently handed to background timeout-recovery tasks
+    /// across all nodes (the `timeout_delay` back-pressure gauge).
+    #[cfg_attr(feature = "serialization", serde(rename = "recover-queue-size"))]
+    pub recover_queue_size: u64,
+
+    /// Peer hosts that failed node validation during tend, accumulated over
+    /// the client's lifetime while metrics are enabled. A host that stays
+    /// unreachable adds one per tend it is tried in.
+    #[cfg_attr(feature = "serialization", serde(rename = "nodes-invalid"))]
+    pub nodes_invalid: u64,
 
     /// Number of commands that exhausted their retry budget.
     #[cfg_attr(feature = "serialization", serde(rename = "exceeded-max-retries"))]
@@ -64,9 +87,15 @@ mod tests {
 
     #[test]
     fn cluster_metrics_serializes_with_expected_layout() {
+        use crate::metrics::PoolGauges;
         let policy = MetricsPolicy::default();
         let mut node = NodeMetricsSnapshot::new(policy.clone());
-        node.set_open_connections(2);
+        node.set_pool_gauges(PoolGauges {
+            total: 2,
+            in_pool: 1,
+            recovering: 0,
+        });
+        node.set_error_rate(5);
         let mut nodes = HashMap::new();
         nodes.insert("127.0.0.1:3000".to_string(), node);
 
@@ -75,6 +104,10 @@ mod tests {
             cluster_aggregated: NodeMetricsSnapshot::new(policy),
             total_nodes: 1,
             open_connections: 2,
+            connections_in_use: 1,
+            connections_in_pool: 1,
+            recover_queue_size: 0,
+            nodes_invalid: 3,
             exceeded_max_retries: 0,
             exceeded_total_timeout: 0,
         };
@@ -86,9 +119,18 @@ mod tests {
         assert!(v.get("cluster-aggregated-metrics").is_some());
         assert_eq!(v["total-nodes"], 1);
         assert_eq!(v["open-connections"], 2);
+        assert_eq!(v["connections-in-use"], 1);
+        assert_eq!(v["connections-in-pool"], 1);
+        assert_eq!(v["recover-queue-size"], 0);
+        assert_eq!(v["nodes-invalid"], 3);
         assert_eq!(v["exceeded-max-retries"], 0);
         assert_eq!(v["exceeded-total-timeout"], 0);
-        // The per-node entry carries the open-connections gauge.
-        assert_eq!(v["127.0.0.1:3000"]["open-connections"], 2);
+        // The per-node entry carries the pool and breaker gauges.
+        let node = &v["127.0.0.1:3000"];
+        assert_eq!(node["open-connections"], 2);
+        assert_eq!(node["connections-in-use"], 1);
+        assert_eq!(node["connections-in-pool"], 1);
+        assert_eq!(node["connections-recovering"], 0);
+        assert_eq!(node["error-rate"], 5);
     }
 }

@@ -139,8 +139,7 @@ pub struct CommandMetric {
 
 impl CommandMetric {
     fn new(policy: &MetricsPolicy) -> Self {
-        let mk =
-            || SyncHistogram::new(policy.histogram_type, policy.base(), policy.latency_columns);
+        let mk = || SyncHistogram::new(policy.latency_shift, policy.latency_columns);
         CommandMetric {
             connection_aq: mk(),
             latency: mk(),
@@ -208,13 +207,19 @@ define_counters! {
     connections_failed => "connections-failed",
     connections_timeout_errors => "connections-error-timeout",
     connections_other_errors => "connections-error-other",
+    connections_tls_errors => "connections-error-tls",
+    connections_auth_errors => "connections-error-auth",
     circuit_breaker_hits => "circuit-breaker-hits",
     connections_pool_empty => "connections-pool-empty",
     connections_pool_overflow => "connections-pool-overflow",
     connections_idle_dropped => "connections-idle-dropped",
     connections_open => "open-connections",
+    connections_in_use => "connections-in-use",
+    connections_in_pool => "connections-in-pool",
+    connections_recovering => "connections-recovering",
     connections_closed => "closed-connections",
-    connections_recovered => "connections-recovered",
+    connections_closed_error => "connections-closed-error",
+    connections_closed_node_removed => "connections-closed-node-removed",
     tends_total => "tends-total",
     tends_successful => "tends-successful",
     tends_failed => "tends-failed",
@@ -223,6 +228,7 @@ define_counters! {
     node_removed => "node-removed-count",
     transaction_retry_count => "transaction-retry-count",
     transaction_error_count => "transaction-error-count",
+    error_rate => "error-rate",
 }
 
 /// The 11 per-command-type latency histograms, in declaration order.
@@ -242,6 +248,58 @@ macro_rules! command_histograms {
             ("batch-write-metrics", CommandType::BatchWrite),
         ]
     };
+}
+
+/// Phase at which opening a new connection failed. Breaks the
+/// `connections-failed` rollup down into the spec's `connection.open.failure`
+/// family (`metrics.md` §4.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenFailure {
+    /// The whole open (connect + TLS + auth) exceeded the connect timeout.
+    Timeout,
+    /// The TCP connect itself failed.
+    Connect,
+    /// The TLS handshake was attempted and failed (certificate, protocol).
+    TlsHandshake,
+    /// The socket was up but login / session authentication failed.
+    Auth,
+}
+
+/// Why a connection was closed. Every close bumps `closed-connections`; the
+/// reason feeds the operational `connection.closed.*` counters
+/// (`metrics.md` §4.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseReason {
+    /// Closed on an error path: a command left it unusable, a pooled socket
+    /// was found dead, or a timeout recovery gave up.
+    Error,
+    /// Idle longer than the configured maximum socket idle time.
+    Idle,
+    /// Offered back to a pool that was already at capacity.
+    PoolOverflow,
+    /// Its node left the cluster.
+    NodeRemoved,
+}
+
+/// Point-in-time connection-pool gauges for one node, read by walking the
+/// pool at snapshot time (`metrics.md` §3.2: no hot-path work).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PoolGauges {
+    /// Connections the node owns: idle in the pool, checked out by a command,
+    /// or still being opened / recovered (the pool reserves the slot first).
+    pub total: u64,
+    /// Idle connections sitting in the pool.
+    pub in_pool: u64,
+    /// Connections handed to a background timeout-recovery task.
+    pub recovering: u64,
+}
+
+impl PoolGauges {
+    /// Connections not idle in the pool: checked out, opening or recovering.
+    #[must_use]
+    pub const fn in_use(&self) -> u64 {
+        self.total.saturating_sub(self.in_pool)
+    }
 }
 
 /// Live, concurrently-updated per-node statistics.
@@ -267,9 +325,16 @@ pub struct NodeMetrics {
     /// it on the command hot path, where taking the `policy` lock is not
     /// acceptable.
     latency_unit: AtomicU8,
-    /// Whether collection is currently enabled. Gates the connection-lifecycle
-    /// counters that are recorded outside the command hot-path.
+    /// Whether collection is currently enabled (Tier 0, `metrics.enabled`).
+    /// Gates the always-on instruments: connection opened/closed, tend and
+    /// node add/remove counters. Nothing on the command hot path.
     enabled: AtomicBool,
+    /// Whether the Tier 1 **operational** group is on
+    /// (`extended.operational.enabled`, mirrored from the applied policy by
+    /// [`NodeMetrics::reshape`]). Gates every per-command instrument (via the
+    /// sample decision) and the connection failure / close-reason counters.
+    /// Meaningless while `enabled` is false.
+    operational: AtomicBool,
     /// Atomic scalar counters.
     pub(crate) counters: LiveCounters,
     /// Per-command-type latency histograms, indexed by [`CommandType::index`].
@@ -287,19 +352,20 @@ impl NodeMetrics {
             std::array::from_fn(|_| None);
         for (_, ct) in command_histograms!() {
             command_metrics[ct.index()] = Some(SyncHistogram::new(
-                policy.histogram_type,
-                policy.base(),
+                policy.latency_shift,
                 policy.latency_columns,
             ));
         }
         let Sampler { range, threshold } = policy.sampler;
         let unit = policy.latency_unit;
+        let operational = policy.operational;
         NodeMetrics {
             policy: RwLock::new(policy),
             sampler_range: AtomicU64::new(range),
             sampler_threshold: AtomicU64::new(threshold),
             latency_unit: AtomicU8::new(unit.to_code()),
             enabled: AtomicBool::new(false),
+            operational: AtomicBool::new(operational),
             counters: LiveCounters::default(),
             command_metrics,
             detailed_metrics: RwLock::new(HashMap::new()),
@@ -318,12 +384,29 @@ impl NodeMetrics {
         self.enabled.store(enabled, Ordering::Relaxed);
     }
 
-    /// Returns whether the next command should be recorded: collection must be
-    /// enabled **and** the configured sampler must select it (drawing from
-    /// `rand`, typically the serving connection's generator). A `threshold` of
-    /// 0 ([`Sampler::never`]) records nothing.
-    pub fn should_sample(&self, rand: &mut XorShift) -> bool {
-        if !self.is_enabled() {
+    /// Returns whether the Tier 1 operational group is recording on this node:
+    /// collection enabled **and** the applied policy's
+    /// [`operational`](MetricsPolicy::operational) flag set. This is the gate
+    /// for the un-sampled operational counters (connection failures, close
+    /// reasons, pool overflow/exhaustion); per-command instruments go through
+    /// [`should_sample_draw`](Self::should_sample_draw) instead.
+    #[must_use]
+    pub fn is_operational(&self) -> bool {
+        self.is_enabled() && self.operational.load(Ordering::Relaxed)
+    }
+
+    /// Decides whether a command's operational metrics are recorded, given a
+    /// random `draw` made once for the whole user call: the operational group
+    /// must be on (see [`is_operational`](Self::is_operational)) **and** the
+    /// configured sampler must select the draw. A `threshold` of 0
+    /// ([`Sampler::never`]) records nothing.
+    ///
+    /// The draw is deliberately separate from the decision so a call whose
+    /// retries land on different nodes gets the *same* answer from each — one
+    /// decision per call, never re-rolled per attempt (`metrics.md` §3.1.1).
+    #[must_use]
+    pub fn should_sample_draw(&self, draw: u64) -> bool {
+        if !self.is_operational() {
             return false;
         }
         let range = self.sampler_range.load(Ordering::Relaxed);
@@ -333,7 +416,17 @@ impl NodeMetrics {
             return false;
         }
         let threshold = self.sampler_threshold.load(Ordering::Relaxed);
-        rand.next_u64() % range < threshold
+        draw % range < threshold
+    }
+
+    /// [`should_sample_draw`](Self::should_sample_draw) with the draw taken
+    /// from `rand`. Only for callers that make exactly one decision per user
+    /// call; a retry loop must draw once up front and reuse the value.
+    pub fn should_sample(&self, rand: &mut XorShift) -> bool {
+        if !self.is_operational() {
+            return false;
+        }
+        self.should_sample_draw(rand.next_u64())
     }
 
     /// Records a connection-open attempt.
@@ -354,56 +447,49 @@ impl NodeMetrics {
         }
     }
 
-    /// Records a failed connection attempt, classifying timeouts separately.
-    pub fn incr_connections_failed(&self, timeout: bool) {
-        if self.is_enabled() {
+    /// Records a failed connection open (Tier 1 operational): the rollup
+    /// `connections-failed` plus one phase-specific counter.
+    pub fn incr_connections_failed(&self, phase: OpenFailure) {
+        if self.is_operational() {
             self.counters
                 .connections_failed
                 .fetch_add(1, Ordering::Relaxed);
-            if timeout {
-                self.counters
-                    .connections_timeout_errors
-                    .fetch_add(1, Ordering::Relaxed);
-            } else {
-                self.counters
-                    .connections_other_errors
-                    .fetch_add(1, Ordering::Relaxed);
-            }
+            let specific = match phase {
+                OpenFailure::Timeout => &self.counters.connections_timeout_errors,
+                OpenFailure::Connect => &self.counters.connections_other_errors,
+                OpenFailure::TlsHandshake => &self.counters.connections_tls_errors,
+                OpenFailure::Auth => &self.counters.connections_auth_errors,
+            };
+            specific.fetch_add(1, Ordering::Relaxed);
         }
     }
 
-    /// Records a closed connection.
-    pub fn incr_connections_closed(&self) {
-        if self.is_enabled() {
-            self.counters
-                .connections_closed
-                .fetch_add(1, Ordering::Relaxed);
+    /// Records a closed connection (Tier 0 `closed-connections`) together with
+    /// the reason it was closed (Tier 1 operational close-reason counters).
+    pub fn incr_connections_closed(&self, reason: CloseReason) {
+        if !self.is_enabled() {
+            return;
         }
+        self.counters
+            .connections_closed
+            .fetch_add(1, Ordering::Relaxed);
+        if !self.is_operational() {
+            return;
+        }
+        let specific = match reason {
+            CloseReason::Error => &self.counters.connections_closed_error,
+            CloseReason::Idle => &self.counters.connections_idle_dropped,
+            CloseReason::PoolOverflow => &self.counters.connections_pool_overflow,
+            CloseReason::NodeRemoved => &self.counters.connections_closed_node_removed,
+        };
+        specific.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Records a poll against an empty connection pool.
     pub fn incr_connections_pool_empty(&self) {
-        if self.is_enabled() {
+        if self.is_operational() {
             self.counters
                 .connections_pool_empty
-                .fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
-    /// Records a connection offered to a full pool and closed.
-    pub fn incr_connections_pool_overflow(&self) {
-        if self.is_enabled() {
-            self.counters
-                .connections_pool_overflow
-                .fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
-    /// Records an idle connection that was dropped.
-    pub fn incr_connections_idle_dropped(&self) {
-        if self.is_enabled() {
-            self.counters
-                .connections_idle_dropped
                 .fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -411,7 +497,7 @@ impl NodeMetrics {
     /// Records a command rejected by the per-node circuit breaker because the
     /// node's error-rate window was exceeded.
     pub fn incr_circuit_breaker_hits(&self) {
-        if self.is_enabled() {
+        if self.is_operational() {
             self.counters
                 .circuit_breaker_hits
                 .fetch_add(1, Ordering::Relaxed);
@@ -420,7 +506,7 @@ impl NodeMetrics {
 
     /// Records a command retry.
     pub fn incr_transaction_retry(&self) {
-        if self.is_enabled() {
+        if self.is_operational() {
             self.counters
                 .transaction_retry_count
                 .fetch_add(1, Ordering::Relaxed);
@@ -429,7 +515,7 @@ impl NodeMetrics {
 
     /// Records a command that ultimately failed.
     pub fn incr_transaction_error(&self) {
-        if self.is_enabled() {
+        if self.is_operational() {
             self.counters
                 .transaction_error_count
                 .fetch_add(1, Ordering::Relaxed);
@@ -489,8 +575,7 @@ impl NodeMetrics {
     }
 
     /// Records the elapsed time of a completed command against its
-    /// per-command-type histogram, in the policy's
-    /// [`LatencyUnit`](crate::metrics::LatencyUnit).
+    /// per-command-type histogram, in the policy's [`LatencyUnit`].
     pub fn record_command(&self, ct: CommandType, elapsed: Duration) {
         if let Some(h) = &self.command_metrics[ct.index()] {
             h.add(self.ticks(elapsed));
@@ -608,10 +693,13 @@ impl NodeMetrics {
         // shape-checked histogram merges silently drop its samples.
         *self.policy.write().unwrap() = policy.clone();
 
-        // Pick up the (possibly new) sampler from the applied policy.
+        // Pick up the (possibly new) sampler and tier flag from the applied
+        // policy.
         let Sampler { range, threshold } = policy.sampler;
         self.sampler_threshold.store(threshold, Ordering::Relaxed);
         self.sampler_range.store(range, Ordering::Relaxed);
+        self.operational
+            .store(policy.operational, Ordering::Relaxed);
 
         let unit_changed = self.latency_unit() != policy.latency_unit;
         if unit_changed {
@@ -622,7 +710,7 @@ impl NodeMetrics {
         // Reshapes to the new layout, then discards values that were recorded
         // in the previous unit (a no-op reshape keeps them).
         let apply = |h: &SyncHistogram, is_time: bool| {
-            h.reshape(policy.histogram_type, policy.base(), policy.latency_columns);
+            h.reshape(policy.latency_shift, policy.latency_columns);
             if unit_changed && is_time {
                 h.reset();
             }
@@ -767,8 +855,7 @@ impl NodeMetricsSnapshot {
     /// Creates an empty snapshot shaped by `policy`.
     #[must_use]
     pub fn new(policy: MetricsPolicy) -> Self {
-        let mk =
-            || SyncHistogram::new(policy.histogram_type, policy.base(), policy.latency_columns);
+        let mk = || SyncHistogram::new(policy.latency_shift, policy.latency_columns);
         NodeMetricsSnapshot {
             latency_unit: policy.latency_unit,
             labels: Labels::new(),
@@ -879,14 +966,72 @@ impl NodeMetricsSnapshot {
     }
 
     /// Overrides the open-connections gauge (set from the node's live count).
-    pub fn set_open_connections(&mut self, open: u64) {
+    pub const fn set_open_connections(&mut self, open: u64) {
         self.counters.connections_open = open;
     }
 
-    /// Open-connections gauge value.
+    /// Stamps every pool gauge from a point-in-time pool walk:
+    /// `open-connections` (the total), `connections-in-use`,
+    /// `connections-in-pool` and `connections-recovering`.
+    pub const fn set_pool_gauges(&mut self, gauges: PoolGauges) {
+        self.counters.connections_open = gauges.total;
+        self.counters.connections_in_use = gauges.in_use();
+        self.counters.connections_in_pool = gauges.in_pool;
+        self.counters.connections_recovering = gauges.recovering;
+    }
+
+    /// The pool gauges this snapshot was stamped with.
     #[must_use]
-    pub fn open_connections(&self) -> u64 {
+    pub const fn pool_gauges(&self) -> PoolGauges {
+        PoolGauges {
+            total: self.counters.connections_open,
+            in_pool: self.counters.connections_in_pool,
+            recovering: self.counters.connections_recovering,
+        }
+    }
+
+    /// Open-connections gauge value (total connections the node owns).
+    #[must_use]
+    pub const fn open_connections(&self) -> u64 {
         self.counters.connections_open
+    }
+
+    /// Connections checked out, opening or recovering (`total - in_pool`).
+    #[must_use]
+    pub const fn connections_in_use(&self) -> u64 {
+        self.counters.connections_in_use
+    }
+
+    /// Idle connections sitting in the pool.
+    #[must_use]
+    pub const fn connections_in_pool(&self) -> u64 {
+        self.counters.connections_in_pool
+    }
+
+    /// Connections handed to a background timeout-recovery task.
+    #[must_use]
+    pub const fn connections_recovering(&self) -> u64 {
+        self.counters.connections_recovering
+    }
+
+    /// Stamps the node's circuit-breaker gauge (`error-rate`): the number of
+    /// command failures counted against the node in the **current**
+    /// `error_rate_window`. Read live when the snapshot is taken.
+    pub const fn set_error_rate(&mut self, count: u64) {
+        self.counters.error_rate = count;
+    }
+
+    /// Current circuit-breaker window error count (`error-rate` gauge).
+    ///
+    /// Two caveats the number carries with it: it only moves while the
+    /// breaker is on (`ClientPolicy::max_error_rate > 0`; otherwise it is a
+    /// permanent 0, which does not mean "no errors"), and the tend loop
+    /// zeroes it every `error_rate_window` tends — at the default window of 1
+    /// it is an errors-since-last-tend reading, unrelated to how often
+    /// snapshots are taken. The cluster-aggregated view is the sum over nodes.
+    #[must_use]
+    pub const fn error_rate(&self) -> u64 {
+        self.counters.error_rate
     }
 
     /// Discards every *time* histogram, keeping counters, result codes and the
@@ -1070,16 +1215,24 @@ mod tests {
         use crate::sampler::Sampler;
         let mut rng = XorShift::with_seed(1, 2);
 
-        // Default policy samples always, but collection is off by default.
+        // Default policy samples always, but collection is off by default and
+        // the operational tier is off in the default policy.
         let m = NodeMetrics::new(MetricsPolicy::default());
         assert!(!m.should_sample(&mut rng), "disabled must never sample");
         m.set_enabled(true);
-        assert!(m.should_sample(&mut rng), "enabled + Always must sample");
+        assert!(
+            !m.should_sample(&mut rng),
+            "Tier 0 only (operational off) must never sample"
+        );
+        assert!(!m.is_operational());
+        m.reshape(&MetricsPolicy::default().with_operational(true));
+        assert!(m.is_operational());
+        assert!(m.should_sample(&mut rng), "enabled + operational + Always must sample");
 
         // `Sampler::never()` records nothing even while enabled.
         let policy = MetricsPolicy {
             sampler: Sampler::never(),
-            ..MetricsPolicy::default()
+            ..MetricsPolicy::default().with_operational(true)
         };
         let m2 = NodeMetrics::new(policy);
         m2.set_enabled(true);
@@ -1088,12 +1241,37 @@ mod tests {
         // A reshape to a sampling policy is picked up live (lock-free).
         m2.reshape(&MetricsPolicy {
             sampler: Sampler::all(),
-            ..MetricsPolicy::default()
+            ..MetricsPolicy::default().with_operational(true)
         });
         assert!(
             m2.should_sample(&mut rng),
             "reshape must update the sampler"
         );
+
+        // Disabling collection turns the operational tier off with it.
+        m2.set_enabled(false);
+        assert!(!m2.is_operational());
+        assert!(!m2.should_sample(&mut rng));
+    }
+
+    #[test]
+    fn should_sample_draw_is_a_pure_function_of_the_draw() {
+        use crate::sampler::Sampler;
+        // 50% sampler: even draws are recorded, odd ones are not, and two
+        // nodes with the same policy agree on every draw — the property the
+        // per-call decision relies on when retries move between nodes.
+        let policy = MetricsPolicy {
+            sampler: Sampler::new(2, 1),
+            ..MetricsPolicy::default().with_operational(true)
+        };
+        let a = NodeMetrics::new(policy.clone());
+        let b = NodeMetrics::new(policy);
+        a.set_enabled(true);
+        b.set_enabled(true);
+        for draw in 0..64u64 {
+            assert_eq!(a.should_sample_draw(draw), draw % 2 == 0);
+            assert_eq!(a.should_sample_draw(draw), b.should_sample_draw(draw));
+        }
     }
 
     #[test]
@@ -1174,10 +1352,12 @@ mod tests {
         metrics.incr_connections_attempt();
         metrics.incr_tend(true);
         metrics.incr_transaction_retry();
+        metrics.incr_connections_closed(CloseReason::Error);
         let snap = metrics.get_and_reset();
         assert_eq!(snap.counters.connections_attempts, 0);
         assert_eq!(snap.counters.tends_total, 0);
         assert_eq!(snap.counters.transaction_retry_count, 0);
+        assert_eq!(snap.counters.connections_closed, 0);
 
         metrics.set_enabled(true);
         metrics.incr_connections_attempt();
@@ -1189,6 +1369,122 @@ mod tests {
         assert_eq!(snap.counters.tends_total, 1);
         assert_eq!(snap.counters.tends_failed, 1);
         assert_eq!(snap.counters.tends_successful, 0);
+    }
+
+    /// Tier split (metrics.md §3): with collection on but the operational
+    /// group off, the Tier 0 counters move and every operational one stays
+    /// at zero; turning the group on via reshape unlocks them.
+    #[test]
+    fn tier_0_only_records_lifecycle_but_not_operational_counters() {
+        let metrics = NodeMetrics::new(MetricsPolicy::default());
+        metrics.set_enabled(true);
+        assert!(metrics.is_enabled() && !metrics.is_operational());
+
+        // Tier 0: opened / closed / tend / node counters.
+        metrics.incr_connections_successful();
+        metrics.incr_connections_closed(CloseReason::Idle);
+        metrics.incr_connections_closed(CloseReason::NodeRemoved);
+        metrics.incr_tend(true);
+        metrics.incr_node_added();
+        // Operational: failures, close reasons, pool events, command counters.
+        metrics.incr_connections_failed(OpenFailure::TlsHandshake);
+        metrics.incr_connections_pool_empty();
+        metrics.incr_circuit_breaker_hits();
+        metrics.incr_transaction_retry();
+        metrics.incr_transaction_error();
+
+        let snap = metrics.get_and_reset();
+        assert_eq!(snap.counters.connections_successful, 1);
+        assert_eq!(snap.counters.connections_closed, 2);
+        assert_eq!(snap.counters.tends_total, 1);
+        assert_eq!(snap.counters.node_added, 1);
+        for (name, value) in [
+            ("connections_idle_dropped", snap.counters.connections_idle_dropped),
+            ("connections_closed_node_removed", snap.counters.connections_closed_node_removed),
+            ("connections_failed", snap.counters.connections_failed),
+            ("connections_tls_errors", snap.counters.connections_tls_errors),
+            ("connections_pool_empty", snap.counters.connections_pool_empty),
+            ("circuit_breaker_hits", snap.counters.circuit_breaker_hits),
+            ("transaction_retry_count", snap.counters.transaction_retry_count),
+            ("transaction_error_count", snap.counters.transaction_error_count),
+        ] {
+            assert_eq!(value, 0, "{name} is operational and must stay 0");
+        }
+
+        metrics.reshape(&MetricsPolicy::default().with_operational(true));
+        metrics.incr_connections_failed(OpenFailure::Timeout);
+        metrics.incr_connections_failed(OpenFailure::Connect);
+        metrics.incr_connections_failed(OpenFailure::TlsHandshake);
+        metrics.incr_connections_failed(OpenFailure::Auth);
+        metrics.incr_connections_closed(CloseReason::Error);
+        metrics.incr_connections_closed(CloseReason::PoolOverflow);
+        metrics.incr_transaction_error();
+        let snap = metrics.get_and_reset();
+        assert_eq!(snap.counters.connections_failed, 4);
+        assert_eq!(snap.counters.connections_timeout_errors, 1);
+        assert_eq!(snap.counters.connections_other_errors, 1);
+        assert_eq!(snap.counters.connections_tls_errors, 1);
+        assert_eq!(snap.counters.connections_auth_errors, 1);
+        assert_eq!(snap.counters.connections_closed, 2);
+        assert_eq!(snap.counters.connections_closed_error, 1);
+        assert_eq!(snap.counters.connections_pool_overflow, 1);
+        assert_eq!(snap.counters.transaction_error_count, 1);
+    }
+
+    #[test]
+    fn pool_gauges_stamp_and_aggregate() {
+        let mut a = NodeMetricsSnapshot::new(MetricsPolicy::default());
+        a.set_pool_gauges(PoolGauges {
+            total: 10,
+            in_pool: 4,
+            recovering: 1,
+        });
+        assert_eq!(a.open_connections(), 10);
+        assert_eq!(a.connections_in_use(), 6);
+        assert_eq!(a.connections_in_pool(), 4);
+        assert_eq!(a.connections_recovering(), 1);
+        assert_eq!(a.pool_gauges().in_use(), 6);
+
+        // A walk that races a checkout can read more idle than total; in_use
+        // saturates instead of wrapping.
+        let odd = PoolGauges {
+            total: 1,
+            in_pool: 3,
+            recovering: 0,
+        };
+        assert_eq!(odd.in_use(), 0);
+
+        // Cluster view = sum across nodes.
+        let mut b = NodeMetricsSnapshot::new(MetricsPolicy::default());
+        b.set_pool_gauges(PoolGauges {
+            total: 3,
+            in_pool: 3,
+            recovering: 0,
+        });
+        let mut agg = NodeMetricsSnapshot::new(MetricsPolicy::default());
+        agg.aggregate(&a);
+        agg.aggregate(&b);
+        assert_eq!(agg.open_connections(), 13);
+        assert_eq!(agg.connections_in_use(), 6);
+        assert_eq!(agg.connections_in_pool(), 7);
+        assert_eq!(agg.connections_recovering(), 1);
+    }
+
+    #[test]
+    fn error_rate_gauge_stamps_and_sums() {
+        let mut a = NodeMetricsSnapshot::new(MetricsPolicy::default());
+        assert_eq!(a.error_rate(), 0);
+        a.set_error_rate(3);
+        assert_eq!(a.error_rate(), 3);
+        let mut b = NodeMetricsSnapshot::new(MetricsPolicy::default());
+        b.set_error_rate(4);
+        let mut agg = NodeMetricsSnapshot::new(MetricsPolicy::default());
+        agg.aggregate(&a);
+        agg.aggregate(&b);
+        assert_eq!(agg.error_rate(), 7);
+        // A re-stamp replaces rather than accumulates: it is a gauge.
+        a.set_error_rate(1);
+        assert_eq!(a.error_rate(), 1);
     }
 
     #[test]
@@ -1241,15 +1537,15 @@ mod tests {
 
     #[test]
     fn recorders_bucket_in_the_policy_unit() {
-        // 1500µs is 1ms: bucket 10 of a µs log2 histogram (2^10 = 1024), and
-        // bucket 0 of a ms one.
+        // 1500µs is 1ms: bucket 11 of a µs log2 histogram (1024 < 1500 <= 2048,
+        // ranges are upper-closed), and bucket 0 of a ms one.
         let elapsed = Duration::from_micros(1_500);
 
         let us = NodeMetrics::new(MetricsPolicy::micros());
         us.record_command(CommandType::Get, elapsed);
         let snap = us.get_and_reset();
         assert_eq!(snap.get_metrics.max(), 1_500);
-        assert_eq!(snap.get_metrics.buckets()[10], 1);
+        assert_eq!(snap.get_metrics.buckets()[11], 1);
 
         let ms = NodeMetrics::new(MetricsPolicy::millis());
         ms.record_command(CommandType::Get, elapsed);
@@ -1417,16 +1713,18 @@ mod tests {
         let metrics = NodeMetrics::new(MetricsPolicy::default());
         metrics.set_enabled(true);
         metrics.record_command(CommandType::Get, Duration::from_millis(10));
-        // Switch to a linear histogram with a different column count.
-        let mut new_policy = MetricsPolicy::default();
-        new_policy.histogram_type = crate::metrics::HistogramType::Linear;
-        new_policy.latency_columns = 7;
-        new_policy.latency_base = 5;
+        // Switch to a wider histogram with a different boundary spacing.
+        let new_policy = MetricsPolicy {
+            latency_columns: 9,
+            latency_shift: 3,
+            ..MetricsPolicy::default()
+        };
         metrics.reshape(&new_policy);
         // Reshape resets the histogram and changes its bucket count.
         let snap = metrics.get_and_reset();
         assert_eq!(snap.get_metrics.count(), 0);
-        assert_eq!(snap.get_metrics.buckets().len(), 7);
+        assert_eq!(snap.get_metrics.buckets().len(), 9);
+        assert_eq!(snap.get_metrics.shift(), 3);
     }
 
     #[cfg(feature = "serialization")]

@@ -27,7 +27,6 @@ use crate::commands::buffer::{self, Buffer, MAX_BUFFER_SIZE};
 use crate::errors::{Error, Result};
 use crate::net::Host;
 use crate::policy::{AuthMode, ClientPolicy};
-use crate::XorShift;
 #[cfg(feature = "rt-async-std")]
 use aerospike_rt::async_std::net::Shutdown;
 #[cfg(feature = "rt-tokio")]
@@ -111,8 +110,6 @@ pub struct Connection {
     idle_timeout: Option<Duration>,
     idle_deadline: Option<Instant>,
 
-    rnd: XorShift,
-
     // connection object
     pub(crate) conn: Netsocket,
 
@@ -170,6 +167,42 @@ macro_rules! io_with_timeout {
             aerospike_rt::timeout($timeout, $io).await
         }
     }};
+}
+
+/// Phase of opening a connection at which it failed. Lets the connection pool
+/// attribute a failed open to the right metrics counter (`metrics.md` §4.4:
+/// `connection.open.failure` / `tls.handshake.failure` / `auth.failure`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// The test build's `open` shim never reaches TLS or auth.
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) enum ConnectPhase {
+    /// The TCP connect (or its timeout) failed; no handshake was attempted.
+    Tcp,
+    /// The socket was up but the TLS handshake failed.
+    Tls,
+    /// TCP (and TLS, when configured) succeeded; login / session
+    /// authentication failed.
+    Auth,
+}
+
+/// A failed [`Connection::open`]: the underlying error tagged with the phase
+/// that produced it. Converts into the plain error with `?` / `From`.
+#[derive(Debug)]
+pub(crate) struct ConnectError {
+    pub(crate) phase: ConnectPhase,
+    pub(crate) error: Error,
+}
+
+impl ConnectError {
+    pub(crate) const fn new(phase: ConnectPhase, error: Error) -> Self {
+        ConnectError { phase, error }
+    }
+}
+
+impl From<ConnectError> for Error {
+    fn from(failure: ConnectError) -> Error {
+        failure.error
+    }
 }
 
 impl Connection {
@@ -233,36 +266,50 @@ impl Connection {
         policy: &ClientPolicy,
         hashed_pass: Option<&String>,
     ) -> Result<Self> {
-        Self::new_with_session(host, policy, hashed_pass, None)
+        Self::open(host, policy, hashed_pass, None)
             .await
             .map(|(conn, _session)| conn)
+            .map_err(Error::from)
     }
 
     /// Like [`new`](Self::new) but optionally reuses a previously-issued
     /// session token to authenticate via `AUTHENTICATE` instead of `LOGIN`.
     /// On success returns the connection plus a fresh `SessionInfo` if the
     /// server issued one (i.e. when we fell back to a full login).
+    ///
+    /// Failures carry the [`ConnectPhase`] they happened in so the connection
+    /// pool can attribute them (TCP vs TLS handshake vs authentication) for
+    /// metrics without parsing error text. [`ConnectError`] converts into a
+    /// plain [`Error`] with `?`.
     #[cfg(not(test))]
-    pub async fn new_with_session(
+    pub(crate) async fn open(
         host: &Host,
         policy: &ClientPolicy,
         hashed_pass: Option<&String>,
         session: Option<&crate::commands::admin_command::SessionInfo>,
-    ) -> Result<(Self, Option<crate::commands::admin_command::SessionInfo>)> {
+    ) -> std::result::Result<
+        (Self, Option<crate::commands::admin_command::SessionInfo>),
+        ConnectError,
+    > {
         let addr = host.address();
         let stream =
             aerospike_rt::timeout(policy.connect_timeout(), TcpStream::connect(addr.clone())).await;
-        if stream.is_err() {
-            return Err(Error::connection(
-                "Could not open network connection".to_string(),
-            ));
-        }
-
-        let stream = stream.unwrap()?;
+        let stream = match stream {
+            Ok(Ok(stream)) => stream,
+            Ok(Err(io)) => return Err(ConnectError::new(ConnectPhase::Tcp, Error::from(io))),
+            Err(_) => {
+                return Err(ConnectError::new(
+                    ConnectPhase::Tcp,
+                    Error::connection("Could not open network connection".to_string()),
+                ))
+            }
+        };
 
         Self::set_nodelay(&stream);
 
-        let stream = Self::get_netsocket(stream, host, policy).await?;
+        let stream = Self::get_netsocket(stream, host, policy)
+            .await
+            .map_err(|err| ConnectError::new(ConnectPhase::Tls, err))?;
 
         let idle_timeout = if policy.idle_timeout > 0 {
             Some(Duration::from_millis(u64::from(policy.idle_timeout)))
@@ -288,7 +335,6 @@ impl Connection {
             can_recover_connection: false,
             response_decompressed: false,
             compressed_stream_body: false,
-            rnd: XorShift::new(),
             // Far-future deadline; reset before each IO so this never fires first.
             #[cfg(feature = "rt-tokio")]
             sleep: Box::pin(aerospike_rt::tokio::time::sleep(
@@ -308,27 +354,34 @@ impl Connection {
             _ => false,
         };
         if !used_session {
-            new_session = conn.authenticate(&policy.auth_mode, hashed_pass).await?;
+            new_session = conn
+                .authenticate(&policy.auth_mode, hashed_pass)
+                .await
+                .map_err(|err| ConnectError::new(ConnectPhase::Auth, err))?;
         }
         conn.refresh();
         Ok((conn, new_session))
     }
 
-    /// Test-mode shim that mirrors the production
-    /// [`new_with_session`](Self::new_with_session) signature so call sites
-    /// like `ConnectionPool::make_conn` link under `cfg(test)`. Always
-    /// returns a fresh `(connection, None)` pair — the test build never
-    /// goes near a real LOGIN, so the cached-session fast path is moot.
+    /// Test-mode shim that mirrors the production [`open`](Self::open)
+    /// signature so call sites like `ConnectionPool::make_conn` link under
+    /// `cfg(test)`. Always returns a fresh `(connection, None)` pair — the
+    /// test build never goes near a real LOGIN, so the cached-session fast
+    /// path is moot.
     #[cfg(test)]
-    pub async fn new_with_session(
+    pub(crate) async fn open(
         host: &Host,
         policy: &ClientPolicy,
         hashed_pass: Option<&String>,
         _session: Option<&crate::commands::admin_command::SessionInfo>,
-    ) -> Result<(Self, Option<crate::commands::admin_command::SessionInfo>)> {
+    ) -> std::result::Result<
+        (Self, Option<crate::commands::admin_command::SessionInfo>),
+        ConnectError,
+    > {
         Self::new(host, policy, hashed_pass)
             .await
             .map(|c| (c, None))
+            .map_err(|err| ConnectError::new(ConnectPhase::Tcp, err))
     }
 
     #[cfg(test)]
@@ -339,7 +392,6 @@ impl Connection {
     ) -> Result<Self> {
         let addr = host.address();
         let stream = Netsocket::TestDummy;
-        let rnd = XorShift::new();
 
         let idle_timeout = if policy.idle_timeout > 0 {
             Some(Duration::from_millis(policy.idle_timeout as u64))
@@ -362,7 +414,6 @@ impl Connection {
             can_recover_connection: false,
             response_decompressed: false,
             compressed_stream_body: false,
-            rnd: rnd,
             // Far-future deadline; reset before each IO so this never fires first.
             #[cfg(feature = "rt-tokio")]
             sleep: Box::pin(aerospike_rt::tokio::time::sleep(
@@ -400,7 +451,6 @@ impl Connection {
             can_recover_connection: false,
             response_decompressed: false,
             compressed_stream_body: false,
-            rnd: XorShift::new(),
             // Far-future deadline; reset before each IO so this never fires first.
             sleep: Box::pin(aerospike_rt::tokio::time::sleep(
                 aerospike_rt::time::Duration::from_secs(3600),
@@ -408,12 +458,6 @@ impl Connection {
         };
         conn.refresh();
         conn
-    }
-
-    /// Returns the connection's per-connection random generator, used by the
-    /// metrics sampler to decide whether to record a command.
-    pub(crate) const fn rng(&mut self) -> &mut XorShift {
-        &mut self.rnd
     }
 
     pub fn close(&mut self) {
@@ -1717,7 +1761,6 @@ mod liveness_probe_tests {
             can_recover_connection: false,
             response_decompressed: false,
             compressed_stream_body: false,
-            rnd: XorShift::new(),
             #[cfg(feature = "rt-tokio")]
             sleep: Box::pin(aerospike_rt::tokio::time::sleep(Duration::from_secs(3600))),
         };
@@ -1810,7 +1853,6 @@ mod tests_eof_loopback {
             can_recover_connection: false,
             response_decompressed: false,
             compressed_stream_body: false,
-            rnd: XorShift::new(),
             // Far-future deadline; reset before each IO so this never fires first.
             sleep: Box::pin(aerospike_rt::tokio::time::sleep(
                 aerospike_rt::time::Duration::from_secs(3600),
@@ -2186,7 +2228,6 @@ giXBCqFUdjj6IPPzkDZtMO1fU3lfoCm6z5EGqRhWg8An6dxdhFCdc2AZ
             can_recover_connection: false,
             response_decompressed: false,
             compressed_stream_body: false,
-            rnd: XorShift::new(),
             sleep: Box::pin(aerospike_rt::tokio::time::sleep(Duration::from_secs(3600))),
         };
         conn.refresh();

@@ -135,9 +135,12 @@ impl BatchOperateCommand {
             crate::metrics::CommandType::BatchRead
         };
         let trans_start = Instant::now();
-        // The per-command sample decision (enabled AND sampler-selected). Made
-        // once, the first time a connection is acquired, then reused for the
-        // whole command so all of its metrics are recorded together or not.
+        // The per-command sample decision (operational tier on AND
+        // sampler-selected). One random draw per sub-batch command, taken here
+        // before the first attempt (metrics.md §3.1.1); the decision is made
+        // from it the first time a node is tried and reused for the whole
+        // command so all of its metrics are recorded together or not at all.
+        let sample_draw: u64 = rand::random();
         let mut sampled: Option<bool> = None;
 
         // Replica sequence offsets, advanced on every scheduled retry (Java
@@ -167,6 +170,7 @@ impl BatchOperateCommand {
                     deadline,
                     self.node.clone(),
                     cmd_type,
+                    sample_draw,
                     &mut sampled,
                     &mut commands_sent,
                 self.hook.as_deref(),
@@ -257,6 +261,7 @@ impl BatchOperateCommand {
                         deadline,
                         node,
                         cmd_type,
+                        sample_draw,
                         &mut sampled,
                         &mut commands_sent,
                     self.hook.as_deref(),
@@ -499,6 +504,7 @@ impl BatchOperateCommand {
         deadline: Option<Instant>,
         node: Arc<Node>,
         cmd_type: crate::metrics::CommandType,
+        sample_draw: u64,
         sampled: &mut Option<bool>,
         commands_sent: &mut u32,
         hook: Option<&crate::batch::BatchHook>,
@@ -507,16 +513,25 @@ impl BatchOperateCommand {
         // is currently outside its error-rate window. Mirrors Java's
         // `node.validateErrorCount()` call site at the top of every
         // command attempt.
+        // Metrics: one sample decision per command, made from the call-level
+        // draw the first time a node is tried and reused across retries and
+        // per-op groups (never re-rolled — metrics.md §3.1.1).
+        if sampled.is_none() {
+            *sampled = Some(node.metrics().should_sample_draw(sample_draw));
+        }
+        let metrics_on = sampled.unwrap_or(false);
+
         if let Err(err) = node.validate_error_count() {
-            node.metrics().incr_circuit_breaker_hits();
+            if metrics_on {
+                node.metrics().incr_circuit_breaker_hits();
+            }
             return Ok(Some(err));
         }
 
-        // Metrics: detailed per-namespace metrics are attributed to every
-        // distinct namespace in this request group. Build the namespace set
-        // when collection is enabled; the per-command sample decision is made
-        // below once a connection (and its rng) is available.
-        let namespaces: Vec<String> = if node.metrics().is_enabled() {
+        // Detailed per-namespace metrics are attributed to every distinct
+        // namespace in this request group; only worth building when this
+        // command is being recorded.
+        let namespaces: Vec<String> = if metrics_on {
             let mut v: Vec<String> = batch_ops
                 .iter()
                 .map(|op| op.0.key().namespace.clone())
@@ -540,13 +555,6 @@ impl BatchOperateCommand {
                 return Ok(Some(err));
             }
         };
-        // Decide once per command whether to record metrics: collection
-        // enabled AND the policy's sampler selects it (drawing from this
-        // connection's rng). Reused across retries/per-op groups.
-        if sampled.is_none() {
-            *sampled = Some(node.metrics().should_sample(conn.rng()));
-        }
-        let metrics_on = sampled.unwrap_or(false);
         if metrics_on {
             let aq_elapsed = aq_start.elapsed();
             for ns in &namespaces {

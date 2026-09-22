@@ -388,9 +388,12 @@ impl Client {
     }
 
     /// Enables periodic client metrics collection, (re)shaping per-node
-    /// histograms to `policy`. While enabled the client records connection,
-    /// tend, latency and result-code statistics that can be read with
-    /// [`Client::metrics`]. Collection is off by default.
+    /// histograms to `policy`. While enabled the client records the Tier 0
+    /// instruments (pool gauges, connection opened/closed, tend and node
+    /// counts) and, if [`MetricsPolicy::operational`](crate::metrics::MetricsPolicy::operational)
+    /// is set, the per-command latency, bytes, result-code, retry/error and
+    /// connection-failure statistics. Read them with [`Client::metrics`].
+    /// Collection is off by default.
     pub fn enable_metrics(&self, policy: crate::metrics::MetricsPolicy) {
         self.cluster.enable_metrics(policy);
     }
@@ -407,26 +410,32 @@ impl Client {
 
     /// Returns a snapshot of the cluster's collected statistics: per-node
     /// metrics keyed by host, a cluster-aggregated view (carrying the node
-    /// labels), and the total node / open-connection counts.
+    /// labels), the total node count and the connection-pool gauges
+    /// (open / in-use / in-pool / recovering) summed across nodes.
     ///
-    /// Returns empty/zeroed statistics if metrics have never been enabled.
+    /// Callable while collection is disabled: the pool gauges are read live
+    /// from the pools on every call, while counters and histograms are
+    /// whatever was accumulated when collection was last on (zero if never).
     pub fn metrics(&self) -> crate::metrics::ClusterMetrics {
         let nodes = self.cluster.metrics_copy();
         let policy = self.cluster.metrics_policy();
         let mut aggregated = crate::metrics::NodeMetricsSnapshot::new((*policy).clone());
-        let mut open_connections = 0u64;
         for snapshot in nodes.values() {
+            // `aggregate` sums the stamped pool gauges along with the counters.
             aggregated.aggregate(snapshot);
-            open_connections += snapshot.open_connections();
         }
         aggregated.set_labels(self.cluster.node_labels());
-        aggregated.set_open_connections(open_connections);
+        let gauges = aggregated.pool_gauges();
 
         crate::metrics::ClusterMetrics {
             nodes,
             cluster_aggregated: aggregated,
             total_nodes: self.cluster.nodes().len(),
-            open_connections,
+            open_connections: gauges.total,
+            connections_in_use: gauges.in_use(),
+            connections_in_pool: gauges.in_pool,
+            recover_queue_size: gauges.recovering,
+            nodes_invalid: self.cluster.nodes_invalid_count(),
             exceeded_max_retries: self.cluster.max_retries_exceeded_count(),
             exceeded_total_timeout: self.cluster.total_timeout_exceeded_count(),
         }
