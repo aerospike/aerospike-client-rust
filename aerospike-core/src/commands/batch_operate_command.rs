@@ -404,6 +404,19 @@ impl BatchOperateCommand {
         }
     }
 
+    /// Connection-queue hint for a request group, derived from the group's
+    /// first digest exactly as `SingleCommand::hint` does for one key.
+    ///
+    /// The hint picks which of the node's `conn_pools_per_node` queues a
+    /// checkout starts on, and which one a new connection is opened into. A
+    /// constant sent every batch sub-request to queue 0 — every checkout
+    /// contending on the same lock, and every new connection filling queue 0
+    /// before any other queue was touched, which is the opposite of what
+    /// sharding the pool is for.
+    fn queue_hint(batch_ops: &[(BatchOperation, usize)]) -> u8 {
+        batch_ops.first().map_or(0, |(op, _)| op.key().digest[0])
+    }
+
     async fn request_group(
         batch_ops: &mut [(BatchOperation, usize)],
         policy: &BatchPolicy,
@@ -440,7 +453,7 @@ impl BatchOperateCommand {
         };
 
         let aq_start = Instant::now();
-        let mut conn = match node.get_connection(0).await {
+        let mut conn = match node.get_connection(Self::queue_hint(batch_ops)).await {
             Ok(conn) => conn,
             // Pool-empty is a pacing signal (a background task is opening a
             // connection), not node ill-health — don't trip the breaker.
@@ -838,5 +851,46 @@ impl BatchOperateCommand {
 
         conn.reset_state();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod queue_hint_tests {
+    use super::*;
+    use crate::{BatchReadPolicy, Bins, Key};
+
+    /// `index` doubles as the key, so each pair has a distinct digest.
+    fn pair(index: usize) -> (BatchOperation, usize) {
+        let key = Key::new("test", "test", Value::from(index as i64)).unwrap();
+        (
+            BatchOperation::read(&BatchReadPolicy::default(), key, Bins::All),
+            index,
+        )
+    }
+
+    #[test]
+    fn queue_hint_comes_from_the_first_digest() {
+        let ops = [pair(1), pair(2)];
+        let expected = ops[0].0.key().digest[0];
+        assert_eq!(BatchOperateCommand::queue_hint(&ops), expected);
+    }
+
+    /// The hint must vary with the group, or every batch sub-request starts on
+    /// the same queue — the defect this replaces. Distinct keys give distinct
+    /// digests, so a fixed hint would show up as every group hashing alike.
+    #[test]
+    fn queue_hint_varies_across_groups() {
+        let hints: std::collections::HashSet<u8> = (1..64)
+            .map(|k| BatchOperateCommand::queue_hint(&[pair(k)]))
+            .collect();
+        assert!(
+            hints.len() > 1,
+            "hint is constant across 63 distinct first keys: {hints:?}"
+        );
+    }
+
+    #[test]
+    fn queue_hint_of_an_empty_group_does_not_panic() {
+        assert_eq!(BatchOperateCommand::queue_hint(&[]), 0);
     }
 }
