@@ -912,8 +912,8 @@ impl Error {
 impl fmt::Display for Error {
     /// Uniform, Java-style format:
     /// `Error <code>[, SubCode: N][, iter=N][, In Doubt: true][, node=X]: <base message>`
-    /// followed by a `sub-exceptions:` block (one indented line per prior
-    /// attempt, labeled as the Java client labels it) and the cause chain.
+    /// followed by a `sub-errors:` block (one indented line per prior attempt)
+    /// and the cause chain.
     ///
     /// The subcode is rendered here, beside the result code, rather than folded
     /// into the server's message — the `(result code, subcode)` pair is the
@@ -936,7 +936,7 @@ impl fmt::Display for Error {
         }
         write!(f, ": {}", self.base_message())?;
         if !i.sub_errors.is_empty() {
-            f.write_str("\nsub-exceptions:")?;
+            f.write_str("\nsub-errors:")?;
             for s in &i.sub_errors {
                 write!(f, "\n\t{s}")?;
             }
@@ -1133,7 +1133,7 @@ mod tests {
         let s = err.to_string();
         assert!(s.contains("iter=2"), "{s}");
         assert!(s.contains("node=BB9051616AC4202"), "{s}");
-        assert!(s.contains("sub-exceptions:"), "{s}");
+        assert!(s.contains("sub-errors:"), "{s}");
     }
 
     #[test]
