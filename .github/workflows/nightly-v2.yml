@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: '0 2 * * *'   # 02:00 UTC daily
   workflow_dispatch:
+  # TEMP: testing dmishra's theory that 8.1.0 is fully compatible while
+  # 8.1.2 is only a minimum-usable version -- revert before merging.
+  pull_request:
+    branches:
+      - main
+      - v3
 
 jobs:
   v2:
@@ -11,4 +17,5 @@ jobs:
     uses: ./.github/workflows/nightly-branch.yml
     with:
       branch: v2
+      server-tag: "8.1.0.0"
     secrets: inherit
