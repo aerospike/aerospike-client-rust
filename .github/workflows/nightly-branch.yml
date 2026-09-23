@@ -202,11 +202,8 @@ jobs:
 
   # ────────────────────────────────────────────────────────────────────────
   # Leg 5 — lua feature compile check (no live server needed)
-  # v2 has no lua feature at all (no mlua dependency), so this leg is
-  # meaningless there -- skip rather than fail on a nonexistent feature.
   # ────────────────────────────────────────────────────────────────────────
   lua-feature-build:
-    if: inputs.branch != 'v2'
     name: lua-feature-build (${{ inputs.branch }})
     runs-on: ubuntu-22.04
     steps:
