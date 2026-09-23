@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       branch:
-        description: 'Branch to test (e.g. v2, v3)'
+        description: 'Branch to test (e.g. v3)'
         required: true
         type: string
 
