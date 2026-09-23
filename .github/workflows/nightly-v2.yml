@@ -17,5 +17,5 @@ jobs:
     uses: ./.github/workflows/nightly-branch.yml
     with:
       branch: v2
-      server-tag: "8.1.0"
+      server-tag: "8.1"
     secrets: inherit
