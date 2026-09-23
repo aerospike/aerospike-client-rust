@@ -7,11 +7,6 @@ on:
         description: 'Branch to test (e.g. v2, v3)'
         required: true
         type: string
-      server-tag:
-        description: 'Aerospike Server Enterprise image tag'
-        required: false
-        type: string
-        default: "8.1.2.0"
 
 permissions:
   contents: read
@@ -55,7 +50,7 @@ jobs:
       - name: Set up Aerospike Database (EE + SC)
         uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
         with:
-          server-tag: ${{ inputs.server-tag }}
+          server-tag: "8.1.2.0"
           enable-strong-consistency: "true"
           features-content: ${{ secrets.AEROSPIKE_SERVER_FEATURES_CONF }}
           oidc-provider: ${{ vars.OIDC_PROVIDER_NAME }}
@@ -96,7 +91,7 @@ jobs:
         id: setup-server
         uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
         with:
-          server-tag: ${{ inputs.server-tag }}
+          server-tag: "8.1.2.0"
           enable-tls: "true"
           enable-security: "true"
           enable-strong-consistency: "true"
@@ -150,7 +145,7 @@ jobs:
       - name: Set up Aerospike Database (EE + AP)
         uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
         with:
-          server-tag: ${{ inputs.server-tag }}
+          server-tag: "8.1.2.0"
           # No enable-strong-consistency — AP is the Aerospike default
           features-content: ${{ secrets.AEROSPIKE_SERVER_FEATURES_CONF }}
           oidc-provider: ${{ vars.OIDC_PROVIDER_NAME }}
@@ -193,7 +188,7 @@ jobs:
       - name: Set up Aerospike Database (Community Edition)
         uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
         with:
-          server-tag: ${{ inputs.server-tag }}
+          server-tag: "8.1.2.0"
           server-container-repo: database-docker-virtual/aerospike-server
           server-edition: community
           oidc-provider: ${{ vars.OIDC_PROVIDER_NAME }}
