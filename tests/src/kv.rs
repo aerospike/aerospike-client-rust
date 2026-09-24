@@ -587,5 +587,9 @@ async fn unknown_value_round_trips_as_a_bin_value() {
     // Not as a key.
     assert!(Key::new(namespace, set_name, Value::Unknown(JBLOB, payload)).is_err());
 
-    client.delete(&WritePolicy::default(), &key).await.unwrap();
+    // Durable: a plain delete of an existing record is forbidden on an SC
+    // namespace.
+    common::delete_durably(&client, &WritePolicy::default(), &key)
+        .await
+        .unwrap();
 }

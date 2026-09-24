@@ -327,7 +327,19 @@ impl BatchExecutor {
                         String::new(),
                         None,
                     )),
-                    Ok(()) => Ok(None),
+                    // Same row shape as a delete that went through the
+                    // multi-record wire path (and as Java's
+                    // `BatchSingle.Delete`): an Ok row carries a bin-less
+                    // record with the deleted record's generation and
+                    // expiration, not `None`. `None` is reserved for rows
+                    // that found no record or failed.
+                    Ok(()) => Ok(Some(crate::Record::new(
+                        None,
+                        crate::IndexMap::new(),
+                        None,
+                        cmd.generation,
+                        cmd.expiration,
+                    ))),
                     Err(e) => Err(e),
                 }
             }

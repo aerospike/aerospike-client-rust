@@ -25,6 +25,11 @@ pub struct DeleteCommand<'a> {
     single_command: SingleCommand<'a>,
     policy: &'a WritePolicy,
     pub existed: bool,
+    /// Generation of the deleted record, from the response header (0 when
+    /// the record did not exist).
+    pub generation: u32,
+    /// Expiration of the deleted record, from the response header.
+    pub expiration: u32,
 }
 
 impl<'a> DeleteCommand<'a> {
@@ -34,6 +39,8 @@ impl<'a> DeleteCommand<'a> {
             single_command: SingleCommand::new(cluster, key, partition),
             policy,
             existed: false,
+            generation: 0,
+            expiration: 0,
         }
     }
 
@@ -104,6 +111,11 @@ impl Command for DeleteCommand<'_> {
         let sz = conn.buffer.read_u64(Some(0));
         let header_length = conn.buffer.read_u8(Some(8));
         let result_code = ResultCode::from(conn.buffer.read_u8(Some(13)));
+        // Same header slots the read path uses; the batch single-key fast
+        // path reports them on the row's `Record`, as Java's
+        // `BatchSingle.Delete` does.
+        self.generation = conn.buffer.read_u32(Some(14));
+        self.expiration = conn.buffer.read_u32(Some(18));
         let field_count = conn.buffer.read_u16(Some(26)) as usize;
         let receive_size = ((sz & 0xFFFF_FFFF_FFFF) - u64::from(header_length)) as usize;
 

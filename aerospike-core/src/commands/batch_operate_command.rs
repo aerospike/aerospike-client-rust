@@ -837,7 +837,17 @@ impl BatchOperateCommand {
                 }
             }
 
-            Some(Record::new(Some(key), bins, Some(results), generation, expiration))
+            // Row shape matches the single-key commands the executor falls
+            // back to for one-key nodes, so a row's `Record` does not depend
+            // on how many keys shared its node:
+            // - the key is reported only when the server actually returned
+            //   one (batch rows normally carry no key fields — an all-zero
+            //   digest is "absent", not a key);
+            // - `results` is positional op output, so a row without ops (a
+            //   delete, a header-only read) has `None`, not an empty list.
+            let key = (key.digest != [0u8; 20]).then_some(key);
+            let results = (op_count > 0).then_some(results);
+            Some(Record::new(key, bins, results, generation, expiration))
         } else {
             None
         };

@@ -1355,3 +1355,66 @@ async fn dropping_batch_foreach_stops_the_hook() {
     assert!(check[0].record().is_some());
     client.close().await.unwrap();
 }
+
+// A row's `Record` must not depend on how many keys shared its node. A node
+// holding exactly one operation is served by a single-key command, every
+// other node by the multi-record wire path; an Ok delete used to come back
+// as `None` from the first and as a bin-less `Record` (with a bogus all-zero
+// key) from the second.
+#[aerospike_macro::test]
+async fn batch_delete_row_shape_is_the_same_alone_and_grouped() {
+    let client = common::client().await;
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    let bpolicy = BatchPolicy::default();
+    let mut dpolicy = BatchDeletePolicy::default();
+    if namespace_sc!(&client) {
+        dpolicy.durable_delete = true;
+    }
+    let rpolicy = BatchReadPolicy::default();
+    let key = as_key!(ns, set, "same-key");
+
+    // Alone on its node (group size 1): the single-key fast path.
+    client.put(&wpolicy, &key, &[as_bin!("bin", 1)]).await.unwrap();
+    let mut solo = [BatchOperation::delete(&dpolicy, key.clone())];
+    client.batch(&bpolicy, &mut solo).await.unwrap();
+    assert_eq!(solo[0].result_code(), Some(ResultCode::Ok), "record must have existed");
+    let alone = solo[0]
+        .batch_record()
+        .record
+        .clone()
+        .expect("an Ok delete carries a record, like Java's BatchSingle.Delete");
+
+    // Grouped with a read of the same key (group size 2, same node): the
+    // multi-record wire path.
+    client.put(&wpolicy, &key, &[as_bin!("bin", 1)]).await.unwrap();
+    let mut paired = [
+        BatchOperation::read(&rpolicy, key.clone(), Bins::None),
+        BatchOperation::delete(&dpolicy, key.clone()),
+    ];
+    client.batch(&bpolicy, &mut paired).await.unwrap();
+    assert_eq!(paired[0].result_code(), Some(ResultCode::Ok));
+    assert_eq!(paired[1].result_code(), Some(ResultCode::Ok), "record must have existed");
+    let grouped = paired[1]
+        .batch_record()
+        .record
+        .clone()
+        .expect("an Ok delete carries a record");
+
+    // Same shape on both paths: no key echoed back, no bins, no positional
+    // results (a delete has no ops).
+    for (label, record) in [("alone", &alone), ("grouped", &grouped)] {
+        assert!(record.key.is_none(), "{label}: a row record carries no key");
+        assert!(record.bins.is_empty(), "{label}: a delete returns no bins");
+        assert!(
+            record.results.is_none(),
+            "{label}: no ops, so no positional results"
+        );
+    }
+    assert_eq!(alone.generation, grouped.generation);
+
+    // The header-only read beside it follows the same rule.
+    let read = paired[0].batch_record().record.clone().expect("read hit");
+    assert!(read.key.is_none() && read.bins.is_empty() && read.results.is_none());
+}
