@@ -593,3 +593,61 @@ async fn unknown_value_round_trips_as_a_bin_value() {
         .await
         .unwrap();
 }
+
+/// `Record::time_to_live` must agree with the Java/Go/C clients: the server
+/// keeps void times in whole seconds and the clients floor "now" to whole
+/// seconds before subtracting, so a record written with a 500 s TTL and read
+/// back within the same wall-clock second reports exactly 500 — never 499
+/// from a fractional "now", and never 498.
+#[aerospike_macro::test]
+async fn ttl_read_back_matches_other_clients() {
+    let client = common::client().await;
+    if !common::ServerCapabilities::detect(&client)
+        .await
+        .explicit_record_ttl_allowed
+    {
+        eprintln!("skipped: this namespace does not allow an explicit record TTL");
+        return;
+    }
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let write_policy = WritePolicy::new(0, Expiration::Seconds(500));
+    let read_policy = ReadPolicy::default();
+    let unix_now = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
+
+    let mut same_second_reads = 0;
+    for i in 0..200_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let before = unix_now();
+        client
+            .put(&write_policy, &key, &[as_bin!("v", i)])
+            .await
+            .unwrap();
+        let record = client.get(&read_policy, &key, Bins::All).await.unwrap();
+        let after = unix_now();
+
+        let ttl = record.time_to_live().expect("record has a TTL");
+        assert_eq!(ttl.subsec_nanos(), 0, "TTL is reported in whole seconds");
+        let secs = ttl.as_secs();
+        // Only a second ticking over between write and read can lower it, by
+        // exactly that many seconds.
+        let elapsed = after - before;
+        assert!(
+            secs <= 500 && 500 - secs <= elapsed,
+            "record {i}: reported {secs}s for a 500s TTL with {elapsed}s elapsed"
+        );
+        if elapsed == 0 {
+            assert_eq!(secs, 500, "record {i}: same-second read must report the full TTL");
+            same_second_reads += 1;
+        }
+    }
+    assert!(
+        same_second_reads > 0,
+        "at least one write/read pair should land in the same second"
+    );
+}
