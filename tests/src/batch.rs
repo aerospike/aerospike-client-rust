@@ -673,12 +673,21 @@ async fn batch_single_key_fast_path_delete() {
 // outcomes for fixed policies. On the fast path, `FailForbidden` / `GenerationError` bubble as
 // a per-key server error (see `BatchExecutor::execute_single_op`).
 
+// Non-durable deletes on existing records are forbidden under SC by default (no
+// tombstone would be left, which SC needs to distinguish "deliberately deleted"
+// from "never replicated" during migrations). `strong-consistency-allow-expunge`
+// is an explicit opt-in escape hatch that lifts that restriction -- some CI
+// server configs enable it, some don't, so branch on the live namespace setting
+// (via `ServerCapabilities`) instead of assuming one or the other.
 #[aerospike_macro::test]
 async fn batch_sc_delete_non_durable_forbidden_when_record_exists() {
     let client = common::client().await;
     if !namespace_sc!(&client) {
         return;
     }
+    let allow_expunge = common::ServerCapabilities::detect(&client)
+        .await
+        .sc_allow_expunge;
 
     let ns = common::namespace();
     let set = &common::rand_str(10);
@@ -698,24 +707,44 @@ async fn batch_sc_delete_non_durable_forbidden_when_record_exists() {
     bpd.durable_delete = false;
 
     let mut ops = [BatchOperation::delete(&bpd, key.clone())];
-    let res = client.batch(&bp, &mut ops).await;
-    match res {
-        Err(e) if e.server_result_code() == Some(ResultCode::FailForbidden) => {}
-        other => panic!(
+    client.batch(&bp, &mut ops).await.unwrap();
+    let result_code = ops[0].batch_record().result_code;
+
+    if allow_expunge {
+        // Expunge is explicitly allowed on this namespace: the non-durable
+        // delete should succeed outright, leaving no record behind.
+        assert_eq!(
+            result_code,
+            Some(ResultCode::Ok),
+            "expunge is allowed on this namespace; delete should succeed, got {:?}",
+            result_code
+        );
+        let result = client.get(&ReadPolicy::default(), &key, Bins::All).await;
+        match result {
+            Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError) => {}
+            other => panic!(
+                "expected record to be gone after an allowed expunge delete, got {:?}",
+                other
+            ),
+        }
+    } else {
+        assert_eq!(
+            result_code,
+            Some(ResultCode::FailForbidden),
             "expected FailForbidden for non-durable delete on SC when record exists, got {:?}",
-            other
-        ),
+            result_code
+        );
+
+        let rec = client
+            .get(&ReadPolicy::default(), &key, Bins::All)
+            .await
+            .expect("record should still exist after forbidden delete");
+        assert_eq!(rec.bins.get("a"), Some(&Value::from(1_i64)));
+
+        common::delete_durably(&client, &wpolicy, &key)
+            .await
+            .unwrap();
     }
-
-    let rec = client
-        .get(&ReadPolicy::default(), &key, Bins::All)
-        .await
-        .expect("record should still exist after forbidden delete");
-    assert_eq!(rec.bins.get("a"), Some(&Value::from(1_i64)));
-
-    common::delete_durably(&client, &wpolicy, &key)
-        .await
-        .unwrap();
 }
 
 #[aerospike_macro::test]
@@ -744,15 +773,18 @@ async fn batch_sc_delete_generation_mismatch_errors() {
     bpd.generation_policy = GenerationPolicy::ExpectGenEqual;
     bpd.generation = 9_999;
 
+    // client.batch()'s own Result only reports whole-batch-level failures; a
+    // per-key rejection like GenerationError shows up in that key's own
+    // BatchOperation::batch_record(), not as an Err from the call itself.
     let mut ops = [BatchOperation::delete(&bpd, key.clone())];
-    let res = client.batch(&bp, &mut ops).await;
-    match res {
-        Err(e) if e.server_result_code() == Some(ResultCode::GenerationError) => {}
-        other => panic!(
-            "expected GenerationError for ExpectGenEqual with wrong generation on SC, got {:?}",
-            other
-        ),
-    }
+    client.batch(&bp, &mut ops).await.unwrap();
+    let result_code = ops[0].batch_record().result_code;
+    assert_eq!(
+        result_code,
+        Some(ResultCode::GenerationError),
+        "expected GenerationError for ExpectGenEqual with wrong generation on SC, got {:?}",
+        result_code
+    );
 
     let rec = client
         .get(&ReadPolicy::default(), &key, Bins::All)

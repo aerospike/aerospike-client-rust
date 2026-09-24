@@ -95,7 +95,7 @@ lazy_static! {
             policy.cluster_name = AEROSPIKE_CLUSTER.clone();
         }
         policy.use_services_alternate = AEROSPIKE_USE_SERVICES_ALTERNATE.clone();
-        if !no_tls() {
+        if !no_server_tls() {
             policy.tls_config = Some(tls_config_no_client_auth());
         }
         policy
@@ -105,8 +105,20 @@ lazy_static! {
     static ref AEROSPIKE_KEY_FILE: String = env::var("AEROSPIKE_KEY_FILE").unwrap_or_default();
 }
 
+/// True when no TLS server is available at all (CA cert not set).
+/// Use this to skip tests that require any TLS connection.
 #[cfg(feature = "tls")]
-pub fn no_tls() -> bool {
+pub fn no_server_tls() -> bool {
+    AEROSPIKE_CACERT_FILE.is_empty()
+}
+
+/// True when mutual TLS (client certificate auth) is not available.
+/// Use this to skip tests that require the client to present a certificate.
+/// Satisfied only when both AEROSPIKE_CACERT_FILE and AEROSPIKE_KEY_FILE are
+/// set AND the server is started with enable-tls-client-auth: "true".
+/// Auto-activates tls_client_auth the moment shared-workflows gains that flag.
+#[cfg(feature = "tls")]
+pub fn no_mutual_tls() -> bool {
     AEROSPIKE_CACERT_FILE.is_empty() || AEROSPIKE_KEY_FILE.is_empty()
 }
 
@@ -474,12 +486,16 @@ macro_rules! namespace_sc {
 #[derive(Clone, Copy, Debug)]
 pub struct ServerCapabilities {
     pub explicit_record_ttl_allowed: bool,
+    /// Whether the SC namespace allows non-durable ("expunge") deletes on existing
+    /// records. Only meaningful when the namespace is SC; `false` on AP namespaces.
+    pub sc_allow_expunge: bool,
 }
 
 impl ServerCapabilities {
     pub async fn detect(client: &aerospike::Client) -> Self {
         Self {
             explicit_record_ttl_allowed: explicit_record_ttl_probe(client).await,
+            sc_allow_expunge: sc_allow_expunge_probe(client).await,
         }
     }
 }
@@ -545,6 +561,24 @@ async fn explicit_record_ttl_probe(client: &aerospike::Client) -> bool {
             false
         }
         Err(e) => panic!("explicit TTL probe put: {}", e),
+    }
+}
+
+/// Reads `strong-consistency-allow-expunge` straight off the server's own
+/// `info namespace/{ns}` output -- it's a config value, not something worth a
+/// synthetic behavioral probe like `explicit_record_ttl_probe`.
+async fn sc_allow_expunge_probe(client: &aerospike::Client) -> bool {
+    let node = match client.cluster.get_random_node() {
+        Ok(n) => n,
+        Err(_) => return false,
+    };
+    let info_key = format!("namespace/{}", namespace());
+    match node.info(&AdminPolicy::default(), &[&info_key]).await {
+        Ok(map) => map
+            .get(&info_key)
+            .map(|info| info.contains("strong-consistency-allow-expunge=true"))
+            .unwrap_or(false),
+        Err(_) => false,
     }
 }
 

@@ -91,7 +91,7 @@ async fn close() {
 #[cfg(feature = "tls")]
 #[aerospike_macro::test]
 async fn tls_client_no_auth() {
-    if common::no_tls() {
+    if common::no_server_tls() {
         return;
     }
 
@@ -106,7 +106,7 @@ async fn tls_client_no_auth() {
 #[cfg(feature = "tls")]
 #[aerospike_macro::test]
 async fn tls_client_auth() {
-    if common::no_tls() {
+    if common::no_mutual_tls() {
         return;
     }
 
