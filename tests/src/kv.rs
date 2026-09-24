@@ -526,3 +526,66 @@ async fn infinity_and_wildcard_are_rejected_not_fatal() {
 
     client.close().await.unwrap();
 }
+
+/// A foreign particle (`Value::Unknown`) round-trips through a whole-bin
+/// write: the payload comes back byte-for-byte under the same particle-type
+/// code, so a record copied through this client keeps bins it cannot
+/// interpret. Anywhere other than a whole bin value it is still refused
+/// client-side.
+#[aerospike_macro::test]
+async fn unknown_value_round_trips_as_a_bin_value() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let key = as_key!(namespace, set_name, "unknown-particle");
+
+    // 7 = JBLOB, a particle type the server knows and this client does not
+    // interpret. Any payload is opaque to both sides.
+    const JBLOB: u8 = 7;
+    let payload: Vec<u8> = (0..64u8).map(|i| i.wrapping_mul(37)).collect();
+    let bins = [
+        as_bin!("foreign", Value::Unknown(JBLOB, payload.clone())),
+        as_bin!("plain", 42),
+    ];
+    client.put(&WritePolicy::default(), &key, &bins).await.unwrap();
+
+    let record = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+    assert_eq!(record.bins["plain"], Value::Int(42));
+    match &record.bins["foreign"] {
+        Value::Unknown(code, bytes) => {
+            assert_eq!(*code, JBLOB, "particle-type code must round-trip");
+            assert_eq!(*bytes, payload, "payload must round-trip verbatim");
+        }
+        other => panic!("expected the foreign bin to decode as Value::Unknown, got {other:?}"),
+    }
+
+    // Also through an operate() bin write, and an empty payload.
+    let ops = [operations::put(&as_bin!("foreign", Value::Unknown(JBLOB, Vec::new())))];
+    client
+        .operate(&WritePolicy::default(), &key, &ops)
+        .await
+        .unwrap();
+    let record = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+    assert_eq!(record.bins["foreign"], Value::Unknown(JBLOB, Vec::new()));
+
+    // Not inside a collection bin: refused before anything is sent.
+    let nested = as_bin!("list", as_list![Value::Unknown(JBLOB, payload.clone())]);
+    let err = client
+        .put(&WritePolicy::default(), &key, &[nested])
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err.kind(), aerospike::ErrorKind::InvalidArgument),
+        "nested Unknown must be a client-side argument error: {err}"
+    );
+    // Not as a key.
+    assert!(Key::new(namespace, set_name, Value::Unknown(JBLOB, payload)).is_err());
+
+    client.delete(&WritePolicy::default(), &key).await.unwrap();
+}

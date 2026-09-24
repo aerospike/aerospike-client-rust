@@ -279,12 +279,18 @@ pub enum Value {
 
     /// Unknown Value signifies values whose wire particle type this client
     /// does not interpret (e.g. legacy language-specific serializations
-    /// like Java/C#/Python blobs). Carries the raw particle-type code and
-    /// the raw payload bytes, uninterpreted.
+    /// like Java/C#/Python/PHP/Ruby/Erlang blobs). Carries the raw
+    /// particle-type code and the raw payload bytes, uninterpreted.
     ///
-    /// Strictly read-only: it is rejected on every path that would send it
-    /// to the server — as a bin value, inside lists/maps/CDT arguments, as
-    /// a record key ([`Key::new`](crate::Key::new) fails), in query
+    /// It can be written back **only as a whole bin value** (`put`, or a
+    /// bin-level `operate` write): the client sends the payload verbatim
+    /// under its original particle-type code, so a record copied through
+    /// this client round-trips foreign bins untouched. The server still
+    /// validates the code and rejects one it does not know.
+    ///
+    /// Everywhere else it is rejected, because the client cannot interpret
+    /// the bytes: inside lists/maps/CDT arguments (packing fails), as a
+    /// record key ([`Key::new`](crate::Key::new) fails), in query
     /// [`Filter`](crate::query::Filter)s (the filter-value conversion
     /// panics, like other non-indexable types), and in expression literals
     /// (packing the expression fails).
@@ -506,13 +512,9 @@ impl Value {
             Value::GeoJSON(ref s) => 1 + 2 + s.len(), // flags + ncells + jsonstr
             Value::HLL(ref h) => h.len(),
             Value::Nil | Value::Infinity | Value::Wildcard => 0,
-            Value::Unknown(code, _) => {
-                return Err(Error::invalid_argument(format!(
-                    "Unknown values (particle type {}({code})) hold data this client \
-                     cannot interpret and cannot be written back to the server.",
-                    ParticleType::name_of(code)
-                )));
-            }
+            // A whole-bin write of a foreign particle: the payload goes back
+            // exactly as it was read, under its own particle-type code.
+            Value::Unknown(_, ref bytes) => bytes.len(),
         };
 
         Ok(res)
@@ -542,13 +544,8 @@ impl Value {
             Value::GeoJSON(ref val) => buf.write_geo(val),
             Value::Infinity => encoder::pack_infinity(&mut Some(buf)),
             Value::Wildcard => encoder::pack_wildcard(&mut Some(buf)),
-            Value::Unknown(code, _) => {
-                return Err(Error::invalid_argument(format!(
-                    "Unknown values (particle type {}({code})) hold data this client \
-                     cannot interpret and cannot be written back to the server.",
-                    ParticleType::name_of(code)
-                )));
-            }
+            // Verbatim payload; `particle_type()` supplies the original code.
+            Value::Unknown(_, ref bytes) => buf.write_bytes(bytes),
         };
 
         Ok(res)
@@ -1772,22 +1769,46 @@ mod tests {
         }
     }
 
-    // Unknown values are read-only: every send path rejects them.
+    // A whole-bin write of an Unknown value sends the payload verbatim under
+    // its original particle-type code — the copy-through case.
     #[test]
-    fn unknown_values_cannot_be_sent() {
-        let value = Value::Unknown(9, vec![1, 2, 3]); // 9 = PYTHON_BLOB
+    fn unknown_values_write_verbatim_as_bin_values() {
+        let payload = vec![1u8, 2, 3];
+        let value = Value::Unknown(9, payload.clone()); // 9 = PYTHON_BLOB
 
-        assert!(value.estimate_size().is_err());
+        assert_eq!(value.particle_type().unwrap(), 9);
+        assert_eq!(value.estimate_size().unwrap(), payload.len());
 
         let mut buf = Buffer::new(0);
         buf.resize_buffer(64).unwrap();
         buf.data_offset = 0;
-        assert!(value.write_to(&mut buf).is_err());
+        assert_eq!(value.write_to(&mut buf).unwrap(), payload.len());
+        assert_eq!(&buf.data_buffer[..payload.len()], &payload[..]);
 
-        // Rejected inside CDT/list/map payloads too.
+        // An empty foreign payload is a legal zero-length bin value.
+        let empty = Value::Unknown(7, Vec::new()); // 7 = JBLOB
+        assert_eq!(empty.estimate_size().unwrap(), 0);
+        buf.data_offset = 0;
+        assert_eq!(empty.write_to(&mut buf).unwrap(), 0);
+    }
+
+    // Everywhere except a whole bin value, Unknown is still rejected: the
+    // client cannot interpret the bytes, so it cannot embed, hash or index
+    // them.
+    #[test]
+    fn unknown_values_rejected_outside_bin_values() {
+        let value = Value::Unknown(9, vec![1, 2, 3]);
+
+        // Inside CDT/list/map payloads.
         assert!(crate::msgpack::encoder::pack_value(&mut None, &value).is_err());
+        // Nested in a collection that is itself a bin value.
+        let list = Value::List(vec![value.clone()]);
+        assert!(list.estimate_size().is_err());
+        let mut map = HashMap::new();
+        map.insert(Value::from("k"), value.clone());
+        assert!(Value::HashMap(map).estimate_size().is_err());
 
-        // And as a key: digest computation fails, so Key::new errors.
+        // As a key: digest computation fails, so Key::new errors.
         let mut hasher = Ripemd160::new();
         assert!(value.write_key_bytes(&mut hasher).is_err());
         assert!(crate::Key::new("ns", "set", value).is_err());

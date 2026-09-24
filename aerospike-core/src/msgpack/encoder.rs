@@ -53,7 +53,8 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
         Value::Unknown(particle_type, _) => {
             return Err(Error::invalid_argument(format!(
                 "Unknown values (particle type {particle_type}) hold data this client \
-                 cannot interpret and cannot be written back to the server."
+                 cannot interpret: they can be written only as a whole bin value, not \
+                 inside lists, maps, CDT arguments or expressions."
             )))
         }
         Value::GeoJSON(ref val) => pack_geo_json(buf, val),
