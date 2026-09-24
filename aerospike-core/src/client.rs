@@ -21,8 +21,6 @@ use std::sync::Arc;
 use std::vec::Vec;
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use regex::Regex;
-use std::sync::LazyLock;
 
 use aerospike_rt::sleep;
 
@@ -1251,9 +1249,7 @@ impl Client {
             language
         );
         let node = self.cluster.get_random_node()?;
-        self.send_info_cmd(policy, node, &cmd)
-            .await
-            .map_err(|e| e.chain_error("Error registering UDF"))?;
+        self.send_info_cmd(policy, node, &cmd, "Error registering UDF").await?;
 
         Ok(RegisterTask::new(
             Arc::clone(&self.cluster),
@@ -1363,9 +1359,7 @@ impl Client {
         let cmd = format!("udf-remove:filename={server_path};");
         let node = self.cluster.get_random_node()?;
         // Sample response: {"udf-remove:filename=server_path;": "ok"}
-        self.send_info_cmd(policy, node, &cmd)
-            .await
-            .map_err(|e| e.chain_error("UDF Remove failed"))?;
+        self.send_info_cmd(policy, node, &cmd, "UDF Remove failed").await?;
 
         Ok(UdfRemoveTask::new(
             Arc::clone(&self.cluster),
@@ -2304,9 +2298,7 @@ impl Client {
             format!("xdr-set-filter:dc={datacenter};namespace={namespace};exp=null")
         };
 
-        self.send_info_cmd(policy, node, &cmd)
-            .await
-            .map_err(|e| e.chain_error("Error setting XDR filter"))
+        self.send_info_cmd(policy, node, &cmd, "Error setting XDR filter").await
     }
 
     /// Removes all records in the specified namespace/set efficiently.
@@ -2378,9 +2370,7 @@ impl Client {
         }
 
         let node = self.cluster.get_random_node()?;
-        self.send_info_cmd(policy, node, &cmd)
-            .await
-            .map_err(|e| e.chain_error("Error truncating ns/set"))
+        self.send_info_cmd(policy, node, &cmd, "Error truncating ns/set").await
     }
 
     /// Creates a secondary index on a bin. This asynchronous server call
@@ -2600,9 +2590,7 @@ impl Client {
 
         write!(cmd, "{index_type}").unwrap();
 
-        self.send_info_cmd(policy, node, &cmd)
-            .await
-            .map_err(|e| e.chain_error("Error creating index"))?;
+        self.send_info_cmd(policy, node, &cmd, "Create index failed").await?;
         Ok(IndexTask::new(
             Arc::clone(&self.cluster),
             namespace.to_string(),
@@ -2672,9 +2660,7 @@ impl Client {
         cmd.push_str(";indexname=");
         cmd.push_str(index_name);
 
-        self.send_info_cmd(policy, node, &cmd)
-            .await
-            .map_err(|e| e.chain_error("Error dropping index"))?;
+        self.send_info_cmd(policy, node, &cmd, "Drop index failed").await?;
         Ok(DropIndexTask::new(
             Arc::clone(&self.cluster),
             namespace.to_string(),
@@ -2682,11 +2668,20 @@ impl Client {
         ))
     }
 
-    async fn send_info_cmd(&self, policy: &AdminPolicy, node: Arc<Node>, cmd: &str) -> Result<()> {
+    /// Sends an info command and turns a non-`ok` response into a server
+    /// error prefixed with `context`. A transport failure on the way
+    /// propagates untouched, as it does in the Java client.
+    async fn send_info_cmd(
+        &self,
+        policy: &AdminPolicy,
+        node: Arc<Node>,
+        cmd: &str,
+        context: &str,
+    ) -> Result<()> {
         let response = node.info(policy, &[cmd]).await?;
         if let Some(response) = response.get(cmd) {
             if response != "ok" && !response.is_empty() {
-                return Err(Self::parse_info_error(response));
+                return Err(Error::info_command_failure(context, response));
             }
         }
 
@@ -3325,32 +3320,6 @@ impl Client {
     ) -> Result<()> {
         let cluster = self.cluster.clone();
         AdminCommand::set_quotas(policy, &cluster, role_name, read_quota, write_quota).await
-    }
-
-    fn parse_info_error(response: &str) -> Error {
-        static RE: LazyLock<Regex> = LazyLock::new(|| {
-            Regex::new(r"^(?i)(fail|error)((:|=)(?P<code>[0-9]+))?((:|=)(?P<msg>.+))?$").unwrap()
-        });
-
-        if !RE.is_match(response) {
-            return Error::server_error(ResultCode::ServerError, response, None);
-        }
-
-        // 'm' is a 'Match', and 'as_str()' returns the matching part of the haystack.
-        let parts = RE
-            .captures(response)
-            .map(|caps| {
-                let code = caps.name("code").map_or_else(
-                    || ResultCode::ServerError,
-                    |code| ResultCode::from(code.as_str().parse::<u8>().unwrap()),
-                );
-                let msg = caps.name("msg").map_or(response, |msg| msg.as_str());
-
-                (code, msg)
-            })
-            .unwrap();
-
-        Error::server_error(parts.0, parts.1, None)
     }
 
     /// Commit a multi-record transaction (MRT). This will verify record versions,

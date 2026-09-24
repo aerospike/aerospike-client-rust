@@ -381,9 +381,9 @@ impl ResultCode {
             ResultCode::KeyMismatch => String::from("Key mismatch"),
             ResultCode::InvalidNamespace => String::from("Namespace not found"),
             ResultCode::BinNameTooLong => {
-                String::from("Bin name length greater than 14 characters")
+                String::from("Bin name length greater than 15 characters or maximum bins exceeded")
             }
-            ResultCode::FailForbidden => String::from("OperationType not allowed at this time"),
+            ResultCode::FailForbidden => String::from("Operation not allowed at this time"),
             ResultCode::ElementNotFound => String::from("Element not found"),
             ResultCode::ElementExists => String::from("Element already exists"),
             ResultCode::OpNotApplicable => String::from("Operation not applicable"),
