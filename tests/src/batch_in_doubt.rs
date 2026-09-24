@@ -231,3 +231,67 @@ async fn batch_read_client_timeout_is_not_in_doubt() {
 
     client.close().await.unwrap();
 }
+
+/// A node group of exactly one key takes the single-record fast path. A
+/// client timeout there must stamp the row exactly as the multi-key path
+/// stamps a node's unanswered rows — TIMEOUT and, for a write, in-doubt —
+/// so a batch reports the same failure the same way however its keys hashed
+/// across nodes. The singleton row used to come back untouched
+/// (`result_code == None`, `in_doubt == false`).
+#[aerospike_macro::test]
+async fn singleton_group_client_timeout_stamps_row_like_grouped() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    register_wait_udf(&client).await;
+
+    let mut bpolicy = BatchPolicy::default();
+    bpolicy.base_policy.socket_timeout = SOCKET_TIMEOUT_MS;
+    bpolicy.base_policy.total_timeout = 0;
+    bpolicy.base_policy.max_retries = 0;
+    let upolicy = BatchUDFPolicy::default();
+    let udf = |key| {
+        BatchOperation::udf(
+            &upolicy,
+            key,
+            "wait_udf",
+            "wait_and_update",
+            Some(vec![Value::from(WAIT_SECS)]),
+        )
+    };
+
+    // One key: necessarily alone on its node — the fast path.
+    let mut alone: Vec<BatchOperation> = keys(namespace, &set_name, 1).into_iter().map(udf).collect();
+    let err = client
+        .batch(&bpolicy, &mut alone)
+        .await
+        .expect_err("the UDF outruns the socket timeout");
+    assert!(err.is_client_timeout(), "expected a client timeout, got {err:?}");
+    assert!(err.in_doubt(), "an unanswered write is in doubt: {err}");
+    assert_eq!(
+        alone[0].result_code(),
+        Some(ResultCode::Timeout),
+        "the singleton row must be stamped TIMEOUT, not left untouched"
+    );
+    assert!(alone[0].in_doubt(), "the singleton write row must be in doubt");
+
+    // nodes + 1 keys: at least one node holds two or more — the multi-key
+    // path — while others may still be singletons. Every unanswered row must
+    // look the same regardless.
+    let key_count = client.nodes().len() + 1;
+    let mut grouped: Vec<BatchOperation> = keys(namespace, &set_name, key_count)
+        .into_iter()
+        .map(udf)
+        .collect();
+    let err = client
+        .batch(&bpolicy, &mut grouped)
+        .await
+        .expect_err("the UDF outruns the socket timeout");
+    assert!(err.in_doubt());
+    for (i, op) in grouped.iter().enumerate() {
+        assert_eq!(op.result_code(), Some(ResultCode::Timeout), "row {i}");
+        assert!(op.in_doubt(), "row {i} must be in doubt");
+    }
+
+    client.close().await.unwrap();
+}

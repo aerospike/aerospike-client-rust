@@ -65,11 +65,7 @@ impl BatchExecutor {
     /// the wait and stamp unanswered rows, which also means rows answered
     /// before a timeout keep their real results.
     #[allow(clippy::mutable_key_type)]
-    pub async fn execute(
-        &self,
-        policy: &BatchPolicy,
-        ops: &mut [BatchOperation],
-    ) -> Result<()> {
+    pub async fn execute(&self, policy: &BatchPolicy, ops: &mut [BatchOperation]) -> Result<()> {
         let rows: Vec<(BatchOperation, usize)> = ops
             .iter_mut()
             .enumerate()
@@ -99,11 +95,8 @@ impl BatchExecutor {
         ops: Vec<BatchOperation>,
         hook: Arc<BatchHook>,
     ) -> Result<()> {
-        let rows: Vec<(BatchOperation, usize)> = ops
-            .into_iter()
-            .enumerate()
-            .map(|(i, op)| (op, i))
-            .collect();
+        let rows: Vec<(BatchOperation, usize)> =
+            ops.into_iter().enumerate().map(|(i, op)| (op, i)).collect();
         let (rows, first_err) = self.run_rows(policy, rows, Some(hook.clone())).await?;
         // Whatever never fired — unanswered, unroutable, or abandoned by an
         // abort — fires now with the outcome it carries, so the hook is the
@@ -169,7 +162,8 @@ impl BatchExecutor {
                 let mut parent = policy.clone();
                 let mut ops = ops;
                 self.cluster.patch_batch_wire(&mut parent, &mut ops);
-                multi_jobs.push(BatchOperateCommand::new(parent, node, ops).with_hook(hook.clone()));
+                multi_jobs
+                    .push(BatchOperateCommand::new(parent, node, ops).with_hook(hook.clone()));
             }
         }
 
@@ -276,7 +270,7 @@ impl BatchExecutor {
         Ok((all_results, first_err))
     }
 
-   async fn execute_single_op(
+    async fn execute_single_op(
         cluster: Arc<Cluster>,
         parent: &BatchPolicy,
         batch_op: &mut BatchOperation,
@@ -393,13 +387,23 @@ impl BatchExecutor {
                 batch_op.set_result_code(ResultCode::UdfBadResponse, in_doubt);
             }
             Err(err) => {
-                // Mirrors Java's `BatchSingle.setInDoubt()` gated on
-                // `ae.getInDoubt()`: the single-command retry loop marked the
-                // error in-doubt iff this was a write that reached the wire.
-                // Propagate that onto the record and notify any transaction
-                // before the error bubbles up.
-                if err.in_doubt() {
+                // A client-side failure (timeout, connection loss, ...) on
+                // the single-key fast path stamps the row exactly the way the
+                // multi-key path stamps a node's unanswered rows (see the
+                // terminal-error walk in `execute_batch_operate`), so one
+                // batch reports the same failure the same way no matter how
+                // its keys hashed across nodes.
+                let rc = if err.is_client_timeout() {
+                    Some(ResultCode::Timeout)
+                } else {
+                    err.server_result_code()
+                };
+                let in_doubt = err.in_doubt() || err.is_client_timeout();
+                if in_doubt {
                     batch_op.set_in_doubt_on_no_response(parent.base_policy.txn.as_ref());
+                }
+                if let Some(rc) = rc {
+                    batch_op.set_result_code(rc, in_doubt);
                 }
                 return Err(err);
             }
@@ -474,12 +478,10 @@ impl BatchExecutor {
                 read_mode_sc,
             );
             match routed {
-                Ok(node) => {
-                    match groups.iter_mut().find(|(n, _)| Arc::ptr_eq(n, &node)) {
-                        Some((_, bucket)) => bucket.push((batch_op, index)),
-                        None => groups.push((node, vec![(batch_op, index)])),
-                    }
-                }
+                Ok(node) => match groups.iter_mut().find(|(n, _)| Arc::ptr_eq(n, &node)) {
+                    Some((_, bucket)) => bucket.push((batch_op, index)),
+                    None => groups.push((node, vec![(batch_op, index)])),
+                },
                 Err(err) => {
                     // Never in-doubt: nothing was sent for this key.
                     batch_op.set_result_code(routing_result_code(&err), false);
