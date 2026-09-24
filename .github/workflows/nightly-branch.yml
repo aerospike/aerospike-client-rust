@@ -105,10 +105,12 @@ jobs:
           AEROSPIKE_USER: admin
           AEROSPIKE_PASSWORD: admin
         run: |
-          # AEROSPIKE_HOSTS points at the TLS-only port for this whole run, but
-          # only tls_client_auth/tls_client_no_auth set policy.tls_config -- every
-          # other test would try a plaintext connection here and fail with an
-          # early EOF. Scope the run to just the TLS-aware tests.
+          # AEROSPIKE_HOSTS points at the TLS-only port. With AEROSPIKE_CACERT_FILE
+          # set, tests/common configures one-way TLS on the shared client policy
+          # (no_server_tls), so every test connects over TLS; tls_client_auth
+          # additionally needs AEROSPIKE_KEY_FILE (no_mutual_tls) and self-skips
+          # without it. The run is still scoped to the TLS-named tests; widening
+          # it to the whole suite is a separate decision.
           cargo test --verbose -p aerospike \
             --no-default-features \
             --features serialization,async,rt-tokio,tls \
