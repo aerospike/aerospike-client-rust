@@ -61,6 +61,9 @@
 #![allow(missing_docs)]
 
 use std::fmt;
+use std::sync::LazyLock;
+
+use regex::Regex;
 
 use crate::{ClientResultCode, ResultCode};
 #[cfg(feature = "rt-tokio")]
@@ -242,6 +245,45 @@ impl Error {
         );
         e.0.node = Some(node.into());
         e
+    }
+
+    /// Server failure whose text arrived in the response body rather than as
+    /// a result code alone — an info command's `FAIL:<code>:<message>`. The
+    /// message becomes the base message (Java: `AerospikeException(code,
+    /// message)`); no node is recorded because info commands are not retried
+    /// across nodes.
+    #[must_use]
+    pub fn server_error_with_message(rc: ResultCode, message: impl Into<String>) -> Error {
+        Error::new(
+            ErrorKind::Server { rc, detail: None },
+            i32::from(u8::from(rc)),
+            Some(message.into()),
+        )
+    }
+
+    /// Failure reported in an info command's response body,
+    /// `ERROR|FAIL[:<code>][:<message>]`, prefixed with the operation that
+    /// issued it (Java: `AerospikeException(code, "Create index failed: " +
+    /// response)`). The parsed code is the primary result code; a missing or
+    /// out-of-range code falls back to `ServerError`, and a response that is
+    /// not in the error format is kept whole as the message.
+    #[must_use]
+    pub fn info_command_failure(context: &str, response: &str) -> Error {
+        static RE: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"^(?i)(fail|error)((:|=)(?P<code>[0-9]+))?((:|=)(?P<msg>.+))?$").unwrap()
+        });
+        let (rc, msg) = match RE.captures(response) {
+            Some(caps) => {
+                let rc = caps
+                    .name("code")
+                    .and_then(|c| c.as_str().parse::<u8>().ok())
+                    .map_or(ResultCode::ServerError, ResultCode::from);
+                let msg = caps.name("msg").map_or(response, |m| m.as_str());
+                (rc, msg)
+            }
+            None => (ResultCode::ServerError, response),
+        };
+        Error::server_error_with_message(rc, format!("{context}: {msg}"))
     }
 
     /// Per-row batch error (internal to the batch response parse flow).
@@ -582,7 +624,7 @@ impl Error {
         let i = &*self.0;
         match &i.kind {
             ErrorKind::Server { rc, detail } => {
-                let mut s = format!("Server error: {rc:?}");
+                let mut s = i.message.clone().unwrap_or_else(|| rc.to_string());
                 if let Some(d) = detail {
                     use std::fmt::Write as _;
                     let _ = write!(s, ", Detail: {d}");
@@ -590,7 +632,7 @@ impl Error {
                 s
             }
             ErrorKind::BatchRow { index, rc, .. } => {
-                format!("Batch row error: index {index}, {rc:?}")
+                format!("Batch row error: index {index}, {rc}")
             }
             ErrorKind::BatchFailed { records } => {
                 format!("Batch failed ({} records)", records.len())
@@ -649,13 +691,17 @@ impl Error {
             ErrorKind::Async(e) => format!("Async runtime error: {e}"),
             // Java `getBaseMessage` contract: the explicit message, else the
             // result code's descriptive string.
-            _ => i.message.clone().unwrap_or_else(|| {
-                if i.result_code < 0 {
-                    ClientResultCode::from(i.result_code).into_string()
-                } else {
-                    ResultCode::from(i.result_code as u8).into_string()
-                }
-            }),
+            _ => i.message.clone().unwrap_or_else(|| self.code_string()),
+        }
+    }
+
+    /// The result code's descriptive string, server or client side.
+    fn code_string(&self) -> String {
+        let code = self.0.result_code;
+        if code < 0 {
+            ClientResultCode::from(code).into_string()
+        } else {
+            ResultCode::from(code as u8).into_string()
         }
     }
 
@@ -866,7 +912,8 @@ impl Error {
 impl fmt::Display for Error {
     /// Uniform, Java-style format:
     /// `Error <code>[, SubCode: N][, iter=N][, In Doubt: true][, node=X]: <base message>`
-    /// followed by one indented line per sub-error and the cause chain.
+    /// followed by a `sub-errors:` block (one indented line per prior attempt)
+    /// and the cause chain.
     ///
     /// The subcode is rendered here, beside the result code, rather than folded
     /// into the server's message — the `(result code, subcode)` pair is the
@@ -1026,6 +1073,51 @@ mod tests {
             Error::max_error_rate("n").base_message(),
             "Max error rate exceeded for node n; backing off"
         );
+    }
+
+    #[test]
+    fn server_base_message_is_the_human_string() {
+        let err = Error::server_error(ResultCode::KeyExistsError, "BB9051616AC4202", None);
+        assert_eq!(err.base_message(), "Key already exists");
+        assert_eq!(
+            err.to_string(),
+            "Error 5, node=BB9051616AC4202: Key already exists"
+        );
+    }
+
+    #[test]
+    fn info_command_failure_keeps_the_server_code_and_text() {
+        let err = Error::info_command_failure(
+            "Create index failed",
+            "FAIL:200:'idx' already exists with different definition",
+        );
+        assert!(matches!(err.kind(), ErrorKind::Server { .. }));
+        assert_eq!(err.result_code(), 200);
+        assert_eq!(err.server_result_code(), Some(ResultCode::IndexFound));
+        assert_eq!(
+            err.base_message(),
+            "Create index failed: 'idx' already exists with different definition"
+        );
+        assert_eq!(err.node(), None);
+        assert_eq!(
+            err.to_string(),
+            "Error 200: Create index failed: 'idx' already exists with different definition"
+        );
+    }
+
+    #[test]
+    fn info_command_failure_tolerates_odd_responses() {
+        // No code: the text is the message under the generic server code.
+        let err = Error::info_command_failure("Drop index failed", "ERROR:no such index");
+        assert_eq!(err.server_result_code(), Some(ResultCode::ServerError));
+        assert_eq!(err.base_message(), "Drop index failed: no such index");
+        // A code outside u8 must not panic; it degrades to the generic code.
+        let err = Error::info_command_failure("Truncate failed", "FAIL:300:bad");
+        assert_eq!(err.server_result_code(), Some(ResultCode::ServerError));
+        assert_eq!(err.base_message(), "Truncate failed: bad");
+        // Not in the error format at all: kept whole.
+        let err = Error::info_command_failure("Truncate failed", "unexpected");
+        assert_eq!(err.base_message(), "Truncate failed: unexpected");
     }
 
     #[test]

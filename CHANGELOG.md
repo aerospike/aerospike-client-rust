@@ -1,5 +1,15 @@
 # Changelog
 
+## [3.0.0-alpha.3]
+
+* **Bug Fixes**
+  * `Error::base_message` for a server failure is the result code's descriptive string (`Key already exists`),
+    not the variant name. Info-command failures (`FAIL:<code>:<message>`) keep the server's text as the base
+    message under the server's code (`Error::info_command_failure`) instead of filing the text as the node and
+    wrapping the code in a client error; an out-of-range code no longer panics. `BinNameTooLong` reads
+    "greater than 15 characters", the server's actual limit, and `FailForbidden` reads "Operation not
+    allowed at this time" (a stray rename had produced "OperationType").
+
 ## [3.0.0-alpha.2]
 
 * **New Features**
