@@ -260,3 +260,84 @@ async fn blob_index_serves_a_blob_equality_filter() {
     task.wait_till_complete(None).await.unwrap();
     client.close().await.unwrap();
 }
+
+/// Port of the Go client's INTEGER index test (CLIENT-4390): from server
+/// 8.1.3 an index over integer bins is declared as `INTEGER`, and both a
+/// range and an equality filter are served by it.
+#[aerospike_macro::test]
+async fn integer_index_serves_range_and_equality_filters() {
+    let client = common::client().await;
+    let ns = common::namespace();
+    let apolicy = AdminPolicy::default();
+
+    let supported = match client.cluster.nodes().first() {
+        Some(node) => node.version().supports_integer_index(),
+        None => false,
+    };
+    if !supported {
+        eprintln!("skipping INTEGER index test: requires server 8.1.3+");
+        client.close().await.unwrap();
+        return;
+    }
+
+    let set = create_test_set(&client, EXPECTED).await;
+    let bin = "bin";
+    let index = format!("idx_int_{set}");
+
+    let _index_guard = common::lock_index_ops().await;
+    let task = client
+        .create_index_on_bin(
+            &apolicy,
+            ns,
+            &set,
+            bin,
+            &index,
+            IndexType::Integer,
+            CollectionIndexType::Default,
+            None,
+        )
+        .await
+        .expect("server 8.1.3+ must accept an INTEGER index");
+    task.wait_till_complete(None).await.unwrap();
+
+    use futures::StreamExt;
+    let qpolicy = QueryPolicy::default();
+
+    // Range filter: 10..=19 -> exactly ten records, all inside the range.
+    let mut statement = Statement::new(ns, &set, Bins::All);
+    statement.add_filter(aerospike::query::Filter::range(bin, 10_i64, 19_i64));
+    let rs = client
+        .query(&qpolicy, PartitionFilter::all(), statement)
+        .await
+        .unwrap();
+    let mut stream = rs.into_stream();
+    let mut count = 0;
+    while let Some(res) = stream.next().await {
+        let record = res.unwrap();
+        let v = match &record.bins[bin] {
+            Value::Int(v) => *v,
+            other => panic!("expected an integer bin, got {other:?}"),
+        };
+        assert!((10..=19).contains(&v), "range filter returned {v}");
+        count += 1;
+    }
+    assert_eq!(count, 10, "range filter over the INTEGER index");
+
+    // Equality filter: exactly one record.
+    let mut statement = Statement::new(ns, &set, Bins::All);
+    statement.add_filter(aerospike::query::Filter::equal(bin, 42_i64));
+    let rs = client
+        .query(&qpolicy, PartitionFilter::all(), statement)
+        .await
+        .unwrap();
+    let mut stream = rs.into_stream();
+    let mut matched = Vec::new();
+    while let Some(res) = stream.next().await {
+        matched.push(res.unwrap().bins[bin].clone());
+    }
+    assert_eq!(matched, vec![Value::Int(42)], "equality filter over the INTEGER index");
+
+    let task = client.drop_index(&apolicy, ns, &set, &index).await.unwrap();
+    task.wait_till_complete(None).await.unwrap();
+    client.close().await.unwrap();
+}

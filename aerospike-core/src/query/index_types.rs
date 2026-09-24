@@ -19,7 +19,15 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IndexType {
     /// Numeric index.
+    ///
+    /// Use for servers older than 8.1.3. From 8.1.3 on, prefer
+    /// [`Integer`](Self::Integer); `Numeric` is still accepted there.
     Numeric,
+
+    /// Integer index. Requires server 8.1.3+, which a node reports through
+    /// `Version::supports_integer_index`; older servers reject it. Use
+    /// [`Numeric`](Self::Numeric) for servers older than 8.1.3.
+    Integer,
 
     /// String index.
     String,
@@ -57,6 +65,7 @@ impl fmt::Display for IndexType {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match *self {
             IndexType::Numeric => "NUMERIC".fmt(f),
+            IndexType::Integer => "INTEGER".fmt(f),
             IndexType::String => "STRING".fmt(f),
             IndexType::Geo2DSphere => "GEO2DSPHERE".fmt(f),
             IndexType::Blob => "BLOB".fmt(f),
@@ -84,6 +93,7 @@ mod tests {
         // These strings go into the `sindex-create` info command verbatim, so
         // they are protocol, not cosmetics.
         assert_eq!(IndexType::Numeric.to_string(), "NUMERIC");
+        assert_eq!(IndexType::Integer.to_string(), "INTEGER");
         assert_eq!(IndexType::String.to_string(), "STRING");
         assert_eq!(IndexType::Geo2DSphere.to_string(), "GEO2DSPHERE");
         assert_eq!(IndexType::Blob.to_string(), "BLOB");

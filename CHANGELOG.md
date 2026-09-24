@@ -2,6 +2,10 @@
 
 ## [3.0.0-alpha.3]
 
+* **New Features**
+  * [CLIENT-4390] `IndexType::Integer` (`INTEGER`) for secondary indexes on server 8.1.3+, reported by
+    `Version::supports_integer_index`; `IndexType::Numeric` remains for older servers.
+
 * **Bug Fixes**
   * `Error::base_message` for a server failure is the result code's descriptive string (`Key already exists`),
     not the variant name. Info-command failures (`FAIL:<code>:<message>`) keep the server's text as the base

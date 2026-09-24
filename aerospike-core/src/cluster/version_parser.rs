@@ -103,6 +103,13 @@ impl Version {
         self >= &Version::new(8, 1, 3, 0)
     }
 
+    /// Server accepts `INTEGER` as a secondary-index type
+    /// ([`IndexType::Integer`](crate::IndexType::Integer)); older servers
+    /// only know `NUMERIC`.
+    pub fn supports_integer_index(&self) -> bool {
+        self >= &Version::new(8, 1, 3, 0)
+    }
+
     /// Server supports extended error detail (subcode, message, expression
     /// trace) requested via
     /// [`BasePolicy::error_detail_verbosity`](crate::policy::BasePolicy::error_detail_verbosity).
