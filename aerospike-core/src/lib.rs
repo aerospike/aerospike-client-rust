@@ -167,8 +167,8 @@ pub use expressions::regex_flag::RegexFlag;
 pub use key::Key;
 pub use mapping::RecordMapper;
 pub use metrics::{
-    ClusterMetrics, CommandType, HistogramType, Labels, LatencyUnit, MetricsPolicy,
-    NodeMetricsSnapshot,
+    ClusterMetrics, CommandType, Labels, LatencyUnit, MetricsPolicy, NodeMetricsSnapshot,
+    PoolGauges,
 };
 pub use net::Host;
 pub use net::ToHosts;
@@ -197,7 +197,9 @@ pub use role::Role;
 pub use sampler::Sampler;
 pub use server_error::{ExpressionTrace, ServerErrorDetail};
 pub use task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, Task, UdfRemoveTask};
-pub use txn::{AbortStatus, CommitErrorType, CommitStatus, Txn, TxnState};
+pub use txn::{
+    AbortStatus, CommitErrorType, CommitStatus, Txn, TxnState, COMMIT_FAILED_ABORT_MESSAGE,
+};
 pub use user::User;
 pub use value::{FloatValue, MapCollection, MapLike, Value};
 pub use xor_shift::XorShift;

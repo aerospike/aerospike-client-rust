@@ -20,20 +20,20 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::result::Result as StdResult;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use aerospike_rt::Mutex as AsyncMutex;
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use hazarc::AtomicArc;
 
-use crate::cluster::node_validator::NodeValidator;
+use crate::cluster::node_validator::{normalize_cluster_name, NodeValidator};
 use crate::cluster::peers::Peers;
 use crate::cluster::peers_parser::PeersParser;
 use crate::cluster::CLIENT_VERSION;
 use crate::commands::Message;
 use crate::errors::{Error, Result};
-use crate::metrics::NodeMetrics;
+use crate::metrics::{CloseReason, NodeMetrics, PoolGauges};
 use crate::net::{Connection, ConnectionPool, Host, PooledConnection, TailVerdict};
 use crate::policy::{AdminPolicy, ClientPolicy};
 use crate::Version;
@@ -80,6 +80,11 @@ pub struct Node {
     responded: AtomicBool,
     active: AtomicBool,
     version: Version,
+    /// Cluster name **as reported by the server** (`cluster-name` info),
+    /// refreshed every tend. Distinct from `ClientPolicy::cluster_name`,
+    /// which is what the user asked to validate against. `None` when the
+    /// server has no cluster name configured.
+    server_cluster_name: RwLock<Option<String>>,
     /// Per-`error_rate_window` circuit breaker state. `error_rate_count`
     /// is bumped on every retriable failure (network error, server
     /// `TIMEOUT` / `DEVICE_OVERLOAD` / `KEY_BUSY`, connection-close-on-error)
@@ -182,6 +187,7 @@ impl Node {
             reference_count: AtomicUsize::new(0),
             responded: AtomicBool::new(false),
             active: AtomicBool::new(true),
+            server_cluster_name: RwLock::new(nv.cluster_name.clone()),
             version: nv.version.clone(),
             rack_ids: AtomicArc::from(HashMap::new()),
             hostname: std::sync::OnceLock::new(),
@@ -434,7 +440,7 @@ impl Node {
         self.increase_failures();
     }
 
-    /// Parses `peers-generation` from `info_map` and compares with the
+    /// Parses `peers_generation` from `info_map` and compares with the
     /// stored value. Sets `peers.gen_changed = true` if they differ.
     ///
     /// When the server's reported generation goes *backward* (`stored > gen`)
@@ -469,8 +475,37 @@ impl Node {
 
     fn validate_node(&self, info_map: &IndexMap<String, String>) -> Result<()> {
         self.verify_node_name(info_map)?;
+        // Record what the server reports before deciding whether it matches
+        // what was configured: discovery must not depend on validation.
+        self.record_cluster_name(info_map);
         self.verify_cluster_name(info_map)?;
         Ok(())
+    }
+
+    /// Stores the server-reported cluster name from a tend response.
+    fn record_cluster_name(&self, info_map: &IndexMap<String, String>) {
+        let reported = normalize_cluster_name(info_map.get("cluster-name"));
+        let mut current = self
+            .server_cluster_name
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *current != reported {
+            *current = reported;
+        }
+    }
+
+    /// Cluster name as reported by this node's server on the last tend
+    /// (`cluster-name` info), or `None` when the server has none configured.
+    ///
+    /// This is the *discovered* name, independent of
+    /// [`ClientPolicy::cluster_name`], which only sets what to validate
+    /// against. Use it to select per-cluster settings (`system.<name>`
+    /// blocks) without opting into validation.
+    pub fn cluster_name(&self) -> Option<String> {
+        self.server_cluster_name
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     fn verify_node_name(&self, info_map: &IndexMap<String, String>) -> Result<()> {
@@ -669,6 +704,26 @@ impl Node {
     /// gauge for metrics).
     pub fn open_connections(&self) -> u64 {
         self.connection_pool.reserved_conns() as u64
+    }
+
+    /// Point-in-time connection-pool gauges (metrics Tier 0, read at snapshot
+    /// time by walking the pool): total owned, idle in the pool, and in
+    /// background timeout recovery. `total` counts reserved slots, so a
+    /// connection still being opened is already "in use".
+    pub fn pool_gauges(&self) -> PoolGauges {
+        PoolGauges {
+            total: self.connection_pool.reserved_conns() as u64,
+            in_pool: self.connection_pool.idle_conns() as u64,
+            recovering: self.connection_pool.recovering_conns() as u64,
+        }
+    }
+
+    /// Closes every idle pooled connection, counting each as closed because
+    /// the node left the cluster. Called by the cluster when it removes the
+    /// node, before the node's final metrics drain, so the closes are not
+    /// lost to the deferred pool teardown in `Drop`.
+    pub(crate) fn close_idle_connections(&self) {
+        self.connection_pool.clear_all();
     }
 
     // Put a connection to the node back in the connection pool
@@ -988,8 +1043,7 @@ impl Node {
                     drop(conn);
                     queue.reduce_capacity();
                     droppable = droppable.saturating_sub(1);
-                    self.metrics.incr_connections_idle_dropped();
-                    self.metrics.incr_connections_closed();
+                    self.metrics.incr_connections_closed(CloseReason::Idle);
                     total_processed += 1;
                     queues_without_work = 0;
                 }
@@ -1029,7 +1083,7 @@ impl Node {
                 Some(conn) => queue.put_back(conn),
                 None => {
                     queue.reduce_capacity();
-                    self.metrics.incr_connections_closed();
+                    self.metrics.incr_connections_closed(CloseReason::Error);
                 }
             }
             total_processed += 1;
@@ -1108,6 +1162,7 @@ mod node_tests {
             client_policy: policy.clone(),
             use_new_info: true,
             version: Version::default(),
+            cluster_name: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
@@ -1218,6 +1273,7 @@ mod node_tests {
             client_policy: policy.clone(),
             use_new_info: true,
             version: Version::default(),
+            cluster_name: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
@@ -1297,6 +1353,7 @@ mod node_tests {
             client_policy: policy.clone(),
             use_new_info: true,
             version: Version::default(),
+            cluster_name: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
@@ -1339,6 +1396,7 @@ mod node_tests {
             client_policy: policy.clone(),
             use_new_info: true,
             version: Version::default(),
+            cluster_name: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
@@ -1446,6 +1504,7 @@ mod pool_health_tests {
             client_policy: policy.clone(),
             use_new_info: true,
             version: Version::default(),
+            cluster_name: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(

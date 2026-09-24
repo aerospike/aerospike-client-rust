@@ -447,6 +447,18 @@ impl Error {
         e
     }
 
+    /// A transaction-level refusal or failure that is not a commit outcome
+    /// (those use [`Error::commit_failed`]), e.g. an abort refused after an
+    /// in-doubt commit failure. Carries `ClientResultCode::TxnFailed`.
+    #[must_use]
+    pub fn txn_failed(msg: impl Into<String>) -> Error {
+        Error::new(
+            ErrorKind::Client,
+            ClientResultCode::TxnFailed.into(),
+            Some(msg.into()),
+        )
+    }
+
     /// Untyped client-side error.
     #[must_use]
     pub fn client_error(msg: impl Into<String>) -> Error {

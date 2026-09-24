@@ -736,9 +736,15 @@ dynamic:
     send_key: true
     durable_delete: true
   metrics:
-    enable: true
+    enabled: true             # Tier 0: pool gauges, opened/closed, tend counts
     labels:
       app_id: billing
+    extended:
+      operational:            # Tier 1: latency histograms, bytes, errors
+        enabled: true
+        latency_unit: ms      # ms (default) | us
+        latency_columns: 7    # <=1, >1, >2, >4, >8, >16, >32
+        latency_shift: 1      # boundary spacing 2^shift
 ```
 
 Notes:

@@ -39,7 +39,7 @@ use crate::commands::admin_command::AdminCommand;
 #[cfg(feature = "dynamic-config")]
 use crate::config::{ConfigDocument, ConfigProvider, DynConfig, DynamicConfig};
 use crate::errors::{Error, Result};
-use crate::metrics::{Labels, MetricsPolicy, NodeMetrics, NodeMetricsSnapshot};
+use crate::metrics::{Labels, MetricsPolicy, NodeMetrics, NodeMetricsSnapshot, PoolGauges};
 use crate::net::Host;
 use crate::policy::{
     BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, TxnRollPolicy, TxnVerifyPolicy, WritePolicy,
@@ -124,6 +124,11 @@ pub struct Cluster {
     // the cluster-aggregated metrics.
     max_retries_exceeded_count: AtomicU64,
     total_timeout_exceeded_count: AtomicU64,
+    // Peer hosts that failed validation during tend (Tier 0 event counter,
+    // `metrics.md` §4.2 `cluster.nodes.invalid`). Counts every failure, so a
+    // host that stays unreachable adds one per tend it is tried in —
+    // Java's `invalidNodeCount` semantics.
+    nodes_invalid_count: AtomicU64,
 
     // Cluster-wide count of connections currently being opened by background
     // fill tasks; shared into every node and checked against
@@ -198,6 +203,7 @@ impl Cluster {
             metrics: std::sync::Mutex::new(HashMap::new()),
             max_retries_exceeded_count: AtomicU64::new(0),
             total_timeout_exceeded_count: AtomicU64::new(0),
+            nodes_invalid_count: AtomicU64::new(0),
             opening_connections: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
 
             #[cfg(feature = "dynamic-config")]
@@ -639,6 +645,7 @@ impl Cluster {
                 let mut nv = NodeValidator::new(self.client_policy());
                 if let Err(err) = nv.validate_node(self, host).await {
                     peers.fail(host.clone());
+                    self.incr_node_invalid();
                     warn!("Add peer node `{host}` failed: `{err}`");
                     continue;
                 }
@@ -908,8 +915,22 @@ impl Cluster {
         };
     }
 
+    /// The cluster name the client was **configured** to validate against
+    /// (`ClientPolicy::cluster_name`). `None` unless the user set one. For the
+    /// name the servers actually report, see
+    /// [`server_cluster_name`](Self::server_cluster_name).
     pub fn cluster_name(&self) -> Option<String> {
         self.client_policy().cluster_name
+    }
+
+    /// The cluster name **reported by the servers** on the last tend, or
+    /// `None` when no active node reports one (no name configured on the
+    /// server, or no node yet). Discovered unconditionally, so it is
+    /// available without setting `ClientPolicy::cluster_name`; use it to
+    /// select per-cluster settings, and fall back to a default block when it
+    /// is `None`. Validation behaviour is unchanged and still opt-in.
+    pub fn server_cluster_name(&self) -> Option<String> {
+        self.nodes().iter().find_map(|node| node.cluster_name())
     }
 
     pub fn client_policy(&self) -> ClientPolicy {
@@ -1151,6 +1172,7 @@ impl Cluster {
                     if let Err(err) = peer_nv.validate_node(self, host).await {
                         self.record_seed_error(host.clone(), &err);
                         harvest.fail(host.clone());
+                        self.incr_node_invalid();
                         log_error_chain!(err, "Seeding peer host {} failed", host);
                         continue;
                     }
@@ -1569,14 +1591,24 @@ impl Cluster {
     }
 
     /// Applies the `dynamic.metrics` section: toggles collection via the existing
-    /// metrics API and folds any latency-histogram overrides into the policy.
+    /// metrics API and folds the `extended.operational` block (its `enabled`
+    /// flag and latency-histogram overrides) plus any custom labels into the
+    /// policy.
     #[cfg(feature = "dynamic-config")]
     fn apply_metrics_config(&self, metrics: &crate::config::MetricsConfig) {
-        // Builds the next metrics policy from the current one, folding in the
-        // latency-histogram overrides and any custom labels.
+        // Builds the next metrics policy from the current one.
         let next_policy = || {
             let mut policy = (*self.metrics_policy()).clone();
-            metrics.policy.clone().merge_into(&mut policy);
+            if let Some(operational) = metrics
+                .extended
+                .as_ref()
+                .and_then(|ext| ext.operational.as_ref())
+            {
+                operational.policy.clone().merge_into(&mut policy);
+                if let Some(on) = operational.enabled {
+                    policy.operational = on;
+                }
+            }
             if let Some(labels) = &metrics.labels {
                 // The cross-client schema models labels as a single flat map;
                 // `Labels` holds a list of entries (empty maps are dropped).
@@ -1584,7 +1616,7 @@ impl Cluster {
             }
             policy
         };
-        match metrics.enable {
+        match metrics.enabled {
             Some(false) => self.disable_metrics(),
             Some(true) => self.enable_metrics(next_policy()),
             // No explicit toggle: refine the policy only if already enabled.
@@ -1638,6 +1670,14 @@ impl Cluster {
         }
     }
 
+    /// Records a peer host that failed node validation during tend (Tier 0:
+    /// gated on collection being enabled only, never sampled).
+    fn incr_node_invalid(&self) {
+        if self.metrics_enabled() {
+            self.nodes_invalid_count.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
     /// Drains each node's live metrics and merges them into the per-host
     /// accumulator.
     fn aggregate_node_metrics(&self, nodes: &[Arc<Node>]) {
@@ -1655,25 +1695,43 @@ impl Cluster {
     }
 
     /// Aggregates and returns a clone of the per-host statistics, stamping each
-    /// active node's open-connection gauge.
+    /// active node's connection-pool gauges (open / in-use / in-pool /
+    /// recovering) from a live pool walk.
+    ///
+    /// Deliberately not gated on `metrics_enabled()`: the pool walk is the
+    /// spec's always-available part of the pull API (`metrics.md` §5.5.3), so
+    /// a snapshot taken while collection is off still carries current gauges
+    /// alongside frozen counters.
     pub fn metrics_copy(&self) -> HashMap<String, NodeMetricsSnapshot> {
         let nodes = self.nodes();
         self.aggregate_node_metrics(&nodes);
 
-        let mut open_by_host: HashMap<String, u64> = HashMap::new();
+        // Live gauges per active node: pool walk + the circuit-breaker
+        // window's current error count.
+        let mut gauges_by_host: HashMap<String, (PoolGauges, u64)> = HashMap::new();
         for node in nodes.iter() {
-            open_by_host.insert(node.host().to_string(), node.open_connections());
+            gauges_by_host.insert(
+                node.host().to_string(),
+                (node.pool_gauges(), node.error_rate_count() as u64),
+            );
         }
 
         let metrics = self.metrics.lock().unwrap();
         let mut res = HashMap::with_capacity(metrics.len());
         for (host, snapshot) in metrics.iter() {
             let mut copy = snapshot.clone();
-            // Active nodes report their current open count; removed hosts 0.
-            copy.set_open_connections(open_by_host.get(host).copied().unwrap_or(0));
+            // Active nodes report their current state; removed hosts 0.
+            let (pool, error_rate) = gauges_by_host.get(host).copied().unwrap_or_default();
+            copy.set_pool_gauges(pool);
+            copy.set_error_rate(error_rate);
             res.insert(host.clone(), copy);
         }
         res
+    }
+
+    /// Value of the invalid-peer counter (failed node validations during tend).
+    pub fn nodes_invalid_count(&self) -> u64 {
+        self.nodes_invalid_count.load(Ordering::Relaxed)
     }
 
     /// Value of the max-retries-exceeded counter.
@@ -1686,13 +1744,21 @@ impl Cluster {
         self.total_timeout_exceeded_count.load(Ordering::Relaxed)
     }
 
-    /// Builds the per-node reserved labels (node/host/cluster/app-id) merged
-    /// with the user-provided labels.
+    /// Builds the per-node reserved labels (`node`, `host`, `cluster`,
+    /// `app_id`) merged with the user-provided labels.
     pub fn node_labels(&self) -> Labels {
         let policy = self.metrics_policy();
         let user_labels = &policy.labels;
         let client_policy = self.client_policy();
-        let cluster_name = client_policy.cluster_name.clone().unwrap_or_default();
+        // The `cluster` label prefers the configured name and otherwise uses
+        // the one the servers report, so an unvalidated cluster is still
+        // labelled (metrics.md §4.1: "from the server, or from explicit
+        // client config").
+        let cluster_name = client_policy
+            .cluster_name
+            .clone()
+            .or_else(|| self.server_cluster_name())
+            .unwrap_or_default();
         let app_id = client_policy.application_id.clone().unwrap_or_default();
 
         let mut labels = Labels::new();
@@ -1706,7 +1772,7 @@ impl Cluster {
             entries.insert("node".to_string(), node.name().to_string());
             entries.insert("host".to_string(), node.host().to_string());
             entries.insert("cluster".to_string(), cluster_name.clone());
-            entries.insert("app-id".to_string(), app_id.clone());
+            entries.insert("app_id".to_string(), app_id.clone());
             labels.push(entries);
         }
         labels
@@ -1781,18 +1847,22 @@ impl Cluster {
                 self.remove_alias(&alias);
             }
         }
-        // Record the removal and drain the node's final metrics into the
-        // per-host accumulator so they survive the node going away (the map
-        // keeps removed-host entries, reported with zero open connections).
+        // Close the node and its idle connections first (each counted as a
+        // node-removed close), THEN record the removal and drain the node's
+        // final metrics into the per-host accumulator so they survive the
+        // node going away (the map keeps removed-host entries, reported with
+        // zero open connections). Connections still on loan are closed later
+        // by the pool's own teardown and are not observed here.
+        for node in &mut nodes_to_remove {
+            debug!("Closing node {node}");
+            node.close();
+            node.close_idle_connections();
+        }
         if self.metrics_enabled() {
             for node in &nodes_to_remove {
                 node.metrics().incr_node_removed();
             }
             self.aggregate_node_metrics(&nodes_to_remove);
-        }
-        for node in &mut nodes_to_remove {
-            debug!("Closing node {node}");
-            node.close();
         }
         self.remove_nodes(&nodes_to_remove);
     }

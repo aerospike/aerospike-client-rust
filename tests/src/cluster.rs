@@ -689,3 +689,36 @@ async fn prefer_rack_reads_work_with_a_non_empty_rack_list() {
     }
 }
 
+
+// ---- server-reported cluster name -----------------------------------------
+
+/// The cluster name is discovered from the servers on every tend, without
+/// `ClientPolicy::cluster_name` being set: selection of per-cluster settings
+/// must not require opting into name validation.
+#[aerospike_macro::test]
+async fn server_cluster_name_is_discovered_without_validation() {
+    let client = fresh_client().await;
+    assert!(
+        client.cluster.cluster_name().is_none(),
+        "this test relies on no configured cluster name"
+    );
+
+    // What the server says, normalized the way the client does ("null" or
+    // empty means the server has no name configured).
+    let info = client
+        .info(&AdminPolicy::default(), &["cluster-name"])
+        .await
+        .unwrap();
+    let raw = info.get("cluster-name").cloned().unwrap_or_default();
+    let expected = (!raw.is_empty() && !raw.eq_ignore_ascii_case("null")).then_some(raw);
+
+    assert_eq!(client.server_cluster_name(), expected);
+    assert_eq!(client.cluster.server_cluster_name(), expected);
+    for node in client.nodes() {
+        assert_eq!(node.cluster_name(), expected, "node {node} disagrees");
+    }
+    // The configured name is untouched: discovery does not turn validation on.
+    assert!(client.cluster.cluster_name().is_none());
+
+    client.close().await.unwrap();
+}

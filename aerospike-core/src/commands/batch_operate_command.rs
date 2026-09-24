@@ -135,9 +135,12 @@ impl BatchOperateCommand {
             crate::metrics::CommandType::BatchRead
         };
         let trans_start = Instant::now();
-        // The per-command sample decision (enabled AND sampler-selected). Made
-        // once, the first time a connection is acquired, then reused for the
-        // whole command so all of its metrics are recorded together or not.
+        // The per-command sample decision (operational tier on AND
+        // sampler-selected). One random draw per sub-batch command, taken here
+        // before the first attempt (metrics.md §3.1.1); the decision is made
+        // from it the first time a node is tried and reused for the whole
+        // command so all of its metrics are recorded together or not at all.
+        let sample_draw: u64 = rand::random();
         let mut sampled: Option<bool> = None;
 
         // Replica sequence offsets, advanced on every scheduled retry (Java
@@ -167,6 +170,7 @@ impl BatchOperateCommand {
                     deadline,
                     self.node.clone(),
                     cmd_type,
+                    sample_draw,
                     &mut sampled,
                     &mut commands_sent,
                 self.hook.as_deref(),
@@ -257,6 +261,7 @@ impl BatchOperateCommand {
                         deadline,
                         node,
                         cmd_type,
+                        sample_draw,
                         &mut sampled,
                         &mut commands_sent,
                     self.hook.as_deref(),
@@ -499,6 +504,7 @@ impl BatchOperateCommand {
         deadline: Option<Instant>,
         node: Arc<Node>,
         cmd_type: crate::metrics::CommandType,
+        sample_draw: u64,
         sampled: &mut Option<bool>,
         commands_sent: &mut u32,
         hook: Option<&crate::batch::BatchHook>,
@@ -507,16 +513,25 @@ impl BatchOperateCommand {
         // is currently outside its error-rate window. Mirrors Java's
         // `node.validateErrorCount()` call site at the top of every
         // command attempt.
+        // Metrics: one sample decision per command, made from the call-level
+        // draw the first time a node is tried and reused across retries and
+        // per-op groups (never re-rolled — metrics.md §3.1.1).
+        if sampled.is_none() {
+            *sampled = Some(node.metrics().should_sample_draw(sample_draw));
+        }
+        let metrics_on = sampled.unwrap_or(false);
+
         if let Err(err) = node.validate_error_count() {
-            node.metrics().incr_circuit_breaker_hits();
+            if metrics_on {
+                node.metrics().incr_circuit_breaker_hits();
+            }
             return Ok(Some(err));
         }
 
-        // Metrics: detailed per-namespace metrics are attributed to every
-        // distinct namespace in this request group. Build the namespace set
-        // when collection is enabled; the per-command sample decision is made
-        // below once a connection (and its rng) is available.
-        let namespaces: Vec<String> = if node.metrics().is_enabled() {
+        // Detailed per-namespace metrics are attributed to every distinct
+        // namespace in this request group; only worth building when this
+        // command is being recorded.
+        let namespaces: Vec<String> = if metrics_on {
             let mut v: Vec<String> = batch_ops
                 .iter()
                 .map(|op| op.0.key().namespace.clone())
@@ -540,13 +555,6 @@ impl BatchOperateCommand {
                 return Ok(Some(err));
             }
         };
-        // Decide once per command whether to record metrics: collection
-        // enabled AND the policy's sampler selects it (drawing from this
-        // connection's rng). Reused across retries/per-op groups.
-        if sampled.is_none() {
-            *sampled = Some(node.metrics().should_sample(conn.rng()));
-        }
-        let metrics_on = sampled.unwrap_or(false);
         if metrics_on {
             let aq_elapsed = aq_start.elapsed();
             for ns in &namespaces {
@@ -585,9 +593,16 @@ impl BatchOperateCommand {
         conn.set_timeout_delay(true, policy.timeout_delay());
 
         // Send command.
-        let bytes_sent = conn.buffer.data_buffer.len() as u64;
-        let write_start = Instant::now();
-        if let Err(err) = conn.flush().await {
+        let write_result = conn.flush().await;
+        // Bytes are accounted for whatever the outcome: the socket layer
+        // counted exactly what left the client, including a partial write.
+        if metrics_on {
+            let sent = conn.bytes_sent() as u64;
+            for ns in &namespaces {
+                node.metrics().record_bytes_sent(ns, cmd_type, sent);
+            }
+        }
+        if let Err(err) = write_result {
             // IO errors are considered temporary anomalies. Retry.
             // Close socket to flush out possible garbage. Do not put back in pool.
             conn.invalidate();
@@ -596,13 +611,6 @@ impl BatchOperateCommand {
             return Ok(Some(err));
         }
         *commands_sent += 1;
-        if metrics_on {
-            let write_elapsed = write_start.elapsed();
-            for ns in &namespaces {
-                node.metrics()
-                    .record_write(ns, cmd_type, bytes_sent, write_elapsed);
-            }
-        }
 
         // Parse results.
         let parse_start = Instant::now();
@@ -614,12 +622,21 @@ impl BatchOperateCommand {
         hook,
                 )
         .await;
-        if metrics_on && parse_outcome.is_ok() {
-            let parse_elapsed = parse_start.elapsed();
+        if metrics_on {
+            // Read side, same rule: exact bytes whatever the outcome.
             let received = conn.bytes_received() as u64;
             for ns in &namespaces {
-                node.metrics()
-                    .record_parse(ns, cmd_type, parse_elapsed, received);
+                node.metrics().record_bytes_received(ns, cmd_type, received);
+            }
+            if parse_outcome.is_ok() {
+                // One sample per successful node sub-batch RPC: latency spans
+                // connection acquire → response parsed (metrics.md §4.6).
+                let rpc_elapsed = aq_start.elapsed();
+                let parse_elapsed = parse_start.elapsed();
+                for ns in &namespaces {
+                    node.metrics().record_latency(ns, cmd_type, rpc_elapsed);
+                    node.metrics().record_parse(ns, cmd_type, parse_elapsed);
+                }
             }
         }
         if let Err(err) = parse_outcome {
@@ -947,6 +964,7 @@ mod tests {
             client_policy: policy.clone(),
             use_new_info: true,
             version: Version::default(),
+            cluster_name: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(

@@ -92,7 +92,7 @@ pub trait Command {
         None
     }
     /// The cluster this command runs against, used by the retry loop to record
-    /// cluster-wide counters (`exceeded-max-retries` / `exceeded-total-timeout`).
+    /// cluster-wide counters (`exceeded_max_retries` / `exceeded_total_timeout`).
     /// Defaulted to `None` for commands that carry only a node handle
     /// (streaming / server-background commands).
     fn cluster(&self) -> Option<&Cluster> {

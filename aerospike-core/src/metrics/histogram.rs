@@ -16,6 +16,25 @@
 //!
 //! All values are `u64`. A [`SyncHistogram`] is a thread-safe wrapper around the
 //! bucketed data.
+//!
+//! # Bucket layout
+//!
+//! Every histogram uses the Aerospike client **range layout** (the one
+//! `asadm`, `asloglatency` and the prior Java client's `latencyColumns` /
+//! `latencyShift` share). With `columns` buckets and a `shift` of *s*
+//! (multiplier `m = 2^s`):
+//!
+//! | bucket        | values recorded                       |
+//! | ------------- | ------------------------------------- |
+//! | 0             | `v <= 1`                              |
+//! | 1             | `1 < v <= m`                          |
+//! | *i*           | `m^(i-1) < v <= m^i`                  |
+//! | `columns - 1` | `v > m^(columns-2)` (overflow bucket) |
+//!
+//! Ranges are **upper-closed**: a value equal to a boundary lands in the
+//! lower bucket. With the default `shift = 1` and 7 columns that is
+//! `<=1, >1, >2, >4, >8, >16, >32`, i.e. bucket `ceil(log2 v)`. A larger shift
+//! skips powers of two (`shift = 3`: `<=1, >1, >8, >64, ...`).
 
 use std::sync::Mutex;
 
@@ -24,21 +43,14 @@ use serde::ser::SerializeStruct;
 #[cfg(feature = "serialization")]
 use serde::{Serialize, Serializer};
 
-/// Bucket layout of a histogram (`Linear` = 0, `Logarithmic` = 1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum HistogramType {
-    /// Buckets are `<base <base*2 <base*3 ... >=base*(columns-1)`.
-    Linear,
-    /// Buckets are `<base^1 <base^2 <base^3 ... >=base^(columns-1)`.
-    #[default]
-    Logarithmic,
-}
+/// Largest usable shift: `2^63` is the biggest power-of-two boundary a `u64`
+/// value can exceed, so anything above is clamped here.
+const MAX_SHIFT: u32 = 63;
 
 /// Inner, non-synchronized histogram state.
 #[derive(Debug, Clone)]
 struct HistogramInner {
-    htype: HistogramType,
-    base: u64,
+    shift: u32,
     buckets: Vec<u64>,
     min: u64,
     max: u64,
@@ -46,15 +58,31 @@ struct HistogramInner {
     count: u64,
 }
 
+/// Normalizes a `(shift, columns)` pair so bucket arithmetic is always
+/// defined: at least one column, a shift between 1 and [`MAX_SHIFT`].
+fn normalize(shift: u32, columns: usize) -> (u32, usize) {
+    (shift.clamp(1, MAX_SHIFT), columns.max(1))
+}
+
+/// Bucket index for value `v` in the range layout described in the module
+/// docs. `shift` and `columns` must already be normalized.
+fn bucket_index(v: u64, shift: u32, columns: usize) -> usize {
+    if v <= 1 {
+        return 0;
+    }
+    // `ceil(log2 v)` for v >= 2: the bit length of `v - 1`.
+    let log2 = 64 - (v - 1).leading_zeros();
+    // Each bucket spans `shift` powers of two; round up so a value equal to a
+    // boundary stays in the lower bucket (upper-closed ranges).
+    let bucket = log2.div_ceil(shift) as usize;
+    bucket.min(columns - 1)
+}
+
 impl HistogramInner {
-    fn new(htype: HistogramType, base: u64, columns: usize) -> Self {
-        // Guard against a zero-column or zero-base configuration which would
-        // make bucket indexing/arithmetic undefined.
-        let columns = columns.max(1);
-        let base = base.max(1);
+    fn new(shift: u32, columns: usize) -> Self {
+        let (shift, columns) = normalize(shift, columns);
         HistogramInner {
-            htype,
-            base,
+            shift,
             buckets: vec![0; columns],
             min: 0,
             max: 0,
@@ -73,14 +101,12 @@ impl HistogramInner {
         self.count = 0;
     }
 
-    fn reshape(&mut self, htype: HistogramType, base: u64, columns: usize) {
-        let columns = columns.max(1);
-        let base = base.max(1);
-        if self.htype == htype && self.base == base && self.buckets.len() == columns {
+    fn reshape(&mut self, shift: u32, columns: usize) {
+        let (shift, columns) = normalize(shift, columns);
+        if self.shift == shift && self.buckets.len() == columns {
             return;
         }
-        self.htype = htype;
-        self.base = base;
+        self.shift = shift;
         self.buckets = vec![0; columns];
         self.min = 0;
         self.max = 0;
@@ -101,38 +127,23 @@ impl HistogramInner {
         self.sum += v as f64;
         self.count += 1;
 
-        let mut slot: i64 = 0;
-        if v > 0 {
-            slot = match self.htype {
-                // Integer division == floor for non-negative operands.
-                HistogramType::Linear => (v / self.base) as i64,
-                HistogramType::Logarithmic => {
-                    ((v as f64).ln() / (self.base as f64).ln()).floor() as i64
-                }
-            };
-        }
-
-        let len = self.buckets.len();
-        let idx = if slot < 0 {
-            0
-        } else if slot as usize >= len {
-            len - 1
-        } else {
-            slot as usize
-        };
+        let idx = bucket_index(v, self.shift, self.buckets.len());
         self.buckets[idx] += 1;
     }
 
     fn merge(&mut self, other: &HistogramInner) {
         // Mismatched histograms are silently skipped.
-        if self.base != other.base
-            || self.htype != other.htype
-            || self.buckets.len() != other.buckets.len()
-        {
+        if self.shift != other.shift || self.buckets.len() != other.buckets.len() {
             return;
         }
 
-        if other.min < self.min || self.min == 0 {
+        // An empty histogram contributes nothing — in particular not its
+        // zero `min`, which used to clobber a real minimum every time a
+        // per-tend drain with no new samples was merged in.
+        if other.count == 0 {
+            return;
+        }
+        if self.count == 0 || other.min < self.min {
             self.min = other.min;
         }
         if other.max > self.max {
@@ -155,11 +166,13 @@ pub struct SyncHistogram {
 }
 
 impl SyncHistogram {
-    /// Creates a new, empty histogram with the given layout.
+    /// Creates a new, empty histogram with `columns` buckets whose boundaries
+    /// multiply by `2^shift` (see the module docs for the layout). A `shift`
+    /// of 0 is treated as 1 and `columns` of 0 as 1.
     #[must_use]
-    pub fn new(htype: HistogramType, base: u64, columns: usize) -> Self {
+    pub fn new(shift: u32, columns: usize) -> Self {
         SyncHistogram {
-            inner: Mutex::new(HistogramInner::new(htype, base, columns)),
+            inner: Mutex::new(HistogramInner::new(shift, columns)),
         }
     }
 
@@ -196,8 +209,8 @@ impl SyncHistogram {
 
     /// Changes the histogram's layout, resetting its contents if the layout
     /// actually changed.
-    pub fn reshape(&self, htype: HistogramType, base: u64, columns: usize) {
-        self.inner.lock().unwrap().reshape(htype, base, columns);
+    pub fn reshape(&self, shift: u32, columns: usize) {
+        self.inner.lock().unwrap().reshape(shift, columns);
     }
 
     /// Discards everything recorded so far, keeping the layout.
@@ -239,6 +252,12 @@ impl SyncHistogram {
         self.inner.lock().unwrap().buckets.clone()
     }
 
+    /// The boundary spacing exponent this histogram was built with.
+    #[must_use]
+    pub fn shift(&self) -> u32 {
+        self.inner.lock().unwrap().shift
+    }
+
     /// Mean of all recorded values (0 if empty).
     #[must_use]
     pub fn average(&self) -> f64 {
@@ -263,8 +282,8 @@ impl Serialize for SyncHistogram {
     where
         S: Serializer,
     {
-        // Only the data fields are serialized; the layout fields (`htype`,
-        // `base`) are intentionally omitted.
+        // Only the data fields are serialized; the layout field (`shift`) is
+        // intentionally omitted — it is reported once per snapshot.
         let g = self.inner.lock().unwrap();
         let mut state = serializer.serialize_struct("histogram", 5)?;
         state.serialize_field("buckets", &g.buckets)?;
@@ -280,37 +299,78 @@ impl Serialize for SyncHistogram {
 mod tests {
     use super::*;
 
+    /// The spec's default layout (`metrics.md` §5.3): 7 columns, shift 1 —
+    /// `<=1, >1, >2, >4, >8, >16, >32`, every range closed at the top.
     #[test]
-    fn logarithmic_bucketing() {
-        // base=8, columns=5 => <8 <64 <512 <4096 >=4096
-        let h = SyncHistogram::new(HistogramType::Logarithmic, 8, 5);
-        for v in [1u64, 7, 8, 63, 64, 511, 512, 4095, 4096, 100_000] {
+    fn default_layout_is_upper_closed_powers_of_two() {
+        let h = SyncHistogram::new(1, 7);
+        let expect = [
+            (0u64, 0usize),
+            (1, 0),
+            (2, 1),
+            (3, 2),
+            (4, 2),
+            (5, 3),
+            (8, 3),
+            (9, 4),
+            (16, 4),
+            (17, 5),
+            (32, 5),
+            (33, 6),
+            (1_000_000, 6),
+            (u64::MAX, 6),
+        ];
+        for (v, bucket) in expect {
+            assert_eq!(
+                bucket_index(v, 1, 7),
+                bucket,
+                "value {v} should land in bucket {bucket}"
+            );
             h.add(v);
         }
-        // 1,7 -> bucket 0; 8,63 -> 1; 64,511 -> 2; 512,4095 -> 3; 4096,100000 -> 4
-        assert_eq!(h.buckets(), vec![2, 2, 2, 2, 2]);
-        assert_eq!(h.count(), 10);
-        assert_eq!(h.min(), 1);
-        assert_eq!(h.max(), 100_000);
+        assert_eq!(h.buckets(), vec![2, 1, 2, 2, 2, 2, 3]);
+        assert_eq!(h.count(), 14);
+        assert_eq!(h.min(), 0);
+        assert_eq!(h.max(), u64::MAX);
+    }
+
+    /// `shift = 3` multiplies each boundary by 8: `<=1, >1, >8, >64, >512`.
+    #[test]
+    fn shift_skips_powers_of_two() {
+        let h = SyncHistogram::new(3, 5);
+        for v in [1u64, 2, 8, 9, 64, 65, 512, 513, 100_000] {
+            h.add(v);
+        }
+        // 1 -> 0; 2,8 -> 1; 9,64 -> 2; 65,512 -> 3; 513,100000 -> 4
+        assert_eq!(h.buckets(), vec![1, 2, 2, 2, 2]);
+        assert_eq!(h.shift(), 3);
     }
 
     #[test]
-    fn linear_bucketing() {
-        // base=15, columns=5 => <15 <30 <45 <60 >=60
-        let h = SyncHistogram::new(HistogramType::Linear, 15, 5);
-        for v in [0u64, 14, 15, 29, 30, 44, 45, 59, 60, 200] {
-            h.add(v);
-        }
-        assert_eq!(h.buckets(), vec![2, 2, 2, 2, 2]);
-        assert_eq!(h.count(), 10);
-        assert_eq!(h.min(), 0);
-        assert_eq!(h.max(), 200);
+    fn degenerate_shapes_are_normalized() {
+        // shift 0 behaves as shift 1; zero columns become one.
+        let h = SyncHistogram::new(0, 7);
+        h.add(3);
+        assert_eq!(h.buckets()[2], 1);
+        assert_eq!(h.shift(), 1);
+
+        let one = SyncHistogram::new(1, 0);
+        one.add(1_000);
+        assert_eq!(one.buckets(), vec![1]);
+
+        // An absurd shift is clamped rather than overflowing the boundary math:
+        // bucket 1 is then `(1, 2^63]` and anything above overflows.
+        let wide = SyncHistogram::new(500, 3);
+        wide.add(1 << 63);
+        wide.add(u64::MAX);
+        assert_eq!(wide.shift(), MAX_SHIFT);
+        assert_eq!(wide.buckets(), vec![0, 1, 1]);
     }
 
     #[test]
     fn merge_combines_counts() {
-        let a = SyncHistogram::new(HistogramType::Logarithmic, 2, 4);
-        let b = SyncHistogram::new(HistogramType::Logarithmic, 2, 4);
+        let a = SyncHistogram::new(1, 4);
+        let b = SyncHistogram::new(1, 4);
         a.add(1);
         a.add(5);
         b.add(5);
@@ -323,9 +383,33 @@ mod tests {
         assert_eq!(total, 4);
     }
 
+    /// Merging an empty histogram must be a no-op: a per-tend drain that
+    /// recorded nothing used to reset `min` to 0 on the accumulator.
+    #[test]
+    fn merge_of_empty_histogram_keeps_min() {
+        let a = SyncHistogram::new(1, 4);
+        a.add(40);
+        a.add(90);
+        let empty = SyncHistogram::new(1, 4);
+        a.merge(&empty);
+        assert_eq!(a.min(), 40);
+        assert_eq!(a.max(), 90);
+        assert_eq!(a.count(), 2);
+
+        // And an empty accumulator takes the other side's min verbatim,
+        // including a genuine 0 sample.
+        let acc = SyncHistogram::new(1, 4);
+        let zero = SyncHistogram::new(1, 4);
+        zero.add(0);
+        zero.add(5);
+        acc.merge(&zero);
+        assert_eq!(acc.min(), 0);
+        assert_eq!(acc.count(), 2);
+    }
+
     #[test]
     fn clone_and_reset_empties_original() {
-        let h = SyncHistogram::new(HistogramType::Logarithmic, 2, 4);
+        let h = SyncHistogram::new(1, 4);
         h.add(10);
         h.add(20);
         let snap = h.clone_and_reset();
@@ -336,20 +420,21 @@ mod tests {
 
     #[test]
     fn reshape_resets_only_on_change() {
-        let h = SyncHistogram::new(HistogramType::Logarithmic, 2, 4);
+        let h = SyncHistogram::new(1, 4);
         h.add(10);
         // identical layout -> no reset
-        h.reshape(HistogramType::Logarithmic, 2, 4);
+        h.reshape(1, 4);
         assert_eq!(h.count(), 1);
         // different layout -> reset
-        h.reshape(HistogramType::Linear, 5, 6);
+        h.reshape(2, 6);
         assert_eq!(h.count(), 0);
         assert_eq!(h.buckets().len(), 6);
+        assert_eq!(h.shift(), 2);
     }
 
     #[test]
     fn zero_value_and_average() {
-        let h = SyncHistogram::new(HistogramType::Logarithmic, 2, 4);
+        let h = SyncHistogram::new(1, 4);
         h.add(0);
         h.add(0);
         assert_eq!(h.count(), 2);
@@ -358,40 +443,41 @@ mod tests {
         assert_eq!(h.buckets()[0], 2); // zero values land in bucket 0
         assert_eq!(h.average(), 0.0);
 
-        let h2 = SyncHistogram::new(HistogramType::Linear, 10, 4);
+        let h2 = SyncHistogram::new(1, 4);
         h2.add(10);
         h2.add(30);
         assert_eq!(h2.average(), 20.0);
         // empty histogram average is 0, not NaN
-        assert_eq!(
-            SyncHistogram::new(HistogramType::Linear, 10, 4).average(),
-            0.0
-        );
+        assert_eq!(SyncHistogram::new(1, 4).average(), 0.0);
     }
 
     #[test]
     fn merge_rejects_mismatched_shape() {
-        let a = SyncHistogram::new(HistogramType::Logarithmic, 2, 4);
-        let b = SyncHistogram::new(HistogramType::Linear, 2, 4); // different type
+        let a = SyncHistogram::new(1, 4);
+        let b = SyncHistogram::new(2, 4); // different shift
         a.add(5);
         b.add(5);
         a.merge(&b); // silently ignored — counts unchanged
+        assert_eq!(a.count(), 1);
+        let c = SyncHistogram::new(1, 5); // different column count
+        c.add(5);
+        a.merge(&c);
         assert_eq!(a.count(), 1);
     }
 
     #[cfg(feature = "serialization")]
     #[test]
     fn serializes_only_data_fields() {
-        let h = SyncHistogram::new(HistogramType::Logarithmic, 2, 4);
+        let h = SyncHistogram::new(1, 4);
         h.add(3);
         let v = serde_json::to_value(&h).unwrap();
-        // Layout fields (htype/base) are intentionally omitted.
+        // The layout field (shift) is intentionally omitted.
         assert!(v.get("buckets").unwrap().is_array());
         assert_eq!(v["count"], 1);
         assert_eq!(v["min"], 3);
         assert_eq!(v["max"], 3);
         assert_eq!(v["sum"], 3.0);
-        assert!(v.get("htype").is_none());
+        assert!(v.get("shift").is_none());
         assert!(v.get("base").is_none());
     }
 }

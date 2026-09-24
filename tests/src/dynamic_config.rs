@@ -41,7 +41,8 @@ fn config_yaml(metrics_enabled: bool) -> String {
     format!(
         "version: \"1.0.0\"\n\
          static:\n  client:\n    config_interval: 1\n\
-         dynamic:\n  metrics:\n    enable: {metrics_enabled}\n    latency_columns: 9\n"
+         dynamic:\n  metrics:\n    enabled: {metrics_enabled}\n\
+         \x20   extended:\n      operational:\n        enabled: true\n        latency_columns: 9\n"
     )
 }
 
@@ -79,9 +80,11 @@ async fn dynamic_config_applies_and_reloads() {
     let _ = std::fs::remove_file(&path);
 }
 
-/// `dynamic.metrics.latency_unit` picks the resolution of the latency
-/// histograms, and a later reload can switch it - which discards the samples
-/// collected in the previous unit, since they cannot share buckets.
+/// `dynamic.metrics.extended.operational.latency_unit` picks the resolution
+/// of the latency histograms, and a later reload can switch it - which
+/// discards the samples collected in the previous unit, since they cannot
+/// share buckets. The operational group has to be enabled for any latency
+/// sample to exist in the first place.
 #[aerospike_macro::test]
 async fn dynamic_metrics_latency_unit_applies_and_switches() {
     use aerospike::{CommandType, LatencyUnit};
@@ -90,7 +93,8 @@ async fn dynamic_metrics_latency_unit_applies_and_switches() {
         format!(
             "version: \"1.0.0\"\n\
              static:\n  client:\n    config_interval: 1\n\
-             dynamic:\n  metrics:\n    enable: true\n    latency_unit: {unit}\n"
+             dynamic:\n  metrics:\n    enabled: true\n\
+             \x20   extended:\n      operational:\n        enabled: true\n        latency_unit: {unit}\n"
         )
     };
 

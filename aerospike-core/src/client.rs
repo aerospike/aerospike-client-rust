@@ -387,10 +387,26 @@ impl Client {
         self.cluster.nodes()
     }
 
+    /// The cluster name the connected servers report (`cluster-name` info),
+    /// discovered during tend regardless of whether
+    /// `ClientPolicy::cluster_name` is set. `None` when the servers have no
+    /// cluster name configured (or no node has been tended yet).
+    ///
+    /// Setting `ClientPolicy::cluster_name` still only *validates* nodes
+    /// against a name; this accessor is how a caller learns the name without
+    /// opting into that validation, for example to pick a per-cluster
+    /// configuration block and fall back to a default when it is `None`.
+    pub fn server_cluster_name(&self) -> Option<String> {
+        self.cluster.server_cluster_name()
+    }
+
     /// Enables periodic client metrics collection, (re)shaping per-node
-    /// histograms to `policy`. While enabled the client records connection,
-    /// tend, latency and result-code statistics that can be read with
-    /// [`Client::metrics`]. Collection is off by default.
+    /// histograms to `policy`. While enabled the client records the Tier 0
+    /// instruments (pool gauges, connection opened/closed, tend and node
+    /// counts) and, if [`MetricsPolicy::operational`](crate::metrics::MetricsPolicy::operational)
+    /// is set, the per-command latency, bytes, result-code, retry/error and
+    /// connection-failure statistics. Read them with [`Client::metrics`].
+    /// Collection is off by default.
     pub fn enable_metrics(&self, policy: crate::metrics::MetricsPolicy) {
         self.cluster.enable_metrics(policy);
     }
@@ -407,26 +423,32 @@ impl Client {
 
     /// Returns a snapshot of the cluster's collected statistics: per-node
     /// metrics keyed by host, a cluster-aggregated view (carrying the node
-    /// labels), and the total node / open-connection counts.
+    /// labels), the total node count and the connection-pool gauges
+    /// (open / in-use / in-pool / recovering) summed across nodes.
     ///
-    /// Returns empty/zeroed statistics if metrics have never been enabled.
+    /// Callable while collection is disabled: the pool gauges are read live
+    /// from the pools on every call, while counters and histograms are
+    /// whatever was accumulated when collection was last on (zero if never).
     pub fn metrics(&self) -> crate::metrics::ClusterMetrics {
         let nodes = self.cluster.metrics_copy();
         let policy = self.cluster.metrics_policy();
         let mut aggregated = crate::metrics::NodeMetricsSnapshot::new((*policy).clone());
-        let mut open_connections = 0u64;
         for snapshot in nodes.values() {
+            // `aggregate` sums the stamped pool gauges along with the counters.
             aggregated.aggregate(snapshot);
-            open_connections += snapshot.open_connections();
         }
         aggregated.set_labels(self.cluster.node_labels());
-        aggregated.set_open_connections(open_connections);
+        let gauges = aggregated.pool_gauges();
 
         crate::metrics::ClusterMetrics {
             nodes,
             cluster_aggregated: aggregated,
             total_nodes: self.cluster.nodes().len(),
-            open_connections,
+            open_connections: gauges.total,
+            connections_in_use: gauges.in_use(),
+            connections_in_pool: gauges.in_pool,
+            recover_queue_size: gauges.recovering,
+            nodes_invalid: self.cluster.nodes_invalid_count(),
             exceeded_max_retries: self.cluster.max_retries_exceeded_count(),
             exceeded_total_timeout: self.cluster.total_timeout_exceeded_count(),
         }
@@ -3347,6 +3369,13 @@ impl Client {
     /// (`Ok`, `AlreadyCommitted`, `CloseAbandoned`), or `ErrorKind::Commit` with
     /// per-key records and an `in_doubt` flag on failure — including an
     /// abandoned roll-forward, whose writes are not yet visible.
+    ///
+    /// A failure with `in_doubt() == true` leaves the transaction in
+    /// [`TxnState::CommitFailed`]: the server may still be rolling it
+    /// forward, so [`abort`](Self::abort) is refused and the only recovery is
+    /// to call `commit` again. If the retry finds the server already marked
+    /// the transaction roll-forward, it completes the roll and returns
+    /// `AlreadyCommitted`.
     pub async fn commit(&self, txn: &Arc<Txn>) -> Result<CommitStatus> {
         self.commit_with_policies(
             &TxnVerifyPolicy::default(),
@@ -3377,6 +3406,10 @@ impl Client {
                 tr.commit(roll_policy).await
             }
             TxnState::Verified => tr.commit(roll_policy).await,
+            // Retrying the commit is the only recovery path after an in-doubt
+            // commit failure: the verify already passed, so go straight to the
+            // roll-forward mark again.
+            TxnState::CommitFailed => tr.commit(roll_policy).await,
             TxnState::Committed => Ok(CommitStatus::AlreadyCommitted),
             TxnState::Aborted => Err(Error::server_error(
                 ResultCode::MrtAborted,
@@ -3392,6 +3425,12 @@ impl Client {
     /// Uses a default policy for the roll. Use
     /// [`abort_with_policy`](Self::abort_with_policy) to control timeouts and
     /// retries.
+    ///
+    /// Abort is **refused** with `ClientResultCode::TxnFailed` after a commit
+    /// failed with an in-doubt outcome ([`TxnState::CommitFailed`]): the
+    /// server may still be rolling the transaction forward, and a rollback
+    /// could discard writes it is committing. Retry [`commit`](Self::commit)
+    /// instead.
     ///
     /// # Arguments
     /// * `txn` - The transaction to abort (wrapped in `Arc`).
@@ -3413,6 +3452,12 @@ impl Client {
 
         match txn.state() {
             TxnState::Open | TxnState::Verified => tr.abort(roll_policy).await,
+            // The roll-forward mark may have reached the server: rolling back
+            // now could discard writes it is committing. Only a commit retry
+            // can resolve the transaction from here.
+            TxnState::CommitFailed => Err(Error::txn_failed(
+                crate::txn::COMMIT_FAILED_ABORT_MESSAGE,
+            )),
             TxnState::Committed => Err(Error::server_error(
                 ResultCode::MrtCommitted,
                 "Transaction already committed".to_string(),

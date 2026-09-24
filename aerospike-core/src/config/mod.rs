@@ -137,13 +137,29 @@ pub struct BatchReadSectionConfig {
     pub respond_all_keys: Option<bool>,
 }
 
-/// The `dynamic.metrics` section. Carries the `enable` toggle (which is not a
-/// [`MetricsPolicy`](crate::metrics::MetricsPolicy) field) alongside the
-/// macro-generated policy overrides.
+/// The `dynamic.metrics` section (cross-client schema, `metrics.md` §7).
+///
+/// Carries the `enabled` master switch (which is not a
+/// [`MetricsPolicy`](crate::metrics::MetricsPolicy) field), the export
+/// `labels`, and the Tier 1 `extended` block:
+///
+/// ```yaml
+/// metrics:
+///   enabled: true
+///   labels:
+///     app_id: billing
+///   extended:
+///     operational:
+///       enabled: true
+///       latency_unit: ms
+///       latency_columns: 7
+///       latency_shift: 1
+/// ```
 #[derive(Debug, Default, Clone, Deserialize)]
 pub struct MetricsConfig {
-    /// Turn metrics collection on/off. `None` leaves the current state unchanged.
-    pub enable: Option<bool>,
+    /// Master switch: turn metrics collection (Tier 0 and any enabled Tier 1
+    /// group) on/off. `None` leaves the current state unchanged.
+    pub enabled: Option<bool>,
 
     /// Custom metadata labels shipped with metrics, as a flat key/value map
     /// (the cross-client `metrics.labels` schema). Applied as a single label
@@ -151,9 +167,30 @@ pub struct MetricsConfig {
     /// empty map is treated the same as no labels.
     pub labels: Option<std::collections::HashMap<String, String>>,
 
-    /// Metrics-policy field overrides: the latency histogram's shape
-    /// (`latency_columns`, `latency_base`) and its time unit (`latency_unit`,
-    /// `us` / `ms`).
+    /// The Tier 1 groups. Only `operational` is implemented; an unknown
+    /// `usage` block is ignored like any other unsupported key.
+    pub extended: Option<ExtendedMetricsConfig>,
+}
+
+/// The `dynamic.metrics.extended` block: the independently enabled Tier 1
+/// groups.
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct ExtendedMetricsConfig {
+    /// The operational group: per-command latency/bytes/result-code
+    /// instruments and connection failure / close-reason counters.
+    pub operational: Option<OperationalMetricsConfig>,
+}
+
+/// The `dynamic.metrics.extended.operational` block.
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct OperationalMetricsConfig {
+    /// Turn the operational group on/off
+    /// ([`MetricsPolicy::operational`](crate::metrics::MetricsPolicy::operational)).
+    /// `None` leaves the current setting unchanged.
+    pub enabled: Option<bool>,
+
+    /// Latency-histogram overrides: shape (`latency_columns`, `latency_shift`)
+    /// and time unit (`latency_unit`, `us` / `ms`).
     ///
     /// Applying any of the three discards the samples already collected — the
     /// old ones cannot share buckets with the new shape or unit.
@@ -202,10 +239,13 @@ dynamic:
     durable_delete: true
     socket_timeout: 4321
   metrics:
-    enable: true
-    latency_columns: 9
-    latency_base: 3
-    latency_unit: ms
+    enabled: true
+    extended:
+      operational:
+        enabled: true
+        latency_columns: 9
+        latency_shift: 3
+        latency_unit: ms
 "#;
 
     fn document() -> ConfigDocument {
@@ -278,6 +318,18 @@ dynamic:
         assert_eq!(cp.config_interval, ClientPolicy::default().config_interval);
     }
 
+    /// The `extended.operational` block of a `dynamic.metrics` section.
+    fn operational_of(doc: ConfigDocument) -> OperationalMetricsConfig {
+        doc.dynamic
+            .unwrap()
+            .metrics
+            .unwrap()
+            .extended
+            .unwrap()
+            .operational
+            .unwrap()
+    }
+
     #[test]
     fn metrics_latency_unit_parses_as_us_or_ms() {
         use crate::metrics::{LatencyUnit, MetricsPolicy};
@@ -285,61 +337,67 @@ dynamic:
         // The SAMPLE asks for milliseconds; it merges onto the policy like the
         // other two histogram keys.
         let mut mp = MetricsPolicy::micros();
-        document()
-            .dynamic
-            .unwrap()
-            .metrics
-            .unwrap()
-            .policy
-            .merge_into(&mut mp);
+        operational_of(document()).policy.merge_into(&mut mp);
         assert_eq!(mp.latency_unit, LatencyUnit::Milliseconds);
 
         // `us` is the other spelling.
-        let doc: ConfigDocument =
-            serde_yml::from_str("dynamic:\n  metrics:\n    latency_unit: us\n").unwrap();
+        let doc: ConfigDocument = serde_yml::from_str(
+            "dynamic:\n  metrics:\n    extended:\n      operational:\n        latency_unit: us\n",
+        )
+        .unwrap();
         let mut mp = MetricsPolicy::millis();
-        doc.dynamic
-            .unwrap()
-            .metrics
-            .unwrap()
-            .policy
-            .merge_into(&mut mp);
+        operational_of(doc).policy.merge_into(&mut mp);
         assert_eq!(mp.latency_unit, LatencyUnit::Microseconds);
         // The column count is a separate key: overriding only the unit leaves it
         // at whatever the policy had, which is why the presets exist.
         assert_eq!(mp.latency_columns, MetricsPolicy::millis().latency_columns);
 
         // Absent key leaves the policy's unit alone.
-        let doc: ConfigDocument =
-            serde_yml::from_str("dynamic:\n  metrics:\n    latency_columns: 9\n").unwrap();
+        let doc: ConfigDocument = serde_yml::from_str(
+            "dynamic:\n  metrics:\n    extended:\n      operational:\n        latency_columns: 9\n",
+        )
+        .unwrap();
         let mut mp = MetricsPolicy::micros();
-        doc.dynamic
-            .unwrap()
-            .metrics
-            .unwrap()
-            .policy
-            .merge_into(&mut mp);
+        operational_of(doc).policy.merge_into(&mut mp);
         assert_eq!(mp.latency_unit, LatencyUnit::Microseconds);
         assert_eq!(mp.latency_columns, 9);
 
         // A bad value is a config error, not a silent fallback.
         assert!(serde_yml::from_str::<ConfigDocument>(
-            "dynamic:\n  metrics:\n    latency_unit: nanos\n"
+            "dynamic:\n  metrics:\n    extended:\n      operational:\n        latency_unit: nanos\n"
         )
         .is_err());
     }
 
     #[test]
-    fn metrics_section_carries_enable_and_policy_overrides() {
+    fn metrics_section_carries_enabled_and_operational_overrides() {
         let metrics = document().dynamic.unwrap().metrics.unwrap();
-        assert_eq!(metrics.enable, Some(true));
-        let mut mp = crate::metrics::MetricsPolicy::default();
-        metrics.policy.merge_into(&mut mp);
-        assert_eq!(mp.latency_columns, 9);
-        assert_eq!(mp.latency_base, 3);
+        assert_eq!(metrics.enabled, Some(true));
         // The SAMPLE has no labels key, so labels stays absent.
-        assert!(metrics.enable.is_some());
         assert!(metrics.labels.is_none());
+
+        let operational = metrics.extended.unwrap().operational.unwrap();
+        assert_eq!(operational.enabled, Some(true));
+        let mut mp = crate::metrics::MetricsPolicy::default();
+        operational.policy.merge_into(&mut mp);
+        assert_eq!(mp.latency_columns, 9);
+        assert_eq!(mp.latency_shift, 3);
+        // `operational.enabled` is applied by the cluster, not the merge: the
+        // policy field is `config(skip)` and stays at its default here.
+        assert!(!mp.operational);
+    }
+
+    #[test]
+    fn metrics_section_without_extended_block_has_no_operational_overrides() {
+        // Tier 0 only: the master switch alone, no Tier 1 block at all.
+        let metrics: MetricsConfig = parse("enabled: true\n").unwrap();
+        assert_eq!(metrics.enabled, Some(true));
+        assert!(metrics.extended.is_none());
+        // An `extended` block with only the (unimplemented) usage group parses
+        // and leaves operational absent.
+        let metrics: MetricsConfig =
+            parse("enabled: true\nextended:\n  usage:\n    enabled: true\n").unwrap();
+        assert!(metrics.extended.unwrap().operational.is_none());
     }
 
     #[test]
@@ -347,20 +405,24 @@ dynamic:
         // Labels are a flat key/value map (cross-client schema); the latency
         // overrides flattened into `policy` must still be captured next to it.
         let yaml = "\
-enable: true
-latency_columns: 11
+enabled: true
+extended:
+  operational:
+    latency_columns: 11
 labels:
   app_id: billing
   team: payments
 ";
         let metrics: MetricsConfig = parse(yaml).expect("metrics section should parse");
-        assert_eq!(metrics.enable, Some(true));
+        assert_eq!(metrics.enabled, Some(true));
         let labels = metrics.labels.as_ref().expect("labels should be present");
         assert_eq!(labels.get("app_id").map(String::as_str), Some("billing"));
         assert_eq!(labels.get("team").map(String::as_str), Some("payments"));
 
         let mut mp = crate::metrics::MetricsPolicy::default();
-        metrics.policy.clone().merge_into(&mut mp);
+        let operational = metrics.extended.unwrap().operational.unwrap();
+        assert!(operational.enabled.is_none());
+        operational.policy.merge_into(&mut mp);
         assert_eq!(mp.latency_columns, 11);
     }
 
@@ -607,23 +669,28 @@ labels:
     }
 
     #[test]
-    fn metrics_partial_merge_preserves_latency_base() {
+    fn metrics_partial_merge_preserves_latency_shift() {
         let default = MetricsPolicy::default();
         let cfg: MetricsPolicyConfig = parse("latency_columns: 9\n").unwrap();
         let mut mp = MetricsPolicy::default();
         cfg.merge_into(&mut mp);
         assert_eq!(mp.latency_columns, 9); // overridden
-        assert_eq!(mp.latency_base, default.latency_base); // kept
+        assert_eq!(mp.latency_shift, default.latency_shift); // kept
     }
 
     #[test]
-    fn metrics_latency_base_overrides_directly() {
-        // `latency_base` is a direct multiplier (matching the Go client), not a
-        // power-of-two exponent — the YAML value lands verbatim on the policy.
+    fn metrics_latency_shift_overrides_directly() {
+        // `latency_shift` is the power-of-two exponent (Java `latencyShift`,
+        // metrics.md §5.3), not a multiplier — the YAML value lands verbatim.
+        let cfg: MetricsPolicyConfig = parse("latency_shift: 3\n").unwrap();
+        let mut mp = MetricsPolicy::default();
+        cfg.merge_into(&mut mp);
+        assert_eq!(mp.latency_shift, 3);
+        // The old Go-style key is not recognised (ignored like any unknown key).
         let cfg: MetricsPolicyConfig = parse("latency_base: 8\n").unwrap();
         let mut mp = MetricsPolicy::default();
         cfg.merge_into(&mut mp);
-        assert_eq!(mp.latency_base, 8);
+        assert_eq!(mp.latency_shift, MetricsPolicy::default().latency_shift);
     }
 
     // ---- Per-record batch sub-sections (mirror the batch_*_policy config tests) ----

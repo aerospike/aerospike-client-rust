@@ -19,8 +19,9 @@ use std::sync::Arc;
 
 use crate::common;
 use aerospike::{
-    as_bin, as_key, operations, AbortStatus, Bins, CommitErrorType, CommitStatus,
-    ReadPolicy, ResultCode, Txn, Value, WritePolicy,
+    as_bin, as_key, operations, AbortStatus, Bins, ClientResultCode, CommitErrorType,
+    CommitStatus, ReadPolicy, ResultCode, Txn, TxnState, Value, WritePolicy,
+    COMMIT_FAILED_ABORT_MESSAGE,
 };
 
 /// Check if the server supports MRT (version >= 8.0).
@@ -816,4 +817,194 @@ async fn txn_cleared_after_abort() {
     assert!(txn.get_writes().is_empty());
     assert!(txn.namespace().is_none());
     assert!(!txn.monitor_exists());
+}
+
+// =============================================================================
+// Abort-after-failed-commit safeguard
+//
+// Ported from the C client's transaction tests and legacy Java's TestTxn
+// (txnAbortBlockedAfterCommitFailed, txnAbortAllowedAfterCleanMarkFailure,
+// txnAbortAllowedAfterVerifyFailure). The failing mark-roll-forward is
+// induced without fault injection: the transaction monitor record
+// (`<ERO~MRT`, key = txn id) is durable-deleted so the server rejects the
+// mark. Whether that failure is in doubt is the transaction's `in_doubt`
+// flag — the discriminator the safeguard keys on.
+// =============================================================================
+
+/// Writes one record inside `txn` so the server creates the transaction
+/// monitor, and returns the key.
+async fn write_in_txn(
+    client: &aerospike::Client,
+    txn: &Arc<Txn>,
+    ns: &str,
+    set: &str,
+) -> aerospike::Key {
+    let key = as_key!(ns, set, &common::rand_str(20));
+    let mut wp = WritePolicy::default();
+    wp.base_policy.txn = Some(txn.clone());
+    client
+        .put(&wp, &key, &[as_bin!("bin", 1)])
+        .await
+        .expect("put inside the transaction");
+    assert!(txn.monitor_exists(), "the write must have created the monitor");
+    key
+}
+
+/// Durable-deletes the transaction monitor record so the next
+/// mark-roll-forward fails at the server.
+async fn delete_txn_monitor(client: &aerospike::Client, ns: &str, txn: &Txn) {
+    let monitor = as_key!(ns, "<ERO~MRT", txn.id());
+    let mut wp = WritePolicy::default();
+    wp.durable_delete = true;
+    let existed = client
+        .delete(&wp, &monitor)
+        .await
+        .expect("delete the transaction monitor record");
+    assert!(existed, "the monitor record must exist before it is deleted");
+}
+
+/// An in-doubt commit failure locks the transaction into `CommitFailed`:
+/// abort is refused with `TxnFailed`, the state does not move, and commit
+/// stays retryable from that state.
+#[aerospike_macro::test]
+async fn txn_abort_blocked_after_commit_failed() {
+    let client = common::client().await;
+    skip_if_no_mrt!(&client);
+
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let txn = Arc::new(Txn::new());
+    write_in_txn(&client, &txn, ns, set).await;
+
+    // An earlier attempt with an unknown outcome.
+    txn.set_in_doubt(true);
+    delete_txn_monitor(&client, ns, &txn).await;
+
+    let err = client.commit(&txn).await.unwrap_err();
+    assert!(err.in_doubt(), "the commit failure must carry in_doubt: {err}");
+    match err.kind() {
+        aerospike::ErrorKind::Commit { error_type, .. } => {
+            assert_eq!(*error_type, CommitErrorType::MarkRollForwardAbandoned);
+        }
+        other => panic!("expected ErrorKind::Commit, got {other:?}"),
+    }
+    assert_eq!(txn.state(), TxnState::CommitFailed);
+
+    // Abort is refused, with the sibling clients' message, and changes nothing.
+    let abort_err = client.abort(&txn).await.unwrap_err();
+    assert_eq!(
+        abort_err.client_result_code(),
+        Some(ClientResultCode::TxnFailed),
+        "abort after an in-doubt commit failure must be TxnFailed: {abort_err}"
+    );
+    assert!(
+        abort_err.to_string().contains(COMMIT_FAILED_ABORT_MESSAGE),
+        "unexpected abort error text: {abort_err}"
+    );
+    assert_eq!(txn.state(), TxnState::CommitFailed);
+
+    // Commit remains the recovery path: it is dispatched straight to the
+    // roll-forward mark again. The monitor is still gone, so it fails again
+    // — but the state must stay CommitFailed rather than sliding anywhere
+    // else, and abort must stay refused.
+    let retry_err = client.commit(&txn).await.unwrap_err();
+    assert!(retry_err.in_doubt());
+    assert_eq!(txn.state(), TxnState::CommitFailed);
+    assert!(client.abort(&txn).await.is_err());
+
+    // New commands are rejected as on any ended transaction.
+    assert!(txn.verify_command().is_err());
+}
+
+/// The negative case: a clean, not-in-doubt mark failure must NOT lock the
+/// transaction. It stays `Verified`, so abort is allowed and releases the
+/// record locks immediately.
+#[aerospike_macro::test]
+async fn txn_abort_allowed_after_clean_mark_failure() {
+    let client = common::client().await;
+    skip_if_no_mrt!(&client);
+
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let txn = Arc::new(Txn::new());
+    let key = write_in_txn(&client, &txn, ns, set).await;
+    assert!(!txn.in_doubt());
+    delete_txn_monitor(&client, ns, &txn).await;
+
+    let err = client.commit(&txn).await.unwrap_err();
+    assert!(
+        !err.in_doubt(),
+        "a server-rejected mark is a clean failure, not in doubt: {err}"
+    );
+    match err.kind() {
+        aerospike::ErrorKind::Commit { error_type, .. } => {
+            assert_eq!(*error_type, CommitErrorType::MarkRollForwardAbandoned);
+        }
+        other => panic!("expected ErrorKind::Commit, got {other:?}"),
+    }
+    assert_eq!(
+        txn.state(),
+        TxnState::Verified,
+        "a clean failure must leave the transaction abortable"
+    );
+
+    let status = client
+        .abort(&txn)
+        .await
+        .expect("abort must be allowed after a clean mark failure");
+    assert!(
+        matches!(
+            status,
+            AbortStatus::Ok | AbortStatus::RollBackAbandoned | AbortStatus::CloseAbandoned
+        ),
+        "unexpected abort status {status:?}"
+    );
+    assert_eq!(txn.state(), TxnState::Aborted);
+
+    // The provisional write was rolled back: the key never becomes visible.
+    let outside = client.get(&ReadPolicy::default(), &key, Bins::All).await;
+    assert!(outside.is_err(), "rolled-back write must not be visible");
+}
+
+/// A verify failure aborts the transaction itself; a following abort is
+/// simply "already aborted", never refused.
+#[aerospike_macro::test]
+async fn txn_abort_allowed_after_verify_failure() {
+    let client = common::client().await;
+    skip_if_no_mrt!(&client);
+
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let key = as_key!(ns, set, &common::rand_str(20));
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("bin", 1)])
+        .await
+        .unwrap();
+
+    let txn = Arc::new(Txn::new());
+    let mut rp = ReadPolicy::default();
+    rp.base_policy.txn = Some(txn.clone());
+    client.get(&rp, &key, Bins::All).await.unwrap();
+
+    // Conflicting write outside the transaction.
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("bin", 2)])
+        .await
+        .unwrap();
+
+    let err = client.commit(&txn).await.unwrap_err();
+    assert!(!err.in_doubt());
+    match err.kind() {
+        aerospike::ErrorKind::Commit { error_type, .. } => {
+            assert_eq!(*error_type, CommitErrorType::VerifyFail);
+        }
+        other => panic!("expected ErrorKind::Commit, got {other:?}"),
+    }
+    assert_eq!(txn.state(), TxnState::Aborted);
+
+    let status = client
+        .abort(&txn)
+        .await
+        .expect("abort after a verify failure is allowed");
+    assert_eq!(status, AbortStatus::AlreadyAborted);
 }

@@ -14,12 +14,13 @@
 // the License.
 
 use std::ops::{Deref, DerefMut, Drop};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::commands::admin_command::SessionInfo;
 use crate::errors::{Error, Result};
-use crate::metrics::NodeMetrics;
-use crate::net::connection::IdleStatus;
+use crate::metrics::{CloseReason, NodeMetrics, OpenFailure};
+use crate::net::connection::{ConnectPhase, IdleStatus};
 use crate::net::{Connection, ConnectionState, Host};
 use aerospike_rt::time::Instant;
 use crate::policy::ClientPolicy;
@@ -32,6 +33,10 @@ struct SharedQueue {
     // Total number of connections associated with the queue.
     // These connections may be in flight and not in the queue.
     reserved: Mutex<usize>,
+    /// Connections currently handed to a background timeout-recovery task
+    /// (they keep their `reserved` slot meanwhile). Read at snapshot time as
+    /// the `connections_recovering` gauge.
+    recovering: AtomicUsize,
     capacity: usize,
     host: Host,
     policy: ClientPolicy,
@@ -65,6 +70,7 @@ impl Queue {
         let shared = SharedQueue {
             connections: Mutex::new(VecDeque::with_capacity(capacity)),
             reserved: Mutex::new(0),
+            recovering: AtomicUsize::new(0),
             capacity,
             host,
             policy,
@@ -144,7 +150,7 @@ impl Queue {
         // Bounds the whole establishment (TCP connect + TLS + auth).
         let result = aerospike_rt::timeout(
             self.0.policy.connect_timeout(),
-            Connection::new_with_session(
+            Connection::open(
                 &self.0.host,
                 &self.0.policy,
                 self.0.hashed_pass.as_ref(),
@@ -171,10 +177,15 @@ impl Queue {
                 }
                 Ok(conn)
             }
-            // Inner error: the connect/auth itself failed.
-            Ok(Err(_)) => {
+            // Inner error: the connect/TLS/auth itself failed. The phase tag
+            // decides which failure counter the rollup is broken down into.
+            Ok(Err(failure)) => {
                 if let Some(metrics) = self.metrics() {
-                    metrics.incr_connections_failed(false);
+                    metrics.incr_connections_failed(match failure.phase {
+                        ConnectPhase::Tcp => OpenFailure::Connect,
+                        ConnectPhase::Tls => OpenFailure::TlsHandshake,
+                        ConnectPhase::Auth => OpenFailure::Auth,
+                    });
                 }
                 Err(Error::connection(
                     "Could not open network connection".to_string(),
@@ -183,7 +194,7 @@ impl Queue {
             // Outer error: the connect future exceeded the policy timeout.
             Err(_) => {
                 if let Some(metrics) = self.metrics() {
-                    metrics.incr_connections_failed(true);
+                    metrics.incr_connections_failed(OpenFailure::Timeout);
                 }
                 Err(Error::connection(
                     "Could not open network connection".to_string(),
@@ -213,7 +224,7 @@ impl Queue {
                 // and take the next one.
                 if !conn.is_alive() {
                     if let Some(metrics) = self.metrics() {
-                        metrics.incr_connections_closed();
+                        metrics.incr_connections_closed(CloseReason::Error);
                     }
                     drop(conn);
                     self.reduce_capacity();
@@ -244,8 +255,7 @@ impl Queue {
         } else {
             if conn.state == ConnectionState::Ready {
                 if let Some(metrics) = self.metrics() {
-                    metrics.incr_connections_pool_overflow();
-                    metrics.incr_connections_closed();
+                    metrics.incr_connections_closed(CloseReason::PoolOverflow);
                 }
             }
             drop(connections);
@@ -254,15 +264,25 @@ impl Queue {
         }
     }
 
-    /// Removes all the connections from the queue.
+    /// Removes and closes every idle connection in the queue, releasing their
+    /// slots. Used when the node leaves the cluster: each close is counted as
+    /// `closed_connections` with the node-removed reason. Connections out on
+    /// loan are untouched; they settle through `PooledConnection::drop`.
     pub fn clear(&self) {
-        let mut connections = self
-            .0
-            .connections
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for mut conn in connections.drain(..) {
+        let drained: Vec<Connection> = {
+            let mut connections = self
+                .0
+                .connections
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            connections.drain(..).collect()
+        };
+        for mut conn in drained {
             conn.close();
+            if let Some(metrics) = self.metrics() {
+                metrics.incr_connections_closed(CloseReason::NodeRemoved);
+            }
+            self.reduce_capacity();
         }
     }
 
@@ -273,6 +293,11 @@ impl Queue {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .len()
+    }
+
+    /// Connections from this queue currently in background timeout recovery.
+    pub fn recovering_count(&self) -> usize {
+        self.0.recovering.load(Ordering::Relaxed)
     }
 
     /// Reserved count: total connections owned by this queue, including
@@ -401,6 +426,29 @@ impl ConnectionPool {
         self.queues.iter().map(Queue::reserved_count).sum()
     }
 
+    /// Idle connections sitting in the queues right now (the
+    /// `connections_in_pool` gauge). Not atomic with
+    /// [`reserved_conns`](Self::reserved_conns): a checkout between the two
+    /// reads can make idle exceed total by one for that snapshot.
+    pub fn idle_conns(&self) -> usize {
+        self.queues.iter().map(Queue::num_conns).sum()
+    }
+
+    /// Connections across all queues currently in background timeout
+    /// recovery (the `connections_recovering` gauge).
+    pub fn recovering_conns(&self) -> usize {
+        self.queues.iter().map(Queue::recovering_count).sum()
+    }
+
+    /// Closes every idle connection in every queue without consuming the
+    /// pool (see [`Queue::clear`]). The pool stays usable; anything returned
+    /// afterwards is closed again by [`close`](Self::close) on drop.
+    pub fn clear_all(&self) {
+        for queue in &self.queues {
+            queue.clear();
+        }
+    }
+
     /// Get a connection from one of the internal pools.
     pub fn get(&self, hint: u8) -> Result<PooledConnection> {
         if self.num_queues == 1 {
@@ -517,15 +565,42 @@ impl ConnectionPool {
     /// If a connection was dropped in a state that was not [`ConnectionState::Ready`],
     /// this method will try to recover the connection by parsing the rest of the data
     /// and returning the connection to a valid state.
-    async fn recover_connection(queue: Queue, mut conn: Connection) {
+    ///
+    /// `guard` holds the queue's `recovering` gauge slot for as long as this
+    /// task lives; it is released when the task finishes or is dropped.
+    async fn recover_connection(queue: Queue, mut conn: Connection, guard: RecoveringGuard) {
         let mut r = crate::net::connection::ConnectionRecovery::new(&mut conn);
         r.recover().await;
+        drop(guard);
         if conn.state == ConnectionState::Ready {
             queue.put_back(conn);
             return;
         }
 
+        // Recovery gave up: the socket is closed and its slot released.
+        if let Some(metrics) = queue.metrics() {
+            metrics.incr_connections_closed(CloseReason::Error);
+        }
         queue.reduce_capacity();
+    }
+}
+
+/// Holds one unit of a queue's `recovering` gauge for the lifetime of a
+/// background recovery task, so the gauge cannot leak if the task is dropped
+/// (e.g. runtime shutdown) before it completes.
+#[derive(Debug)]
+struct RecoveringGuard(Arc<SharedQueue>);
+
+impl RecoveringGuard {
+    fn new(queue: &Queue) -> Self {
+        queue.0.recovering.fetch_add(1, Ordering::Relaxed);
+        RecoveringGuard(queue.0.clone())
+    }
+}
+
+impl Drop for RecoveringGuard {
+    fn drop(&mut self) {
+        self.0.recovering.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -550,21 +625,23 @@ impl Drop for PooledConnection {
                 ConnectionState::Closed => {
                     self.queue.reduce_capacity();
                     if let Some(metrics) = self.queue.metrics() {
-                        metrics.incr_connections_closed();
+                        metrics.incr_connections_closed(CloseReason::Error);
                     }
                 }
                 ConnectionState::Ready => self.queue.put_back(conn),
                 _ if conn.should_attempt_recovery() => {
                     // need to spawn a new green thread to avoid blocking the current one
+                    let guard = RecoveringGuard::new(&self.queue);
                     aerospike_rt::spawn(ConnectionPool::recover_connection(
                         Queue(self.queue.0.clone()),
                         conn,
+                        guard,
                     ));
                 }
                 _ => {
                     self.queue.reduce_capacity();
                     if let Some(metrics) = self.queue.metrics() {
-                        metrics.incr_connections_closed();
+                        metrics.incr_connections_closed(CloseReason::Error);
                     }
                 }
             }
