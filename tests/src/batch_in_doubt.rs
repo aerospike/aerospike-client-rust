@@ -295,3 +295,57 @@ async fn singleton_group_client_timeout_stamps_row_like_grouped() {
 
     client.close().await.unwrap();
 }
+
+/// `Error::iteration()` and the "after N tries" message report the attempts
+/// that were actually made. The budget check that finds the budget spent is
+/// not a try: with `max_retries = 0` there is exactly one wire attempt, and
+/// the error must say 1, not 2 — the value Java reports, and the one the
+/// Python SDK exposes as `TimeoutError.iteration`. The sub-error list is
+/// the independent witness: it holds every attempt but the last, which
+/// rides the cause chain, so it must have `max_retries` entries.
+#[aerospike_macro::test]
+async fn timeout_reports_the_attempts_actually_made() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    register_wait_udf(&client).await;
+
+    for max_retries in [0u32, 1, 2] {
+        let mut wpolicy = WritePolicy::default();
+        wpolicy.base_policy.socket_timeout = SOCKET_TIMEOUT_MS;
+        wpolicy.base_policy.total_timeout = 0;
+        wpolicy.base_policy.max_retries = max_retries as usize;
+
+        let key = as_key!(namespace, &set_name, format!("iter-{max_retries}"));
+        let err = client
+            .execute_udf(
+                &wpolicy,
+                &key,
+                "wait_udf",
+                "wait_and_update",
+                Some(&[Value::from(WAIT_SECS)]),
+            )
+            .await
+            .expect_err("the UDF outruns the socket timeout");
+
+        let attempts = max_retries + 1;
+        assert!(err.is_client_timeout(), "max_retries={max_retries}: {err:?}");
+        assert_eq!(
+            err.iteration(),
+            Some(attempts),
+            "max_retries={max_retries}: iteration must equal the attempts made: {err}"
+        );
+        assert_eq!(
+            err.sub_errors().len(),
+            max_retries as usize,
+            "max_retries={max_retries}: one sub-error per attempt but the last: {err}"
+        );
+        let text = err.to_string();
+        assert!(
+            text.contains(&format!("after {attempts} tries")),
+            "max_retries={max_retries}: message must count {attempts} tries: {text}"
+        );
+    }
+
+    client.close().await.unwrap();
+}

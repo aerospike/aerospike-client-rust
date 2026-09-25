@@ -155,11 +155,17 @@ impl<'a> SingleCommand<'a> {
         };
 
         // Execute command until successful, timed out or maximum iterations have been reached.
+        //
+        // `iterations` counts attempts *made so far* and is bumped only once
+        // the loop commits to another attempt (below, after the budget and
+        // deadline checks). Every error built at the top of the loop therefore
+        // reports the true number of tries; a budget check that finds the
+        // budget spent is not itself a try. Java stamps its exception the
+        // same way, so `iteration` agrees with the reference: one attempt
+        // under `max_retries = 0` reports 1, not 2.
         loop {
-            iterations += 1;
-
             // check for max retries
-            if iterations > effective_attempt {
+            if iterations >= effective_attempt {
                 // first attempt isn't a retry
                 if metrics_on {
                     if let Some(n) = &last_node {
@@ -184,7 +190,7 @@ impl<'a> SingleCommand<'a> {
             }
 
             // Sleep before trying again, after the first iteration
-            if iterations > 1 {
+            if iterations > 0 {
                 // DO NOT retry for streaming commands here. They retry in their own execution logic.
                 // DO NOT retry for any error other than network errors.
                 if !cmd.can_retry() {
@@ -234,8 +240,9 @@ impl<'a> SingleCommand<'a> {
                 }
             }
 
-            // Record the previous iteration's error as a sub-error once we're
-            // committing to another attempt.
+            // Committing to another attempt: count it, and file the previous
+            // attempt's error as a sub-error.
+            iterations += 1;
             if let Some(prev) = last_err.take() {
                 sub_errors.push(prev);
             }
