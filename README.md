@@ -181,7 +181,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Connect to an Aerospike cluster with TLS but without client certificate authentication:
 
 ```rust
-use aerospike::{Client, ClientPolicy};
+use aerospike::{Client, ClientPolicy, TlsPolicy};
 use rustls::RootCertStore;
 use rustls::pki_types::CertificateDer;
 
@@ -203,7 +203,7 @@ fn tls_config_no_client_auth(ca_cert_path: &str) -> rustls::ClientConfig {
 }
 
 let mut policy = ClientPolicy::default();
-policy.tls_config = Some(tls_config_no_client_auth("/path/to/ca-cert.pem"));
+policy.tls_policy = Some(TlsPolicy::new(tls_config_no_client_auth("/path/to/ca-cert.pem")));
 
 let hosts = "tls-cluster.example.com:4333";
 let client = Client::new(&policy, hosts).await
@@ -215,7 +215,7 @@ let client = Client::new(&policy, hosts).await
 Connect to an Aerospike cluster with TLS and mutual authentication using client certificates:
 
 ```rust
-use aerospike::{Client, ClientPolicy};
+use aerospike::{Client, ClientPolicy, TlsPolicy};
 use rustls::RootCertStore;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
@@ -248,16 +248,31 @@ fn tls_config_with_client_auth(
 }
 
 let mut policy = ClientPolicy::default();
-policy.tls_config = Some(tls_config_with_client_auth(
+policy.tls_policy = Some(TlsPolicy::new(tls_config_with_client_auth(
     "/path/to/ca-cert.pem",
     "/path/to/client-cert.pem",
     "/path/to/client-key.pem",
-));
+)));
 
 let hosts = "tls-cluster.example.com:4333";
 let client = Client::new(&policy, hosts).await
     .expect("Failed to connect to cluster");
 ```
+
+Every connection is encrypted by default. To encrypt only the authentication
+exchange and run the data plane in cleartext — the equivalent of the Java
+client's `TlsPolicy.forLoginOnly` — set `for_login_only`:
+
+```rust
+policy.tls_policy =
+    Some(TlsPolicy::new(tls_config_no_client_auth("/path/to/ca-cert.pem")).with_login_only(true));
+```
+
+The login rides TLS; the client then reads the node's non-TLS address, closes
+the TLS connection and reconnects there, authenticating every later connection
+with the session token. Credentials never cross a cleartext socket. **This
+trades away data-plane encryption**: records, bin values and query results
+travel unencrypted. It requires an `auth_mode` other than `AuthMode::None`.
 
 **Note**: To use TLS features, enable the `tls` feature in your `Cargo.toml`:
 

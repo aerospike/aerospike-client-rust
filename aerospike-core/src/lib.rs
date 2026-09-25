@@ -179,6 +179,8 @@ pub use policy::{
     Expiration, GenerationPolicy, Policy, QueryDuration, QueryPolicy, ReadModeAP, ReadModeSC,
     ReadPolicy, ReadTouchTTL, RecordExistsAction, TxnRollPolicy, TxnVerifyPolicy, WritePolicy,
 };
+#[cfg(feature = "tls")]
+pub use policy::TlsPolicy;
 pub use privilege::{Privilege, PrivilegeCode};
 pub use query::{
     CollectionIndexType, EqFilterValue, IndexType, PartitionFilter, QueryHandle, QueryPlan,

@@ -96,7 +96,7 @@ async fn tls_client_no_auth() {
     }
 
     let policy = &mut common::client_policy().clone();
-    policy.tls_config = Some(common::tls_config_no_client_auth());
+    policy.tls_policy = Some(aerospike::TlsPolicy::new(common::tls_config_no_client_auth()));
     let client = Client::new(policy, &common::hosts()).await.unwrap();
     let names = client.node_names();
     assert!(!names.is_empty());
@@ -111,7 +111,7 @@ async fn tls_client_auth() {
     }
 
     let policy = &mut common::client_policy().clone();
-    policy.tls_config = Some(common::tls_config());
+    policy.tls_policy = Some(aerospike::TlsPolicy::new(common::tls_config()));
     let client = Client::new(policy, &common::hosts()).await.unwrap();
     let names = client.node_names();
     assert!(!names.is_empty());

@@ -96,7 +96,7 @@ lazy_static! {
         }
         policy.use_services_alternate = AEROSPIKE_USE_SERVICES_ALTERNATE.clone();
         if !no_server_tls() {
-            policy.tls_config = Some(tls_config_no_client_auth());
+            policy.tls_policy = Some(aerospike::TlsPolicy::new(tls_config_no_client_auth()));
         }
         policy
     };

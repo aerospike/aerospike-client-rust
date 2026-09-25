@@ -3,6 +3,20 @@
 ## [3.0.0-alpha.3]
 
 * **New Features**
+  * [CLIENT-5387] `TlsPolicy` (Java parity): `ClientPolicy::tls_config: Option<rustls::ClientConfig>`
+    is replaced by `ClientPolicy::tls_policy: Option<TlsPolicy>`, which wraps the `rustls::ClientConfig`
+    (`TlsPolicy::new(config)`, or `config.into()`) and carries the settings that govern *when* TLS is
+    used rather than how. **Breaking**: `policy.tls_config = Some(cfg)` becomes
+    `policy.tls_policy = Some(TlsPolicy::new(cfg))`.
+  * [CLIENT-5387] `TlsPolicy::for_login_only` (Java `TlsPolicy.forLoginOnly`): encrypt the
+    authentication exchange and run the data plane in cleartext. The login rides TLS; the client then
+    reads the node's non-TLS address (`service-clear-*`), closes the TLS connection and reconnects
+    there, and every pooled/tend connection afterwards is plain TCP authenticated with the session
+    token. Credentials never cross a cleartext socket: a missing, expired or rejected token is renewed
+    over a short-lived TLS connection, and a cleartext `LOGIN` is refused outright. Peers are still
+    discovered and validated by their TLS addresses (as in Java) and switched to cleartext one by
+    one. Requires an `auth_mode` other than `AuthMode::None`. **This trades away data-plane
+    encryption** and is off by default.
   * [CLIENT-4390] `IndexType::Integer` (`INTEGER`) for secondary indexes on server 8.1.3+, reported by
     `Version::supports_integer_index`; `IndexType::Numeric` remains for older servers.
 

@@ -158,9 +158,17 @@ impl Node {
             } else {
                 0
             }),
+            // Under `for_login_only` the pool's addresses are the cleartext
+            // ones; it keeps the node's TLS address and the token from
+            // validation so it can renew the session over TLS without ever
+            // logging in on a clear socket.
             connection_pool: ConnectionPool::new(
                 nv.aliases[0].clone(),
                 client_policy.clone(),
+                nv.login_host.clone().map(|tls_host| crate::net::LoginOnly {
+                    tls_host,
+                    session: nv.session.clone(),
+                }),
                 Some(metrics.clone()),
                 buffer_pool,
             ),
@@ -831,12 +839,24 @@ impl Node {
             // Open lazily. The first call after Node::new pays the
             // TCP-handshake + LOGIN here; subsequent calls reuse the
             // already-authenticated socket.
-            let conn = Connection::new(
+            // The tend socket is part of the data plane: cleartext under
+            // `for_login_only`, so it authenticates with the pool's session
+            // token rather than sending credentials (the pool renews the
+            // token over TLS when it has to).
+            let session = self
+                .connection_pool
+                .login_session()
+                .await
+                .map_err(|e| e.chain_error("Failed to obtain a TLS session for tend"))?;
+            let conn = Connection::open(
                 &self.host,
                 &self.client_policy,
                 self.client_policy.hashed_pass().as_ref(),
+                session.as_ref(),
             )
             .await
+            .map(|(conn, _session)| conn)
+            .map_err(crate::Error::from)
             .map_err(|e| e.chain_error("Failed to open tend connection"))?;
             *guard = Some(conn);
         }
@@ -1163,6 +1183,8 @@ mod node_tests {
             use_new_info: true,
             version: Version::default(),
             cluster_name: None,
+            session: None,
+            login_host: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
@@ -1274,6 +1296,8 @@ mod node_tests {
             use_new_info: true,
             version: Version::default(),
             cluster_name: None,
+            session: None,
+            login_host: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
@@ -1354,6 +1378,8 @@ mod node_tests {
             use_new_info: true,
             version: Version::default(),
             cluster_name: None,
+            session: None,
+            login_host: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
@@ -1397,6 +1423,8 @@ mod node_tests {
             use_new_info: true,
             version: Version::default(),
             cluster_name: None,
+            session: None,
+            login_host: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
@@ -1505,6 +1533,8 @@ mod pool_health_tests {
             use_new_info: true,
             version: Version::default(),
             cluster_name: None,
+            session: None,
+            login_host: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(

@@ -319,13 +319,23 @@ impl Connection {
             crate::commands::buffer::Buffer::with_pool(self.buffer.reclaim_threshold, pool);
     }
 
+    /// Wraps the socket in TLS when the policy has a TLS config **and** this
+    /// particular connection is meant to be encrypted. `use_tls` is false for
+    /// the cleartext data plane under
+    /// [`ClientPolicy::for_login_only`](crate::ClientPolicy::for_login_only);
+    /// the decision is made once, here, and never revisited for the life of
+    /// the connection.
     #[cfg(feature = "tls")]
     async fn get_netsocket(
         stream: TcpStream,
         host: &Host,
         policy: &ClientPolicy,
+        use_tls: bool,
     ) -> Result<Netsocket> {
-        if let Some(tls_config) = policy.tls_config.clone() {
+        if !use_tls {
+            return Ok(Netsocket::Tcp(stream));
+        }
+        if let Some(tls_config) = policy.tls_policy.as_ref().map(|tls| tls.config.clone()) {
             let connector = TlsConnector::from(Arc::new(tls_config));
             let server_name = host
                 .tls_name
@@ -345,6 +355,7 @@ impl Connection {
         stream: TcpStream,
         _host: &Host,
         _policy: &ClientPolicy,
+        _use_tls: bool,
     ) -> Result<Netsocket> {
         Ok(Netsocket::Tcp(stream))
     }
@@ -392,6 +403,50 @@ impl Connection {
         (Self, Option<crate::commands::admin_command::SessionInfo>),
         ConnectError,
     > {
+        // Under `for_login_only` this is a data-plane connection: plain TCP,
+        // and authenticated with a session token only. A full LOGIN here
+        // would put credentials on a cleartext socket, which is precisely
+        // what the setting exists to avoid, so it is refused.
+        let login_only = policy.login_only_active();
+        Self::open_inner(
+            host,
+            policy,
+            hashed_pass,
+            session,
+            !login_only,
+            !login_only,
+        )
+        .await
+    }
+
+    /// Opens a **TLS** connection and performs the full credential exchange,
+    /// whatever `for_login_only` says. This is the one connection that setting
+    /// keeps encrypted: node validation and session renewal use it to obtain a
+    /// token, then close it and move to the cleartext address.
+    #[cfg(not(test))]
+    pub(crate) async fn open_tls_login(
+        host: &Host,
+        policy: &ClientPolicy,
+        hashed_pass: Option<&String>,
+    ) -> std::result::Result<
+        (Self, Option<crate::commands::admin_command::SessionInfo>),
+        ConnectError,
+    > {
+        Self::open_inner(host, policy, hashed_pass, None, true, true).await
+    }
+
+    #[cfg(not(test))]
+    async fn open_inner(
+        host: &Host,
+        policy: &ClientPolicy,
+        hashed_pass: Option<&String>,
+        session: Option<&crate::commands::admin_command::SessionInfo>,
+        use_tls: bool,
+        allow_full_login: bool,
+    ) -> std::result::Result<
+        (Self, Option<crate::commands::admin_command::SessionInfo>),
+        ConnectError,
+    > {
         let addr = host.address();
         let stream =
             aerospike_rt::timeout(policy.connect_timeout(), TcpStream::connect(addr.clone())).await;
@@ -408,7 +463,7 @@ impl Connection {
 
         Self::set_nodelay(&stream);
 
-        let stream = Self::get_netsocket(stream, host, policy)
+        let stream = Self::get_netsocket(stream, host, policy, use_tls)
             .await
             .map_err(|err| ConnectError::new(ConnectPhase::Tls, err))?;
 
@@ -456,6 +511,19 @@ impl Connection {
             _ => false,
         };
         if !used_session {
+            // No usable token and this connection may not carry credentials:
+            // the caller has to obtain one over TLS first (see
+            // `open_tls_login`). Only reachable with `for_login_only`.
+            if !allow_full_login && policy.auth_enabled() {
+                conn.close();
+                return Err(ConnectError::new(
+                    ConnectPhase::Auth,
+                    Error::client_error(
+                        "for_login_only: refusing to send credentials over a cleartext \
+                         connection; a session token obtained over TLS is required",
+                    ),
+                ));
+            }
             new_session = conn
                 .authenticate(&policy.auth_mode, hashed_pass)
                 .await
@@ -470,6 +538,20 @@ impl Connection {
     /// `cfg(test)`. Always returns a fresh `(connection, None)` pair — the
     /// test build never goes near a real LOGIN, so the cached-session fast
     /// path is moot.
+    /// `cfg(test)` twin of [`open_tls_login`](Self::open_tls_login); the test
+    /// build has no real LOGIN, so it yields a plain dummy connection.
+    #[cfg(test)]
+    pub(crate) async fn open_tls_login(
+        host: &Host,
+        policy: &ClientPolicy,
+        hashed_pass: Option<&String>,
+    ) -> std::result::Result<
+        (Self, Option<crate::commands::admin_command::SessionInfo>),
+        ConnectError,
+    > {
+        Self::open(host, policy, hashed_pass, None).await
+    }
+
     #[cfg(test)]
     pub(crate) async fn open(
         host: &Host,
@@ -2081,7 +2163,7 @@ mod tests_eof_loopback {
 
         let host = Host::new("127.0.0.1", 0);
         let policy = ClientPolicy::default();
-        let q = Queue::with_capacity(1, host, policy, None, None);
+        let q = Queue::with_capacity(1, host, policy, None, None, None);
 
         let addr = spawn_fin_peer().await;
         let stream = TcpStream::connect(addr).await.unwrap();
@@ -2114,7 +2196,7 @@ mod tests_eof_loopback {
 
         let host = Host::new("127.0.0.1", 0);
         let policy = ClientPolicy::default();
-        let q = Queue::with_capacity(1, host, policy, None, None);
+        let q = Queue::with_capacity(1, host, policy, None, None, None);
 
         let addr = spawn_idle_peer().await;
         let stream = TcpStream::connect(addr).await.unwrap();

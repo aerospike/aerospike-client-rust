@@ -975,6 +975,8 @@ mod tests {
             use_new_info: true,
             version: Version::default(),
             cluster_name: None,
+            session: None,
+            login_host: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(

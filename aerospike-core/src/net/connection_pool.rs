@@ -27,6 +27,32 @@ use crate::policy::ClientPolicy;
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
+/// Why one `try_make_conn` attempt failed. Only the authentication phase is
+/// worth distinguishing: under `for_login_only` it is the one failure a fresh
+/// TLS login can fix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AttemptFailure {
+    /// The server rejected the session token (expired or revoked).
+    Auth,
+    /// Anything else: connect, TLS handshake, timeout.
+    Other,
+}
+
+/// Per-node context for
+/// [`ClientPolicy::for_login_only`](crate::ClientPolicy::for_login_only): the
+/// data plane runs in cleartext, so the credential exchange has to happen
+/// somewhere else. `tls_host` is the node's TLS address, kept for exactly
+/// that — logging in again over TLS when the session token expires or is
+/// rejected. `session` is the token obtained during node validation, seeded
+/// so the first pooled connection does not have to log in at all.
+#[derive(Debug, Clone)]
+pub struct LoginOnly {
+    /// The node's TLS address; only ever used for the credential exchange.
+    pub tls_host: Host,
+    /// Token from node validation, if validation obtained one.
+    pub session: Option<SessionInfo>,
+}
+
 #[derive(Debug)]
 struct SharedQueue {
     connections: Mutex<VecDeque<Connection>>,
@@ -46,6 +72,10 @@ struct SharedQueue {
     /// AUTHENTICATE with the token instead of paying for a full login.
     /// Cleared on token rejection (server restart / token revocation).
     session: Mutex<Option<SessionInfo>>,
+    /// Set when the data plane is cleartext but the login is not
+    /// ([`ClientPolicy::for_login_only`](crate::ClientPolicy::for_login_only)).
+    /// `None` on every ordinary pool.
+    login_only: Option<LoginOnly>,
     /// Per-node metrics sink. Connection-lifecycle counters are recorded here
     /// (no-op when metrics are disabled). `None` in unit tests.
     metrics: Option<Arc<NodeMetrics>>,
@@ -63,10 +93,12 @@ impl Queue {
         capacity: usize,
         host: Host,
         policy: ClientPolicy,
+        login_only: Option<LoginOnly>,
         metrics: Option<Arc<NodeMetrics>>,
         buffer_pool: Option<Arc<crate::net::buffer_pool::TieredBufferPool>>,
     ) -> Self {
         let hashed_pass = policy.hashed_pass();
+        let session = Mutex::new(login_only.as_ref().and_then(|l| l.session.clone()));
         let shared = SharedQueue {
             connections: Mutex::new(VecDeque::with_capacity(capacity)),
             reserved: Mutex::new(0),
@@ -75,7 +107,8 @@ impl Queue {
             host,
             policy,
             hashed_pass,
-            session: Mutex::new(None),
+            session,
+            login_only,
             metrics,
             buffer_pool,
         };
@@ -130,18 +163,101 @@ impl Queue {
     /// already holds a non-expired session, the new connection
     /// authenticates via AUTHENTICATE with that token; otherwise it does a
     /// full LOGIN and stores the resulting session for the next caller.
+    ///
+    /// Under
+    /// [`for_login_only`](crate::ClientPolicy::for_login_only) this
+    /// connection is cleartext and may not carry credentials, so a missing or
+    /// expired token is first renewed over a short-lived TLS connection; a
+    /// token the server rejects is renewed the same way and the open retried
+    /// once.
     pub async fn make_conn(&self) -> Result<Connection> {
+        let renewable = self.0.login_only.is_some() && self.0.policy.auth_enabled();
+        match self.try_make_conn(self.cached_session()).await {
+            Ok(conn) => Ok(conn),
+            // The seeded token was expired or revoked. Log in again over TLS
+            // and retry once; the credentials still never cross the clear
+            // socket.
+            Err((AttemptFailure::Auth, _)) if renewable => {
+                let renewed = self.renew_login_session().await?;
+                self.try_make_conn(Some(renewed)).await.map_err(|(_, e)| e)
+            }
+            Err((_, err)) => Err(err),
+        }
+    }
+
+    /// The pool's cached token, if it is still usable.
+    fn cached_session(&self) -> Option<SessionInfo> {
         // Snapshot the current session under the lock, then drop the guard
         // before any await so the mutex doesn't get held across .await
         // points (it's a std::sync::Mutex, not async-aware).
-        let cached_session: Option<SessionInfo> = {
-            let guard = self
-                .0
-                .session
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            guard.as_ref().filter(|s| !s.is_expired()).cloned()
-        };
+        let guard = self
+            .0
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.as_ref().filter(|s| !s.is_expired()).cloned()
+    }
+
+    fn store_session(&self, session: SessionInfo) {
+        let mut guard = self
+            .0
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *guard = Some(session);
+    }
+
+    /// Performs the credential exchange over a short-lived TLS connection to
+    /// the node's TLS address and caches the resulting token. The connection
+    /// is closed immediately: it exists only to log in.
+    async fn renew_login_session(&self) -> Result<SessionInfo> {
+        let login = self
+            .0
+            .login_only
+            .as_ref()
+            .expect("renew_login_session called without a login-only context");
+
+        let (mut conn, session) = aerospike_rt::timeout(
+            self.0.policy.connect_timeout(),
+            Connection::open_tls_login(
+                &login.tls_host,
+                &self.0.policy,
+                self.0.hashed_pass.as_ref(),
+            ),
+        )
+        .await
+        .map_err(|_| Error::timeout("Timeout logging in over TLS".to_string()))?
+        .map_err(Error::from)?;
+        conn.close();
+        drop(conn);
+
+        let session = session.ok_or_else(|| {
+            Error::client_error(
+                "for_login_only: the server issued no session token, so the cleartext \
+                 data plane cannot authenticate",
+            )
+        })?;
+        self.store_session(session.clone());
+        Ok(session)
+    }
+
+    /// Opens one connection, using `session` for authentication. When the data
+    /// plane is cleartext and no usable token was supplied, the token is
+    /// obtained over TLS first.
+    async fn try_make_conn(
+        &self,
+        mut cached_session: Option<SessionInfo>,
+    ) -> std::result::Result<Connection, (AttemptFailure, Error)> {
+        if cached_session.is_none()
+            && self.0.login_only.is_some()
+            && self.0.policy.auth_enabled()
+        {
+            cached_session = Some(
+                self.renew_login_session()
+                    .await
+                    .map_err(|e| (AttemptFailure::Other, e))?,
+            );
+        }
 
         if let Some(metrics) = self.metrics() {
             metrics.incr_connections_attempt();
@@ -187,8 +303,13 @@ impl Queue {
                         ConnectPhase::Auth => OpenFailure::Auth,
                     });
                 }
-                Err(Error::connection(
-                    "Could not open network connection".to_string(),
+                Err((
+                    if matches!(failure.phase, ConnectPhase::Auth) {
+                        AttemptFailure::Auth
+                    } else {
+                        AttemptFailure::Other
+                    },
+                    Error::connection("Could not open network connection".to_string()),
                 ))
             }
             // Outer error: the connect future exceeded the policy timeout.
@@ -196,8 +317,9 @@ impl Queue {
                 if let Some(metrics) = self.metrics() {
                     metrics.incr_connections_failed(OpenFailure::Timeout);
                 }
-                Err(Error::connection(
-                    "Could not open network connection".to_string(),
+                Err((
+                    AttemptFailure::Other,
+                    Error::connection("Could not open network connection".to_string()),
                 ))
             }
         }
@@ -375,6 +497,7 @@ impl ConnectionPool {
     pub fn new(
         host: Host,
         policy: ClientPolicy,
+        login_only: Option<LoginOnly>,
         metrics: Option<Arc<NodeMetrics>>,
         buffer_pool: Option<Arc<crate::net::buffer_pool::TieredBufferPool>>,
     ) -> Self {
@@ -385,6 +508,7 @@ impl ConnectionPool {
             num_queues,
             host,
             policy,
+            login_only,
             metrics,
             buffer_pool,
         );
@@ -396,6 +520,7 @@ impl ConnectionPool {
         num_queues: u8,
         host: Host,
         policy: ClientPolicy,
+        login_only: Option<LoginOnly>,
         metrics: Option<Arc<NodeMetrics>>,
         buffer_pool: Option<Arc<crate::net::buffer_pool::TieredBufferPool>>,
     ) -> Vec<Queue> {
@@ -413,6 +538,7 @@ impl ConnectionPool {
                 capacity,
                 host.clone(),
                 policy.clone(),
+                login_only.clone(),
                 metrics.clone(),
                 buffer_pool.clone(),
             ));
@@ -537,6 +663,28 @@ impl ConnectionPool {
     pub fn close(&mut self) {
         for queue in self.queues.drain(..) {
             queue.clear();
+        }
+    }
+
+    /// A session token for connections opened outside the pool (the node's
+    /// tend socket).
+    ///
+    /// `None` on an ordinary pool, where each connection authenticates
+    /// itself. Under
+    /// [`for_login_only`](crate::ClientPolicy::for_login_only) the caller's
+    /// socket will be cleartext and may not carry credentials, so this
+    /// returns a valid token, logging in over TLS if the cached one is
+    /// missing or expired.
+    pub(crate) async fn login_session(&self) -> Result<Option<SessionInfo>> {
+        let Some(queue) = self.queues.first() else {
+            return Ok(None);
+        };
+        if queue.0.login_only.is_none() || !queue.0.policy.auth_enabled() {
+            return Ok(None);
+        }
+        match queue.cached_session() {
+            Some(session) => Ok(Some(session)),
+            None => queue.renew_login_session().await.map(Some),
         }
     }
 
@@ -715,7 +863,7 @@ mod tests {
         let host = Host::new("some-url", 30000);
         let policy = ClientPolicy::default();
 
-        let q = Queue::with_capacity(3, host.clone(), policy.clone(), None, None);
+        let q = Queue::with_capacity(3, host.clone(), policy.clone(), None, None, None);
         assert_eq!(q.num_conns(), 0);
         assert_eq!(q.reserved(), 0);
         assert_eq!(q.get().is_err(), true);
@@ -779,7 +927,7 @@ mod tests {
         let host = Host::new("some-url", 30000);
         let policy = ClientPolicy::default();
 
-        let p = ConnectionPool::new(host.clone(), policy.clone(), None, None);
+        let p = ConnectionPool::new(host.clone(), policy.clone(), None, None, None);
         assert_eq!(p.num_conns(), 0);
         assert_eq!(p.get(0).is_err(), true);
 
@@ -815,7 +963,7 @@ mod tests {
             ..ClientPolicy::default()
         };
 
-        let p = ConnectionPool::new(host.clone(), policy.clone(), None, None);
+        let p = ConnectionPool::new(host.clone(), policy.clone(), None, None, None);
         assert_eq!(p.num_conns(), 0);
         assert_eq!(p.get(0).is_err(), true);
 
@@ -949,7 +1097,7 @@ mod tests {
             ..ClientPolicy::default()
         };
 
-        let q = Queue::with_capacity(3, host.clone(), policy.clone(), None, None);
+        let q = Queue::with_capacity(3, host.clone(), policy.clone(), None, None, None);
         let c = Connection::new(&host, &policy, None)
             .await
             .expect("creating dummy connection failed");
@@ -973,7 +1121,7 @@ mod tests {
         let host = Host::new("some-url", 30000);
         let policy = ClientPolicy::default();
 
-        let q = Queue::with_capacity(2, host.clone(), policy.clone(), None, None);
+        let q = Queue::with_capacity(2, host.clone(), policy.clone(), None, None, None);
 
         let c1 = Connection::new(&host, &policy, None)
             .await
@@ -1021,7 +1169,7 @@ mod tests {
         let host = Host::new("some-url", 30000);
         let policy = ClientPolicy::default();
 
-        let p = ConnectionPool::new(host.clone(), policy.clone(), None, None);
+        let p = ConnectionPool::new(host.clone(), policy.clone(), None, None, None);
         assert_eq!(p.total_reserved(), 0);
 
         // make_conn returns a PooledConnection; dropping it returns the
@@ -1057,7 +1205,7 @@ mod tests {
             max_conns_per_node: 8,
             ..ClientPolicy::default()
         };
-        let p = ConnectionPool::new(host.clone(), policy.clone(), None, None);
+        let p = ConnectionPool::new(host.clone(), policy.clone(), None, None, None);
 
         {
             let mut pconn = p.make_conn(0).await.expect("make_conn failed");
@@ -1077,7 +1225,7 @@ mod tests {
             max_conns_per_node: 8,
             ..ClientPolicy::default()
         };
-        let p = ConnectionPool::new(host.clone(), policy.clone(), None, None);
+        let p = ConnectionPool::new(host.clone(), policy.clone(), None, None, None);
 
         {
             let pconn = p.make_conn(0).await.expect("make_conn failed");
@@ -1103,7 +1251,7 @@ mod tests {
         };
 
         // Non-Ready path: nothing accumulates.
-        let buggy = ConnectionPool::new(host.clone(), policy.clone(), None, None);
+        let buggy = ConnectionPool::new(host.clone(), policy.clone(), None, None, None);
         for i in 0..min {
             let mut pconn = buggy.make_conn(i).await.expect("make_conn failed");
             pconn.set_state(ConnectionState::Writing);
@@ -1112,7 +1260,7 @@ mod tests {
         assert_eq!(buggy.num_conns(), 0);
 
         // Ready path: pool reaches min in one pass.
-        let fixed = ConnectionPool::new(host.clone(), policy.clone(), None, None);
+        let fixed = ConnectionPool::new(host.clone(), policy.clone(), None, None, None);
         for i in 0..min {
             let pconn = fixed.make_conn(i).await.expect("make_conn failed");
             drop(pconn);
@@ -1129,7 +1277,7 @@ mod tests {
             max_conns_per_node: 2, // 1 slot per queue
             ..ClientPolicy::default()
         };
-        let p = ConnectionPool::new(host, policy, None, None);
+        let p = ConnectionPool::new(host, policy, None, None, None);
 
         // Starting from hint 1: takes queue 1's only slot.
         let q1 = p.reserve_queue(1).expect("queue 1 has capacity");
@@ -1161,7 +1309,7 @@ mod tests {
             max_conns_per_node: 3,
             ..ClientPolicy::default()
         };
-        let p = ConnectionPool::new(host.clone(), policy.clone(), None, None);
+        let p = ConnectionPool::new(host.clone(), policy.clone(), None, None, None);
 
         for round in 0..10 {
             let mut c = p.make_conn(0).await.expect("make_conn failed");

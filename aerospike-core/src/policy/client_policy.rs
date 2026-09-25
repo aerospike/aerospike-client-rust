@@ -48,6 +48,127 @@ pub enum AuthMode {
     PKI,
 }
 
+/// TLS connection policy for TLS-enabled servers.
+///
+/// Everything that configures the handshake itself — protocol versions,
+/// cipher suites, root certificates, client certificates, revocation — lives
+/// in the [`ClientConfig`] this wraps. The policy adds the one setting that
+/// is about *when* TLS is used rather than how:
+/// [`for_login_only`](Self::for_login_only).
+///
+/// # Examples
+///
+/// Using cert files to allow for client authentication.
+///
+/// ```rust,edition2021,no_run
+/// # use rustls::RootCertStore;
+/// # use rustls::pki_types::CertificateDer;
+/// # use rustls::pki_types::PrivateKeyDer;
+/// # use rustls::pki_types::pem::PemObject;
+/// # use aerospike::TlsPolicy;
+/// let mut root_store = RootCertStore {
+///     roots: webpki_roots::TLS_SERVER_ROOTS.into(),
+/// };
+///
+/// root_store.add_parsable_certificates(
+///     CertificateDer::pem_file_iter("tls_cacert_file")
+///         .expect("Cannot open CA file")
+///         .map(|result| result.unwrap()),
+/// );
+///
+/// let client_ca = CertificateDer::from_pem_file("tls_cacert_file").expect("Cannot open CA file");
+/// let client_key = PrivateKeyDer::from_pem_file("tls_key_file").expect("Cannot open Key file");
+///
+/// let config = rustls::ClientConfig::builder()
+///     .with_root_certificates(root_store)
+///     .with_client_auth_cert(vec![client_ca], client_key)
+///     .unwrap();
+///
+/// let tls_policy = TlsPolicy::new(config);
+/// ```
+///
+/// Using cert files without enforcing client authentication.
+///
+/// ```rust,edition2021,no_run
+/// # use rustls::RootCertStore;
+/// # use rustls::pki_types::CertificateDer;
+/// # use rustls::pki_types::pem::PemObject;
+/// # use aerospike::TlsPolicy;
+/// let mut root_store = RootCertStore {
+///     roots: webpki_roots::TLS_SERVER_ROOTS.into(),
+/// };
+///
+/// root_store.add_parsable_certificates(
+///     CertificateDer::pem_file_iter("tls_cacert_file")
+///         .expect("Cannot open CA file")
+///         .map(|result| result.unwrap()),
+/// );
+///
+/// let config = rustls::ClientConfig::builder()
+///     .with_root_certificates(root_store)
+///     .with_no_client_auth();
+///
+/// let tls_policy = TlsPolicy::new(config);
+/// ```
+#[cfg(feature = "tls")]
+#[derive(Debug, Clone)]
+pub struct TlsPolicy {
+    /// The TLS handshake configuration: protocol versions, cipher suites,
+    /// root certificates, client certificate and revocation.
+    pub config: ClientConfig,
+
+    /// Encrypt only the authentication exchange, then run the data plane in
+    /// cleartext (Java `TlsPolicy.forLoginOnly`).
+    ///
+    /// The credential exchange (`LOGIN`) always rides TLS. Once the server
+    /// issues a session token the client closes the TLS connection, asks the
+    /// node for its non-TLS address (`service-clear-*`) and reconnects there;
+    /// every pooled and tend connection afterwards is plain TCP and
+    /// authenticates with the token (`AUTHENTICATE`). No connection is ever
+    /// downgraded mid-stream: each one is wholly TLS or wholly cleartext for
+    /// its lifetime, and credentials never cross a cleartext socket — when
+    /// the token expires the client logs in over TLS again.
+    ///
+    /// **This trades away data-plane encryption.** Records, bin values and
+    /// query results travel unencrypted. Enable it only when the network
+    /// between client and cluster is already trusted and the cost of
+    /// encrypting the data plane has been measured to matter.
+    ///
+    /// Requires an [`auth_mode`](ClientPolicy::auth_mode) other than
+    /// [`AuthMode::None`]: with no login to protect, this would merely
+    /// disable TLS, so it is rejected as a misconfiguration.
+    ///
+    /// Default: `false`.
+    pub for_login_only: bool,
+}
+
+#[cfg(feature = "tls")]
+impl TlsPolicy {
+    /// A policy that encrypts every connection with `config`.
+    #[must_use]
+    pub const fn new(config: ClientConfig) -> Self {
+        TlsPolicy {
+            config,
+            for_login_only: false,
+        }
+    }
+
+    /// Sets [`for_login_only`](Self::for_login_only). Read its documentation
+    /// before enabling it: it leaves the data plane unencrypted.
+    #[must_use]
+    pub const fn with_login_only(mut self, for_login_only: bool) -> Self {
+        self.for_login_only = for_login_only;
+        self
+    }
+}
+
+#[cfg(feature = "tls")]
+impl From<ClientConfig> for TlsPolicy {
+    fn from(config: ClientConfig) -> Self {
+        TlsPolicy::new(config)
+    }
+}
+
 /// Minimum allowed value for [`ClientPolicy::tend_interval`], in milliseconds.
 pub const TEND_INTERVAL_MIN_MS: u32 = 250;
 
@@ -60,58 +181,15 @@ pub struct ClientPolicy {
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub auth_mode: AuthMode,
 
-    /// TLS secure connection policy for TLS enabled servers.
-    /// # Examples
+    /// TLS connection policy for TLS-enabled servers. `None` (the default)
+    /// means plaintext connections.
     ///
-    /// Using cert files to allow for client authentication.
-    ///
-    /// ```rust,edition2021,no_run
-    /// # use rustls::RootCertStore;
-    /// # use rustls::pki_types::CertificateDer;
-    /// # use rustls::pki_types::PrivateKeyDer;
-    /// # use rustls::pki_types::pem::PemObject;
-    /// let mut root_store = RootCertStore {
-    ///     roots: webpki_roots::TLS_SERVER_ROOTS.into(),
-    /// };
-    ///
-    /// root_store.add_parsable_certificates(
-    ///     CertificateDer::pem_file_iter("tls_cacert_file")
-    ///         .expect("Cannot open CA file")
-    ///         .map(|result| result.unwrap()),
-    /// );
-    ///
-    /// let client_ca = CertificateDer::from_pem_file("tls_cacert_file").expect("Cannot open CA file");
-    /// let client_key = PrivateKeyDer::from_pem_file("tls_key_file").expect("Cannot open Key file");
-    ///
-    /// let tls_config = rustls::ClientConfig::builder()
-    ///     .with_root_certificates(root_store)
-    ///     .with_client_auth_cert(vec![client_ca], client_key)
-    ///     .unwrap();
-    /// ```
-    ///
-    /// Using cert files without enforcing client authentication.
-    ///
-    /// ```rust,edition2021,no_run
-    /// # use rustls::RootCertStore;
-    /// # use rustls::pki_types::CertificateDer;
-    /// # use rustls::pki_types::pem::PemObject;
-    /// let mut root_store = RootCertStore {
-    ///     roots: webpki_roots::TLS_SERVER_ROOTS.into(),
-    /// };
-    ///
-    /// root_store.add_parsable_certificates(
-    ///     CertificateDer::pem_file_iter("tls_cacert_file")
-    ///         .expect("Cannot open CA file")
-    ///         .map(|result| result.unwrap()),
-    /// );
-    ///
-    /// let tls_config = rustls::ClientConfig::builder()
-    ///     .with_root_certificates(root_store)
-    ///     .with_no_client_auth();
-    /// ```
+    /// See [`TlsPolicy`] for how to build one, and
+    /// [`TlsPolicy::for_login_only`] for encrypting only the login exchange
+    /// and leaving the data plane in the clear.
     #[cfg(feature = "tls")]
     #[cfg_attr(feature = "dynamic-config", config(skip))]
-    pub tls_config: Option<ClientConfig>,
+    pub tls_policy: Option<TlsPolicy>,
 
     /// Socket timeout in milliseconds for a single **info/admin command**:
     /// the `info` requests the tend loop issues every cycle (node refresh,
@@ -451,7 +529,7 @@ impl Default for ClientPolicy {
             custom_client_id: None,
 
             #[cfg(feature = "tls")]
-            tls_config: None,
+            tls_policy: None,
         }
     }
 }
@@ -487,7 +565,7 @@ impl ClientPolicy {
         // requirement (testing only).
         if matches!(self.auth_mode, AuthMode::External(_, _)) {
             #[cfg(feature = "tls")]
-            let tls_enabled = self.tls_config.is_some();
+            let tls_enabled = self.tls_policy.is_some();
             #[cfg(not(feature = "tls"))]
             let tls_enabled = false;
 
@@ -499,11 +577,24 @@ impl ClientPolicy {
             }
         }
 
+        // `for_login_only` lives on the TLS policy, so "login-only without
+        // TLS" cannot be expressed at all. What is still expressible, and
+        // still wrong, is login-only with no login: that would silently mean
+        // "no TLS at all", which a caller asking for login-only TLS plainly
+        // did not intend.
+        #[cfg(feature = "tls")]
+        if self.login_only_active() && !self.auth_enabled() {
+            return Err(Error::client_error(
+                "TlsPolicy::for_login_only requires authentication (auth_mode other \
+                 than AuthMode::None): with no login to protect it would only disable TLS",
+            ));
+        }
+
         // PKI authentication identifies the user by the client TLS
         // certificate, so it cannot work at all without a TLS config.
         if matches!(self.auth_mode, AuthMode::PKI) {
             #[cfg(feature = "tls")]
-            let tls_enabled = self.tls_config.is_some();
+            let tls_enabled = self.tls_policy.is_some();
             #[cfg(not(feature = "tls"))]
             let tls_enabled = false;
 
@@ -622,11 +713,16 @@ impl ClientPolicy {
 
     #[cfg(feature = "tls")]
     pub(crate) const fn peers_string(&self) -> &'static str {
-        match (&self.tls_config, self.use_services_alternate) {
-            (None, true) => "peers-clear-alt",
-            (None, false) => "peers-clear-std",
-            (Some(_), true) => "peers-tls-alt",
-            (Some(_), false) => "peers-tls-std",
+        // Keyed on the TLS policy alone, deliberately ignoring
+        // `for_login_only` (Java `PeerParser` does the same): peers are
+        // discovered by their TLS addresses because each one is validated
+        // over TLS first — the login must be encrypted — and only then
+        // switched to its cleartext address via `service-clear-*`.
+        match (self.tls_policy.is_some(), self.use_services_alternate) {
+            (false, true) => "peers-clear-alt",
+            (false, false) => "peers-clear-std",
+            (true, true) => "peers-tls-alt",
+            (true, false) => "peers-tls-std",
         }
     }
 
@@ -640,12 +736,47 @@ impl ClientPolicy {
 
     #[cfg(feature = "tls")]
     pub(crate) const fn service_string(&self) -> &'static str {
-        match (&self.tls_config, self.use_services_alternate) {
-            (None, true) => "service-clear-alt",
-            (None, false) => "service-clear-std",
-            (Some(_), true) => "service-tls-alt",
-            (Some(_), false) => "service-tls-std",
+        // Same rule as `peers_string`: the TLS family whenever TLS is
+        // configured. (Under `for_login_only` this command is never sent —
+        // load-balancer detection is off there.)
+        match (self.tls_policy.is_some(), self.use_services_alternate) {
+            (false, true) => "service-clear-alt",
+            (false, false) => "service-clear-std",
+            (true, true) => "service-tls-alt",
+            (true, false) => "service-tls-std",
         }
+    }
+
+    /// The non-TLS service command, whatever the TLS configuration says. Used
+    /// by the `for_login_only` switch to find the node's cleartext address.
+    pub(crate) const fn clear_service_string(&self) -> &'static str {
+        if self.use_services_alternate {
+            "service-clear-alt"
+        } else {
+            "service-clear-std"
+        }
+    }
+
+    /// Whether any credential exchange happens at all.
+    pub(crate) const fn auth_enabled(&self) -> bool {
+        !matches!(self.auth_mode, AuthMode::None)
+    }
+
+    /// Whether the data plane runs in cleartext because the TLS policy asks
+    /// for [`TlsPolicy::for_login_only`]. Every site that decides "TLS or
+    /// not" for a connection consults this.
+    #[cfg(feature = "tls")]
+    pub(crate) const fn login_only_active(&self) -> bool {
+        match &self.tls_policy {
+            Some(tls) => tls.for_login_only,
+            None => false,
+        }
+    }
+
+    /// Without the `tls` feature there is no TLS to restrict to the login.
+    #[cfg(not(feature = "tls"))]
+    pub(crate) const fn login_only_active(&self) -> bool {
+        false
     }
 
     #[cfg(not(feature = "tls"))]
@@ -661,6 +792,105 @@ impl ClientPolicy {
 mod tests {
     use super::*;
     use aerospike_rt::time::Duration;
+
+    /// A minimal TLS config: enough for the policy layer, which only ever
+    /// asks whether one is present.
+    #[cfg(feature = "tls")]
+    fn some_tls_config() -> ClientConfig {
+        ClientConfig::builder()
+            .with_root_certificates(tokio_rustls::rustls::RootCertStore::empty())
+            .with_no_client_auth()
+    }
+
+    /// `for_login_only` living on `TlsPolicy` makes "login-only without TLS"
+    /// unrepresentable. What remains checkable is login-only with no login,
+    /// which would silently mean "no TLS at all".
+    #[cfg(feature = "tls")]
+    #[test]
+    fn for_login_only_requires_authentication() {
+        // TLS, login-only, but no authentication.
+        let mut p = ClientPolicy {
+            tls_policy: Some(TlsPolicy::new(some_tls_config()).with_login_only(true)),
+            ..ClientPolicy::default()
+        };
+        assert!(matches!(p.auth_mode, AuthMode::None));
+        let err = p
+            .validate()
+            .expect_err("login-only without a login must be rejected");
+        assert!(err.to_string().contains("requires authentication"), "{err}");
+
+        // With authentication it is a valid policy, and active.
+        p.set_auth_mode(AuthMode::Internal("u".into(), "p".into()))
+            .unwrap();
+        p.validate().expect("tls + auth is a valid login-only policy");
+        assert!(p.login_only_active());
+
+        // Off by default: a plain TLS policy encrypts everything.
+        let plain = ClientPolicy {
+            tls_policy: Some(TlsPolicy::new(some_tls_config())),
+            ..ClientPolicy::default()
+        };
+        assert!(!plain.tls_policy.as_ref().unwrap().for_login_only);
+        assert!(!plain.login_only_active());
+        plain.validate().expect("plain TLS needs no authentication");
+
+        // No TLS at all: nothing to restrict.
+        assert!(!ClientPolicy::default().login_only_active());
+    }
+
+    /// Peer discovery keys on the TLS policy alone, as Java's `PeerParser`
+    /// does: under login-only each peer is still validated over TLS (the
+    /// login has to be encrypted), so discovery must hand back the TLS
+    /// addresses. The switch to cleartext happens per node afterwards, via
+    /// the always-clear `clear_service_string`.
+    #[cfg(feature = "tls")]
+    #[test]
+    fn address_family_follows_tls_policy_not_login_only() {
+        let mut p = ClientPolicy::default();
+
+        // No TLS: clear.
+        assert_eq!(p.service_string(), "service-clear-std");
+        assert_eq!(p.peers_string(), "peers-clear-std");
+
+        // Plain TLS: the TLS family.
+        p.tls_policy = Some(TlsPolicy::new(some_tls_config()));
+        assert_eq!(p.service_string(), "service-tls-std");
+        assert_eq!(p.peers_string(), "peers-tls-std");
+
+        // Login-only: STILL the TLS family — peers are validated over TLS
+        // before each is switched to its clear address.
+        p.tls_policy = Some(TlsPolicy::new(some_tls_config()).with_login_only(true));
+        assert_eq!(p.service_string(), "service-tls-std");
+        assert_eq!(p.peers_string(), "peers-tls-std");
+        p.use_services_alternate = true;
+        assert_eq!(p.service_string(), "service-tls-alt");
+        assert_eq!(p.peers_string(), "peers-tls-alt");
+
+        // The switch command is always the clear one, whatever TLS says.
+        assert_eq!(p.clear_service_string(), "service-clear-alt");
+        p.use_services_alternate = false;
+        assert_eq!(p.clear_service_string(), "service-clear-std");
+    }
+
+    /// `From<ClientConfig>` keeps the common case a one-liner.
+    #[cfg(feature = "tls")]
+    #[test]
+    fn tls_policy_builds_from_a_bare_client_config() {
+        let policy: TlsPolicy = some_tls_config().into();
+        assert!(!policy.for_login_only);
+        assert!(TlsPolicy::new(some_tls_config())
+            .with_login_only(true)
+            .for_login_only);
+    }
+
+    #[test]
+    fn auth_enabled_tracks_the_auth_mode() {
+        let mut p = ClientPolicy::default();
+        assert!(!p.auth_enabled(), "AuthMode::None is no authentication");
+        p.set_auth_mode(AuthMode::Internal("u".into(), "p".into()))
+            .unwrap();
+        assert!(p.auth_enabled());
+    }
 
     #[test]
     fn buffer_pool_sizing_is_validated() {
@@ -830,7 +1060,7 @@ mod tests {
                 .with_no_client_auth();
             let policy = ClientPolicy {
                 auth_mode: AuthMode::PKI,
-                tls_config: Some(tls_config),
+                tls_policy: Some(TlsPolicy::new(tls_config)),
                 ..ClientPolicy::default()
             };
             assert!(policy.validate().is_ok());

@@ -39,6 +39,14 @@ pub struct NodeValidator {
     /// the discovered name is available even when
     /// `ClientPolicy::cluster_name` is unset and no validation runs.
     pub cluster_name: Option<String>,
+    /// Session token from the TLS login, kept only when
+    /// [`ClientPolicy::for_login_only`](crate::ClientPolicy::for_login_only)
+    /// is active: the cleartext connections that follow authenticate with it
+    /// instead of sending credentials.
+    pub session: Option<crate::commands::admin_command::SessionInfo>,
+    /// The node's TLS address, kept under `for_login_only` so the pool can
+    /// log in again over TLS when the session expires.
+    pub login_host: Option<Host>,
     /// Whether this validator was created for a seed host. When true,
     /// `validate_alias` queries `service-{tls,clear}-{std,alt}` and, if the
     /// seed isn't listed in the response, treats the seed as a load
@@ -65,6 +73,8 @@ impl NodeValidator {
             use_new_info: true,
             version: Version::default(),
             cluster_name: None,
+            session: None,
+            login_host: None,
             detect_load_balancer: false,
         }
     }
@@ -130,8 +140,28 @@ impl NodeValidator {
     }
 
     async fn validate_alias(&mut self, cluster: &Cluster, alias: &Host) -> Result<()> {
-        let mut conn =
-            Connection::new(alias, &self.client_policy, cluster.hashed_pass().as_ref()).await?;
+        // `for_login_only` keeps exactly one connection encrypted: this one,
+        // which carries the credential exchange. Java does the same in
+        // `NodeValidator.validateAddress` before handing off to `SwitchClear`.
+        let login_only = self.client_policy.login_only_active();
+        let (mut conn, session) = if login_only {
+            Connection::open_tls_login(alias, &self.client_policy, cluster.hashed_pass().as_ref())
+                .await
+                .map_err(Error::from)?
+        } else {
+            (
+                Connection::new(alias, &self.client_policy, cluster.hashed_pass().as_ref()).await?,
+                None,
+            )
+        };
+        if login_only {
+            self.session = session;
+            self.login_host = Some(alias.clone());
+            // The cleartext address is about to be read from the service
+            // command, so there is nothing left for load-balancer detection
+            // to resolve (Java disables it here for the same reason).
+            self.detect_load_balancer = false;
+        }
         let admin_policy = AdminPolicy {
             timeout: self.client_policy.timeout,
         };
@@ -151,8 +181,19 @@ impl NodeValidator {
                 None
             };
 
+        // Under `for_login_only` the node's non-TLS address is fetched in the
+        // same round trip that validates it.
+        let clear_command: Option<&'static str> = if login_only {
+            Some(self.client_policy.clear_service_string())
+        } else {
+            None
+        };
+
         let mut commands: Vec<&str> = vec!["node", "cluster-name", "build", "partition-generation"];
         if let Some(cmd) = address_command {
+            commands.push(cmd);
+        }
+        if let Some(cmd) = clear_command {
             commands.push(cmd);
         }
 
@@ -247,7 +288,85 @@ impl NodeValidator {
             }
         }
 
+        // The TLS connection has done its one job (the login) and is already
+        // closed. Move this node onto its cleartext address for good.
+        if let Some(cmd) = clear_command {
+            let raw = info_map.get(cmd).cloned().unwrap_or_default();
+            self.switch_to_clear_address(&raw).await?;
+        }
+
         Ok(())
+    }
+
+    /// Point this node at a non-TLS address (`for_login_only`).
+    ///
+    /// Mirrors Java's `SwitchClear`: walk the addresses the node reported,
+    /// apply `ip_map`, and keep the first one that accepts a cleartext
+    /// connection authenticated with the session token. Proving the token
+    /// works before committing is the point — a clear address that cannot
+    /// authenticate is no use, and finding out now beats finding out on the
+    /// first command.
+    async fn switch_to_clear_address(&mut self, raw: &str) -> Result<()> {
+        let session = self.session.clone();
+        for entry in raw.split(';') {
+            if entry.trim().is_empty() {
+                continue;
+            }
+            let parsed = match entry.to_hosts() {
+                Ok(v) => v,
+                Err(e) => {
+                    debug!("for_login_only: cannot parse clear service entry `{entry}`: {e}");
+                    continue;
+                }
+            };
+            for mut host in parsed {
+                // A cleartext endpoint has no TLS name to verify against.
+                host.tls_name = None;
+                if let Some(ref ip_map) = self.client_policy.ip_map {
+                    if let Some(mapped) = ip_map.get(&host.name) {
+                        host.name.clone_from(mapped);
+                    }
+                }
+                for resolved in (host.name.as_str(), host.port)
+                    .to_socket_addrs()
+                    .into_iter()
+                    .flatten()
+                {
+                    let candidate = Host::new(&resolved.ip().to_string(), resolved.port());
+                    match Connection::open(
+                        &candidate,
+                        &self.client_policy,
+                        None,
+                        session.as_ref(),
+                    )
+                    .await
+                    {
+                        Ok((mut probe, _)) => {
+                            probe.close();
+                            drop(probe);
+                            debug!(
+                                "for_login_only: node {} switched to clear address {}",
+                                self.name, candidate
+                            );
+                            self.address = candidate.address();
+                            self.aliases = vec![candidate];
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            debug!(
+                                "for_login_only: clear address {candidate} unusable: {}",
+                                Error::from(e)
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(Error::invalid_node(format!(
+            "for_login_only: node {} reported no usable non-TLS address (service response: `{raw}`)",
+            self.name
+        )))
     }
 
     async fn maybe_swap_lb_address(&mut self, cluster: &Cluster, seed: &Host, raw: &str) {
