@@ -2,6 +2,72 @@
 
 Welcome to Aerospike's official [Rust client](https://aerospike.com/docs/develop/client/rust).
 
+## AI coding agent entry point
+
+The Aerospike Rust client — crates.io package `aerospike`, async-first over Tokio
+or async-std, with a blocking API behind the `sync` feature. Authoritative
+version: `[workspace.package] version` in the root `Cargo.toml`. Requires Rust
+1.87+ and Aerospike server 6.4+.
+
+**Two things to get right before writing any code:**
+
+1. **The API lives in `aerospike-core/`.** Root [`src/lib.rs`](src/lib.rs) is an
+   11-line re-export facade — open it for the feature-selection guard, then go to
+   `aerospike-core/src/` for the actual client implementation.
+2. **Cargo features decide what compiles.** See *Selecting features* below — the
+   wrong feature set is a compile error, not a runtime error.
+
+### Selecting features
+
+| Goal | Cargo features |
+|---|---|
+| Async client, Tokio (default) | `default`, or explicitly `["rt-tokio"]` |
+| Async client, async-std | `default-features = false`, `["async", "serialization", "rt-async-std"]` |
+| Blocking client | `default-features = false`, `["rt-tokio", "sync"]` — **Tokio only**: `aerospike-sync` pulls in its own default `rt-tokio` regardless of what runtime feature you also pass, so `["rt-async-std", "sync"]` is currently broken (compile error) even though it looks valid |
+| TLS | add `"tls"` (on by default; **requires `rt-tokio`** — not available under async-std) |
+| Runtime config file | add `"dynamic-config"` (on by default) |
+| `query_aggregate` / stream UDFs | add `"lua"` (off by default — compiles a vendored Lua interpreter) |
+
+`rt-tokio` and `rt-async-std` are mutually exclusive — enabling both (e.g. adding
+one without disabling defaults first) is a compile error. Full detail in
+[Installation](#installation) below.
+
+### Where things live
+
+- **`aerospike-core/src/`** — the client implementation. This is "the Rust client."
+- **`aerospike-sync/`** — thin blocking wrapper; [mirrors the async API](aerospike-sync/README.md) 1:1, so read `aerospike-core` first regardless of which you're generating for.
+- **`examples/`** — one runnable file per feature area; [examples/README.md](examples/README.md) is the routing table (server-version gates included) — read it before writing new example code.
+- **`tests/src/`** — the primary integration suite, one file per feature area, run against a live server. `tests/proptests/` and [`tests/proptest_async/`](tests/proptest_async/README.md) are property-based tests, a different tier. `tests/common/` is shared test harness, not a place to add feature tests.
+- **`benches/`** and **`tools/benchmark/`** — load generators for tuning connection properties, not API usage references.
+
+### Verifying generated code
+
+- `cargo build` / `cargo test` with the right feature set (above) is the first check — a wrong feature set fails here, not at runtime.
+- `cargo test-docs` (alias for `cargo test --workspace --doc`, see `.cargo/config.toml`) runs every public doc-comment example as a compiled, runnable test — e.g. [`select_by_path`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/operations/path/fn.select_by_path.html) in `aerospike-core/src/operations/path.rs`. Doc comments are load-bearing, not illustrative-only.
+- `cargo doc --open` builds the reference locally from source — see *Which API reference wins* below for why this matters.
+- `tests/src/examples.rs` runs every example in `examples/` against a live server on every test run.
+
+### Which API reference wins
+
+[docs.rs/aerospike](https://docs.rs/aerospike) defaults to the latest **stable**
+release, `2.2.0` — a major version behind `v3` (this branch), which reshaped the
+batch API (`BatchOperation`) and query signature (`PartitionFilter`). A
+`3.0.0-alpha` matching this branch is published and fully documented, just not
+the default: use
+[docs.rs/aerospike/3.0.0-alpha.2](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/)
+explicitly, or run `cargo doc --open` for a reference built from the exact
+source you're reading. If those two ever disagree, `cargo doc --open` wins —
+it's built from what's actually in the tree.
+
+### Cross-language reference
+
+[SubMilliPost](https://github.com/aerospike/aerospike-submillipost) works
+through Aerospike data-modeling patterns end to end via a small social-newsletter
+app (posts, comments, likes, subscriptions), with a [cross-language
+implementation guide](https://github.com/aerospike/aerospike-submillipost/blob/main/docs/guides/cross-language-implementation.md)
+for porting it to a new client. No Rust port exists yet — the reference
+implementation is Java.
+
 ## Feature highlights
 
 **Execution models:**
@@ -38,7 +104,7 @@ Welcome to Aerospike's official [Rust client](https://aerospike.com/docs/develop
 - **Size expressions:** adds `expressions::record_size()` and `expressions::memory_size()` 
   for granular control.
 
-Take a look at the [changelog](https://github.com/aerospike/aerospike-client-rust/blob/v2/CHANGELOG.md) for more details.
+Take a look at the [changelog](https://github.com/aerospike/aerospike-client-rust/blob/v3/CHANGELOG.md) for more details.
 
 ## What’s coming next?
 
@@ -64,7 +130,7 @@ Prerequisites:
 1. Clone the repository and change into the project directory:
 
    ```
-   git clone --single-branch --branch v2 https://github.com/aerospike/aerospike-client-rust.git
+   git clone --single-branch --branch v3 https://github.com/aerospike/aerospike-client-rust.git
    cd aerospike-client-rust
    ```
 
@@ -86,19 +152,23 @@ To use the client in your own project, add one of the following to your `Cargo.t
    # OR
 
    # Async API with async-std runtime
-   aerospike = { version = "<version>", features = ["rt-async-std"]}
+   # (default-features = false is required: the default `rt-tokio` and
+   # `rt-async-std` cannot both be enabled — that's a compile error, not a
+   # runtime one)
+   aerospike = { version = "<version>", default-features = false, features = ["async", "serialization", "rt-async-std"]}
 
    # The library still supports the old sync interface, but it will be deprecated in the future.
    # This is only for compatibility reasons and will be removed in a later stage.
 
-   # Sync API with tokio
+   # Sync API (Tokio only today — see note below)
    aerospike = { version = "<version>", default-features = false, features = ["rt-tokio", "sync"]}
-
-   # OR
-
-   # Sync API with async-std
-   aerospike = { version = "<version>", default-features = false, features = ["rt-async-std", "sync"]}
    ```
+
+   > **Note:** the sync API only works with the Tokio runtime right now.
+   > `aerospike-sync` pulls in its own default `rt-tokio` regardless of what
+   > runtime feature you pass at the root, so `features = ["rt-async-std", "sync"]`
+   > looks valid but is currently a compile error ("Please select only one
+   > runtime"). Tracked as a known limitation, not yet fixed.
 
    Then run `cargo build` in your project.
 
