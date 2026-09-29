@@ -214,6 +214,7 @@ mod value;
 mod bin;
 #[macro_use]
 mod key;
+mod locks;
 mod batch;
 mod client;
 mod cluster;

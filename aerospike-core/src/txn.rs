@@ -15,6 +15,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering};
 use std::sync::RwLock;
+use crate::locks::{read, write};
 use std::time::Duration;
 
 use crate::errors::{Error, Result};
@@ -182,8 +183,8 @@ impl std::fmt::Debug for Txn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Txn")
             .field("id", &self.id)
-            .field("state", &*self.state.read().unwrap())
-            .field("namespace", &*self.namespace.read().unwrap())
+            .field("state", &*read(&self.state))
+            .field("namespace", &*read(&self.namespace))
             .field("timeout", &self.timeout)
             .field("deadline", &self.deadline.load(Ordering::Relaxed))
             .finish()
@@ -231,12 +232,12 @@ impl Txn {
 
     /// Return the transaction state.
     pub fn state(&self) -> TxnState {
-        *self.state.read().unwrap()
+        *read(&self.state)
     }
 
     /// Set the transaction state.
     pub fn set_state(&self, state: TxnState) {
-        *self.state.write().unwrap() = state;
+        *write(&self.state) = state;
     }
 
     /// Records that a commit attempt failed with an in-doubt outcome: the
@@ -244,7 +245,7 @@ impl Txn {
     /// already reached a terminal state ([`Committed`](TxnState::Committed) or
     /// [`Aborted`](TxnState::Aborted)), which are left untouched.
     pub fn mark_commit_failed(&self) {
-        let mut state = self.state.write().unwrap();
+        let mut state = write(&self.state);
         if !matches!(*state, TxnState::Committed | TxnState::Aborted) {
             *state = TxnState::CommitFailed;
         }
@@ -253,38 +254,38 @@ impl Txn {
     /// Process the results of a record read. For internal use only.
     pub fn on_read(&self, key: &Key, version: Option<u64>) {
         if let Some(ver) = version {
-            let mut reads = self.reads.write().unwrap();
+            let mut reads = write(&self.reads);
             reads.insert(key.digest, (key.clone(), Some(ver)));
         }
     }
 
     /// Get record version for a given key.
     pub fn get_read_version(&self, key: &Key) -> Option<u64> {
-        let reads = self.reads.read().unwrap();
+        let reads = read(&self.reads);
         reads.get(&key.digest).and_then(|(_, v)| *v)
     }
 
     /// Check if a read exists for the given key.
     pub fn read_exists_for_key(&self, key: &Key) -> bool {
-        let reads = self.reads.read().unwrap();
+        let reads = read(&self.reads);
         reads.contains_key(&key.digest)
     }
 
     /// Get all read keys and their versions.
     pub fn get_reads(&self) -> Vec<(Key, Option<u64>)> {
-        let reads = self.reads.read().unwrap();
+        let reads = read(&self.reads);
         reads.values().cloned().collect()
     }
 
     /// Process the results of a record write. For internal use only.
     pub fn on_write(&self, key: &Key, version: Option<u64>, result_code: ResultCode) {
         if version.is_some() {
-            let mut reads = self.reads.write().unwrap();
+            let mut reads = write(&self.reads);
             reads.insert(key.digest, (key.clone(), version));
         } else if result_code == ResultCode::Ok {
-            let mut reads = self.reads.write().unwrap();
+            let mut reads = write(&self.reads);
             reads.remove(&key.digest);
-            let mut writes = self.writes.write().unwrap();
+            let mut writes = write(&self.writes);
             writes.insert(key.digest, key.clone());
         }
     }
@@ -292,25 +293,25 @@ impl Txn {
     /// Add key to write hash when write command is in doubt (usually caused by timeout).
     pub fn on_write_in_doubt(&self, key: &Key) {
         self.write_in_doubt.store(true, Ordering::Relaxed);
-        self.writes.write().unwrap().insert(key.digest, key.clone());
-        self.reads.write().unwrap().remove(&key.digest);
+        write(&self.writes).insert(key.digest, key.clone());
+        write(&self.reads).remove(&key.digest);
     }
 
     /// Get all write keys.
     pub fn get_writes(&self) -> Vec<Key> {
-        let writes = self.writes.read().unwrap();
+        let writes = read(&self.writes);
         writes.values().cloned().collect()
     }
 
     /// Check if a write exists for the given key.
     pub fn write_exists_for_key(&self, key: &Key) -> bool {
-        let writes = self.writes.read().unwrap();
+        let writes = read(&self.writes);
         writes.contains_key(&key.digest)
     }
 
     /// Return transaction namespace.
     pub fn namespace(&self) -> Option<String> {
-        self.namespace.read().unwrap().clone()
+        read(&self.namespace).clone()
     }
 
     /// Verify current transaction state and namespace for a future command.
@@ -321,7 +322,7 @@ impl Txn {
 
     /// Verify that the transaction state allows future commands.
     pub fn verify_command(&self) -> Result<()> {
-        if *self.state.read().unwrap() != TxnState::Open {
+        if *read(&self.state) != TxnState::Open {
             return Err(Error::client_error(
                 "Issuing commands to this transaction is forbidden because it has been ended by a commit or abort".to_string(),
             ));
@@ -332,7 +333,7 @@ impl Txn {
     /// Set transaction namespace only if doesn't already exist.
     /// If namespace already exists, verify new namespace is the same.
     pub fn set_namespace(&self, ns: &str) -> Result<()> {
-        let mut guard = self.namespace.write().unwrap();
+        let mut guard = write(&self.namespace);
         match &*guard {
             None => {
                 *guard = Some(ns.to_string());
@@ -398,12 +399,12 @@ impl Txn {
 
     /// Clear transaction. Remove all tracked keys and reset transient flags.
     pub fn clear(&self) {
-        *self.namespace.write().unwrap() = None;
+        *write(&self.namespace) = None;
         self.deadline.store(0, Ordering::Relaxed);
         self.write_in_doubt.store(false, Ordering::Relaxed);
         self.in_doubt.store(false, Ordering::Relaxed);
-        self.reads.write().unwrap().clear();
-        self.writes.write().unwrap().clear();
+        write(&self.reads).clear();
+        write(&self.writes).clear();
     }
 }
 

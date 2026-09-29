@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use std::net::ToSocketAddrs;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
 use std::sync::Arc;
+use crate::locks::lock;
 use std::vec::Vec;
 
 pub use self::node::Node;
@@ -1289,7 +1290,7 @@ impl Cluster {
 
         // Reshape retained per-host snapshots.
         {
-            let mut metrics = self.metrics.lock().unwrap();
+            let mut metrics = lock(&self.metrics);
             for snapshot in metrics.values_mut() {
                 let mut reshaped = NodeMetricsSnapshot::new(policy.clone());
                 reshaped.aggregate(snapshot);
@@ -1681,7 +1682,7 @@ impl Cluster {
     /// Drains each node's live metrics and merges them into the per-host
     /// accumulator.
     fn aggregate_node_metrics(&self, nodes: &[Arc<Node>]) {
-        let mut metrics = self.metrics.lock().unwrap();
+        let mut metrics = lock(&self.metrics);
         for node in nodes {
             let host = node.host().to_string();
             let drained = node.metrics().get_and_reset();
@@ -1716,7 +1717,7 @@ impl Cluster {
             );
         }
 
-        let metrics = self.metrics.lock().unwrap();
+        let metrics = lock(&self.metrics);
         let mut res = HashMap::with_capacity(metrics.len());
         for (host, snapshot) in metrics.iter() {
             let mut copy = snapshot.clone();

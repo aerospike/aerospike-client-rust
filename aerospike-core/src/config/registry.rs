@@ -18,6 +18,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
+use crate::locks::lock;
 
 use super::provider::ConfigProvider;
 use super::yaml::YamlFileProvider;
@@ -51,16 +52,8 @@ static REGISTRY: LazyLock<Mutex<HashMap<String, ProviderFactory>>> = LazyLock::n
 /// The scheme includes the trailing `://`, e.g. `"http://"`. Replaces any
 /// existing factory for that scheme. This is how additional config sources are
 /// wired into the env-var path.
-///
-/// # Panics
-///
-/// Panics if the internal registry lock is poisoned (a prior panic while holding
-/// it), which should not happen in normal operation.
 pub fn register_provider(scheme: &str, factory: ProviderFactory) {
-    REGISTRY
-        .lock()
-        .expect("config provider registry poisoned")
-        .insert(scheme.to_string(), factory);
+    lock(&REGISTRY).insert(scheme.to_string(), factory);
 }
 
 /// Splits a DSN into `(scheme_with_slashes, path)`. A DSN with no `scheme://`
@@ -84,7 +77,7 @@ fn parse_dsn(dsn: &str) -> Option<(String, String)> {
 /// the DSN is empty or its scheme has no registered factory.
 pub(crate) fn build_provider(dsn: &str) -> Option<Arc<dyn ConfigProvider>> {
     let (scheme, path) = parse_dsn(dsn)?;
-    let reg = REGISTRY.lock().expect("config provider registry poisoned");
+    let reg = lock(&REGISTRY);
     reg.get(&scheme).map_or_else(
         || {
             warn!("No dynamic-config provider registered for scheme `{scheme}`");

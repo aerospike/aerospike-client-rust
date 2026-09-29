@@ -14,16 +14,12 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
+
+use crate::locks::lock;
 
 use crate::cluster::Node;
 use crate::net::Host;
-
-/// Locks one of the internal collections, recovering from poisoning (a
-/// panicked tend task must not wedge every subsequent tend).
-fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 /// Represents a peer node discovered from the server's peers list.
 #[derive(Debug, Clone)]

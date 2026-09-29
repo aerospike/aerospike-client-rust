@@ -22,6 +22,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Mutex, RwLock};
+use crate::locks::{lock, read, write};
 use std::time::Duration;
 
 use super::histogram::SyncHistogram;
@@ -634,29 +635,23 @@ impl NodeMetrics {
         let idx = ct.index();
         // Fast path: namespace + slot already present.
         {
-            let map = self.result_code_counts.read().unwrap();
+            let map = read(&self.result_code_counts);
             if let Some(slots) = map.get(namespace) {
                 if let Some(counts) = &slots[idx] {
-                    *counts.lock().unwrap().entry(rc).or_insert(0) += 1;
+                    *lock(counts).entry(rc).or_insert(0) += 1;
                     return;
                 }
             }
         }
         // Slow path: insert namespace/slot.
-        let mut map = self.result_code_counts.write().unwrap();
+        let mut map = write(&self.result_code_counts);
         let slots = map
             .entry(namespace.to_string())
             .or_insert_with(empty_live_rc_slots);
         if slots[idx].is_none() {
             slots[idx] = Some(Mutex::new(HashMap::new()));
         }
-        *slots[idx]
-            .as_ref()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .entry(rc)
-            .or_insert(0) += 1;
+        *lock(slots[idx].as_ref().unwrap()).entry(rc).or_insert(0) += 1;
     }
 
     fn with_command_metric<F: FnOnce(&CommandMetric)>(
@@ -670,7 +665,7 @@ impl NodeMetrics {
         }
         let idx = ct.index();
         {
-            let map = self.detailed_metrics.read().unwrap();
+            let map = read(&self.detailed_metrics);
             if let Some(slots) = map.get(namespace) {
                 if let Some(cm) = &slots[idx] {
                     f(cm);
@@ -678,12 +673,12 @@ impl NodeMetrics {
                 }
             }
         }
-        let mut map = self.detailed_metrics.write().unwrap();
+        let mut map = write(&self.detailed_metrics);
         let slots = map
             .entry(namespace.to_string())
             .or_insert_with(empty_metric_slots);
         if slots[idx].is_none() {
-            slots[idx] = Some(CommandMetric::new(&self.policy.read().unwrap()));
+            slots[idx] = Some(CommandMetric::new(&read(&self.policy)));
         }
         f(slots[idx].as_ref().unwrap());
     }
@@ -699,7 +694,7 @@ impl NodeMetrics {
         // Store the applied policy first: anything created lazily from here on
         // (detailed metrics, drain snapshots) must take the new shape, or the
         // shape-checked histogram merges silently drop its samples.
-        *self.policy.write().unwrap() = policy.clone();
+        *write(&self.policy) = policy.clone();
 
         // Pick up the (possibly new) sampler and tier flag from the applied
         // policy.
@@ -727,7 +722,7 @@ impl NodeMetrics {
         for h in self.command_metrics.iter().flatten() {
             apply(h, true);
         }
-        for slots in self.detailed_metrics.read().unwrap().values() {
+        for slots in read(&self.detailed_metrics).values() {
             for cm in slots.iter().flatten() {
                 for h in [&cm.connection_aq, &cm.latency, &cm.parsing] {
                     apply(h, true);
@@ -743,7 +738,7 @@ impl NodeMetrics {
     /// the live values.
     #[must_use]
     pub fn get_and_reset(&self) -> NodeMetricsSnapshot {
-        let mut snapshot = NodeMetricsSnapshot::new(self.policy.read().unwrap().clone());
+        let mut snapshot = NodeMetricsSnapshot::new(read(&self.policy).clone());
         // The recorders read the unit from the atomic, so stamp the snapshot
         // from the same source they used.
         snapshot.latency_unit = self.latency_unit();
@@ -756,7 +751,7 @@ impl NodeMetrics {
         }
 
         // Drain detailed metrics.
-        for (ns, slots) in self.detailed_metrics.read().unwrap().iter() {
+        for (ns, slots) in read(&self.detailed_metrics).iter() {
             let mut tgt = empty_metric_slots();
             for (i, slot) in slots.iter().enumerate() {
                 if let Some(src) = slot {
@@ -773,11 +768,11 @@ impl NodeMetrics {
         }
 
         // Drain result-code counts (clone then zero the live entries).
-        for (ns, slots) in self.result_code_counts.read().unwrap().iter() {
+        for (ns, slots) in read(&self.result_code_counts).iter() {
             let mut tgt = empty_rc_slots();
             for (i, slot) in slots.iter().enumerate() {
                 if let Some(counts) = slot {
-                    let mut guard = counts.lock().unwrap();
+                    let mut guard = lock(counts);
                     tgt[i] = Some(guard.clone());
                     for v in guard.values_mut() {
                         *v = 0;

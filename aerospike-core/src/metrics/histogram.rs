@@ -37,6 +37,7 @@
 //! skips powers of two (`shift = 3`: `<=1, >1, >8, >64, ...`).
 
 use std::sync::Mutex;
+use crate::locks::lock;
 
 #[cfg(feature = "serialization")]
 use serde::ser::SerializeStruct;
@@ -178,28 +179,28 @@ impl SyncHistogram {
 
     /// Records a single value into the appropriate bucket.
     pub fn add(&self, v: u64) {
-        self.inner.lock().unwrap().add(v);
+        lock(&self.inner).add(v);
     }
 
     /// Merges the contents of `other` into `self`. Histograms with a different
     /// shape are ignored.
     pub fn merge(&self, other: &SyncHistogram) {
-        let snapshot = other.inner.lock().unwrap().clone();
-        self.inner.lock().unwrap().merge(&snapshot);
+        let snapshot = lock(&other.inner).clone();
+        lock(&self.inner).merge(&snapshot);
     }
 
     /// Returns a deep copy of this histogram.
     #[must_use]
     pub fn clone_histogram(&self) -> SyncHistogram {
         SyncHistogram {
-            inner: Mutex::new(self.inner.lock().unwrap().clone()),
+            inner: Mutex::new(lock(&self.inner).clone()),
         }
     }
 
     /// Returns a deep copy of this histogram and resets the original to empty.
     #[must_use]
     pub fn clone_and_reset(&self) -> SyncHistogram {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = lock(&self.inner);
         let copy = guard.clone();
         guard.reset();
         SyncHistogram {
@@ -210,7 +211,7 @@ impl SyncHistogram {
     /// Changes the histogram's layout, resetting its contents if the layout
     /// actually changed.
     pub fn reshape(&self, shift: u32, columns: usize) {
-        self.inner.lock().unwrap().reshape(shift, columns);
+        lock(&self.inner).reshape(shift, columns);
     }
 
     /// Discards everything recorded so far, keeping the layout.
@@ -219,49 +220,49 @@ impl SyncHistogram {
     /// already in the buckets — a [`LatencyUnit`](crate::metrics::LatencyUnit)
     /// change reshapes nothing but makes every existing sample meaningless.
     pub(crate) fn reset(&self) {
-        self.inner.lock().unwrap().reset();
+        lock(&self.inner).reset();
     }
 
     /// Number of values recorded.
     #[must_use]
     pub fn count(&self) -> u64 {
-        self.inner.lock().unwrap().count
+        lock(&self.inner).count
     }
 
     /// Smallest value recorded (0 if empty).
     #[must_use]
     pub fn min(&self) -> u64 {
-        self.inner.lock().unwrap().min
+        lock(&self.inner).min
     }
 
     /// Largest value recorded (0 if empty).
     #[must_use]
     pub fn max(&self) -> u64 {
-        self.inner.lock().unwrap().max
+        lock(&self.inner).max
     }
 
     /// Sum of all recorded values.
     #[must_use]
     pub fn sum(&self) -> f64 {
-        self.inner.lock().unwrap().sum
+        lock(&self.inner).sum
     }
 
     /// Snapshot of the bucket counts.
     #[must_use]
     pub fn buckets(&self) -> Vec<u64> {
-        self.inner.lock().unwrap().buckets.clone()
+        lock(&self.inner).buckets.clone()
     }
 
     /// The boundary spacing exponent this histogram was built with.
     #[must_use]
     pub fn shift(&self) -> u32 {
-        self.inner.lock().unwrap().shift
+        lock(&self.inner).shift
     }
 
     /// Mean of all recorded values (0 if empty).
     #[must_use]
     pub fn average(&self) -> f64 {
-        let g = self.inner.lock().unwrap();
+        let g = lock(&self.inner);
         if g.count > 0 {
             g.sum / g.count as f64
         } else {
@@ -284,7 +285,7 @@ impl Serialize for SyncHistogram {
     {
         // Only the data fields are serialized; the layout field (`shift`) is
         // intentionally omitted — it is reported once per snapshot.
-        let g = self.inner.lock().unwrap();
+        let g = lock(&self.inner);
         let mut state = serializer.serialize_struct("histogram", 5)?;
         state.serialize_field("buckets", &g.buckets)?;
         state.serialize_field("min", &g.min)?;

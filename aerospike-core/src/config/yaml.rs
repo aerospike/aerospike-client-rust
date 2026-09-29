@@ -14,6 +14,7 @@
 
 use std::path::PathBuf;
 use std::sync::Mutex;
+use crate::locks::lock;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
@@ -60,7 +61,7 @@ impl YamlFileProvider {
     /// updating the stored modification time. A file with no available mtime is
     /// always treated as changed.
     fn changed_since_last(&self, modified: Option<SystemTime>) -> bool {
-        let mut last = self.last_modified.lock().expect("yaml provider mutex poisoned");
+        let mut last = lock(&self.last_modified);
         match (modified, *last) {
             (Some(m), Some(prev)) if m <= prev => false,
             _ => {
