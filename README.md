@@ -49,15 +49,19 @@ one without disabling defaults first) is a compile error. Full detail in
 
 ### Which API reference wins
 
-[docs.rs/aerospike](https://docs.rs/aerospike) defaults to the latest **stable**
-release, `2.2.0` — a major version behind `v3` (this branch), which reshaped the
-batch API (`BatchOperation`) and query signature (`PartitionFilter`). A
-`3.0.0-alpha` matching this branch is published and fully documented, just not
-the default: use
-[docs.rs/aerospike/3.0.0-alpha.2](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/)
-explicitly, or run `cargo doc --open` for a reference built from the exact
-source you're reading. If those two ever disagree, `cargo doc --open` wins —
-it's built from what's actually in the tree.
+By default, docs.rs shows the manual for the latest **stable** release
+(`2.2.0`) — one version behind this branch (`v3`), which changed some APIs
+(batch operations, queries). Don't trust the default docs.rs page while
+reading `v3` code.
+
+Two ways to get the reference that actually matches this branch:
+
+- Go straight to [docs.rs/aerospike/3.0.0-alpha.2](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/) — the version-pinned page.
+- Or run `cargo doc --open` to build the reference from the exact code in front of you.
+
+If the two ever disagree, trust `cargo doc --open` — it's built fresh from
+what's actually in the tree; the docs.rs page is just a snapshot from whenever
+it was last published.
 
 ## Feature highlights
 
