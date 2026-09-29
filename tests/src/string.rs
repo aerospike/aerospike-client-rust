@@ -1271,10 +1271,10 @@ async fn to_string_from_integer_double_string_blob_and_bin_type_error() {
         .operate(&wpolicy, &key, &[str_op::to_string(BIN)])
         .await
         .expect_err("to_string on list bin should fail");
-    let msg = format!("{}", err);
-    assert!(
-        msg.contains("BinTypeError") || msg.contains("BIN_TYPE_ERROR"),
-        "unexpected error: {msg}"
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::BinTypeError),
+        "unexpected error: {err}"
     );
 }
 

@@ -750,10 +750,10 @@ async fn starts_with_filter_gates_get() {
         .get(&rpolicy2, &key, Bins::All)
         .await
         .expect_err("filter should have rejected the get");
-    let msg = format!("{}", err);
-    assert!(
-        msg.contains("FilteredOut") || msg.contains("FILTERED_OUT"),
-        "unexpected error: {msg}"
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::FilteredOut),
+        "unexpected error: {err}"
     );
 }
 
