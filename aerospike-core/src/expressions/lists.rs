@@ -386,7 +386,7 @@ pub fn size(bin: Expression, ctx: &[CdtContext]) -> Expression {
 }
 
 /// Creates an expression that concatenates the string items of `bin`. The list
-/// must hold only strings. Requires Aerospike Server version 8.1.3 or later.
+/// must hold only strings. Requires Aerospike Server version 8.2.0 or later.
 ///
 /// ```
 /// // The list bin "a" joins to "onetwothree"
@@ -406,7 +406,7 @@ pub fn join(bin: Expression, ctx: &[CdtContext]) -> Expression {
 ///
 /// The inverse of
 /// [`expressions::string::split_by_separator`](crate::expressions::string::split_by_separator).
-/// Requires Aerospike Server version 8.1.3 or later.
+/// Requires Aerospike Server version 8.2.0 or later.
 ///
 /// ```
 /// // The list bin "a" joins to "one|two|three"

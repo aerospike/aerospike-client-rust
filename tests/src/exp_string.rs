@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Integration tests for CDT string filter expressions.
-//! Requires Aerospike Server version >= 8.1.3.
+//! Requires Aerospike Server version >= 8.2.0.
 
 use crate::common;
 
@@ -44,7 +44,7 @@ async fn server_supports_string_operations(client: &aerospike::Client) -> bool {
     };
 
     if !supported {
-        eprintln!("Skipping: server does not support string expressions (requires >= 8.1.3)");
+        eprintln!("Skipping: server does not support string expressions (requires >= 8.2.0)");
     }
 
     supported
@@ -70,7 +70,7 @@ async fn eval(client: &aerospike::Client, key: &Key, exp: Expression) -> Record 
 async fn strlen_via_expression() {
     let client = common::client().await;
     if !server_supports_string_operations(&client).await {
-        eprintln!("Skipping: server does not support string operations (requires >= 8.1.3)");
+        eprintln!("Skipping: server does not support string operations (requires >= 8.2.0)");
         return;
     }
     let key = as_key!(common::namespace(), &common::rand_str(10), "exp_strlen");

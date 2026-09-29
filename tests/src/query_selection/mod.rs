@@ -17,7 +17,7 @@
 //! Ported from Java fluent `QuerySelectionIntegrationTest`,
 //! `QuerySelectionHintFlagsTest`, and `QuerySelectionExplainScopeTest`.
 //!
-//! Requires Aerospike Server >= 8.1.3; tests self-skip when the connected
+//! Requires Aerospike Server >= 8.2.0; tests self-skip when the connected
 //! node's [`Version::supports_query_selection`] is false.
 //!
 //! Debug query-plan logs (matching Java `Loggers.QUERY`):
@@ -60,7 +60,7 @@ pub(crate) async fn supports_query_selection(client: &Client) -> bool {
         .map(|node| node.version().supports_query_selection())
         .unwrap_or(false);
     if !ok {
-        eprintln!("Skipping: server does not support query selection (requires >= 8.1.3)");
+        eprintln!("Skipping: server does not support query selection (requires >= 8.2.0)");
     }
     ok
 }

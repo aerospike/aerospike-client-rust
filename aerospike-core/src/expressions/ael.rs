@@ -67,7 +67,7 @@ fn pack_ael_text(buf: &mut Option<&mut Buffer>, text: &str) -> usize {
 /// [`and`](super::and), [`or`](super::or), [`not`](super::not) or any other
 /// expression.
 ///
-/// Requires a server that supports `EXP_AEL_COMPILE` — 8.1.3 or later, which
+/// Requires a server that supports `EXP_AEL_COMPILE` — 8.2.0 or later, which
 /// [`Version::supports_server_compiled_ael`](crate::cluster::version_parser::Version::supports_server_compiled_ael)
 /// reports; older servers reject the payload.
 ///

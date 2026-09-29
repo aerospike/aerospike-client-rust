@@ -730,7 +730,7 @@ impl Error {
     /// Returns the extended server-supplied error detail (subcode, message,
     /// expression trace), if the server attached one. Requires
     /// [`BasePolicy::error_detail_verbosity`](crate::policy::BasePolicy::error_detail_verbosity)
-    /// greater than zero and server version 8.1.3+. Drills into the cause
+    /// greater than zero and server version 8.2.0+. Drills into the cause
     /// chain so checks still work after retry decoration.
     #[must_use]
     pub fn server_error_detail(&self) -> Option<&crate::ServerErrorDetail> {

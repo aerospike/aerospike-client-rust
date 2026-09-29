@@ -829,7 +829,7 @@ async fn server_supports_server_compiled_ael(client: &Client) -> bool {
     };
 
     if !supported {
-        eprintln!("Skipping: server does not compile AEL text (requires >= 8.1.3)");
+        eprintln!("Skipping: server does not compile AEL text (requires >= 8.2.0)");
     }
 
     supported
