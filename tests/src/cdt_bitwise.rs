@@ -201,7 +201,7 @@ async fn server_supports_b64_encode(client: &aerospike::Client) -> bool {
     };
 
     if !supported {
-        eprintln!("Skipping: server does not support bit_b64_encode (requires >= 8.1.3)");
+        eprintln!("Skipping: server does not support bit_b64_encode (requires >= 8.2.0)");
     }
 
     supported

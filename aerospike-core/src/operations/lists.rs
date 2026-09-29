@@ -1063,7 +1063,7 @@ pub fn get_range_from(bin: &str, index: i64) -> Operation {
 /// The list must hold only strings; anything else is a `PARAMETER_ERROR`.
 ///
 /// This is the inverse of [`operations::string::split`](crate::operations::string::split)
-/// with no separator. Requires Aerospike Server version 8.1.3 or later.
+/// with no separator. Requires Aerospike Server version 8.2.0 or later.
 pub fn join(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::StringJoin as u8,
@@ -1087,7 +1087,7 @@ pub fn join(bin: &str) -> Operation {
 ///
 /// This is the inverse of
 /// [`operations::string::split_by_separator`](crate::operations::string::split_by_separator).
-/// Requires Aerospike Server version 8.1.3 or later.
+/// Requires Aerospike Server version 8.2.0 or later.
 pub fn join_by_separator(bin: &str, separator: &str) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::StringJoin as u8,

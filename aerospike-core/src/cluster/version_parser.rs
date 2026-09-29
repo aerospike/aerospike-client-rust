@@ -100,14 +100,14 @@ impl Version {
 
     /// Server supports CDT string operations (`StringOperation` builders).
     pub fn supports_string_operations(&self) -> bool {
-        self >= &Version::new(8, 1, 3, 0)
+        self >= &Version::new(8, 2, 0, 0)
     }
 
     /// Server accepts `INTEGER` as a secondary-index type
     /// ([`IndexType::Integer`](crate::IndexType::Integer)); older servers
     /// only know `NUMERIC`.
     pub fn supports_integer_index(&self) -> bool {
-        self >= &Version::new(8, 1, 3, 0)
+        self >= &Version::new(8, 2, 0, 0)
     }
 
     /// Server supports extended error detail (subcode, message, expression
@@ -115,19 +115,19 @@ impl Version {
     /// [`BasePolicy::error_detail_verbosity`](crate::policy::BasePolicy::error_detail_verbosity).
     /// Older servers ignore the request flags.
     pub fn supports_extended_error_detail(&self) -> bool {
-        self >= &Version::new(8, 1, 3, 0)
+        self >= &Version::new(8, 2, 0, 0)
     }
 
     /// Server accepts server-compiled textual AEL on filter field 43 (`[128, <utf-8 bin>]`).
     ///
-    /// Aligns with Java fluent `Cluster.supportsServerCompiledFilterExpression()` (≥ 8.1.3).
+    /// Aligns with Java fluent `Cluster.supportsServerCompiledFilterExpression()` (≥ 8.2.0).
     pub fn supports_server_compiled_ael(&self) -> bool {
-        self >= &Version::new(8, 1, 3, 0)
+        self >= &Version::new(8, 2, 0, 0)
     }
 
     /// Server supports two-phase server query selection (field **44** WHERE explain → execute).
     pub fn supports_query_selection(&self) -> bool {
-        self >= &Version::new(8, 1, 3, 0)
+        self >= &Version::new(8, 2, 0, 0)
     }
 }
 

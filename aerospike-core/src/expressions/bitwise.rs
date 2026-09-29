@@ -594,7 +594,7 @@ pub fn get_int(
 /// eq(b64_encode(blob_bin("a".to_string())), string_val("AUI=".to_string()));
 /// ```
 ///
-/// Requires Aerospike Server version 8.1.3 or later.
+/// Requires Aerospike Server version 8.2.0 or later.
 pub fn b64_encode(bin: Expression) -> Expression {
     let args = vec![ExpressionArgument::Value(Value::from(
         BitExpOp::B64Encode as i64,
@@ -618,7 +618,7 @@ pub fn b64_encode(bin: Expression) -> Expression {
 ///   string_val("AQ==".to_string()));
 /// ```
 ///
-/// Requires Aerospike Server version 8.1.3 or later.
+/// Requires Aerospike Server version 8.2.0 or later.
 pub fn b64_encode_range(
     byte_offset: Expression,
     byte_size: Expression,

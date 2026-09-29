@@ -20,13 +20,13 @@ use std::fmt;
 pub enum IndexType {
     /// Numeric index.
     ///
-    /// Use for servers older than 8.1.3. From 8.1.3 on, prefer
+    /// Use for servers older than 8.2.0. From 8.2.0 on, prefer
     /// [`Integer`](Self::Integer); `Numeric` is still accepted there.
     Numeric,
 
-    /// Integer index. Requires server 8.1.3+, which a node reports through
+    /// Integer index. Requires server 8.2.0+, which a node reports through
     /// `Version::supports_integer_index`; older servers reject it. Use
-    /// [`Numeric`](Self::Numeric) for servers older than 8.1.3.
+    /// [`Numeric`](Self::Numeric) for servers older than 8.2.0.
     Integer,
 
     /// String index.
