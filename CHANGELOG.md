@@ -21,6 +21,10 @@
     `Version::supports_integer_index`; `IndexType::Numeric` remains for older servers.
 
 * **Bug Fixes**
+  * Serializing `Value::Infinity`, `Value::Wildcard` or a `Value::MultiResult` is a serde error
+    instead of a panic. **Breaking**: `From<Value> for i64` is now `TryFrom<Value>` (and
+    `TryFrom<&Value>`) with a `String` error, like every other `Value` conversion —
+    `let n: i64 = value.into()` becomes `let n = i64::try_from(&value)?`.
   * `Error::base_message` for a server failure is the result code's descriptive string (`Key already exists`),
     not the variant name. Info-command failures (`FAIL:<code>:<message>`) keep the server's text as the base
     message under the server's code (`Error::info_command_failure`) instead of filing the text as the node and

@@ -932,20 +932,22 @@ impl<'a> From<&'a bool> for Value {
     }
 }
 
-impl From<Value> for i64 {
-    fn from(val: Value) -> i64 {
-        match val {
-            Value::Int(val) => val,
-            _ => panic!("Value is not an integer to convert."),
-        }
+impl TryFrom<Value> for i64 {
+    type Error = String;
+    fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
+        i64::try_from(&val)
     }
 }
 
-impl<'a> From<&'a Value> for i64 {
-    fn from(val: &'a Value) -> i64 {
+impl TryFrom<&Value> for i64 {
+    type Error = String;
+    fn try_from(val: &Value) -> std::result::Result<Self, Self::Error> {
         match *val {
-            Value::Int(val) => val,
-            _ => panic!("Value is not an integer to convert."),
+            Value::Int(v) => Ok(v),
+            _ => Err(format!(
+                "Invalid type conversion from Value::{} to i64",
+                val.type_label()
+            )),
         }
     }
 }
@@ -1367,9 +1369,14 @@ impl Serialize for Value {
                 }
                 map.end()
             }
-            Value::Infinity => panic!("Infinity cannot be serialized"),
-            Value::Wildcard => panic!("Wildcard cannot be serialized"),
-            Value::MultiResult(_) => panic!("MultiValue cannot be serialized"),
+            // Server-only markers and a UDF's multi-value result have no
+            // representation in a data format: refuse, do not abort.
+            Value::Infinity | Value::Wildcard | Value::MultiResult(_) => {
+                Err(serde::ser::Error::custom(format!(
+                    "Value::{} cannot be serialized",
+                    self.type_label()
+                )))
+            }
             // Serialize the raw payload; the particle type is not
             // representable in most formats and the bytes are opaque anyway.
             Value::Unknown(_, b) => serializer.serialize_bytes(&b[..]),
@@ -1709,6 +1716,28 @@ mod tests {
         let string = String::from(r#"{"type":"Point"}"#);
         let str = r#"{"type":"Point"}"#;
         assert_eq!(as_geo!(string), as_geo!(str));
+    }
+
+    #[test]
+    fn i64_conversion_is_fallible_instead_of_panicking() {
+        use crate::Value;
+
+        assert_eq!(i64::try_from(as_val!(42)), Ok(42));
+        assert_eq!(i64::try_from(&as_val!(7)), Ok(7));
+        let err = i64::try_from(as_val!("x")).unwrap_err();
+        assert!(err.contains("string") && err.contains("i64"), "{err}");
+        assert!(i64::try_from(Value::Nil).is_err());
+    }
+
+    #[test]
+    #[cfg(feature = "serialization")]
+    fn unserializable_values_are_an_error_not_a_panic() {
+        use crate::Value;
+
+        for v in [Value::Infinity, Value::Wildcard, Value::MultiResult(vec![])] {
+            let err = serde_json::to_string(&v).unwrap_err().to_string();
+            assert!(err.contains("cannot be serialized"), "{err}");
+        }
     }
 
     #[test]

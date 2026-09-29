@@ -228,7 +228,7 @@ async fn rate_limited_query(client: &Client, namespace: &str, _set_name: &str) {
         match res {
             Ok(rec) => {
                 count += 1;
-                let v: i64 = rec.bins[BIN_NAME].clone().into();
+                let v = i64::try_from(&rec.bins[BIN_NAME]).unwrap();
                 assert!(v >= 0 && v <= range_end, "Unexpected bin value: {}", v);
 
                 // Log progress more frequently to see the throttling

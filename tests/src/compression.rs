@@ -468,7 +468,7 @@ async fn query_operate_with_compression() {
         for i in 0..200_i64 {
             let key = as_key!(namespace, &set_name, i);
             let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
-            let val: i64 = rec.bins["int"].clone().into();
+            let val = i64::try_from(&rec.bins["int"]).unwrap();
             assert_eq!(
                 val,
                 i + expected_int,

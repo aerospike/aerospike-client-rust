@@ -166,7 +166,7 @@ async fn query_single_consumer() {
         match res {
             Ok(rec) => {
                 count += 1;
-                let v: i64 = rec.bins["bin"].clone().into();
+                let v = i64::try_from(&rec.bins["bin"]).unwrap();
                 assert!(v >= 0);
                 assert!(v < 10);
             }
@@ -222,7 +222,7 @@ async fn query_single_consumer_with_cursor() {
             match res {
                 Ok(rec) => {
                     count += 1;
-                    let v: i64 = rec.bins["bin"].clone().into();
+                    let v = i64::try_from(&rec.bins["bin"]).unwrap();
                     assert!(v >= 0);
                     assert!(v < 10);
                 }
@@ -472,7 +472,7 @@ async fn query_single_consumer_rps() {
         match res {
             Ok(rec) => {
                 count += 1;
-                let v: i64 = rec.bins["bin"].clone().into();
+                let v = i64::try_from(&rec.bins["bin"]).unwrap();
                 assert!(v >= 0);
                 assert!(v <= (EXPECTED / 3) as i64);
             }
@@ -571,7 +571,7 @@ async fn query_multi_consumer() {
                 match res {
                     Ok(rec) => {
                         count.fetch_add(1, Ordering::Relaxed);
-                        let v: i64 = rec.bins["bin"].clone().into();
+                        let v = i64::try_from(&rec.bins["bin"]).unwrap();
                         assert!(v >= 0);
                         assert!(v < 10);
                     }
@@ -762,7 +762,7 @@ async fn query_filter_with_specific_bins() {
                     !rec.bins.contains_key("extra"),
                     "'extra' should not be returned"
                 );
-                let v: i64 = rec.bins["bin"].clone().into();
+                let v = i64::try_from(&rec.bins["bin"]).unwrap();
                 assert!(v >= 0 && v < 10);
                 assert_eq!(rec.bins["bin2"], as_val!("hello"));
             }
@@ -864,7 +864,7 @@ async fn query_filter_with_index_name() {
                 assert_eq!(rec.bins.len(), 2, "expected 2 bins, got {:?}", rec.bins);
                 assert!(rec.bins.contains_key("bin"), "missing 'bin'");
                 assert!(rec.bins.contains_key("bin2"), "missing 'bin2'");
-                let v: i64 = rec.bins["bin"].clone().into();
+                let v = i64::try_from(&rec.bins["bin"]).unwrap();
                 assert!(v >= 0 && v < 10);
             }
             Err(err) => panic!("{:?}", err),
@@ -979,7 +979,7 @@ async fn query_long_relax_ap_duration() {
         match res {
             Ok(rec) => {
                 count += 1;
-                let v: i64 = rec.bins["bin"].clone().into();
+                let v = i64::try_from(&rec.bins["bin"]).unwrap();
                 assert!(v >= 0 && v < 10);
             }
             Err(err) => panic!("{:?}", err),
@@ -1015,7 +1015,7 @@ async fn query_operate_write() {
     for i in 0..100_i64 {
         let key = as_key!(namespace, &set_name, i);
         let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
-        let val: i64 = rec.bins["bin"].clone().into();
+        let val = i64::try_from(&rec.bins["bin"]).unwrap();
         assert_eq!(val, i + 100, "record {i} was not updated correctly");
     }
 
@@ -1046,7 +1046,7 @@ async fn query_operate_scan_all() {
     for i in 0..50_i64 {
         let key = as_key!(namespace, &set_name, i);
         let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
-        let val: i64 = rec.bins["new_bin"].clone().into();
+        let val = i64::try_from(&rec.bins["new_bin"]).unwrap();
         assert_eq!(val, 999, "record {i} missing new_bin");
     }
 
@@ -1108,7 +1108,7 @@ async fn query_filter_equal_by_index() {
         match res {
             Ok(rec) => {
                 count += 1;
-                let v: i64 = rec.bins["bin"].clone().into();
+                let v = i64::try_from(&rec.bins["bin"]).unwrap();
                 assert_eq!(v, 5);
             }
             Err(err) => panic!("{:?}", err),
@@ -1476,7 +1476,7 @@ async fn query_filter_with_expression_builder() {
         match res {
             Ok(rec) => {
                 count += 1;
-                let v: i64 = rec.bins["a"].clone().into();
+                let v = i64::try_from(&rec.bins["a"]).unwrap();
                 assert!(v >= 0 && v <= 9);
             }
             Err(err) => panic!("{:?}", err),
@@ -1614,8 +1614,8 @@ async fn query_filter_expression_with_policy_filter() {
         match res {
             Ok(rec) => {
                 count += 1;
-                let a: i64 = rec.bins["a"].clone().into();
-                let b: i64 = rec.bins["b"].clone().into();
+                let a = i64::try_from(&rec.bins["a"]).unwrap();
+                let b = i64::try_from(&rec.bins["b"]).unwrap();
                 assert!(a >= 0 && a <= 9, "a={} out of index range", a);
                 assert_eq!(b, 0, "post-filter should exclude odd records, a={}", a);
             }

@@ -177,7 +177,7 @@ end
     for i in 0..10_i64 {
         let key = as_key!(namespace, &set_name, i);
         let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
-        let val: i64 = rec.bins["bin"].clone().into();
+        let val = i64::try_from(&rec.bins["bin"]).unwrap();
         assert_eq!(val, i * 2, "record {i} was not doubled");
     }
 
@@ -185,7 +185,7 @@ end
     for i in 10..50_i64 {
         let key = as_key!(namespace, &set_name, i);
         let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
-        let val: i64 = rec.bins["bin"].clone().into();
+        let val = i64::try_from(&rec.bins["bin"]).unwrap();
         assert_eq!(val, i, "record {i} should not have been modified");
     }
 
@@ -306,7 +306,7 @@ end
     for i in 0..20_i64 {
         let key = as_key!(namespace, &set_name, i);
         let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
-        let val: i64 = rec.bins["bin"].clone().into();
+        let val = i64::try_from(&rec.bins["bin"]).unwrap();
         assert_eq!(val, i + 100, "record {i} not updated correctly");
     }
 
