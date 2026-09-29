@@ -1042,7 +1042,7 @@ async fn batch_row_error_carries_server_subcode_and_message() {
         None => false,
     };
     if !supported {
-        eprintln!("skipping: cluster predates extended error detail (8.1.3)");
+        eprintln!("skipping: cluster predates extended error detail (8.2.0)");
         client.close().await.unwrap();
         return;
     }

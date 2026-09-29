@@ -17,7 +17,7 @@
     discovered and validated by their TLS addresses (as in Java) and switched to cleartext one by
     one. Requires an `auth_mode` other than `AuthMode::None`. **This trades away data-plane
     encryption** and is off by default.
-  * [CLIENT-4390] `IndexType::Integer` (`INTEGER`) for secondary indexes on server 8.1.3+, reported by
+  * [CLIENT-4390] `IndexType::Integer` (`INTEGER`) for secondary indexes on server 8.2.0+, reported by
     `Version::supports_integer_index`; `IndexType::Numeric` remains for older servers.
 
 * **Bug Fixes**

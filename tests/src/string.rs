@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Integration tests for CDT string operations.
-//! Requires Aerospike Server version >= 8.1.3.
+//! Requires Aerospike Server version >= 8.2.0.
 
 use std::collections::HashMap;
 
@@ -35,7 +35,7 @@ async fn server_supports_string_operations(client: &aerospike::Client) -> bool {
     };
 
     if !supported {
-        eprintln!("Skipping: server does not support string operations (requires >= 8.1.3)");
+        eprintln!("Skipping: server does not support string operations (requires >= 8.2.0)");
     }
 
     supported
@@ -1271,10 +1271,10 @@ async fn to_string_from_integer_double_string_blob_and_bin_type_error() {
         .operate(&wpolicy, &key, &[str_op::to_string(BIN)])
         .await
         .expect_err("to_string on list bin should fail");
-    let msg = format!("{}", err);
-    assert!(
-        msg.contains("BinTypeError") || msg.contains("BIN_TYPE_ERROR"),
-        "unexpected error: {msg}"
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::BinTypeError),
+        "unexpected error: {err}"
     );
 }
 
@@ -1355,7 +1355,7 @@ async fn no_fail_does_not_change_missing_bin_noop() {
     assert_eq!(rec.bins.get("other").unwrap(), &Value::from("untouched"));
 }
 
-// All eight additive ops create a missing bin from empty in server 8.1.3.
+// All eight additive ops create a missing bin from empty in server 8.2.0.
 // Transform/subtractive ops still no-op.
 
 #[aerospike_macro::test]
@@ -2074,7 +2074,7 @@ const NFD: &str = "cafe\u{301}";
 /// **`#[ignore]`d because the server does not honour this for a needle that
 /// spans the whole bin.** A length precheck rejects the 5-codepoint NFD needle
 /// against the 4-codepoint NFC bin before the canonical search runs, so this
-/// fails on 8.1.3.0 exactly as the Java and Go reference tests do. It is kept,
+/// fails on 8.2.0.0 exactly as the Java and Go reference tests do. It is kept,
 /// runnable with `--ignored`, rather than deleted: the mid-string case below
 /// passes, so dropping this one would hide a guarantee that is not actually met.
 #[aerospike_macro::test]

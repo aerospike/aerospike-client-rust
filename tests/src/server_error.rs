@@ -14,7 +14,7 @@
 
 //! Integration tests for extended server-supplied error detail.
 //! Ported from the Go client's `error_detail_verbosity_test.go` (CLIENT-4975).
-//! Requires Aerospike Server version >= 8.1.3; every test self-skips on older
+//! Requires Aerospike Server version >= 8.2.0; every test self-skips on older
 //! servers (the request flag is ignored there).
 //!
 //! Note on subcodes: the server's subcode *values* are a server-version-specific
@@ -50,7 +50,7 @@ async fn supports_error_detail(client: &Client) -> bool {
         Err(_) => false,
     };
     if !ok {
-        eprintln!("Skipping: server does not support extended error detail (requires >= 8.1.3)");
+        eprintln!("Skipping: server does not support extended error detail (requires >= 8.2.0)");
     }
     ok
 }

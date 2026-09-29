@@ -24,7 +24,7 @@
 //! [`ServerErrorDetail`] and via the [`Error::server_error_detail`],
 //! [`Error::sub_code`] and [`Error::server_message`] accessors.
 //!
-//! Requires Aerospike server version 8.1.3 or later; older servers ignore the
+//! Requires Aerospike server version 8.2.0 or later; older servers ignore the
 //! request flags.
 //!
 //! [`Error::server_error_detail`]: crate::errors::Error::server_error_detail
@@ -367,7 +367,7 @@ impl fmt::Display for ExpressionTrace {
 /// Populated only when
 /// [`BasePolicy::error_detail_verbosity`](crate::policy::BasePolicy::error_detail_verbosity)
 /// is greater than zero and the failing branch dispatched a detail. Requires
-/// server version 8.1.3+.
+/// server version 8.2.0+.
 #[cfg_attr(feature = "serialization", derive(serde::Serialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ServerErrorDetail {

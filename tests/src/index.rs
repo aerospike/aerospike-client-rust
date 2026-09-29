@@ -262,7 +262,7 @@ async fn blob_index_serves_a_blob_equality_filter() {
 }
 
 /// Port of the Go client's INTEGER index test (CLIENT-4390): from server
-/// 8.1.3 an index over integer bins is declared as `INTEGER`, and both a
+/// 8.2.0 an index over integer bins is declared as `INTEGER`, and both a
 /// range and an equality filter are served by it.
 #[aerospike_macro::test]
 async fn integer_index_serves_range_and_equality_filters() {
@@ -275,7 +275,7 @@ async fn integer_index_serves_range_and_equality_filters() {
         None => false,
     };
     if !supported {
-        eprintln!("skipping INTEGER index test: requires server 8.1.3+");
+        eprintln!("skipping INTEGER index test: requires server 8.2.0+");
         client.close().await.unwrap();
         return;
     }
@@ -297,7 +297,7 @@ async fn integer_index_serves_range_and_equality_filters() {
             None,
         )
         .await
-        .expect("server 8.1.3+ must accept an INTEGER index");
+        .expect("server 8.2.0+ must accept an INTEGER index");
     task.wait_till_complete(None).await.unwrap();
 
     use futures::StreamExt;

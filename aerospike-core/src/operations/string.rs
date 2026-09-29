@@ -19,7 +19,7 @@
 //! indexes count from the end of the string (-1 = last codepoint). Out-of-bounds
 //! indexes are clamped to the valid range; no error is returned.
 //!
-//! String operations require Aerospike Server version 8.1.3 or later. A non-empty
+//! String operations require Aerospike Server version 8.2.0 or later. A non-empty
 //! [`CdtContext`] argument navigates into a string nested inside a list or map
 //! bin; with an empty context, the operation targets the bin itself. The leaf
 //! that the context resolves to must already be an Aerospike string —

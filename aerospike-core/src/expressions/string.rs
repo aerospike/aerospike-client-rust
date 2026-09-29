@@ -43,7 +43,7 @@
 //! [`crate::expressions::lists::get_by_index`] or
 //! [`crate::expressions::maps::get_by_key`] to extract the leaf first.
 //!
-//! Requires Aerospike Server version 8.1.3 or later.
+//! Requires Aerospike Server version 8.2.0 or later.
 
 use crate::expressions::{ExpOp, ExpType, Expression, ExpressionArgument, MODIFY};
 use crate::operations::string::{StringPolicy, StringRegexFlags};

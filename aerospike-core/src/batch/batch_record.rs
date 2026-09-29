@@ -119,7 +119,7 @@ impl BatchRecord {
     /// Populated on the same terms as the single-key commands: the request must
     /// ask for it via
     /// [`BasePolicy::error_detail_verbosity`](crate::policy::BasePolicy::error_detail_verbosity)
-    /// and the server must be 8.1.3+. [`sub_code`](Self::sub_code) and
+    /// and the server must be 8.2.0+. [`sub_code`](Self::sub_code) and
     /// [`server_message`](Self::server_message) read the two fields callers
     /// usually want.
     #[must_use]

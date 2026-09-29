@@ -442,7 +442,7 @@ pub struct BasePolicy {
     /// [`Error::server_message`](crate::errors::Error::server_message)
     /// accessors. See [`crate::ServerErrorDetail`].
     ///
-    /// Requires Aerospike server version 8.1.3 or later; older servers ignore
+    /// Requires Aerospike server version 8.2.0 or later; older servers ignore
     /// the flag.
     ///
     /// Default: 0

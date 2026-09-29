@@ -772,7 +772,7 @@ const B64_FLAGS_INVERT_SIZE: u8 = 1;
 /// returns "AUI="
 /// ```
 ///
-/// Requires Aerospike Server version 8.1.3 or later.
+/// Requires Aerospike Server version 8.2.0 or later.
 pub fn b64_encode(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::B64Encode as u8,
@@ -805,7 +805,7 @@ pub fn b64_encode(bin: &str) -> Operation {
 /// returns "QgM="
 /// ```
 ///
-/// Requires Aerospike Server version 8.1.3 or later.
+/// Requires Aerospike Server version 8.2.0 or later.
 pub fn b64_encode_range(
     bin: &str,
     byte_offset: i64,

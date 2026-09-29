@@ -618,7 +618,7 @@ async fn server_supports_list_join(client: &Client) -> bool {
     };
 
     if !supported {
-        eprintln!("Skipping: server does not support string_list_join (requires >= 8.1.3)");
+        eprintln!("Skipping: server does not support string_list_join (requires >= 8.2.0)");
     }
 
     supported
