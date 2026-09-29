@@ -59,15 +59,6 @@ explicitly, or run `cargo doc --open` for a reference built from the exact
 source you're reading. If those two ever disagree, `cargo doc --open` wins —
 it's built from what's actually in the tree.
 
-### Cross-language reference
-
-[SubMilliPost](https://github.com/aerospike/aerospike-submillipost) works
-through Aerospike data-modeling patterns end to end via a small social-newsletter
-app (posts, comments, likes, subscriptions), with a [cross-language
-implementation guide](https://github.com/aerospike/aerospike-submillipost/blob/main/docs/guides/cross-language-implementation.md)
-for porting it to a new client. No Rust port exists yet — the reference
-implementation is Java.
-
 ## Feature highlights
 
 **Execution models:**
