@@ -17,6 +17,10 @@
     discovered and validated by their TLS addresses (as in Java) and switched to cleartext one by
     one. Requires an `auth_mode` other than `AuthMode::None`. **This trades away data-plane
     encryption** and is off by default.
+  * `PartitionFilter` implements `Serialize`/`Deserialize` under the `serialization` feature: the
+    partition range and each partition's resume point (id, retry, bval, digest — the same fields the Go
+    client persists) round-trip, so a paginated query can hand its cursor to another process and
+    continue there. Deserialization rejects a cursor whose range or entries are inconsistent.
   * [CLIENT-4390] `IndexType::Integer` (`INTEGER`) for secondary indexes on server 8.2.0+, reported by
     `Version::supports_integer_index`; `IndexType::Numeric` remains for older servers.
 

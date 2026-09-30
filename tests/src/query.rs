@@ -2176,3 +2176,45 @@ async fn query_ops_projection_multiple_bins() {
 
     client.close().await.unwrap();
 }
+
+/// A query resumes from a cursor that crossed a serde boundary into a fresh
+/// `PartitionFilter` — pagination handed from one process to another.
+/// Every record arrives exactly once across the pages.
+#[aerospike_macro::test]
+async fn query_resumes_from_a_serialized_cursor() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    const RECORDS: i64 = 60;
+    for i in 0..RECORDS {
+        let key = as_key!(namespace, &set_name, i);
+        client.put(&wpolicy, &key, &[as_bin!("bin", i)]).await.unwrap();
+    }
+
+    let mut qpolicy = QueryPolicy::default();
+    qpolicy.max_records = 17;
+
+    let mut seen = std::collections::HashSet::new();
+    let mut pages = 0;
+    let mut stored = serde_json::to_string(&PartitionFilter::all()).unwrap();
+    loop {
+        let pf: PartitionFilter = serde_json::from_str(&stored).unwrap();
+        if pf.done() {
+            break;
+        }
+        pages += 1;
+        let statement = Statement::new(namespace, &set_name, Bins::All);
+        let rs = client.query(&qpolicy, pf, statement).await.unwrap();
+        let mut rs = rs.into_stream();
+        while let Some(res) = rs.next().await {
+            let rec = res.unwrap();
+            let v = i64::try_from(&rec.bins["bin"]).unwrap();
+            assert!(seen.insert(v), "record {v} delivered twice");
+        }
+        let pf = rs.partition_filter().await.unwrap();
+        stored = serde_json::to_string(&pf).unwrap();
+    }
+    assert_eq!(seen.len(), RECORDS as usize, "every record exactly once");
+    assert!(pages >= 4, "{pages} pages for {RECORDS} records at 17 per page");
+}
