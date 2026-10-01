@@ -99,7 +99,7 @@ async fn prepare_scope_fixture(client: &Client) -> ScopeFixture {
         (
             AGE_BIN,
             &age_index_name,
-            IndexType::Numeric,
+            IndexType::Integer,
             CollectionIndexType::Default,
         ),
         (

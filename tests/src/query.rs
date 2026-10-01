@@ -54,7 +54,7 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
             &set_name,
             "bin",
             &index_name,
-            IndexType::Numeric,
+            IndexType::Integer,
             CollectionIndexType::Default,
             None,
         )
@@ -799,7 +799,7 @@ async fn query_duplicate_bin_projection_returns_scalar() {
             set_name,
             "a_fr",
             idx,
-            IndexType::Numeric,
+            IndexType::Integer,
             CollectionIndexType::Default,
             None,
         )
@@ -1153,7 +1153,7 @@ async fn create_list_test_set(client: &Client) -> String {
             &set_name,
             "list_bin",
             &idx_name,
-            IndexType::Numeric,
+            IndexType::Integer,
             CollectionIndexType::List,
             None,
         )
@@ -1455,7 +1455,7 @@ async fn query_filter_with_expression_builder() {
             namespace,
             &set_name,
             &idx_name,
-            IndexType::Numeric,
+            IndexType::Integer,
             CollectionIndexType::Default,
             &exp,
         )
@@ -1521,7 +1521,7 @@ async fn query_filter_with_context_builder() {
             &set_name,
             bin_name,
             &idx_name,
-            IndexType::Numeric,
+            IndexType::Integer,
             CollectionIndexType::Default,
             Some(&ctx),
         )
@@ -1584,7 +1584,7 @@ async fn query_filter_expression_with_policy_filter() {
             namespace,
             &set_name,
             &idx_name,
-            IndexType::Numeric,
+            IndexType::Integer,
             CollectionIndexType::Default,
             &idx_exp,
         )
@@ -2101,7 +2101,7 @@ async fn query_returns_user_key_when_send_key_set() {
             &set_name,
             bin_name,
             &format!("{}_{}_qk", namespace, set_name),
-            IndexType::Numeric,
+            IndexType::Integer,
             CollectionIndexType::Default,
             None,
         )

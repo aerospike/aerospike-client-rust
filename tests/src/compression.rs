@@ -394,7 +394,7 @@ async fn query_with_compression() {
             &set_name,
             "int",
             &idx_name,
-            IndexType::Numeric,
+            IndexType::Integer,
             CollectionIndexType::Default,
             None,
         )

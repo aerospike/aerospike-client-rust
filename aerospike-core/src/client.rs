@@ -2383,7 +2383,7 @@ impl Client {
     /// * `set_name` — Set name (can be empty for namespace-wide).
     /// * `bin_name` — Bin to index.
     /// * `index_name` — Unique name for the index.
-    /// * `index_type` — [`IndexType`] (e.g. Numeric, String).
+    /// * `index_type` — [`IndexType`] (e.g. Integer, String).
     /// * `collection_index_type` — [`CollectionIndexType`] for list/map indexing.
     /// * `ctx` — Optional [`CdtContext`](crate::operations::CdtContext) for nested collection indexing.
     ///
@@ -2417,7 +2417,7 @@ impl Client {
     ///
     /// match client.create_index_on_bin(
     ///     &policy, "foo", "bar", "baz",
-    ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, None,
+    ///     "idx_foo_bar_baz", IndexType::Integer, CollectionIndexType::Default, None,
     /// ).await {
     ///     Err(err) => println!("Failed to create index: {}", err),
     ///     Ok(task) => { /* wait for task with task.wait_till_complete(None).await */ }
@@ -2458,7 +2458,7 @@ impl Client {
     /// * `namespace` — Namespace for the index.
     /// * `set_name` — Set name (can be empty for namespace-wide).
     /// * `index_name` — Unique name for the index.
-    /// * `index_type` — [`IndexType`] (e.g. Numeric, String).
+    /// * `index_type` — [`IndexType`] (e.g. Integer, String).
     /// * `collection_index_type` — [`CollectionIndexType`].
     /// * `expression` — [`Expression`](crate::expressions::Expression) defining the index (e.g. equality on a bin).
     ///
@@ -2491,7 +2491,7 @@ impl Client {
     /// let expression = eq(int_bin("a".to_string()), int_val(500));
     /// match client.create_index_using_expression(
     ///     &policy, "foo", "bar", "idx_foo_bar_baz",
-    ///     IndexType::Numeric, CollectionIndexType::Default, &expression,
+    ///     IndexType::Integer, CollectionIndexType::Default, &expression,
     /// ).await {
     ///     Err(err) => println!("Failed to create index: {}", err),
     ///     Ok(task) => { /* wait for task with task.wait_till_complete(None).await */ }

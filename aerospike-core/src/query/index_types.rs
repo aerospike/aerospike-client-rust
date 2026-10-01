@@ -20,15 +20,20 @@ use std::fmt;
 pub enum IndexType {
     /// Numeric index.
     ///
-    /// Use for servers older than 8.2.0. From 8.2.0 on, prefer
-    /// [`Integer`](Self::Integer); `Numeric` is still accepted there.
+    /// **Deprecated**: use [`Integer`](Self::Integer). `Integer` is the
+    /// canonical type on every server version. Passing `Numeric` still creates
+    /// the same index and writes `NUMERIC`.
+    #[deprecated(note = "Use IndexType::Integer instead")]
     Numeric,
 
     /// Integer index.
     ///
+    /// Canonical secondary-index type for integer bins on every server version
+    /// ([CLIENT-4363](https://aerospike.atlassian.net/browse/CLIENT-4363),
+    /// [SERVER-460](https://aerospike.atlassian.net/browse/SERVER-460)).
     /// `sindex-create` sends `INTEGER` on servers that accept it (8.2.0 and
-    /// newer) and `NUMERIC` on older servers, which reject `INTEGER`. Callers
-    /// can pass `Integer` for both.
+    /// newer, [`Version::supports_integer_index`](crate::Version::supports_integer_index))
+    /// and `NUMERIC` on older servers, which reject `INTEGER`.
     Integer,
 
     /// String index.
@@ -66,9 +71,12 @@ pub enum CollectionIndexType {
 impl IndexType {
     /// Type to write into `sindex-create` for this server.
     ///
-    /// Servers before 8.2.0 reject `INTEGER` and accept `NUMERIC` for the same
-    /// index. `supports_integer_index` is
+    /// `Integer` is canonical on every server. Servers before 8.2.0 reject
+    /// `INTEGER` and accept `NUMERIC` for the same index, so `Integer` is
+    /// written as `Numeric` there. An explicit `Numeric` stays `NUMERIC`.
+    /// `supports_integer_index` is
     /// [`Version::supports_integer_index`](crate::Version::supports_integer_index).
+    #[allow(deprecated)]
     pub(crate) fn for_server(self, supports_integer_index: bool) -> Self {
         match self {
             IndexType::Integer if !supports_integer_index => IndexType::Numeric,
@@ -78,6 +86,7 @@ impl IndexType {
 }
 
 impl fmt::Display for IndexType {
+    #[allow(deprecated)]
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match *self {
             IndexType::Numeric => "NUMERIC".fmt(f),
@@ -101,6 +110,7 @@ impl fmt::Display for CollectionIndexType {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::{CollectionIndexType, IndexType};
 

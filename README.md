@@ -679,7 +679,7 @@ let task = client
         set_name,
         "bin_name",
         "idx_bin_name",
-        IndexType::Numeric,
+        IndexType::Integer,
         CollectionIndexType::Default,
         None,
     )

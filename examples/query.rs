@@ -289,7 +289,7 @@ async fn collection_index_query(client: &Client, namespace: &str) {
             &set_name,
             bin,
             &index_name,
-            IndexType::Numeric,
+            IndexType::Integer,
             CollectionIndexType::List,
             None,
         )
@@ -371,7 +371,7 @@ async fn create_secondary_index(client: &Client, namespace: &str, set_name: &str
             set_name,
             BIN_NAME,
             &index_name,
-            IndexType::Numeric,
+            IndexType::Integer,
             CollectionIndexType::Default,
             None,
         )

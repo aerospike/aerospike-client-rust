@@ -61,7 +61,7 @@ async fn create_index_on_bin() {
             &set,
             bin,
             &index,
-            IndexType::Numeric,
+            IndexType::Integer,
             CollectionIndexType::Default,
             None,
         )
@@ -77,7 +77,7 @@ async fn create_index_on_bin() {
             &set,
             bin,
             &index,
-            IndexType::Numeric,
+            IndexType::Integer,
             CollectionIndexType::Default,
             None,
         )
@@ -119,7 +119,7 @@ async fn create_index_using_expression() {
             ns,
             &set,
             &index,
-            IndexType::Numeric,
+            IndexType::Integer,
             CollectionIndexType::Default,
             &fe,
         )
@@ -134,7 +134,7 @@ async fn create_index_using_expression() {
             ns,
             &set,
             &index,
-            IndexType::Numeric,
+            IndexType::Integer,
             CollectionIndexType::Default,
             &fe,
         )
@@ -261,24 +261,14 @@ async fn blob_index_serves_a_blob_equality_filter() {
     client.close().await.unwrap();
 }
 
-/// Port of the Go client's INTEGER index test (CLIENT-4390): from server
-/// 8.2.0 an index over integer bins is declared as `INTEGER`, and both a
-/// range and an equality filter are served by it.
+/// `IndexType::Integer` creates an index over integer bins on every server
+/// version. The client writes `INTEGER` from 8.2.0 and `NUMERIC` before that.
+/// Both a range and an equality filter are served by it.
 #[aerospike_macro::test]
 async fn integer_index_serves_range_and_equality_filters() {
     let client = common::client().await;
     let ns = common::namespace();
     let apolicy = AdminPolicy::default();
-
-    let supported = match client.cluster.nodes().first() {
-        Some(node) => node.version().supports_integer_index(),
-        None => false,
-    };
-    if !supported {
-        eprintln!("skipping INTEGER index test: requires server 8.2.0+");
-        client.close().await.unwrap();
-        return;
-    }
 
     let set = create_test_set(&client, EXPECTED).await;
     let bin = "bin";
@@ -297,7 +287,7 @@ async fn integer_index_serves_range_and_equality_filters() {
             None,
         )
         .await
-        .expect("server 8.2.0+ must accept an INTEGER index");
+        .expect("IndexType::Integer must create an index on this server");
     task.wait_till_complete(None).await.unwrap();
 
     use futures::StreamExt;

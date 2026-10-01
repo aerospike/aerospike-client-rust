@@ -60,7 +60,7 @@ async fn prepare_hint_fixture(client: &Client) -> HintFixture {
                 &set_name,
                 bin,
                 index_name,
-                IndexType::Numeric,
+                IndexType::Integer,
                 CollectionIndexType::Default,
                 None,
             )

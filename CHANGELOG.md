@@ -17,8 +17,10 @@
     discovered and validated by their TLS addresses (as in Java) and switched to cleartext one by
     one. Requires an `auth_mode` other than `AuthMode::None`. **This trades away data-plane
     encryption** and is off by default.
-  * [CLIENT-4390] `IndexType::Integer` (`INTEGER`) for secondary indexes on server 8.2.0+, reported by
-    `Version::supports_integer_index`; `IndexType::Numeric` remains for older servers.
+  * [CLIENT-4363] `IndexType::Integer` is the canonical secondary-index type on every server version.
+    `sindex-create` writes `INTEGER` when `Version::supports_integer_index` is true (server 8.2.0+)
+    and `NUMERIC` on older servers, which reject `INTEGER`. `IndexType::Numeric` is deprecated and
+    still writes `NUMERIC`.
 
 * **Bug Fixes**
   * `Error::base_message` for a server failure is the result code's descriptive string (`Key already exists`),

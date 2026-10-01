@@ -135,7 +135,7 @@ async fn query_execute_udf_with_filter() {
             &set_name,
             "bin",
             &format!("{}_{}_{}", namespace, set_name, "bin"),
-            IndexType::Numeric,
+            IndexType::Integer,
             CollectionIndexType::Default,
             None,
         )

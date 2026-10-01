@@ -645,7 +645,7 @@ end
             set_name,
             "bin_i",
             &format!("{}_{}_{}", ns, set_name, "bin_i"),
-            aerospike::IndexType::Numeric,
+            aerospike::IndexType::Integer,
             CollectionIndexType::Default,
             None,
         )

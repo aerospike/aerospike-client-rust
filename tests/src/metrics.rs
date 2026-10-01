@@ -998,7 +998,7 @@ async fn metrics_bytes_received_query_commands() {
             &set_name,
             "bin",
             &index_name,
-            IndexType::Numeric,
+            IndexType::Integer,
             CollectionIndexType::Default,
             None,
         )

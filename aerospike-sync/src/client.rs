@@ -761,7 +761,7 @@ impl Client {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let _ = client.create_index_on_bin(&AdminPolicy::default(), "foo", "bar", "baz",
-    ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, None);
+    ///     "idx_foo_bar_baz", IndexType::Integer, CollectionIndexType::Default, None);
     /// ```
     pub fn create_index_on_bin(
         &self,
@@ -802,7 +802,7 @@ impl Client {
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
     /// let fe: Expression = eq(int_bin("a".to_string()), int_val(500));
     /// let _ = client.create_index_using_expression(&AdminPolicy::default(), "foo", "bar",
-    ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, &fe);
+    ///     "idx_foo_bar_baz", IndexType::Integer, CollectionIndexType::Default, &fe);
     /// ```
     pub fn create_index_using_expression(
         &self,

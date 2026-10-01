@@ -96,7 +96,7 @@ pub(crate) async fn prepare_fixture(client: &Client) -> QuerySelectionFixture {
                 &set_name,
                 bin,
                 index_name,
-                IndexType::Numeric,
+                IndexType::Integer,
                 CollectionIndexType::Default,
                 None,
             )

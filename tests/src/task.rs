@@ -87,7 +87,7 @@ async fn index_task_test() {
             &set_name,
             &bin_name,
             &index_name,
-            IndexType::Numeric,
+            IndexType::Integer,
             CollectionIndexType::Default,
             None,
         )
