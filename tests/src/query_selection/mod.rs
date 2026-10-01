@@ -18,7 +18,10 @@
 //! `QuerySelectionHintFlagsTest`, and `QuerySelectionExplainScopeTest`.
 //!
 //! Requires Aerospike Server >= 8.2.0; tests self-skip when the connected
-//! node's [`Version::supports_query_selection`] is false.
+//! node's [`Version::supports_query_selection`] is false. They also self-skip
+//! on server 8.2.0.0 when `enable-quotas` is true: that build SIGSEGVs in
+//! `as_security_check_rps` from the query-explain path. Role quota coverage
+//! stays in `role_management`, which requires quotas to remain enabled.
 //!
 //! Debug query-plan logs (matching Java `Loggers.QUERY`):
 //! `RUST_LOG=query=debug cargo test --test lib query_selection -- --nocapture`
@@ -54,15 +57,40 @@ pub(crate) struct QuerySelectionFixture {
 }
 
 pub(crate) async fn supports_query_selection(client: &Client) -> bool {
-    let ok = client
-        .cluster
-        .get_random_node()
-        .map(|node| node.version().supports_query_selection())
-        .unwrap_or(false);
-    if !ok {
+    let node = match client.cluster.get_random_node() {
+        Ok(node) => node,
+        Err(_) => {
+            eprintln!("Skipping: server does not support query selection (requires >= 8.2.0)");
+            return false;
+        }
+    };
+    let version = node.version();
+    if !version.supports_query_selection() {
         eprintln!("Skipping: server does not support query selection (requires >= 8.2.0)");
+        return false;
     }
-    ok
+    // 8.2.0.0's explain path calls as_security_check_rps with a null rps_udata.
+    // With enable-quotas true that write SIGSEGVs asd and drops the node for
+    // every later test, including role_management. Quotas stay enabled.
+    if *version == aerospike::Version::new(8, 2, 0, 0) && quotas_enabled(client).await {
+        eprintln!("Skipping: server 8.2.0.0 aborts on query-explain when enable-quotas is true");
+        return false;
+    }
+    true
+}
+
+async fn quotas_enabled(client: &Client) -> bool {
+    let node = match client.cluster.get_random_node() {
+        Ok(node) => node,
+        Err(_) => return false,
+    };
+    let command = "get-config:context=security";
+    match node.info(&AdminPolicy::default(), &[command]).await {
+        Ok(map) => map
+            .get(command)
+            .is_some_and(|info| info.contains("enable-quotas=true")),
+        Err(_) => false,
+    }
 }
 
 pub(crate) async fn prepare_fixture(client: &Client) -> QuerySelectionFixture {
