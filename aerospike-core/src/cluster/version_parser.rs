@@ -103,9 +103,11 @@ impl Version {
         self >= &Version::new(8, 2, 0, 0)
     }
 
-    /// Server accepts `INTEGER` as a secondary-index type
-    /// ([`IndexType::Integer`](crate::IndexType::Integer)); older servers
-    /// only know `NUMERIC`.
+    /// Server accepts `INTEGER` as a secondary-index type name.
+    ///
+    /// [`IndexType::Integer`](crate::IndexType::Integer) is the canonical type
+    /// on every server. `sindex-create` sends `INTEGER` when this is true and
+    /// `NUMERIC` when it is false.
     pub fn supports_integer_index(&self) -> bool {
         self >= &Version::new(8, 2, 0, 0)
     }
