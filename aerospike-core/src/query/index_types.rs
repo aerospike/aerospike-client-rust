@@ -65,9 +65,9 @@ pub enum CollectionIndexType {
 }
 
 impl fmt::Display for IndexType {
-    #[allow(deprecated)]
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match *self {
+            #[allow(deprecated)]
             IndexType::Numeric => "NUMERIC".fmt(f),
             IndexType::Integer => "INTEGER".fmt(f),
             IndexType::String => "STRING".fmt(f),
@@ -89,7 +89,6 @@ impl fmt::Display for CollectionIndexType {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::{CollectionIndexType, IndexType};
 
@@ -97,7 +96,9 @@ mod tests {
     fn index_type_wire_names() {
         // These strings go into the `sindex-create` info command verbatim, so
         // they are protocol, not cosmetics.
-        assert_eq!(IndexType::Numeric.to_string(), "NUMERIC");
+        #[allow(deprecated)]
+        let numeric = IndexType::Numeric;
+        assert_eq!(numeric.to_string(), "NUMERIC");
         assert_eq!(IndexType::Integer.to_string(), "INTEGER");
         assert_eq!(IndexType::String.to_string(), "STRING");
         assert_eq!(IndexType::Geo2DSphere.to_string(), "GEO2DSPHERE");
