@@ -24,9 +24,11 @@ pub enum IndexType {
     /// [`Integer`](Self::Integer); `Numeric` is still accepted there.
     Numeric,
 
-    /// Integer index. Requires server 8.2.0+, which a node reports through
-    /// `Version::supports_integer_index`; older servers reject it. Use
-    /// [`Numeric`](Self::Numeric) for servers older than 8.2.0.
+    /// Integer index.
+    ///
+    /// `sindex-create` sends `INTEGER` on servers that accept it (8.2.0 and
+    /// newer) and `NUMERIC` on older servers, which reject `INTEGER`. Callers
+    /// can pass `Integer` for both.
     Integer,
 
     /// String index.
@@ -59,6 +61,20 @@ pub enum CollectionIndexType {
 
     /// Index map values.
     MapValues,
+}
+
+impl IndexType {
+    /// Type to write into `sindex-create` for this server.
+    ///
+    /// Servers before 8.2.0 reject `INTEGER` and accept `NUMERIC` for the same
+    /// index. `supports_integer_index` is
+    /// [`Version::supports_integer_index`](crate::Version::supports_integer_index).
+    pub(crate) fn for_server(self, supports_integer_index: bool) -> Self {
+        match self {
+            IndexType::Integer if !supports_integer_index => IndexType::Numeric,
+            other => other,
+        }
+    }
 }
 
 impl fmt::Display for IndexType {
@@ -97,6 +113,19 @@ mod tests {
         assert_eq!(IndexType::String.to_string(), "STRING");
         assert_eq!(IndexType::Geo2DSphere.to_string(), "GEO2DSPHERE");
         assert_eq!(IndexType::Blob.to_string(), "BLOB");
+    }
+
+    #[test]
+    fn integer_index_is_numeric_before_8_2() {
+        assert_eq!(IndexType::Integer.for_server(false).to_string(), "NUMERIC");
+        assert_eq!(IndexType::Integer.for_server(true).to_string(), "INTEGER");
+        assert_eq!(IndexType::String.for_server(false).to_string(), "STRING");
+        assert_eq!(
+            IndexType::Geo2DSphere.for_server(false).to_string(),
+            "GEO2DSPHERE"
+        );
+        assert_eq!(IndexType::Blob.for_server(false).to_string(), "BLOB");
+        assert_eq!(IndexType::Numeric.for_server(true).to_string(), "NUMERIC");
     }
 
     #[test]
