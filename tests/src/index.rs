@@ -261,14 +261,24 @@ async fn blob_index_serves_a_blob_equality_filter() {
     client.close().await.unwrap();
 }
 
-/// `IndexType::Integer` creates an index over integer bins on every server
-/// version. The client writes `INTEGER` from 8.2.0 and `NUMERIC` before that.
-/// Both a range and an equality filter are served by it.
+/// Port of the Go client's INTEGER index test: from server 8.2.0 an index
+/// over integer bins is declared as `INTEGER`, and both a range and an
+/// equality filter are served by it.
 #[aerospike_macro::test]
 async fn integer_index_serves_range_and_equality_filters() {
     let client = common::client().await;
     let ns = common::namespace();
     let apolicy = AdminPolicy::default();
+
+    let supported = match client.cluster.nodes().first() {
+        Some(node) => node.version().supports_integer_index(),
+        None => false,
+    };
+    if !supported {
+        eprintln!("skipping INTEGER index test: requires server 8.2.0+");
+        client.close().await.unwrap();
+        return;
+    }
 
     let set = create_test_set(&client, EXPECTED).await;
     let bin = "bin";
@@ -287,7 +297,7 @@ async fn integer_index_serves_range_and_equality_filters() {
             None,
         )
         .await
-        .expect("IndexType::Integer must create an index on this server");
+        .expect("server 8.2.0+ must accept an INTEGER index");
     task.wait_till_complete(None).await.unwrap();
 
     use futures::StreamExt;

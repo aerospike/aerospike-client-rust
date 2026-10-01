@@ -2588,12 +2588,7 @@ impl Client {
             cmd.push(',');
         }
 
-        write!(
-            cmd,
-            "{}",
-            index_type.for_server(node_version.supports_integer_index())
-        )
-        .unwrap();
+        write!(cmd, "{index_type}").unwrap();
 
         self.send_info_cmd(policy, node, &cmd, "Create index failed").await?;
         Ok(IndexTask::new(

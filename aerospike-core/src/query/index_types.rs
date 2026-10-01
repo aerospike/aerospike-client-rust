@@ -29,9 +29,7 @@ pub enum IndexType {
     /// Integer index.
     ///
     /// Canonical secondary-index type for integer bins on every server version.
-    /// `sindex-create` sends `INTEGER` on servers that accept it (8.2.0 and
-    /// newer, [`Version::supports_integer_index`](crate::Version::supports_integer_index))
-    /// and `NUMERIC` on older servers, which reject `INTEGER`.
+    /// `sindex-create` sends `INTEGER`.
     Integer,
 
     /// String index.
@@ -64,23 +62,6 @@ pub enum CollectionIndexType {
 
     /// Index map values.
     MapValues,
-}
-
-impl IndexType {
-    /// Type to write into `sindex-create` for this server.
-    ///
-    /// `Integer` is canonical on every server. Servers before 8.2.0 reject
-    /// `INTEGER` and accept `NUMERIC` for the same index, so `Integer` is
-    /// written as `Numeric` there. An explicit `Numeric` stays `NUMERIC`.
-    /// `supports_integer_index` is
-    /// [`Version::supports_integer_index`](crate::Version::supports_integer_index).
-    #[allow(deprecated)]
-    pub(crate) fn for_server(self, supports_integer_index: bool) -> Self {
-        match self {
-            IndexType::Integer if !supports_integer_index => IndexType::Numeric,
-            other => other,
-        }
-    }
 }
 
 impl fmt::Display for IndexType {
@@ -121,19 +102,6 @@ mod tests {
         assert_eq!(IndexType::String.to_string(), "STRING");
         assert_eq!(IndexType::Geo2DSphere.to_string(), "GEO2DSPHERE");
         assert_eq!(IndexType::Blob.to_string(), "BLOB");
-    }
-
-    #[test]
-    fn integer_index_is_numeric_before_8_2() {
-        assert_eq!(IndexType::Integer.for_server(false).to_string(), "NUMERIC");
-        assert_eq!(IndexType::Integer.for_server(true).to_string(), "INTEGER");
-        assert_eq!(IndexType::String.for_server(false).to_string(), "STRING");
-        assert_eq!(
-            IndexType::Geo2DSphere.for_server(false).to_string(),
-            "GEO2DSPHERE"
-        );
-        assert_eq!(IndexType::Blob.for_server(false).to_string(), "BLOB");
-        assert_eq!(IndexType::Numeric.for_server(true).to_string(), "NUMERIC");
     }
 
     #[test]
