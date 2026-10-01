@@ -28,9 +28,7 @@ pub enum IndexType {
 
     /// Integer index.
     ///
-    /// Canonical secondary-index type for integer bins on every server version
-    /// ([CLIENT-4363](https://aerospike.atlassian.net/browse/CLIENT-4363),
-    /// [SERVER-460](https://aerospike.atlassian.net/browse/SERVER-460)).
+    /// Canonical secondary-index type for integer bins on every server version.
     /// `sindex-create` sends `INTEGER` on servers that accept it (8.2.0 and
     /// newer, [`Version::supports_integer_index`](crate::Version::supports_integer_index))
     /// and `NUMERIC` on older servers, which reject `INTEGER`.
