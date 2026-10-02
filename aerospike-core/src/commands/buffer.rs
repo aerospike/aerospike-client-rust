@@ -712,7 +712,7 @@ impl Buffer {
         }
 
         if attr.send_key && key.has_value_to_send() {
-            self.write_field_value(&key.user_key.clone().unwrap(), FieldType::Key)?;
+            self.write_field_value(key.user_key.as_ref().unwrap(), FieldType::Key)?;
         }
         Ok(())
     }
@@ -892,7 +892,7 @@ impl Buffer {
 
         // Write user key
         if attr.send_key && key.has_value_to_send() {
-            self.write_field_value(&key.user_key.clone().unwrap(), FieldType::Key)?;
+            self.write_field_value(key.user_key.as_ref().unwrap(), FieldType::Key)?;
         }
         Ok(())
     }
@@ -1470,7 +1470,7 @@ impl Buffer {
 
         // ---------- estimation: filter block ----------
         if let Some(filter) = filter {
-            let idx_type = filter.collection_index_type.clone();
+            let idx_type = filter.collection_index_type;
             if idx_type != CollectionIndexType::Default {
                 self.data_offset += 1 + FIELD_HEADER_SIZE as usize;
                 field_count += 1;
@@ -1642,7 +1642,7 @@ impl Buffer {
         self.write_u64(task_id);
 
         if let Some(filter) = filter {
-            let idx_type = filter.collection_index_type.clone();
+            let idx_type = filter.collection_index_type;
             if idx_type != CollectionIndexType::Default {
                 self.write_field_header(1, FieldType::IndexType);
                 self.write_u8(idx_type as u8);
@@ -1806,7 +1806,7 @@ impl Buffer {
 
     #[allow(clippy::ref_option)]
     fn estimate_filter_size(&mut self, filter: &Option<Expression>) -> Result<usize> {
-        filter.clone().map_or(Ok(0), |filter| {
+        filter.as_ref().map_or(Ok(0), |filter| {
             let filter_size = filter.pack(&mut None)?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             // filter_size + FIELD_HEADER_SIZE as usize

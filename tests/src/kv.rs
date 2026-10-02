@@ -599,6 +599,17 @@ async fn unknown_value_round_trips_as_a_bin_value() {
 /// seconds before subtracting, so a record written with a 500 s TTL and read
 /// back within the same wall-clock second reports exactly 500 — never 499
 /// from a fractional "now", and never 498.
+///
+/// The one thing the client cannot control is the server's clock. When it
+/// runs ahead of the client's (the podman VM here is a steady 31 ms ahead
+/// of the host), a read in the last `skew` of each client second sees a
+/// void time stamped in the *next* server second and reports 501. That is
+/// not a client defect, so a 501 is tolerated — but only as a small
+/// minority of the same-second reads: a client that rounded "now" instead
+/// of flooring it would push about half of them to 501. The samples are
+/// spread over more than two seconds so that fraction means something;
+/// packed into a few milliseconds, the whole loop lands in the skew tail
+/// or misses it, which is what made this test flake under load.
 #[aerospike_macro::test]
 async fn ttl_read_back_matches_other_clients() {
     let client = common::client().await;
@@ -621,6 +632,7 @@ async fn ttl_read_back_matches_other_clients() {
     };
 
     let mut same_second_reads = 0;
+    let mut same_second_over = 0;
     for i in 0..200_i64 {
         let key = as_key!(namespace, &set_name, i);
         let before = unix_now();
@@ -629,25 +641,38 @@ async fn ttl_read_back_matches_other_clients() {
             .await
             .unwrap();
         let record = client.get(&read_policy, &key, Bins::All).await.unwrap();
+        let ttl = record.time_to_live().expect("record has a TTL");
         let after = unix_now();
 
-        let ttl = record.time_to_live().expect("record has a TTL");
         assert_eq!(ttl.subsec_nanos(), 0, "TTL is reported in whole seconds");
         let secs = ttl.as_secs();
         // Only a second ticking over between write and read can lower it, by
-        // exactly that many seconds.
+        // exactly that many seconds; only a server clock running ahead can
+        // raise it, by one.
         let elapsed = after - before;
         assert!(
-            secs <= 500 && 500 - secs <= elapsed,
+            secs <= 501 && 500u64.saturating_sub(secs) <= elapsed,
             "record {i}: reported {secs}s for a 500s TTL with {elapsed}s elapsed"
         );
         if elapsed == 0 {
-            assert_eq!(secs, 500, "record {i}: same-second read must report the full TTL");
+            assert!(
+                secs == 500 || secs == 501,
+                "record {i}: same-second read must report the full TTL, got {secs}"
+            );
             same_second_reads += 1;
+            if secs == 501 {
+                same_second_over += 1;
+            }
         }
+        aerospike_rt::sleep(Duration::from_millis(12)).await;
     }
     assert!(
         same_second_reads > 0,
         "at least one write/read pair should land in the same second"
+    );
+    assert!(
+        same_second_over * 3 < same_second_reads,
+        "{same_second_over} of {same_second_reads} same-second reads reported 501: \
+         more than server clock skew explains, so \"now\" is not being floored"
     );
 }

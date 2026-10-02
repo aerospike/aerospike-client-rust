@@ -40,13 +40,19 @@ use aerospike::{
 // clock: since AER-6914 (server 8.2) the UDF sandbox drops `os`, `io`,
 // `debug` and `load*` to prevent escapes, so `os.time()` is a nil index and
 // the UDF would fail instantly instead of stalling. A pure-Lua loop works on
-// every server; measured ~14 ns per iteration on 8.2, so `secs` is scaled to
-// ~200 M iterations per requested second — over ten times the timeout.
+// every server. The count is calibrated, not maximal: measured ~13 ns per
+// iteration on 8.2, so `WAIT_ITERS` spins for ~530 ms — comfortably past the
+// 250 ms socket timeout, yet under the server's 1 s transaction deadline, so
+// the server rarely has to kill one (a couple per group run, when the tests'
+// own UDFs queue behind each other). That matters because every spinning UDF
+// pins a service thread: the earlier 200 M-iteration spin ran until the
+// server killed it at 1 s, and a 50-row batch of them held all six threads
+// of the dev node for ~8 s, timing out unrelated tests' 1 s-deadline
+// commands across the whole suite. Hence also the small row counts below.
 const WAIT_UDF: &str = r#"
-function wait_and_update(rec, secs)
-  local n = secs * 200000000
+function wait_and_update(rec, iters)
   local x = 0
-  for i = 1, n do x = (x + i) % 7 end
+  for i = 1, iters do x = (x + i) % 7 end
   if aerospike:exists(rec) then
     rec['bin'] = 1
     aerospike:update(rec)
@@ -58,7 +64,7 @@ function wait_and_update(rec, secs)
 end
 "#;
 
-const WAIT_SECS: i64 = 1;
+const WAIT_ITERS: i64 = 40_000_000;
 const SOCKET_TIMEOUT_MS: u32 = 250;
 
 async fn register_wait_udf(client: &Client) {
@@ -101,7 +107,7 @@ async fn single_key_udf_client_timeout_marks_in_doubt() {
             &key,
             "wait_udf",
             "wait_and_update",
-            Some(&[Value::from(WAIT_SECS)]),
+            Some(&[Value::from(WAIT_ITERS)]),
         )
         .await
         .expect_err("the UDF outruns the socket timeout");
@@ -137,8 +143,11 @@ async fn batch_udf_client_timeout_marks_in_doubt() {
     bpolicy.base_policy.total_timeout = 0;
     bpolicy.base_policy.max_retries = 0;
 
+    // Four rows: enough to prove every unanswered row is stamped, few enough
+    // that the spinning UDFs leave service threads free for the rest of the
+    // suite (see the note on `WAIT_UDF`).
     let upolicy = BatchUDFPolicy::default();
-    let ops: Vec<BatchOperation> = keys(namespace, &set_name, 50)
+    let ops: Vec<BatchOperation> = keys(namespace, &set_name, 4)
         .into_iter()
         .map(|key| {
             BatchOperation::udf(
@@ -146,7 +155,7 @@ async fn batch_udf_client_timeout_marks_in_doubt() {
                 key,
                 "wait_udf",
                 "wait_and_update",
-                Some(vec![Value::from(WAIT_SECS)]),
+                Some(vec![Value::from(WAIT_ITERS)]),
             )
         })
         .collect();
@@ -171,7 +180,7 @@ async fn batch_udf_client_timeout_marks_in_doubt() {
     // Per-row outcomes live on the operations themselves: each unanswered
     // write marked in-doubt and stamped TIMEOUT. This is what a wrapper maps
     // to its own exception, as the Java SDK does with its per-row records.
-    assert_eq!(ops.len(), 50);
+    assert_eq!(ops.len(), 4);
     assert!(
         ops.iter().all(|op| op.in_doubt()),
         "every unanswered write row is in doubt"
@@ -256,7 +265,7 @@ async fn singleton_group_client_timeout_stamps_row_like_grouped() {
             key,
             "wait_udf",
             "wait_and_update",
-            Some(vec![Value::from(WAIT_SECS)]),
+            Some(vec![Value::from(WAIT_ITERS)]),
         )
     };
 
@@ -323,7 +332,7 @@ async fn timeout_reports_the_attempts_actually_made() {
                 &key,
                 "wait_udf",
                 "wait_and_update",
-                Some(&[Value::from(WAIT_SECS)]),
+                Some(&[Value::from(WAIT_ITERS)]),
             )
             .await
             .expect_err("the UDF outruns the socket timeout");

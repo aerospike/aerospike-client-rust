@@ -1551,7 +1551,7 @@ impl Client {
         let defer_sink = sink.clone();
         let cluster = self.cluster.clone();
         aerospike_rt::spawn(async move {
-            Self::execute_query_timeout(cluster, &t_policy, tracker, statement.clone(), sink, None)
+            Self::execute_query_timeout(cluster, &t_policy, tracker, statement, sink, None)
                 .await;
             defer_sink.close();
         });
@@ -1609,7 +1609,7 @@ impl Client {
         let defer_sink = sink.clone();
         let cluster = self.cluster.clone();
         let task = aerospike_rt::spawn(async move {
-            Self::execute_query_timeout(cluster, &t_policy, tracker, statement.clone(), sink, None)
+            Self::execute_query_timeout(cluster, &t_policy, tracker, statement, sink, None)
                 .await;
             defer_sink.close();
         });
@@ -1724,7 +1724,7 @@ impl Client {
                 cluster,
                 &t_policy,
                 tracker,
-                statement.clone(),
+                statement,
                 sink,
                 execute_where,
             )

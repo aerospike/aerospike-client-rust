@@ -1757,10 +1757,9 @@ impl Cluster {
         // client config").
         let cluster_name = client_policy
             .cluster_name
-            .clone()
             .or_else(|| self.server_cluster_name())
             .unwrap_or_default();
-        let app_id = client_policy.application_id.clone().unwrap_or_default();
+        let app_id = client_policy.application_id.unwrap_or_default();
 
         let mut labels = Labels::new();
         for node in self.nodes().iter() {

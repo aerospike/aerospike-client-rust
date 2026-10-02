@@ -46,7 +46,7 @@ pub enum IndexType {
 }
 
 /// Secondary index collection type.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CollectionIndexType {
     /// Normal, scalar index.
     Default = 0,
