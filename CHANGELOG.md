@@ -25,6 +25,10 @@
     `Version::supports_integer_index`; `IndexType::Numeric` remains for older servers.
 
 * **Bug Fixes**
+  * Background queries (`query_operate`, `query_execute_udf`) treat `KEY_NOT_FOUND`
+    (result code 2) as "set absent on this node" and succeed, matching the Java
+    client. A 3-node cluster returns that code from nodes that do not hold a
+    fresh, empty set.
   * Serializing `Value::Infinity`, `Value::Wildcard` or a `Value::MultiResult` is a serde error
     instead of a panic. **Breaking**: `From<Value> for i64` is now `TryFrom<Value>` (and
     `TryFrom<&Value>`) with a `String` error, like every other `Value` conversion —
