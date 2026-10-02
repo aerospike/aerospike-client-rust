@@ -341,3 +341,65 @@ async fn integer_index_serves_range_and_equality_filters() {
     task.wait_till_complete(None).await.unwrap();
     client.close().await.unwrap();
 }
+
+/// A set index is created through the sindex framework with nothing but the
+/// set and the name (`sindex-create:…;indextype=set`), which is what lets the
+/// `sindex-admin` role create it. Mirrors the Go client's test: create, drop,
+/// recreate, drop — the recreate proves the drop really removed it. A set
+/// index with no set, or asked for through a bin-based constructor, is
+/// rejected on the client before anything is sent.
+#[aerospike_macro::test]
+async fn set_index_create_drop_recreate() {
+    let client = common::client().await;
+    let supported = client
+        .cluster
+        .get_random_node()
+        .is_ok_and(|node| node.version().supports_set_index());
+    if !supported {
+        eprintln!("skipped: set indexes need server 8.1.2+");
+        return;
+    }
+    let ns = common::namespace();
+    let set = common::rand_str(10);
+    let index = format!("{set}_setidx");
+    let apolicy = AdminPolicy::default();
+
+    let err = client
+        .create_set_index(&apolicy, ns, "", &index)
+        .await
+        .expect_err("a set index needs a set");
+    assert!(matches!(err.kind(), ErrorKind::InvalidArgument), "{err}");
+    let err = client
+        .create_index_on_bin(
+            &apolicy,
+            ns,
+            &set,
+            "bin",
+            &index,
+            IndexType::Numeric,
+            CollectionIndexType::Set,
+            None,
+        )
+        .await
+        .expect_err("a set index takes no bin");
+    assert!(matches!(err.kind(), ErrorKind::InvalidArgument), "{err}");
+
+    let _index_guard = common::lock_index_ops().await;
+    for round in 0..2 {
+        let task = client
+            .create_set_index(&apolicy, ns, &set, &index)
+            .await
+            .unwrap_or_else(|e| panic!("round {round}: create set index: {e}"));
+        task.wait_till_complete(None)
+            .await
+            .unwrap_or_else(|e| panic!("round {round}: set index build: {e}"));
+
+        let task = client
+            .drop_index(&apolicy, ns, &set, &index)
+            .await
+            .unwrap_or_else(|e| panic!("round {round}: drop set index: {e}"));
+        task.wait_till_complete(None)
+            .await
+            .unwrap_or_else(|e| panic!("round {round}: set index drop: {e}"));
+    }
+}

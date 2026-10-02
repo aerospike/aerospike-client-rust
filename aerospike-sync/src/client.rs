@@ -763,6 +763,22 @@ impl Client {
     /// let _ = client.create_index_on_bin(&AdminPolicy::default(), "foo", "bar", "baz",
     ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, None);
     /// ```
+    /// Creates a set index (record presence per set; no bin, type, context or
+    /// expression). Requires server 8.1.2+. See the async client's
+    /// `create_set_index`.
+    pub fn create_set_index(
+        &self,
+        policy: &AdminPolicy,
+        namespace: &str,
+        set_name: &str,
+        index_name: &str,
+    ) -> Result<IndexTask> {
+        block_on(
+            self.async_client
+                .create_set_index(policy, namespace, set_name, index_name),
+        )
+    }
+
     pub fn create_index_on_bin(
         &self,
         policy: &AdminPolicy,

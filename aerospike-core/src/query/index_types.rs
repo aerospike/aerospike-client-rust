@@ -59,6 +59,13 @@ pub enum CollectionIndexType {
 
     /// Index map values.
     MapValues,
+
+    /// A set index: record presence per set, with no bin, type, context or
+    /// expression. Requires server 8.1.2+, which a node reports through
+    /// `Version::supports_set_index`. Created with
+    /// [`Client::create_set_index`](crate::Client::create_set_index); the
+    /// bin- and expression-based constructors reject it.
+    Set,
 }
 
 impl fmt::Display for IndexType {
@@ -80,6 +87,7 @@ impl fmt::Display for CollectionIndexType {
             CollectionIndexType::List => "LIST".fmt(f),
             CollectionIndexType::MapKeys => "MAPKEYS".fmt(f),
             CollectionIndexType::MapValues => "MAPVALUES".fmt(f),
+            CollectionIndexType::Set => "SET".fmt(f),
         }
     }
 }
@@ -105,5 +113,6 @@ mod tests {
         assert_eq!(CollectionIndexType::List.to_string(), "LIST");
         assert_eq!(CollectionIndexType::MapKeys.to_string(), "MAPKEYS");
         assert_eq!(CollectionIndexType::MapValues.to_string(), "MAPVALUES");
+        assert_eq!(CollectionIndexType::Set.to_string(), "SET");
     }
 }

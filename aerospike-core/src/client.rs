@@ -2515,6 +2515,64 @@ impl Client {
         .await
     }
 
+    /// Creates a set index: a secondary index on record presence per set, with
+    /// no bin, type, context or expression. This asynchronous server call
+    /// returns before the index is built; wait on the returned task.
+    ///
+    /// Requires server 8.1.2+ ([`Version::supports_set_index`]). The server
+    /// builds it through the sindex framework, so the `sindex-admin` role is
+    /// enough — the older `set-config … enable-index=true` route needs
+    /// `set-config`. Dropped with [`drop_index`](Self::drop_index) like any
+    /// other index.
+    ///
+    /// # Errors
+    ///
+    /// `set_name` is required: a set index with no set is rejected here, before
+    /// anything is sent. Server failures come back as the server reports them.
+    ///
+    /// ```rust,edition2021
+    /// # extern crate aerospike;
+    /// # use aerospike::*;
+    /// # use std::env;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// # let hosts = env::var("AEROSPIKE_HOSTS").unwrap_or(String::from("127.0.0.1:3000"));
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
+    /// let policy = AdminPolicy::default();
+    ///
+    /// match client.create_set_index(&policy, "test", "demo", "demo_set_idx").await {
+    ///     Err(err) => println!("Failed to create set index: {}", err),
+    ///     Ok(task) => { /* wait for task with task.wait_till_complete(None).await */ }
+    /// }
+    /// # }
+    /// ```
+    pub async fn create_set_index(
+        &self,
+        policy: &AdminPolicy,
+        namespace: &str,
+        set_name: &str,
+        index_name: &str,
+    ) -> Result<IndexTask> {
+        if set_name.is_empty() {
+            return Err(Error::invalid_argument(
+                "a set index requires a set name".to_string(),
+            ));
+        }
+        self.create_index(
+            policy,
+            namespace,
+            set_name,
+            "",
+            index_name,
+            IndexType::Numeric,
+            CollectionIndexType::Set,
+            None,
+            None,
+        )
+        .await
+    }
+
     /// Creates a secondary index on a bin or using expression. This asynchronous server call
     /// returns before the command is complete.
     ///
@@ -2548,6 +2606,26 @@ impl Client {
 
         cmd.push_str(";indexname=");
         cmd.push_str(index_name);
+
+        if collection_index_type == CollectionIndexType::Set {
+            // A set index takes nothing else: the server rejects a bin, a type,
+            // a context or an expression on it (`ERROR:4:type parameter is not
+            // supported for set index`). The command is exactly what the Java
+            // and Go clients send.
+            if !bin_name.is_empty() || expression.is_some() || ctx.is_some_and(|c| !c.is_empty()) {
+                return Err(Error::invalid_argument(
+                    "a set index takes no bin, expression or context; use create_set_index"
+                        .to_string(),
+                ));
+            }
+            cmd.push_str(";indextype=set");
+            self.send_info_cmd(policy, node, &cmd, "Create index failed").await?;
+            return Ok(IndexTask::new(
+                Arc::clone(&self.cluster),
+                namespace.to_string(),
+                index_name.to_string(),
+            ));
+        }
 
         if let Some(ctx) = ctx {
             if !ctx.is_empty() {

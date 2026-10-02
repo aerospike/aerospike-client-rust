@@ -110,6 +110,13 @@ impl Version {
         self >= &Version::new(8, 2, 0, 0)
     }
 
+    /// Server creates set indexes through the sindex framework
+    /// (`sindex-create … indextype=set`), see
+    /// [`Client::create_set_index`](crate::Client::create_set_index).
+    pub fn supports_set_index(&self) -> bool {
+        self >= &Version::new(8, 1, 2, 0)
+    }
+
     /// Server supports extended error detail (subcode, message, expression
     /// trace) requested via
     /// [`BasePolicy::error_detail_verbosity`](crate::policy::BasePolicy::error_detail_verbosity).

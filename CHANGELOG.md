@@ -24,6 +24,11 @@
   * `ResultCode::InvalidEncoding` (29, "Invalid UTF-8 encoding", server 8.2.0+) and the
     `OpNotApplicable` subcode `OPNOT_STRING_REGEX_LIMIT_EXCEEDED` (12) are decoded instead of
     falling into `Unknown`.
+  * `Client::create_set_index(policy, namespace, set, name)` and `CollectionIndexType::Set`: a set
+    index (record presence per set) created through the sindex framework with no bin, type, context
+    or expression, so the `sindex-admin` role suffices. Server 8.1.2+, reported by
+    `Version::supports_set_index`. Parity with Go `CreateSetIndex` (CLIENT-4315) and Java's
+    four-argument `createIndex` (CLIENT-4316). Also on the sync client.
   * [CLIENT-4390] `IndexType::Integer` (`INTEGER`) for secondary indexes on server 8.2.0+, reported by
     `Version::supports_integer_index`; `IndexType::Numeric` remains for older servers.
 
