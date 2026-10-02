@@ -62,7 +62,7 @@ async fn time_reads(client: &Client, keys: &[Key], concurrency: Concurrency, lab
         let start = Instant::now();
         client.batch(&policy, &mut ops).await.expect("batch read");
         samples.push(start.elapsed().as_secs_f64() * 1000.0);
-        assert!(ops.iter().all(|o| o.batch_record().result_code == Some(ResultCode::Ok)));
+        assert!(ops.iter().all(|o| o.batch_record().result_code() == Some(ResultCode::Ok)));
     }
     report(label, keys.len(), samples);
 }

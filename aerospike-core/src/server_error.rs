@@ -194,6 +194,81 @@ pub mod sub_code {
     pub const MRT_BLOCKED_RECORD_LOCKED: u32 = 1;
     /// Op belongs to a different MRT than the one holding the lock.
     pub const MRT_BLOCKED_ID_MISMATCH: u32 = 2;
+
+    /// The constant's name for a `(result code, subcode)` pair.
+    ///
+    /// `None` when the pair is not one this client knows. Scoped by the pair
+    /// because subcode values repeat across parent result codes (`1` is
+    /// `PARAM_TTL_INVALID` under `ParameterError` and `FILTERED_META` under
+    /// `FilteredOut`). The counterpart of Go's `SubCodeToString`.
+    #[must_use]
+    pub const fn name(rc: crate::ResultCode, sub_code: u32) -> Option<&'static str> {
+        use crate::ResultCode as R;
+        Some(match (rc, sub_code) {
+            (_, NONE) => "NONE",
+            (R::ParameterError, PARAM_TTL_INVALID) => "PARAM_TTL_INVALID",
+            (R::ParameterError, PARAM_BITS_OFFSET_OUT_OF_RANGE) => "PARAM_BITS_OFFSET_OUT_OF_RANGE",
+            (R::ParameterError, PARAM_BITS_SIZE_OUT_OF_RANGE) => "PARAM_BITS_SIZE_OUT_OF_RANGE",
+            (R::ParameterError, PARAM_BITS_RESIZE_EXCEEDED) => "PARAM_BITS_RESIZE_EXCEEDED",
+            (R::ParameterError, PARAM_BIN_COUNT_TOO_LARGE) => "PARAM_BIN_COUNT_TOO_LARGE",
+            (R::ParameterError, PARAM_STRING_OP_PARAMS_INVALID) => "PARAM_STRING_OP_PARAMS_INVALID",
+            (R::ParameterError, PARAM_STRING_OP_INVALID) => "PARAM_STRING_OP_INVALID",
+            (R::ParameterError, PARAM_STRING_CTX_MALFORMED) => "PARAM_STRING_CTX_MALFORMED",
+            (R::ParameterError, PARAM_STRING_INDEX_OUT_OF_BOUNDS) => "PARAM_STRING_INDEX_OUT_OF_BOUNDS",
+            (R::ParameterError, PARAM_STRING_REGEX_INVALID) => "PARAM_STRING_REGEX_INVALID",
+            (R::ParameterError, PARAM_STRING_UTF8_INVALID) => "PARAM_STRING_UTF8_INVALID",
+            (R::PartitionUnavailable, UNAVAIL_INITIAL_BALANCE_UNRESOLVED) => {
+                "UNAVAIL_INITIAL_BALANCE_UNRESOLVED"
+            }
+            (R::PartitionUnavailable, UNAVAIL_REPLICA_UNAVAILABLE) => "UNAVAIL_REPLICA_UNAVAILABLE",
+            (R::UnsupportedFeature, UNSUPP_FEAT_MRT_REQUIRES_STRONG_CONSISTENCY) => {
+                "UNSUPP_FEAT_MRT_REQUIRES_STRONG_CONSISTENCY"
+            }
+            (R::UnsupportedFeature, UNSUPP_FEAT_GENERIC) => "UNSUPP_FEAT_GENERIC",
+            (R::BinNotFound, BIN_NOT_FOUND_HLL_CANNOT_CREATE_WITH_OP) => {
+                "BIN_NOT_FOUND_HLL_CANNOT_CREATE_WITH_OP"
+            }
+            (R::BinNotFound, BIN_NOT_FOUND_STRING_VALUE_NOT_FOUND) => {
+                "BIN_NOT_FOUND_STRING_VALUE_NOT_FOUND"
+            }
+            (R::BinNameTooLong, BIN_NAME_COUNT_TOO_LARGE) => "BIN_NAME_COUNT_TOO_LARGE",
+            (R::FailForbidden, FORBID_XDR_FILTER_BLOCKED) => "FORBID_XDR_FILTER_BLOCKED",
+            (R::FailForbidden, FORBID_SET_COUNT_STOP_WRITES) => "FORBID_SET_COUNT_STOP_WRITES",
+            (R::FailForbidden, FORBID_SET_SIZE_STOP_WRITES) => "FORBID_SET_SIZE_STOP_WRITES",
+            (R::FailForbidden, FORBID_CLOCK_SKEW_STOP_WRITES) => "FORBID_CLOCK_SKEW_STOP_WRITES",
+            (R::FailForbidden, FORBID_REPLACE_CONFLICT_RESOLVING) => "FORBID_REPLACE_CONFLICT_RESOLVING",
+            (R::FailForbidden, FORBID_TRUNCATED) => "FORBID_TRUNCATED",
+            (R::FailForbidden, FORBID_DURABILITY_VIOLATION) => "FORBID_DURABILITY_VIOLATION",
+            (R::OpNotApplicable, OPNOT_CDT_INDEX_OUT_OF_BOUNDS) => "OPNOT_CDT_INDEX_OUT_OF_BOUNDS",
+            (R::OpNotApplicable, OPNOT_CDT_RANK_OUT_OF_BOUNDS) => "OPNOT_CDT_RANK_OUT_OF_BOUNDS",
+            (R::OpNotApplicable, OPNOT_CDT_BOUNDED_LIST_OVERFLOW) => "OPNOT_CDT_BOUNDED_LIST_OVERFLOW",
+            (R::OpNotApplicable, OPNOT_HLL_INDEX_BITS_UNSET) => "OPNOT_HLL_INDEX_BITS_UNSET",
+            (R::OpNotApplicable, OPNOT_HLL_CANNOT_REDUCE_INDEX_BITS) => {
+                "OPNOT_HLL_CANNOT_REDUCE_INDEX_BITS"
+            }
+            (R::OpNotApplicable, OPNOT_HLL_CANNOT_REDUCE_MINHASH_BITS) => {
+                "OPNOT_HLL_CANNOT_REDUCE_MINHASH_BITS"
+            }
+            (R::OpNotApplicable, OPNOT_HLL_CANNOT_FOLD_MINHASH) => "OPNOT_HLL_CANNOT_FOLD_MINHASH",
+            (R::OpNotApplicable, OPNOT_HLL_FOLD_INDEX_BITS_TOO_LARGE) => {
+                "OPNOT_HLL_FOLD_INDEX_BITS_TOO_LARGE"
+            }
+            (R::OpNotApplicable, OPNOT_HLL_INTERSECT_MINHASH_MISMATCH) => {
+                "OPNOT_HLL_INTERSECT_MINHASH_MISMATCH"
+            }
+            (R::OpNotApplicable, OPNOT_STRING_CONVERSION_FAILED) => "OPNOT_STRING_CONVERSION_FAILED",
+            (R::OpNotApplicable, OPNOT_STRING_UTF8_INVALID) => "OPNOT_STRING_UTF8_INVALID",
+            (R::OpNotApplicable, OPNOT_STRING_REGEX_LIMIT_EXCEEDED) => {
+                "OPNOT_STRING_REGEX_LIMIT_EXCEEDED"
+            }
+            (R::OpNotApplicable, OPNOT_STRING_B64_INVALID) => "OPNOT_STRING_B64_INVALID",
+            (R::FilteredOut, FILTERED_META) => "FILTERED_META",
+            (R::FilteredOut, FILTERED_BINS) => "FILTERED_BINS",
+            (R::MrtBlocked, MRT_BLOCKED_RECORD_LOCKED) => "MRT_BLOCKED_RECORD_LOCKED",
+            (R::MrtBlocked, MRT_BLOCKED_ID_MISMATCH) => "MRT_BLOCKED_ID_MISMATCH",
+            _ => return None,
+        })
+    }
 }
 
 /// The expression build failed.
@@ -782,6 +857,23 @@ mod tests {
     // ============================================================
     // fixmap baseline
     // ============================================================
+
+    #[test]
+    fn sub_code_names_are_scoped_by_result_code() {
+        use crate::ResultCode;
+        assert_eq!(
+            sub_code::name(ResultCode::ParameterError, 1),
+            Some("PARAM_TTL_INVALID")
+        );
+        assert_eq!(sub_code::name(ResultCode::FilteredOut, 1), Some("FILTERED_META"));
+        assert_eq!(
+            sub_code::name(ResultCode::OpNotApplicable, 12),
+            Some("OPNOT_STRING_REGEX_LIMIT_EXCEEDED")
+        );
+        assert_eq!(sub_code::name(ResultCode::KeyNotFoundError, 0), Some("NONE"));
+        assert_eq!(sub_code::name(ResultCode::KeyNotFoundError, 1), None, "no subcodes under this code");
+        assert_eq!(sub_code::name(ResultCode::ParameterError, 99), None);
+    }
 
     #[test]
     fn parses_fixmap_with_subcode_and_message() {

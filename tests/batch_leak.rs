@@ -216,7 +216,7 @@ async fn retry_resplit_path_does_not_leak() {
         let rows = ops.len();
         let allocs_before = ALLOCATIONS.load(Relaxed);
         client.batch(&bpolicy, &mut ops).await.expect("retry batch");
-        assert!(ops.iter().all(|o| o.batch_record().result_code == Some(ResultCode::Ok)));
+        assert!(ops.iter().all(|o| o.batch_record().result_code() == Some(ResultCode::Ok)));
         drop(ops);
         run.record(allocs_before, rows);
     }

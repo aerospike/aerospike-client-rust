@@ -72,7 +72,7 @@ async fn write_values(client: &Client, keys: &[Key], value_of: impl Fn(usize) ->
             })
             .collect();
         let recs = run(client, &BatchPolicy::default(), ops).await.expect("seed write");
-        assert!(recs.iter().all(|r| r.result_code == Some(ResultCode::Ok)));
+        assert!(recs.iter().all(|r| r.result_code() == Some(ResultCode::Ok)));
     }
 }
 
@@ -187,7 +187,7 @@ async fn random_mixed_batches_return_every_row_in_input_order() {
                 _ if written[i] => ResultCode::Ok,
                 _ => ResultCode::KeyNotFoundError,
             };
-            assert_eq!(recs[i].result_code, Some(expected), "{row}: result code");
+            assert_eq!(recs[i].result_code(), Some(expected), "{row}: result code");
             if matches!(kinds[i], Kind::ReadSome | Kind::ReadMore | Kind::ReadAll) && written[i] {
                 assert_eq!(bin_value(&recs[i]), Some(Value::from(i as i64)), "{row}: read returned another row's value");
             }
@@ -200,9 +200,9 @@ async fn random_mixed_batches_return_every_row_in_input_order() {
             let row = format!("{ctx} verify row {i} kind {:?} written={}", kinds[i], written[i]);
             match kinds[i] {
                 Kind::Write => assert_eq!(bin_value(&after[i]), Some(Value::from(1_000 + i as i64)), "{row}"),
-                Kind::Delete => assert_eq!(after[i].result_code, Some(ResultCode::KeyNotFoundError), "{row}"),
+                Kind::Delete => assert_eq!(after[i].result_code(), Some(ResultCode::KeyNotFoundError), "{row}"),
                 _ if written[i] => assert_eq!(bin_value(&after[i]), Some(Value::from(i as i64)), "{row}"),
-                _ => assert_eq!(after[i].result_code, Some(ResultCode::KeyNotFoundError), "{row}"),
+                _ => assert_eq!(after[i].result_code(), Some(ResultCode::KeyNotFoundError), "{row}"),
             }
         }
     }
@@ -246,13 +246,13 @@ async fn random_batches_with_unroutable_rows_land_at_their_index() {
                 // v3 maps the routing failure onto the server code for the same
                 // condition; an unknown namespace is INVALID_NAMESPACE.
                 assert!(
-                    matches!(recs[i].result_code, Some(ResultCode::InvalidNamespace | ResultCode::PartitionUnavailable)),
-                    "{row}: unexpected code {:?}", recs[i].result_code
+                    matches!(recs[i].result_code(), Some(ResultCode::InvalidNamespace | ResultCode::PartitionUnavailable)),
+                    "{row}: unexpected code {:?}", recs[i].result_code()
                 );
                 assert!(recs[i].record.is_none(), "{row}: unroutable row carried a record");
-                assert!(!recs[i].in_doubt, "{row}: nothing was sent, so never in doubt");
+                assert!(!recs[i].in_doubt(), "{row}: nothing was sent, so never in doubt");
             } else {
-                assert_eq!(recs[i].result_code, Some(ResultCode::Ok), "{row}");
+                assert_eq!(recs[i].result_code(), Some(ResultCode::Ok), "{row}");
                 assert_eq!(bin_value(&recs[i]), Some(Value::from(i as i64)), "{row}: value");
             }
         }
@@ -285,9 +285,10 @@ async fn same_random_read_batch_agrees_across_replica_policies() {
             .unwrap_or_else(|e| panic!("seed {seed} {replica:?}: {e}"))
             .into_iter()
             .map(|rec| {
+                let rc = rec.result_code();
                 let mut bins: Vec<(String, Value)> = rec.record.map(|rr| rr.bins.into_iter().collect()).unwrap_or_default();
                 bins.sort_by(|a, b| a.0.cmp(&b.0));
-                (rec.key, rec.result_code, bins)
+                (rec.key, rc, bins)
             })
             .collect()
     }
@@ -358,7 +359,7 @@ async fn sequence_retry_resplits_onto_the_next_replica_and_succeeds() {
     // call-level error; either way not every row can be Ok.
     policy.base_policy.max_retries = 0;
     let no_retry = run(&client, &policy, ops.clone()).await;
-    let all_ok = no_retry.as_ref().map(|recs| recs.iter().all(|x| x.result_code == Some(ResultCode::Ok))).unwrap_or(false);
+    let all_ok = no_retry.as_ref().map(|recs| recs.iter().all(|x| x.result_code() == Some(ResultCode::Ok))).unwrap_or(false);
     assert!(!all_ok, "with max_retries = 0 the keys on the tripped node cannot all succeed");
 
     // With retries the re-split routes those keys to the next replica.
@@ -367,7 +368,7 @@ async fn sequence_retry_resplits_onto_the_next_replica_and_succeeds() {
     assert_eq!(recs.len(), keys.len());
     for (i, rec) in recs.iter().enumerate() {
         assert_eq!(rec.key, keys[i], "row {i}: order after re-split");
-        assert_eq!(rec.result_code, Some(ResultCode::Ok), "row {i}: code");
+        assert_eq!(rec.result_code(), Some(ResultCode::Ok), "row {i}: code");
         assert_eq!(bin_value(rec), Some(Value::from(i as i64)), "row {i}: value");
     }
     assert_eq!(tripped.error_rate_count(), trips_before, "retry attempts must not feed the breaker");

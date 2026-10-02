@@ -198,27 +198,12 @@ impl BatchExecutor {
                         all_results.extend(cmd.batch_ops);
                         continue;
                     }
-                    // Mark this node's unanswered rows with the failure
-                    // (Java parity): a client timeout stamps TIMEOUT and
-                    // makes writes in-doubt — they may have been applied;
-                    // other terminal errors stamp their server code when
-                    // one exists. Rows answered before the failure keep
-                    // their real results.
-                    let rc = if e.is_client_timeout() {
-                        Some(ResultCode::Timeout)
-                    } else {
-                        e.server_result_code()
-                    };
-                    let in_doubt = e.in_doubt() || e.is_client_timeout();
+                    // The command stamped its unanswered rows with this
+                    // failure as it ended; this covers anything that reached
+                    // here without passing through that path. Rows answered
+                    // before the failure keep their real results.
                     for (op, _) in &mut cmd.batch_ops {
-                        if op.record_mut().result_code.is_none() {
-                            if in_doubt {
-                                op.set_in_doubt_on_no_response(policy.base_policy.txn.as_ref());
-                            }
-                            if let Some(rc) = rc {
-                                op.set_result_code(rc, in_doubt);
-                            }
-                        }
+                        op.stamp_unanswered(&e, policy.base_policy.txn.as_ref());
                     }
                     first_err.get_or_insert(e);
                 }
@@ -368,12 +353,8 @@ impl BatchExecutor {
                 batch_op.set_record(record);
             }
             Err(err) if matches!(err.kind(), crate::ErrorKind::Server { .. }) => {
-                let rc = err.server_result_code().expect("server error has rc");
-                batch_op.set_result_code(rc, err.in_doubt());
-                // The single-key command carries the server's error detail on
-                // the Error; keep it on the row like the multi-record wire
-                // path does.
-                batch_op.set_error_detail(err.server_error_detail().cloned().map(Box::new));
+                // The error is the row's outcome, detail, node and all.
+                batch_op.set_error(err);
             }
             Err(err) if matches!(err.kind(), crate::ErrorKind::UdfBadResponse) => {
                 // A UDF execution failure is a per-key batch outcome. The
@@ -384,9 +365,15 @@ impl BatchExecutor {
                 let reason = err.message().unwrap_or("UDF Error").to_string();
                 let mut bins = crate::IndexMap::new();
                 bins.insert("FAILURE".to_string(), crate::Value::from(reason));
-                let in_doubt = err.in_doubt();
-                batch_op.set_record(Some(crate::Record::new(None, bins, None, 0, 0)));
-                batch_op.set_result_code(ResultCode::UdfBadResponse, in_doubt);
+                let mut row_error = Error::server_error_bare(ResultCode::UdfBadResponse);
+                if let Some(node) = err.node() {
+                    row_error = row_error.with_node(node);
+                }
+                if err.in_doubt() {
+                    row_error.force_in_doubt();
+                }
+                batch_op.set_error(row_error.chain_cause(Some(err)));
+                batch_op.record_mut().record = Some(crate::Record::new(None, bins, None, 0, 0));
             }
             Err(err) => {
                 // A client-side failure (timeout, connection loss, ...) on
@@ -395,18 +382,7 @@ impl BatchExecutor {
                 // terminal-error walk in `execute_batch_operate`), so one
                 // batch reports the same failure the same way no matter how
                 // its keys hashed across nodes.
-                let rc = if err.is_client_timeout() {
-                    Some(ResultCode::Timeout)
-                } else {
-                    err.server_result_code()
-                };
-                let in_doubt = err.in_doubt() || err.is_client_timeout();
-                if in_doubt {
-                    batch_op.set_in_doubt_on_no_response(parent.base_policy.txn.as_ref());
-                }
-                if let Some(rc) = rc {
-                    batch_op.set_result_code(rc, in_doubt);
-                }
+                batch_op.stamp_unanswered(&err, parent.base_policy.txn.as_ref());
                 return Err(err);
             }
         }
@@ -485,8 +461,11 @@ impl BatchExecutor {
                     None => groups.push((node, vec![(batch_op, index)])),
                 },
                 Err(err) => {
-                    // Never in-doubt: nothing was sent for this key.
-                    batch_op.set_result_code(routing_result_code(&err), false);
+                    // Never in-doubt: nothing was sent for this key. The row's
+                    // code is the routing outcome; the routing error is its cause.
+                    batch_op.set_error(
+                        Error::server_error_bare(routing_result_code(&err)).chain_cause(Some(err.clone())),
+                    );
                     unroutable.push((batch_op, index));
                     first_err.get_or_insert(err);
                 }

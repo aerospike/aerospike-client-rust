@@ -591,3 +591,53 @@ async fn verbosity_disabled_yields_no_detail_on_filtered_out() {
     assert!(err.server_error_detail().is_none());
     assert!(err.server_message().is_none());
 }
+
+/// A batch row the server filtered out is not an error, but at verbosity 2
+/// the server still says why ("filtered out by bins expression"). The multi-key
+/// path parsed that detail and then dropped it; now the row keeps it, and
+/// says which node answered. Single-key groups take the fast path and must
+/// agree, so the batch is sized to a multi-key group on a single node.
+#[aerospike_macro::test]
+async fn batch_filtered_out_rows_keep_detail_and_node() {
+    let client = common::client().await;
+    if !supports_error_detail(&client).await {
+        eprintln!("skipped: server does not support error detail");
+        return;
+    }
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let keys: Vec<Key> = (0..3).map(|i| aerospike::as_key!(namespace, &set_name, i)).collect();
+    for key in &keys {
+        put(&client, key, aerospike::as_bin!(BIN, 1)).await;
+    }
+
+    let mut bpolicy = aerospike::BatchPolicy::default();
+    bpolicy.base_policy.error_detail_verbosity = 2;
+    // The batch-level filter lives on `BatchPolicy` itself, not on its base policy.
+    bpolicy.filter_expression = Some(eq(int_bin(BIN.to_string()), int_val(99)));
+    let brp = aerospike::BatchReadPolicy::default();
+    let mut ops: Vec<aerospike::BatchOperation> = keys
+        .iter()
+        .cloned()
+        .map(|key| aerospike::BatchOperation::read(&brp, key, aerospike::Bins::All))
+        .collect();
+
+    client
+        .batch(&bpolicy, &mut ops)
+        .await
+        .expect("filtered-out rows are per-key outcomes, not a failure");
+    for (i, op) in ops.iter().enumerate() {
+        let row = op.batch_record();
+        assert_eq!(row.result_code(), Some(ResultCode::FilteredOut), "row {i}");
+        // The server explains a filtered row in words (subcode 0 on 8.2 —
+        // FILTERED_META / FILTERED_BINS are defined but not sent for reads).
+        assert!(
+            row.server_message().is_some_and(|m| m.contains("filtered")),
+            "row {i}: the server's explanation must survive the parser, got {:?}",
+            row.error_detail()
+        );
+        let node = row.node().expect("the answering node is recorded on a non-OK row");
+        assert!(node.contains(':'), "row {i}: node is `<name>: <host:port>`, got {node}");
+        assert_eq!(op.node(), Some(node));
+    }
+}

@@ -46,6 +46,9 @@ pub struct BatchRecordIndex {
     pub record: Option<crate::Record>,
     pub result_code: ResultCode,
     pub version: Option<u64>,
+    /// The server's extended error detail for the row, when the row carries
+    /// a non-error outcome that still has one (`KeyNotFound`, `FilteredOut`).
+    pub error_detail: Option<Box<crate::ServerErrorDetail>>,
 }
 
 /// Policy for a single batch read operation.
@@ -686,13 +689,26 @@ impl BatchOperation {
     }
 
     /// The per-key result code, `None` if the operation was never executed.
+    /// See [`BatchRecord::result_code`].
     pub fn result_code(&self) -> Option<ResultCode> {
-        self.batch_record().result_code
+        self.batch_record().result_code()
     }
 
     /// Whether a write may have been applied despite an error.
     pub fn in_doubt(&self) -> bool {
-        self.batch_record().in_doubt
+        self.batch_record().in_doubt()
+    }
+
+    /// The failure behind this row, see [`BatchRecord::error`].
+    #[must_use]
+    pub fn error(&self) -> Option<&Error> {
+        self.batch_record().error()
+    }
+
+    /// The node behind this row's outcome, see [`BatchRecord::node`].
+    #[must_use]
+    pub fn node(&self) -> Option<&str> {
+        self.batch_record().node()
     }
 
 
@@ -700,11 +716,7 @@ impl BatchOperation {
     /// Clears any result from a previous execution, so a reused operation
     /// starts a call with a clean row.
     pub(crate) fn clear_result(&mut self) {
-        let br = self.record_mut();
-        br.record = None;
-        br.result_code = None;
-        br.in_doubt = false;
-        br.set_error_detail(None);
+        self.record_mut().clear();
     }
 
     /// A cheap, allocation-free stand-in swapped into a caller's slice while
@@ -738,17 +750,7 @@ impl BatchOperation {
     }
 
     pub(crate) fn set_record(&mut self, record: Option<Record>) {
-        match self {
-            Self::Read { br, .. }
-            | Self::Write { br, .. }
-            | Self::Delete { br, .. }
-            | Self::UDF { br, .. }
-            | Self::TxnVerify { br, .. }
-            | Self::TxnRoll { br, .. } => {
-                br.record = record;
-                br.result_code = Some(ResultCode::Ok);
-            }
-        }
+        self.record_mut().set_ok(record);
     }
 
     pub(crate) const fn record_mut(&mut self) -> &mut BatchRecord {
@@ -762,29 +764,15 @@ impl BatchOperation {
         }
     }
 
-    /// Attach the server's extended error detail for this row.
-    pub(crate) fn set_error_detail(&mut self, detail: Option<Box<crate::ServerErrorDetail>>) {
-        self.record_mut().set_error_detail(detail);
+    /// Record this row's failure, see [`BatchRecord::set_error`].
+    pub(crate) fn set_error(&mut self, error: Error) {
+        self.record_mut().set_error(error);
     }
 
-    pub(crate) const fn set_result_code(&mut self, rc: ResultCode, in_doubt: bool) {
-        // `BatchRecord::set_error` honors in_doubt only for write records —
-        // reads (incl. txn verify) can never be in-doubt.
-        self.record_mut().set_error(rc, in_doubt);
-    }
-
-    /// Mark this record in-doubt after a command-level failure when no
-    /// response was received for it: an unanswered write may have been
-    /// applied by the server. An attached transaction is notified so a later
-    /// commit degrades to abort correctly.
-    pub(crate) fn set_in_doubt_on_no_response(&mut self, txn: Option<&Arc<crate::txn::Txn>>) {
-        let br = self.record_mut();
-        if br.result_code.is_none() && br.has_write() {
-            br.in_doubt = true;
-            if let Some(txn) = txn {
-                txn.on_write_in_doubt(&br.key);
-            }
-        }
+    /// Stamp this row with a command-level failure if the server never
+    /// answered it, see [`BatchRecord::stamp_unanswered`].
+    pub(crate) fn stamp_unanswered(&mut self, cause: &Error, txn: Option<&Arc<crate::txn::Txn>>) {
+        self.record_mut().stamp_unanswered(cause, txn);
     }
 }
 
@@ -938,18 +926,26 @@ mod in_doubt_tests {
         assert_eq!(br.sub_code(), crate::server_error::sub_code::NONE);
         assert!(br.server_message().is_none());
         assert!(br.error_detail().is_none());
+        assert!(br.error().is_none());
+        assert!(br.node().is_none());
 
-        w.set_result_code(ResultCode::BinNotFound, false);
-        w.set_error_detail(Some(Box::new(crate::ServerErrorDetail {
+        let detail = crate::ServerErrorDetail {
             sub_code: 7,
             message: "count op on non-hll bin".to_string(),
             exp_trace: None,
-        })));
+        };
+        w.set_error(Error::server_error(
+            ResultCode::BinNotFound,
+            "A1: 10.0.0.1:3000",
+            Some(Box::new(detail)),
+        ));
 
         let br = w.batch_record();
-        assert_eq!(br.result_code, Some(ResultCode::BinNotFound));
+        assert_eq!(br.result_code(), Some(ResultCode::BinNotFound));
         assert_eq!(br.sub_code(), 7);
         assert_eq!(br.server_message(), Some("count op on non-hll bin"));
+        assert_eq!(br.node(), Some("A1: 10.0.0.1:3000"));
+        assert!(br.error().unwrap().matches(&[ResultCode::BinNotFound]));
     }
 
     #[test]
@@ -957,11 +953,12 @@ mod in_doubt_tests {
         // Verbosity 1 can carry a subcode with no text; `server_message` must
         // not hand back an empty string, matching `Error::server_message`.
         let mut w = write_op("w");
-        w.set_error_detail(Some(Box::new(crate::ServerErrorDetail {
+        let detail = crate::ServerErrorDetail {
             sub_code: 3,
             message: String::new(),
             exp_trace: None,
-        })));
+        };
+        w.set_error(Error::server_error(ResultCode::BinNotFound, "A1", Some(Box::new(detail))));
 
         let br = w.batch_record();
         assert_eq!(br.sub_code(), 3);
@@ -969,36 +966,110 @@ mod in_doubt_tests {
     }
 
     #[test]
-    fn set_result_code_honors_in_doubt_only_for_writes() {
+    fn in_doubt_is_read_off_the_error_and_only_for_writes() {
+        let in_doubt_timeout = || Error::timeout("Timeout").set_in_doubt(true, 1);
+
         let mut w = write_op("w");
-        w.set_result_code(ResultCode::Timeout, true);
-        assert!(w.batch_record().in_doubt);
+        w.set_error(in_doubt_timeout());
+        assert!(w.batch_record().in_doubt());
+        assert_eq!(
+            w.result_code(),
+            Some(ResultCode::Timeout),
+            "a client timeout reads as TIMEOUT like the other clients"
+        );
 
         let mut r = read_op("r");
-        r.set_result_code(ResultCode::Timeout, true);
-        assert!(!r.batch_record().in_doubt);
+        r.set_error(in_doubt_timeout());
+        assert!(!r.batch_record().in_doubt(), "a read is never in doubt, whatever its error says");
+    }
+
+    #[test]
+    fn a_client_failure_without_a_server_code_reads_as_none() {
+        let mut w = write_op("w");
+        w.set_error(Error::connection("reset by peer"));
+        assert_eq!(w.result_code(), None);
+        assert!(w.error().is_some(), "but the failure itself is there");
     }
 
     #[test]
     fn no_response_write_becomes_in_doubt_and_notifies_txn() {
         let txn = Arc::new(Txn::new());
+        let cause = Error::timeout("Command timed out").set_in_doubt(true, 1);
         let mut w = write_op("w");
-        w.set_in_doubt_on_no_response(Some(&txn));
+        w.stamp_unanswered(&cause, Some(&txn));
 
         let br = w.batch_record();
-        assert!(br.in_doubt);
-        assert!(br.result_code.is_none());
+        assert!(br.in_doubt());
+        assert_eq!(br.result_code(), Some(ResultCode::Timeout));
         assert!(txn.write_in_doubt());
     }
 
     #[test]
     fn no_response_read_is_never_in_doubt() {
         let txn = Arc::new(Txn::new());
+        let cause = Error::timeout("Command timed out").set_in_doubt(true, 1);
         let mut r = read_op("r");
-        r.set_in_doubt_on_no_response(Some(&txn));
+        r.stamp_unanswered(&cause, Some(&txn));
 
-        assert!(!r.batch_record().in_doubt);
+        let br = r.batch_record();
+        assert!(!br.in_doubt());
+        assert!(
+            !br.error().unwrap().in_doubt(),
+            "the read row's copy of the cause is cleared, not just hidden"
+        );
         assert!(!txn.write_in_doubt());
+    }
+
+
+    #[test]
+    #[cfg(feature = "serialization")]
+    fn a_row_serializes_field_for_field_with_a_structured_error() {
+        let mut w = write_op("w");
+        let detail = crate::ServerErrorDetail {
+            sub_code: 2,
+            message: "filtered".into(),
+            exp_trace: None,
+        };
+        w.set_record(None);
+        w.set_error(
+            Error::server_error(ResultCode::FilteredOut, "A1: h:3000", Some(Box::new(detail)))
+                .with_retry_context(1, None, vec![Error::timeout("first try")]),
+        );
+        let json: serde_json::Value = serde_json::to_value(w.batch_record()).unwrap();
+
+        assert!(json["record"].is_null(), "a failure drops the earlier record");
+        assert_eq!(json["has_write"], true);
+        let e = &json["error"];
+        assert_eq!(e["kind"], "Server");
+        assert_eq!(e["result_code"], 27);
+        assert_eq!(e["message"], "Command filtered out, Detail: filtered");
+        assert_eq!(e["node"], "A1: h:3000");
+        assert_eq!(e["iteration"], 1);
+        assert_eq!(e["in_doubt"], false);
+        assert_eq!(e["server_error_detail"]["sub_code"], 2);
+        assert_eq!(e["sub_errors"][0]["kind"], "Timeout");
+        assert!(e["source"].is_null());
+        assert_eq!(json.as_object().unwrap().len(), 4, "key, record, error, has_write — nothing derived");
+
+        let mut ok = write_op("ok");
+        ok.set_record(None);
+        let json: serde_json::Value = serde_json::to_value(ok.batch_record()).unwrap();
+        assert!(json["error"].is_null());
+        assert!(json["record"].is_object(), "an answered row has a record");
+    }
+
+    #[test]
+    fn an_answered_row_is_not_restamped_and_clear_resets_everything() {
+        let mut w = write_op("w");
+        w.set_record(None);
+        w.stamp_unanswered(&Error::timeout("late").set_in_doubt(true, 1), None);
+        assert_eq!(w.result_code(), Some(ResultCode::Ok), "an answered row keeps its answer");
+
+        w.set_error(Error::server_error(ResultCode::KeyBusy, "A1", None));
+        w.clear_result();
+        let br = w.batch_record();
+        assert_eq!(br.result_code(), None);
+        assert!(br.error().is_none() && br.node().is_none() && !br.in_doubt());
     }
 
     #[test]
@@ -1007,11 +1078,11 @@ mod in_doubt_tests {
         // for the final attempt; the terminal walk must not touch it.
         let txn = Arc::new(Txn::new());
         let mut w = write_op("w");
-        w.set_result_code(ResultCode::KeyNotFoundError, false);
-        w.set_in_doubt_on_no_response(Some(&txn));
+        w.set_error(Error::server_error_bare(ResultCode::KeyNotFoundError));
+        w.stamp_unanswered(&Error::timeout("late").set_in_doubt(true, 1), Some(&txn));
 
         let br = w.batch_record();
-        assert!(!br.in_doubt);
+        assert!(!br.in_doubt());
         assert!(!txn.write_in_doubt());
     }
 }

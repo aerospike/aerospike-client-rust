@@ -679,7 +679,7 @@ async fn txn_version_mismatch_on_commit() {
                     .find(|r| r.key.digest == key0_digest)
                     .expect("verify_records missing the conflicting key");
                 assert_ne!(
-                    failed.result_code,
+                    failed.result_code(),
                     Some(ResultCode::Ok),
                     "conflicting key should have a non-Ok verify result",
                 );
@@ -738,7 +738,7 @@ async fn txn_verify_deleted_key_fails() {
         } => {
             assert_eq!(*error_type, CommitErrorType::VerifyFail);
             assert_eq!(verify_records.len(), 1);
-            assert_ne!(verify_records[0].result_code, Some(ResultCode::Ok));
+            assert_ne!(verify_records[0].result_code(), Some(ResultCode::Ok));
         }
         other => panic!("Expected ErrorKind::Commit, got: {:?}", other),
     }

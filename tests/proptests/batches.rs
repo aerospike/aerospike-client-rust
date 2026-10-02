@@ -199,7 +199,7 @@ proptest_async::proptest! {
                 for result in results {
                     // Check the result code to filter out "errors" that aren't
                     // really errors.
-                    match result.result_code {
+                    match result.result_code() {
                         // If a result has been filtered out,
                         Some(ResultCode::FilteredOut) => {
                             // skip the check; it's been filtered out.
@@ -263,7 +263,7 @@ proptest_async::proptest! {
                         }
 
                         _ => {
-                            eprintln!("WARNING: Unknown result code {:?}", result.result_code);
+                            eprintln!("WARNING: Unknown result code {:?}", result.result_code());
                         }
                     }
                 }
@@ -340,7 +340,7 @@ proptest_async::proptest! {
                         _ => panic!("Unexpected batch operation"),
                     };
 
-                    match record.result_code {
+                    match record.result_code() {
                         Some(ResultCode::Ok) => (),
                         Some(ResultCode::FilteredOut) => (),
 
@@ -380,7 +380,7 @@ proptest_async::proptest! {
                         }
 
                         _ => {
-                            panic!("Unexpected result code: {:?}", record.result_code);
+                            panic!("Unexpected result code: {:?}", record.result_code());
                         }
                     }
                 }

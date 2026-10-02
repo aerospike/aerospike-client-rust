@@ -216,7 +216,7 @@ impl BatchOperateCommand {
                 let mut routed: Vec<Option<Arc<Node>>> = Vec::with_capacity(self.batch_ops.len());
                 let mut route_err: Option<Error> = None;
                 for (op, _) in &self.batch_ops {
-                    if op.batch_record().result_code.is_some() {
+                    if op.batch_record().result_code().is_some() {
                         routed.push(None);
                         continue;
                     }
@@ -339,7 +339,7 @@ impl BatchOperateCommand {
                         .metrics()
                         .record_command(cmd_type, trans_start.elapsed());
                     for (op, _) in &self.batch_ops {
-                        if let Some(rc) = op.batch_record().result_code {
+                        if let Some(rc) = op.batch_record().result_code() {
                             self.node.metrics().record_result_code(
                                 &op.key().namespace,
                                 cmd_type,
@@ -461,8 +461,8 @@ impl BatchOperateCommand {
             match bucket {
                 Some(b) => buckets[b].1.push(pair),
                 None => {
-                    if pair.0.batch_record().result_code.is_none() {
-                        pair.0.set_result_code(ResultCode::PartitionUnavailable, false);
+                    if pair.0.batch_record().result_code().is_none() {
+                        pair.0.set_error(Error::server_error_bare(ResultCode::PartitionUnavailable));
                     }
                     held.push(pair);
                 }
@@ -482,25 +482,20 @@ impl BatchOperateCommand {
     }
 
     fn set_terminal_error(&mut self, err: Error, is_write: bool, commands_sent: u32) {
-        self.mark_rows_in_doubt(commands_sent);
-        self.terminal_error = Some(err.set_in_doubt(is_write, commands_sent));
+        let err = err.set_in_doubt(is_write, commands_sent);
+        self.mark_rows_unanswered(&err);
+        self.terminal_error = Some(err);
     }
 
-    /// After a command-level failure with at least one attempt on the wire,
-    /// mark every record that never received a response: an unanswered write
-    /// may have been applied by the server, so it becomes in-doubt and an
-    /// attached transaction is notified. Reads are unaffected. Mirrors
-    /// Java's `Batch.inDoubt()` walk over `BatchRecord.hasWrite`.
-    ///
-    /// Marks *rows*; the command's own error is marked by
-    /// [`set_terminal_error`](Self::set_terminal_error).
-    fn mark_rows_in_doubt(&mut self, commands_sent: u32) {
-        if commands_sent == 0 {
-            return;
-        }
+    /// Every row the server never answered takes a copy of the command's
+    /// terminal failure: the in-doubt rule already applied to `err` (a write
+    /// row is in doubt once a request reached the wire) travels with the copy,
+    /// a read row's copy is cleared, and an attached transaction hears about
+    /// each in-doubt write. Rows answered before the failure keep their result.
+    fn mark_rows_unanswered(&mut self, err: &Error) {
         let txn = self.policy.base_policy.txn.clone();
         for (op, _) in &mut self.batch_ops {
-            op.set_in_doubt_on_no_response(txn.as_ref());
+            op.stamp_unanswered(err, txn.as_ref());
         }
     }
 
@@ -562,6 +557,7 @@ impl BatchOperateCommand {
             Vec::new()
         };
 
+        let node_label = node.to_string();
         let aq_start = Instant::now();
         let mut conn = match node.get_connection(Self::queue_hint(batch_ops)).await {
             Ok(conn) => conn,
@@ -638,8 +634,9 @@ impl BatchOperateCommand {
             &mut conn,
             policy.base_policy.txn.as_ref(),
             *commands_sent,
-        hook,
-                )
+            hook,
+            &node_label,
+        )
         .await;
         if metrics_on {
             // Read side, same rule: exact bytes whatever the outcome.
@@ -690,6 +687,7 @@ impl BatchOperateCommand {
         txn: Option<&Arc<crate::txn::Txn>>,
         commands_sent: u32,
         hook: Option<&crate::batch::BatchHook>,
+        node_label: &str,
     ) -> Result<bool> {
         while conn.bytes_read() < size {
             conn.read_buffer(commands::buffer::MSG_REMAINING_HEADER_SIZE as usize)
@@ -711,8 +709,20 @@ impl BatchOperateCommand {
                         }
                     }
 
-                    batch_op.0.set_record(batch_record.record);
-                    batch_op.0.set_result_code(batch_record.result_code, false);
+                    if batch_record.result_code == ResultCode::Ok {
+                        batch_op.0.set_record(batch_record.record);
+                    } else {
+                        // Not found, filtered out, or a UDF failure: the row
+                        // failed, with the server's explanation and the node
+                        // that answered on its error, and whatever record came
+                        // with it (a UDF's FAILURE bin) kept beside it.
+                        batch_op.0.set_error(Error::server_error(
+                            batch_record.result_code,
+                            node_label,
+                            batch_record.error_detail,
+                        ));
+                        batch_op.0.record_mut().record = batch_record.record;
+                    }
                     // Fire as the row lands; `false` (or a cancelled batch)
                     // tears this group down — the connection is mid-stream
                     // and is invalidated, not pooled.
@@ -740,8 +750,15 @@ impl BatchOperateCommand {
                         let batch_op = batch_ops
                             .get_mut(index as usize)
                             .expect("Invalid batch index");
-                        batch_op.0.set_result_code(rc, commands_sent > 1);
-                        batch_op.0.set_error_detail(detail.clone());
+                        // In-doubt mirrors Java's `Command.batchInDoubt`: a row
+                        // error in this response is definitive for this
+                        // attempt, so a write is only in doubt when an earlier
+                        // attempt was also sent.
+                        let mut row_error = Error::server_error(rc, node_label, detail.clone());
+                        if batch_op.0.has_write() && commands_sent > 1 {
+                            row_error.force_in_doubt();
+                        }
+                        batch_op.0.set_error(row_error);
                         if let Some(hook) = hook {
                             if !hook.fire(batch_op.1, batch_op.0.batch_record()).await {
                                 return Err(Error::stream_terminated(None));
@@ -875,6 +892,7 @@ impl BatchOperateCommand {
             record,
             result_code,
             version,
+            error_detail,
         }))
     }
 
@@ -888,6 +906,7 @@ impl BatchOperateCommand {
         txn: Option<&Arc<crate::txn::Txn>>,
         commands_sent: u32,
         hook: Option<&crate::batch::BatchHook>,
+        node_label: &str,
     ) -> Result<()> {
         let mut status = true;
 
@@ -938,7 +957,15 @@ impl BatchOperateCommand {
                     let mut inner_conn =
                         BufferedConn::new_with_decoder(conn.conn, decoder, body_decompressed_size);
 
-                    match Self::parse_group(batch_ops, &mut inner_conn, inner_size, txn, commands_sent, hook)
+                    match Self::parse_group(
+                        batch_ops,
+                        &mut inner_conn,
+                        inner_size,
+                        txn,
+                        commands_sent,
+                        hook,
+                        node_label,
+                    )
                         .await
                     {
                         Ok(stat) => status = stat,
@@ -956,7 +983,17 @@ impl BatchOperateCommand {
                 status = false;
                 if size > 0 {
                     conn.set_limit_body(size)?;
-                    match Self::parse_group(batch_ops, &mut conn, size, txn, commands_sent, hook).await {
+                    match Self::parse_group(
+                        batch_ops,
+                        &mut conn,
+                        size,
+                        txn,
+                        commands_sent,
+                        hook,
+                        node_label,
+                    )
+                    .await
+                    {
                         Ok(stat) => status = stat,
                         Err(e) if matches!(e.kind(), ErrorKind::Server { .. }) => {
                             conn.drain(conn.conn.deadline()).await?;
@@ -1077,7 +1114,7 @@ mod tests {
                 let original = regrouped[i].1;
                 let expected = if original == 2 { &b } else { &a };
                 assert!(Arc::ptr_eq(node, expected), "row {original} in the wrong group");
-                assert!(regrouped[i].0.batch_record().result_code.is_none());
+                assert!(regrouped[i].0.batch_record().result_code().is_none());
             }
         }
         let mut stranded = indices(&regrouped[3..]);
@@ -1085,8 +1122,8 @@ mod tests {
         assert_eq!(stranded, vec![1, 4]);
         for (op, _) in &regrouped[3..] {
             let br = op.batch_record();
-            assert_eq!(br.result_code, Some(ResultCode::PartitionUnavailable));
-            assert!(!br.in_doubt, "an unsent row is never in doubt");
+            assert_eq!(br.result_code(), Some(ResultCode::PartitionUnavailable));
+            assert!(!br.in_doubt(), "an unsent row is never in doubt");
         }
     }
 
@@ -1097,14 +1134,14 @@ mod tests {
     fn regroup_holds_settled_rows_without_restamping_them() {
         let a = node("A");
         let mut ops: Vec<_> = (0..3).map(pair).collect();
-        ops[1].0.set_result_code(ResultCode::KeyNotFoundError, false);
+        ops[1].0.set_error(Error::server_error_bare(ResultCode::KeyNotFoundError));
         let routed = vec![Some(a.clone()), None, Some(a.clone())];
         let (regrouped, ranges) = BatchOperateCommand::regroup_for_retry(ops, routed);
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].1, 0..2);
         assert_eq!(indices(&regrouped), vec![0, 2, 1]);
         assert_eq!(
-            regrouped[2].0.batch_record().result_code,
+            regrouped[2].0.batch_record().result_code(),
             Some(ResultCode::KeyNotFoundError),
             "a settled row keeps its own result, it is not stamped PartitionUnavailable"
         );
@@ -1119,7 +1156,7 @@ mod tests {
         assert_eq!(regrouped.len(), 3);
         assert!(regrouped
             .iter()
-            .all(|(op, _)| op.batch_record().result_code == Some(ResultCode::PartitionUnavailable)));
+            .all(|(op, _)| op.batch_record().result_code() == Some(ResultCode::PartitionUnavailable)));
     }
 
     #[test]
@@ -1180,13 +1217,13 @@ mod tests {
                         assert!(p < original, "relative order not preserved: {ctx}");
                     }
                     prev = Some(original);
-                    assert!(regrouped[i].0.batch_record().result_code.is_none(), "{ctx}");
+                    assert!(regrouped[i].0.batch_record().result_code().is_none(), "{ctx}");
                 }
             }
             for (op, original) in &regrouped[routable..] {
                 assert_eq!(assign[*original], usize::MAX, "routable row held out: {ctx}");
                 assert_eq!(
-                    op.batch_record().result_code,
+                    op.batch_record().result_code(),
                     Some(ResultCode::PartitionUnavailable),
                     "{ctx}"
                 );

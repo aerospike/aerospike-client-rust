@@ -233,10 +233,10 @@ end
     let mut results: Vec<BatchRecord> = batch.iter().map(|op| op.batch_record().clone()).collect();
 
     for (i, r) in results.iter().enumerate() {
-        if r.result_code != Some(ResultCode::Ok) {
+        if r.result_code() != Some(ResultCode::Ok) {
             eprintln!(
                 "batch_operate_read: skipped — batch write {i} returned {:?}",
-                r.result_code
+                r.result_code()
             );
             return;
         }
@@ -375,7 +375,7 @@ end
 
     let result = results.remove(0);
     assert_eq!(result.key, key4);
-    assert_eq!(result.result_code, Some(ResultCode::UdfBadResponse));
+    assert_eq!(result.result_code(), Some(ResultCode::UdfBadResponse));
     let record = result.record;
     assert_eq!(
         record.unwrap().bins.get("FAILURE"),
@@ -414,7 +414,7 @@ async fn batch_operate_scalar_multi_op_same_bin_returns_multi_result() {
     client.batch(&bpolicy, &mut ops).await.unwrap();
 
     let result = ops[0].batch_record().clone();
-    assert_eq!(Some(ResultCode::Ok), result.result_code);
+    assert_eq!(Some(ResultCode::Ok), result.result_code());
     assert_eq!(
         result.record.unwrap().bins.get("count"),
         Some(&Value::MultiResult(vec![Value::from(10i64), Value::from(10i64)]))
@@ -457,7 +457,7 @@ async fn batch_operate_read_multi_op_single_bin() {
     let mut results: Vec<BatchRecord> = list.iter().map(|op| op.batch_record().clone()).collect();
 
     let result = results.remove(0);
-    assert!(Some(ResultCode::Ok) == result.result_code);
+    assert!(Some(ResultCode::Ok) == result.result_code());
     assert!(
         Some(&Value::MultiResult(as_values!(3, 333))) == result.record.unwrap().bins.get("lbin")
     );
@@ -509,8 +509,8 @@ async fn batch_operate_read_touch_ttl() {
     client.batch(&bpolicy, &mut list).await.unwrap();
     let recs: Vec<BatchRecord> = list.iter().map(|op| op.batch_record().clone()).collect();
 
-    assert!(Some(ResultCode::Ok) == recs[0].result_code);
-    assert!(Some(ResultCode::Ok) == recs[1].result_code);
+    assert!(Some(ResultCode::Ok) == recs[0].result_code());
+    assert!(Some(ResultCode::Ok) == recs[1].result_code());
 
     // Read records again, but don't reset read ttl.
     sleep(Duration::from_secs(3)).await;
@@ -524,15 +524,15 @@ async fn batch_operate_read_touch_ttl() {
     let recs: Vec<BatchRecord> = list.iter().map(|op| op.batch_record().clone()).collect();
 
     // Key 2 should have expired.
-    assert!(Some(ResultCode::Ok) == recs[0].result_code);
-    assert!(Some(ResultCode::KeyNotFoundError) == recs[1].result_code);
+    assert!(Some(ResultCode::Ok) == recs[0].result_code());
+    assert!(Some(ResultCode::KeyNotFoundError) == recs[1].result_code());
 
     // Read  record after it expires, showing it's gone.
     sleep(Duration::from_secs(8)).await;
     client.batch(&bpolicy, &mut list).await.unwrap();
     let recs: Vec<BatchRecord> = list.iter().map(|op| op.batch_record().clone()).collect();
-    assert!(Some(ResultCode::KeyNotFoundError) == recs[0].result_code);
-    assert!(Some(ResultCode::KeyNotFoundError) == recs[1].result_code);
+    assert!(Some(ResultCode::KeyNotFoundError) == recs[0].result_code());
+    assert!(Some(ResultCode::KeyNotFoundError) == recs[1].result_code());
 }
 
 // ===== Single-key fast path (Go's executeSingle / Java's BatchSingle*) =====
@@ -571,7 +571,7 @@ async fn batch_single_key_fast_path_read_returns_record() {
     client.batch(&bp, &mut ops).await.unwrap();
     let recs: Vec<BatchRecord> = ops.iter().map(|op| op.batch_record().clone()).collect();
     assert_eq!(recs.len(), 1);
-    assert_eq!(recs[0].result_code, Some(ResultCode::Ok));
+    assert_eq!(recs[0].result_code(), Some(ResultCode::Ok));
     let rec = recs[0].record.as_ref().expect("record returned");
     assert_eq!(rec.bins.get("a"), Some(&Value::from(7_i64)));
     assert_eq!(rec.bins.get("b"), Some(&Value::from("hello")));
@@ -599,7 +599,7 @@ async fn batch_single_key_fast_path_read_missing_key() {
     client.batch(&bp, &mut ops).await.unwrap();
     let recs: Vec<BatchRecord> = ops.iter().map(|op| op.batch_record().clone()).collect();
     assert_eq!(recs.len(), 1);
-    assert_eq!(recs[0].result_code, Some(ResultCode::KeyNotFoundError));
+    assert_eq!(recs[0].result_code(), Some(ResultCode::KeyNotFoundError));
     assert!(recs[0].record.is_none());
 }
 
@@ -708,7 +708,7 @@ async fn batch_sc_delete_non_durable_forbidden_when_record_exists() {
 
     let mut ops = [BatchOperation::delete(&bpd, key.clone())];
     client.batch(&bp, &mut ops).await.unwrap();
-    let result_code = ops[0].batch_record().result_code;
+    let result_code = ops[0].batch_record().result_code();
 
     if allow_expunge {
         // Expunge is explicitly allowed on this namespace: the non-durable
@@ -778,7 +778,7 @@ async fn batch_sc_delete_generation_mismatch_errors() {
     // BatchOperation::batch_record(), not as an Err from the call itself.
     let mut ops = [BatchOperation::delete(&bpd, key.clone())];
     client.batch(&bp, &mut ops).await.unwrap();
-    let result_code = ops[0].batch_record().result_code;
+    let result_code = ops[0].batch_record().result_code();
     assert_eq!(
         result_code,
         Some(ResultCode::GenerationError),
@@ -869,7 +869,7 @@ async fn batch_write_repeat_compression() {
     assert_eq!(results.len(), 8);
     for record in &results {
         assert_eq!(
-            record.result_code,
+            record.result_code(),
             Some(ResultCode::Ok),
             "repeated batch write failed: {record:?}"
         );
@@ -932,7 +932,7 @@ async fn batch_records_unroutable_key_without_failing_the_batch() {
     // The reachable keys were read.
     for i in [0, 2] {
         assert_eq!(
-            records[i].result_code,
+            records[i].result_code(),
             Some(ResultCode::Ok),
             "good key at {i} should have succeeded: {:?}",
             records[i]
@@ -944,9 +944,9 @@ async fn batch_records_unroutable_key_without_failing_the_batch() {
     }
 
     // The unroutable key carries its own error and no record.
-    assert_eq!(records[1].result_code, Some(ResultCode::InvalidNamespace));
+    assert_eq!(records[1].result_code(), Some(ResultCode::InvalidNamespace));
     assert!(records[1].record.is_none());
-    assert!(!records[1].in_doubt, "nothing was sent, so nothing is in doubt");
+    assert!(!records[1].in_doubt(), "nothing was sent, so nothing is in doubt");
 
     client.close().await.unwrap();
 }
@@ -1008,11 +1008,11 @@ async fn batch_write_to_unroutable_key_is_not_in_doubt() {
     let records: Vec<BatchRecord> = batch.iter().map(|op| op.batch_record().clone()).collect();
     assert_eq!(records.len(), 2);
 
-    assert_eq!(records[0].result_code, Some(ResultCode::InvalidNamespace));
+    assert_eq!(records[0].result_code(), Some(ResultCode::InvalidNamespace));
     assert!(records[0].has_write());
-    assert!(!records[0].in_doubt);
+    assert!(!records[0].in_doubt());
 
-    assert_eq!(records[1].result_code, Some(ResultCode::Ok));
+    assert_eq!(records[1].result_code(), Some(ResultCode::Ok));
     // The reachable write really landed.
     let stored = client
         .get(&ReadPolicy::default(), &good, Bins::All)
@@ -1082,12 +1082,12 @@ async fn batch_row_error_carries_server_subcode_and_message() {
     assert_eq!(records.len(), 2);
 
     // The healthy row is untouched and carries no detail.
-    assert_eq!(records[0].result_code, Some(ResultCode::Ok));
+    assert_eq!(records[0].result_code(), Some(ResultCode::Ok));
     assert_eq!(records[0].sub_code(), 0);
     assert!(records[0].server_message().is_none());
 
     // The failing row now explains itself.
-    assert_eq!(records[1].result_code, Some(ResultCode::BinNotFound));
+    assert_eq!(records[1].result_code(), Some(ResultCode::BinNotFound));
     assert!(
         records[1].sub_code() >= 1,
         "expected a server subcode on the failing row, got {:?}",
@@ -1133,7 +1133,7 @@ async fn batch_row_error_detail_absent_at_verbosity_zero() {
     let _ = client.batch(&bpolicy, &mut batch).await;
     let records: Vec<BatchRecord> = batch.iter().map(|op| op.batch_record().clone()).collect();
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].result_code, Some(ResultCode::BinNotFound));
+    assert_eq!(records[0].result_code(), Some(ResultCode::BinNotFound));
     assert_eq!(records[0].sub_code(), 0, "verbosity 0 must not carry detail");
     assert!(records[0].server_message().is_none());
     assert!(records[0].error_detail().is_none());
@@ -1168,7 +1168,7 @@ async fn batch_foreach_reports_every_row_exactly_once() {
     let s = seen.clone();
     client
         .batch_foreach(&BatchPolicy::default(), ops, move |idx, row| {
-            s.lock().unwrap().push((idx, row.result_code, row.record.is_some()));
+            s.lock().unwrap().push((idx, row.result_code(), row.record.is_some()));
             std::future::ready(true)
         })
         .await
@@ -1214,7 +1214,7 @@ async fn batch_foreach_abort_stops_early_and_sweeps_the_rest() {
     client
         .batch_foreach(&BatchPolicy::default(), ops, move |_idx, row| {
             f.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let keep_going = if row.result_code.is_some() {
+            let keep_going = if row.result_code().is_some() {
                 a.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1 < 5
             } else {
                 true
@@ -1257,7 +1257,7 @@ async fn batch_foreach_reports_unroutable_key_with_its_error() {
     let s = seen.clone();
     client
         .batch_foreach(&BatchPolicy::default(), ops, move |idx, row| {
-            s.lock().unwrap().push((idx, row.result_code, row.record.is_some()));
+            s.lock().unwrap().push((idx, row.result_code(), row.record.is_some()));
             std::future::ready(true)
         })
         .await
@@ -1297,7 +1297,7 @@ async fn batch_foreach_hook_may_await() {
     let c = count.clone();
     client
         .batch_foreach(&BatchPolicy::default(), ops, move |_idx, row| {
-            assert_eq!(row.result_code, Some(ResultCode::Ok));
+            assert_eq!(row.result_code(), Some(ResultCode::Ok));
             let c = c.clone();
             async move {
                 aerospike_rt::sleep(Duration::from_millis(1)).await;
@@ -1461,7 +1461,7 @@ async fn batch_single_row_error_carries_server_subcode_and_message() {
     let _ = client.batch(&bpolicy, &mut batch).await;
     let records: Vec<BatchRecord> = batch.iter().map(|op| op.batch_record().clone()).collect();
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].result_code, Some(ResultCode::BinNotFound));
+    assert_eq!(records[0].result_code(), Some(ResultCode::BinNotFound));
     assert!(
         records[0].sub_code() >= 1,
         "expected a server subcode on the failing row, got {:?}",

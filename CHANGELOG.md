@@ -21,6 +21,30 @@
     partition range and each partition's resume point (id, retry, bval, digest — the same fields the Go
     client persists) round-trip, so a paginated query can hand its cursor to another process and
     continue there. Deserialization rejects a cursor whose range or entries are inconsistent.
+  * `BatchRecord` is built around one `Error`. A row is failed when `error()` is set, succeeded when
+    `record` is (every answered row has one, bin-less for an operation that returns nothing), pending
+    when neither is; everything about a failure — result code, in-doubt, node, server detail, cause
+    chain — is read off that error: `result_code()`, `in_doubt()`, `node()`, `error_detail()`,
+    `sub_code()`, `server_message()`, and `error()` itself (so `matches()` and the rest of `Error`
+    apply per row). A row the server answered `KeyNotFound` or `FilteredOut` is a failed row in this
+    sense, as the single-key `get` would be; the batch call still succeeds. Rows filled in by hand
+    use `set_ok(record)` / `set_error(error)`. `Error` is now `Clone`. **Breaking**: the public
+    fields `result_code` and `in_doubt` are methods — `row.result_code` becomes `row.result_code()`.
+    A client-side failure with no server code (a connection loss) reads as `result_code() == None`
+    with the failure on `error()`; a client timeout reads as `Timeout`, as before. An unanswered
+    row's in-doubt now follows the failure's own flag, so a timeout before anything reached the
+    wire no longer marks rows in doubt.
+  * `Error` serializes (under `serialization`) as a structured record — `kind` (the variant name,
+    also `ErrorKind::name()`), `result_code`, `message`, `node`, `iteration`, `in_doubt`,
+    `server_error_detail`, `sub_errors` and `source`, the last two recursively — so a serialized
+    `BatchRecord` (`key`, `record`, `error`, `has_write`) carries the whole failure, not a projection.
+  * `BatchRecord::node()` (and `BatchOperation::node()`): the node that answered, or whose failure
+    stamped, a batch row, in the same `"<name>: <host:port>"` form as `Error::node()`.
+  * `Error::matches(&[ResultCode])` and `Error::matches_client(&[ClientResultCode])` search the whole
+    cause chain for any of the given codes (Go `Matches` parity); `server_result_code()` still reports
+    only the first server code it meets.
+  * `server_error::sub_code::name(rc, sub_code)` gives a subcode's constant name, scoped by its parent
+    result code; `Error`'s `Display` shows it beside the number (`SubCode: 2 (FILTERED_BINS)`).
   * `ResultCode::InvalidEncoding` (29, "Invalid UTF-8 encoding", server 8.2.0+) and the
     `OpNotApplicable` subcode `OPNOT_STRING_REGEX_LIMIT_EXCEEDED` (12) are decoded instead of
     falling into `Unknown`.
@@ -45,6 +69,8 @@
   * Single-key retry exhaustion now reports `MaxRetriesExceeded` (-11) like the batch path and the Go
     client; it used to report the timeout code 9 (which Java keeps behind its `Timeout` exception type,
     mirrored here by `ErrorKind::Timeout`).
+  * Batch rows the server answered `KeyNotFound` or `FilteredOut` lost the server's extended error
+    detail (FILTERED_META / FILTERED_BINS): the multi-key parser read it and discarded it.
   * Nine client-built server errors passed message text (or nothing) as the *node*, so `Display`
     printed `node=<message>` and `base_message()` lost the text.
   * `ResultCode` descriptions corrected from the server/Java strings: `AlwaysForbidden` ("Operation not

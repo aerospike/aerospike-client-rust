@@ -13,38 +13,41 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::Key;
-use crate::Record;
-use crate::ResultCode;
+use crate::{Error, Key, Record, ResultCode};
 #[cfg(feature = "serialization")]
 use serde::Serialize;
 
 /// Encapsulates the Batch key and record result.
+///
+/// A row has three states, read off two fields: failed when [`error`](Self::error)
+/// is set, succeeded when it is not and [`record`](Self::record) is — every
+/// answered row has a record, a bin-less one for an operation that returns
+/// nothing — and pending (never answered) when neither is. Every error
+/// attribute a caller may want — the result code, whether a write is in doubt,
+/// the node, the server's extended detail — is read off that one error through
+/// the accessors here, so the row never keeps a parallel copy of what [`Error`]
+/// already models. A row the server answered `KeyNotFound` or `FilteredOut` is
+/// a *failed* row in this sense, exactly as the single-key `get` returns `Err`
+/// for it; the batch call itself still succeeds, because per-key outcomes do
+/// not fail the call.
+///
+/// Serializes field for field: `key`, `record`, `error` (see [`Error`]'s own
+/// serialization), `has_write`.
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 #[derive(Debug, Clone)]
 pub struct BatchRecord {
     /// Key.
     pub key: Key,
 
-    /// Record result after batch command has completed. Will be nil if record was not found
-    /// or an error occurred. See `ResultCode`.
+    /// Record result after batch command has completed: `Some` for every
+    /// answered row that did not fail (bin-less for an operation that returns
+    /// nothing, such as a delete), `None` for a pending row and for most
+    /// failures — a UDF failure keeps its `FAILURE` bin here.
     pub record: Option<Record>,
 
-    /// `ResultCode` for this returned record. See `ResultCode`.
-    /// If not OK, the record will be nil.
-    pub result_code: Option<ResultCode>,
-
-    /// `InDoubt` signifies the possibility that the write command may have completed even though an error
-    /// occurred for this record. This may be the case when a client error occurs (like timeout)
-    /// after the command was sent to the server.
-    pub in_doubt: bool,
-
-    /// Extended server-supplied error detail for this row. Boxed because it is
-    /// 152 bytes against a `BatchRecord`'s 408 and is `None` for every row that
-    /// succeeded; private so the boxing stays an implementation detail, as it is
-    /// on [`Error`](crate::Error). Read it through
-    /// [`error_detail`](Self::error_detail).
-    error_detail: Option<Box<crate::ServerErrorDetail>>,
+    /// The failure, when the row failed. Everything about it — result code,
+    /// in-doubt, node, server detail, cause chain — lives here.
+    error: Option<Error>,
 
     /// Does this command contain a write operation.
     has_write: bool,
@@ -58,17 +61,16 @@ impl BatchRecord {
     /// [`in_doubt`](Self::in_doubt), and [`has_write`](Self::has_write) is what
     /// enforces that.
     ///
-    /// [`record`](Self::record), [`result_code`](Self::result_code) and
-    /// [`in_doubt`](Self::in_doubt) are public, so a caller filling in a row it
-    /// obtained elsewhere — a proxy, a cache, a test double — assigns them
-    /// directly; [`set_error_detail`](Self::set_error_detail) is the route to the
-    /// extended detail behind [`server_message`](Self::server_message).
+    /// A caller filling in a row it obtained elsewhere — a proxy, a cache, a
+    /// test double — uses [`set_ok`](Self::set_ok) and
+    /// [`set_error`](Self::set_error):
     ///
     /// ```
-    /// use aerospike::{BatchRecord, Key, ResultCode, Value};
+    /// use aerospike::{BatchRecord, Error, Key, ResultCode, Value};
     ///
     /// let mut row = BatchRecord::new(Key::new("test", "demo", Value::Int(1))?, false);
-    /// row.result_code = Some(ResultCode::KeyNotFoundError);
+    /// row.set_error(Error::server_error_with_message(ResultCode::KeyNotFoundError, "no such key"));
+    /// assert_eq!(row.result_code(), Some(ResultCode::KeyNotFoundError));
     /// assert!(row.record.is_none());
     /// # Ok::<(), aerospike::Error>(())
     /// ```
@@ -77,9 +79,7 @@ impl BatchRecord {
         BatchRecord {
             key,
             record: None,
-            result_code: None,
-            in_doubt: false,
-            error_detail: None,
+            error: None,
             has_write,
         }
     }
@@ -93,23 +93,47 @@ impl BatchRecord {
         self.has_write
     }
 
-    /// Record a per-key failure. `in_doubt` is honored only for write
-    /// records — reads can never be in-doubt.
-    pub(crate) const fn set_error(&mut self, rc: crate::ResultCode, in_doubt: bool) {
-        self.result_code = Some(rc);
-        self.in_doubt = self.has_write && in_doubt;
+    /// The row's result code: `Some(Ok)` on success, the failure's code
+    /// otherwise, `None` while the row has no outcome (never sent, or the call
+    /// died before the server answered it).
+    ///
+    /// A client-side timeout reads as [`ResultCode::Timeout`], as in the other
+    /// clients; any other client-side failure has no server code and reads as
+    /// `None` here — [`error`](Self::error) still has it.
+    #[must_use]
+    pub fn result_code(&self) -> Option<ResultCode> {
+        match (&self.error, &self.record) {
+            (Some(e), _) => e
+                .server_result_code()
+                .or_else(|| e.is_client_timeout().then_some(ResultCode::Timeout)),
+            (None, Some(_)) => Some(ResultCode::Ok),
+            (None, None) => None,
+        }
     }
 
-    /// Attach the server's extended error detail for this row.
-    ///
-    /// A `None` argument leaves whatever is already there rather than clearing it.
-    /// That is deliberate and is why this is a method rather than a public field:
-    /// the reply is parsed in more than one pass, and a later pass with nothing to
-    /// add must not erase what an earlier one attached.
-    pub fn set_error_detail(&mut self, detail: Option<Box<crate::ServerErrorDetail>>) {
-        if detail.is_some() {
-            self.error_detail = detail;
-        }
+    /// Whether a write may have been applied even though the row failed — a
+    /// client error (like a timeout) after the command reached the server.
+    /// Never true for a read row, whatever its error says.
+    #[must_use]
+    pub fn in_doubt(&self) -> bool {
+        self.has_write && self.error().is_some_and(Error::in_doubt)
+    }
+
+    /// The failure behind this row, with everything an [`Error`] carries:
+    /// [`matches`](Error::matches), [`node`](Error::node),
+    /// [`server_error_detail`](Error::server_error_detail), the cause chain.
+    /// `None` for a pending or successful row.
+    #[must_use]
+    pub const fn error(&self) -> Option<&Error> {
+        self.error.as_ref()
+    }
+
+    /// The node behind a failed row — the one that answered it, or the one
+    /// whose failure stamped it — in the `"<name>: <host:port>"` form of
+    /// [`Error::node`]. `None` for a pending or successful row.
+    #[must_use]
+    pub fn node(&self) -> Option<&str> {
+        self.error().and_then(Error::node)
     }
 
     /// Extended server-supplied error detail for this row — subcode, message,
@@ -124,7 +148,7 @@ impl BatchRecord {
     /// usually want.
     #[must_use]
     pub fn error_detail(&self) -> Option<&crate::ServerErrorDetail> {
-        self.error_detail.as_deref()
+        self.error().and_then(Error::server_error_detail)
     }
 
     /// The server-supplied error subcode for this row, or
@@ -136,16 +160,67 @@ impl BatchRecord {
     /// parent result code and are not globally unique, so dispatch on the pair.
     #[must_use]
     pub fn sub_code(&self) -> u32 {
-        self.error_detail()
-            .map_or(crate::server_error::sub_code::NONE, |d| d.sub_code)
+        self.error()
+            .map_or(crate::server_error::sub_code::NONE, Error::sub_code)
     }
 
     /// The server's human-readable explanation for this row's failure, if it
     /// sent one.
     #[must_use]
     pub fn server_message(&self) -> Option<&str> {
-        self.error_detail()
-            .map(|d| d.message.as_str())
-            .filter(|m| !m.is_empty())
+        self.error().and_then(Error::server_message)
+    }
+
+    /// Record a successful answer. An answered row always holds a record —
+    /// `None` here stands for an operation that returns nothing and is stored
+    /// as a bin-less record — so [`result_code`](Self::result_code) reads `Ok`.
+    pub(crate) fn set_ok(&mut self, record: Option<Record>) {
+        self.error = None;
+        self.record =
+            Some(record.unwrap_or_else(|| Record::new(None, crate::IndexMap::new(), None, 0, 0)));
+    }
+
+    /// Record a failure: the error is kept and any record is dropped, so a row
+    /// that fails after an earlier answer does not carry stale data. The
+    /// error's own in-doubt flag is honoured only for a write row. A failure
+    /// that comes with a record of its own (a UDF's `FAILURE` bin) assigns
+    /// [`record`](Self::record) after this call.
+    pub(crate) fn set_error(&mut self, error: Error) {
+        self.record = None;
+        self.error = Some(error);
+    }
+
+    /// Back to pending: no record, no error. A reused operation starts a call
+    /// with a clean row.
+    pub(crate) fn clear(&mut self) {
+        self.record = None;
+        self.error = None;
+    }
+
+    /// Stamp a row the server never answered with the failure that ended its
+    /// command. The row takes a copy of `cause`: for a write row the copy
+    /// keeps the cause's in-doubt flag (the request may have been applied),
+    /// and an attached transaction is told so a later commit degrades to
+    /// abort correctly; a read row can never be in doubt, so its copy is
+    /// cleared. A row that already has an outcome is left alone.
+    pub(crate) fn stamp_unanswered(
+        &mut self,
+        cause: &Error,
+        txn: Option<&std::sync::Arc<crate::txn::Txn>>,
+    ) {
+        if self.error.is_some() || self.record.is_some() {
+            return;
+        }
+        let mut row_error = cause.clone();
+        if self.has_write {
+            if row_error.in_doubt() {
+                if let Some(txn) = txn {
+                    txn.on_write_in_doubt(&self.key);
+                }
+            }
+        } else {
+            row_error.clear_in_doubt();
+        }
+        self.error = Some(row_error);
     }
 }

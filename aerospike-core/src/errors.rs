@@ -217,6 +217,22 @@ impl fmt::Debug for Error {
 // ---------------------------------------------------------------------------
 
 impl Error {
+    /// Mark this error in doubt regardless of the retry-loop rule. For rows a
+    /// command-level failure never answered: the request may have reached the
+    /// server, and the row's copy of the failure must say so.
+    pub(crate) fn force_in_doubt(&mut self) {
+        self.0.in_doubt = true;
+    }
+
+    /// Clear in-doubt on this error and every cause. For a read row's copy of
+    /// a write command's failure: a read can never be in doubt.
+    pub(crate) fn clear_in_doubt(&mut self) {
+        self.0.in_doubt = false;
+        if let Some(s) = &mut self.0.source {
+            s.clear_in_doubt();
+        }
+    }
+
     fn new(kind: ErrorKind, result_code: i32, message: Option<String>) -> Error {
         Error(Box::new(ErrorInner {
             kind,
@@ -736,6 +752,30 @@ impl Error {
         }
     }
 
+    /// True when this error, or any cause in its chain, carries one of the
+    /// given server result codes. Unlike
+    /// [`server_result_code`](Self::server_result_code), which reports the
+    /// first server code it meets, this keeps walking, so a retry-decorated
+    /// error whose root was `KeyBusy` still matches `KeyBusy`. The
+    /// counterpart of Go's `Matches`.
+    #[must_use]
+    pub fn matches(&self, codes: &[ResultCode]) -> bool {
+        let own = match &self.0.kind {
+            ErrorKind::Server { rc, .. } | ErrorKind::BatchRow { rc, .. } => codes.contains(rc),
+            _ => false,
+        };
+        own || self.0.source.as_ref().is_some_and(|s| s.matches(codes))
+    }
+
+    /// True when this error, or any cause in its chain, carries one of the
+    /// given client-side result codes. See [`matches`](Self::matches).
+    #[must_use]
+    pub fn matches_client(&self, codes: &[ClientResultCode]) -> bool {
+        let own = self.0.result_code < 0
+            && codes.contains(&ClientResultCode::from(self.0.result_code));
+        own || self.0.source.as_ref().is_some_and(|s| s.matches_client(codes))
+    }
+
     /// Returns the extended server-supplied error detail (subcode, message,
     /// expression trace), if the server attached one. Requires
     /// [`BasePolicy::error_detail_verbosity`](crate::policy::BasePolicy::error_detail_verbosity)
@@ -930,6 +970,149 @@ impl Error {
 // Display / std::error::Error
 // ---------------------------------------------------------------------------
 
+/// A copy with the same kind, codes, message, node, iteration, in-doubt flag
+/// and cause chain. Three kinds wrap foreign errors that cannot be copied: an
+/// [`Io`](ErrorKind::Io) payload is rebuilt from its kind and text, and the
+/// password-hash and task-join payloads become [`Client`](ErrorKind::Client)
+/// with the same message, so the copy prints the same and keeps its codes.
+impl Clone for Error {
+    fn clone(&self) -> Self {
+        let i = &*self.0;
+        let kind = match &i.kind {
+            ErrorKind::Server { rc, detail } => ErrorKind::Server {
+                rc: *rc,
+                detail: detail.clone(),
+            },
+            ErrorKind::BatchRow {
+                index,
+                rc,
+                last,
+                detail,
+            } => ErrorKind::BatchRow {
+                index: *index,
+                rc: *rc,
+                last: *last,
+                detail: detail.clone(),
+            },
+            ErrorKind::BatchFailed { records } => ErrorKind::BatchFailed {
+                records: records.clone(),
+            },
+            ErrorKind::Commit {
+                error_type,
+                verify_records,
+                roll_records,
+            } => ErrorKind::Commit {
+                error_type: error_type.clone(),
+                verify_records: verify_records.clone(),
+                roll_records: roll_records.clone(),
+            },
+            ErrorKind::Timeout => ErrorKind::Timeout,
+            ErrorKind::Connection => ErrorKind::Connection,
+            ErrorKind::ConnectionPoolEmpty => ErrorKind::ConnectionPoolEmpty,
+            ErrorKind::NoMoreConnections => ErrorKind::NoMoreConnections,
+            ErrorKind::MaxErrorRate => ErrorKind::MaxErrorRate,
+            ErrorKind::InvalidNode => ErrorKind::InvalidNode,
+            ErrorKind::InvalidNamespace => ErrorKind::InvalidNamespace,
+            ErrorKind::InvalidArgument => ErrorKind::InvalidArgument,
+            ErrorKind::BadResponse => ErrorKind::BadResponse,
+            ErrorKind::ParsePeers => ErrorKind::ParsePeers,
+            ErrorKind::UdfBadResponse => ErrorKind::UdfBadResponse,
+            ErrorKind::StreamTerminated => ErrorKind::StreamTerminated,
+            ErrorKind::Client => ErrorKind::Client,
+            ErrorKind::Base64(e) => ErrorKind::Base64(e.clone()),
+            ErrorKind::InvalidUtf8(e) => ErrorKind::InvalidUtf8(*e),
+            ErrorKind::Io(e) => ErrorKind::Io(std::io::Error::new(e.kind(), e.to_string())),
+            ErrorKind::ParseAddr(e) => ErrorKind::ParseAddr(e.clone()),
+            ErrorKind::ParseInt(e) => ErrorKind::ParseInt(e.clone()),
+            ErrorKind::PwHash(_) => ErrorKind::Client,
+            #[cfg(feature = "rt-tokio")]
+            ErrorKind::Async(_) => ErrorKind::Client,
+        };
+        // A degraded kind keeps its text by carrying the old base message.
+        let message = match (&i.kind, &i.message) {
+            (ErrorKind::PwHash(_), None) => Some(self.base_message()),
+            #[cfg(feature = "rt-tokio")]
+            (ErrorKind::Async(_), None) => Some(self.base_message()),
+            (_, m) => m.clone(),
+        };
+        Error(Box::new(ErrorInner {
+            kind,
+            result_code: i.result_code,
+            message,
+            node: i.node.clone(),
+            iteration: i.iteration,
+            in_doubt: i.in_doubt,
+            sub_errors: i.sub_errors.clone(),
+            source: i.source.clone(),
+        }))
+    }
+}
+
+impl ErrorKind {
+    /// The variant's name, without its payload: `"Server"`, `"Timeout"`, …
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            ErrorKind::Server { .. } => "Server",
+            ErrorKind::BatchRow { .. } => "BatchRow",
+            ErrorKind::BatchFailed { .. } => "BatchFailed",
+            ErrorKind::Timeout => "Timeout",
+            ErrorKind::Connection => "Connection",
+            ErrorKind::ConnectionPoolEmpty => "ConnectionPoolEmpty",
+            ErrorKind::NoMoreConnections => "NoMoreConnections",
+            ErrorKind::MaxErrorRate => "MaxErrorRate",
+            ErrorKind::InvalidNode => "InvalidNode",
+            ErrorKind::InvalidNamespace => "InvalidNamespace",
+            ErrorKind::InvalidArgument => "InvalidArgument",
+            ErrorKind::BadResponse => "BadResponse",
+            ErrorKind::ParsePeers => "ParsePeers",
+            ErrorKind::UdfBadResponse => "UdfBadResponse",
+            ErrorKind::StreamTerminated => "StreamTerminated",
+            ErrorKind::Commit { .. } => "Commit",
+            ErrorKind::Client => "Client",
+            ErrorKind::Base64(_) => "Base64",
+            ErrorKind::InvalidUtf8(_) => "InvalidUtf8",
+            ErrorKind::Io(_) => "Io",
+            ErrorKind::ParseAddr(_) => "ParseAddr",
+            ErrorKind::ParseInt(_) => "ParseInt",
+            ErrorKind::PwHash(_) => "PwHash",
+            #[cfg(feature = "rt-tokio")]
+            ErrorKind::Async(_) => "Async",
+        }
+    }
+}
+
+/// Serializes the error as a structured record rather than its `Display`
+/// text, so a consumer can dispatch on it: `kind` (the variant name),
+/// `result_code`, `message` (the base message, no metadata), `node`,
+/// `iteration`, `in_doubt`, `server_error_detail` (subcode, message, trace, when
+/// the server sent any), `sub_errors` (earlier attempts) and `source` (the
+/// cause), the last two recursively in the same shape.
+#[cfg(feature = "serialization")]
+impl serde::Serialize for Error {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let i = &*self.0;
+        let detail = match &i.kind {
+            ErrorKind::Server { detail, .. } | ErrorKind::BatchRow { detail, .. } => {
+                detail.as_deref()
+            }
+            _ => None,
+        };
+        let mut e = serializer.serialize_struct("Error", 9)?;
+        e.serialize_field("kind", i.kind.name())?;
+        e.serialize_field("result_code", &i.result_code)?;
+        e.serialize_field("message", &self.base_message())?;
+        e.serialize_field("node", &i.node)?;
+        e.serialize_field("iteration", &i.iteration)?;
+        e.serialize_field("in_doubt", &i.in_doubt)?;
+        e.serialize_field("server_error_detail", &detail)?;
+        e.serialize_field("sub_errors", &i.sub_errors)?;
+        e.serialize_field("source", &i.source)?;
+        e.end()
+    }
+}
+
 impl fmt::Display for Error {
     /// Uniform, Java-style format:
     /// `Error <code>[, SubCode: N][, iter=N][, In Doubt: true][, node=X]: <base message>`
@@ -945,6 +1128,12 @@ impl fmt::Display for Error {
         write!(f, "Error {}", i.result_code)?;
         if self.sub_code() != crate::server_error::sub_code::NONE {
             write!(f, ", SubCode: {}", self.sub_code())?;
+            if let Some(name) = self
+                .server_result_code()
+                .and_then(|rc| crate::server_error::sub_code::name(rc, self.sub_code()))
+            {
+                write!(f, " ({name})")?;
+            }
         }
         if let Some(it) = i.iteration {
             write!(f, ", iter={it}")?;
@@ -1244,6 +1433,48 @@ mod tests {
     }
 
     #[test]
+    fn matches_walks_the_whole_chain() {
+        let root = Error::server_error(ResultCode::KeyBusy, "A1: 10.0.0.1:3000", None);
+        let outer = root.wrap(Error::max_retries_exceeded("Timeout after 3 tries"));
+
+        // The first server code in the chain is KeyBusy; a second, different
+        // server code deeper down must still be found.
+        assert!(outer.matches(&[ResultCode::KeyBusy]));
+        assert!(outer.matches(&[ResultCode::Timeout, ResultCode::KeyBusy]));
+        assert!(!outer.matches(&[ResultCode::KeyNotFoundError]));
+        assert!(!outer.matches(&[]));
+        assert!(outer.matches_client(&[ClientResultCode::MaxRetriesExceeded]));
+        assert!(!outer.matches_client(&[ClientResultCode::ParseError]));
+
+        let two_deep = Error::server_error(ResultCode::DeviceOverload, "A1", None)
+            .wrap(Error::server_error(ResultCode::Timeout, "A1", None))
+            .wrap(Error::client_error("gave up"));
+        assert_eq!(two_deep.server_result_code(), Some(ResultCode::Timeout));
+        assert!(two_deep.matches(&[ResultCode::DeviceOverload]), "{two_deep}");
+    }
+
+    #[test]
+    fn display_names_a_known_subcode() {
+        let detail = crate::ServerErrorDetail {
+            sub_code: crate::server_error::sub_code::FILTERED_BINS,
+            message: String::new(),
+            exp_trace: None,
+        };
+        let err = Error::server_error(ResultCode::FilteredOut, "A1", Some(Box::new(detail)));
+        let s = err.to_string();
+        assert!(s.contains(", SubCode: 2 (FILTERED_BINS)"), "{s}");
+
+        let detail = crate::ServerErrorDetail {
+            sub_code: 77,
+            message: String::new(),
+            exp_trace: None,
+        };
+        let err = Error::server_error(ResultCode::FilteredOut, "A1", Some(Box::new(detail)));
+        let s = err.to_string();
+        assert!(s.contains(", SubCode: 77,") || s.ends_with("SubCode: 77"), "unknown subcode stays bare: {s}");
+    }
+
+    #[test]
     fn retry_exhaustion_chain_is_in_doubt() {
         // The exact shape single_command builds on retry exit with
         // max_retries=0: last_err.wrap(exit_err) makes the exit error primary
@@ -1337,7 +1568,7 @@ mod tests {
     fn batch_failed_carries_records_and_cause() {
         let key = crate::Key::new("ns", "set", crate::Value::from("k")).unwrap();
         let mut rec = crate::BatchRecord::new(key, true);
-        rec.in_doubt = true;
+        rec.set_error(Error::timeout("Timeout after 2 tries").set_in_doubt(true, 1));
         let cause = Error::timeout("Timeout after 2 tries").set_in_doubt(true, 1);
 
         let err = Error::batch_failed(vec![rec], cause);
@@ -1346,7 +1577,7 @@ mod tests {
         match err.kind() {
             ErrorKind::BatchFailed { records } => {
                 assert_eq!(records.len(), 1);
-                assert!(records[0].in_doubt);
+                assert!(records[0].in_doubt());
             }
             other => panic!("expected BatchFailed, got {other:?}"),
         }
