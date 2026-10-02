@@ -223,6 +223,13 @@ impl ServerCommand<'_> {
 
             let result_code = ResultCode::from(conn.buffer().read_u8(Some(5)));
 
+            // A background query/scan returns KEY_NOT_FOUND when the set does
+            // not exist on this node. That is "set absent", not a failure of
+            // the job. The Java client's ServerCommand treats it the same way.
+            if result_code == ResultCode::KeyNotFoundError {
+                return Ok(false);
+            }
+
             // Check for end of response
             let info3 = conn.buffer().read_u8(Some(3));
             if info3 & buffer::INFO3_LAST == buffer::INFO3_LAST {

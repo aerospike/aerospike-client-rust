@@ -1054,6 +1054,39 @@ async fn query_operate_scan_all() {
 }
 
 #[aerospike_macro::test]
+async fn query_operate_empty_set() {
+    // A background operate on a set that has never been written. On a
+    // multi-node cluster the server answers KEY_NOT_FOUND (result code 2)
+    // from each node that does not hold the set. That is "set absent",
+    // the same reading as the Java client's ServerCommand, and must not
+    // fail the job. The reported case is a 3-node strong-consistency
+    // cluster.
+    let client = common::client().await;
+    let nodes = client.nodes().len();
+    if nodes < 3 {
+        eprintln!("Skipping query_operate_empty_set: needs a 3-node cluster (have {nodes})");
+        client.close().await.unwrap();
+        return;
+    }
+
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let statement = Statement::new(namespace, &set_name, Bins::All);
+    let wpolicy = WritePolicy::default();
+    let ops = vec![operations::put(&as_bin!("bin", 1))];
+
+    let task = client
+        .query_operate(&wpolicy, statement, &ops)
+        .await
+        .expect("background operate on an empty set should succeed");
+    task.wait_till_complete(Some(Duration::from_secs(30)))
+        .await
+        .expect("background operate on an empty set should complete");
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
 async fn query_operate_empty_ops_returns_parameter_error() {
     let client = common::client().await;
     let namespace = common::namespace();

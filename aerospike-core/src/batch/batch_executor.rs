@@ -372,6 +372,10 @@ impl BatchExecutor {
             Err(err) if matches!(err.kind(), crate::ErrorKind::Server { .. }) => {
                 let rc = err.server_result_code().expect("server error has rc");
                 batch_op.set_result_code(rc, err.in_doubt());
+                // The single-key command carries the server's error detail on
+                // the Error; keep it on the row like the multi-record wire
+                // path does.
+                batch_op.set_error_detail(err.server_error_detail().cloned().map(Box::new));
             }
             Err(err) if matches!(err.kind(), crate::ErrorKind::UdfBadResponse) => {
                 // A UDF execution failure is a per-key batch outcome. The
