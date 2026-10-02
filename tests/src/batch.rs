@@ -1418,3 +1418,62 @@ async fn batch_delete_row_shape_is_the_same_alone_and_grouped() {
     let read = paired[0].batch_record().record.clone().expect("read hit");
     assert!(read.key.is_none() && read.bins.is_empty() && read.results.is_none());
 }
+
+#[aerospike_macro::test]
+async fn batch_single_row_error_carries_server_subcode_and_message() {
+    // A one-key node group is executed as a single-key command rather than a
+    // batch wire command; the error detail must survive that conversion just
+    // as it does on the multi-record parse path. One row forces the
+    // conversion on any cluster size.
+    use aerospike::operations::hll;
+
+    let client = common::client().await;
+    let namespace: &str = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    let supported = match client.cluster.nodes().first() {
+        Some(node) => node.version().supports_extended_error_detail(),
+        None => false,
+    };
+    if !supported {
+        eprintln!("skipping: cluster predates extended error detail (8.2.0)");
+        client.close().await.unwrap();
+        return;
+    }
+
+    let mut bpolicy = BatchPolicy::default();
+    bpolicy.base_policy.error_detail_verbosity = 2;
+    let bpw = BatchWritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("other-bin", 1)])
+        .await
+        .unwrap();
+
+    let mut batch = vec![BatchOperation::write(
+        &bpw,
+        key.clone(),
+        vec![hll::refresh_count("no-hll-bin")],
+    )];
+
+    // A row error may surface as the call's Err; the row carries its
+    // outcome either way.
+    let _ = client.batch(&bpolicy, &mut batch).await;
+    let records: Vec<BatchRecord> = batch.iter().map(|op| op.batch_record().clone()).collect();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].result_code, Some(ResultCode::BinNotFound));
+    assert!(
+        records[0].sub_code() >= 1,
+        "expected a server subcode on the failing row, got {:?}",
+        records[0]
+    );
+    let message = records[0]
+        .server_message()
+        .expect("expected a server message on the failing row");
+    assert!(
+        message.to_lowercase().contains("count op"),
+        "unexpected server message: {message:?}"
+    );
+
+    client.close().await.unwrap();
+}
