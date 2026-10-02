@@ -1305,25 +1305,35 @@ mod node_tests {
         ));
         let node = Node::new(policy, nv, metrics, Arc::new(std::sync::atomic::AtomicUsize::new(0)), None);
 
-        // Trigger 4 pool misses with distinct hints — each reports pool-empty
-        // and spawns a background fill on its own queue.
+        // `ConnectionPool::get` walks every queue, and the shared test runtime
+        // is multi-threaded, so a fill spawned for an earlier hint can park a
+        // connection before the next call. That call then checks the connection
+        // out instead of missing, and never reserves its own queue. Hold any
+        // connection we observe and retry the hint until it misses.
+        let mut checked_out = Vec::new();
         for hint in 0..4u8 {
-            let err = node.get_connection(hint).await.unwrap_err();
-            assert!(
-                err.is_pool_empty(),
-                "pool miss must report ConnectionPoolEmpty, got {err:?}"
-            );
-        }
-
-        // Let the spawned fill tasks run (test connections are dummies, so
-        // they complete on the next scheduler passes).
-        for _ in 0..20 {
-            aerospike_rt::sleep(aerospike_rt::time::Duration::from_millis(1)).await;
-            if node.connection_pool.total_reserved() == 4 {
-                break;
+            let mut attempts = 0;
+            loop {
+                attempts += 1;
+                assert!(
+                    attempts <= 8,
+                    "hint {hint} never missed; background fills kept satisfying get_connection"
+                );
+                match node.get_connection(hint).await {
+                    Ok(conn) => checked_out.push(conn),
+                    Err(err) => {
+                        assert!(
+                            err.is_pool_empty(),
+                            "pool miss must report ConnectionPoolEmpty, got {err:?}"
+                        );
+                        break;
+                    }
+                }
             }
         }
 
+        // The slot is reserved synchronously in `reserve_queue`, before the
+        // background open finishes, so this does not wait on the fills.
         let queues = node.connection_pool.queues();
         for i in 0..4 {
             assert_eq!(
@@ -1332,6 +1342,13 @@ mod node_tests {
                 "queue[{i}] must have exactly 1 reserved connection"
             );
         }
+        // The last miss has not been checked out, so at most the three earlier
+        // fills can be sitting in `checked_out`.
+        assert!(
+            checked_out.len() <= 3,
+            "held {} connections from earlier fills",
+            checked_out.len()
+        );
     }
 
     /// A pool miss spawns a background fill; a subsequent `get_connection`
