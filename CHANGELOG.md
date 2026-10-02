@@ -71,6 +71,8 @@
     mirrored here by `ErrorKind::Timeout`).
   * Batch rows the server answered `KeyNotFound` or `FilteredOut` lost the server's extended error
     detail (FILTERED_META / FILTERED_BINS): the multi-key parser read it and discarded it.
+  * The `batch_operations`, `query` and `timeout_configuration` examples defaulted to port 3100 when
+    `AEROSPIKE_HOSTS` is unset; every other example and the test harness use 3000.
   * Nine client-built server errors passed message text (or nothing) as the *node*, so `Display`
     printed `node=<message>` and `base_message()` lost the text.
   * `ResultCode` descriptions corrected from the server/Java strings: `AlwaysForbidden` ("Operation not

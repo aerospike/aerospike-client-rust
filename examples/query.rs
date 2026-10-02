@@ -43,7 +43,7 @@ pub async fn run() {
 }
 
 async fn connect_to_aerospike() -> Client {
-    let hosts = env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| String::from("127.0.0.1:3100"));
+    let hosts = env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| String::from("127.0.0.1:3000"));
 
     let mut policy = ClientPolicy::default();
     policy.use_services_alternate = std::env::var("AEROSPIKE_USE_SERVICES_ALTERNATE")
