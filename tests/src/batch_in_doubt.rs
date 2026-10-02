@@ -28,7 +28,7 @@ use crate::common;
 
 use aerospike::{
     as_bin, as_key, AdminPolicy, BatchOperation, BatchPolicy, BatchReadPolicy, BatchUDFPolicy,
-    Bins, Client, Key, ResultCode, Task, UDFLang, Value, WritePolicy,
+    Bins, Client, ClientResultCode, Key, ResultCode, Task, UDFLang, Value, WritePolicy,
 };
 
 // A UDF that occupies the server for at least `secs` before writing. `os.clock()`
@@ -116,10 +116,13 @@ async fn single_key_udf_client_timeout_marks_in_doubt() {
         err.is_client_timeout(),
         "expected a client timeout, got {err:?}"
     );
+    // Retry exhaustion is MAX_RETRIES_EXCEEDED (-11) on both the single-key
+    // and the batch path (Go does the same; Java keeps 9 behind its Timeout
+    // exception type, which `ErrorKind::Timeout` mirrors here).
     assert_eq!(
-        err.result_code(),
-        i32::from(u8::from(ResultCode::Timeout)),
-        "expected TIMEOUT, got {err}"
+        err.client_result_code(),
+        Some(ClientResultCode::MaxRetriesExceeded),
+        "expected MAX_RETRIES_EXCEEDED, got {err}"
     );
     assert!(
         err.in_doubt(),
@@ -339,6 +342,13 @@ async fn timeout_reports_the_attempts_actually_made() {
 
         let attempts = max_retries + 1;
         assert!(err.is_client_timeout(), "max_retries={max_retries}: {err:?}");
+        // Retry exhaustion is MAX_RETRIES_EXCEEDED (-11), as in Java and Go —
+        // the single-key path used to report the server timeout code 9.
+        assert_eq!(
+            err.client_result_code(),
+            Some(ClientResultCode::MaxRetriesExceeded),
+            "max_retries={max_retries}: {err}"
+        );
         assert_eq!(
             err.iteration(),
             Some(attempts),

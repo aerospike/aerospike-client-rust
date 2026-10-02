@@ -283,7 +283,7 @@ impl TxnRoll {
             .map(|r| r.result_code);
         if let Some(code) = failure {
             return Err(match code {
-                Some(rc) => Error::server_error(rc, String::new(), None),
+                Some(rc) => Error::server_error_bare(rc),
                 None => {
                     Error::timeout("Verify: no response for one or more records".to_string())
                 }
@@ -400,9 +400,10 @@ impl TxnRoll {
                 "abort"
             };
             return Err(match code {
-                Some(rc) => {
-                    Error::server_error(rc, format!("Failed to {action} one or more records"), None)
-                }
+                Some(rc) => Error::server_error_with_message(
+                    rc,
+                    format!("Failed to {action} one or more records"),
+                ),
                 None => Error::timeout(format!(
                     "Failed to {action}: no response for one or more records"
                 )),

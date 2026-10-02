@@ -175,7 +175,7 @@ impl<'a> SingleCommand<'a> {
                         cluster.incr_max_retries_exceeded();
                     }
                 }
-                let err = Error::timeout(format!("Timeout after {iterations} tries"));
+                let err = Error::max_retries_exceeded(format!("Timeout after {iterations} tries"));
                 let tail = match last_err.take() {
                     Some(e) => e.wrap(err),
                     None => err,

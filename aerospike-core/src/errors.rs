@@ -261,6 +261,15 @@ impl Error {
         )
     }
 
+    /// Server result code with no node and no message: for outcomes the client
+    /// derives itself from a response set (a verify-failure code, a missing
+    /// key re-injected for a batch row, a plan filtered out before it ran).
+    /// The result code's description serves as the message.
+    #[must_use]
+    pub(crate) fn server_error_bare(rc: ResultCode) -> Error {
+        Error::new(ErrorKind::Server { rc, detail: None }, i32::from(u8::from(rc)), None)
+    }
+
     /// Failure reported in an info command's response body,
     /// `ERROR|FAIL[:<code>][:<message>]`, prefixed with the operation that
     /// issued it (Java: `AerospikeException(code, "Create index failed: " +

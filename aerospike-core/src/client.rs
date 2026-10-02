@@ -1148,10 +1148,9 @@ impl Client {
         ops: &[Operation],
     ) -> Result<Record> {
         if ops.is_empty() {
-            return Err(Error::server_error(
+            return Err(Error::server_error_with_message(
                 ResultCode::ParameterError,
                 "no operations defined",
-                None,
             ));
         }
         let policy = self.cluster.resolve_write(policy);
@@ -1687,11 +1686,7 @@ impl Client {
         plan: QueryPlan,
     ) -> Result<Arc<Recordset>> {
         if plan.is_filtered_out() {
-            return Err(Error::server_error(
-                ResultCode::FilteredOut,
-                String::new(),
-                None,
-            ));
+            return Err(Error::server_error_bare(ResultCode::FilteredOut));
         }
 
         statement.filters = match plan.filter_for_execute()? {
@@ -1902,10 +1897,9 @@ impl Client {
             return Ok(value);
         }
         if let Some(reason) = record.bins.swap_remove("FAILURE") {
-            return Err(Error::server_error(
+            return Err(Error::server_error_with_message(
                 ResultCode::QueryGeneric,
                 format!("aggregation UDF failed on the server: {reason}"),
-                None,
             ));
         }
         Err(Error::bad_response(format!(
@@ -1943,10 +1937,9 @@ impl Client {
         operations: &[Operation],
     ) -> Result<ExecuteTask> {
         if operations.is_empty() {
-            return Err(Error::server_error(
+            return Err(Error::server_error_with_message(
                 ResultCode::ParameterError,
                 "no operations defined",
-                None,
             ));
         }
         // Inject the ops into `statement.operations` so the unified
@@ -3380,10 +3373,9 @@ impl Client {
             // roll-forward mark again.
             TxnState::CommitFailed => tr.commit(roll_policy).await,
             TxnState::Committed => Ok(CommitStatus::AlreadyCommitted),
-            TxnState::Aborted => Err(Error::server_error(
+            TxnState::Aborted => Err(Error::server_error_with_message(
                 ResultCode::MrtAborted,
-                "Transaction already aborted".to_string(),
-                None,
+                "Transaction already aborted",
             )),
         }
     }
@@ -3427,10 +3419,9 @@ impl Client {
             TxnState::CommitFailed => Err(Error::txn_failed(
                 crate::txn::COMMIT_FAILED_ABORT_MESSAGE,
             )),
-            TxnState::Committed => Err(Error::server_error(
+            TxnState::Committed => Err(Error::server_error_with_message(
                 ResultCode::MrtCommitted,
-                "Transaction already committed".to_string(),
-                None,
+                "Transaction already committed",
             )),
             TxnState::Aborted => Ok(AbortStatus::AlreadyAborted),
         }

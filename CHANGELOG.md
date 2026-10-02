@@ -21,6 +21,9 @@
     partition range and each partition's resume point (id, retry, bval, digest — the same fields the Go
     client persists) round-trip, so a paginated query can hand its cursor to another process and
     continue there. Deserialization rejects a cursor whose range or entries are inconsistent.
+  * `ResultCode::InvalidEncoding` (29, "Invalid UTF-8 encoding", server 8.2.0+) and the
+    `OpNotApplicable` subcode `OPNOT_STRING_REGEX_LIMIT_EXCEEDED` (12) are decoded instead of
+    falling into `Unknown`.
   * [CLIENT-4390] `IndexType::Integer` (`INTEGER`) for secondary indexes on server 8.2.0+, reported by
     `Version::supports_integer_index`; `IndexType::Numeric` remains for older servers.
 
@@ -29,6 +32,19 @@
     (result code 2) as "set absent on this node" and succeed, matching the Java
     client. A 3-node cluster returns that code from nodes that do not hold a
     fresh, empty set.
+  * A batch whose `total_timeout` elapsed outside the retry loop's own deadline checks returned a
+    bare timeout and **dropped every row of that node group**: the caller's `BatchOperation`s came
+    back as placeholders. The whole-command deadline is now a terminal failure like any other — the
+    error is a client timeout and in doubt, and every unanswered write row is stamped TIMEOUT and
+    in doubt with its key intact.
+  * Single-key retry exhaustion now reports `MaxRetriesExceeded` (-11) like the batch path and the Go
+    client; it used to report the timeout code 9 (which Java keeps behind its `Timeout` exception type,
+    mirrored here by `ErrorKind::Timeout`).
+  * Nine client-built server errors passed message text (or nothing) as the *node*, so `Display`
+    printed `node=<message>` and `base_message()` lost the text.
+  * `ResultCode` descriptions corrected from the server/Java strings: `AlwaysForbidden` ("Operation not
+    allowed"), `PartitionUnavailable` ("Partition unavailable"), `FilteredOut` ("Command filtered
+    out"), `LostConflict`, and the allowlist codes no longer say "whitelist".
   * Serializing `Value::Infinity`, `Value::Wildcard` or a `Value::MultiResult` is a serde error
     instead of a panic. **Breaking**: `From<Value> for i64` is now `TryFrom<Value>` (and
     `TryFrom<&Value>`) with a `String` error, like every other `Value` conversion —

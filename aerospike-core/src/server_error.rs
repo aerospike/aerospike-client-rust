@@ -170,7 +170,8 @@ pub mod sub_code {
     /// Source blob/string is not valid UTF-8 for an `OPNOT_APPLICABLE` path.
     pub const OPNOT_STRING_UTF8_INVALID: u32 = 11;
 
-    // 12 is reserved server-side for a regex-limit subcode still in review.
+    /// Regex evaluation exceeded its resource budget (server 8.2+).
+    pub const OPNOT_STRING_REGEX_LIMIT_EXCEEDED: u32 = 12;
 
     /// The string is not valid base64 — a length that is not a multiple of 4, a
     /// character outside the alphabet, or misplaced `=` padding.

@@ -316,11 +316,9 @@ impl BatchExecutor {
                 // DeleteCommand reports missing-key via `cmd.existed`, not Result::Err —
                 // re-inject KEY_NOT_FOUND so batch sees it per-record.
                 match cmd.execute().await {
-                    Ok(()) if !cmd.existed => Err(Error::server_error(
-                        ResultCode::KeyNotFoundError,
-                        String::new(),
-                        None,
-                    )),
+                    Ok(()) if !cmd.existed => {
+                        Err(Error::server_error_bare(ResultCode::KeyNotFoundError))
+                    }
                     // Same row shape as a delete that went through the
                     // multi-record wire path (and as Java's
                     // `BatchSingle.Delete`): an Ok row carries a bin-less

@@ -50,6 +50,10 @@ pub struct BatchOperateCommand {
     /// outcome and in-doubt mark — survives for the executor to stamp and
     /// hand back to the caller's rows.
     pub(crate) terminal_error: Option<Error>,
+    /// Request buffers that reached the wire so far. Lives on the command,
+    /// not the loop, so the whole-command deadline can mark the rows with the
+    /// same in-doubt rule as every other terminal failure.
+    commands_sent: u32,
     /// `batch_foreach`'s per-row hook, fired as each row's result lands.
     hook: Option<Arc<crate::batch::BatchHook>>,
 }
@@ -65,6 +69,7 @@ impl BatchOperateCommand {
             node,
             batch_ops,
             terminal_error: None,
+            commands_sent: 0,
             hook: None,
         }
     }
@@ -75,41 +80,59 @@ impl BatchOperateCommand {
     }
 
     #[allow(clippy::option_if_let_else)]
-    pub async fn execute(self, cluster: Arc<Cluster>) -> Result<Self> {
+    pub async fn execute(mut self, cluster: Arc<Cluster>) -> Result<Self> {
         // An aborted or cancelled batch_foreach: don't start work nobody
         // wants; the rows come back untouched for the final sweep.
         if self.hook.as_ref().is_some_and(|h| !h.is_active()) {
             return Ok(self);
         }
         if self.policy.total_timeout() > 0 {
+            let total_ms = u64::from(self.policy.total_timeout());
             let res = aerospike_rt::timeout(
-                Duration::from_millis(u64::from(self.policy.total_timeout())),
+                Duration::from_millis(total_ms),
                 self.execute_command(cluster.clone()),
             )
             .await;
             match res {
-                Ok(res) => res,
+                Ok(res) => res?,
                 Err(_) => {
                     // The whole-command deadline elapsed before the inner loop
                     // returned. The in-loop deadline check is mutually
                     // exclusive with this path, so there's no double count.
+                    // The rows are still ours: stamp them exactly as any other
+                    // terminal failure does, and hand them back. Returning
+                    // `Err` here used to drop every row of the group.
                     cluster.incr_total_timeout_exceeded();
-                    Err(Error::timeout("Timeout".to_string()))
+                    let is_write = self.is_write();
+                    let commands_sent = self.commands_sent;
+                    self.set_terminal_error(
+                        Error::timeout(format!("Command timed out after {total_ms} ms")),
+                        is_write,
+                        commands_sent,
+                    );
                 }
             }
         } else {
-            self.execute_command(cluster).await
+            self.execute_command(cluster).await?;
         }
+        Ok(self)
     }
 
-    pub async fn execute_command(mut self, cluster: Arc<Cluster>) -> Result<Self> {
+    /// Whether this batch carries any write. Drives the metrics command type
+    /// and the in-doubt rule for a terminal failure (only writes can be in
+    /// doubt). The op set does not change across retries.
+    fn is_write(&self) -> bool {
+        self.batch_ops.iter().any(|op| op.0.has_write())
+    }
+
+    /// The retry loop. Every terminal failure is recorded through
+    /// [`set_terminal_error`](Self::set_terminal_error) and the function
+    /// returns `Ok`, so the rows survive for the executor; an `Err` here means
+    /// the command could not be prepared at all.
+    pub async fn execute_command(&mut self, cluster: Arc<Cluster>) -> Result<()> {
         let mut iterations: usize = 0;
         let mut last_err: Option<Error> = None;
         let node_addr = self.node.to_string();
-        // Number of times a request buffer actually reached the wire. Drives
-        // per-row in-doubt (a row error after a retry may mask an applied
-        // earlier attempt) and the terminal no-response in-doubt walk.
-        let mut commands_sent: u32 = 0;
 
         // set timeout outside the loop
         let deadline = self.policy.deadline();
@@ -121,11 +144,7 @@ impl BatchOperateCommand {
         // background task opens a connection (not part of the retry budget).
         let mut pool_empty_waits: usize = 0;
 
-        // Whether this batch carries any write. Drives both the metrics command
-        // type and the in-doubt rule for a terminal failure (only writes can be
-        // in doubt). The op set does not change across retries, so it is
-        // computed once.
-        let is_write = self.batch_ops.iter().any(|op| op.0.has_write());
+        let is_write = self.is_write();
 
         // Metrics: a batch containing any write op is a BatchWrite, otherwise
         // a BatchRead. `trans_start` measures the overall command latency.
@@ -159,7 +178,7 @@ impl BatchOperateCommand {
         loop {
             // A hook abort or a dropped batch_foreach: no further attempts.
             if self.hook.as_ref().is_some_and(|h| !h.is_active()) {
-                return Ok(self);
+                return Ok(());
             }
             let retry_err = if iterations == 0 || same_node_retry {
                 // First attempt, and every retry for non-sequence replicas:
@@ -172,15 +191,15 @@ impl BatchOperateCommand {
                     cmd_type,
                     sample_draw,
                     &mut sampled,
-                    &mut commands_sent,
+                    &mut self.commands_sent,
                 self.hook.as_deref(),
                 )
                 .await
                 {
                     Ok(res) => res,
                     Err(err) => {
-                        self.set_terminal_error(err, is_write, commands_sent);
-                        return Ok(self);
+                        self.set_terminal_error(err, is_write, self.commands_sent);
+                        return Ok(());
                     }
                 }
             } else {
@@ -245,9 +264,9 @@ impl BatchOperateCommand {
                 self.batch_ops = regrouped;
                 if ranges.is_empty() {
                     if let Some(err) = route_err {
-                        self.set_terminal_error(err, is_write, commands_sent);
+                        self.set_terminal_error(err, is_write, self.commands_sent);
                     }
-                    return Ok(self);
+                    return Ok(());
                 }
 
                 // Run every group this round even if one fails (Java's
@@ -263,7 +282,7 @@ impl BatchOperateCommand {
                         cmd_type,
                         sample_draw,
                         &mut sampled,
-                        &mut commands_sent,
+                        &mut self.commands_sent,
                     self.hook.as_deref(),
                 )
                     .await
@@ -273,8 +292,8 @@ impl BatchOperateCommand {
                         }
                         Ok(None) => (),
                         Err(err) => {
-                            self.set_terminal_error(err, is_write, commands_sent);
-                            return Ok(self);
+                            self.set_terminal_error(err, is_write, self.commands_sent);
+                            return Ok(());
                         }
                     }
                 }
@@ -329,7 +348,7 @@ impl BatchOperateCommand {
                         }
                     }
                 }
-                return Ok(self);
+                return Ok(());
             }
 
             iterations += 1;
@@ -352,9 +371,9 @@ impl BatchOperateCommand {
                         .chain_cause(last_err)
                         .with_retry_context(u32_iters, Some(&node_addr), Vec::new()),
                     is_write,
-                    commands_sent,
+                    self.commands_sent,
                 );
-                return Ok(self);
+                return Ok(());
             }
 
             // Sleep before trying again, after the first iteration
@@ -380,9 +399,9 @@ impl BatchOperateCommand {
                             .chain_cause(last_err)
                             .with_retry_context(u32_iters, Some(&node_addr), Vec::new()),
                         is_write,
-                        commands_sent,
+                        self.commands_sent,
                     );
-                    return Ok(self);
+                    return Ok(());
                 }
             }
         }

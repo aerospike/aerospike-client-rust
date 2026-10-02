@@ -77,7 +77,8 @@ pub enum ResultCode {
     /// Specified bin name does not exist in record.
     BinNotFound,
 
-    /// Specified bin name does not exist in record.
+    /// The storage device is overloaded; the server rejected the command
+    /// (retried by the client like a timeout).
     DeviceOverload,
 
     /// Key type mismatch.
@@ -86,7 +87,7 @@ pub enum ResultCode {
     /// Invalid namespace.
     InvalidNamespace,
 
-    /// Bin name length greater than 14 characters.
+    /// Bin name length greater than 15 characters, or too many unique bin names.
     BinNameTooLong,
 
     /// `OperationType` not allowed at this time.
@@ -110,6 +111,9 @@ pub enum ResultCode {
 
     /// Write command loses conflict to XDR.
     LostConflict,
+
+    /// A string in the request is not valid UTF-8. Server 8.2.0+.
+    InvalidEncoding,
 
     /// Write can't complete until XDR finishes shipping.
     XDRKeyBusy,
@@ -300,6 +304,7 @@ impl ResultCode {
             26 => ResultCode::OpNotApplicable,
             27 => ResultCode::FilteredOut,
             28 => ResultCode::LostConflict,
+            29 => ResultCode::InvalidEncoding,
             32 => ResultCode::XDRKeyBusy,
             120 => ResultCode::MrtBlocked,
             121 => ResultCode::MrtVersionMismatch,
@@ -369,8 +374,8 @@ impl ResultCode {
             ResultCode::ClusterKeyMismatch => String::from("Cluster key mismatch"),
             ResultCode::ServerMemError => String::from("Server memory error"),
             ResultCode::Timeout => String::from("Timeout"),
-            ResultCode::AlwaysForbidden => String::from("Xds not available"),
-            ResultCode::PartitionUnavailable => String::from("Server not available"),
+            ResultCode::AlwaysForbidden => String::from("Operation not allowed"),
+            ResultCode::PartitionUnavailable => String::from("Partition unavailable"),
             ResultCode::BinTypeError => String::from("Bin type error"),
             ResultCode::RecordTooBig => String::from("Record too big"),
             ResultCode::KeyBusy => String::from("Hot key"),
@@ -387,8 +392,9 @@ impl ResultCode {
             ResultCode::ElementNotFound => String::from("Element not found"),
             ResultCode::ElementExists => String::from("Element already exists"),
             ResultCode::OpNotApplicable => String::from("Operation not applicable"),
-            ResultCode::FilteredOut => String::from("Transaction filtered out"),
-            ResultCode::LostConflict => String::from("Write command loses conflict to XDR"),
+            ResultCode::FilteredOut => String::from("Command filtered out"),
+            ResultCode::LostConflict => String::from("Command failed due to conflict with XDR"),
+            ResultCode::InvalidEncoding => String::from("Invalid UTF-8 encoding"),
             ResultCode::XDRKeyBusy => {
                 String::from("Write can't complete until XDR finishes shipping")
             }
@@ -428,12 +434,12 @@ impl ResultCode {
             ResultCode::InvalidRole => String::from("Invalid role"),
             ResultCode::RoleAlreadyExists => String::from("Role already exists"),
             ResultCode::InvalidPrivilege => String::from("Invalid privilege"),
-            ResultCode::InvalidAllowlist => String::from("Invalid whitelist"),
+            ResultCode::InvalidAllowlist => String::from("Invalid allowlist"),
             ResultCode::QuotasNotEnabled => String::from("Quotas not enabled"),
             ResultCode::InvalidQuota => String::from("Invalid quota"),
             ResultCode::NotAuthenticated => String::from("Not authenticated"),
             ResultCode::RoleViolation => String::from("Role violation"),
-            ResultCode::NotAllowlisted => String::from("Command not whitelisted"),
+            ResultCode::NotAllowlisted => String::from("Command not allowlisted"),
             ResultCode::QuotaExceeded => String::from("Quota exceeded"),
             ResultCode::UdfBadResponse => String::from("Udf returned error"),
             ResultCode::BatchDisabled => String::from("Batch functionality has been disabled"),
@@ -492,6 +498,7 @@ impl From<ResultCode> for u8 {
             ResultCode::OpNotApplicable => 26,
             ResultCode::FilteredOut => 27,
             ResultCode::LostConflict => 28,
+            ResultCode::InvalidEncoding => 29,
             ResultCode::XDRKeyBusy => 32,
             ResultCode::MrtBlocked => 120,
             ResultCode::MrtVersionMismatch => 121,
@@ -780,6 +787,8 @@ mod tests {
     #[test]
     fn from_result_code() {
         assert_eq!(ResultCode::KeyNotFoundError, ResultCode::from(2u8));
+        assert_eq!(ResultCode::InvalidEncoding, ResultCode::from(29u8));
+        assert_eq!(ResultCode::InvalidEncoding.to_string(), "Invalid UTF-8 encoding");
     }
 
     #[test]
