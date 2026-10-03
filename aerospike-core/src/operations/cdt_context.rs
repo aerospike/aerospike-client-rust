@@ -69,13 +69,19 @@ pub struct CdtContext {
     pub(crate) expression: Option<Expression>,
 }
 
-/// Converts a context array to base64 to be used in info commands.
-pub fn to_base64(ctx: &[CdtContext]) -> Result<String> {
+/// Packs a context array to the byte stream that [`to_base64`] encodes;
+/// the inverse of [`ctx_from_bytes`].
+pub fn to_bytes(ctx: &[CdtContext]) -> Result<Vec<u8>> {
     let size = pack_ctx_for_index(&mut None, ctx)?;
     let mut buf = Buffer::new(0);
     buf.resize_buffer(size)?;
     let _ = pack_ctx_for_index(&mut Some(&mut buf), ctx);
-    Ok(BASE64.encode(&buf.data_buffer))
+    Ok(std::mem::take(&mut buf.data_buffer))
+}
+
+/// Converts a context array to base64 to be used in info commands.
+pub fn to_base64(ctx: &[CdtContext]) -> Result<String> {
+    Ok(BASE64.encode(to_bytes(ctx)?))
 }
 
 /// Restore a context array from the byte stream emitted by [`to_base64`]
@@ -659,6 +665,29 @@ mod tests {
     }
 
     // ---- to_base64 / from_base64 round-trip -----------------------------
+
+    #[test]
+    fn ctx_to_bytes_is_what_to_base64_encodes() {
+        let original = vec![
+            ctx_map_key(Value::String("book".into())),
+            ctx_list_index(2),
+            ctx_all_children_with_filter(expressions::gt(
+                expressions::int_bin("score".into()),
+                expressions::int_val(10),
+            )),
+        ];
+        let bytes = to_bytes(&original).expect("pack");
+        assert_eq!(
+            BASE64.decode(to_base64(&original).expect("encode")).unwrap(),
+            bytes
+        );
+        let restored = ctx_from_bytes(&bytes).expect("unpack");
+        assert_eq!(restored.len(), original.len());
+        for (o, r) in original.iter().zip(&restored) {
+            assert_eq!(o.id, r.id);
+        }
+        assert_eq!(to_bytes(&restored).expect("repack"), bytes);
+    }
 
     #[test]
     fn ctx_round_trip_simple_path() {
