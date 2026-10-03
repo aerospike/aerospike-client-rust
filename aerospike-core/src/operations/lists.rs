@@ -36,7 +36,7 @@
 //! `Nil < Bool < Int < String < List < Map < Bytes < Float < GeoJSON`,
 //! with each type ordered naturally (numbers numerically, strings and
 //! blobs byte-wise, lists element-wise, maps by length then entries).
-//! [`Value`](crate::Value)'s `Ord` implementation matches this order
+//! [`Value`]'s `Ord` implementation matches this order
 //! exactly, so a client-side `Vec<Value>::sort()` reproduces the
 //! server's sort.
 

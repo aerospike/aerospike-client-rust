@@ -118,7 +118,7 @@ pub struct TlsPolicy {
     pub config: ClientConfig,
 
     /// Encrypt only the authentication exchange, then run the data plane in
-    /// cleartext (Java `TlsPolicy.forLoginOnly`).
+    /// cleartext.
     ///
     /// The credential exchange (`LOGIN`) always rides TLS. Once the server
     /// issues a session token the client closes the TLS connection, asks the
@@ -305,8 +305,7 @@ pub struct ClientPolicy {
     /// many such opens can run concurrently across all nodes, protecting the
     /// cluster from a thundering herd after a cold start or mass disconnect.
     ///
-    /// `0` (the default) means unlimited. Mirrors the Go client's
-    /// `OpeningConnectionThreshold`.
+    /// `0` (the default) means unlimited.
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub opening_connection_threshold: usize,
 
@@ -350,8 +349,7 @@ pub struct ClientPolicy {
     /// own dedicated pool, sized by the `buffer_pool_*` fields below and
     /// freed when the client is dropped. Pooled buffers that go unused
     /// are aged out within about a minute (a victim-cache scheme driven
-    /// by the cluster tend loop, mirroring the Go client's GC-backed
-    /// `sync.Pool`). Set to `false` to restore the previous
+    /// by the cluster tend loop). Set to `false` to restore the previous
     /// allocate/`shrink_to_fit` behavior.
     ///
     /// Default: true
@@ -361,7 +359,7 @@ pub struct ClientPolicy {
     /// Smallest buffer kept by this client's tiered buffer pool. Must be
     /// a power of two, at least 1024.
     ///
-    /// Default: 8192 (8 KiB, matching the Go client's `MinBufferSize`)
+    /// Default: 8192 (8 KiB)
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub buffer_pool_min_size: usize,
 
@@ -369,8 +367,7 @@ pub struct ClientPolicy {
     /// buffers are allocated fresh and never retained. Must be a power of
     /// two, >= `buffer_pool_min_size`.
     ///
-    /// Default: 1048576 (1 MiB, matching the Go client's
-    /// `PoolCutOffBufferSize`)
+    /// Default: 1048576 (1 MiB)
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub buffer_pool_max_size: usize,
 
@@ -384,8 +381,8 @@ pub struct ClientPolicy {
     pub buffer_pool_tier_bytes: usize,
 
     /// Interval in milliseconds between cluster tends by the maintenance task.
-    /// Minimum allowed value is [`TEND_INTERVAL_MIN_MS`] (250 ms); smaller values
-    /// will be rejected by [`ClientPolicy::validate`].
+    /// Minimum allowed value is [`TEND_INTERVAL_MIN_MS`] (250 ms); a smaller value is
+    /// rejected when the client is created.
     ///
     /// Default: 1000
     pub tend_interval: u32,

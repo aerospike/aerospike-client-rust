@@ -119,7 +119,10 @@ impl Client {
     ///
     /// # Arguments
     ///
-    /// * `policy` — Client policy (timeouts, connection limits, authentication). Must pass [`ClientPolicy::validate`].
+    /// * `policy` — Client policy (timeouts, connection limits, authentication). An inconsistent
+    ///   policy (a minimum pool larger than the maximum, a tend interval under 250 ms, TLS
+    ///   for the login only without authentication) is rejected here with an error before
+    ///   any connection is made.
     /// * `hosts` — Seed hosts; any type implementing [`ToHosts`] (e.g. string like `"host1:3000,host2:3000"`).
     ///
     /// # Returns
@@ -338,8 +341,7 @@ impl Client {
 
     /// Send info commands to a randomly selected cluster node and return
     /// the parsed key/value response. The map preserves the server's
-    /// response order — one entry per command, in request order. The Rust
-    /// counterpart of Java's `Info.request(policy, node, commands...)`.
+    /// response order — one entry per command, in request order.
     ///
     /// # Examples
     ///
@@ -552,8 +554,7 @@ impl Client {
     ///
     /// No result vector is allocated, the operations are not cloned into the
     /// engine, and parsed records are never deep-copied — they are parsed
-    /// straight into the caller's rows (the C client's `as_batch_read_record`
-    /// shape). The slice is reusable across calls; prior results are cleared
+    /// straight into the caller's rows. The slice is reusable across calls; prior results are cleared
     /// on entry. Ordering is untouched, so result-to-operation correlation is
     /// positional.
     ///
@@ -1483,7 +1484,8 @@ impl Client {
     ///
     /// # Errors
     ///
-    /// * Returns an error if the statement is invalid (e.g. [`Statement::validate`] fails) or initial partition assignment fails.
+    /// * Returns an error if the statement is invalid (an aggregation with an empty package or
+    ///   function name, bins and operations both set) or initial partition assignment fails.
     ///
     /// # Panics
     /// Panics if the async block fails
@@ -1558,9 +1560,8 @@ impl Client {
         Ok(recordset)
     }
 
-    /// Execute a scan or query, delivering records through `callback` — the
-    /// C client's `aerospike_query_foreach` shape — instead of a
-    /// [`Recordset`] stream.
+    /// Execute a scan or query, delivering records through `callback` instead
+    /// of a [`Recordset`] stream.
     ///
     /// The callback is `async`, invoked **inline on the node streams,
     /// concurrently from up to one task per node**, with each record (or
@@ -2382,7 +2383,7 @@ impl Client {
     ///
     /// # Returns
     ///
-    /// `Ok(IndexTask)` to poll or wait for index creation to complete (e.g. [`IndexTask::wait_till_complete`](crate::task::IndexTask::wait_till_complete)).
+    /// `Ok(IndexTask)` to poll or wait for index creation to complete (e.g. [`Task::wait_till_complete`](crate::Task::wait_till_complete)).
     ///
     /// # Errors
     ///

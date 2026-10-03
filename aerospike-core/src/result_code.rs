@@ -467,7 +467,7 @@ impl ResultCode {
 }
 
 impl From<ResultCode> for u8 {
-    /// Wire value of the result code (inverse of [`ResultCode::from_u8`]).
+    /// Wire value of the result code (inverse of `ResultCode::from(u8)`).
     fn from(rc: ResultCode) -> u8 {
         match rc {
             ResultCode::Ok => 0,
@@ -575,8 +575,8 @@ impl fmt::Display for ResultCode {
 }
 
 
-/// Client-side error codes, mirroring the Java client's negative `ResultCode`
-/// constants.
+/// Client-side error codes: the negative values a failure that never reached
+/// the server reports through [`Error::result_code`](crate::errors::Error::result_code).
 ///
 /// Server failures carry a [`ResultCode`] (non-negative wire
 /// value); failures generated on the client carry one of these, so downstream
@@ -585,8 +585,8 @@ impl fmt::Display for ResultCode {
 /// code via
 /// [`Error::client_result_code`](crate::errors::Error::client_result_code).
 ///
-/// Note: client-side *timeouts* use the server `TIMEOUT` (9) code, matching
-/// the Java client, and therefore do not appear here.
+/// Note: client-side *timeouts* use the server `TIMEOUT` (9) code and
+/// therefore do not appear here.
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ClientResultCode {
@@ -614,8 +614,7 @@ pub enum ClientResultCode {
     /// Client serialization error.
     SerializeError,
 
-    /// Asynchronous delay queue is full. Reserved for Java compatibility;
-    /// not produced by this client.
+    /// Asynchronous delay queue is full. Reserved; not produced by this client.
     AsyncQueueFull,
 
     /// Server is not accepting requests (connection failure).
@@ -714,7 +713,7 @@ impl From<i32> for ClientResultCode {
 }
 
 impl From<ClientResultCode> for i32 {
-    /// Java-compatible numeric value (inverse of [`ClientResultCode::from_i32`]).
+    /// Numeric value (inverse of `ClientResultCode::from(i32)`).
     fn from(rc: ClientResultCode) -> i32 {
         match rc {
             ClientResultCode::TxnAlreadyAborted => -19,

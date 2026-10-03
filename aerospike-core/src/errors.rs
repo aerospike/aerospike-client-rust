@@ -16,12 +16,11 @@
 //! Error and Result types for the Aerospike client.
 //!
 //! [`Error`] is an opaque struct carrying metadata common to every failure —
-//! a Java-compatible [`result_code`](Error::result_code) (negative for
+//! a numeric [`result_code`](Error::result_code) (negative for
 //! client-side failures, the server [`ResultCode`] value otherwise), the node,
 //! iteration count, in-doubt flag, retry sub-errors, and an optional causal
 //! [`source`](std::error::Error::source) — plus an [`ErrorKind`] describing
-//! the specific failure. This mirrors the Java client's `AerospikeException`
-//! base class + subclasses.
+//! the specific failure.
 //!
 //! # Examples
 //!
@@ -71,9 +70,8 @@ use aerospike_rt::task;
 
 /// The specific failure carried by an [`Error`].
 ///
-/// The "subclass" half of the Java `AerospikeException` hierarchy; metadata
-/// common to every failure (result code, node, iteration, in-doubt,
-/// sub-errors, cause) lives on [`Error`] itself.
+/// Metadata common to every failure (result code, node, iteration, in-doubt,
+/// sub-errors, cause) lives on [`Error`] itself; the kind says what went wrong.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ErrorKind {
@@ -104,8 +102,7 @@ pub enum ErrorKind {
     },
     /// A batch command failed after per-key processing began. Carries every
     /// [`BatchRecord`](crate::BatchRecord) outcome known to the client
-    /// (successes, per-key errors, and in-doubt marks for unanswered writes),
-    /// mirroring Java's `AerospikeException.BatchRecordArray`.
+    /// (successes, per-key errors, and in-doubt marks for unanswered writes).
     BatchFailed {
         /// Per-key outcomes in the original request order.
         records: Vec<crate::BatchRecord>,
@@ -265,9 +262,8 @@ impl Error {
 
     /// Server failure whose text arrived in the response body rather than as
     /// a result code alone — an info command's `FAIL:<code>:<message>`. The
-    /// message becomes the base message (Java: `AerospikeException(code,
-    /// message)`); no node is recorded because info commands are not retried
-    /// across nodes.
+    /// message becomes the base message; no node is recorded because info
+    /// commands are not retried across nodes.
     #[must_use]
     pub fn server_error_with_message(rc: ResultCode, message: impl Into<String>) -> Error {
         Error::new(
@@ -288,8 +284,7 @@ impl Error {
 
     /// Failure reported in an info command's response body,
     /// `ERROR|FAIL[:<code>][:<message>]`, prefixed with the operation that
-    /// issued it (Java: `AerospikeException(code, "Create index failed: " +
-    /// response)`). The parsed code is the primary result code; a missing or
+    /// issued it. The parsed code is the primary result code; a missing or
     /// out-of-range code falls back to `ServerError`, and a response that is
     /// not in the error format is kept whole as the message.
     #[must_use]
@@ -350,7 +345,7 @@ impl Error {
 
     /// Client-side timeout, not (yet) in-doubt. Write retry loops mark the
     /// error in-doubt via [`set_in_doubt`](Self::set_in_doubt) when at least
-    /// one attempt reached the wire. Uses the Java-compatible `TIMEOUT` (9)
+    /// one attempt reached the wire. Uses the `TIMEOUT` (9)
     /// result code; use [`max_retries_exceeded`](Self::max_retries_exceeded)
     /// when the retry budget (not the clock) ran out.
     #[must_use]
@@ -363,7 +358,7 @@ impl Error {
     }
 
     /// Retry budget exhausted before the command completed
-    /// (`MAX_RETRIES_EXCEEDED`, Java parity).
+    /// (`MAX_RETRIES_EXCEEDED`).
     #[must_use]
     pub fn max_retries_exceeded(msg: impl Into<String>) -> Error {
         Error::new(
@@ -437,8 +432,8 @@ impl Error {
         )
     }
 
-    /// Invalid argument passed to a client API (Java parity: the positive
-    /// `PARAMETER_ERROR` code, like Java's client-side validation).
+    /// Invalid argument passed to a client API. Carries the positive
+    /// `PARAMETER_ERROR` code, the same code the server uses for a bad parameter.
     #[must_use]
     pub fn invalid_argument(msg: impl Into<String>) -> Error {
         Error::new(
@@ -587,7 +582,7 @@ impl Error {
         &self.0.kind
     }
 
-    /// Java-compatible numeric result code: the server [`ResultCode`] wire
+    /// Numeric result code: the server [`ResultCode`] wire
     /// value for server failures, a negative [`ClientResultCode`] value for
     /// client-side failures. Uniform across every error.
     #[must_use]
@@ -600,7 +595,7 @@ impl Error {
     /// for failures generated on the client. Drills into the cause chain.
     ///
     /// `None` for server failures and for client-side timeouts (which use
-    /// the server `TIMEOUT` code, matching the Java client — check for those
+    /// the server `TIMEOUT` code — check for those
     /// via [`kind`](Self::kind) / [`ErrorKind::Timeout`]).
     #[must_use]
     pub fn client_result_code(&self) -> Option<ClientResultCode> {
@@ -628,7 +623,7 @@ impl Error {
     }
 
     /// Errors from prior retry attempts of the same command. Empty when no
-    /// retry occurred (Java: `getSubExceptions`).
+    /// retry occurred.
     #[must_use]
     pub fn sub_errors(&self) -> &[Error] {
         &self.0.sub_errors
@@ -640,8 +635,8 @@ impl Error {
     /// `&dyn Error`, so reading the cause's [`kind`](Self::kind) or
     /// [`result_code`](Self::result_code) through it needs a downcast. This is
     /// the same link, typed: an aggregate
-    /// [`ErrorKind::BatchFailed`](ErrorKind::BatchFailed) reports the
-    /// `BATCH_FAILED` code (Java `AerospikeException.BatchRecordArray` parity)
+    /// [`ErrorKind::BatchFailed`] reports the
+    /// `BATCH_FAILED` code
     /// and this reaches the underlying timeout or server failure without
     /// parsing the message.
     ///
@@ -655,7 +650,7 @@ impl Error {
     }
 
     /// The message without the metadata decoration that [`fmt::Display`]
-    /// adds (Java: `getBaseMessage`).
+    /// adds.
     #[must_use]
     pub fn base_message(&self) -> String {
         let i = &*self.0;
@@ -756,8 +751,7 @@ impl Error {
     /// given server result codes. Unlike
     /// [`server_result_code`](Self::server_result_code), which reports the
     /// first server code it meets, this keeps walking, so a retry-decorated
-    /// error whose root was `KeyBusy` still matches `KeyBusy`. The
-    /// counterpart of Go's `Matches`.
+    /// error whose root was `KeyBusy` still matches `KeyBusy`.
     #[must_use]
     pub fn matches(&self, codes: &[ResultCode]) -> bool {
         let own = match &self.0.kind {
@@ -845,7 +839,7 @@ impl Error {
     /// the pool. Client-side errors and the `SCAN_ABORT` / `QUERY_ABORTED`
     /// server codes require the socket to be discarded (it may still have
     /// stream bytes pending); client timeouts keep the socket for background
-    /// recovery (Java: `AerospikeException.keepConnection`).
+    /// recovery.
     #[must_use]
     pub fn keep_connection(&self) -> bool {
         match &self.0.kind {
@@ -913,7 +907,7 @@ impl Error {
     }
 
     /// Attach retry context: iteration count, last node attempted, and the
-    /// errors of prior attempts (Java: `setIteration` / `setSubExceptions`).
+    /// errors of prior attempts.
     #[must_use]
     pub fn with_retry_context(
         mut self,
@@ -1114,7 +1108,7 @@ impl serde::Serialize for Error {
 }
 
 impl fmt::Display for Error {
-    /// Uniform, Java-style format:
+    /// Uniform format:
     /// `Error <code>[, SubCode: N][, iter=N][, In Doubt: true][, node=X]: <base message>`
     /// followed by a `sub-errors:` block (one indented line per prior attempt)
     /// and the cause chain.

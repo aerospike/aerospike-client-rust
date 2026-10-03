@@ -24,9 +24,9 @@
 //! Every operation that takes a map accepts any of the three map
 //! collection types — `HashMap` (unordered), `IndexMap`
 //! (insertion-ordered) or `BTreeMap` (key-sorted) — via the
-//! [`MapLike`](crate::MapLike) trait. Maps returned by map operations
-//! decode as [`Value::OrderedMap`](crate::Value::OrderedMap) (or
-//! [`Value::SortedMap`](crate::Value::SortedMap) for K-ordered
+//! [`MapLike`] trait. Maps returned by map operations
+//! decode as [`Value::OrderedMap`] (or
+//! [`Value::SortedMap`] for K-ordered
 //! returns), preserving the pair order the server sent; the map
 //! `Value` variants compare equal by content, so results can be
 //! asserted against any representation.
@@ -53,7 +53,7 @@
 //! range operations) follows the server's canonical value order —
 //! keys sort `Int < String < Blob`, each type by its natural
 //! (numeric / lexicographic / byte-wise) order; see
-//! [`Value`](crate::Value)'s `Ord` implementation, which matches it.
+//! [`Value`]'s `Ord` implementation, which matches it.
 //!
 //! Index/Count examples:
 //!
@@ -130,13 +130,13 @@ pub enum MapOrder {
     /// the map's storage/wire representation, NOT the returned pair
     /// order — the server returns the entries of an unordered map in
     /// canonical key order too, just without the K-ordered wire flag
-    /// (so it decodes as [`Value::OrderedMap`](crate::Value::OrderedMap)
-    /// rather than [`Value::SortedMap`](crate::Value::SortedMap)).
+    /// (so it decodes as [`Value::OrderedMap`]
+    /// rather than [`Value::SortedMap`]).
     /// Insertion order is never preserved server-side.
     Unordered = 0,
 
     /// Order map by key. Returns carry the K-ordered wire flag and
-    /// decode as [`Value::SortedMap`](crate::Value::SortedMap).
+    /// decode as [`Value::SortedMap`].
     KeyOrdered = 1,
 
     /// Order map by key, then value.

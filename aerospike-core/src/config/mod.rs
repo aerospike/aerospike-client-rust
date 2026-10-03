@@ -94,8 +94,7 @@ pub struct DynamicConfig {
     /// Overrides for batch *read*. Carries the per-record read fields (read
     /// modes, timeouts, replica — like [`read`](Self::read)) plus the
     /// batch-command wire flags (`allow_inline`, `allow_inline_ssd`,
-    /// `respond_all_keys`). Matches the Go client, which applies those flags to
-    /// the parent batch policy from the `batch_read` section.
+    /// `respond_all_keys`), which are applied to the parent batch policy.
     pub batch_read: Option<BatchReadSectionConfig>,
     /// Overrides for per-record batch *write* sub-policies. Carries the same
     /// fields as [`write`](Self::write) (timeouts, `send_key`, `durable_delete`).
@@ -108,7 +107,7 @@ pub struct DynamicConfig {
     pub batch_udf: Option<BatchUDFPolicyConfig>,
     /// Overrides for the multi-record-transaction *verify* policy (applied by
     /// `commit`). Carries the `BasePolicy` knobs (timeouts, retries, read
-    /// modes); Go's batch-only txn keys have no per-key analogue here.
+    /// modes).
     pub txn_verify: Option<TxnVerifyPolicyConfig>,
     /// Overrides for the multi-record-transaction *roll* policy (applied by
     /// `commit` and `abort`). Carries the `BasePolicy` knobs.
@@ -119,11 +118,9 @@ pub struct DynamicConfig {
 
 /// The `dynamic.batch_read` section.
 ///
-/// The flattened [`ReadPolicyConfig`] drives each batch read's per-record read
-/// policy; the three batch-command wire flags are applied to the parent batch
-/// policy (matching the Go client's `batch_read` handling).
-/// `max_concurrent_thread` is intentionally omitted — it is dead in the Go
-/// client too.
+/// The flattened read-policy keys (the same ones as `dynamic.read`) drive each
+/// batch read's per-record read policy; the three batch-command wire flags are
+/// applied to the parent batch policy.
 #[derive(Debug, Default, Clone, Deserialize)]
 pub struct BatchReadSectionConfig {
     /// Per-record read overrides (read modes, timeouts, retries, replica).

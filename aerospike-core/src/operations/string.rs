@@ -129,7 +129,7 @@ impl StringWriteFlags {
     /// fails with `BIN_EXISTS_ERROR`.
     ///
     /// Only the additive operations that can create a bin from an empty string
-    /// accept this flag: [`insert`], [`overwrite`], [`concat`], [`concat_list`],
+    /// accept this flag: [`insert`], [`overwrite`], [`concat()`], [`concat_list`],
     /// [`append`], [`prepend`], [`pad_start`], [`pad_end`] and [`repeat`], plus
     /// their expression equivalents. Every other string modify operation
     /// rejects it with `PARAMETER_ERROR`.

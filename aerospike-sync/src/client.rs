@@ -779,6 +779,8 @@ impl Client {
         )
     }
 
+    /// Creates a secondary index on a bin, optionally inside a CDT context.
+    /// Blocking wrapper over the async client's `create_index_on_bin`.
     pub fn create_index_on_bin(
         &self,
         policy: &AdminPolicy,

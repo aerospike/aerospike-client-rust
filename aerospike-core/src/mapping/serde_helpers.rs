@@ -216,9 +216,8 @@ fn nanos_to_system_time<E: de::Error>(nanos: i64) -> Result<SystemTime, E> {
     time.ok_or_else(|| E::custom(format!("timestamp {nanos}ns is unrepresentable")))
 }
 
-/// Store a [`SystemTime`] field as epoch **milliseconds** (the Java
-/// client's `Date.getTime()` encoding, and the bespoke engine's
-/// `ToValue` encoding): `#[serde(with =
+/// Store a [`SystemTime`] field as epoch **milliseconds** (the bespoke
+/// engine's `ToValue` encoding): `#[serde(with =
 /// "serde_helpers::system_time_as_millis")]`.
 pub mod system_time_as_millis {
     use super::{

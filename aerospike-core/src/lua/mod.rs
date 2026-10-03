@@ -25,9 +25,8 @@
 //!
 //! For that to work, the client needs the *same* UDF source that was
 //! registered on the server. Point the client at your local `.lua` files
-//! with [`set_lua_path`] (analogous to `LuaConfig.SourceDirectory` in the
-//! Java client and `SetLuaPath` in the Go client), or register the source
-//! in memory with [`register_package`]:
+//! with [`set_lua_path`], or register the source in memory with
+//! [`register_package`]:
 //!
 //! ```rust,no_run
 //! aerospike::lua::set_lua_path("udf/");
@@ -75,8 +74,7 @@ static PACKAGES: LazyLock<RwLock<HashMap<String, String>>> =
 /// Set the directory where the client looks for `<package_name>.lua` files
 /// during aggregation queries.
 ///
-/// Defaults to `"udf"`. Process-wide, like the Java client's
-/// `LuaConfig.SourceDirectory` and the Go client's `SetLuaPath`.
+/// Defaults to `"udf"`. Process-wide.
 pub fn set_lua_path<P: AsRef<Path>>(dir: P) {
     *write(&SOURCE_DIR) = dir.as_ref().to_path_buf();
 }

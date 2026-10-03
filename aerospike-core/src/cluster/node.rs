@@ -613,8 +613,7 @@ impl Node {
     }
 
     /// Returns true if this node hosts the given namespace on exactly the
-    /// given rack (Java `Node.hasRack`). Rack preference ordering is the
-    /// caller's concern — see `Partition::get_rack_node`.
+    /// given rack. Rack preference ordering is the caller's concern.
     pub fn has_rack(&self, namespace: &str, rack_id: usize) -> bool {
         self.rack_ids
             .load()

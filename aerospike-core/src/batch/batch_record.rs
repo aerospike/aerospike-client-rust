@@ -61,17 +61,16 @@ impl BatchRecord {
     /// [`in_doubt`](Self::in_doubt), and [`has_write`](Self::has_write) is what
     /// enforces that.
     ///
-    /// A caller filling in a row it obtained elsewhere — a proxy, a cache, a
-    /// test double — uses [`set_ok`](Self::set_ok) and
-    /// [`set_error`](Self::set_error):
+    /// A new row is pending: no record, no error, no result code. The client
+    /// fills it in as the batch runs; callers only read it.
     ///
     /// ```
-    /// use aerospike::{BatchRecord, Error, Key, ResultCode, Value};
+    /// use aerospike::{BatchRecord, Key, Value};
     ///
-    /// let mut row = BatchRecord::new(Key::new("test", "demo", Value::Int(1))?, false);
-    /// row.set_error(Error::server_error_with_message(ResultCode::KeyNotFoundError, "no such key"));
-    /// assert_eq!(row.result_code(), Some(ResultCode::KeyNotFoundError));
-    /// assert!(row.record.is_none());
+    /// let row = BatchRecord::new(Key::new("test", "demo", Value::Int(1))?, false);
+    /// assert!(row.result_code().is_none());
+    /// assert!(row.record.is_none() && row.error().is_none());
+    /// assert!(!row.has_write());
     /// # Ok::<(), aerospike::Error>(())
     /// ```
     #[must_use]
@@ -97,9 +96,9 @@ impl BatchRecord {
     /// otherwise, `None` while the row has no outcome (never sent, or the call
     /// died before the server answered it).
     ///
-    /// A client-side timeout reads as [`ResultCode::Timeout`], as in the other
-    /// clients; any other client-side failure has no server code and reads as
-    /// `None` here — [`error`](Self::error) still has it.
+    /// A client-side timeout reads as [`ResultCode::Timeout`]; any other
+    /// client-side failure has no server code and reads as `None` here —
+    /// [`error`](Self::error) still has it.
     #[must_use]
     pub fn result_code(&self) -> Option<ResultCode> {
         match (&self.error, &self.record) {

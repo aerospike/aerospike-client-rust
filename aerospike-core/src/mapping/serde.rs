@@ -101,7 +101,7 @@ pub fn from_bins<T: DeserializeOwned>(bins: &IndexMap<String, Value>) -> Result<
 /// Serde builds its own diagnostics through `ser::Error` / `de::Error`, so this
 /// is a plain carrier for the message it hands over. Nothing here corresponds to
 /// a server result code: a value that cannot be represented as a
-/// [`Value`](crate::Value) fails before any command is sent.
+/// [`Value`] fails before any command is sent.
 #[derive(Debug)]
 pub struct SerdeError(String);
 

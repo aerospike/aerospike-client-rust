@@ -47,9 +47,9 @@
 //!
 //! Every elapsed time — command latency, connection-acquire time, parse time —
 //! is bucketed in the [`MetricsPolicy::latency_unit`] resolution. The default is
-//! [`LatencyUnit::Milliseconds`] with 7 columns ([`MetricsPolicy::millis`], the
-//! cross-client default); [`MetricsPolicy::micros`] selects microseconds with
-//! 24 columns (Go-client parity). Unit and column count belong together — 7
+//! [`LatencyUnit::Milliseconds`] with 7 columns ([`MetricsPolicy::millis`]);
+//! [`MetricsPolicy::micros`] selects microseconds with
+//! 24 columns. Unit and column count belong together — 7
 //! columns of microseconds top out at `>32µs`. Bucket boundaries are
 //! `<=1, >1, >2, >4, ...` (upper-closed, spaced by `2^latency_shift`); see
 //! [`histogram`].

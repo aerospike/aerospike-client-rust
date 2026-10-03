@@ -94,7 +94,7 @@ pub fn to_base64(ctx: &[CdtContext]) -> Result<String> {
 /// *not* reconstructed structurally. That's enough to round-trip the CTX
 /// (re-packing the restored CTX produces the same bytes), but reading the
 /// inner expression as Rust types requires the original
-/// [`Expression`](crate::expressions::Expression) builder.
+/// [`Expression`] builder.
 ///
 /// # Errors
 /// - `BadResponse` on a malformed array header / odd-length entry list.

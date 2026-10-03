@@ -27,8 +27,8 @@
     chain — is read off that error: `result_code()`, `in_doubt()`, `node()`, `error_detail()`,
     `sub_code()`, `server_message()`, and `error()` itself (so `matches()` and the rest of `Error`
     apply per row). A row the server answered `KeyNotFound` or `FilteredOut` is a failed row in this
-    sense, as the single-key `get` would be; the batch call still succeeds. Rows filled in by hand
-    use `set_ok(record)` / `set_error(error)`. `Error` is now `Clone`. **Breaking**: the public
+    sense, as the single-key `get` would be; the batch call still succeeds. `Error` is now
+    `Clone`. **Breaking**: the public
     fields `result_code` and `in_doubt` are methods — `row.result_code` becomes `row.result_code()`.
     A client-side failure with no server code (a connection loss) reads as `result_code() == None`
     with the failure on `error()`; a client timeout reads as `Timeout`, as before. An unanswered

@@ -113,10 +113,8 @@ pub trait Policy {
     /// Whether to use zlib compression on command buffers.
     ///
     /// Compression uses `BEST_SPEED`, and a request that doesn't shrink is
-    /// sent uncompressed (both matching the Java client). Unlike Java —
-    /// which only compresses write/operate/UDF/batch requests — this
-    /// client compresses *any* request over the threshold, including
-    /// reads/deletes with large filter expressions.
+    /// sent uncompressed. Any request over the threshold is compressed,
+    /// including reads/deletes with large filter expressions.
     fn use_compression(&self) -> bool;
 
     /// Minimum command-buffer size at which compression actually fires.

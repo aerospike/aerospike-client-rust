@@ -596,7 +596,7 @@ impl NodeMetrics {
     /// Records the latency of one **successful RPC attempt** for the detailed
     /// metrics: measured from the start of the connection acquire to the end
     /// of response parsing (`metrics.md` §4.6, "pool acquire → response
-    /// parsed"; Java `SyncCommand.executeCommand` `begin` → `addLatency`).
+    /// parsed").
     /// Failed attempts record nothing here; a retried attempt that then
     /// succeeds records its own sample.
     pub fn record_latency(&self, namespace: &str, ct: CommandType, latency: Duration) {

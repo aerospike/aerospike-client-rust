@@ -28,10 +28,9 @@ The `crud_sync` example is the exception — it requires the `sync` feature, whi
 * `transaction` — multi-record transactions: commit and abort (server 8.0+, strong-consistency namespace)
 * `udf` — register a Lua UDF, execute per-record, and run background UDFs
 
-These cover the feature areas of the Java client's examples (including the
-stream-UDF aggregations `QueryAverage`/`QuerySum` via `query_aggregate`).
-Not ported: the Java GUI/console scaffolding. The Java `Async*` variants
-need no counterpart: the Rust client is async-native.
+Stream-UDF aggregations (average, sum) are covered through `query_aggregate`.
+Every example is async; the client is async-native, so there are no separate
+synchronous and asynchronous variants.
 
 ## Configuration
 

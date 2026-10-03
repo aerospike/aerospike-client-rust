@@ -19,9 +19,8 @@
 //!
 //! # Bucket layout
 //!
-//! Every histogram uses the Aerospike client **range layout** (the one
-//! `asadm`, `asloglatency` and the prior Java client's `latencyColumns` /
-//! `latencyShift` share). With `columns` buckets and a `shift` of *s*
+//! Every histogram uses the Aerospike **range layout** (the one `asadm` and
+//! `asloglatency` use). With `columns` buckets and a `shift` of *s*
 //! (multiplier `m = 2^s`):
 //!
 //! | bucket        | values recorded                       |

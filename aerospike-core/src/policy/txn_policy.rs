@@ -21,8 +21,7 @@ use crate::policy::BatchPolicyConfig;
 /// checking the versions of the records that took part in the transaction
 /// before it is committed.
 ///
-/// Like the Aerospike Go client's `TxnVerifyPolicy`, this wraps a
-/// [`BatchPolicy`]: verification is sent to the server as one batch command per
+/// Wraps a [`BatchPolicy`]: verification is sent to the server as one batch command per
 /// node, so the batch knobs (`concurrency`, `allow_inline`, `respond_all_keys`,
 /// `replica`, read modes) all apply.
 #[derive(Debug, Clone)]
@@ -57,8 +56,7 @@ impl PolicyLike for TxnVerifyPolicy {
 /// Policy for the *roll* phase of a multi-record transaction — rolling records
 /// forward on commit or back on abort.
 ///
-/// Like the Aerospike Go client's `TxnRollPolicy`, this wraps a [`BatchPolicy`]:
-/// rolling is sent as one batch command per node.
+/// Wraps a [`BatchPolicy`]: rolling is sent as one batch command per node.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct TxnRollPolicy {

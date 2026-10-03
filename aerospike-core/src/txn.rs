@@ -82,8 +82,7 @@ pub enum TxnState {
 }
 
 /// Message carried by the error [`Client::abort`](crate::Client::abort)
-/// returns for a transaction in [`TxnState::CommitFailed`]. Verbatim from the
-/// C and legacy Java clients.
+/// returns for a transaction in [`TxnState::CommitFailed`].
 pub const COMMIT_FAILED_ABORT_MESSAGE: &str =
     "Abort not allowed because a commit already failed on this transaction with an in-doubt outcome";
 

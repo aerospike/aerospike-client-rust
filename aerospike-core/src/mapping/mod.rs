@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Object mapping — the contract for converting between application
-//! types and Aerospike records (port of the Java SDK's `RecordMapper`).
+//! types and Aerospike records.
 //!
 //! Implement [`RecordMapper`] for an entity type to store it as a record
 //! and read it back:
@@ -71,10 +71,8 @@
 //!
 //! For types you don't own (the orphan rule prevents implementing this
 //! trait for them), wrap them in a newtype and implement the mapper on
-//! the wrapper — the Rust idiom replacing the Java SDK's external
-//! mapper objects and `RecordMappingFactory` registry, which exist
-//! because Java resolves mappers at runtime; Rust resolves the
-//! implementation at compile time.
+//! the wrapper; the implementation is resolved at compile time, so no
+//! runtime registry of mappers is needed.
 
 #[cfg(feature = "serialization")]
 pub mod serde;
@@ -505,8 +503,8 @@ impl FromValue for Hll {
 
 // -- std::time ------------------------------------------------------------------
 
-/// [`SystemTime`] encodes as epoch **milliseconds** (matching the Java
-/// client's `Date.getTime()` bins); pre-epoch times are negative. Use
+/// [`SystemTime`] encodes as epoch **milliseconds**; pre-epoch times are
+/// negative. Use
 /// the `serde_helpers` time modules for other resolutions under the
 /// serde engine.
 impl ToValue for SystemTime {

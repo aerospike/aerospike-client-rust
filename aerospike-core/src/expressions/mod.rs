@@ -530,8 +530,8 @@ pub fn key_exists() -> Expression {
 /// ```
 /// Creates a bin expression with an explicitly supplied value type.
 /// Prefer the typed accessors (`int_bin`, `string_bin`, …) when the bin
-/// type is known at compile time; this generic form mirrors Java's
-/// `Exp.bin(name, type)` for dynamically-typed callers.
+/// type is known at compile time; this generic form is for callers whose
+/// bin types are only known at run time.
 pub fn bin(name: String, exp_type: ExpType) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
@@ -950,7 +950,7 @@ pub fn list_val(val: Vec<Value>) -> Expression {
 
 /// Creates a map bin value. Accepts any of the three map collection
 /// types — `HashMap`, `IndexMap` or `BTreeMap` — via
-/// [`MapLike`](crate::MapLike).
+/// [`MapLike`].
 ///
 /// To compare whole maps in an expression (`eq`, `lt`, … — supported for
 /// ordered maps since server 6.3), pass a `BTreeMap`: it is packed with
@@ -1068,8 +1068,8 @@ pub const fn xor(exps: Vec<Expression>) -> Expression {
 }
 
 /// Creates an "exclusive" operator: true when exactly one of the
-/// expressions is true (the Java client's `Exp.exclusive`; alias of
-/// [`xor`] — both compile to the same server opcode).
+/// expressions is true (alias of [`xor`] — both compile to the same server
+/// opcode).
 /// ```
 /// // exactly one of a == 0, b == 0
 /// use aerospike::expressions::{exclusive, eq, int_bin, int_val};

@@ -262,7 +262,8 @@ pub enum Value {
     SortedMap(BTreeMap<Value, Value>),
 
     /// Result of any map operation in which the server returns a
-    /// map requested with [`MapReturnType::KeyValue`].
+    /// map in an order the caller asked to keep (see
+    /// [`MapReturnType`](crate::operations::maps::MapReturnType)).
     KeyValueList(Vec<(Value, Value)>),
 
     /// `GeoJSON` data type are JSON formatted strings to encode geo-spatial information.
@@ -278,8 +279,8 @@ pub enum Value {
     Wildcard,
 
     /// Unknown Value signifies values whose wire particle type this client
-    /// does not interpret (e.g. legacy language-specific serializations
-    /// like Java/C#/Python/PHP/Ruby/Erlang blobs). Carries the raw
+    /// does not interpret (e.g. the legacy language-specific serialization
+    /// blobs written by older clients). Carries the raw
     /// particle-type code and the raw payload bytes, uninterpreted.
     ///
     /// It can be written back **only as a whole bin value** (`put`, or a
@@ -397,11 +398,10 @@ impl Value {
     ///
     /// [`Infinity`](Value::Infinity) and [`Wildcard`](Value::Wildcard) have no
     /// particle type: they exist only inside msgpack payloads, as CDT and
-    /// expression bounds, where [`msgpack::encoder::pack_value`] writes them
+    /// expression bounds, where the msgpack encoder writes them
     /// directly and never asks for a particle code. Reaching here means one was
     /// handed to the client as an ordinary bin value or record key, which is a
-    /// caller mistake — Java reports the same case as `PARAMETER_ERROR` from
-    /// `Value.getType()`, and so does this.
+    /// caller mistake and is reported as `PARAMETER_ERROR`.
     pub fn particle_type(&self) -> Result<u8> {
         let code = match *self {
             Value::Nil => ParticleType::NULL as u8,

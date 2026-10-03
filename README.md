@@ -325,8 +325,7 @@ let client = Client::new(&policy, hosts).await
 ```
 
 Every connection is encrypted by default. To encrypt only the authentication
-exchange and run the data plane in cleartext — the equivalent of the Java
-client's `TlsPolicy.forLoginOnly` — set `for_login_only`:
+exchange and run the data plane in cleartext, set `for_login_only`:
 
 ```rust
 policy.tls_policy =

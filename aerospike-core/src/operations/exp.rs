@@ -170,8 +170,7 @@ pub fn write_exp<E: ToExpWriteFlagBitmask>(bin: &str, exp: Expression, flags: E)
 
 /// Creates operation that performs a read expression.
 ///
-/// For a pre-serialized expression (Java's `ExpOperation.read(name, bytes,
-/// flags)` overload), wrap the packed bytes with
+/// For a pre-serialized expression, wrap the packed bytes with
 /// [`expressions::from_packed_bytes`](crate::expressions::from_packed_bytes)
 /// or [`expressions::from_base64`](crate::expressions::from_base64).
 pub fn read_exp<E: ToExpReadFlagBitmask>(name: &str, exp: Expression, flags: E) -> Operation {

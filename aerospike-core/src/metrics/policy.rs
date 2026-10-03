@@ -65,10 +65,9 @@ impl Labels {
 /// command latency, connection-acquire time and parse time. Size histograms
 /// (bytes sent/received) are unaffected.
 ///
-/// Milliseconds with 7 columns is the cross-client default (the Java client
-/// and the `learn-metrics` log format); microseconds with 24 columns is what
-/// the Go client records. Pick one with [`MetricsPolicy::millis`] or
-/// [`MetricsPolicy::micros`].
+/// Milliseconds with 7 columns is the default (the `learn-metrics` log
+/// format); microseconds with 24 columns gives sub-millisecond resolution.
+/// Pick one with [`MetricsPolicy::millis`] or [`MetricsPolicy::micros`].
 ///
 /// Serialized in metrics snapshots, and read from config files, as `"us"` /
 /// `"ms"`.
@@ -84,7 +83,7 @@ pub enum LatencyUnit {
     )]
     Microseconds,
     /// Milliseconds. The default. With 7 columns and shift 1 the buckets are
-    /// `<=1ms >1ms >2ms >4ms >8ms >16ms >32ms`, matching the Java client.
+    /// `<=1ms >1ms >2ms >4ms >8ms >16ms >32ms`.
     #[cfg_attr(
         any(feature = "serialization", feature = "dynamic-config"),
         serde(rename = "ms")
@@ -144,14 +143,13 @@ impl std::fmt::Display for LatencyUnit {
 }
 
 /// Default number of latency histogram columns (elapsed-time range buckets),
-/// paired with the default [`LatencyUnit::Milliseconds`] — the cross-client
-/// default (`metrics.md` §5.3, Java-client parity).
+/// paired with the default [`LatencyUnit::Milliseconds`] (`metrics.md` §5.3).
 pub const DEFAULT_LATENCY_COLUMNS: usize = 7;
 /// Latency columns that pair with [`LatencyUnit::Milliseconds`]. Same value as
 /// [`DEFAULT_LATENCY_COLUMNS`]; used by [`MetricsPolicy::millis`].
 pub const MILLIS_LATENCY_COLUMNS: usize = DEFAULT_LATENCY_COLUMNS;
-/// Latency columns that pair with [`LatencyUnit::Microseconds`] — Go-client
-/// parity. Used by [`MetricsPolicy::micros`].
+/// Latency columns that pair with [`LatencyUnit::Microseconds`]. Used by
+/// [`MetricsPolicy::micros`].
 pub const MICROS_LATENCY_COLUMNS: usize = 24;
 /// Default histogram boundary spacing exponent: boundaries multiply by
 /// `2^shift`, so `1` means every power of two (`>1 >2 >4 >8 ...`).
@@ -213,8 +211,8 @@ pub struct MetricsPolicy {
     /// Histogram boundary spacing exponent: after the `<=1` bucket every
     /// boundary is the previous one multiplied by `2^latency_shift`. `1` is
     /// every power of two (`>1 >2 >4 >8 ...`); `3` skips two powers at a time
-    /// (`>1 >8 >64 ...`). Same semantics as the Java client's `latencyShift`,
-    /// `asadm` and `asloglatency`. Values below 1 are treated as 1.
+    /// (`>1 >8 >64 ...`). Same semantics as `asadm` and `asloglatency`.
+    /// Values below 1 are treated as 1.
     ///
     /// Default: 1.
     pub latency_shift: u32,
@@ -244,7 +242,7 @@ impl Default for MetricsPolicy {
 
 impl MetricsPolicy {
     /// Millisecond-resolution latency histograms with 7 columns — the
-    /// cross-client default (`metrics.md` §5.3, Java-client parity).
+    /// default (`metrics.md` §5.3).
     ///
     /// Buckets: `<=1ms >1ms >2ms >4ms >8ms >16ms >32ms`. Sub-millisecond
     /// phases record `0` and land in the first bucket. The operational tier
@@ -261,8 +259,7 @@ impl MetricsPolicy {
         }
     }
 
-    /// Microsecond-resolution latency histograms with 24 columns — Go-client
-    /// parity.
+    /// Microsecond-resolution latency histograms with 24 columns.
     ///
     /// Buckets: `<=1µs >1µs >2µs ... >4.2s`.
     #[must_use]

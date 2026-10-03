@@ -200,7 +200,7 @@ pub mod sub_code {
     /// `None` when the pair is not one this client knows. Scoped by the pair
     /// because subcode values repeat across parent result codes (`1` is
     /// `PARAM_TTL_INVALID` under `ParameterError` and `FILTERED_META` under
-    /// `FilteredOut`). The counterpart of Go's `SubCodeToString`.
+    /// `FilteredOut`).
     #[must_use]
     pub const fn name(rc: crate::ResultCode, sub_code: u32) -> Option<&'static str> {
         use crate::ResultCode as R;
