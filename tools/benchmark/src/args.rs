@@ -20,8 +20,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use aerospike::{
-    BatchPolicy, BatchReadPolicy, BatchWritePolicy, Bin, Expiration, Key, ReadPolicy,
-    ReadTouchTTL, RecordExistsAction, Value, WritePolicy,
+    BatchPolicy, BatchReadPolicy, BatchWritePolicy, Bin, Expiration, Key, ReadPolicy, ReadTouchTTL,
+    RecordExistsAction, Value, WritePolicy,
 };
 use rand::rngs::StdRng;
 
@@ -155,11 +155,14 @@ impl Args {
             .map(|i| format!("{}_{}", opts.bin_name_base, i + 1))
             .collect();
 
-        let udf = opts.udf.as_ref().map(|(package, function, values)| UdfSpec {
-            package: package.clone(),
-            function: function.clone(),
-            values: values.iter().map(|v| Value::from(v.as_str())).collect(),
-        });
+        let udf = opts
+            .udf
+            .as_ref()
+            .map(|(package, function, values)| UdfSpec {
+                package: package.clone(),
+                function: function.clone(),
+                values: values.iter().map(|v| Value::from(v.as_str())).collect(),
+            });
 
         let mut args = Args {
             n_bins,

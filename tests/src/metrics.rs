@@ -608,7 +608,10 @@ async fn metrics_tier0_only_records_lifecycle_not_commands() {
 
     let metrics = client.metrics();
     let agg = &metrics.cluster_aggregated;
-    assert!(metrics.open_connections >= 2, "the burst must have grown the pool");
+    assert!(
+        metrics.open_connections >= 2,
+        "the burst must have grown the pool"
+    );
     assert!(
         agg.counters.connections_successful >= 1,
         "Tier 0 opened-connections counter must move"
@@ -674,7 +677,10 @@ async fn metrics_pool_gauges_are_a_live_pool_walk() {
         disabled.open_connections,
         "in_use + in_pool must equal the open total"
     );
-    assert_eq!(disabled.cluster_aggregated.counters.connections_successful, 0);
+    assert_eq!(
+        disabled.cluster_aggregated.counters.connections_successful,
+        0
+    );
 
     client.enable_metrics(MetricsPolicy::default());
     exercise_single_key(&client, namespace, &set_name).await;
@@ -688,7 +694,10 @@ async fn metrics_pool_gauges_are_a_live_pool_walk() {
         metrics.connections_in_pool >= 1,
         "an idle client keeps its connections in the pool"
     );
-    assert_eq!(metrics.recover_queue_size, 0, "no timeouts, nothing recovering");
+    assert_eq!(
+        metrics.recover_queue_size, 0,
+        "no timeouts, nothing recovering"
+    );
     // Per-node and cluster views agree.
     let mut in_use = 0;
     let mut in_pool = 0;
@@ -729,7 +738,10 @@ async fn metrics_error_rate_and_nodes_invalid_gauges() {
     }
     assert_eq!(metrics.cluster_aggregated.error_rate(), sum);
     // Only successful commands were issued, so the window holds nothing.
-    assert_eq!(sum, 0, "no command failed, the breaker window must be empty");
+    assert_eq!(
+        sum, 0,
+        "no command failed, the breaker window must be empty"
+    );
     assert_eq!(
         metrics.nodes_invalid, 0,
         "a healthy cluster has no failed peer validations"
@@ -768,10 +780,7 @@ async fn min_conns_no_churn_across_tends() {
     sleep(Duration::from_secs(6)).await;
 
     let metrics = client.metrics();
-    let idle_dropped = metrics
-        .cluster_aggregated
-        .counters
-        .connections_idle_dropped;
+    let idle_dropped = metrics.cluster_aggregated.counters.connections_idle_dropped;
     assert_eq!(
         idle_dropped, 0,
         "min connections were reaped and recreated across tends (churn); \
@@ -940,7 +949,13 @@ async fn metrics_bytes_received_batch_commands() {
     let mut udfs: Vec<_> = keys
         .iter()
         .map(|k| {
-            BatchOperation::udf(&bpu, k.clone(), udf, "echo", Some(vec![as_val!(blob.as_str())]))
+            BatchOperation::udf(
+                &bpu,
+                k.clone(),
+                udf,
+                "echo",
+                Some(vec![as_val!(blob.as_str())]),
+            )
         })
         .collect();
     client.batch(&bpolicy, &mut udfs).await.unwrap();
@@ -984,7 +999,11 @@ async fn metrics_bytes_received_query_commands() {
     for i in 0..RECORDS as i64 {
         let key = as_key!(namespace, &set_name, i);
         client
-            .put(&wpolicy, &key, &[as_bin!("bin", i), as_bin!("blob", blob.as_str())])
+            .put(
+                &wpolicy,
+                &key,
+                &[as_bin!("bin", i), as_bin!("blob", blob.as_str())],
+            )
             .await
             .unwrap();
     }

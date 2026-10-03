@@ -39,7 +39,7 @@ async fn register_task_test() {
     let udf_file_name = "my_udf_task.lua";
 
     let register_task = client
-        .register_udf(&apolicy, code.as_bytes(), &udf_file_name, UDFLang::Lua)
+        .register_udf(&apolicy, code.as_bytes(), udf_file_name, UDFLang::Lua)
         .await
         .unwrap();
 
@@ -48,7 +48,7 @@ async fn register_task_test() {
         Ok(Status::Complete)
     ));
 
-    let remove_task = client.remove_udf(&apolicy, &udf_file_name).await.unwrap();
+    let remove_task = client.remove_udf(&apolicy, udf_file_name).await.unwrap();
     // Wait for some time to ensure UDF has been unregistered on all nodes.
     remove_task.wait_till_complete(None).await.unwrap();
 
@@ -72,7 +72,7 @@ async fn index_task_test() {
 
     let wpolicy = WritePolicy::default();
     let apolicy = AdminPolicy::default();
-    for i in 0..2 as i64 {
+    for i in 0..2_i64 {
         let key = as_key!(namespace, &set_name, i);
         let wbin = as_bin!(&bin_name, i);
         let bins = vec![wbin];
@@ -83,7 +83,7 @@ async fn index_task_test() {
     let index_task = client
         .create_index_on_bin(
             &apolicy,
-            &namespace,
+            namespace,
             &set_name,
             &bin_name,
             &index_name,

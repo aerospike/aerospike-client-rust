@@ -35,7 +35,7 @@ pub struct Labels(pub Vec<HashMap<String, String>>);
 impl Labels {
     /// Creates an empty set of labels.
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Labels(Vec::new())
     }
 
@@ -248,7 +248,7 @@ impl MetricsPolicy {
     /// phases record `0` and land in the first bucket. The operational tier
     /// is off; turn it on with [`with_operational`](Self::with_operational).
     #[must_use]
-    pub fn millis() -> Self {
+    pub const fn millis() -> Self {
         MetricsPolicy {
             operational: false,
             latency_unit: LatencyUnit::Milliseconds,

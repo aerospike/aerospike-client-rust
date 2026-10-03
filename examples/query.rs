@@ -318,7 +318,9 @@ async fn collection_index_query(client: &Client, namespace: &str) {
         .drop_index(&apolicy, namespace, &set_name, &index_name)
         .await;
     for i in 0..30i64 {
-        let _ = client.delete(&wpolicy, &as_key!(namespace, &set_name, i)).await;
+        let _ = client
+            .delete(&wpolicy, &as_key!(namespace, &set_name, i))
+            .await;
     }
 }
 

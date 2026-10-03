@@ -243,9 +243,7 @@ impl<'a> Partition<'a> {
         let mut fallback2: Option<(Arc<Node>, usize)> = None;
 
         for rack_id in rack_ids {
-            let mut seq = self.sequence;
-
-            for _ in 0..replica_count {
+            for seq in self.sequence..self.sequence + replica_count {
                 let index = seq % replica_count;
                 let node = partitions
                     .nodes
@@ -276,7 +274,6 @@ impl<'a> Partition<'a> {
                         fallback2 = Some((node, seq));
                     }
                 }
-                seq += 1;
             }
         }
 

@@ -119,7 +119,10 @@ impl TrackerShared {
                 ps.bval = bval;
             }
         } else {
-            debug_assert!(false, "record partition {partition_id} beyond tracker range");
+            debug_assert!(
+                false,
+                "record partition {partition_id} beyond tracker range"
+            );
         }
     }
 
@@ -170,7 +173,10 @@ impl TrackerShared {
             return;
         };
         let Some(ps) = self.partitions.get(offset) else {
-            debug_assert!(false, "record partition {partition_id} beyond tracker range");
+            debug_assert!(
+                false,
+                "record partition {partition_id} beyond tracker range"
+            );
             return;
         };
 
@@ -186,7 +192,11 @@ impl TrackerShared {
                 ps.bval = bval;
             }
             // Anything parked contiguously above this seq commits with it.
-            while ps.pending.first().is_some_and(|&(s, ..)| s == ps.consumed + 1) {
+            while ps
+                .pending
+                .first()
+                .is_some_and(|&(s, ..)| s == ps.consumed + 1)
+            {
                 let (s, d, b) = ps.pending.remove(0);
                 ps.consumed = s;
                 ps.digest = Some(d);
@@ -365,8 +375,8 @@ impl PartitionTracker {
         let mut list = Vec::<NodePartitions>::with_capacity(self.node_capacity);
         let partitions = Arc::clone(&self.shared.partitions);
 
-        let retry = self.shared.partition_filter.retry.load(Ordering::Relaxed)
-            && self.iteration == 1;
+        let retry =
+            self.shared.partition_filter.retry.load(Ordering::Relaxed) && self.iteration == 1;
 
         for (offset, part) in partitions.iter().enumerate() {
             let (part_retry, part_id) = {
@@ -456,7 +466,7 @@ impl PartitionTracker {
     }
 
     fn find_node<'a>(
-        list: &'a mut Vec<NodePartitions>,
+        list: &'a mut [NodePartitions],
         node: &Arc<Node>,
     ) -> Option<&'a mut NodePartitions> {
         list.iter_mut().find(|np| np.node == *node)
@@ -539,10 +549,14 @@ impl PartitionTracker {
             let total_timeout = u64::from(policy.total_timeout());
             if deadline < Instant::now() + Duration::from_millis(total_timeout) {
                 let remaining = (deadline - Instant::now()).as_millis() as u32;
-                self.shared.total_timeout.store(remaining, Ordering::Relaxed);
+                self.shared
+                    .total_timeout
+                    .store(remaining, Ordering::Relaxed);
 
                 if self.shared.socket_timeout.load(Ordering::Relaxed) > remaining {
-                    self.shared.socket_timeout.store(remaining, Ordering::Relaxed);
+                    self.shared
+                        .socket_timeout
+                        .store(remaining, Ordering::Relaxed);
                 }
             }
         }

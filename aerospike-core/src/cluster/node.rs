@@ -13,14 +13,14 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::collections::HashMap;
-use std::time::Duration;
 use indexmap::IndexMap;
+use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::result::Result as StdResult;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use aerospike_rt::Mutex as AsyncMutex;
 
@@ -114,7 +114,7 @@ async fn await_spawned_task<T>(handle: aerospike_rt::task::JoinHandle<Option<T>>
     use futures::FutureExt;
     std::panic::AssertUnwindSafe(async move {
         #[cfg(feature = "rt-tokio")]
-        return handle.await.ok().flatten(); 
+        return handle.await.ok().flatten();
 
         #[cfg(feature = "rt-async-std")]
         return handle.await; // task panic re-raises here → caught below
@@ -153,11 +153,7 @@ impl Node {
             address: nv.address.clone(),
 
             host: nv.aliases[0].clone(),
-            rebalance_generation: AtomicIsize::new(if client_policy.rack_aware() {
-                -1
-            } else {
-                0
-            }),
+            rebalance_generation: AtomicIsize::new(if client_policy.rack_aware() { -1 } else { 0 }),
             // Under `for_login_only` the pool's addresses are the cleartext
             // ones; it keeps the node's TLS address and the token from
             // validation so it can renew the session over TLS without ever
@@ -628,7 +624,7 @@ impl Node {
             .map(|entry| {
                 let (key, val) = entry
                     .split_once(':')
-                    .ok_or(Error::bad_response("Invalid rack entry"))?;
+                    .ok_or_else(|| Error::bad_response("Invalid rack entry"))?;
                 let ns = key.trim();
                 // Aerospike server enforces 1..=31 for namespace names.
                 // Reject anything outside that to avoid populating the rack
@@ -703,7 +699,7 @@ impl Node {
     }
 
     /// Returns the per-node metrics sink.
-    pub fn metrics(&self) -> &Arc<NodeMetrics> {
+    pub const fn metrics(&self) -> &Arc<NodeMetrics> {
         &self.metrics
     }
 
@@ -834,7 +830,9 @@ impl Node {
         commands: &[&str],
     ) -> Result<IndexMap<String, String>> {
         let mut guard = self.tend_connection.lock().await;
-        if guard.is_none() {
+        let conn = if let Some(conn) = guard.as_mut() {
+            conn
+        } else {
             // Open lazily. The first call after Node::new pays the
             // TCP-handshake + LOGIN here; subsequent calls reuse the
             // already-authenticated socket.
@@ -857,11 +855,8 @@ impl Node {
             .map(|(conn, _session)| conn)
             .map_err(crate::Error::from)
             .map_err(|e| e.chain_error("Failed to open tend connection"))?;
-            *guard = Some(conn);
-        }
-
-        // SAFETY: we just ensured `guard` is `Some`.
-        let conn = guard.as_mut().expect("tend connection just opened");
+            guard.insert(conn)
+        };
         match Message::info(policy, conn, commands).await {
             Ok(map) => Ok(map),
             Err(e) => {
@@ -1098,12 +1093,11 @@ impl Node {
         // slowest one. A healed connection re-pools into its own queue, and a
         // failed one frees that queue's reserved slot.
         for (queue, handle) in probe_handles {
-            match await_spawned_task(handle).await {
-                Some(conn) => queue.put_back(conn),
-                None => {
-                    queue.reduce_capacity();
-                    self.metrics.incr_connections_closed(CloseReason::Error);
-                }
+            if let Some(conn) = await_spawned_task(handle).await {
+                queue.put_back(conn)
+            } else {
+                queue.reduce_capacity();
+                self.metrics.incr_connections_closed(CloseReason::Error);
             }
             total_processed += 1;
         }
@@ -1189,7 +1183,13 @@ mod node_tests {
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
             crate::metrics::MetricsPolicy::default(),
         ));
-        Node::new(policy, nv, metrics, Arc::new(std::sync::atomic::AtomicUsize::new(0)), None)
+        Node::new(
+            policy,
+            nv,
+            metrics,
+            Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            None,
+        )
     }
 
     /// One idle connection in the pool, using the test [`crate::net::Connection`] (no real socket).
@@ -1217,10 +1217,7 @@ mod node_tests {
             matches!(err.kind(), crate::ErrorKind::InvalidNode),
             "expected InvalidNode, got {err:?}"
         );
-        assert!(
-            err.to_string().contains("inactive"),
-            "unexpected: {err}"
-        );
+        assert!(err.to_string().contains("inactive"), "unexpected: {err}");
         assert_eq!(
             node.connection_pool.num_conns(),
             before,
@@ -1302,7 +1299,13 @@ mod node_tests {
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
             crate::metrics::MetricsPolicy::default(),
         ));
-        let node = Node::new(policy, nv, metrics, Arc::new(std::sync::atomic::AtomicUsize::new(0)), None);
+        let node = Node::new(
+            policy,
+            nv,
+            metrics,
+            Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            None,
+        );
 
         // Trigger 4 pool misses with distinct hints — each reports pool-empty
         // and spawns a background fill on its own queue.
@@ -1324,9 +1327,9 @@ mod node_tests {
         }
 
         let queues = node.connection_pool.queues();
-        for i in 0..4 {
+        for (i, queue) in queues.iter().enumerate().take(4) {
             assert_eq!(
-                queues[i].reserved_count(),
+                queue.reserved_count(),
                 1,
                 "queue[{i}] must have exactly 1 reserved connection"
             );
@@ -1429,7 +1432,13 @@ mod node_tests {
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
             crate::metrics::MetricsPolicy::default(),
         ));
-        let node = Node::new(policy, nv, metrics, Arc::new(std::sync::atomic::AtomicUsize::new(0)), None);
+        let node = Node::new(
+            policy,
+            nv,
+            metrics,
+            Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            None,
+        );
 
         let mut in_flight = Vec::new();
         for i in 0..5 {
@@ -1542,7 +1551,7 @@ mod pool_health_tests {
         Node::new(policy, nv, metrics, Arc::new(AtomicUsize::new(0)), None)
     }
 
-    /// Park `n` real TCP conns (make_conn's test shim has no socket).
+    /// Park `n` real TCP conns (`make_conn`'s test shim has no socket).
     async fn park_conns(node: &Node, addr: SocketAddr, policy: &ClientPolicy, n: usize) {
         let queue = &node.connection_pool.queues()[0];
         for _ in 0..n {
@@ -1624,7 +1633,10 @@ mod pool_health_tests {
         park_conns(&node, addr, &policy, 2).await;
 
         let processed = node.reap_and_refresh_idle_connections().await;
-        assert_eq!(processed, 0, "nothing is expired, so tend must touch nothing");
+        assert_eq!(
+            processed, 0,
+            "nothing is expired, so tend must touch nothing"
+        );
         assert_eq!(node.connection_pool.num_conns(), 2);
     }
 
@@ -1651,7 +1663,7 @@ mod pool_health_tests {
     }
 
     /// A dead floor connection fails its probe and is evicted, freeing the
-    /// slot for fill_min_conns to replace.
+    /// slot for `fill_min_conns` to replace.
     #[aerospike_macro::test]
     async fn dead_floor_conn_is_evicted_by_probe() {
         let (addr, _dead) = spawn_fake_node(true).await; // peer FINs everything
@@ -1669,7 +1681,7 @@ mod pool_health_tests {
         );
     }
 
-    /// idle_timeout = 0: no deadline exists, so tend must touch nothing —
+    /// `idle_timeout = 0`: no deadline exists, so tend must touch nothing —
     /// no drops, no probes. Dead sockets are the checkout peek's job.
     #[aerospike_macro::test]
     async fn idle_timeout_zero_tend_is_noop() {
@@ -1699,7 +1711,10 @@ mod pool_health_tests {
 
         let processed = node.reap_and_refresh_idle_connections().await;
 
-        assert_eq!(processed, 5, "3 retired + 2 probed: every conn accounted for");
+        assert_eq!(
+            processed, 5,
+            "3 retired + 2 probed: every conn accounted for"
+        );
         assert_eq!(
             node.connection_pool.total_reserved(),
             2,

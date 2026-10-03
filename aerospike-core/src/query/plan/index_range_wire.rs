@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::fmt::Write as _;
+
 use crate::errors::{Error, Result};
 
 use crate::commands::particle_type::ParticleType;
 
 /// Internal transform of explain field `22` (`INDEX_RANGE`) for phase-2 execute.
-pub(crate) struct IndexRangeWire;
+pub struct IndexRangeWire;
 
 impl IndexRangeWire {
-    /// Converts explain INDEX_RANGE bytes to the execute shape used with field `21`.
+    /// Converts explain `INDEX_RANGE` bytes to the execute shape used with field `21`.
     pub(crate) fn for_execute_with_index_name(probe_range_bytes: &[u8]) -> Result<Vec<u8>> {
         if probe_range_bytes.is_empty() {
-            return Err(Error::bad_response(
-                "empty INDEX_RANGE field body",
-            ));
+            return Err(Error::bad_response("empty INDEX_RANGE field body"));
         }
 
         let mut offset = 0usize;
@@ -37,9 +37,7 @@ impl IndexRangeWire {
             )));
         }
         if offset >= probe_range_bytes.len() {
-            return Err(Error::bad_response(
-                "truncated INDEX_RANGE field body",
-            ));
+            return Err(Error::bad_response("truncated INDEX_RANGE field body"));
         }
 
         let bin_name_len = probe_range_bytes[offset] as usize;
@@ -48,17 +46,13 @@ impl IndexRangeWire {
             return Ok(probe_range_bytes.to_vec());
         }
         if offset + bin_name_len > probe_range_bytes.len() {
-            return Err(Error::bad_response(
-                "truncated INDEX_RANGE field body",
-            ));
+            return Err(Error::bad_response("truncated INDEX_RANGE field body"));
         }
 
         offset += bin_name_len;
         let tail_len = probe_range_bytes.len() - offset;
         if tail_len == 0 {
-            return Err(Error::bad_response(
-                "truncated INDEX_RANGE field body",
-            ));
+            return Err(Error::bad_response("truncated INDEX_RANGE field body"));
         }
 
         let mut execute = Vec::with_capacity(2 + tail_len);
@@ -163,7 +157,12 @@ fn read_bytes_bound(bytes: &[u8], mut offset: usize) -> Option<BoundBytes> {
 }
 
 fn bytes_to_hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
 }
 
 #[cfg(test)]

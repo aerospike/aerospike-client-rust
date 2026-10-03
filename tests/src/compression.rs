@@ -15,8 +15,8 @@
 
 use std::time::Duration;
 
-use futures::stream::StreamExt;
 use aerospike_rt::sleep;
+use futures::stream::StreamExt;
 
 use crate::common;
 
@@ -798,21 +798,24 @@ async fn put_get_compression_size_sweep() {
 
     let sizes: &[usize] = &[
         1,
-        64,          // whole message still below the 128-byte threshold
-        200,         // just above the threshold
+        64,  // whole message still below the 128-byte threshold
+        200, // just above the threshold
         4 * 1024,
         64 * 1024 - 1, // encoder chunk boundary
         64 * 1024,
         64 * 1024 + 1,
-        256 * 1024,  // multi-chunk
-        512 * 1024,  // large record
+        256 * 1024, // multi-chunk
+        512 * 1024, // large record
     ];
 
     let mut keys = Vec::new();
     for (i, &size) in sizes.iter().enumerate() {
         for (variant, payload) in [
             ("zeros", vec![7u8; size]),
-            ("random", random_bytes(size, (i as u32 + 1).wrapping_mul(2_654_435_761))),
+            (
+                "random",
+                random_bytes(size, (i as u32 + 1).wrapping_mul(2_654_435_761)),
+            ),
         ] {
             let key = as_key!(namespace, &set_name, format!("sweep-{size}-{variant}"));
             client

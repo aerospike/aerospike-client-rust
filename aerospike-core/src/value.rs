@@ -845,7 +845,6 @@ impl From<u64> for Value {
         // refuse instead.
         assert!(
             val <= i64::MAX as u64,
-            "{}",
             "Aerospike does not support u64 natively on server-side. \
              Value {val} exceeds i64::MAX. Cast explicitly to i64 if \
              the truncation is intentional."
@@ -1242,6 +1241,7 @@ macro_rules! as_values {
 macro_rules! as_map {
     ( $( $k:expr => $v:expr),* ) => {
         {
+            #[allow(unused_mut)] // an empty invocation never inserts
             let mut temp_map = std::collections::HashMap::new();
             $(
                 temp_map.insert(as_val!($k), as_val!($v));
@@ -1274,6 +1274,7 @@ macro_rules! as_map {
 macro_rules! as_ord_map {
     ( $( $k:expr => $v:expr),* ) => {
         {
+            #[allow(unused_mut)] // an empty invocation never inserts
             let mut temp_map = $crate::IndexMap::new();
             $(
                 temp_map.insert(as_val!($k), as_val!($v));
@@ -1306,6 +1307,7 @@ macro_rules! as_ord_map {
 macro_rules! as_sorted_map {
     ( $( $k:expr => $v:expr),* ) => {
         {
+            #[allow(unused_mut)] // an empty invocation never inserts
             let mut temp_map = std::collections::BTreeMap::new();
             $(
                 temp_map.insert(as_val!($k), as_val!($v));
@@ -1333,7 +1335,11 @@ impl Serialize for Value {
                 FloatValue::F64(u) => serializer.serialize_f64(f64::from_bits(*u)),
             },
             Value::String(s) | Value::GeoJSON(s) => serializer.serialize_str(s),
-            Value::Blob(b) | Value::HLL(b) => serializer.serialize_bytes(&b[..]),
+            // An unknown particle serializes as its raw payload too: the type is
+            // not representable in most formats and the bytes are opaque anyway.
+            Value::Blob(b) | Value::HLL(b) | Value::Unknown(_, b) => {
+                serializer.serialize_bytes(&b[..])
+            }
             Value::List(l) => {
                 let mut seq = serializer.serialize_seq(Some(l.len()))?;
                 for elem in l {
@@ -1377,9 +1383,6 @@ impl Serialize for Value {
                     self.type_label()
                 )))
             }
-            // Serialize the raw payload; the particle type is not
-            // representable in most formats and the bytes are opaque anyway.
-            Value::Unknown(_, b) => serializer.serialize_bytes(&b[..]),
         }
     }
 }
@@ -1434,6 +1437,7 @@ impl From<MapCollection<Value, Value>> for Value {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::float_cmp)] // the literals under test are exactly representable
 
     /// `f32 -> f64` is lossless, and an F32 bin is already written to the
     /// server as a double, so every public conversion must widen the same
@@ -1460,7 +1464,7 @@ mod tests {
 
     /// Narrowing an F64 to f32 must cast the number, not its bit pattern. The
     /// old `f32::from_bits(bits as u32)` kept the low 32 bits of the double's
-    /// encoding: for 2.25 (0x4002_0000_0000_0000) those are all zero, so it
+    /// encoding: for 2.25 (`0x4002_0000_0000_0000`) those are all zero, so it
     /// returned 0.0 for a value that is exactly representable in f32.
     #[test]
     fn f64_float_values_narrow_to_f32_by_value_not_by_bits() {
@@ -1553,9 +1557,7 @@ mod tests {
         assert_eq!(Value::Wildcard.type_label(), "wildcard");
         assert_eq!(Value::from(1).type_label(), "int");
 
-        let err = String::try_from(Value::Infinity)
-            .expect_err("INF is not a string")
-            .to_string();
+        let err = String::try_from(Value::Infinity).expect_err("INF is not a string");
         assert!(err.contains("INF"), "message should name the type: {err}");
     }
 
@@ -1640,7 +1642,7 @@ mod tests {
         let ordered = as_ord_map!("k" => 1);
         let as_hash: HashMap<Value, Value> = ordered.clone().try_into().unwrap();
         assert_eq!(as_hash.len(), 1);
-        let as_sorted: BTreeMap<Value, Value> = ordered.clone().try_into().unwrap();
+        let as_sorted: BTreeMap<Value, Value> = ordered.try_into().unwrap();
         assert_eq!(as_sorted.len(), 1);
         let as_index: IndexMap<Value, Value> = as_map!("k" => 1).try_into().unwrap();
         assert_eq!(as_index.len(), 1);

@@ -106,15 +106,14 @@ impl Command for ServerCommand<'_> {
         // `is_udf` is informational — the unified path picks the
         // payload up directly from the statement.
         let _ = self.is_udf;
-        conn.buffer
-            .set_query(
-                QueryDirection::Background(self.write_policy),
-                self.statement,
-                self.task_id,
-                &self.node,
-                None,
-                None,
-            )
+        conn.buffer.set_query(
+            QueryDirection::Background(self.write_policy),
+            self.statement,
+            self.task_id,
+            &self.node,
+            None,
+            None,
+        )
     }
 
     fn get_node(&mut self) -> Result<Arc<Node>> {

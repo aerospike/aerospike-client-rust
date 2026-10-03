@@ -335,7 +335,11 @@ async fn integer_index_serves_range_and_equality_filters() {
     while let Some(res) = stream.next().await {
         matched.push(res.unwrap().bins[bin].clone());
     }
-    assert_eq!(matched, vec![Value::Int(42)], "equality filter over the INTEGER index");
+    assert_eq!(
+        matched,
+        vec![Value::Int(42)],
+        "equality filter over the INTEGER index"
+    );
 
     let task = client.drop_index(&apolicy, ns, &set, &index).await.unwrap();
     task.wait_till_complete(None).await.unwrap();

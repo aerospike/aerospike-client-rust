@@ -79,9 +79,18 @@ async fn seed_keys(client: &Client, namespace: &str, n: usize) -> Vec<Key> {
         let mut writes: Vec<_> = chunk
             .iter()
             .enumerate()
-            .map(|(i, k)| BatchOperation::write(&bwp, k.clone(), vec![operations::put(&as_bin!(V, i as i64))]))
+            .map(|(i, k)| {
+                BatchOperation::write(
+                    &bwp,
+                    k.clone(),
+                    vec![operations::put(&as_bin!(V, i as i64))],
+                )
+            })
             .collect();
-        client.batch(&BatchPolicy::default(), &mut writes).await.expect("seed write");
+        client
+            .batch(&BatchPolicy::default(), &mut writes)
+            .await
+            .expect("seed write");
     }
     keys
 }
@@ -94,12 +103,20 @@ fn random_batch(r: &mut Rng, keys: &[Key]) -> (BatchPolicy, Vec<BatchOperation>)
     let bogus = format!("nx_{}", common::rand_str(4));
     let ops = (0..n)
         .map(|i| {
-            let key = if i > 0 && r.below(6) == 0 { as_key!(bogus.as_str(), &keys[i].set_name, i as i64) } else { keys[i].clone() };
+            let key = if i > 0 && r.below(6) == 0 {
+                as_key!(bogus.as_str(), &keys[i].set_name, i as i64)
+            } else {
+                keys[i].clone()
+            };
             BatchOperation::read(&brp, key, random_bins(r))
         })
         .collect();
     let mut policy = BatchPolicy::default();
-    policy.replica = if r.below(2) == 0 { Replica::Master } else { Replica::Sequence };
+    policy.replica = if r.below(2) == 0 {
+        Replica::Master
+    } else {
+        Replica::Sequence
+    };
     (policy, ops)
 }
 
@@ -133,7 +150,8 @@ fn assert_flat(label: &str, live_before: isize, live_after: isize, run: &Run) {
     let n = run.live_samples.len();
     let window = 15.min(n / 2).max(1);
     let mean = |s: &[isize]| s.iter().map(|&x| x as f64).sum::<f64>() / s.len() as f64;
-    let growth = (mean(&run.live_samples[n - window..]) - mean(&run.live_samples[..window])) as isize;
+    let growth =
+        (mean(&run.live_samples[n - window..]) - mean(&run.live_samples[..window])) as isize;
     let spread = run.live_samples.iter().max().unwrap() - run.live_samples.iter().min().unwrap();
     let mut apr = run.allocs_per_row.clone();
     apr.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -144,9 +162,20 @@ fn assert_flat(label: &str, live_before: isize, live_after: isize, run: &Run) {
     );
     // A leaked row set (one 300-row op vector is ~170 KiB) blows through any
     // of these within a handful of batches.
-    assert!(live_after - live_before <= 256 * KIB, "{label}: live bytes did not return to baseline (+{} KiB)", (live_after - live_before) / KIB);
-    assert!(growth <= 256 * KIB, "{label}: live bytes trend upward across the run (+{} KiB)", growth / KIB);
-    assert!(max_apr <= 400.0, "{label}: allocations per row exploded ({max_apr:.0}/row)");
+    assert!(
+        live_after - live_before <= 256 * KIB,
+        "{label}: live bytes did not return to baseline (+{} KiB)",
+        (live_after - live_before) / KIB
+    );
+    assert!(
+        growth <= 256 * KIB,
+        "{label}: live bytes trend upward across the run (+{} KiB)",
+        growth / KIB
+    );
+    assert!(
+        max_apr <= 400.0,
+        "{label}: allocations per row exploded ({max_apr:.0}/row)"
+    );
 }
 
 #[aerospike_macro::test]
@@ -181,7 +210,9 @@ async fn retry_resplit_path_does_not_leak() {
     let mut policy = common::client_policy().clone();
     policy.max_error_rate = 1;
     policy.error_rate_window = 10_000;
-    let client = Client::new(&policy, &common::hosts()).await.expect("connect");
+    let client = Client::new(&policy, &common::hosts())
+        .await
+        .expect("connect");
     let namespace = common::namespace();
     if client.cluster.nodes().len() < 2 {
         println!("SKIP: retry re-split needs >= 2 nodes");
@@ -203,11 +234,17 @@ async fn retry_resplit_path_does_not_leak() {
     let mut r = Rng(0x5EED_5EED);
     let make = |r: &mut Rng| -> Vec<BatchOperation> {
         let n = 1 + r.below(keys.len());
-        keys[..n].iter().map(|k| BatchOperation::read(&brp, k.clone(), random_bins(r))).collect()
+        keys[..n]
+            .iter()
+            .map(|k| BatchOperation::read(&brp, k.clone(), random_bins(r)))
+            .collect()
     };
     for _ in 0..10 {
         let mut ops = make(&mut r);
-        client.batch(&bpolicy, &mut ops).await.expect("warm-up through retry");
+        client
+            .batch(&bpolicy, &mut ops)
+            .await
+            .expect("warm-up through retry");
     }
     let live_before = settled_live().await;
     let mut run = Run::default();
@@ -216,7 +253,9 @@ async fn retry_resplit_path_does_not_leak() {
         let rows = ops.len();
         let allocs_before = ALLOCATIONS.load(Relaxed);
         client.batch(&bpolicy, &mut ops).await.expect("retry batch");
-        assert!(ops.iter().all(|o| o.batch_record().result_code() == Some(ResultCode::Ok)));
+        assert!(ops
+            .iter()
+            .all(|o| o.batch_record().result_code() == Some(ResultCode::Ok)));
         drop(ops);
         run.record(allocs_before, rows);
     }

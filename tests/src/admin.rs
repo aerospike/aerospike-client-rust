@@ -37,7 +37,7 @@ async fn user_management() {
 
     /* CREATE USER */
     client
-        .create_user(&admin_policy, USER_NAME, "something", &vec![ROLE])
+        .create_user(&admin_policy, USER_NAME, "something", &[ROLE])
         .await
         .unwrap();
 
@@ -56,7 +56,7 @@ async fn user_management() {
 
     /* GRANT ROLES */
     client
-        .grant_roles(&admin_policy, USER_NAME, &vec![ROLE])
+        .grant_roles(&admin_policy, USER_NAME, &[ROLE])
         .await
         .unwrap();
 
@@ -71,7 +71,7 @@ async fn user_management() {
 
     /* REVOKE ROLES */
     client
-        .revoke_roles(&admin_policy, USER_NAME, &vec![ROLE])
+        .revoke_roles(&admin_policy, USER_NAME, &[ROLE])
         .await
         .unwrap();
 
@@ -91,7 +91,7 @@ async fn user_management() {
 
     let users = client.query_users(&admin_policy, None).await.unwrap();
     let user = users.iter().find(|u| u.user == USER_NAME);
-    assert_eq!(user.is_none(), true);
+    assert!(user.is_none());
 }
 
 #[aerospike_macro::test]
@@ -120,7 +120,7 @@ async fn role_management() {
 
     /* CREATE ROLE */
     client
-        .create_role(&admin_policy, ROLE, &privileges, &vec![], 1000, 5000)
+        .create_role(&admin_policy, ROLE, &privileges, &[], 1000, 5000)
         .await
         .unwrap();
 
@@ -141,7 +141,7 @@ async fn role_management() {
 
     /* GRANT PRIVILEGES */
     client
-        .grant_privileges(&admin_policy, ROLE, &vec![wpriv.clone()])
+        .grant_privileges(&admin_policy, ROLE, std::slice::from_ref(&wpriv))
         .await
         .unwrap();
 
@@ -156,7 +156,7 @@ async fn role_management() {
 
     /* REVOKE PRIVILEGES */
     client
-        .revoke_privileges(&admin_policy, ROLE, &vec![wpriv.clone()])
+        .revoke_privileges(&admin_policy, ROLE, std::slice::from_ref(&wpriv))
         .await
         .unwrap();
 
@@ -175,5 +175,5 @@ async fn role_management() {
 
     let roles = client.query_roles(&admin_policy, None).await.unwrap();
     let role = roles.iter().find(|r| r.name == ROLE);
-    assert_eq!(role.is_none(), true)
+    assert!(role.is_none())
 }

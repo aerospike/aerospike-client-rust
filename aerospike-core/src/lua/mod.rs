@@ -45,10 +45,10 @@ mod bytes;
 mod stream;
 mod values;
 
+use crate::locks::{read, write};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, RwLock};
-use crate::locks::{read, write};
 
 use async_channel::{Receiver, Sender};
 use mlua::Lua;
@@ -63,8 +63,7 @@ const STREAM_OPS_SOURCE: &str = include_str!("resources/stream_ops.lua");
 const AEROSPIKE_SOURCE: &str = include_str!("resources/aerospike.lua");
 
 /// Directory containing the client-side copies of the UDF packages.
-static SOURCE_DIR: LazyLock<RwLock<PathBuf>> =
-    LazyLock::new(|| RwLock::new(PathBuf::from("udf")));
+static SOURCE_DIR: LazyLock<RwLock<PathBuf>> = LazyLock::new(|| RwLock::new(PathBuf::from("udf")));
 
 /// In-memory UDF package sources registered via [`register_package`].
 /// Looked up before the filesystem.

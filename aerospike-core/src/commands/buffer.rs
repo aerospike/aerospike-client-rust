@@ -171,7 +171,7 @@ pub const INFO4_ERROR_VERBOSITY_SHIFT: u8 = 5;
 pub const INFO4_ERROR_VERBOSITY_MASK: u8 = 0x60;
 
 /// Pack the error-detail verbosity level into its INFO4 bits (5-6).
-pub(crate) const fn error_verbosity_bits(verbosity: u8) -> u8 {
+pub const fn error_verbosity_bits(verbosity: u8) -> u8 {
     (verbosity << INFO4_ERROR_VERBOSITY_SHIFT) & INFO4_ERROR_VERBOSITY_MASK
 }
 
@@ -196,7 +196,7 @@ pub const MAX_BUFFER_SIZE: usize = 120 * 1024 * 1024 + 8; // 120 MB + header
 /// Result of walking a response's field section: the record version (for MRT
 /// bookkeeping) and any extended server-supplied error detail.
 #[derive(Default)]
-pub(crate) struct ParsedFields {
+pub struct ParsedFields {
     pub version: Option<u64>,
     pub error_detail: Option<Box<crate::ServerErrorDetail>>,
 }
@@ -378,6 +378,9 @@ impl Buffer {
     ///   `[8 .. 16]`               → original uncompressed size
     ///   `[16 .. 16+compressed]`   → compressed data
     pub(crate) fn compress(&mut self) -> Result<()> {
+        /// zlib misbehaves on very large single writes; feed it in 64 KB chunks.
+        const STEP: usize = 64 * 1024;
+
         let cmd_start = self.compress_offset;
         // After end() is called, data_offset no longer reflects the command length.
         // Use the buffer length instead.
@@ -416,7 +419,6 @@ impl Buffer {
 
             // Write in 64KB chunks to work around zlib issues (matching Go client behavior).
             let mut pos = 0;
-            const STEP: usize = 64 * 1024;
             while pos + STEP < uncompressed_size {
                 encoder
                     .write_all(&src[pos..pos + STEP])
@@ -3043,8 +3045,8 @@ mod tests {
     }
 
     /// Helper: build a Buffer that looks like a real command was written.
-    /// Returns (buffer, uncompressed_payload) where uncompressed_payload is
-    /// the command bytes at [compress_offset .. data_offset] before end() is called.
+    /// Returns `(buffer, uncompressed_payload)` where `uncompressed_payload` is
+    /// the command bytes at `[compress_offset .. data_offset]` before `end()` is called.
     fn make_command_buffer(payload_size: usize, use_compress: bool) -> Buffer {
         let mut buf = Buffer::new(0);
         buf.set_compress(use_compress, DEFAULT_COMPRESS_THRESHOLD);
@@ -3616,7 +3618,7 @@ mod tests {
     // ---- set_operate attribute bits (CLIENT-5102: RESPOND_ALL_OPS for
     // string ops; grouping mirrors Go/Java OperateArgs) ----
 
-    /// Build an operate command and return (read_attr, write_attr).
+    /// Build an operate command and return `(read_attr, write_attr)`.
     fn operate_attrs(ops: &[crate::operations::Operation]) -> (u8, u8) {
         let key = test_key();
         let mut buf = Buffer::new(0);

@@ -16,11 +16,11 @@ async fn hll() {
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
 
-    let ops = &vec![hll::init(&hpolicy, "bin", 4)];
+    let ops = &[hll::init(&hpolicy, "bin", 4)];
     client.operate(&wpolicy, &key, ops).await.unwrap();
 
     let v = vec![Value::from("asd123")];
-    let ops = &vec![hll::add(&hpolicy, "bin", v)];
+    let ops = &[hll::add(&hpolicy, "bin", v)];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(
         *rec.bins.get("bin").unwrap(),
@@ -28,7 +28,7 @@ async fn hll() {
         "Register update did not match"
     );
 
-    let ops = &vec![hll::get_count("bin")];
+    let ops = &[hll::get_count("bin")];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(
         *rec.bins.get("bin").unwrap(),
@@ -36,14 +36,14 @@ async fn hll() {
         "HLL Count did not match"
     );
 
-    let ops = &vec![hll::init_with_min_hash(&hpolicy, "bin2", 8, 0)];
+    let ops = &[hll::init_with_min_hash(&hpolicy, "bin2", 8, 0)];
     client.operate(&wpolicy, &key, ops).await.unwrap();
 
-    let ops = &vec![hll::fold("bin2", 6)];
+    let ops = &[hll::fold("bin2", 6)];
     client.operate(&wpolicy, &key, ops).await.unwrap();
 
     let v2 = vec![Value::from("123asd")];
-    let ops = &vec![hll::add(&hpolicy, "bin2", v2)];
+    let ops = &[hll::add(&hpolicy, "bin2", v2)];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(
         *rec.bins.get("bin2").unwrap(),
@@ -51,7 +51,7 @@ async fn hll() {
         "Register update did not match"
     );
 
-    let ops = &vec![hll::describe("bin")];
+    let ops = &[hll::describe("bin")];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(
         *rec.bins.get("bin").unwrap(),
@@ -65,7 +65,7 @@ async fn hll() {
         .unwrap();
     let bin2val = vec![rec.bins.get("bin2").unwrap().clone()];
 
-    let ops = &vec![hll::get_intersect_count("bin", bin2val.clone())];
+    let ops = &[hll::get_intersect_count("bin", bin2val.clone())];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(
         *rec.bins.get("bin").unwrap(),
@@ -73,7 +73,7 @@ async fn hll() {
         "Intersect Count is wrong"
     );
 
-    let ops = &vec![hll::get_union_count("bin", bin2val.clone())];
+    let ops = &[hll::get_union_count("bin", bin2val.clone())];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(
         *rec.bins.get("bin").unwrap(),
@@ -81,14 +81,14 @@ async fn hll() {
         "Union Count is wrong"
     );
 
-    let ops = &vec![hll::get_union("bin", bin2val.clone())];
+    let ops = &[hll::get_union("bin", bin2val.clone())];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     let val = Value::HLL(vec![
         0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ]);
     assert_eq!(*rec.bins.get("bin").unwrap(), val, "Union does not match");
 
-    let ops = &vec![hll::refresh_count("bin")];
+    let ops = &[hll::refresh_count("bin")];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(
         *rec.bins.get("bin").unwrap(),
@@ -96,7 +96,7 @@ async fn hll() {
         "HLL Refresh Count did not match"
     );
 
-    let ops = &vec![
+    let ops = &[
         hll::set_union(&hpolicy, "bin", bin2val.clone()),
         hll::get_count("bin"),
     ];
@@ -107,7 +107,7 @@ async fn hll() {
         "Written Union count does not match"
     );
 
-    let ops = &vec![hll::get_similarity("bin", bin2val)];
+    let ops = &[hll::get_similarity("bin", bin2val)];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(
         *rec.bins.get("bin").unwrap(),

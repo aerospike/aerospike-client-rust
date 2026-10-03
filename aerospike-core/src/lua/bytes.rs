@@ -133,13 +133,16 @@ impl UserData for LuaBytes {
                 Ok(0)
             }
         });
-        methods.add_meta_method_mut(MetaMethod::NewIndex, |_, this, (index, value): (i64, i64)| {
-            if index >= 1 {
-                #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-                this.set_byte((index - 1) as usize, value as u8);
-            }
-            Ok(())
-        });
+        methods.add_meta_method_mut(
+            MetaMethod::NewIndex,
+            |_, this, (index, value): (i64, i64)| {
+                if index >= 1 {
+                    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                    this.set_byte((index - 1) as usize, value as u8);
+                }
+                Ok(())
+            },
+        );
         methods.add_meta_method(MetaMethod::Len, |_, this, ()| Ok(this.bytes.len() as i64));
         methods.add_meta_method(MetaMethod::ToString, |_, this, ()| Ok(this.hex()));
     }
@@ -214,21 +217,25 @@ pub fn register(lua: &Lua) -> mlua::Result<()> {
     let (n, f) = get(lua, "get_byte", |b, o| i64::from(b.get_byte(o)))?;
     bytes.set(n, f)?;
     let (n, f) = get(lua, "get_int16", |b, o| {
-        b.read::<2>(o).map_or(0, |a| i64::from(i16::from_be_bytes(a)))
+        b.read::<2>(o)
+            .map_or(0, |a| i64::from(i16::from_be_bytes(a)))
     })?;
     bytes.set(n, f.clone())?;
     bytes.set("get_int16_be", f)?;
     let (n, f) = get(lua, "get_int16_le", |b, o| {
-        b.read::<2>(o).map_or(0, |a| i64::from(i16::from_le_bytes(a)))
+        b.read::<2>(o)
+            .map_or(0, |a| i64::from(i16::from_le_bytes(a)))
     })?;
     bytes.set(n, f)?;
     let (n, f) = get(lua, "get_int32", |b, o| {
-        b.read::<4>(o).map_or(0, |a| i64::from(i32::from_be_bytes(a)))
+        b.read::<4>(o)
+            .map_or(0, |a| i64::from(i32::from_be_bytes(a)))
     })?;
     bytes.set(n, f.clone())?;
     bytes.set("get_int32_be", f)?;
     let (n, f) = get(lua, "get_int32_le", |b, o| {
-        b.read::<4>(o).map_or(0, |a| i64::from(i32::from_le_bytes(a)))
+        b.read::<4>(o)
+            .map_or(0, |a| i64::from(i32::from_le_bytes(a)))
     })?;
     bytes.set(n, f)?;
     let (n, f) = get(lua, "get_int64", |b, o| {
@@ -243,31 +250,28 @@ pub fn register(lua: &Lua) -> mlua::Result<()> {
 
     bytes.set(
         "get_string",
-        lua.create_function(
-            |_, (ud, offset, len): (mlua::AnyUserData, i64, usize)| {
-                let b = ud.borrow::<LuaBytes>()?;
-                let Some(start) = offset0(offset).filter(|o| *o < b.bytes.len()) else {
-                    return Ok(String::new());
-                };
-                let end = (start + len).min(b.bytes.len());
-                Ok(String::from_utf8_lossy(&b.bytes[start..end]).into_owned())
-            },
-        )?,
+        lua.create_function(|_, (ud, offset, len): (mlua::AnyUserData, i64, usize)| {
+            let b = ud.borrow::<LuaBytes>()?;
+            let Some(start) = offset0(offset).filter(|o| *o < b.bytes.len()) else {
+                return Ok(String::new());
+            };
+            let end = (start + len).min(b.bytes.len());
+            Ok(String::from_utf8_lossy(&b.bytes[start..end]).into_owned())
+        })?,
     )?;
     bytes.set(
         "get_bytes",
-        lua.create_function(
-            |_, (ud, offset, len): (mlua::AnyUserData, i64, usize)| {
-                let b = ud.borrow::<LuaBytes>()?;
-                let payload = offset0(offset)
+        lua.create_function(|_, (ud, offset, len): (mlua::AnyUserData, i64, usize)| {
+            let b = ud.borrow::<LuaBytes>()?;
+            let payload =
+                offset0(offset)
                     .filter(|o| *o < b.bytes.len())
                     .map_or_else(Vec::new, |start| {
                         let end = (start + len).min(b.bytes.len());
                         b.bytes[start..end].to_vec()
                     });
-                Ok(LuaBytes::new(payload, ParticleType::BLOB))
-            },
-        )?,
+            Ok(LuaBytes::new(payload, ParticleType::BLOB))
+        })?,
     )?;
     bytes.set(
         "get_var_int",
@@ -413,12 +417,14 @@ pub fn register(lua: &Lua) -> mlua::Result<()> {
 
     bytes.set(
         "append_string",
-        lua.create_function(|_, (ud, value): (mlua::AnyUserData, mlua::prelude::LuaString)| {
-            let mut b = ud.borrow_mut::<LuaBytes>()?;
-            let end = b.bytes.len();
-            b.write(end, &value.as_bytes());
-            Ok(true)
-        })?,
+        lua.create_function(
+            |_, (ud, value): (mlua::AnyUserData, mlua::prelude::LuaString)| {
+                let mut b = ud.borrow_mut::<LuaBytes>()?;
+                let end = b.bytes.len();
+                b.write(end, &value.as_bytes());
+                Ok(true)
+            },
+        )?,
     )?;
     bytes.set(
         "append_bytes",

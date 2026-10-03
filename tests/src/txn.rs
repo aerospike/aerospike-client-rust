@@ -19,9 +19,8 @@ use std::sync::Arc;
 
 use crate::common;
 use aerospike::{
-    as_bin, as_key, operations, AbortStatus, Bins, ClientResultCode, CommitErrorType,
-    CommitStatus, ReadPolicy, ResultCode, Txn, TxnState, Value, WritePolicy,
-    COMMIT_FAILED_ABORT_MESSAGE,
+    as_bin, as_key, operations, AbortStatus, Bins, ClientResultCode, CommitErrorType, CommitStatus,
+    ReadPolicy, ResultCode, Txn, TxnState, Value, WritePolicy, COMMIT_FAILED_ABORT_MESSAGE,
 };
 
 /// Check if the server supports MRT (version >= 8.0).
@@ -846,7 +845,10 @@ async fn write_in_txn(
         .put(&wp, &key, &[as_bin!("bin", 1)])
         .await
         .expect("put inside the transaction");
-    assert!(txn.monitor_exists(), "the write must have created the monitor");
+    assert!(
+        txn.monitor_exists(),
+        "the write must have created the monitor"
+    );
     key
 }
 
@@ -860,7 +862,10 @@ async fn delete_txn_monitor(client: &aerospike::Client, ns: &str, txn: &Txn) {
         .delete(&wp, &monitor)
         .await
         .expect("delete the transaction monitor record");
-    assert!(existed, "the monitor record must exist before it is deleted");
+    assert!(
+        existed,
+        "the monitor record must exist before it is deleted"
+    );
 }
 
 /// An in-doubt commit failure locks the transaction into `CommitFailed`:
@@ -881,7 +886,10 @@ async fn txn_abort_blocked_after_commit_failed() {
     delete_txn_monitor(&client, ns, &txn).await;
 
     let err = client.commit(&txn).await.unwrap_err();
-    assert!(err.in_doubt(), "the commit failure must carry in_doubt: {err}");
+    assert!(
+        err.in_doubt(),
+        "the commit failure must carry in_doubt: {err}"
+    );
     match err.kind() {
         aerospike::ErrorKind::Commit { error_type, .. } => {
             assert_eq!(*error_type, CommitErrorType::MarkRollForwardAbandoned);

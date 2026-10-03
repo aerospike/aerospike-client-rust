@@ -725,9 +725,10 @@ impl ClientPolicy {
 
     #[cfg(not(feature = "tls"))]
     pub(crate) const fn peers_string(&self) -> &'static str {
-        match self.use_services_alternate {
-            true => "peers-clear-alt",
-            false => "peers-clear-std",
+        if self.use_services_alternate {
+            "peers-clear-alt"
+        } else {
+            "peers-clear-std"
         }
     }
 
@@ -778,9 +779,10 @@ impl ClientPolicy {
 
     #[cfg(not(feature = "tls"))]
     pub(crate) const fn service_string(&self) -> &'static str {
-        match self.use_services_alternate {
-            true => "service-clear-alt",
-            false => "service-clear-std",
+        if self.use_services_alternate {
+            "service-clear-alt"
+        } else {
+            "service-clear-std"
         }
     }
 }
@@ -819,7 +821,8 @@ mod tests {
         // With authentication it is a valid policy, and active.
         p.set_auth_mode(AuthMode::Internal("u".into(), "p".into()))
             .unwrap();
-        p.validate().expect("tls + auth is a valid login-only policy");
+        p.validate()
+            .expect("tls + auth is a valid login-only policy");
         assert!(p.login_only_active());
 
         // Off by default: a plain TLS policy encrypts everything.
@@ -875,9 +878,11 @@ mod tests {
     fn tls_policy_builds_from_a_bare_client_config() {
         let policy: TlsPolicy = some_tls_config().into();
         assert!(!policy.for_login_only);
-        assert!(TlsPolicy::new(some_tls_config())
-            .with_login_only(true)
-            .for_login_only);
+        assert!(
+            TlsPolicy::new(some_tls_config())
+                .with_login_only(true)
+                .for_login_only
+        );
     }
 
     #[test]
@@ -928,7 +933,7 @@ mod tests {
         };
         assert_eq!(policy.connect_timeout(), Duration::from_millis(1_500));
         // The general timeout is unaffected.
-        assert_eq!(policy.timeout(), Duration::from_millis(30_000));
+        assert_eq!(policy.timeout(), Duration::from_secs(30));
     }
 
     #[test]

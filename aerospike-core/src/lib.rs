@@ -39,9 +39,25 @@
     clippy::unseparated_literal_suffix,
     clippy::unused_self,
     clippy::use_self,
-    clippy::missing_errors_doc
+    clippy::missing_errors_doc,
+    // Style calls this crate makes deliberately: an `if let`/`match` on an
+    // Option with multi-line arms reads better than `map_or_else`; lock
+    // guards are scoped by blocks rather than explicit `drop`s; policies are
+    // built field by field after `default()`, as callers write them; and
+    // `&Option<T>` parameters mirror the policy accessors that return them.
+    clippy::option_if_let_else,
+    clippy::significant_drop_tightening,
+    clippy::significant_drop_in_scrutinee,
+    clippy::field_reassign_with_default,
+    clippy::ref_option,
+    clippy::struct_field_names,
+    // `async fn` is part of the API contract even where the body does not
+    // await yet (query entry points, pool checkout): callers must not have
+    // to change when an implementation starts to.
+    clippy::unused_async,
+    // Integer -> f64 for averages, ratios and percentages is intended.
+    clippy::cast_precision_loss
 )]
-
 // The `doc_cfg` feature requires nightly Rust and only runs during docs.rs builds,
 // triggered via `--cfg docsrs` in `aerospike-core/Cargo.toml`. When active, it
 // automatically generates "Available on crate feature `x` only" badges for all
@@ -174,13 +190,13 @@ pub use net::Host;
 pub use net::ToHosts;
 pub use operations::{ListOrderType, ListPolicy, ListReturnType, ListSortFlags, ListWriteFlags};
 pub use operations::{MapPolicy, MapReturnType, MapWriteFlags, MapWriteMode};
+#[cfg(feature = "tls")]
+pub use policy::TlsPolicy;
 pub use policy::{
     AdminPolicy, AuthMode, BasePolicy, BatchPolicy, ClientPolicy, CommitLevel, Concurrency,
     Expiration, GenerationPolicy, Policy, QueryDuration, QueryPolicy, ReadModeAP, ReadModeSC,
     ReadPolicy, ReadTouchTTL, RecordExistsAction, TxnRollPolicy, TxnVerifyPolicy, WritePolicy,
 };
-#[cfg(feature = "tls")]
-pub use policy::TlsPolicy;
 pub use privilege::{Privilege, PrivilegeCode};
 pub use query::{
     CollectionIndexType, EqFilterValue, IndexType, PartitionFilter, QueryHandle, QueryPlan,
@@ -214,7 +230,6 @@ mod value;
 mod bin;
 #[macro_use]
 mod key;
-mod locks;
 mod batch;
 mod client;
 mod cluster;
@@ -223,6 +238,7 @@ mod common;
 #[cfg(feature = "dynamic-config")]
 pub mod config;
 pub mod expressions;
+mod locks;
 #[cfg(feature = "lua")]
 pub mod lua;
 pub mod mapping;

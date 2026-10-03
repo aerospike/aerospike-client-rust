@@ -40,7 +40,10 @@ pub async fn run() {
     let wpolicy = WritePolicy::default();
     for i in 0..RECORDS as i64 {
         let key = as_key!("test", SET, i);
-        client.put(&wpolicy, &key, &[as_bin!("n", i)]).await.unwrap();
+        client
+            .put(&wpolicy, &key, &[as_bin!("n", i)])
+            .await
+            .unwrap();
     }
 
     // ---- Full scan (Java AsyncScan): no filter on the statement ----
@@ -107,7 +110,8 @@ pub async fn run() {
         }));
     }
     for w in workers {
-        w.await;
+        // A worker only counts records; a failure shows up as a short total below.
+        let _ = w.await;
     }
     println!(
         "parallel scan: {} records via 4 workers",

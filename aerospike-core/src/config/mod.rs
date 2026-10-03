@@ -36,8 +36,8 @@ mod yaml;
 
 pub(crate) use dyn_config::DynConfig;
 pub use provider::ConfigProvider;
-pub use registry::{register_provider, ProviderFactory, CONFIG_URL_ENV};
 pub(crate) use registry::provider_from_env;
+pub use registry::{register_provider, ProviderFactory, CONFIG_URL_ENV};
 pub use yaml::YamlFileProvider;
 
 use serde::Deserialize;
@@ -45,8 +45,8 @@ use serde::Deserialize;
 use crate::batch::{BatchDeletePolicyConfig, BatchUDFPolicyConfig};
 use crate::metrics::MetricsPolicyConfig;
 use crate::policy::{
-    BatchPolicyConfig, ClientPolicyConfig, QueryPolicyConfig, ReadPolicyConfig, TxnRollPolicyConfig,
-    TxnVerifyPolicyConfig, WritePolicyConfig,
+    BatchPolicyConfig, ClientPolicyConfig, QueryPolicyConfig, ReadPolicyConfig,
+    TxnRollPolicyConfig, TxnVerifyPolicyConfig, WritePolicyConfig,
 };
 
 /// Converts a seconds value (the unit used for a few keys in config files) into
@@ -296,19 +296,28 @@ dynamic:
         // Static merge applies only the `startup` fields, converting seconds→ms.
         let mut cp = ClientPolicy::default();
         static_client.clone().merge_static_into(&mut cp);
-        assert_eq!(cp.config_interval, 5_000, "config_interval is seconds in YAML");
+        assert_eq!(
+            cp.config_interval, 5_000,
+            "config_interval is seconds in YAML"
+        );
         assert_eq!(cp.max_conns_per_node, 512);
         assert_eq!(cp.min_conns_per_node, 10);
         // The dynamic merge must NOT touch static fields.
         let mut cp_dyn = ClientPolicy::default();
         static_client.merge_into(&mut cp_dyn);
-        assert_eq!(cp_dyn.max_conns_per_node, ClientPolicy::default().max_conns_per_node);
+        assert_eq!(
+            cp_dyn.max_conns_per_node,
+            ClientPolicy::default().max_conns_per_node
+        );
 
         // Dynamic merge applies dynamic fields, converting max_socket_idle seconds→ms.
         let mut cp = ClientPolicy::default();
         dynamic_client.merge_into(&mut cp);
         assert_eq!(cp.timeout, 2_500);
-        assert_eq!(cp.idle_timeout, 55_000, "max_socket_idle is seconds in YAML");
+        assert_eq!(
+            cp.idle_timeout, 55_000,
+            "max_socket_idle is seconds in YAML"
+        );
         assert!(cp.use_services_alternate);
         assert_eq!(cp.application_id.as_deref(), Some("billing"));
         // config_interval is a startup field — untouched by the dynamic merge.
@@ -438,7 +447,10 @@ labels:
         dynamic.txn_verify.unwrap().merge_into(&mut vp);
         assert_eq!(vp.batch_policy.base_policy.socket_timeout, 1500);
         assert_eq!(vp.batch_policy.base_policy.max_retries, 9);
-        assert_eq!(vp.batch_policy.base_policy.read_mode_sc, ReadModeSC::Linearize);
+        assert_eq!(
+            vp.batch_policy.base_policy.read_mode_sc,
+            ReadModeSC::Linearize
+        );
         // Batch knob (replica) flows through — the whole point of wrapping BatchPolicy.
         assert_eq!(vp.batch_policy.replica, Replica::PreferRack);
         // total_timeout is absent → the TxnVerifyPolicy default (10s) is preserved.
@@ -449,7 +461,7 @@ labels:
         assert_eq!(rp.batch_policy.base_policy.total_timeout, 7000);
         assert_eq!(rp.batch_policy.base_policy.max_retries, 4);
         assert!(!rp.batch_policy.respond_all_keys); // batch knob applied
-        // socket_timeout absent → the TxnRollPolicy default (3s) is preserved.
+                                                    // socket_timeout absent → the TxnRollPolicy default (3s) is preserved.
         assert_eq!(rp.batch_policy.base_policy.socket_timeout, 3_000);
     }
 
@@ -483,7 +495,10 @@ labels:
     #[test]
     fn read_mode_sc_enum_deserialization() {
         assert_eq!(parse::<ReadModeSC>("SESSION").unwrap(), ReadModeSC::Session);
-        assert_eq!(parse::<ReadModeSC>("LINEARIZE").unwrap(), ReadModeSC::Linearize);
+        assert_eq!(
+            parse::<ReadModeSC>("LINEARIZE").unwrap(),
+            ReadModeSC::Linearize
+        );
         assert_eq!(
             parse::<ReadModeSC>("ALLOW_REPLICA").unwrap(),
             ReadModeSC::AllowReplica
@@ -506,7 +521,10 @@ labels:
             Replica::MasterProles
         );
         assert_eq!(parse::<Replica>("SEQUENCE").unwrap(), Replica::Sequence);
-        assert_eq!(parse::<Replica>("PREFER_RACK").unwrap(), Replica::PreferRack);
+        assert_eq!(
+            parse::<Replica>("PREFER_RACK").unwrap(),
+            Replica::PreferRack
+        );
         assert_eq!(parse::<Replica>("master").unwrap(), Replica::Master);
         assert!(parse::<Replica>("\"foo\"").is_err());
         assert!(parse::<Replica>("\"\"").is_err());
@@ -516,7 +534,10 @@ labels:
     #[test]
     fn query_duration_enum_deserialization() {
         assert_eq!(parse::<QueryDuration>("LONG").unwrap(), QueryDuration::Long);
-        assert_eq!(parse::<QueryDuration>("SHORT").unwrap(), QueryDuration::Short);
+        assert_eq!(
+            parse::<QueryDuration>("SHORT").unwrap(),
+            QueryDuration::Short
+        );
         assert_eq!(
             parse::<QueryDuration>("LONG_RELAX_AP").unwrap(),
             QueryDuration::LongRelaxAP
@@ -558,9 +579,13 @@ labels:
         cfg.merge_into(&mut p);
         assert_eq!(p.base_policy.socket_timeout, 3); // overridden
         assert_eq!(p.replica, Replica::PreferRack); // overridden
-        assert_eq!(p.base_policy.total_timeout, default.base_policy.total_timeout); // kept
+        assert_eq!(
+            p.base_policy.total_timeout,
+            default.base_policy.total_timeout
+        ); // kept
         assert_eq!(p.base_policy.max_retries, default.base_policy.max_retries); // kept
-        assert_eq!(p.base_policy.read_mode_ap, default.base_policy.read_mode_ap); // kept
+        assert_eq!(p.base_policy.read_mode_ap, default.base_policy.read_mode_ap);
+        // kept
     }
 
     #[test]

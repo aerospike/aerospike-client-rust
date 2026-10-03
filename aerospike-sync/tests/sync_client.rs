@@ -191,13 +191,19 @@ fn batch_foreach_reports_all_rows() {
     const COUNT: usize = 20;
     for i in 0..COUNT {
         let key = as_key!(&ns, &set, i as i64);
-        client.put(&wpolicy, &key, &[as_bin!("i", i as i64)]).unwrap();
+        client
+            .put(&wpolicy, &key, &[as_bin!("i", i as i64)])
+            .unwrap();
     }
     let brp = BatchReadPolicy::default();
     let mut ops: Vec<BatchOperation> = (0..COUNT)
         .map(|i| BatchOperation::read(&brp, as_key!(&ns, &set, i as i64), Bins::All))
         .collect();
-    ops.push(BatchOperation::read(&brp, as_key!(&ns, &set, "missing"), Bins::All));
+    ops.push(BatchOperation::read(
+        &brp,
+        as_key!(&ns, &set, "missing"),
+        Bins::All,
+    ));
 
     let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let s = seen.clone();
@@ -210,7 +216,10 @@ fn batch_foreach_reports_all_rows() {
     let mut seen = seen.lock().unwrap().clone();
     seen.sort();
     assert_eq!(seen.len(), COUNT + 1);
-    assert!(seen[..COUNT].iter().enumerate().all(|(i, (idx, found))| *idx == i && *found));
+    assert!(seen[..COUNT]
+        .iter()
+        .enumerate()
+        .all(|(i, (idx, found))| *idx == i && *found));
     assert_eq!(seen[COUNT], (COUNT, false));
 }
 

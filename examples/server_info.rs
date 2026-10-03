@@ -31,10 +31,7 @@ pub async fn run() {
         println!("--- node {} (server {:?}) ---", node.name(), node.version());
 
         let info = node
-            .info(
-                &apolicy,
-                &["build", "edition", "namespaces", "statistics"],
-            )
+            .info(&apolicy, &["build", "edition", "namespaces", "statistics"])
             .await
             .unwrap();
 
@@ -47,7 +44,10 @@ pub async fn run() {
             for stat in stats.split(';').take(5) {
                 println!("stat:       {stat}");
             }
-            println!("…           ({} statistics total)", stats.split(';').count());
+            println!(
+                "…           ({} statistics total)",
+                stats.split(';').count()
+            );
         }
     }
 

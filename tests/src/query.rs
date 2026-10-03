@@ -97,7 +97,7 @@ async fn query_timeout() {
     // runtimes (a 2x-of-5ms bound is below the timing floor there).
     let expected_duration = Duration::from_secs(5);
     assert!(duration < expected_duration);
-    assert_eq!(timed_out, true);
+    assert!(timed_out);
 
     client.close().await.unwrap();
 }
@@ -111,7 +111,7 @@ async fn query_single_consumer_no_setname() {
     qpolicy.expected_duration = QueryDuration::Long;
 
     // Filter Query
-    let statement = Statement::new(namespace, &set_name, Bins::All);
+    let statement = Statement::new(namespace, set_name, Bins::All);
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, statement).await.unwrap();
     let mut count = 0;
@@ -267,7 +267,7 @@ async fn query_single_consumer_with_cursor() {
 async fn query_foreach_delivers_all_exactly_once() {
     let client = common::singleton_client().await;
     let namespace = common::namespace();
-    let set_name = create_test_set(&client, EXPECTED).await;
+    let set_name = create_test_set(client, EXPECTED).await;
 
     let count = Arc::new(AtomicUsize::new(0));
     let seen = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
@@ -275,15 +275,20 @@ async fn query_foreach_delivers_all_exactly_once() {
 
     let stmt = Statement::new(namespace, &set_name, Bins::All);
     let mut handle = client
-        .query_foreach(&QueryPolicy::default(), PartitionFilter::all(), stmt, move |res| {
-            let (s, c) = (s.clone(), c.clone());
-            async move {
-                let rec = res.unwrap();
-                s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
-                c.fetch_add(1, Ordering::Relaxed);
-                true
-            }
-        })
+        .query_foreach(
+            &QueryPolicy::default(),
+            PartitionFilter::all(),
+            stmt,
+            move |res| {
+                let (s, c) = (s.clone(), c.clone());
+                async move {
+                    let rec = res.unwrap();
+                    s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
+                    c.fetch_add(1, Ordering::Relaxed);
+                    true
+                }
+            },
+        )
         .await
         .unwrap();
 
@@ -301,7 +306,7 @@ async fn query_foreach_delivers_all_exactly_once() {
 async fn query_foreach_abort_and_resume_exactly_once() {
     let client = common::singleton_client().await;
     let namespace = common::namespace();
-    let set_name = create_test_set(&client, EXPECTED).await;
+    let set_name = create_test_set(client, EXPECTED).await;
 
     let count = Arc::new(AtomicUsize::new(0));
     let seen = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
@@ -337,8 +342,16 @@ async fn query_foreach_abort_and_resume_exactly_once() {
         }
     }
 
-    assert_eq!(seen.lock().unwrap().len(), EXPECTED, "records lost across abort/resume");
-    assert_eq!(count.load(Ordering::Relaxed), EXPECTED, "duplicate deliveries");
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        EXPECTED,
+        "records lost across abort/resume"
+    );
+    assert_eq!(
+        count.load(Ordering::Relaxed),
+        EXPECTED,
+        "duplicate deliveries"
+    );
 }
 
 /// External cancellation through the handle, then resume: same exactly-once
@@ -347,7 +360,7 @@ async fn query_foreach_abort_and_resume_exactly_once() {
 async fn query_foreach_cancel_and_resume_exactly_once() {
     let client = common::singleton_client().await;
     let namespace = common::namespace();
-    let set_name = create_test_set(&client, EXPECTED).await;
+    let set_name = create_test_set(client, EXPECTED).await;
 
     let count = Arc::new(AtomicUsize::new(0));
     let seen = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
@@ -356,15 +369,20 @@ async fn query_foreach_cancel_and_resume_exactly_once() {
     let (c, s) = (count.clone(), seen.clone());
     let stmt = Statement::new(namespace, &set_name, Bins::All);
     let mut handle = client
-        .query_foreach(&QueryPolicy::default(), PartitionFilter::all(), stmt, move |res| {
-            let (s, c) = (s.clone(), c.clone());
-            async move {
-                let rec = res.unwrap();
-                s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
-                c.fetch_add(1, Ordering::Relaxed);
-                true
-            }
-        })
+        .query_foreach(
+            &QueryPolicy::default(),
+            PartitionFilter::all(),
+            stmt,
+            move |res| {
+                let (s, c) = (s.clone(), c.clone());
+                async move {
+                    let rec = res.unwrap();
+                    s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
+                    c.fetch_add(1, Ordering::Relaxed);
+                    true
+                }
+            },
+        )
         .await
         .unwrap();
     while count.load(Ordering::Relaxed) == 0 && handle.is_active() {
@@ -398,8 +416,16 @@ async fn query_foreach_cancel_and_resume_exactly_once() {
         pf = handle.partition_filter().await.unwrap();
     }
 
-    assert_eq!(seen.lock().unwrap().len(), EXPECTED, "records lost across cancel/resume");
-    assert_eq!(count.load(Ordering::Relaxed), EXPECTED, "duplicate deliveries");
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        EXPECTED,
+        "records lost across cancel/resume"
+    );
+    assert_eq!(
+        count.load(Ordering::Relaxed),
+        EXPECTED,
+        "duplicate deliveries"
+    );
 }
 
 /// The secondary-index flavour of the mid-stream-cancel no-loss contract:
@@ -595,7 +621,7 @@ async fn query_large_i64() {
     const BIN: &str = "val";
 
     let client = Arc::new(common::client().await);
-    let value = Value::from(i64::max_value());
+    let value = Value::from(i64::MAX);
     let key = Key::new(common::namespace(), SET, value.clone()).unwrap();
     let wpolicy = WritePolicy::default();
     let apolicy = AdminPolicy::default();
@@ -608,7 +634,7 @@ async fn query_large_i64() {
 
     let mut qpolicy = aerospike::QueryPolicy::new();
     let bin_name = aerospike::expressions::int_bin(BIN.into());
-    let bin_val = aerospike::expressions::int_val(i64::max_value());
+    let bin_val = aerospike::expressions::int_val(i64::MAX);
     qpolicy
         .base_policy
         .filter_expression
@@ -621,7 +647,7 @@ async fn query_large_i64() {
     while let Some(r) = recordset.next().await {
         assert!(r.is_ok());
         let int = r.unwrap().bins.swap_remove(BIN).unwrap();
-        assert_eq!(int, Value::Int(i64::max_value()));
+        assert_eq!(int, Value::Int(i64::MAX));
     }
 
     let _ = client.truncate(&apolicy, common::namespace(), SET, 0).await;
@@ -660,7 +686,7 @@ async fn test_query_geo_within_geojson_region() {
         .put(
             &wp,
             &key1,
-            &vec![as_bin!(
+            &[as_bin!(
                 bin_name,
                 as_geo!(r#"{"type": "Point", "coordinates": [-122.0, 37.5]}"#)
             )],
@@ -673,7 +699,7 @@ async fn test_query_geo_within_geojson_region() {
         .put(
             &wp,
             &key2,
-            &vec![as_bin!(
+            &[as_bin!(
                 bin_name,
                 as_geo!(r#"{"type": "Point", "coordinates": [-121.5, 37.5]}"#)
             )],
@@ -687,7 +713,7 @@ async fn test_query_geo_within_geojson_region() {
         .put(
             &wp,
             &key3,
-            &vec![as_bin!(
+            &[as_bin!(
                 bin_name,
                 as_geo!(r#"{"type": "Point", "coordinates": [-120.0, 37.5]}"#)
             )],
@@ -763,7 +789,7 @@ async fn query_filter_with_specific_bins() {
                     "'extra' should not be returned"
                 );
                 let v = i64::try_from(&rec.bins["bin"]).unwrap();
-                assert!(v >= 0 && v < 10);
+                assert!((0..10).contains(&v));
                 assert_eq!(rec.bins["bin2"], as_val!("hello"));
             }
             Err(err) => panic!("{:?}", err),
@@ -865,7 +891,7 @@ async fn query_filter_with_index_name() {
                 assert!(rec.bins.contains_key("bin"), "missing 'bin'");
                 assert!(rec.bins.contains_key("bin2"), "missing 'bin2'");
                 let v = i64::try_from(&rec.bins["bin"]).unwrap();
-                assert!(v >= 0 && v < 10);
+                assert!((0..10).contains(&v));
             }
             Err(err) => panic!("{:?}", err),
         }
@@ -980,7 +1006,7 @@ async fn query_long_relax_ap_duration() {
             Ok(rec) => {
                 count += 1;
                 let v = i64::try_from(&rec.bins["bin"]).unwrap();
-                assert!(v >= 0 && v < 10);
+                assert!((0..10).contains(&v));
             }
             Err(err) => panic!("{:?}", err),
         }
@@ -1299,7 +1325,7 @@ async fn create_geo_test_set(client: &Client) -> String {
         .put(
             &wp,
             &key1,
-            &vec![as_bin!(
+            &[as_bin!(
                 bin_name,
                 as_geo!(r#"{"type": "Point", "coordinates": [-122.0, 37.5]}"#)
             )],
@@ -1312,7 +1338,7 @@ async fn create_geo_test_set(client: &Client) -> String {
         .put(
             &wp,
             &key2,
-            &vec![as_bin!(
+            &[as_bin!(
                 bin_name,
                 as_geo!(r#"{"type": "Point", "coordinates": [-122.1, 37.5]}"#)
             )],
@@ -1326,7 +1352,7 @@ async fn create_geo_test_set(client: &Client) -> String {
         .put(
             &wp,
             &key3,
-            &vec![as_bin!(
+            &[as_bin!(
                 bin_name,
                 as_geo!(r#"{"type": "Point", "coordinates": [-73.9, 40.7]}"#)
             )],
@@ -1402,7 +1428,7 @@ async fn query_filter_geo_contains() {
         .put(
             &wp,
             &key1,
-            &vec![as_bin!(
+            &[as_bin!(
                 bin_name,
                 as_geo!(
                     r#"{
@@ -1423,7 +1449,7 @@ async fn query_filter_geo_contains() {
         .put(
             &wp,
             &key2,
-            &vec![as_bin!(
+            &[as_bin!(
                 bin_name,
                 as_geo!(
                     r#"{
@@ -1510,7 +1536,7 @@ async fn query_filter_with_expression_builder() {
             Ok(rec) => {
                 count += 1;
                 let v = i64::try_from(&rec.bins["a"]).unwrap();
-                assert!(v >= 0 && v <= 9);
+                assert!((0..=9).contains(&v));
             }
             Err(err) => panic!("{:?}", err),
         }
@@ -1649,7 +1675,7 @@ async fn query_filter_expression_with_policy_filter() {
                 count += 1;
                 let a = i64::try_from(&rec.bins["a"]).unwrap();
                 let b = i64::try_from(&rec.bins["b"]).unwrap();
-                assert!(a >= 0 && a <= 9, "a={} out of index range", a);
+                assert!((0..=9).contains(&a), "a={} out of index range", a);
                 assert_eq!(b, 0, "post-filter should exclude odd records, a={}", a);
             }
             Err(err) => panic!("{:?}", err),
@@ -1691,19 +1717,19 @@ async fn test_short_query_not_tracked() {
     let nodes = client.nodes();
     for node in &nodes {
         let set_cfg_cmd: &str = "set-config:context=service;query-max-done=100";
-        let _ = node.info(&ap, &vec![set_cfg_cmd]).await;
+        let _ = node.info(&ap, &[set_cfg_cmd]).await;
     }
     aerospike_rt::sleep(Duration::from_secs(1)).await;
 
     // Clear any stale tracked queries: set to 0, wait, set back to 100
     for node in &nodes {
         let reset_cmd: &str = "set-config:context=service;query-max-done=0";
-        let _ = node.info(&ap, &vec![reset_cmd]).await;
+        let _ = node.info(&ap, &[reset_cmd]).await;
     }
     aerospike_rt::sleep(Duration::from_millis(500)).await;
     for node in &nodes {
         let set_cmd: &str = "set-config:context=service;query-max-done=100";
-        let _ = node.info(&ap, &vec![set_cmd]).await;
+        let _ = node.info(&ap, &[set_cmd]).await;
     }
     aerospike_rt::sleep(Duration::from_millis(500)).await;
 
@@ -1744,7 +1770,7 @@ async fn test_short_query_not_tracked() {
     let set_marker = format!(":set={}", set);
     let mut total_tracked = 0;
     for node in &nodes {
-        let result = node.info(&ap, &vec!["query-show"]).await;
+        let result = node.info(&ap, &["query-show"]).await;
         match result {
             Ok(info_map) => {
                 for (_, value) in &info_map {
@@ -2222,7 +2248,10 @@ async fn query_resumes_from_a_serialized_cursor() {
     const RECORDS: i64 = 60;
     for i in 0..RECORDS {
         let key = as_key!(namespace, &set_name, i);
-        client.put(&wpolicy, &key, &[as_bin!("bin", i)]).await.unwrap();
+        client
+            .put(&wpolicy, &key, &[as_bin!("bin", i)])
+            .await
+            .unwrap();
     }
 
     let mut qpolicy = QueryPolicy::default();
@@ -2249,5 +2278,8 @@ async fn query_resumes_from_a_serialized_cursor() {
         stored = serde_json::to_string(&pf).unwrap();
     }
     assert_eq!(seen.len(), RECORDS as usize, "every record exactly once");
-    assert!(pages >= 4, "{pages} pages for {RECORDS} records at 17 per page");
+    assert!(
+        pages >= 4,
+        "{pages} pages for {RECORDS} records at 17 per page"
+    );
 }

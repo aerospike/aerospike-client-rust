@@ -181,7 +181,7 @@ impl BatchExecutor {
 
         if !active() {
             // Aborted before the groups ran: their rows come back untouched.
-            for cmd in multi_jobs.drain(..) {
+            for cmd in std::mem::take(&mut multi_jobs) {
                 all_results.extend(cmd.batch_ops);
             }
         }
@@ -463,7 +463,8 @@ impl BatchExecutor {
                     // Never in-doubt: nothing was sent for this key. The row's
                     // code is the routing outcome; the routing error is its cause.
                     batch_op.set_error(
-                        Error::server_error_bare(routing_result_code(&err)).chain_cause(Some(err.clone())),
+                        Error::server_error_bare(routing_result_code(&err))
+                            .chain_cause(Some(err.clone())),
                     );
                     unroutable.push((batch_op, index));
                     first_err.get_or_insert(err);
@@ -481,10 +482,13 @@ impl BatchExecutor {
     }
 }
 
+/// One node's share of a batch: the rows routed to it, each with its input index.
+type NodeGroup = (Arc<Node>, Vec<(BatchOperation, usize)>);
+
 /// The outcome of splitting a batch across nodes.
 struct BatchSplit {
     /// Keys that resolved to a node, grouped by that node in first-seen order.
-    groups: Vec<(Arc<Node>, Vec<(BatchOperation, usize)>)>,
+    groups: Vec<NodeGroup>,
     /// Keys that resolved to nothing, each already marked with its result code
     /// and carrying its original input index.
     unroutable: Vec<(BatchOperation, usize)>,

@@ -93,6 +93,11 @@
     wrapping the code in a client error; an out-of-range code no longer panics. `BinNameTooLong` reads
     "greater than 15 characters", the server's actual limit, and `FailForbidden` reads "Operation not
     allowed at this time" (a stray rename had produced "OperationType").
+  * The workspace builds clean under `clippy::pedantic` + `clippy::nursery` (core) and default clippy
+    (every other crate, the examples, the benchmark tool and the integration tests) for every feature
+    set, including `rt-async-std`. Visible side effects: `ToValue`/`FromValue` for `HashMap` accept
+    any hasher; a secondary-index query plan missing its index name or range is an error instead of
+    a panic; `Value::Unknown` reaches Lua as bytes through the same arm as a blob.
 
 ## [3.0.0-alpha.2]
 

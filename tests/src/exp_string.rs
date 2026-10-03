@@ -59,7 +59,7 @@ async fn put_str(client: &aerospike::Client, wpolicy: &WritePolicy, key: &Key, s
 }
 
 async fn eval(client: &aerospike::Client, key: &Key, exp: Expression) -> Record {
-    let ops = &vec![read_exp(VAR, exp, ExpReadFlags::Default)];
+    let ops = &[read_exp(VAR, exp, ExpReadFlags::Default)];
     client
         .operate(&WritePolicy::default(), key, ops)
         .await
@@ -207,12 +207,12 @@ async fn to_integer_and_double_via_expression() {
     let rec = eval(&client, &key, str_exp::to_integer(string_bin(BIN.into()))).await;
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::Int(12345));
 
-    put_str(&client, &wpolicy, &key, "3.14").await;
+    put_str(&client, &wpolicy, &key, "2.75").await;
     let rec = eval(&client, &key, str_exp::to_double(string_bin(BIN.into()))).await;
     match rec.bins.get(VAR).unwrap() {
         Value::Float(f) => {
             let n = f64::from(f);
-            assert!((n - 3.14).abs() < 1e-3, "got {n}");
+            assert!((n - 2.75).abs() < 1e-3, "got {n}");
         }
         other => panic!("expected float, got {:?}", other),
     }
@@ -867,7 +867,11 @@ async fn no_fail_suppressing_a_prepare_failure_evaluates_to_the_source() {
     if !server_supports_string_operations(&client).await {
         return;
     }
-    let key = as_key!(common::namespace(), &common::rand_str(10), "exp_nofail_prep");
+    let key = as_key!(
+        common::namespace(),
+        &common::rand_str(10),
+        "exp_nofail_prep"
+    );
     put_str(&client, &WritePolicy::default(), &key, "hello").await;
 
     let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);

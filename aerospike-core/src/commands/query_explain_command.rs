@@ -28,7 +28,7 @@ use crate::query::QueryWhereWire;
 use crate::ResultCode;
 
 /// Internal phase-1 of server-led query selection (field `44` WHERE + EXPLAIN).
-pub(crate) struct QueryExplainCommand<'a> {
+pub struct QueryExplainCommand<'a> {
     cluster: Arc<Cluster>,
     policy: &'a QueryPolicy,
     namespace: String,
@@ -142,11 +142,7 @@ impl Command for QueryExplainCommand<'_> {
         }
 
         let fields = if field_count > 0 {
-            AsMsgFields::from_buffer(
-                &conn.buffer.data_buffer,
-                header_size,
-                field_count,
-            )?
+            AsMsgFields::from_buffer(&conn.buffer.data_buffer, header_size, field_count)?
         } else {
             AsMsgFields::from_buffer(&[], 0, 0)?
         };
@@ -175,7 +171,7 @@ impl Command for QueryExplainCommand<'_> {
                 &self.explain_where_bytes,
             );
         }
-        
+
         conn.buffer.reset_offset();
         Ok(())
     }
@@ -198,13 +194,12 @@ fn log_query_plan(
 ) {
     let index_hint = index_name_hint.unwrap_or("none");
     let where_flags = QueryWhereWire::flags(explain_where_bytes)
-        .map(QueryWhereWire::format_policy_flags)
-        .unwrap_or_else(|_| "unknown".into());
+        .map_or_else(|_| "unknown".into(), QueryWhereWire::format_policy_flags);
     let ael = plan.ael().unwrap_or_else(|_| "<invalid>".into());
     let set = plan.set_name().unwrap_or("");
 
     if plan.is_secondary_index() {
-        let range = IndexRangeWire::describe_probe_range(plan.index_range_bytes().as_deref())
+        let range = IndexRangeWire::describe_probe_range(plan.index_range_bytes())
             .unwrap_or_else(|| "invalid".into());
         log::debug!(
             target: "query",

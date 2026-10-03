@@ -172,7 +172,11 @@ async fn dynamic_config_overrides_do_not_break_operations() {
         .await
         .expect("put with dynamic write override");
     let record = client
-        .get(&aerospike::ReadPolicy::default(), &key, aerospike::Bins::All)
+        .get(
+            &aerospike::ReadPolicy::default(),
+            &key,
+            aerospike::Bins::All,
+        )
         .await
         .expect("get with dynamic read override");
     assert_eq!(record.bins.get("bin").unwrap().to_string(), "value");
@@ -244,7 +248,9 @@ async fn dynamic_config_batch_sub_policies_apply() {
     assert_eq!(reads.len(), 3);
     for op in &reads {
         assert_eq!(
-            op.record().and_then(|r| r.bins.get("v")).map(ToString::to_string),
+            op.record()
+                .and_then(|r| r.bins.get("v"))
+                .map(ToString::to_string),
             Some("1".to_string())
         );
     }

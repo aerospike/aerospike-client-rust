@@ -19,10 +19,10 @@
 //! [`NodeMetricsSnapshot`] (an owned, serializable copy) which is aggregated into
 //! the cluster-wide view.
 
+use crate::locks::{lock, read, write};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Mutex, RwLock};
-use crate::locks::{lock, read, write};
 use std::time::Duration;
 
 use super::histogram::SyncHistogram;
@@ -199,7 +199,7 @@ macro_rules! define_counters {
         }
 
         impl Counters {
-            fn add(&mut self, other: &Counters) {
+            const fn add(&mut self, other: &Counters) {
                 $(self.$field += other.$field;)+
             }
         }
@@ -648,10 +648,8 @@ impl NodeMetrics {
         let slots = map
             .entry(namespace.to_string())
             .or_insert_with(empty_live_rc_slots);
-        if slots[idx].is_none() {
-            slots[idx] = Some(Mutex::new(HashMap::new()));
-        }
-        *lock(slots[idx].as_ref().unwrap()).entry(rc).or_insert(0) += 1;
+        let counts = slots[idx].get_or_insert_with(|| Mutex::new(HashMap::new()));
+        *lock(counts).entry(rc).or_insert(0) += 1;
     }
 
     fn with_command_metric<F: FnOnce(&CommandMetric)>(
@@ -901,7 +899,7 @@ impl NodeMetricsSnapshot {
         *self.command_histogram_mut(name) = h;
     }
 
-    fn command_histograms(&self) -> [(&'static str, &SyncHistogram); 11] {
+    const fn command_histograms(&self) -> [(&'static str, &SyncHistogram); 11] {
         [
             ("get_metrics", &self.get_metrics),
             ("get_header_metrics", &self.get_header_metrics),
@@ -920,7 +918,7 @@ impl NodeMetricsSnapshot {
     /// Returns the per-command-type latency histogram for `ct`, or `None` for
     /// command types without a dedicated histogram ([`CommandType::None`]).
     #[must_use]
-    pub fn command_histogram(&self, ct: CommandType) -> Option<&SyncHistogram> {
+    pub const fn command_histogram(&self, ct: CommandType) -> Option<&SyncHistogram> {
         Some(match ct {
             CommandType::Get => &self.get_metrics,
             CommandType::GetHeader => &self.get_header_metrics,
@@ -1043,7 +1041,7 @@ impl NodeMetricsSnapshot {
     /// Used when the [`LatencyUnit`] changes: the retained samples were measured
     /// in the old unit and cannot share buckets with the new one. The node-level
     /// twin of this is [`NodeMetrics::reshape`].
-    pub(crate) fn reset_time_histograms(&mut self) {
+    pub(crate) fn reset_time_histograms(&self) {
         for (_, h) in self.command_histograms() {
             h.reset();
         }
@@ -1124,7 +1122,7 @@ impl NodeMetricsSnapshot {
 }
 
 #[cfg(feature = "serialization")]
-fn labels_empty(labels: &Labels) -> bool {
+const fn labels_empty(labels: &Labels) -> bool {
     labels.0.is_empty()
 }
 
@@ -1230,7 +1228,10 @@ mod tests {
         assert!(!m.is_operational());
         m.reshape(&MetricsPolicy::default().with_operational(true));
         assert!(m.is_operational());
-        assert!(m.should_sample(&mut rng), "enabled + operational + Always must sample");
+        assert!(
+            m.should_sample(&mut rng),
+            "enabled + operational + Always must sample"
+        );
 
         // `Sampler::never()` records nothing even while enabled.
         let policy = MetricsPolicy {
@@ -1404,14 +1405,32 @@ mod tests {
         assert_eq!(snap.counters.tends_total, 1);
         assert_eq!(snap.counters.node_added, 1);
         for (name, value) in [
-            ("connections_idle_dropped", snap.counters.connections_idle_dropped),
-            ("connections_closed_node_removed", snap.counters.connections_closed_node_removed),
+            (
+                "connections_idle_dropped",
+                snap.counters.connections_idle_dropped,
+            ),
+            (
+                "connections_closed_node_removed",
+                snap.counters.connections_closed_node_removed,
+            ),
             ("connections_failed", snap.counters.connections_failed),
-            ("connections_tls_errors", snap.counters.connections_tls_errors),
-            ("connections_pool_empty", snap.counters.connections_pool_empty),
+            (
+                "connections_tls_errors",
+                snap.counters.connections_tls_errors,
+            ),
+            (
+                "connections_pool_empty",
+                snap.counters.connections_pool_empty,
+            ),
             ("circuit_breaker_hits", snap.counters.circuit_breaker_hits),
-            ("transaction_retry_count", snap.counters.transaction_retry_count),
-            ("transaction_error_count", snap.counters.transaction_error_count),
+            (
+                "transaction_retry_count",
+                snap.counters.transaction_retry_count,
+            ),
+            (
+                "transaction_error_count",
+                snap.counters.transaction_error_count,
+            ),
         ] {
             assert_eq!(value, 0, "{name} is operational and must stay 0");
         }
@@ -1595,7 +1614,10 @@ mod tests {
         metrics.record_latency("ns", CommandType::Put, Duration::from_millis(5));
         let snapshot = metrics.get_and_reset();
         let cm = snapshot.detailed_metric("ns", CommandType::Put).unwrap();
-        assert_eq!(cm.latency.buckets().len(), crate::metrics::MILLIS_LATENCY_COLUMNS);
+        assert_eq!(
+            cm.latency.buckets().len(),
+            crate::metrics::MILLIS_LATENCY_COLUMNS
+        );
         assert_eq!(cm.latency.count(), 1);
         assert_eq!(snapshot.latency_unit, LatencyUnit::Milliseconds);
 
@@ -1696,7 +1718,7 @@ mod tests {
         metrics.record_latency("ns", CommandType::Put, Duration::from_millis(1));
         metrics.record_result_code("ns", CommandType::Put, ResultCode::Ok);
 
-        let mut snap = metrics.get_and_reset();
+        let snap = metrics.get_and_reset();
         snap.reset_time_histograms();
 
         assert_eq!(snap.get_metrics.count(), 0);

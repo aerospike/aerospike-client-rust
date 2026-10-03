@@ -21,8 +21,7 @@ use aerospike::operations::cdt_context::{ctx_map_key, ctx_map_key_create};
 use aerospike::operations::{maps, MapOrder};
 use aerospike::{
     as_bin, as_key, as_list, as_map, as_ord_map, as_sorted_map, as_val, as_values, Bins, MapPolicy,
-    MapReturnType,
-    MapWriteFlags, MapWriteMode, ReadPolicy, Value, WritePolicy,
+    MapReturnType, MapWriteFlags, MapWriteMode, ReadPolicy, Value, WritePolicy,
 };
 
 #[aerospike_macro::test]
@@ -118,7 +117,7 @@ async fn map_operations() {
     let bin = as_bin!(bin_name, val);
     let bins = vec![bin];
 
-    client.put(&wpolicy, &key, &bins.as_slice()).await.unwrap();
+    client.put(&wpolicy, &key, bins.as_slice()).await.unwrap();
 
     // ---------------------------------------------------------------------------------
 
@@ -131,7 +130,7 @@ async fn map_operations() {
     let bin = as_bin!(bin_name, val);
     let bins = vec![bin];
 
-    client.put(&wpolicy, &key, &bins.as_slice()).await.unwrap();
+    client.put(&wpolicy, &key, bins.as_slice()).await.unwrap();
 
     let op = maps::get_by_index(bin_name, 0, MapReturnType::UnorderedMap);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
@@ -399,7 +398,7 @@ async fn map_operations_wildcard() {
     assert_eq!(*rec.bins.get("bin").unwrap(), as_val!(3));
 
     let val = as_list!(Value::from("Joe"), Value::Wildcard);
-    let ops = &vec![maps::get_by_value("bin", val, MapReturnType::Key)];
+    let ops = &[maps::get_by_value("bin", val, MapReturnType::Key)];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!(9));
 }
@@ -484,9 +483,15 @@ async fn map_create_op() {
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!("a", "z"));
 
     // The nested map was created K-ordered, so a full read decodes it as SortedMap.
-    let rec = client.get(&ReadPolicy::default(), &key3, ["bin"]).await.unwrap();
+    let rec = client
+        .get(&ReadPolicy::default(), &key3, ["bin"])
+        .await
+        .unwrap();
     let Some(Value::OrderedMap(outer)) = rec.bins.get("bin") else {
-        panic!("expected top-level unordered map, got {:?}", rec.bins.get("bin"));
+        panic!(
+            "expected top-level unordered map, got {:?}",
+            rec.bins.get("bin")
+        );
     };
     assert!(
         matches!(outer.get(&as_val!("sub")), Some(Value::SortedMap(_))),
@@ -756,8 +761,7 @@ async fn map_apis_accept_all_three_map_collections() {
     let opolicy = MapPolicy::new(MapOrder::KeyOrdered, MapWriteMode::Update);
     let okey = as_key!(namespace, set_name, "ordered_put_items");
     let hash: HashMap<Value, Value> = [pair("z", 26), pair("a", 1), pair("m", 13)].into();
-    let ordered: IndexMap<Value, Value> =
-        [pair("z", 6), pair("q", 7)].into_iter().collect();
+    let ordered: IndexMap<Value, Value> = [pair("z", 6), pair("q", 7)].into_iter().collect();
     let ops = [
         maps::put_items(&opolicy, "obh", hash),
         maps::put_items(&opolicy, "obo", ordered),

@@ -47,6 +47,8 @@ pub enum OpType {
     Txn,
 }
 
+// Each variant owns its workload's state; the benchmark holds one per thread.
+#[allow(clippy::large_enum_variant)]
 pub enum TaskType {
     Insert(InsertTask),
     ReadUpdate(ReadUpdateTask),

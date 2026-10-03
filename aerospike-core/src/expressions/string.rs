@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! String filter expressions. Produce [`Expression`] nodes that read or
+//! String filter expressions.
+//!
+//! Produce [`Expression`] nodes that read or
 //! transform string values inside another expression. Mirrors the operations
 //! exposed by [`crate::operations::string`], but composes inside expressions
 //! instead of being sent as standalone operate ops.
@@ -115,7 +117,9 @@ pub fn substr(src: Expression, start: Expression) -> Expression {
 }
 
 /// Expression that returns the substring of `src` in the half-open codepoint
-/// range `[start, end)` — `start` inclusive, `end` exclusive. Negative
+/// range `[start, end)` — `start` inclusive, `end` exclusive.
+///
+/// Negative
 /// indexes count from the end. If, after negative-index normalization,
 /// `start >= end`, the result is the empty string.
 pub fn substr_range(src: Expression, start: Expression, end: Expression) -> Expression {
@@ -322,7 +326,7 @@ pub fn insert(
             sub(INSERT),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::FilterExpression(value),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -341,7 +345,7 @@ pub fn overwrite(
             sub(OVERWRITE),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::FilterExpression(value),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -354,7 +358,7 @@ pub fn concat(policy: &StringPolicy, src: Expression, values: Expression) -> Exp
         vec![
             sub(CONCAT),
             ExpressionArgument::FilterExpression(values),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -368,7 +372,7 @@ pub fn append(policy: &StringPolicy, src: Expression, value: Expression) -> Expr
         vec![
             sub(APPEND),
             ExpressionArgument::FilterExpression(value),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -382,7 +386,7 @@ pub fn prepend(policy: &StringPolicy, src: Expression, value: Expression) -> Exp
         vec![
             sub(PREPEND),
             ExpressionArgument::FilterExpression(value),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -418,7 +422,7 @@ pub fn snip(
             sub(SNIP),
             ExpressionArgument::FilterExpression(start),
             ExpressionArgument::FilterExpression(end),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -436,7 +440,7 @@ pub fn replace(
         vec![
             sub(REPLACE),
             ExpressionArgument::QuotedExpressions(vec![needle, replacement]),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -454,7 +458,7 @@ pub fn replace_all(
         vec![
             sub(REPLACE_ALL),
             ExpressionArgument::QuotedExpressions(vec![needle, replacement]),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -465,7 +469,7 @@ pub fn upper(policy: &StringPolicy, src: Expression) -> Expression {
         src,
         vec![
             sub(UPPER),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -476,7 +480,7 @@ pub fn lower(policy: &StringPolicy, src: Expression) -> Expression {
         src,
         vec![
             sub(LOWER),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -487,7 +491,7 @@ pub fn case_fold(policy: &StringPolicy, src: Expression) -> Expression {
         src,
         vec![
             sub(CASE_FOLD),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -498,7 +502,7 @@ pub fn normalize_nfc(policy: &StringPolicy, src: Expression) -> Expression {
         src,
         vec![
             sub(NORMALIZE_NFC),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -509,7 +513,7 @@ pub fn trim_start(policy: &StringPolicy, src: Expression) -> Expression {
         src,
         vec![
             sub(TRIM_START),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -520,7 +524,7 @@ pub fn trim_end(policy: &StringPolicy, src: Expression) -> Expression {
         src,
         vec![
             sub(TRIM_END),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -531,7 +535,7 @@ pub fn trim(policy: &StringPolicy, src: Expression) -> Expression {
         src,
         vec![
             sub(TRIM),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -550,7 +554,7 @@ pub fn pad_start(
             sub(PAD_START),
             ExpressionArgument::FilterExpression(target_length),
             ExpressionArgument::FilterExpression(pad_string),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -569,7 +573,7 @@ pub fn pad_end(
             sub(PAD_END),
             ExpressionArgument::FilterExpression(target_length),
             ExpressionArgument::FilterExpression(pad_string),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -581,7 +585,7 @@ pub fn repeat(policy: &StringPolicy, src: Expression, count: Expression) -> Expr
         vec![
             sub(REPEAT),
             ExpressionArgument::FilterExpression(count),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -606,7 +610,7 @@ pub fn regex_replace(
             sub(REGEX_REPLACE),
             ExpressionArgument::QuotedExpressions(vec![pattern, replacement]),
             ExpressionArgument::Value(Value::Int(regex_flags.0)),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -639,12 +643,8 @@ pub fn to_string(src: Expression) -> Expression {
 // Helpers
 // -----------------------------------------------------------------
 
-fn sub(sub_op: i64) -> ExpressionArgument {
+const fn sub(sub_op: i64) -> ExpressionArgument {
     ExpressionArgument::Value(Value::Int(sub_op))
-}
-
-const fn policy_flags(policy: &StringPolicy) -> i64 {
-    policy.flags()
 }
 
 fn add_read(

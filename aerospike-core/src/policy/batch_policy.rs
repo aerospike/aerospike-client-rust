@@ -14,9 +14,9 @@
 // the License.
 
 use crate::expressions::Expression;
-use crate::policy::{BasePolicy, Concurrency, PolicyLike};
 #[cfg(feature = "dynamic-config")]
 use crate::policy::BasePolicyConfig;
+use crate::policy::{BasePolicy, Concurrency, PolicyLike};
 
 use super::Replica;
 

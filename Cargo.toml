@@ -95,3 +95,8 @@ required-features = ["sync", "rt-tokio"]
 [[example]]
 name = "query_aggregate"
 required-features = ["lua"]
+
+# Tests, examples and benches build policies field by field after `default()`,
+# the way callers write them; the struct-update form the lint wants reads worse.
+[lints.clippy]
+field_reassign_with_default = "allow"

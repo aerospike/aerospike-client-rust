@@ -14,7 +14,9 @@
 
 //! serde ↔ [`Value`] bridge (the `serde_json::value` analog): serialize
 //! any `T: Serialize` into a [`Value`] tree and deserialize any
-//! `T: Deserialize` back out. This powers the `#[record(serde)]` engine
+//! `T: Deserialize` back out.
+//!
+//! This powers the `#[record(serde)]` engine
 //! of the `RecordMapper` derive and is usable standalone.
 //!
 //! Encoding notes (differences from the bespoke derive engine — the

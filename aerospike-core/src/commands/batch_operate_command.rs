@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::IndexMap;
 use aerospike_rt::time::Instant;
 use indexmap::map::Entry::{Occupied, Vacant};
-use crate::IndexMap;
 use std::io::Read;
 use std::sync::Arc;
 
@@ -93,24 +93,23 @@ impl BatchOperateCommand {
                 self.execute_command(cluster.clone()),
             )
             .await;
-            match res {
-                Ok(res) => res?,
-                Err(_) => {
-                    // The whole-command deadline elapsed before the inner loop
-                    // returned. The in-loop deadline check is mutually
-                    // exclusive with this path, so there's no double count.
-                    // The rows are still ours: stamp them exactly as any other
-                    // terminal failure does, and hand them back. Returning
-                    // `Err` here used to drop every row of the group.
-                    cluster.incr_total_timeout_exceeded();
-                    let is_write = self.is_write();
-                    let commands_sent = self.commands_sent;
-                    self.set_terminal_error(
-                        Error::timeout(format!("Command timed out after {total_ms} ms")),
-                        is_write,
-                        commands_sent,
-                    );
-                }
+            if let Ok(res) = res {
+                res?
+            } else {
+                // The whole-command deadline elapsed before the inner loop
+                // returned. The in-loop deadline check is mutually
+                // exclusive with this path, so there's no double count.
+                // The rows are still ours: stamp them exactly as any other
+                // terminal failure does, and hand them back. Returning
+                // `Err` here used to drop every row of the group.
+                cluster.incr_total_timeout_exceeded();
+                let is_write = self.is_write();
+                let commands_sent = self.commands_sent;
+                self.set_terminal_error(
+                    Error::timeout(format!("Command timed out after {total_ms} ms")),
+                    is_write,
+                    commands_sent,
+                );
             }
         } else {
             self.execute_command(cluster).await?;
@@ -192,7 +191,7 @@ impl BatchOperateCommand {
                     sample_draw,
                     &mut sampled,
                     &mut self.commands_sent,
-                self.hook.as_deref(),
+                    self.hook.as_deref(),
                 )
                 .await
                 {
@@ -283,8 +282,8 @@ impl BatchOperateCommand {
                         sample_draw,
                         &mut sampled,
                         &mut self.commands_sent,
-                    self.hook.as_deref(),
-                )
+                        self.hook.as_deref(),
+                    )
                     .await
                     {
                         Ok(Some(e)) => {
@@ -306,9 +305,7 @@ impl BatchOperateCommand {
                 // retry metrics, and is not chained into the error history
                 // (thousands of waits must not build a thousand-deep chain).
                 // Bounded by the outer total-timeout wrapper and the wait cap.
-                if e.is_pool_empty()
-                    && pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS
-                {
+                if e.is_pool_empty() && pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS {
                     pool_empty_waits += 1;
                     sleep(commands::POOL_EMPTY_WAIT).await;
                     continue;
@@ -322,8 +319,7 @@ impl BatchOperateCommand {
                 if !matches!(
                     self.policy.base_policy.read_mode_sc,
                     crate::policy::ReadModeSC::Linearize
-                ) || e.client_result_code()
-                    == Some(crate::ClientResultCode::ServerNotAvailable)
+                ) || e.client_result_code() == Some(crate::ClientResultCode::ServerNotAvailable)
                 {
                     sequence_sc += 1;
                 }
@@ -457,20 +453,21 @@ impl BatchOperateCommand {
             .collect();
         let mut held: Vec<IndexedOp> = Vec::new();
         for (mut pair, bucket) in ops.into_iter().zip(bucket_of) {
-            match bucket {
-                Some(b) => buckets[b].1.push(pair),
-                None => {
-                    if pair.0.batch_record().result_code().is_none() {
-                        pair.0.set_error(Error::server_error_bare(ResultCode::PartitionUnavailable));
-                    }
-                    held.push(pair);
+            if let Some(b) = bucket {
+                buckets[b].1.push(pair)
+            } else {
+                if pair.0.batch_record().result_code().is_none() {
+                    pair.0
+                        .set_error(Error::server_error_bare(ResultCode::PartitionUnavailable));
                 }
+                held.push(pair);
             }
         }
 
         let total = buckets.iter().map(|(_, b)| b.len()).sum::<usize>() + held.len();
         let mut regrouped: Vec<IndexedOp> = Vec::with_capacity(total);
-        let mut ranges: Vec<(Arc<Node>, std::ops::Range<usize>)> = Vec::with_capacity(buckets.len());
+        let mut ranges: Vec<(Arc<Node>, std::ops::Range<usize>)> =
+            Vec::with_capacity(buckets.len());
         for (node, bucket) in buckets {
             let start = regrouped.len();
             regrouped.extend(bucket);
@@ -545,10 +542,7 @@ impl BatchOperateCommand {
         // namespace in this request group; only worth building when this
         // command is being recorded.
         let namespaces: Vec<String> = if metrics_on {
-            let mut v: Vec<String> = batch_ops
-                .iter()
-                .map(|op| op.0.key().namespace.clone())
-                .collect();
+            let mut v: Vec<String> = batch_ops.iter().map(|op| op.0.key().namespace).collect();
             v.sort();
             v.dedup();
             v
@@ -803,10 +797,7 @@ impl BatchOperateCommand {
             return Ok(None);
         }
 
-        let found_key = matches!(
-            result_code,
-            ResultCode::Ok | ResultCode::UdfBadResponse
-        );
+        let found_key = matches!(result_code, ResultCode::Ok | ResultCode::UdfBadResponse);
 
         conn.buffer().skip(6);
         let generation = conn.buffer().read_u32(None);
@@ -965,7 +956,7 @@ impl BatchOperateCommand {
                         hook,
                         node_label,
                     )
-                        .await
+                    .await
                     {
                         Ok(stat) => status = stat,
                         Err(e) if matches!(e.kind(), ErrorKind::Server { .. }) => {
@@ -1084,7 +1075,12 @@ mod tests {
     fn regroup_makes_each_nodes_keys_contiguous() {
         let (a, b) = (node("A"), node("B"));
         let ops: Vec<_> = (0..4).map(pair).collect();
-        let routed = vec![Some(b.clone()), Some(a.clone()), Some(b.clone()), Some(a.clone())];
+        let routed = vec![
+            Some(b.clone()),
+            Some(a.clone()),
+            Some(b.clone()),
+            Some(a.clone()),
+        ];
         let (regrouped, ranges) = BatchOperateCommand::regroup_for_retry(ops, routed);
         assert_eq!(ranges.len(), 2);
         assert!(Arc::ptr_eq(&ranges[0].0, &b));
@@ -1101,18 +1097,31 @@ mod tests {
         let (a, b) = (node("A"), node("B"));
         let ops: Vec<_> = (0..5).map(pair).collect();
         // 0 -> A, 1 -> unroutable, 2 -> B, 3 -> A, 4 -> unroutable
-        let routed = vec![Some(a.clone()), None, Some(b.clone()), Some(a.clone()), None];
+        let routed = vec![
+            Some(a.clone()),
+            None,
+            Some(b.clone()),
+            Some(a.clone()),
+            None,
+        ];
         let (regrouped, ranges) = BatchOperateCommand::regroup_for_retry(ops, routed);
 
         assert_eq!(regrouped.len(), 5, "every row is kept for the executor");
         let covered: usize = ranges.iter().map(|(_, r)| r.len()).sum();
         assert_eq!(covered, 3, "ranges cover exactly the routable rows");
-        assert_eq!(ranges.last().unwrap().1.end, 3, "ranges stop before the stranded rows");
+        assert_eq!(
+            ranges.last().unwrap().1.end,
+            3,
+            "ranges stop before the stranded rows"
+        );
         for (node, range) in &ranges {
             for i in range.clone() {
                 let original = regrouped[i].1;
                 let expected = if original == 2 { &b } else { &a };
-                assert!(Arc::ptr_eq(node, expected), "row {original} in the wrong group");
+                assert!(
+                    Arc::ptr_eq(node, expected),
+                    "row {original} in the wrong group"
+                );
                 assert!(regrouped[i].0.batch_record().result_code().is_none());
             }
         }
@@ -1133,8 +1142,10 @@ mod tests {
     fn regroup_holds_settled_rows_without_restamping_them() {
         let a = node("A");
         let mut ops: Vec<_> = (0..3).map(pair).collect();
-        ops[1].0.set_error(Error::server_error_bare(ResultCode::KeyNotFoundError));
-        let routed = vec![Some(a.clone()), None, Some(a.clone())];
+        ops[1]
+            .0
+            .set_error(Error::server_error_bare(ResultCode::KeyNotFoundError));
+        let routed = vec![Some(a.clone()), None, Some(a)];
         let (regrouped, ranges) = BatchOperateCommand::regroup_for_retry(ops, routed);
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].1, 0..2);
@@ -1153,9 +1164,9 @@ mod tests {
             BatchOperateCommand::regroup_for_retry(ops, vec![None, None, None]);
         assert!(ranges.is_empty());
         assert_eq!(regrouped.len(), 3);
-        assert!(regrouped
-            .iter()
-            .all(|(op, _)| op.batch_record().result_code() == Some(ResultCode::PartitionUnavailable)));
+        assert!(regrouped.iter().all(
+            |(op, _)| op.batch_record().result_code() == Some(ResultCode::PartitionUnavailable)
+        ));
     }
 
     #[test]
@@ -1183,7 +1194,13 @@ mod tests {
             let nodes: Vec<Arc<Node>> = (0..k).map(|i| node(&format!("N{i}"))).collect();
             // usize::MAX marks "unroutable".
             let assign: Vec<usize> = (0..n)
-                .map(|_| if r.below(6) == 0 { usize::MAX } else { r.below(k) })
+                .map(|_| {
+                    if r.below(6) == 0 {
+                        usize::MAX
+                    } else {
+                        r.below(k)
+                    }
+                })
                 .collect();
             let ops: Vec<_> = (0..n).map(pair).collect();
             let routed: Vec<Option<Arc<Node>>> = assign
@@ -1202,7 +1219,10 @@ mod tests {
                 assert!(!range.is_empty(), "empty range: {ctx}");
                 next_start = range.end;
             }
-            assert_eq!(next_start, routable, "ranges must cover exactly the routable rows: {ctx}");
+            assert_eq!(
+                next_start, routable,
+                "ranges must cover exactly the routable rows: {ctx}"
+            );
 
             for (node, range) in &ranges {
                 let mut prev: Option<usize> = None;
@@ -1216,11 +1236,18 @@ mod tests {
                         assert!(p < original, "relative order not preserved: {ctx}");
                     }
                     prev = Some(original);
-                    assert!(regrouped[i].0.batch_record().result_code().is_none(), "{ctx}");
+                    assert!(
+                        regrouped[i].0.batch_record().result_code().is_none(),
+                        "{ctx}"
+                    );
                 }
             }
             for (op, original) in &regrouped[routable..] {
-                assert_eq!(assign[*original], usize::MAX, "routable row held out: {ctx}");
+                assert_eq!(
+                    assign[*original],
+                    usize::MAX,
+                    "routable row held out: {ctx}"
+                );
                 assert_eq!(
                     op.batch_record().result_code(),
                     Some(ResultCode::PartitionUnavailable),
@@ -1230,9 +1257,17 @@ mod tests {
 
             let mut all = indices(&regrouped);
             all.sort_unstable();
-            assert_eq!(all, (0..n).collect::<Vec<_>>(), "index multiset wrong: {ctx}");
+            assert_eq!(
+                all,
+                (0..n).collect::<Vec<_>>(),
+                "index multiset wrong: {ctx}"
+            );
 
-            let mut used: Vec<usize> = assign.iter().copied().filter(|&a| a != usize::MAX).collect();
+            let mut used: Vec<usize> = assign
+                .iter()
+                .copied()
+                .filter(|&a| a != usize::MAX)
+                .collect();
             used.sort_unstable();
             used.dedup();
             assert_eq!(ranges.len(), used.len(), "range count != nodes used: {ctx}");

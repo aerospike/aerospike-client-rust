@@ -12,7 +12,6 @@
 
 //! Multi-Record Transaction (MRT) support.
 
-
 //! Poison-tolerant access to the crate's `std::sync` locks.
 //!
 //! Every `Mutex`/`RwLock` in this crate guards plain data — counters, maps,

@@ -16,9 +16,9 @@
 // effective visibility is set by those re-exports, so `pub(crate)` is intentional.
 #![allow(clippy::redundant_pub_crate)]
 
+use crate::locks::lock;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
-use crate::locks::lock;
 
 use super::provider::ConfigProvider;
 use super::yaml::YamlFileProvider;
@@ -104,7 +104,10 @@ mod tests {
     fn parse_dsn_defaults_scheme_to_file() {
         assert_eq!(
             parse_dsn("/etc/aerospike/config.yaml"),
-            Some(("file://".to_string(), "/etc/aerospike/config.yaml".to_string()))
+            Some((
+                "file://".to_string(),
+                "/etc/aerospike/config.yaml".to_string()
+            ))
         );
     }
 

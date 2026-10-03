@@ -416,11 +416,7 @@ pub fn join(bin: Expression, ctx: &[CdtContext]) -> Expression {
 ///   join_by_separator(string_val("|".to_string()), list_bin("a".to_string()), &[]),
 ///   string_val("one|two|three".to_string()));
 /// ```
-pub fn join_by_separator(
-    separator: Expression,
-    bin: Expression,
-    ctx: &[CdtContext],
-) -> Expression {
+pub fn join_by_separator(separator: Expression, bin: Expression, ctx: &[CdtContext]) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::StringJoin as i64)),
         ExpressionArgument::FilterExpression(separator),

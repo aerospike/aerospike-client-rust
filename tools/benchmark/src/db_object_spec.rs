@@ -68,7 +68,8 @@ impl FromStr for DBObjectSpec {
         }
 
         let args: Vec<&str> = bin_spec_trimmed.split(':').collect();
-        let type_str = args.first()
+        let type_str = args
+            .first()
             .ok_or_else(|| "Empty object spec".to_string())?
             .trim();
 
@@ -248,7 +249,10 @@ mod tests {
         let mut rng = seeded_rng();
         let v = spec.gen_value(&mut rng, None);
         if let Value::Int(n) = v {
-            assert!(n >= 0 && n <= i64::MAX, "integer should be in 0..=i64::MAX");
+            assert!(
+                (0..=i64::MAX).contains(&n),
+                "integer should be in 0..=i64::MAX"
+            );
         } else {
             panic!("expected Value::Int, got {:?}", v);
         }
@@ -286,7 +290,7 @@ mod tests {
             for c in s.chars() {
                 let code = c as u32;
                 assert!(
-                    code >= 33 && code <= 126,
+                    (33..=126).contains(&code),
                     "char {:?} not in printable ASCII",
                     c
                 );
@@ -303,7 +307,7 @@ mod tests {
         let v = spec.gen_value(&mut rng, None);
         if let Value::Int(ms) = v {
             // Roughly 2020–2040 in ms
-            assert!(ms >= 1_570_000_000_000 && ms <= 2_500_000_000_000);
+            assert!((1_570_000_000_000..=2_500_000_000_000).contains(&ms));
         } else {
             panic!("expected Value::Int (timestamp), got {:?}", v);
         }

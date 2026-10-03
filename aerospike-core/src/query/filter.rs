@@ -104,10 +104,7 @@ impl EqFilterValue for &[u8] {
 impl EqFilterValue for Value {
     fn into_filter_value(self) -> Value {
         assert!(
-            matches!(
-                self,
-                Value::Int(_) | Value::String(_) | Value::Blob(_)
-            ),
+            matches!(self, Value::Int(_) | Value::String(_) | Value::Blob(_)),
             "equality/contains filter value must be integer, string, or blob"
         );
         self
@@ -117,10 +114,7 @@ impl EqFilterValue for Value {
 impl RangeFilterValue for Value {
     fn into_filter_value(self) -> Value {
         assert!(
-            matches!(
-                self,
-                Value::Int(_) | Value::String(_) | Value::Blob(_)
-            ),
+            matches!(self, Value::Int(_) | Value::String(_) | Value::Blob(_)),
             "equality/contains filter value must be integer, string, or blob"
         );
         self
@@ -458,7 +452,13 @@ impl Filter {
     /// Creates a geo-spatial "points within region" filter for queries on a collection index.
     pub fn geo_within_region_cit(bin_name: &str, region: &str, cit: CollectionIndexType) -> Self {
         let region = Value::String(region.to_owned());
-        Filter::new(bin_name, cit, ParticleType::GEOJSON as u8, region.clone(), region)
+        Filter::new(
+            bin_name,
+            cit,
+            ParticleType::GEOJSON as u8,
+            region.clone(),
+            region,
+        )
     }
 
     /// Creates a geo-spatial "points within region" filter targeting a specific secondary index
@@ -580,7 +580,13 @@ impl Filter {
     /// Creates a geo-spatial "regions containing point" filter for queries on a collection index.
     pub fn geo_contains_cit(bin_name: &str, point: &str, cit: CollectionIndexType) -> Self {
         let point = Value::String(point.to_owned());
-        Filter::new(bin_name, cit, ParticleType::GEOJSON as u8, point.clone(), point)
+        Filter::new(
+            bin_name,
+            cit,
+            ParticleType::GEOJSON as u8,
+            point.clone(),
+            point,
+        )
     }
 
     /// Creates a geo-spatial "regions containing point" filter targeting a specific secondary
@@ -604,7 +610,13 @@ impl Filter {
         cit: CollectionIndexType,
     ) -> Self {
         let point = Value::String(point.to_owned());
-        Filter::new_by_index(index_name, cit, ParticleType::GEOJSON as u8, point.clone(), point)
+        Filter::new_by_index(
+            index_name,
+            cit,
+            ParticleType::GEOJSON as u8,
+            point.clone(),
+            point,
+        )
     }
 
     // ========================================================================
@@ -666,7 +678,7 @@ impl Filter {
         //     + begin particle size(4) + end particle size(4) = 10
         Ok(self.bin_name.len() + self.begin.estimate_size()? + self.end.estimate_size()? + 10)
     }
-    
+
     pub(crate) fn index_range_field_body_size(&self) -> Result<usize> {
         if self.has_wire_range() {
             self.estimate_size()
@@ -691,14 +703,12 @@ impl Filter {
         self.end.write_to(buffer)?;
         Ok(())
     }
-    
+
     pub(crate) fn write_index_range_field(&self, buffer: &mut Buffer) -> Result<()> {
-        if self.has_wire_range() {
-            self.write(buffer)
-        } else {
+        if !self.has_wire_range() {
             buffer.write_u8(1);
-            self.write(buffer)
         }
+        self.write(buffer)
     }
 }
 
@@ -815,9 +825,8 @@ macro_rules! as_within_region {
 #[macro_export]
 macro_rules! as_within_radius {
     ($bin_name:expr, $lat:expr, $lng:expr, $radius:expr) => {{
-        let lat = $lat as f64;
-        let lng = $lng as f64;
-        let radius = $radius as f64;
+        #[allow(clippy::cast_lossless)] // the macro accepts any numeric literal
+        let (lat, lng, radius) = ($lat as f64, $lng as f64, $radius as f64);
         let geo_json = format!(
             "{{ \"type\": \"AeroCircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}",
             lng, lat, radius
@@ -832,9 +841,8 @@ macro_rules! as_within_radius {
         )
     }};
     ($bin_name:expr, $lat:expr, $lng:expr, $radius:expr, $cit:expr) => {{
-        let lat = $lat as f64;
-        let lng = $lng as f64;
-        let radius = $radius as f64;
+        #[allow(clippy::cast_lossless)] // the macro accepts any numeric literal
+        let (lat, lng, radius) = ($lat as f64, $lng as f64, $radius as f64);
         let geo_json = format!(
             "{{ \"type\": \"AeroCircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}",
             lng, lat, radius
@@ -1020,7 +1028,7 @@ mod tests {
         assert!(f.expression.is_some());
 
         let f = Filter::geo_within_region_cit("bin1", "{}", CollectionIndexType::MapValues)
-            .expression(exp.clone());
+            .expression(exp);
         assert!(f.expression.is_some());
     }
 
@@ -1055,7 +1063,7 @@ mod tests {
         assert!(f.expression.is_some());
 
         let f = Filter::geo_within_radius_cit("bin1", 3.0, 1.0, 7.0, CollectionIndexType::List)
-            .expression(exp.clone());
+            .expression(exp);
         assert!(f.expression.is_some());
     }
 
@@ -1091,8 +1099,8 @@ mod tests {
         let f = Filter::geo_contains("bin1", "{}").expression(exp.clone());
         assert!(f.expression.is_some());
 
-        let f = Filter::geo_contains_cit("bin1", "{}", CollectionIndexType::MapValues)
-            .expression(exp.clone());
+        let f =
+            Filter::geo_contains_cit("bin1", "{}", CollectionIndexType::MapValues).expression(exp);
         assert!(f.expression.is_some());
     }
 

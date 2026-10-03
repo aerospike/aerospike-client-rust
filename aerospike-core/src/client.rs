@@ -42,9 +42,9 @@ use crate::policy::{
     TxnVerifyPolicy, WritePolicy,
 };
 use crate::query::plan::{QueryPlan, QueryWhereWire, FLAG_EXPLAIN, FLAG_HARD_HINT};
-use crate::query::{CallbackCtx, PartitionFilter, PartitionTracker, QueryHandle, QuerySink};
 #[cfg(feature = "lua")]
 use crate::query::ResultSet;
+use crate::query::{CallbackCtx, PartitionFilter, PartitionTracker, QueryHandle, QuerySink};
 use crate::task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, UdfRemoveTask};
 use crate::txn::{AbortStatus, CommitStatus, Txn, TxnState};
 use crate::txn_roll::TxnRoll;
@@ -368,7 +368,6 @@ impl Client {
         node.info(policy, commands).await
     }
 
-
     /// Returns a list of active server nodes in the cluster.
     ///
     /// # Examples
@@ -566,8 +565,8 @@ impl Client {
     ///
     /// # Errors
     ///
-    /// * Returns an error if the batch request fails (e.g. timeout, cluster error). 
-    /// Individual key-not-found is indicated by `record: None` in the corresponding [`BatchRecord`].
+    /// * Returns an error if the batch request fails (e.g. timeout, cluster error).
+    ///   Individual key-not-found is indicated by `record: None` in the corresponding [`BatchRecord`].
     ///
     /// Per-key outcomes (key not found, filtered out, a key the cluster
     /// cannot route) are **not** errors — they live on each row's result
@@ -620,11 +619,7 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub async fn batch(
-        &self,
-        policy: &BatchPolicy,
-        ops: &mut [BatchOperation],
-    ) -> Result<()> {
+    pub async fn batch(&self, policy: &BatchPolicy, ops: &mut [BatchOperation]) -> Result<()> {
         let policy = self.cluster.resolve_batch(policy);
         let policy = policy.as_ref();
         if let Some(txn) = &policy.base_policy.txn {
@@ -673,6 +668,15 @@ impl Client {
         F: Fn(usize, &BatchRecord) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = bool> + Send + 'static,
     {
+        // Dropping this future — the caller lost interest — stops the hook
+        // from firing again and lets running groups wind down.
+        struct CancelOnDrop(Arc<crate::batch::BatchHook>);
+        impl Drop for CancelOnDrop {
+            fn drop(&mut self) {
+                self.0.cancel();
+            }
+        }
+
         let policy = self.cluster.resolve_batch(policy);
         let policy = policy.as_ref();
         if let Some(txn) = &policy.base_policy.txn {
@@ -689,14 +693,6 @@ impl Client {
             Box::new(move |idx, row| Box::pin(on_row(idx, row))),
             ops.len(),
         ));
-        // Dropping this future — the caller lost interest — stops the hook
-        // from firing again and lets running groups wind down.
-        struct CancelOnDrop(Arc<crate::batch::BatchHook>);
-        impl Drop for CancelOnDrop {
-            fn drop(&mut self) {
-                self.0.cancel();
-            }
-        }
         let _guard = CancelOnDrop(Arc::clone(&hook));
 
         let executor = BatchExecutor::new(self.cluster.clone());
@@ -1249,7 +1245,8 @@ impl Client {
             language
         );
         let node = self.cluster.get_random_node()?;
-        self.send_info_cmd(policy, node, &cmd, "Error registering UDF").await?;
+        self.send_info_cmd(policy, node, &cmd, "Error registering UDF")
+            .await?;
 
         Ok(RegisterTask::new(
             Arc::clone(&self.cluster),
@@ -1359,7 +1356,8 @@ impl Client {
         let cmd = format!("udf-remove:filename={server_path};");
         let node = self.cluster.get_random_node()?;
         // Sample response: {"udf-remove:filename=server_path;": "ok"}
-        self.send_info_cmd(policy, node, &cmd, "UDF Remove failed").await?;
+        self.send_info_cmd(policy, node, &cmd, "UDF Remove failed")
+            .await?;
 
         Ok(UdfRemoveTask::new(
             Arc::clone(&self.cluster),
@@ -1552,8 +1550,7 @@ impl Client {
         let defer_sink = sink.clone();
         let cluster = self.cluster.clone();
         aerospike_rt::spawn(async move {
-            Self::execute_query_timeout(cluster, &t_policy, tracker, statement, sink, None)
-                .await;
+            Self::execute_query_timeout(cluster, &t_policy, tracker, statement, sink, None).await;
             defer_sink.close();
         });
 
@@ -1609,8 +1606,7 @@ impl Client {
         let defer_sink = sink.clone();
         let cluster = self.cluster.clone();
         let task = aerospike_rt::spawn(async move {
-            Self::execute_query_timeout(cluster, &t_policy, tracker, statement, sink, None)
-                .await;
+            Self::execute_query_timeout(cluster, &t_policy, tracker, statement, sink, None).await;
             defer_sink.close();
         });
 
@@ -1648,9 +1644,7 @@ impl Client {
         }
 
         let flags = explain_where_flags.unwrap_or(FLAG_EXPLAIN);
-        if flags & FLAG_HARD_HINT != 0
-            && index_name_hint.map(str::is_empty).unwrap_or(true)
-        {
+        if flags & FLAG_HARD_HINT != 0 && index_name_hint.is_none_or(str::is_empty) {
             return Err(Error::invalid_argument(
                 "HARD_HINT requires a non-empty index name hint",
             ));
@@ -1690,10 +1684,7 @@ impl Client {
             return Err(Error::server_error_bare(ResultCode::FilteredOut));
         }
 
-        statement.filters = match plan.filter_for_execute()? {
-            Some(filter) => Some(vec![filter]),
-            None => None,
-        };
+        statement.filters = plan.filter_for_execute()?.map(|filter| vec![filter]);
 
         let execute_where = Some(Arc::from(plan.into_execute_where_bytes()));
         statement.validate()?;
@@ -1811,7 +1802,8 @@ impl Client {
         // client's input queue.
         let (input_tx, input_rx) = async_channel::bounded::<Value>(500);
         // Lua output stream -> ResultSet pump.
-        let (output_tx, output_rx) = async_channel::bounded::<Value>(policy.record_queue_size.max(1));
+        let (output_tx, output_rx) =
+            async_channel::bounded::<Value>(policy.record_queue_size.max(1));
         // Completion/error signal from the Lua pipeline task.
         let (done_tx, done_rx) = async_channel::bounded::<Result<()>>(1);
 
@@ -1960,8 +1952,13 @@ impl Client {
 
         let mut last_err: Option<Error> = None;
         for node in &nodes {
-            let mut cmd =
-                ServerCommand::new(node.clone(), write_policy, &statement, task_id, self.cluster.clone());
+            let mut cmd = ServerCommand::new(
+                node.clone(),
+                write_policy,
+                &statement,
+                task_id,
+                self.cluster.clone(),
+            );
             if let Err(err) = cmd.execute().await {
                 last_err = Some(err);
             }
@@ -2292,7 +2289,8 @@ impl Client {
             format!("xdr-set-filter:dc={datacenter};namespace={namespace};exp=null")
         };
 
-        self.send_info_cmd(policy, node, &cmd, "Error setting XDR filter").await
+        self.send_info_cmd(policy, node, &cmd, "Error setting XDR filter")
+            .await
     }
 
     /// Removes all records in the specified namespace/set efficiently.
@@ -2364,7 +2362,8 @@ impl Client {
         }
 
         let node = self.cluster.get_random_node()?;
-        self.send_info_cmd(policy, node, &cmd, "Error truncating ns/set").await
+        self.send_info_cmd(policy, node, &cmd, "Error truncating ns/set")
+            .await
     }
 
     /// Creates a secondary index on a bin. This asynchronous server call
@@ -2620,7 +2619,8 @@ impl Client {
                 ));
             }
             cmd.push_str(";indextype=set");
-            self.send_info_cmd(policy, node, &cmd, "Create index failed").await?;
+            self.send_info_cmd(policy, node, &cmd, "Create index failed")
+                .await?;
             return Ok(IndexTask::new(
                 Arc::clone(&self.cluster),
                 namespace.to_string(),
@@ -2662,7 +2662,8 @@ impl Client {
 
         write!(cmd, "{index_type}").unwrap();
 
-        self.send_info_cmd(policy, node, &cmd, "Create index failed").await?;
+        self.send_info_cmd(policy, node, &cmd, "Create index failed")
+            .await?;
         Ok(IndexTask::new(
             Arc::clone(&self.cluster),
             namespace.to_string(),
@@ -2732,7 +2733,8 @@ impl Client {
         cmd.push_str(";indexname=");
         cmd.push_str(index_name);
 
-        self.send_info_cmd(policy, node, &cmd, "Drop index failed").await?;
+        self.send_info_cmd(policy, node, &cmd, "Drop index failed")
+            .await?;
         Ok(DropIndexTask::new(
             Arc::clone(&self.cluster),
             namespace.to_string(),
@@ -2937,9 +2939,7 @@ impl Client {
             {
                 AdminCommand::change_password(policy, &cluster, user, password).await
             }
-            crate::AuthMode::PKI => Err(Error::client_error(
-                "Can't change PKI user's password",
-            )),
+            crate::AuthMode::PKI => Err(Error::client_error("Can't change PKI user's password")),
             _ => AdminCommand::set_password(policy, &cluster, user, password).await,
         }
     }
@@ -3418,12 +3418,8 @@ impl Client {
     /// the transaction roll-forward, it completes the roll and returns
     /// `AlreadyCommitted`.
     pub async fn commit(&self, txn: &Arc<Txn>) -> Result<CommitStatus> {
-        self.commit_with_policies(
-            &TxnVerifyPolicy::default(),
-            &TxnRollPolicy::default(),
-            txn,
-        )
-        .await
+        self.commit_with_policies(&TxnVerifyPolicy::default(), &TxnRollPolicy::default(), txn)
+            .await
     }
 
     /// Commit a multi-record transaction with explicit verify and roll policies.
@@ -3446,11 +3442,10 @@ impl Client {
                 tr.verify(verify_policy, roll_policy).await?;
                 tr.commit(roll_policy).await
             }
-            TxnState::Verified => tr.commit(roll_policy).await,
-            // Retrying the commit is the only recovery path after an in-doubt
-            // commit failure: the verify already passed, so go straight to the
-            // roll-forward mark again.
-            TxnState::CommitFailed => tr.commit(roll_policy).await,
+            // A verified transaction goes straight to the roll-forward mark.
+            // That is also the only recovery path after an in-doubt commit
+            // failure: the verify already passed, so the commit is retried.
+            TxnState::Verified | TxnState::CommitFailed => tr.commit(roll_policy).await,
             TxnState::Committed => Ok(CommitStatus::AlreadyCommitted),
             TxnState::Aborted => Err(Error::server_error_with_message(
                 ResultCode::MrtAborted,
@@ -3495,9 +3490,9 @@ impl Client {
             // The roll-forward mark may have reached the server: rolling back
             // now could discard writes it is committing. Only a commit retry
             // can resolve the transaction from here.
-            TxnState::CommitFailed => Err(Error::txn_failed(
-                crate::txn::COMMIT_FAILED_ABORT_MESSAGE,
-            )),
+            TxnState::CommitFailed => {
+                Err(Error::txn_failed(crate::txn::COMMIT_FAILED_ABORT_MESSAGE))
+            }
             TxnState::Committed => Err(Error::server_error_with_message(
                 ResultCode::MrtCommitted,
                 "Transaction already committed",

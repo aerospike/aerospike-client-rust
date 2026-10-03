@@ -21,7 +21,6 @@ use std::env;
 use aerospike::CollectionIndexType;
 use aerospike::Task;
 
-use rand;
 use rand::distr::Alphanumeric;
 use rand::RngExt;
 
@@ -54,7 +53,7 @@ lazy_static! {
         env::var("AEROSPIKE_CLEANUP").map(|v| v.trim().eq_ignore_ascii_case("true") || v.trim().eq_ignore_ascii_case("1")).unwrap_or(false);
 }
 
-#[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
+#[cfg(all(feature = "rt-tokio", not(feature = "rt-async-std")))]
 lazy_static! {
     pub static ref RUNTIME: tokio::runtime::Runtime = {
         use tokio::runtime;
@@ -94,7 +93,7 @@ lazy_static! {
                 .unwrap();
             policy.cluster_name = AEROSPIKE_CLUSTER.clone();
         }
-        policy.use_services_alternate = AEROSPIKE_USE_SERVICES_ALTERNATE.clone();
+        policy.use_services_alternate = *AEROSPIKE_USE_SERVICES_ALTERNATE;
         if !no_server_tls() {
             policy.tls_policy = Some(aerospike::TlsPolicy::new(tls_config_no_client_auth()));
         }
@@ -123,7 +122,7 @@ pub fn no_mutual_tls() -> bool {
 }
 
 pub fn hosts() -> &'static str {
-    &*AEROSPIKE_HOSTS
+    &AEROSPIKE_HOSTS
 }
 
 #[cfg(feature = "tls")]
@@ -166,20 +165,20 @@ pub fn tls_config_no_client_auth() -> rustls::ClientConfig {
 
 #[cfg(feature = "tls")]
 pub fn tls_cacert_file() -> &'static str {
-    &*AEROSPIKE_CACERT_FILE
+    &AEROSPIKE_CACERT_FILE
 }
 
 #[cfg(feature = "tls")]
 pub fn tls_key_file() -> &'static str {
-    &*AEROSPIKE_KEY_FILE
+    &AEROSPIKE_KEY_FILE
 }
 
 pub fn namespace() -> &'static str {
-    &*AEROSPIKE_NAMESPACE
+    &AEROSPIKE_NAMESPACE
 }
 
 pub fn prop_setname() -> &'static str {
-    &*AEROSPIKE_PROP_SET_NAME
+    &AEROSPIKE_PROP_SET_NAME
 }
 
 pub fn prop_setname_multi() -> String {
@@ -187,7 +186,7 @@ pub fn prop_setname_multi() -> String {
 }
 
 pub fn client_policy() -> &'static ClientPolicy {
-    &*GLOBAL_CLIENT_POLICY
+    &GLOBAL_CLIENT_POLICY
 }
 
 static INDEX_OPS: OnceCell<Mutex<()>> = OnceCell::const_new();
@@ -439,13 +438,13 @@ pub fn rand_str(sz: usize) -> String {
 pub async fn enterprise_edition() -> bool {
     let client = client().await;
     let node = client.cluster.get_random_node();
-    if let Err(_) = node {
+    if node.is_err() {
         return false;
     }
 
     let node = node.unwrap();
-    let edition = node.info(&AdminPolicy::default(), &vec!["edition"]).await;
-    if let Err(_) = edition {
+    let edition = node.info(&AdminPolicy::default(), &["edition"]).await;
+    if edition.is_err() {
         return false;
     }
 
@@ -641,7 +640,7 @@ pub async fn security_enabled() -> bool {
 
     let client = client().await;
     let roles = client.query_users(&AdminPolicy::default(), None).await;
-    if let Err(_) = roles {
+    if roles.is_err() {
         return false;
     }
 

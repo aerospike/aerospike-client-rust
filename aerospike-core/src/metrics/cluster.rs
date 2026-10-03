@@ -22,7 +22,9 @@ use super::node_metrics::NodeMetricsSnapshot;
 use serde::Serialize;
 
 /// Aggregated statistics for the whole cluster, returned by
-/// [`crate::Client::metrics`]. The per-host snapshots are flattened in alongside
+/// [`crate::Client::metrics`].
+///
+/// The per-host snapshots are flattened in alongside
 /// the synthetic `cluster_aggregated_metrics`, `total_nodes` and
 /// `open_connections` keys.
 #[derive(Debug, Clone)]

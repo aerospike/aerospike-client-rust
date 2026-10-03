@@ -120,7 +120,9 @@ mod tests {
         // Digit-first (but not purely numeric) tls name in the two-part form.
         assert_eq!(
             vec![Host::new_tls("foo", "6abc.example.com", 3000)],
-            Parser::new("foo:6abc.example.com", 3000).read_hosts().unwrap()
+            Parser::new("foo:6abc.example.com", 3000)
+                .read_hosts()
+                .unwrap()
         );
         // A purely numeric LAST token is always a port.
         assert_eq!(

@@ -21,12 +21,13 @@ pub mod peers;
 pub mod peers_parser;
 pub mod version_parser;
 
+use crate::locks::lock;
 use aerospike_rt::time::{Duration, Instant};
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::net::ToSocketAddrs;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
 use std::sync::Arc;
-use crate::locks::lock;
 use std::vec::Vec;
 
 pub use self::node::Node;
@@ -409,7 +410,7 @@ impl Cluster {
                     self.materialize_peers(&peers).await;
 
                     // Decide which existing nodes can be dropped.
-                    self.find_nodes_to_remove(&peers).await;
+                    self.find_nodes_to_remove(&peers);
 
                     let nodes_to_remove = peers.get_nodes_to_remove();
                     if !nodes_to_remove.is_empty() {
@@ -633,7 +634,7 @@ impl Cluster {
         // `peers` accumulator; actual cluster membership is still committed
         // afterwards by the tend task (add/remove stays single-flow).
         let materialize_tasks = groups.into_iter().map(|(mut peer, sources)| async move {
-            if self.peer_exists(peers, &mut peer).await {
+            if self.peer_exists(peers, &mut peer) {
                 return;
             }
 
@@ -693,7 +694,7 @@ impl Cluster {
     ///   hostname on the node on success.
     /// - If host mismatch on a failing node, mark as `replace_node`.
     /// - Also check if already added during this tend cycle.
-    async fn peer_exists(&self, peers: &Peers, peer: &mut Peer) -> bool {
+    fn peer_exists(&self, peers: &Peers, peer: &mut Peer) -> bool {
         // Check 1: Find by node name in current cluster nodes.
         if let Ok(node) = self.get_node_by_name(&peer.node_name) {
             // Mirrors Java's `findPeerNode`:
@@ -1053,9 +1054,9 @@ impl Cluster {
         }
 
         let mut sb = String::with_capacity(64 + errs.len() * 80);
-        sb.push_str(&format!("Failed to connect to [{}] host(s):\n", errs.len()));
+        let _ = writeln!(sb, "Failed to connect to [{}] host(s):", errs.len());
         for (host, err) in &errs {
-            sb.push_str(&format!("  {host} {err}\n"));
+            let _ = writeln!(sb, "  {host} {err}");
         }
         sb
     }
@@ -1118,10 +1119,10 @@ impl Cluster {
             // node names + per-peer multi-host fallback. Use a throwaway
             // `Peers` so any pending generation produced here doesn't bleed
             // into the next tend cycle's accounting.
-            let mut harvest = Peers::new(16, 16);
+            let harvest = Peers::new(16, 16);
             harvest.set_gen_changed(false);
             harvest.reset_refresh_count();
-            if let Err(err) = seed_node.refresh_peers(&mut harvest).await {
+            if let Err(err) = seed_node.refresh_peers(&harvest).await {
                 self.record_seed_error(seed.clone(), &err);
                 log_error_chain!(err, "Seed peer fetch failed: {}", seed);
                 seed_node.close();
@@ -1302,7 +1303,7 @@ impl Cluster {
             }
         }
 
-        for node in self.nodes().iter() {
+        for node in &self.nodes() {
             node.metrics().reshape(&policy);
             node.metrics().set_enabled(true);
         }
@@ -1311,7 +1312,7 @@ impl Cluster {
     /// Disables metrics collection.
     pub fn disable_metrics(&self) {
         self.metrics_enabled.store(false, Ordering::Relaxed);
-        for node in self.nodes().iter() {
+        for node in &self.nodes() {
             node.metrics().set_enabled(false);
         }
     }
@@ -1321,6 +1322,7 @@ impl Cluster {
     /// Overlays the cluster's current dynamic `read`-section config (if any) onto a
     /// user-supplied policy. Returns the original borrowed when dynamic config is
     /// off or absent (zero cost); an owned, merged copy otherwise.
+    #[cfg_attr(not(feature = "dynamic-config"), allow(clippy::missing_const_for_fn))]
     pub(crate) fn resolve_read<'a>(&self, policy: &'a ReadPolicy) -> Cow<'a, ReadPolicy> {
         #[cfg(feature = "dynamic-config")]
         if let Some(dc) = self.dyn_config.get() {
@@ -1334,6 +1336,7 @@ impl Cluster {
     }
 
     /// As [`resolve_read`](Self::resolve_read) for the `write` section.
+    #[cfg_attr(not(feature = "dynamic-config"), allow(clippy::missing_const_for_fn))]
     pub(crate) fn resolve_write<'a>(&self, policy: &'a WritePolicy) -> Cow<'a, WritePolicy> {
         #[cfg(feature = "dynamic-config")]
         if let Some(dc) = self.dyn_config.get() {
@@ -1347,6 +1350,7 @@ impl Cluster {
     }
 
     /// As [`resolve_read`](Self::resolve_read) for the `query` section.
+    #[cfg_attr(not(feature = "dynamic-config"), allow(clippy::missing_const_for_fn))]
     pub(crate) fn resolve_query<'a>(&self, policy: &'a QueryPolicy) -> Cow<'a, QueryPolicy> {
         #[cfg(feature = "dynamic-config")]
         if let Some(dc) = self.dyn_config.get() {
@@ -1360,6 +1364,7 @@ impl Cluster {
     }
 
     /// As [`resolve_read`](Self::resolve_read) for the `batch` section.
+    #[cfg_attr(not(feature = "dynamic-config"), allow(clippy::missing_const_for_fn))]
     pub(crate) fn resolve_batch<'a>(&self, policy: &'a BatchPolicy) -> Cow<'a, BatchPolicy> {
         #[cfg(feature = "dynamic-config")]
         if let Some(dc) = self.dyn_config.get() {
@@ -1373,6 +1378,7 @@ impl Cluster {
     }
 
     /// As [`resolve_read`](Self::resolve_read) for the `txn_verify` section.
+    #[cfg_attr(not(feature = "dynamic-config"), allow(clippy::missing_const_for_fn))]
     pub(crate) fn resolve_txn_verify<'a>(
         &self,
         policy: &'a TxnVerifyPolicy,
@@ -1389,6 +1395,7 @@ impl Cluster {
     }
 
     /// As [`resolve_read`](Self::resolve_read) for the `txn_roll` section.
+    #[cfg_attr(not(feature = "dynamic-config"), allow(clippy::missing_const_for_fn))]
     pub(crate) fn resolve_txn_roll<'a>(&self, policy: &'a TxnRollPolicy) -> Cow<'a, TxnRollPolicy> {
         #[cfg(feature = "dynamic-config")]
         if let Some(dc) = self.dyn_config.get() {
@@ -1409,7 +1416,14 @@ impl Cluster {
     // handled by `patch_batch_wire`. No-ops when the feature/config is absent.
 
     /// Overlays the `batch_read` section onto a batch read's effective read policy.
-    #[cfg_attr(not(feature = "dynamic-config"), allow(unused_variables))]
+    #[cfg_attr(
+        not(feature = "dynamic-config"),
+        allow(
+            unused_variables,
+            clippy::missing_const_for_fn,
+            clippy::needless_pass_by_ref_mut
+        )
+    )]
     pub(crate) fn apply_batch_read(&self, policy: &mut ReadPolicy) {
         #[cfg(feature = "dynamic-config")]
         if let Some(dc) = self.dyn_config.get() {
@@ -1422,7 +1436,14 @@ impl Cluster {
     }
 
     /// Overlays the `batch_write` section onto a batch write's effective write policy.
-    #[cfg_attr(not(feature = "dynamic-config"), allow(unused_variables))]
+    #[cfg_attr(
+        not(feature = "dynamic-config"),
+        allow(
+            unused_variables,
+            clippy::missing_const_for_fn,
+            clippy::needless_pass_by_ref_mut
+        )
+    )]
     pub(crate) fn apply_batch_write(&self, policy: &mut WritePolicy) {
         #[cfg(feature = "dynamic-config")]
         if let Some(dc) = self.dyn_config.get() {
@@ -1434,7 +1455,14 @@ impl Cluster {
 
     /// Overlays the `batch_delete` section's `send_key`/`durable_delete` onto a
     /// batch delete's effective write policy.
-    #[cfg_attr(not(feature = "dynamic-config"), allow(unused_variables))]
+    #[cfg_attr(
+        not(feature = "dynamic-config"),
+        allow(
+            unused_variables,
+            clippy::missing_const_for_fn,
+            clippy::needless_pass_by_ref_mut
+        )
+    )]
     pub(crate) fn apply_batch_delete(&self, policy: &mut WritePolicy) {
         #[cfg(feature = "dynamic-config")]
         if let Some(dc) = self.dyn_config.get() {
@@ -1451,7 +1479,14 @@ impl Cluster {
 
     /// Overlays the `batch_udf` section's `send_key`/`durable_delete` onto a
     /// batch UDF's effective write policy.
-    #[cfg_attr(not(feature = "dynamic-config"), allow(unused_variables))]
+    #[cfg_attr(
+        not(feature = "dynamic-config"),
+        allow(
+            unused_variables,
+            clippy::missing_const_for_fn,
+            clippy::needless_pass_by_ref_mut
+        )
+    )]
     pub(crate) fn apply_batch_udf(&self, policy: &mut WritePolicy) {
         #[cfg(feature = "dynamic-config")]
         if let Some(dc) = self.dyn_config.get() {
@@ -1472,7 +1507,14 @@ impl Cluster {
     /// read modes, so this only affects reads). Per-section timeouts are
     /// command-level here and come from the already-resolved parent `batch`
     /// section. No-op when the feature/config is absent.
-    #[cfg_attr(not(feature = "dynamic-config"), allow(unused_variables))]
+    #[cfg_attr(
+        not(feature = "dynamic-config"),
+        allow(
+            unused_variables,
+            clippy::missing_const_for_fn,
+            clippy::needless_pass_by_ref_mut
+        )
+    )]
     pub(crate) fn patch_batch_wire(
         &self,
         parent: &mut BatchPolicy,
@@ -1710,7 +1752,7 @@ impl Cluster {
         // Live gauges per active node: pool walk + the circuit-breaker
         // window's current error count.
         let mut gauges_by_host: HashMap<String, (PoolGauges, u64)> = HashMap::new();
-        for node in nodes.iter() {
+        for node in &nodes {
             gauges_by_host.insert(
                 node.host().to_string(),
                 (node.pool_gauges(), node.error_rate_count() as u64),
@@ -1762,7 +1804,7 @@ impl Cluster {
         let app_id = client_policy.application_id.unwrap_or_default();
 
         let mut labels = Labels::new();
-        for node in self.nodes().iter() {
+        for node in &self.nodes() {
             let mut entries: HashMap<String, String> = HashMap::new();
             for label_map in user_labels.entries() {
                 for (k, v) in label_map {
@@ -1786,7 +1828,7 @@ impl Cluster {
     ///   refreshes also failed (refreshCount == 0).
     /// - Multi-node clusters: remove if referenceCount == 0 (not referenced by
     ///   any peer) AND either failing or not in partition map.
-    async fn find_nodes_to_remove(&self, peers: &Peers) {
+    fn find_nodes_to_remove(&self, peers: &Peers) {
         let refresh_count = peers.refresh_count();
         let nodes = self.nodes();
 

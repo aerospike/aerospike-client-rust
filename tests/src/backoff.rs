@@ -224,7 +224,7 @@ async fn batch_sequence_retry_resplits_when_breaker_open() {
     // again. The command must exhaust its retry budget (proving the loop
     // ran through the re-split branch) and surface the breaker error, with
     // the per-record results on the caller's rows.
-    use aerospike::{BatchOperation, BatchPolicy, BatchReadPolicy, Bins, ErrorKind};
+    use aerospike::{BatchOperation, BatchPolicy, BatchReadPolicy, Bins};
 
     let client = breaker_client(1).await;
     let namespace = common::namespace();

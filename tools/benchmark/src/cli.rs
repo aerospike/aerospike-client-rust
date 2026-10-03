@@ -438,11 +438,7 @@ fn from_cli(cli: Cli) -> Result<Options, String> {
                 .unwrap_or_default(),
         )),
         (None, None) => None,
-        _ => {
-            return Err(
-                "--udf-package and --udf-function must be specified together".to_string(),
-            )
-        }
+        _ => return Err("--udf-package and --udf-function must be specified together".to_string()),
     };
 
     let partition_ids = cli
@@ -463,7 +459,8 @@ fn from_cli(cli: Cli) -> Result<Options, String> {
         })
         .unwrap_or_default();
 
-    let duration_secs = parse_duration_secs(cli.duration, cli.transactions, workload_kind(&workload))?;
+    let duration_secs =
+        parse_duration_secs(cli.duration, cli.transactions, workload_kind(&workload))?;
 
     let options = Options {
         hosts: cli
@@ -471,9 +468,7 @@ fn from_cli(cli: Cli) -> Result<Options, String> {
             .or_else(|| env::var("AEROSPIKE_HOSTS").ok())
             .unwrap_or_else(|| String::from("127.0.0.1:3000")),
         user: cli.user,
-        password: cli
-            .password
-            .or_else(|| env::var("AEROSPIKE_PASSWORD").ok()),
+        password: cli.password.or_else(|| env::var("AEROSPIKE_PASSWORD").ok()),
         cluster_name: cli.cluster_name,
         namespace: cli.namespace,
         set: cli.set,
@@ -621,7 +616,9 @@ fn custom_validations(opts: &Options) -> Result<(), String> {
             return Err("--mrt-size cannot be combined with --batch-size".to_string());
         }
         if opts.workload == Workload::Initialize && opts.keys % (mrt as i64) != 0 {
-            return Err("--keys must be a multiple of --mrt-size for the Insert workload".to_string());
+            return Err(
+                "--keys must be a multiple of --mrt-size for the Insert workload".to_string(),
+            );
         }
     }
     if opts.udf.is_some() && opts.batch_size > 1 {

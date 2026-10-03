@@ -204,11 +204,7 @@ impl StreamCommand {
                     // No lock on this path: the tracker's record-facing state
                     // is atomics, and the partition set has a single writer —
                     // this command.
-                    if !self
-                        .sink
-                        .tracker()
-                        .allow_record(&mut self.node_partitions)
-                    {
+                    if !self.sink.tracker().allow_record(&mut self.node_partitions) {
                         continue 'outer;
                     }
 
@@ -341,8 +337,7 @@ impl StreamCommand {
                     let buf = conn.buffer();
                     let start = buf.data_offset();
                     if let Some(slice) = buf.data_buffer.get(start..start + data_size) {
-                        error_detail =
-                            crate::server_error::parse_error_detail(slice).map(Box::new);
+                        error_detail = crate::server_error::parse_error_detail(slice).map(Box::new);
                     }
                     conn.buffer().skip(data_size);
                 }

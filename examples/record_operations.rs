@@ -115,7 +115,10 @@ pub async fn run() {
     let _ = client.delete(&wpolicy, &missing).await;
     let mut replace_only = WritePolicy::default();
     replace_only.record_exists_action = RecordExistsAction::ReplaceOnly;
-    match client.put(&replace_only, &missing, &[as_bin!("b", 1)]).await {
+    match client
+        .put(&replace_only, &missing, &[as_bin!("b", 1)])
+        .await
+    {
         Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError) => {
             println!("replace: replace-only on missing record correctly rejected");
         }

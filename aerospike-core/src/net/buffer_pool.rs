@@ -83,7 +83,7 @@ impl std::fmt::Debug for TieredBufferPool {
             .field("max", &self.max)
             .field("tiers", &self.tiers.len())
             .field("retained_bytes", &self.retained_bytes())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

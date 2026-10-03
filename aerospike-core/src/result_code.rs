@@ -574,7 +574,6 @@ impl fmt::Display for ResultCode {
     }
 }
 
-
 /// Client-side error codes: the negative values a failure that never reached
 /// the server reports through [`Error::result_code`](crate::errors::Error::result_code).
 ///
@@ -672,31 +671,19 @@ impl ClientResultCode {
     /// Convert a client result code into a string.
     pub fn into_string(self) -> String {
         match self {
-            ClientResultCode::TxnAlreadyAborted => {
-                String::from("Transaction already aborted")
-            }
-            ClientResultCode::TxnAlreadyCommitted => {
-                String::from("Transaction already committed")
-            }
+            ClientResultCode::TxnAlreadyAborted => String::from("Transaction already aborted"),
+            ClientResultCode::TxnAlreadyCommitted => String::from("Transaction already committed"),
             ClientResultCode::TxnFailed => String::from("Transaction failed"),
-            ClientResultCode::BatchFailed => {
-                String::from("One or more keys failed in a batch")
-            }
-            ClientResultCode::NoResponse => {
-                String::from("No response received from server")
-            }
+            ClientResultCode::BatchFailed => String::from("One or more keys failed in a batch"),
+            ClientResultCode::NoResponse => String::from("No response received from server"),
             ClientResultCode::MaxErrorRate => String::from("Max errors limit reached"),
             ClientResultCode::MaxRetriesExceeded => String::from("Max retries exceeded"),
             ClientResultCode::SerializeError => String::from("Serialize error"),
-            ClientResultCode::AsyncQueueFull => {
-                String::from("Async delay queue is full")
-            }
+            ClientResultCode::AsyncQueueFull => String::from("Async delay queue is full"),
             ClientResultCode::ServerNotAvailable => {
                 String::from("Server is not accepting requests")
             }
-            ClientResultCode::NoMoreConnections => {
-                String::from("No more available connections")
-            }
+            ClientResultCode::NoMoreConnections => String::from("No more available connections"),
             ClientResultCode::QueryTerminated => String::from("Query was terminated"),
             ClientResultCode::ScanTerminated => String::from("Scan was terminated"),
             ClientResultCode::InvalidNodeError => String::from("Invalid node"),
@@ -790,7 +777,10 @@ mod tests {
     fn from_result_code() {
         assert_eq!(ResultCode::KeyNotFoundError, ResultCode::from(2u8));
         assert_eq!(ResultCode::InvalidEncoding, ResultCode::from(29u8));
-        assert_eq!(ResultCode::InvalidEncoding.to_string(), "Invalid UTF-8 encoding");
+        assert_eq!(
+            ResultCode::InvalidEncoding.to_string(),
+            "Invalid UTF-8 encoding"
+        );
     }
 
     #[test]

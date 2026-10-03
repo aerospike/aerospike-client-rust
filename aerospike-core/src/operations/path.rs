@@ -146,7 +146,9 @@ pub fn select_matching_tree(bin: &str, ctx: impl AsRef<[CdtContext]>) -> Operati
 }
 
 /// Convenience wrapper: modify with default flags, failing on type
-/// mismatches (`ModifyFlag::DEFAULT`). Equivalent to
+/// mismatches (`ModifyFlag::DEFAULT`).
+///
+/// Equivalent to
 /// `modify_by_path(bin, ModifyFlag::DEFAULT, exp, ctx)`.
 /// Requires Aerospike Server version >= 8.1.1.
 pub fn modify(bin: &str, exp: Expression, ctx: impl AsRef<[CdtContext]>) -> Operation {
@@ -160,7 +162,9 @@ pub fn modify_no_fail(bin: &str, exp: Expression, ctx: impl AsRef<[CdtContext]>)
     modify_by_path(bin, ModifyFlag::NO_FAIL, exp, ctx)
 }
 
-/// Convenience wrapper: remove the leaves resolved by a path. Equivalent
+/// Convenience wrapper: remove the leaves resolved by a path.
+///
+/// Equivalent
 /// to `modify_by_path(bin, ModifyFlag::DEFAULT, exp_remove_result(), ctx)`.
 /// Mirrors a common pattern (delete-by-filter / delete-by-key-set) that
 /// would otherwise require importing `expressions::exp_remove_result`.

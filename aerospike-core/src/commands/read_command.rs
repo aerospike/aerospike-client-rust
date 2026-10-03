@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use indexmap::map::Entry::{Occupied, Vacant};
 use crate::IndexMap;
+use indexmap::map::Entry::{Occupied, Vacant};
 use std::sync::Arc;
 
 use crate::cluster::partition::Partition;
@@ -128,7 +128,10 @@ impl<'a> ReadCommand<'a> {
             }
         }
 
-        Ok((Record::new(None, bins, results, generation, expiration), version))
+        Ok((
+            Record::new(None, bins, results, generation, expiration),
+            version,
+        ))
     }
 }
 
@@ -247,11 +250,7 @@ impl Command for ReadCommand<'_> {
                 // extended server error detail is surfaced (the server may
                 // attach it to KEY_NOT_FOUND / FILTERED_OUT responses).
                 let error_detail = conn.buffer.parse_response_fields(field_count).error_detail;
-                Err(Error::server_error(
-                    rc,
-                    conn.addr.clone(),
-                    error_detail,
-                ))
+                Err(Error::server_error(rc, conn.addr.clone(), error_detail))
             }
         }
     }

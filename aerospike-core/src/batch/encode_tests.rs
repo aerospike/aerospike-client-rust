@@ -52,7 +52,10 @@ fn row_of(shape: Shape, i: i64) -> (BatchOperation, usize) {
         Shape::Write => BatchOperation::write(
             &BatchWritePolicy::default(),
             key("test", "set"),
-            vec![operations::put(&Bin::new("w".to_string(), Value::from(1i64)))],
+            vec![operations::put(&Bin::new(
+                "w".to_string(),
+                Value::from(1i64),
+            ))],
         ),
     };
     (op, i as usize)
@@ -60,7 +63,10 @@ fn row_of(shape: Shape, i: i64) -> (BatchOperation, usize) {
 
 fn read_row(i: i64, bins: Bins) -> (BatchOperation, usize) {
     let key = Key::new("test", "set", Value::from(i)).unwrap();
-    (BatchOperation::read(&BatchReadPolicy::default(), key, bins), i as usize)
+    (
+        BatchOperation::read(&BatchReadPolicy::default(), key, bins),
+        i as usize,
+    )
 }
 
 /// Length of the encoded message body.
@@ -103,7 +109,10 @@ fn rows_with_different_bins_do_not_repeat() {
         read_row(1, Bins::from(["c", "d", "e"])),
     ];
     let grew_by = encoded_len(&batch) - one;
-    assert!(grew_by > REPEAT_ROW_SIZE, "a row with its own bin list wrote only a repeat row ({grew_by} bytes)");
+    assert!(
+        grew_by > REPEAT_ROW_SIZE,
+        "a row with its own bin list wrote only a repeat row ({grew_by} bytes)"
+    );
 }
 
 /// A repeat is only valid against the row immediately before it. An A, B, A
@@ -115,7 +124,11 @@ fn a_repeat_is_only_against_the_previous_row() {
     let b = || Bins::from(["c", "d", "e"]);
     let aa = encoded_len(&[read_row(0, a()), read_row(1, a())]);
     let aba = encoded_len(&[read_row(0, a()), read_row(1, b()), read_row(2, a())]);
-    assert!(aba - aa > REPEAT_ROW_SIZE, "row 2 repeated a row it does not directly follow (grew by {})", aba - aa);
+    assert!(
+        aba - aa > REPEAT_ROW_SIZE,
+        "row 2 repeated a row it does not directly follow (grew by {})",
+        aba - aa
+    );
 }
 
 /// Rows differing only by namespace share every other field, so the namespace
@@ -133,7 +146,10 @@ fn a_different_namespace_breaks_the_repeat() {
     );
     let one = encoded_len(&[read_row(0, bins())]);
     let two = encoded_len(&[read_row(0, bins()), other_ns]);
-    assert!(two - one > REPEAT_ROW_SIZE, "a row in another namespace repeated the previous row's header");
+    assert!(
+        two - one > REPEAT_ROW_SIZE,
+        "a row in another namespace repeated the previous row's header"
+    );
 }
 
 /// Random sequences of shapes, with a coin flip per row between "same shape as
@@ -146,7 +162,13 @@ fn a_different_namespace_breaks_the_repeat() {
 /// loop, the total would drift from the prediction.
 #[test]
 fn random_repeat_sequences_encode_to_the_predicted_size() {
-    const SHAPES: [Shape; 5] = [Shape::ReadA, Shape::ReadB, Shape::ReadOtherSet, Shape::ReadOtherNs, Shape::Write];
+    const SHAPES: [Shape; 5] = [
+        Shape::ReadA,
+        Shape::ReadB,
+        Shape::ReadOtherSet,
+        Shape::ReadOtherNs,
+        Shape::Write,
+    ];
     let base = encoded_len(&[]);
     let mut rng = Rng(0xD1B5_4A32_D192_ED03);
     let (mut repeats_seen, mut breaks_seen) = (0usize, 0usize);
@@ -158,10 +180,17 @@ fn random_repeat_sequences_encode_to_the_predicted_size() {
         let mut shapes: Vec<Shape> = Vec::with_capacity(n);
         for i in 0..n {
             let same = i > 0 && r.below(2) == 0;
-            shapes.push(if same { shapes[i - 1] } else { SHAPES[r.below(SHAPES.len())] });
+            shapes.push(if same {
+                shapes[i - 1]
+            } else {
+                SHAPES[r.below(SHAPES.len())]
+            });
         }
-        let rows: Vec<(BatchOperation, usize)> =
-            shapes.iter().enumerate().map(|(i, s)| row_of(*s, i as i64)).collect();
+        let rows: Vec<(BatchOperation, usize)> = shapes
+            .iter()
+            .enumerate()
+            .map(|(i, s)| row_of(*s, i as i64))
+            .collect();
 
         let mut expected = base;
         for i in 0..n {

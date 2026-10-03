@@ -55,7 +55,11 @@ fn random_bins(r: &mut Rng) -> Bins {
 
 /// v3 writes results into the caller's operations: run the batch and hand
 /// back the rows it produced, in input order.
-async fn run(client: &Client, policy: &BatchPolicy, mut ops: Vec<BatchOperation>) -> Result<Vec<BatchRecord>> {
+async fn run(
+    client: &Client,
+    policy: &BatchPolicy,
+    mut ops: Vec<BatchOperation>,
+) -> Result<Vec<BatchRecord>> {
     client.batch(policy, &mut ops).await?;
     Ok(ops.iter().map(|op| op.batch_record().clone()).collect())
 }
@@ -71,7 +75,9 @@ async fn write_values(client: &Client, keys: &[Key], value_of: impl Fn(usize) ->
                 BatchOperation::write(&bwp, k.clone(), vec![operations::put(&bin)])
             })
             .collect();
-        let recs = run(client, &BatchPolicy::default(), ops).await.expect("seed write");
+        let recs = run(client, &BatchPolicy::default(), ops)
+            .await
+            .expect("seed write");
         assert!(recs.iter().all(|r| r.result_code() == Some(ResultCode::Ok)));
     }
 }
@@ -85,13 +91,17 @@ async fn breaker_client(max_error_rate: usize) -> Client {
     policy.max_error_rate = max_error_rate;
     // Far longer than any test here, so the breaker never resets under us.
     policy.error_rate_window = 10_000;
-    Client::new(&policy, &common::hosts()).await.expect("connect for breaker test")
+    Client::new(&policy, &common::hosts())
+        .await
+        .expect("connect for breaker test")
 }
 
 async fn rack_client(rack: usize) -> Client {
     let mut policy = common::client_policy().clone();
     policy.rack_ids = Some(vec![rack]);
-    Client::new(&policy, &common::hosts()).await.expect("connect for rack test")
+    Client::new(&policy, &common::hosts())
+        .await
+        .expect("connect for rack test")
 }
 
 /// Node count and the namespace's replication factor, printed so a run's
@@ -112,7 +122,10 @@ async fn cluster_facts(client: &Client, namespace: &str) -> (usize, Option<usize
             }),
         None => None,
     };
-    println!("cluster: {} node(s), {namespace} replication-factor={rf:?}", nodes.len());
+    println!(
+        "cluster: {} node(s), {namespace} replication-factor={rf:?}",
+        nodes.len()
+    );
     (nodes.len(), rf)
 }
 
@@ -142,7 +155,12 @@ async fn random_mixed_batches_return_every_row_in_input_order() {
         let keys: Vec<Key> = (0..n).map(|i| as_key!(namespace, &set, i as i64)).collect();
 
         let written: Vec<bool> = (0..n).map(|_| r.chance(2)).collect();
-        let prewritten: Vec<Key> = keys.iter().zip(&written).filter(|(_, w)| **w).map(|(k, _)| k.clone()).collect();
+        let prewritten: Vec<Key> = keys
+            .iter()
+            .zip(&written)
+            .filter(|(_, w)| **w)
+            .map(|(k, _)| k.clone())
+            .collect();
         // Value = the key's index, so a wrong-slot row is detectable by value too.
         let index_of = |k: &Key| keys.iter().position(|x| x == k).unwrap() as i64;
         write_values(&client, &prewritten, |j| index_of(&prewritten[j])).await;
@@ -166,9 +184,15 @@ async fn random_mixed_batches_return_every_row_in_input_order() {
             .enumerate()
             .map(|(i, (kind, key))| match kind {
                 Kind::ReadSome => BatchOperation::read(&brp, key.clone(), Bins::from([V])),
-                Kind::ReadMore => BatchOperation::read(&brp, key.clone(), Bins::from([V, "absent"])),
+                Kind::ReadMore => {
+                    BatchOperation::read(&brp, key.clone(), Bins::from([V, "absent"]))
+                }
                 Kind::ReadAll => BatchOperation::read(&brp, key.clone(), Bins::All),
-                Kind::Write => BatchOperation::write(&bwp, key.clone(), vec![operations::put(&as_bin!(V, 1_000 + i as i64))]),
+                Kind::Write => BatchOperation::write(
+                    &bwp,
+                    key.clone(),
+                    vec![operations::put(&as_bin!(V, 1_000 + i as i64))],
+                ),
                 Kind::Delete => BatchOperation::delete(&bdp, key.clone()),
             })
             .collect();
@@ -189,20 +213,44 @@ async fn random_mixed_batches_return_every_row_in_input_order() {
             };
             assert_eq!(recs[i].result_code(), Some(expected), "{row}: result code");
             if matches!(kinds[i], Kind::ReadSome | Kind::ReadMore | Kind::ReadAll) && written[i] {
-                assert_eq!(bin_value(&recs[i]), Some(Value::from(i as i64)), "{row}: read returned another row's value");
+                assert_eq!(
+                    bin_value(&recs[i]),
+                    Some(Value::from(i as i64)),
+                    "{row}: read returned another row's value"
+                );
             }
         }
 
         // The writes and deletes must have landed on the right keys.
-        let verify: Vec<_> = keys.iter().map(|k| BatchOperation::read(&brp, k.clone(), Bins::All)).collect();
+        let verify: Vec<_> = keys
+            .iter()
+            .map(|k| BatchOperation::read(&brp, k.clone(), Bins::All))
+            .collect();
         let after = run(&client, &BatchPolicy::default(), verify).await.unwrap();
         for i in 0..n {
-            let row = format!("{ctx} verify row {i} kind {:?} written={}", kinds[i], written[i]);
+            let row = format!(
+                "{ctx} verify row {i} kind {:?} written={}",
+                kinds[i], written[i]
+            );
             match kinds[i] {
-                Kind::Write => assert_eq!(bin_value(&after[i]), Some(Value::from(1_000 + i as i64)), "{row}"),
-                Kind::Delete => assert_eq!(after[i].result_code(), Some(ResultCode::KeyNotFoundError), "{row}"),
-                _ if written[i] => assert_eq!(bin_value(&after[i]), Some(Value::from(i as i64)), "{row}"),
-                _ => assert_eq!(after[i].result_code(), Some(ResultCode::KeyNotFoundError), "{row}"),
+                Kind::Write => assert_eq!(
+                    bin_value(&after[i]),
+                    Some(Value::from(1_000 + i as i64)),
+                    "{row}"
+                ),
+                Kind::Delete => assert_eq!(
+                    after[i].result_code(),
+                    Some(ResultCode::KeyNotFoundError),
+                    "{row}"
+                ),
+                _ if written[i] => {
+                    assert_eq!(bin_value(&after[i]), Some(Value::from(i as i64)), "{row}")
+                }
+                _ => assert_eq!(
+                    after[i].result_code(),
+                    Some(ResultCode::KeyNotFoundError),
+                    "{row}"
+                ),
             }
         }
     }
@@ -226,13 +274,31 @@ async fn random_batches_with_unroutable_rows_land_at_their_index() {
         // Row 0 always routable so the batch as a whole is valid.
         let unroutable: Vec<bool> = (0..n).map(|i| i > 0 && r.chance(5)).collect();
         let keys: Vec<Key> = (0..n)
-            .map(|i| as_key!(if unroutable[i] { bogus_ns.as_str() } else { namespace }, &set, i as i64))
+            .map(|i| {
+                as_key!(
+                    if unroutable[i] {
+                        bogus_ns.as_str()
+                    } else {
+                        namespace
+                    },
+                    &set,
+                    i as i64
+                )
+            })
             .collect();
-        let routable: Vec<Key> = keys.iter().zip(&unroutable).filter(|(_, u)| !**u).map(|(k, _)| k.clone()).collect();
+        let routable: Vec<Key> = keys
+            .iter()
+            .zip(&unroutable)
+            .filter(|(_, u)| !**u)
+            .map(|(k, _)| k.clone())
+            .collect();
         let index_of = |k: &Key| keys.iter().position(|x| x == k).unwrap() as i64;
         write_values(&client, &routable, |j| index_of(&routable[j])).await;
 
-        let ops: Vec<_> = keys.iter().map(|k| BatchOperation::read(&brp, k.clone(), random_bins(&mut r))).collect();
+        let ops: Vec<_> = keys
+            .iter()
+            .map(|k| BatchOperation::read(&brp, k.clone(), random_bins(&mut r)))
+            .collect();
         let recs = run(&client, &BatchPolicy::default(), ops)
             .await
             .unwrap_or_else(|e| panic!("seed {seed}: batch failed: {e}"));
@@ -246,23 +312,52 @@ async fn random_batches_with_unroutable_rows_land_at_their_index() {
                 // v3 maps the routing failure onto the server code for the same
                 // condition; an unknown namespace is INVALID_NAMESPACE.
                 assert!(
-                    matches!(recs[i].result_code(), Some(ResultCode::InvalidNamespace | ResultCode::PartitionUnavailable)),
-                    "{row}: unexpected code {:?}", recs[i].result_code()
+                    matches!(
+                        recs[i].result_code(),
+                        Some(ResultCode::InvalidNamespace | ResultCode::PartitionUnavailable)
+                    ),
+                    "{row}: unexpected code {:?}",
+                    recs[i].result_code()
                 );
-                assert!(recs[i].record.is_none(), "{row}: unroutable row carried a record");
-                assert!(!recs[i].in_doubt(), "{row}: nothing was sent, so never in doubt");
+                assert!(
+                    recs[i].record.is_none(),
+                    "{row}: unroutable row carried a record"
+                );
+                assert!(
+                    !recs[i].in_doubt(),
+                    "{row}: nothing was sent, so never in doubt"
+                );
             } else {
                 assert_eq!(recs[i].result_code(), Some(ResultCode::Ok), "{row}");
-                assert_eq!(bin_value(&recs[i]), Some(Value::from(i as i64)), "{row}: value");
+                assert_eq!(
+                    bin_value(&recs[i]),
+                    Some(Value::from(i as i64)),
+                    "{row}: value"
+                );
             }
         }
     }
 
     // Nothing routable: the routing error is the result, not an empty batch.
     let all_bogus: Vec<_> = (0..5)
-        .map(|i| BatchOperation::read(&brp, as_key!(format!("nx_{}", common::rand_str(6)).as_str(), "s", i as i64), Bins::All))
+        .map(|i| {
+            BatchOperation::read(
+                &brp,
+                as_key!(
+                    format!("nx_{}", common::rand_str(6)).as_str(),
+                    "s",
+                    i as i64
+                ),
+                Bins::All,
+            )
+        })
         .collect();
-    assert!(run(&client, &BatchPolicy::default(), all_bogus).await.is_err(), "a batch with no routable key must fail");
+    assert!(
+        run(&client, &BatchPolicy::default(), all_bogus)
+            .await
+            .is_err(),
+        "a batch with no routable key must fail"
+    );
 }
 
 /// The same random read batch under Master, Sequence and PreferRack must
@@ -277,7 +372,12 @@ async fn same_random_read_batch_agrees_across_replica_policies() {
     let brp = BatchReadPolicy::default();
 
     type Row = (Key, Option<ResultCode>, Vec<(String, Value)>);
-    async fn rows(client: &Client, replica: Replica, ops: &[BatchOperation], seed: u64) -> Vec<Row> {
+    async fn rows(
+        client: &Client,
+        replica: Replica,
+        ops: &[BatchOperation],
+        seed: u64,
+    ) -> Vec<Row> {
         let mut policy = BatchPolicy::default();
         policy.replica = replica;
         run(client, &policy, ops.to_vec())
@@ -286,7 +386,10 @@ async fn same_random_read_batch_agrees_across_replica_policies() {
             .into_iter()
             .map(|rec| {
                 let rc = rec.result_code();
-                let mut bins: Vec<(String, Value)> = rec.record.map(|rr| rr.bins.into_iter().collect()).unwrap_or_default();
+                let mut bins: Vec<(String, Value)> = rec
+                    .record
+                    .map(|rr| rr.bins.into_iter().collect())
+                    .unwrap_or_default();
                 bins.sort_by(|a, b| a.0.cmp(&b.0));
                 (rec.key, rc, bins)
             })
@@ -299,19 +402,32 @@ async fn same_random_read_batch_agrees_across_replica_policies() {
         let n = 1 + r.below(400);
         let keys: Vec<Key> = (0..n).map(|i| as_key!(namespace, &set, i as i64)).collect();
         write_values(&master, &keys, |i| i as i64).await;
-        let ops: Vec<_> = keys.iter().map(|k| BatchOperation::read(&brp, k.clone(), random_bins(&mut r))).collect();
+        let ops: Vec<_> = keys
+            .iter()
+            .map(|k| BatchOperation::read(&brp, k.clone(), random_bins(&mut r)))
+            .collect();
 
         let by_master = rows(&master, Replica::Master, &ops, seed).await;
         let by_sequence = rows(&master, Replica::Sequence, &ops, seed).await;
         let by_rack = rows(&rack, Replica::PreferRack, &ops, seed).await;
 
         assert_eq!(by_master.len(), n, "seed {seed}: row count");
-        assert_eq!(by_master, by_sequence, "seed {seed}: Master vs Sequence differ");
-        assert_eq!(by_master, by_rack, "seed {seed}: Master vs PreferRack differ");
+        assert_eq!(
+            by_master, by_sequence,
+            "seed {seed}: Master vs Sequence differ"
+        );
+        assert_eq!(
+            by_master, by_rack,
+            "seed {seed}: Master vs PreferRack differ"
+        );
         for (i, (key, rc, bins)) in by_master.iter().enumerate() {
             assert_eq!(*key, keys[i], "seed {seed} row {i}: order");
             assert_eq!(*rc, Some(ResultCode::Ok), "seed {seed} row {i}: code");
-            assert!(bins.iter().any(|(b, v)| b == V && *v == Value::from(i as i64)), "seed {seed} row {i}: value");
+            assert!(
+                bins.iter()
+                    .any(|(b, v)| b == V && *v == Value::from(i as i64)),
+                "seed {seed} row {i}: value"
+            );
         }
     }
     rack.close().await.unwrap();
@@ -330,7 +446,9 @@ async fn sequence_retry_resplits_onto_the_next_replica_and_succeeds() {
     let namespace = common::namespace();
     let (node_count, rf) = cluster_facts(&client, namespace).await;
     if node_count < 2 || rf.is_some_and(|rf| rf < 2) {
-        println!("SKIP: needs >= 2 nodes and replication-factor >= 2 (have {node_count}, rf {rf:?})");
+        println!(
+            "SKIP: needs >= 2 nodes and replication-factor >= 2 (have {node_count}, rf {rf:?})"
+        );
         client.close().await.unwrap();
         return;
     }
@@ -342,7 +460,9 @@ async fn sequence_retry_resplits_onto_the_next_replica_and_succeeds() {
     policy.base_policy.total_timeout = 10_000;
 
     let set = common::rand_str(10);
-    let keys: Vec<Key> = (0..200).map(|i| as_key!(namespace, &set, i as i64)).collect();
+    let keys: Vec<Key> = (0..200)
+        .map(|i| as_key!(namespace, &set, i as i64))
+        .collect();
     write_values(&client, &keys, |i| i as i64).await;
 
     let tripped = client.cluster.nodes()[0].clone();
@@ -352,36 +472,64 @@ async fn sequence_retry_resplits_onto_the_next_replica_and_succeeds() {
     let trips_before = tripped.error_rate_count();
 
     let mut r = Rng::new(0x5EED);
-    let ops: Vec<_> = keys.iter().map(|k| BatchOperation::read(&brp, k.clone(), random_bins(&mut r))).collect();
+    let ops: Vec<_> = keys
+        .iter()
+        .map(|k| BatchOperation::read(&brp, k.clone(), random_bins(&mut r)))
+        .collect();
 
     // No retry budget: the group on the tripped node is refused. On v3 that is
     // a per-row outcome (the call may succeed with those rows marked) or a
     // call-level error; either way not every row can be Ok.
     policy.base_policy.max_retries = 0;
     let no_retry = run(&client, &policy, ops.clone()).await;
-    let all_ok = no_retry.as_ref().map(|recs| recs.iter().all(|x| x.result_code() == Some(ResultCode::Ok))).unwrap_or(false);
-    assert!(!all_ok, "with max_retries = 0 the keys on the tripped node cannot all succeed");
+    let all_ok = no_retry
+        .as_ref()
+        .map(|recs| recs.iter().all(|x| x.result_code() == Some(ResultCode::Ok)))
+        .unwrap_or(false);
+    assert!(
+        !all_ok,
+        "with max_retries = 0 the keys on the tripped node cannot all succeed"
+    );
 
     // With retries the re-split routes those keys to the next replica.
     policy.base_policy.max_retries = 3;
-    let recs = run(&client, &policy, ops).await.expect("the retry must re-route onto the healthy replica");
+    let recs = run(&client, &policy, ops)
+        .await
+        .expect("the retry must re-route onto the healthy replica");
     assert_eq!(recs.len(), keys.len());
     for (i, rec) in recs.iter().enumerate() {
         assert_eq!(rec.key, keys[i], "row {i}: order after re-split");
         assert_eq!(rec.result_code(), Some(ResultCode::Ok), "row {i}: code");
-        assert_eq!(bin_value(rec), Some(Value::from(i as i64)), "row {i}: value");
+        assert_eq!(
+            bin_value(rec),
+            Some(Value::from(i as i64)),
+            "row {i}: value"
+        );
     }
-    assert_eq!(tripped.error_rate_count(), trips_before, "retry attempts must not feed the breaker");
+    assert_eq!(
+        tripped.error_rate_count(),
+        trips_before,
+        "retry attempts must not feed the breaker"
+    );
 
     for seed in 1..=3u64 {
         let mut r = Rng::new(seed.wrapping_mul(0x2545_F491_4F6C_DD1D));
         let n = 1 + r.below(150);
-        let sub: Vec<_> = keys[..n].iter().map(|k| BatchOperation::read(&brp, k.clone(), random_bins(&mut r))).collect();
-        let recs = run(&client, &policy, sub).await.unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+        let sub: Vec<_> = keys[..n]
+            .iter()
+            .map(|k| BatchOperation::read(&brp, k.clone(), random_bins(&mut r)))
+            .collect();
+        let recs = run(&client, &policy, sub)
+            .await
+            .unwrap_or_else(|e| panic!("seed {seed}: {e}"));
         assert_eq!(recs.len(), n, "seed {seed}");
         for (i, rec) in recs.iter().enumerate() {
             assert_eq!(rec.key, keys[i], "seed {seed} row {i}: order");
-            assert_eq!(bin_value(rec), Some(Value::from(i as i64)), "seed {seed} row {i}: value");
+            assert_eq!(
+                bin_value(rec),
+                Some(Value::from(i as i64)),
+                "seed {seed} row {i}: value"
+            );
         }
     }
     client.close().await.unwrap();
@@ -396,13 +544,17 @@ async fn arc_node_refcounts_return_to_baseline_after_many_random_batches() {
     let brp = BatchReadPolicy::default();
 
     let set = common::rand_str(10);
-    let keys: Vec<Key> = (0..300).map(|i| as_key!(namespace, &set, i as i64)).collect();
+    let keys: Vec<Key> = (0..300)
+        .map(|i| as_key!(namespace, &set, i as i64))
+        .collect();
     write_values(&client, &keys, |i| i as i64).await;
 
     // Background work — tend, pool fill, a just-finished batch's tasks — can
     // hold a node briefly, so both readings are the minimum over a settle window.
     async fn settled(client: &Client) -> Vec<usize> {
-        let snap = |c: &Client| -> Vec<usize> { c.cluster.nodes().iter().map(Arc::strong_count).collect() };
+        let snap = |c: &Client| -> Vec<usize> {
+            c.cluster.nodes().iter().map(Arc::strong_count).collect()
+        };
         let mut best = snap(client);
         for _ in 0..6 {
             sleep(Duration::from_millis(300)).await;
@@ -420,12 +572,20 @@ async fn arc_node_refcounts_return_to_baseline_after_many_random_batches() {
         let bogus = format!("nx_{}", common::rand_str(4));
         let ops = (0..n)
             .map(|i| {
-                let key = if i > 0 && r.chance(6) { as_key!(bogus.as_str(), &set, i as i64) } else { keys[i].clone() };
+                let key = if i > 0 && r.chance(6) {
+                    as_key!(bogus.as_str(), &set, i as i64)
+                } else {
+                    keys[i].clone()
+                };
                 BatchOperation::read(&brp, key, random_bins(r))
             })
             .collect();
         let mut policy = BatchPolicy::default();
-        policy.replica = if r.chance(2) { Replica::Master } else { Replica::Sequence };
+        policy.replica = if r.chance(2) {
+            Replica::Master
+        } else {
+            Replica::Sequence
+        };
         (policy, ops)
     };
 
@@ -446,5 +606,8 @@ async fn arc_node_refcounts_return_to_baseline_after_many_random_batches() {
 
     let after = settled(&client).await;
     println!("node Arc strong counts: baseline {baseline:?} after {after:?}");
-    assert_eq!(after, baseline, "Arc<Node> references leaked out of the batch path");
+    assert_eq!(
+        after, baseline,
+        "Arc<Node> references leaked out of the batch path"
+    );
 }

@@ -7,19 +7,19 @@ use proptest::prelude::*;
 pub fn valid_bin_name() -> impl Strategy<Value = String> {
     prop::string::string_regex("[\\w\\d]{1,3}")
         .unwrap()
-        .prop_filter("max 14 bytes", |s| s.bytes().len() <= 14)
+        .prop_filter("max 14 bytes", |s| s.len() <= 14)
 }
 
 pub fn latin_bin_name() -> impl Strategy<Value = String> {
     prop::string::string_regex("[A-Za-z0-9]{1,14}")
         .unwrap()
-        .prop_filter("max 14 bytes", |s| s.bytes().len() <= 14)
+        .prop_filter("max 14 bytes", |s| s.len() <= 14)
 }
 
 pub fn long_latin_bin_name() -> impl Strategy<Value = String> {
     prop::string::string_regex("[A-Za-z0-9]{8,10}")
         .unwrap()
-        .prop_filter("max 14 bytes", |s| s.bytes().len() <= 14)
+        .prop_filter("max 14 bytes", |s| s.len() <= 14)
 }
 
 prop_compose! {
@@ -38,7 +38,7 @@ pub fn bins(n: u8) -> impl Strategy<Value = Bins> {
     prop_oneof![
         Just(Bins::None),
         Just(Bins::All),
-        bin_names(n).prop_map(|bins| Bins::Some(bins)),
+        bin_names(n).prop_map(Bins::Some),
     ]
 }
 
@@ -46,7 +46,7 @@ pub fn latin_bins(n: u8) -> impl Strategy<Value = Bins> {
     prop_oneof![
         // Just(Bins::None),
         Just(Bins::All),
-        latin_bin_names(n).prop_map(|bins| Bins::Some(bins)),
+        latin_bin_names(n).prop_map(Bins::Some),
     ]
 }
 

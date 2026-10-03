@@ -30,10 +30,8 @@ proptest_async::proptest! {
         assert_eq!(*rec.bins.get("bin").unwrap(), val);
 
         let values = vec![as_val!(v1), as_val!(v2), as_val!(v3)];
-        let ops = &vec![
-            lists::insert_items(&lpolicy, "bin", 1, values),
-            operations::get_bin("bin"),
-        ];
+        let ops = &[lists::insert_items(&lpolicy, "bin", 1, values),
+            operations::get_bin("bin")];
         let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
         assert_eq!(
             *rec.bins.get("bin").unwrap(),

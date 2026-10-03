@@ -63,7 +63,9 @@ pub fn value_to_lua(lua: &Lua, value: Value) -> mlua::Result<LuaValue> {
         }),
         Value::String(s) => LuaValue::String(lua.create_string(&s)?),
         Value::GeoJSON(s) => LuaValue::UserData(lua.create_userdata(LuaGeoJSON(s))?),
-        Value::Blob(b) => {
+        // An opaque foreign payload has no Lua notion either, so it travels
+        // as plain bytes like a blob.
+        Value::Blob(b) | Value::Unknown(_, b) => {
             LuaValue::UserData(lua.create_userdata(LuaBytes::new(b, ParticleType::BLOB))?)
         }
         Value::HLL(b) => {
@@ -86,11 +88,6 @@ pub fn value_to_lua(lua: &Lua, value: Value) -> mlua::Result<LuaValue> {
             return Err(mlua::Error::runtime(
                 "Infinity/Wildcard values cannot be passed to Lua",
             ))
-        }
-        // Opaque foreign payload: Lua has no notion of unknown particle
-        // types, so surface it as plain bytes (like blobs).
-        Value::Unknown(_, b) => {
-            LuaValue::UserData(lua.create_userdata(LuaBytes::new(b, ParticleType::BLOB))?)
         }
     })
 }

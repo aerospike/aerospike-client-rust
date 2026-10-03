@@ -20,9 +20,10 @@ static INIT_LOGGER: Once = Once::new();
 
 pub(crate) fn init_test_logger() {
     INIT_LOGGER.call_once(|| {
-        let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("error"))
-            .is_test(true)
-            .try_init();
+        let _ =
+            env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("error"))
+                .is_test(true)
+                .try_init();
     });
 }
 #[cfg(feature = "tls")]

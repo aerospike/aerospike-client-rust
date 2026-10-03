@@ -193,13 +193,10 @@ pub fn pack_cdt_create_op(
     cdt_op: &CdtOperation,
     ctx: &[CdtContext],
 ) -> Result<usize> {
-    let (order_flag, args) = match cdt_op.args.split_first() {
-        Some((&CdtArgument::Byte(flag), rest)) => (flag, rest),
-        _ => {
-            return Err(Error::invalid_argument(
-                "CDT create op requires a leading order-flag byte argument",
-            ))
-        }
+    let Some((&CdtArgument::Byte(order_flag), args)) = cdt_op.args.split_first() else {
+        return Err(Error::invalid_argument(
+            "CDT create op requires a leading order-flag byte argument",
+        ));
     };
 
     let mut size: usize = 0;

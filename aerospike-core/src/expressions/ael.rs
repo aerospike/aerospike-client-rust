@@ -22,7 +22,7 @@ use crate::{Error, Result};
 use super::from_packed_bytes;
 use super::Expression;
 
-/// First element of the root MessagePack array: server compiles the UTF-8 AEL string.
+/// First element of the root `MessagePack` array: server compiles the UTF-8 AEL string.
 pub const SERVER_COMPILED_AEL_EXPRESSION_OP: i64 = 128;
 
 /// Writes the AEL source as a `MessagePack` **bin** — `0xc4`/`0xc5`/`0xc6` by
@@ -83,9 +83,7 @@ fn pack_ael_text(buf: &mut Option<&mut Buffer>, text: &str) -> usize {
 /// ```
 pub fn from_ael(text: &str) -> Result<Expression> {
     if text.is_empty() {
-        return Err(Error::invalid_argument(
-            "AEL source text must not be empty",
-        ));
+        return Err(Error::invalid_argument("AEL source text must not be empty"));
     }
 
     let mut size = 0;
@@ -106,7 +104,8 @@ pub fn from_ael(text: &str) -> Result<Expression> {
 }
 
 /// Build a filter [`Expression`] for the AEL wire form: a two-element
-/// MessagePack array `[`[`SERVER_COMPILED_AEL_EXPRESSION_OP`]`, <ael bin>]`.
+/// `MessagePack` array whose first element is
+/// [`SERVER_COMPILED_AEL_EXPRESSION_OP`] and whose second is the AEL bin.
 ///
 /// The earlier name for [`from_ael`], kept working; new code should use
 /// `from_ael`.

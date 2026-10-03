@@ -283,8 +283,7 @@ impl<'a> SingleCommand<'a> {
             let mut conn = match node.get_connection(cmd.hint()).await {
                 Ok(conn) => conn,
                 Err(err)
-                    if err.is_pool_empty()
-                        && pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS =>
+                    if err.is_pool_empty() && pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS =>
                 {
                     // A background task is opening a connection. This is a
                     // pacing wait, not a failure: it consumes neither the
@@ -377,8 +376,11 @@ impl<'a> SingleCommand<'a> {
             // the bytes that arrived.
             if metrics_on {
                 if let Some(ns) = cmd_namespace.as_deref() {
-                    node.metrics()
-                        .record_bytes_received(ns, cmd_type, conn.bytes_received() as u64);
+                    node.metrics().record_bytes_received(
+                        ns,
+                        cmd_type,
+                        conn.bytes_received() as u64,
+                    );
                 }
             }
             if let Err(err) = parse_result {

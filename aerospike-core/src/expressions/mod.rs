@@ -134,6 +134,8 @@ pub(crate) enum ExpOp {
 
 pub(crate) const MODIFY: i64 = 0x40;
 
+// `Value` is the common argument; boxing it would cost an allocation per node.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ExpressionArgument {
     Value(Value),
@@ -440,7 +442,6 @@ impl Expression {
     /// Used when an expression context needs to be encoded as binary bytes within CDT operations.
     /// Calls `size()` to determine the expression size without pre-allocating, then writes
     /// the binary header and the expression bytes lazily.
-    #[must_use]
     pub(crate) fn pack_binary(&self, buf: &mut Option<&mut Buffer>) -> Result<usize> {
         let exp_size = self.size()?;
         let header_size = if exp_size < 256 {
@@ -492,7 +493,9 @@ pub fn from_base64(b64: &str) -> Result<Expression> {
     Ok(from_packed_bytes(bytes))
 }
 
-/// Build an expression from already-packed wire bytes. Used when restoring
+/// Build an expression from already-packed wire bytes.
+///
+/// Used when restoring
 /// an expression-form CDT context entry from `ctx_from_bytes` — we don't
 /// re-parse the expression structure, we just keep the raw bytes so a
 /// later pack emits them verbatim. Mirrors what `from_base64` does, minus
@@ -1851,324 +1854,6 @@ pub const fn unknown() -> Expression {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // The generic `bin(name, type)` accessor packs identically to the
-    // corresponding typed accessor (Java Exp.bin parity).
-    #[test]
-    fn generic_bin_matches_typed_accessors() {
-        assert_eq!(
-            bin("a".to_string(), ExpType::INT).base64().unwrap(),
-            int_bin("a".to_string()).base64().unwrap()
-        );
-        assert_eq!(
-            bin("a".to_string(), ExpType::STRING).base64().unwrap(),
-            string_bin("a".to_string()).base64().unwrap()
-        );
-        assert_ne!(
-            bin("a".to_string(), ExpType::FLOAT).base64().unwrap(),
-            int_bin("a".to_string()).base64().unwrap()
-        );
-    }
-
-    #[test]
-    fn base64_roundtrip_int_eq() {
-        let expr = eq(int_bin("bin".to_string()), int_val(42));
-        let b64 = expr.base64().unwrap();
-        assert!(!b64.is_empty());
-
-        let decoded = from_base64(&b64).unwrap();
-        let re_encoded = decoded.base64().unwrap();
-        assert_eq!(b64, re_encoded);
-    }
-
-    #[test]
-    fn base64_roundtrip_string_compare() {
-        let expr = eq(
-            string_bin("name".to_string()),
-            string_val("hello".to_string()),
-        );
-        let b64 = expr.base64().unwrap();
-
-        let decoded = from_base64(&b64).unwrap();
-        let re_encoded = decoded.base64().unwrap();
-        assert_eq!(b64, re_encoded);
-    }
-
-    #[test]
-    fn base64_roundtrip_complex_expression() {
-        let expr = and(vec![
-            gt(int_bin("age".to_string()), int_val(18)),
-            lt(int_bin("age".to_string()), int_val(65)),
-            eq(
-                string_bin("status".to_string()),
-                string_val("active".to_string()),
-            ),
-        ]);
-        let b64 = expr.base64().unwrap();
-
-        let decoded = from_base64(&b64).unwrap();
-        let re_encoded = decoded.base64().unwrap();
-        assert_eq!(b64, re_encoded);
-    }
-
-    #[test]
-    fn from_base64_invalid_input() {
-        let result = from_base64("not-valid-base64!!!");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn base64_roundtrip_bool_and_float() {
-        let expr = or(vec![
-            eq(float_bin("score".to_string()), float_val(3.14)),
-            bool_val(true),
-        ]);
-        let b64 = expr.base64().unwrap();
-
-        let decoded = from_base64(&b64).unwrap();
-        let re_encoded = decoded.base64().unwrap();
-        assert_eq!(b64, re_encoded);
-    }
-
-    // ===== Path-expression convenience wrappers =====
-    //
-    // These tests assert byte-for-byte equality between each wrapper and
-    // the explicit `exp_select_by_path` / `exp_modify_by_path` form it
-    // shadows. That way every shorthand stays in lock-step with the raw
-    // API even if SelectFlag / ModifyFlag values shift later.
-
-    use crate::operations::cdt_context::{ctx_map_key, Path};
-    use crate::operations::path::{ModifyFlag, SelectFlag};
-    use crate::value::Value;
-
-    fn sample_path() -> Path {
-        Path::new().map_key("book").all_children()
-    }
-
-    #[test]
-    fn exp_select_by_path_accepts_path_builder() {
-        // `Path` should slot in directly because it implements
-        // AsRef<[CdtContext]>.
-        let path = sample_path();
-        let direct = exp_select_by_path(
-            ExpType::LIST,
-            SelectFlag::VALUE,
-            list_bin("b".into()),
-            &path,
-        )
-        .base64()
-        .unwrap();
-        let via_slice = exp_select_by_path(
-            ExpType::LIST,
-            SelectFlag::VALUE,
-            list_bin("b".into()),
-            path.as_slice(),
-        )
-        .base64()
-        .unwrap();
-        assert_eq!(direct, via_slice);
-    }
-
-    #[test]
-    fn exp_select_values_matches_raw_value_flag() {
-        let ctx = vec![ctx_map_key(Value::from("book"))];
-        let wrapper = exp_select_values(ExpType::LIST, list_bin("b".into()), &ctx)
-            .base64()
-            .unwrap();
-        let raw = exp_select_by_path(
-            ExpType::LIST,
-            SelectFlag::VALUE,
-            list_bin("b".into()),
-            ctx.as_slice(),
-        )
-        .base64()
-        .unwrap();
-        assert_eq!(wrapper, raw);
-    }
-
-    #[test]
-    fn exp_select_map_keys_matches_raw_map_key_flag() {
-        let ctx = vec![ctx_map_key(Value::from("book"))];
-        let wrapper = exp_select_map_keys(ExpType::LIST, map_bin("m".into()), &ctx)
-            .base64()
-            .unwrap();
-        let raw = exp_select_by_path(
-            ExpType::LIST,
-            SelectFlag::MAP_KEY,
-            map_bin("m".into()),
-            ctx.as_slice(),
-        )
-        .base64()
-        .unwrap();
-        assert_eq!(wrapper, raw);
-    }
-
-    #[test]
-    fn exp_select_map_entries_matches_raw_map_key_value_flag() {
-        let ctx = vec![ctx_map_key(Value::from("book"))];
-        let wrapper = exp_select_map_entries(ExpType::LIST, map_bin("m".into()), &ctx)
-            .base64()
-            .unwrap();
-        let raw = exp_select_by_path(
-            ExpType::LIST,
-            SelectFlag::MAP_KEY_VALUE,
-            map_bin("m".into()),
-            ctx.as_slice(),
-        )
-        .base64()
-        .unwrap();
-        assert_eq!(wrapper, raw);
-    }
-
-    #[test]
-    fn exp_select_matching_tree_matches_raw_matching_tree_flag() {
-        let ctx = vec![ctx_map_key(Value::from("book"))];
-        let wrapper = exp_select_matching_tree(ExpType::MAP, map_bin("m".into()), &ctx)
-            .base64()
-            .unwrap();
-        let raw = exp_select_by_path(
-            ExpType::MAP,
-            SelectFlag::MATCHING_TREE,
-            map_bin("m".into()),
-            ctx.as_slice(),
-        )
-        .base64()
-        .unwrap();
-        assert_eq!(wrapper, raw);
-    }
-
-    #[test]
-    fn exp_modify_matches_raw_default_flag() {
-        let ctx = vec![ctx_map_key(Value::from("book"))];
-        let modify_exp = int_val(7);
-        let wrapper = exp_modify(ExpType::MAP, map_bin("m".into()), modify_exp.clone(), &ctx)
-            .base64()
-            .unwrap();
-        let raw = exp_modify_by_path(
-            ExpType::MAP,
-            ModifyFlag::DEFAULT,
-            map_bin("m".into()),
-            modify_exp,
-            ctx.as_slice(),
-        )
-        .base64()
-        .unwrap();
-        assert_eq!(wrapper, raw);
-    }
-
-    #[test]
-    fn exp_modify_no_fail_matches_raw_no_fail_flag() {
-        let ctx = vec![ctx_map_key(Value::from("book"))];
-        let modify_exp = int_val(7);
-        let wrapper =
-            exp_modify_no_fail(ExpType::MAP, map_bin("m".into()), modify_exp.clone(), &ctx)
-                .base64()
-                .unwrap();
-        let raw = exp_modify_by_path(
-            ExpType::MAP,
-            ModifyFlag::NO_FAIL,
-            map_bin("m".into()),
-            modify_exp,
-            ctx.as_slice(),
-        )
-        .base64()
-        .unwrap();
-        assert_eq!(wrapper, raw);
-    }
-
-    #[test]
-    fn exp_remove_matches_raw_remove_result_modify() {
-        let ctx = vec![ctx_map_key(Value::from("book"))];
-        let wrapper = exp_remove(ExpType::MAP, map_bin("m".into()), &ctx)
-            .base64()
-            .unwrap();
-        let raw = exp_modify_by_path(
-            ExpType::MAP,
-            ModifyFlag::DEFAULT,
-            map_bin("m".into()),
-            exp_remove_result(),
-            ctx.as_slice(),
-        )
-        .base64()
-        .unwrap();
-        assert_eq!(wrapper, raw);
-    }
-
-    // ===== InList / MapKeys / MapValues round-trip =====
-    //
-    // Each new opcode lives next to its sibling via base64 round-trip:
-    // pack to base64, decode, re-pack, and assert the bytes haven't
-    // shifted. This catches any future edit that breaks the new ExpOp
-    // → wire mapping without needing a live server.
-
-    #[test]
-    fn in_list_base64_roundtrips() {
-        let expr = in_list(
-            int_val(2),
-            list_val(vec![
-                Value::from(1_i64),
-                Value::from(2_i64),
-                Value::from(3_i64),
-            ]),
-        );
-        let b64 = expr.base64().unwrap();
-        let decoded = from_base64(&b64).unwrap();
-        assert_eq!(b64, decoded.base64().unwrap());
-    }
-
-    #[test]
-    fn map_keys_base64_roundtrips() {
-        let expr = map_keys(map_bin("m".into()));
-        let b64 = expr.base64().unwrap();
-        let decoded = from_base64(&b64).unwrap();
-        assert_eq!(b64, decoded.base64().unwrap());
-    }
-
-    #[test]
-    fn map_values_base64_roundtrips() {
-        let expr = map_values(map_bin("m".into()));
-        let b64 = expr.base64().unwrap();
-        let decoded = from_base64(&b64).unwrap();
-        assert_eq!(b64, decoded.base64().unwrap());
-    }
-
-    #[test]
-    fn in_list_composes_with_map_keys() {
-        // membership test against the keyset of a map bin
-        let expr = in_list(string_val("book".into()), map_keys(map_bin("m".into())));
-        let b64 = expr.base64().unwrap();
-        let decoded = from_base64(&b64).unwrap();
-        assert_eq!(b64, decoded.base64().unwrap());
-    }
-
-    #[test]
-    fn string_pack_roundtrip() {
-        let literal = "b".repeat(31);
-
-        let expr = eq(string_bin("a".to_string()), string_val(literal.clone()));
-        let b64 = expr.base64().unwrap();
-        let decoded = from_base64(&b64).unwrap();
-        let decoded_b64 = decoded.base64().unwrap();
-        let bytes = decoded.bytes.unwrap();
-
-        assert!(
-            bytes.windows(3).any(|w| w == [0xd9, 0x20, 0x03]),
-            "expected str8 prefix 0xd9 0x20 then STRING 0x03; got: {:02x?}",
-            bytes
-        );
-        assert!(
-            !bytes.windows(4).any(|w| w == [0xda, 0x00, 0x20, 0x03]),
-            "must not use str16 0xda 0x00 0x20 for length 32; got: {:02x?}",
-            bytes
-        );
-
-        assert_eq!(b64, decoded_b64);
-    }
-}
-
 // ===== Path Expression helpers =====
 
 /// Pack CDT context in "flat" format used by path-based operations.
@@ -2587,7 +2272,9 @@ pub fn exp_modify_no_fail(
     )
 }
 
-/// Convenience wrapper: remove the leaves resolved by a path. Equivalent
+/// Convenience wrapper: remove the leaves resolved by a path.
+///
+/// Equivalent
 /// to `exp_modify_by_path(return_type, ModifyFlag::DEFAULT, bin_exp, exp_remove_result(), ctx)`.
 /// Requires Aerospike Server version >= 8.1.1.
 pub fn exp_remove(
@@ -2602,4 +2289,320 @@ pub fn exp_remove(
         exp_remove_result(),
         ctx,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The generic `bin(name, type)` accessor packs identically to the
+    // corresponding typed accessor (Java Exp.bin parity).
+    #[test]
+    fn generic_bin_matches_typed_accessors() {
+        assert_eq!(
+            bin("a".to_string(), ExpType::INT).base64().unwrap(),
+            int_bin("a".to_string()).base64().unwrap()
+        );
+        assert_eq!(
+            bin("a".to_string(), ExpType::STRING).base64().unwrap(),
+            string_bin("a".to_string()).base64().unwrap()
+        );
+        assert_ne!(
+            bin("a".to_string(), ExpType::FLOAT).base64().unwrap(),
+            int_bin("a".to_string()).base64().unwrap()
+        );
+    }
+
+    #[test]
+    fn base64_roundtrip_int_eq() {
+        let expr = eq(int_bin("bin".to_string()), int_val(42));
+        let b64 = expr.base64().unwrap();
+        assert!(!b64.is_empty());
+
+        let decoded = from_base64(&b64).unwrap();
+        let re_encoded = decoded.base64().unwrap();
+        assert_eq!(b64, re_encoded);
+    }
+
+    #[test]
+    fn base64_roundtrip_string_compare() {
+        let expr = eq(
+            string_bin("name".to_string()),
+            string_val("hello".to_string()),
+        );
+        let b64 = expr.base64().unwrap();
+
+        let decoded = from_base64(&b64).unwrap();
+        let re_encoded = decoded.base64().unwrap();
+        assert_eq!(b64, re_encoded);
+    }
+
+    #[test]
+    fn base64_roundtrip_complex_expression() {
+        let expr = and(vec![
+            gt(int_bin("age".to_string()), int_val(18)),
+            lt(int_bin("age".to_string()), int_val(65)),
+            eq(
+                string_bin("status".to_string()),
+                string_val("active".to_string()),
+            ),
+        ]);
+        let b64 = expr.base64().unwrap();
+
+        let decoded = from_base64(&b64).unwrap();
+        let re_encoded = decoded.base64().unwrap();
+        assert_eq!(b64, re_encoded);
+    }
+
+    #[test]
+    fn from_base64_invalid_input() {
+        let result = from_base64("not-valid-base64!!!");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn base64_roundtrip_bool_and_float() {
+        let expr = or(vec![
+            eq(float_bin("score".to_string()), float_val(2.5)),
+            bool_val(true),
+        ]);
+        let b64 = expr.base64().unwrap();
+
+        let decoded = from_base64(&b64).unwrap();
+        let re_encoded = decoded.base64().unwrap();
+        assert_eq!(b64, re_encoded);
+    }
+
+    // ===== Path-expression convenience wrappers =====
+    //
+    // These tests assert byte-for-byte equality between each wrapper and
+    // the explicit `exp_select_by_path` / `exp_modify_by_path` form it
+    // shadows. That way every shorthand stays in lock-step with the raw
+    // API even if SelectFlag / ModifyFlag values shift later.
+
+    use crate::operations::cdt_context::{ctx_map_key, Path};
+    use crate::operations::path::{ModifyFlag, SelectFlag};
+    use crate::value::Value;
+
+    fn sample_path() -> Path {
+        Path::new().map_key("book").all_children()
+    }
+
+    #[test]
+    fn exp_select_by_path_accepts_path_builder() {
+        // `Path` should slot in directly because it implements
+        // AsRef<[CdtContext]>.
+        let path = sample_path();
+        let direct = exp_select_by_path(
+            ExpType::LIST,
+            SelectFlag::VALUE,
+            list_bin("b".into()),
+            &path,
+        )
+        .base64()
+        .unwrap();
+        let via_slice = exp_select_by_path(
+            ExpType::LIST,
+            SelectFlag::VALUE,
+            list_bin("b".into()),
+            path.as_slice(),
+        )
+        .base64()
+        .unwrap();
+        assert_eq!(direct, via_slice);
+    }
+
+    #[test]
+    fn exp_select_values_matches_raw_value_flag() {
+        let ctx = vec![ctx_map_key(Value::from("book"))];
+        let wrapper = exp_select_values(ExpType::LIST, list_bin("b".into()), &ctx)
+            .base64()
+            .unwrap();
+        let raw = exp_select_by_path(
+            ExpType::LIST,
+            SelectFlag::VALUE,
+            list_bin("b".into()),
+            ctx.as_slice(),
+        )
+        .base64()
+        .unwrap();
+        assert_eq!(wrapper, raw);
+    }
+
+    #[test]
+    fn exp_select_map_keys_matches_raw_map_key_flag() {
+        let ctx = vec![ctx_map_key(Value::from("book"))];
+        let wrapper = exp_select_map_keys(ExpType::LIST, map_bin("m".into()), &ctx)
+            .base64()
+            .unwrap();
+        let raw = exp_select_by_path(
+            ExpType::LIST,
+            SelectFlag::MAP_KEY,
+            map_bin("m".into()),
+            ctx.as_slice(),
+        )
+        .base64()
+        .unwrap();
+        assert_eq!(wrapper, raw);
+    }
+
+    #[test]
+    fn exp_select_map_entries_matches_raw_map_key_value_flag() {
+        let ctx = vec![ctx_map_key(Value::from("book"))];
+        let wrapper = exp_select_map_entries(ExpType::LIST, map_bin("m".into()), &ctx)
+            .base64()
+            .unwrap();
+        let raw = exp_select_by_path(
+            ExpType::LIST,
+            SelectFlag::MAP_KEY_VALUE,
+            map_bin("m".into()),
+            ctx.as_slice(),
+        )
+        .base64()
+        .unwrap();
+        assert_eq!(wrapper, raw);
+    }
+
+    #[test]
+    fn exp_select_matching_tree_matches_raw_matching_tree_flag() {
+        let ctx = vec![ctx_map_key(Value::from("book"))];
+        let wrapper = exp_select_matching_tree(ExpType::MAP, map_bin("m".into()), &ctx)
+            .base64()
+            .unwrap();
+        let raw = exp_select_by_path(
+            ExpType::MAP,
+            SelectFlag::MATCHING_TREE,
+            map_bin("m".into()),
+            ctx.as_slice(),
+        )
+        .base64()
+        .unwrap();
+        assert_eq!(wrapper, raw);
+    }
+
+    #[test]
+    fn exp_modify_matches_raw_default_flag() {
+        let ctx = vec![ctx_map_key(Value::from("book"))];
+        let modify_exp = int_val(7);
+        let wrapper = exp_modify(ExpType::MAP, map_bin("m".into()), modify_exp.clone(), &ctx)
+            .base64()
+            .unwrap();
+        let raw = exp_modify_by_path(
+            ExpType::MAP,
+            ModifyFlag::DEFAULT,
+            map_bin("m".into()),
+            modify_exp,
+            ctx.as_slice(),
+        )
+        .base64()
+        .unwrap();
+        assert_eq!(wrapper, raw);
+    }
+
+    #[test]
+    fn exp_modify_no_fail_matches_raw_no_fail_flag() {
+        let ctx = vec![ctx_map_key(Value::from("book"))];
+        let modify_exp = int_val(7);
+        let wrapper =
+            exp_modify_no_fail(ExpType::MAP, map_bin("m".into()), modify_exp.clone(), &ctx)
+                .base64()
+                .unwrap();
+        let raw = exp_modify_by_path(
+            ExpType::MAP,
+            ModifyFlag::NO_FAIL,
+            map_bin("m".into()),
+            modify_exp,
+            ctx.as_slice(),
+        )
+        .base64()
+        .unwrap();
+        assert_eq!(wrapper, raw);
+    }
+
+    #[test]
+    fn exp_remove_matches_raw_remove_result_modify() {
+        let ctx = vec![ctx_map_key(Value::from("book"))];
+        let wrapper = exp_remove(ExpType::MAP, map_bin("m".into()), &ctx)
+            .base64()
+            .unwrap();
+        let raw = exp_modify_by_path(
+            ExpType::MAP,
+            ModifyFlag::DEFAULT,
+            map_bin("m".into()),
+            exp_remove_result(),
+            ctx.as_slice(),
+        )
+        .base64()
+        .unwrap();
+        assert_eq!(wrapper, raw);
+    }
+
+    // ===== InList / MapKeys / MapValues round-trip =====
+    //
+    // Each new opcode lives next to its sibling via base64 round-trip:
+    // pack to base64, decode, re-pack, and assert the bytes haven't
+    // shifted. This catches any future edit that breaks the new ExpOp
+    // → wire mapping without needing a live server.
+
+    #[test]
+    fn in_list_base64_roundtrips() {
+        let expr = in_list(
+            int_val(2),
+            list_val(vec![
+                Value::from(1_i64),
+                Value::from(2_i64),
+                Value::from(3_i64),
+            ]),
+        );
+        let b64 = expr.base64().unwrap();
+        let decoded = from_base64(&b64).unwrap();
+        assert_eq!(b64, decoded.base64().unwrap());
+    }
+
+    #[test]
+    fn map_keys_base64_roundtrips() {
+        let expr = map_keys(map_bin("m".into()));
+        let b64 = expr.base64().unwrap();
+        let decoded = from_base64(&b64).unwrap();
+        assert_eq!(b64, decoded.base64().unwrap());
+    }
+
+    #[test]
+    fn map_values_base64_roundtrips() {
+        let expr = map_values(map_bin("m".into()));
+        let b64 = expr.base64().unwrap();
+        let decoded = from_base64(&b64).unwrap();
+        assert_eq!(b64, decoded.base64().unwrap());
+    }
+
+    #[test]
+    fn in_list_composes_with_map_keys() {
+        // membership test against the keyset of a map bin
+        let expr = in_list(string_val("book".into()), map_keys(map_bin("m".into())));
+        let b64 = expr.base64().unwrap();
+        let decoded = from_base64(&b64).unwrap();
+        assert_eq!(b64, decoded.base64().unwrap());
+    }
+
+    #[test]
+    fn string_pack_roundtrip() {
+        let literal = "b".repeat(31);
+
+        let expr = eq(string_bin("a".to_string()), string_val(literal));
+        let b64 = expr.base64().unwrap();
+        let decoded = from_base64(&b64).unwrap();
+        let decoded_b64 = decoded.base64().unwrap();
+        let bytes = decoded.bytes.unwrap();
+
+        assert!(
+            bytes.windows(3).any(|w| w == [0xd9, 0x20, 0x03]),
+            "expected str8 prefix 0xd9 0x20 then STRING 0x03; got: {bytes:02x?}"
+        );
+        assert!(
+            !bytes.windows(4).any(|w| w == [0xda, 0x00, 0x20, 0x03]),
+            "must not use str16 0xda 0x00 0x20 for length 32; got: {bytes:02x?}"
+        );
+
+        assert_eq!(b64, decoded_b64);
+    }
 }

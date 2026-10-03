@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use super::{BatchPolicy, BasePolicy, PolicyLike, ReadModeSC, Replica};
+use super::{BasePolicy, BatchPolicy, PolicyLike, ReadModeSC, Replica};
 #[cfg(feature = "dynamic-config")]
 use crate::policy::BatchPolicyConfig;
 
@@ -92,7 +92,10 @@ mod tests {
     #[test]
     fn txn_verify_defaults_match_go() {
         let p = TxnVerifyPolicy::default();
-        assert_eq!(p.batch_policy.base_policy.read_mode_sc, ReadModeSC::Linearize);
+        assert_eq!(
+            p.batch_policy.base_policy.read_mode_sc,
+            ReadModeSC::Linearize
+        );
         assert_eq!(p.batch_policy.base_policy.max_retries, 5);
         assert_eq!(p.batch_policy.base_policy.socket_timeout, 3_000);
         assert_eq!(p.batch_policy.base_policy.total_timeout, 10_000);

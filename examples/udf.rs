@@ -54,10 +54,19 @@ pub async fn run() {
 
     // ---- Execute a UDF against a single record ----
     let key = as_key!("test", "udf_demo", "record-1");
-    client.put(&wpolicy, &key, &[as_bin!("n", 21)]).await.unwrap();
+    client
+        .put(&wpolicy, &key, &[as_bin!("n", 21)])
+        .await
+        .unwrap();
 
     client
-        .execute_udf(&wpolicy, &key, "example_udf", "double_bin", Some(&[as_val!("n")]))
+        .execute_udf(
+            &wpolicy,
+            &key,
+            "example_udf",
+            "double_bin",
+            Some(&[as_val!("n")]),
+        )
         .await
         .unwrap();
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
@@ -66,7 +75,13 @@ pub async fn run() {
 
     // A UDF can also return a value directly.
     let echoed = client
-        .execute_udf(&wpolicy, &key, "example_udf", "echo", Some(&[as_val!("pong")]))
+        .execute_udf(
+            &wpolicy,
+            &key,
+            "example_udf",
+            "echo",
+            Some(&[as_val!("pong")]),
+        )
         .await
         .unwrap();
     println!("echo => {echoed:?}");
@@ -75,12 +90,21 @@ pub async fn run() {
     let set_name = "udf_demo_bg";
     for i in 0..10i64 {
         let key = as_key!("test", set_name, i);
-        client.put(&wpolicy, &key, &[as_bin!("n", i)]).await.unwrap();
+        client
+            .put(&wpolicy, &key, &[as_bin!("n", i)])
+            .await
+            .unwrap();
     }
 
     let stmt = Statement::new("test", set_name, Bins::All);
     let task = client
-        .query_execute_udf(&wpolicy, stmt, "example_udf", "double_bin", Some(&[as_val!("n")]))
+        .query_execute_udf(
+            &wpolicy,
+            stmt,
+            "example_udf",
+            "double_bin",
+            Some(&[as_val!("n")]),
+        )
         .await
         .unwrap();
     task.wait_till_complete(None).await.unwrap();
@@ -94,7 +118,10 @@ pub async fn run() {
     assert_eq!(rec.bins.get("n"), Some(&Value::Int(14)));
 
     // ---- Cleanup ----
-    let task = client.remove_udf(&apolicy, "example_udf.lua").await.unwrap();
+    let task = client
+        .remove_udf(&apolicy, "example_udf.lua")
+        .await
+        .unwrap();
     let _ = task.wait_till_complete(None).await;
     for i in 0..10i64 {
         let _ = client.delete(&wpolicy, &as_key!("test", set_name, i)).await;

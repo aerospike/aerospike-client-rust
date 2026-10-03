@@ -372,7 +372,7 @@ impl<T: FromValue> FromValue for Vec<T> {
     }
 }
 
-impl<K: ToValue, V: ToValue> ToValue for HashMap<K, V> {
+impl<K: ToValue, V: ToValue, S: std::hash::BuildHasher> ToValue for HashMap<K, V, S> {
     fn to_value(&self) -> Result<Value> {
         let mut out: HashMap<Value, Value> = HashMap::with_capacity(self.len());
         for (k, v) in self {
@@ -382,9 +382,10 @@ impl<K: ToValue, V: ToValue> ToValue for HashMap<K, V> {
     }
 }
 
-impl<K, V: FromValue> FromValue for HashMap<K, V>
+impl<K, V: FromValue, S> FromValue for HashMap<K, V, S>
 where
     K: FromValue + Eq + std::hash::Hash,
+    S: std::hash::BuildHasher + Default,
 {
     fn from_value(value: &Value) -> Result<Self> {
         map_entries(value)?
@@ -416,22 +417,24 @@ where
 
 // -- Aerospike-specific wrapper types ------------------------------------------
 
-/// A field stored as the server's native GeoJSON particle
+/// A field stored as the server's native `GeoJSON` particle
 /// ([`Value::GeoJSON`]) instead of a plain string — queryable with
-/// geospatial filters. Works in both derive engines; under serde-based
+/// geospatial filters.
+///
+/// Works in both derive engines; under serde-based
 /// serializers other than Aerospike's (JSON, YAML, ...) it encodes
 /// transparently as the inner string.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GeoJson(pub String);
 
 impl GeoJson {
-    /// Wrap a GeoJSON document string.
+    /// Wrap a `GeoJSON` document string.
     #[must_use]
     pub fn new(geo_json: impl Into<String>) -> GeoJson {
         GeoJson(geo_json.into())
     }
 
-    /// The GeoJSON document string.
+    /// The `GeoJSON` document string.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -459,9 +462,11 @@ impl FromValue for GeoJson {
     }
 }
 
-/// A field stored as the server's HyperLogLog particle ([`Value::HLL`])
+/// A field stored as the server's `HyperLogLog` particle ([`Value::HLL`])
 /// instead of a plain blob — as written by HLL operations or backup
-/// restores. Works in both derive engines; under serde-based serializers
+/// restores.
+///
+/// Works in both derive engines; under serde-based serializers
 /// other than Aerospike's it encodes transparently as bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Hll(pub Vec<u8>);
@@ -588,6 +593,7 @@ pub mod __derive {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::float_cmp)] // the literals under test are exactly representable
     use super::*;
 
     #[test]

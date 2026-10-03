@@ -216,7 +216,6 @@ impl Client {
         block_on(self.async_client.info(policy, commands))
     }
 
-
     /// Returns a list of active server nodes in the cluster.
     pub fn nodes(&self) -> Vec<Arc<Node>> {
         self.async_client.nodes()
@@ -315,11 +314,7 @@ impl Client {
     ///
     /// Results are written into the operations themselves; see the async
     /// `Client::batch` for the full contract.
-    pub fn batch(
-        &self,
-        policy: &BatchPolicy,
-        batch_records: &mut [BatchOperation],
-    ) -> Result<()> {
+    pub fn batch(&self, policy: &BatchPolicy, batch_records: &mut [BatchOperation]) -> Result<()> {
         block_on(self.async_client.batch(policy, batch_records))
     }
 

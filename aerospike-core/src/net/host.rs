@@ -126,7 +126,7 @@ mod tests {
         );
     }
 
-    /// Control: letter-first tls_name already parses (QE-1025 TEST 2).
+    /// Control: letter-first `tls_name` already parses (QE-1025 TEST 2).
     #[test]
     fn tls_name_letter_first_parses_host_tls_port() {
         assert_tls_host(
@@ -136,7 +136,7 @@ mod tests {
             4000,
         );
     }
-    /// QE-1025 TEST 1: digit-first tls_name must not be mistaken for a port.
+    /// QE-1025 TEST 1: digit-first `tls_name` must not be mistaken for a port.
     #[test]
     fn tls_name_digit_first_parses_host_tls_port() {
         assert_tls_host(
@@ -146,7 +146,7 @@ mod tests {
             4000,
         );
     }
-    /// QE-1025 TEST 3: Aerospike Cloud UUID-style tls_name (host == tls_name).
+    /// QE-1025 TEST 3: Aerospike Cloud UUID-style `tls_name` (`host == tls_name`).
     #[test]
     fn tls_name_cloud_uuid_hostname_parses_host_tls_port() {
         let seed = format!("{CLOUD_TLS_NAME}:{CLOUD_TLS_NAME}:4000");

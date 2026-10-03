@@ -234,10 +234,7 @@ async fn batch_read_client_timeout_is_not_in_doubt() {
             // 1ms was enough on this machine; nothing to assert.
         }
         Err(err) => {
-            assert!(
-                !err.in_doubt(),
-                "a read timeout is never in doubt: {err}"
-            );
+            assert!(!err.in_doubt(), "a read timeout is never in doubt: {err}");
         }
     }
 
@@ -273,19 +270,26 @@ async fn singleton_group_client_timeout_stamps_row_like_grouped() {
     };
 
     // One key: necessarily alone on its node — the fast path.
-    let mut alone: Vec<BatchOperation> = keys(namespace, &set_name, 1).into_iter().map(udf).collect();
+    let mut alone: Vec<BatchOperation> =
+        keys(namespace, &set_name, 1).into_iter().map(udf).collect();
     let err = client
         .batch(&bpolicy, &mut alone)
         .await
         .expect_err("the UDF outruns the socket timeout");
-    assert!(err.is_client_timeout(), "expected a client timeout, got {err:?}");
+    assert!(
+        err.is_client_timeout(),
+        "expected a client timeout, got {err:?}"
+    );
     assert!(err.in_doubt(), "an unanswered write is in doubt: {err}");
     assert_eq!(
         alone[0].result_code(),
         Some(ResultCode::Timeout),
         "the singleton row must be stamped TIMEOUT, not left untouched"
     );
-    assert!(alone[0].in_doubt(), "the singleton write row must be in doubt");
+    assert!(
+        alone[0].in_doubt(),
+        "the singleton write row must be in doubt"
+    );
 
     // nodes + 1 keys: at least one node holds two or more — the multi-key
     // path — while others may still be singletons. Every unanswered row must
@@ -341,7 +345,10 @@ async fn timeout_reports_the_attempts_actually_made() {
             .expect_err("the UDF outruns the socket timeout");
 
         let attempts = max_retries + 1;
-        assert!(err.is_client_timeout(), "max_retries={max_retries}: {err:?}");
+        assert!(
+            err.is_client_timeout(),
+            "max_retries={max_retries}: {err:?}"
+        );
         // Retry exhaustion is MAX_RETRIES_EXCEEDED (-11), as in Java and Go —
         // the single-key path used to report the server timeout code 9.
         assert_eq!(

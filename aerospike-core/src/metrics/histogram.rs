@@ -35,8 +35,8 @@
 //! `<=1, >1, >2, >4, >8, >16, >32`, i.e. bucket `ceil(log2 v)`. A larger shift
 //! skips powers of two (`shift = 3`: `<=1, >1, >8, >64, ...`).
 
-use std::sync::Mutex;
 use crate::locks::lock;
+use std::sync::Mutex;
 
 #[cfg(feature = "serialization")]
 use serde::ser::SerializeStruct;
@@ -297,6 +297,7 @@ impl Serialize for SyncHistogram {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::float_cmp)] // averages of small integers are exact
     use super::*;
 
     /// The spec's default layout (`metrics.md` §5.3): 7 columns, shift 1 —

@@ -28,7 +28,7 @@ use crate::Record;
 /// lock-free; batching amortizes it 64-fold for +39%/+53% measured scan
 /// throughput (with/without bin data), while a batch of small records stays
 /// well under a memory page.
-pub(crate) const RECORD_BATCH: usize = 64;
+pub const RECORD_BATCH: usize = 64;
 
 /// One stream element as it travels from a node reader to the consumer: the
 /// record (or error), plus what the consumer edge needs to commit the resume
@@ -37,7 +37,7 @@ pub(crate) const RECORD_BATCH: usize = 64;
 /// cursor on the contiguously consumed prefix when several consumers drain
 /// the same recordset.
 #[derive(Debug)]
-pub(crate) struct StreamEntry {
+pub struct StreamEntry {
     pub(crate) result: Result<Record>,
     pub(crate) bval: Option<u64>,
     /// `(epoch, seq)` from [`TrackerShared::stamp_delivery`]; `None` on the
@@ -324,9 +324,8 @@ mod tests {
     /// exactly that many — these tests push single records and reason about
     /// slot-level blocking.
     fn recordset(slots: usize) -> Arc<Recordset> {
-        let tracker =
-            PartitionTracker::new(&QueryPolicy::default(), PartitionFilter::all(), &[])
-                .expect("tracker");
+        let tracker = PartitionTracker::new(&QueryPolicy::default(), PartitionFilter::all(), &[])
+            .expect("tracker");
         Arc::new(Recordset::new(slots * RECORD_BATCH, 0, 1, tracker.shared()))
     }
 
@@ -359,10 +358,7 @@ mod tests {
     }
 
     /// The resume cursor (digest, bval) for the partition holding `key`.
-    fn cursor_of(
-        tracker: &TrackerShared,
-        key: &crate::Key,
-    ) -> (Option<[u8; 20]>, Option<u64>) {
+    fn cursor_of(tracker: &TrackerShared, key: &crate::Key) -> (Option<[u8; 20]>, Option<u64>) {
         let pf = tracker.partition_filter();
         let parts = pf.partitions.as_ref().unwrap();
         let ps = parts[key.partition_id()].lock();
@@ -389,11 +385,15 @@ mod tests {
                 stamp: shared.stamp_delivery(k.partition_id()),
             })
             .collect();
-        block_on(rs.clone().push_batch(entries)).unwrap();
+        block_on(rs.push_batch(entries)).unwrap();
 
         // Pushed but unconsumed: no cursor movement.
         for k in &keys {
-            assert_eq!(cursor_of(&shared, k).0, None, "cursor moved before consumption");
+            assert_eq!(
+                cursor_of(&shared, k).0,
+                None,
+                "cursor moved before consumption"
+            );
         }
 
         // Consume exactly one record; only its partition's cursor advances.
@@ -402,7 +402,11 @@ mod tests {
         let first_key = first.key.as_ref().unwrap();
         assert_eq!(cursor_of(&shared, first_key).0, Some(first_key.digest));
         for k in keys.iter().filter(|k| k.digest != first_key.digest) {
-            assert_eq!(cursor_of(&shared, k).0, None, "unconsumed record was committed");
+            assert_eq!(
+                cursor_of(&shared, k).0,
+                None,
+                "unconsumed record was committed"
+            );
         }
 
         // Close with the rest still buffered: cursors must not move.
@@ -439,7 +443,11 @@ mod tests {
         // A sibling consumer takes the LAST record first: the cursor must
         // not move — records 1 and 2 are still unconsumed somewhere.
         rs.deliver(e3).unwrap();
-        assert_eq!(cursor_of(&shared, &key), (None, None), "cursor jumped a gap");
+        assert_eq!(
+            cursor_of(&shared, &key),
+            (None, None),
+            "cursor jumped a gap"
+        );
 
         // The first record closes nothing but its own slot.
         rs.deliver(e1).unwrap();
@@ -499,7 +507,7 @@ mod tests {
             bval: Some(42),
             stamp: shared.stamp_delivery(key.partition_id()),
         };
-        block_on(rs.clone().push_batch(vec![entry])).unwrap();
+        block_on(rs.push_batch(vec![entry])).unwrap();
         assert_eq!(cursor_of(&shared, &key), (None, None));
 
         let mut stream = rs.into_stream();

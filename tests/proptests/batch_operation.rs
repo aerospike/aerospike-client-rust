@@ -10,7 +10,7 @@ pub enum PropBatchOperation {
     ReadOps(BatchReadPolicy, Vec<PropOperation>),
     Write(BatchWritePolicy, Vec<PropOperation>),
     Delete(BatchDeletePolicy),
-    UDF(BatchUDFPolicy, String, String, Option<Vec<Value>>),
+    Udf(BatchUDFPolicy, String, String, Option<Vec<Value>>),
 }
 
 impl PropBatchOperation {
@@ -24,7 +24,7 @@ impl PropBatchOperation {
                 BatchOperation::write(bwp, key, ops.iter().map(|op| op.to_op()).collect())
             }
             PropBatchOperation::Delete(bdp) => BatchOperation::delete(bdp, key),
-            PropBatchOperation::UDF(bup, server_path, function_name, args) => {
+            PropBatchOperation::Udf(bup, server_path, function_name, args) => {
                 BatchOperation::udf(bup, key, server_path, function_name, args.clone())
             }
         }
@@ -60,31 +60,31 @@ pub fn any_batch_udf_operation() -> impl Strategy<Value = PropBatchOperation> {
 }
 
 prop_compose! {
-    pub fn many_batch_operations(n: usize)(ops in prop::collection::vec(any_batch_operation(), 1..n as usize)) -> Vec<PropBatchOperation> {
+    pub fn many_batch_operations(n: usize)(ops in prop::collection::vec(any_batch_operation(), 1..n)) -> Vec<PropBatchOperation> {
         ops
     }
 }
 
 prop_compose! {
-    pub fn many_batch_read_operations(n: usize)(ops in prop::collection::vec(any_batch_read_operation(), 1..n as usize)) -> Vec<PropBatchOperation> {
+    pub fn many_batch_read_operations(n: usize)(ops in prop::collection::vec(any_batch_read_operation(), 1..n)) -> Vec<PropBatchOperation> {
         ops
     }
 }
 
 prop_compose! {
-    pub fn many_batch_write_operations(n: usize)(ops in prop::collection::vec(any_batch_write_operation(), 1..n as usize)) -> Vec<PropBatchOperation> {
+    pub fn many_batch_write_operations(n: usize)(ops in prop::collection::vec(any_batch_write_operation(), 1..n)) -> Vec<PropBatchOperation> {
         ops
     }
 }
 
 prop_compose! {
-    pub fn many_batch_delete_operations(n: usize)(ops in prop::collection::vec(any_batch_delete_operation(), 1..n as usize)) -> Vec<PropBatchOperation> {
+    pub fn many_batch_delete_operations(n: usize)(ops in prop::collection::vec(any_batch_delete_operation(), 1..n)) -> Vec<PropBatchOperation> {
         ops
     }
 }
 
 prop_compose! {
-    pub fn many_batch_udf_operations(n: usize)(ops in prop::collection::vec(any_batch_udf_operation(), 1..n as usize)) -> Vec<PropBatchOperation> {
+    pub fn many_batch_udf_operations(n: usize)(ops in prop::collection::vec(any_batch_udf_operation(), 1..n)) -> Vec<PropBatchOperation> {
         ops
     }
 }
@@ -137,6 +137,6 @@ prop_compose! {
 prop_compose! {
     pub fn bop_udf()
     (bup in batch_udf_policy(), v in value_any()) -> PropBatchOperation {
-        PropBatchOperation::UDF(bup, "test_udf_proptests1".into(), "echo".into(), Some(vec![v]))
+        PropBatchOperation::Udf(bup, "test_udf_proptests1".into(), "echo".into(), Some(vec![v]))
     }
 }

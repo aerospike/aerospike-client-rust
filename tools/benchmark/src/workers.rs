@@ -569,10 +569,7 @@ mod test {
         let mut rng = StdRng::seed_from_u64(7);
         let items = spec.items(&mut rng);
         assert_eq!(items.len(), 15);
-        assert_eq!(
-            items.iter().filter(|i| **i == TxnItem::ReadAll).count(),
-            10
-        );
+        assert_eq!(items.iter().filter(|i| **i == TxnItem::ReadAll).count(), 10);
 
         // Variance applies to both counts: reads in [5,15], writes in [0,5].
         let spec = TxnSpec {
@@ -583,7 +580,7 @@ mod test {
         };
         for _ in 0..50 {
             let n = spec.items(&mut rng).len();
-            assert!((5..=20).contains(&n), "unexpected item count {n}");
+            assert!((5..=20).contains(&n), "{}", "unexpected item count {n}");
         }
     }
 }

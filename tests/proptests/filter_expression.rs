@@ -10,15 +10,15 @@ pub fn true_or_false_filter_expression() -> impl Strategy<Value = Option<Express
 }
 
 pub fn true_filter_expression() -> impl Strategy<Value = Option<Expression>> {
-    exp_short_true_with().prop_map(|fe| Some(fe))
+    exp_short_true_with().prop_map(Some)
 }
 
 pub fn false_filter_expression() -> impl Strategy<Value = Option<Expression>> {
-    exp_short_false_with().prop_map(|fe| Some(fe))
+    exp_short_false_with().prop_map(Some)
 }
 
 pub fn filter_expression() -> impl Strategy<Value = Option<Expression>> {
-    prop_oneof![Just(None), exp_tree().prop_map(|fe| Some(fe))]
+    prop_oneof![Just(None), exp_tree().prop_map(Some)]
 }
 
 pub fn exp_simple() -> impl Strategy<Value = Expression> {

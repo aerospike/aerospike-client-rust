@@ -55,11 +55,7 @@ impl QueryPlan {
         }
 
         if result_code != ResultCode::Ok {
-            return Err(Error::server_error(
-                result_code,
-                String::new(),
-                None,
-            ));
+            return Err(Error::server_error(result_code, String::new(), None));
         }
 
         let index_name = fields.utf8_field(FieldType::IndexName);
@@ -112,7 +108,7 @@ impl QueryPlan {
     /// This is the answer explain exists to give; the predicates below
     /// ([`is_secondary_index`](Self::is_secondary_index) and friends) are
     /// shorthand for testing it.
-    pub fn selection(&self) -> QuerySelection {
+    pub const fn selection(&self) -> QuerySelection {
         self.selection
     }
 
@@ -130,11 +126,6 @@ impl QueryPlan {
     /// AEL source text from the explain field `44` payload.
     pub fn ael(&self) -> Result<String> {
         QueryWhereWire::ael(&self.explain_where_bytes)
-    }
-
-    /// Field `44` body sent on explain (`EXPLAIN` flag set).
-    pub(crate) fn explain_where_bytes(&self) -> &[u8] {
-        &self.explain_where_bytes
     }
 
     /// Field `44` body for execute (`EXPLAIN` flag cleared).
@@ -161,7 +152,7 @@ impl QueryPlan {
     ///
     /// [`CollectionIndexType::Default`] on a primary-index or filtered-out plan,
     /// where no index was chosen.
-    pub fn index_type(&self) -> &CollectionIndexType {
+    pub const fn index_type(&self) -> &CollectionIndexType {
         &self.index_type
     }
 
@@ -191,13 +182,19 @@ impl QueryPlan {
             QuerySelection::PrimaryIndex | QuerySelection::FilteredOut => Ok(None),
             QuerySelection::SecondaryIndex => {
                 // Both fields are `Some` whenever phase 1 selects SecondaryIndex.
-                let index_name = self.index_name.as_deref().unwrap();
-                let probe_range = self.index_range_bytes.as_deref().unwrap();
+                let (Some(index_name), Some(probe_range)) = (
+                    self.index_name.as_deref(),
+                    self.index_range_bytes.as_deref(),
+                ) else {
+                    return Err(Error::client_error(
+                        "secondary-index plan without an index name or range",
+                    ));
+                };
                 let execute_range = IndexRangeWire::for_execute_with_index_name(probe_range)?;
                 Ok(Some(Filter::from_wire_range(
                     index_name,
                     execute_range,
-                    self.index_type.clone(),
+                    self.index_type,
                 )))
             }
         }
@@ -274,7 +271,7 @@ mod tests {
         assert_eq!(plan.namespace(), "test");
         assert_eq!(plan.set_name(), Some("users"));
         assert_eq!(plan.ael().unwrap(), AEL);
-        assert_eq!(plan.explain_where_bytes(), &explain_where);
+        assert_eq!(plan.explain_where_bytes, explain_where);
         assert!(plan.index_name().is_none());
         assert!(plan.index_range_bytes().is_none());
         assert_eq!(plan.index_type(), &CollectionIndexType::Default);
@@ -295,14 +292,9 @@ mod tests {
             ),
             (FieldType::IndexRange as u8, RANGE),
         ]);
-        let plan = QueryPlan::from_explain_response(
-            ResultCode::Ok,
-            "test",
-            None,
-            explain_where,
-            &fields,
-        )
-        .unwrap();
+        let plan =
+            QueryPlan::from_explain_response(ResultCode::Ok, "test", None, explain_where, &fields)
+                .unwrap();
 
         assert_eq!(plan.selection(), QuerySelection::SecondaryIndex);
         assert!(plan.is_secondary_index());

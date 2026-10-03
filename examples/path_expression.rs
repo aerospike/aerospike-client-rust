@@ -5,10 +5,10 @@
 
 use std::env;
 
+use aerospike::expressions::maps::get_by_key;
 use aerospike::expressions::{
     eq, exp_map_loop_var, exp_string_loop_var, float_val, le, string_val, ExpType, LoopVarPart,
 };
-use aerospike::expressions::maps::get_by_key;
 use aerospike::operations::cdt_context::{ctx_all_children_with_filter, ctx_map_key};
 use aerospike::operations::path::{select_by_path, SelectFlag};
 use aerospike::operations::MapReturnType;
@@ -57,7 +57,11 @@ pub async fn run() {
         as_map!("title" => "The Lord of the Rings", "price" => 22.99_f64)
     );
     client
-        .put(&wpolicy, &key, &[as_bin!("store", as_map!("book" => books))])
+        .put(
+            &wpolicy,
+            &key,
+            &[as_bin!("store", as_map!("book" => books))],
+        )
         .await
         .unwrap();
 
@@ -80,7 +84,11 @@ pub async fn run() {
         string_val("title".to_string()),
     ));
 
-    let op = select_by_path("store", SelectFlag::VALUE, &[ctx_book, ctx_cheap, ctx_title]);
+    let op = select_by_path(
+        "store",
+        SelectFlag::VALUE,
+        &[ctx_book, ctx_cheap, ctx_title],
+    );
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     println!(

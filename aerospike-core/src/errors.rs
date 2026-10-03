@@ -272,7 +272,11 @@ impl Error {
     /// The result code's description serves as the message.
     #[must_use]
     pub(crate) fn server_error_bare(rc: ResultCode) -> Error {
-        Error::new(ErrorKind::Server { rc, detail: None }, i32::from(u8::from(rc)), None)
+        Error::new(
+            ErrorKind::Server { rc, detail: None },
+            i32::from(u8::from(rc)),
+            None,
+        )
     }
 
     /// Failure reported in an info command's response body,
@@ -739,9 +743,13 @@ impl Error {
     /// given client-side result codes. See [`matches`](Self::matches).
     #[must_use]
     pub fn matches_client(&self, codes: &[ClientResultCode]) -> bool {
-        let own = self.0.result_code < 0
-            && codes.contains(&ClientResultCode::from(self.0.result_code));
-        own || self.0.source.as_ref().is_some_and(|s| s.matches_client(codes))
+        let own =
+            self.0.result_code < 0 && codes.contains(&ClientResultCode::from(self.0.result_code));
+        own || self
+            .0
+            .source
+            .as_ref()
+            .is_some_and(|s| s.matches_client(codes))
     }
 
     /// Returns the extended server-supplied error detail (subcode, message,
@@ -1054,7 +1062,10 @@ impl ErrorKind {
 /// cause), the last two recursively in the same shape.
 #[cfg(feature = "serialization")]
 impl serde::Serialize for Error {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
         let i = &*self.0;
         let detail = match &i.kind {
@@ -1406,7 +1417,10 @@ mod tests {
             .wrap(Error::server_error(ResultCode::Timeout, "A1", None))
             .wrap(Error::client_error("gave up"));
         assert_eq!(two_deep.server_result_code(), Some(ResultCode::Timeout));
-        assert!(two_deep.matches(&[ResultCode::DeviceOverload]), "{two_deep}");
+        assert!(
+            two_deep.matches(&[ResultCode::DeviceOverload]),
+            "{two_deep}"
+        );
     }
 
     #[test]
@@ -1427,7 +1441,10 @@ mod tests {
         };
         let err = Error::server_error(ResultCode::FilteredOut, "A1", Some(Box::new(detail)));
         let s = err.to_string();
-        assert!(s.contains(", SubCode: 77,") || s.ends_with("SubCode: 77"), "unknown subcode stays bare: {s}");
+        assert!(
+            s.contains(", SubCode: 77,") || s.ends_with("SubCode: 77"),
+            "unknown subcode stays bare: {s}"
+        );
     }
 
     #[test]

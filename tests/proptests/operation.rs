@@ -33,7 +33,7 @@ impl PropOperation {
 }
 
 prop_compose! {
-    pub fn many_operations(n: usize)(bin in bin())(ops in prop::collection::vec(any_operation(bin), 1..n as usize)) -> Vec<PropOperation> {
+    pub fn many_operations(n: usize)(bin in bin())(ops in prop::collection::vec(any_operation(bin), 1..n)) -> Vec<PropOperation> {
         ops
     }
 }

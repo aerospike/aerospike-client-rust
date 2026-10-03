@@ -99,13 +99,11 @@ proptest_async::proptest! {
             Ok(res) => {
                 // Data validation
                 for op in res {
-                    op.record.map(|r| {
-                        if let Some(actual_value) = r.bins.get("binName") {
-                            if expected_value != actual_value.as_string() {
-                                panic!("Batch Read: Value for bin 'binName' doesn't match; expected: {:?}, got: {:?}", expected_value, actual_value);
-                            }
+                    if let Some(actual_value) = op.record.as_ref().and_then(|r| r.bins.get("binName")) {
+                        if expected_value != actual_value.as_string() {
+                            panic!("Batch Read: Value for bin 'binName' doesn't match; expected: {:?}, got: {:?}", expected_value, actual_value);
                         }
-                    });
+                    }
                 }
             }
         }
@@ -138,18 +136,12 @@ proptest_async::proptest! {
             // First, we need to discover the names of the bins that proptest-rs
             // has chosen for this run.
 
-            match op {
-                PropBatchOperation::Write(_, ref ops) => {
-                    for sub_op in ops {
-                        match sub_op {
-                            PropOperation::Put(ref bin) => {
-                                puts_to_bins.insert(bin.name.clone(), bin.value.clone());
-                            }
-                           _ => (),
-                        }
+            if let PropBatchOperation::Write(_, ref ops) = op {
+                for sub_op in ops {
+                    if let PropOperation::Put(ref bin) = sub_op {
+                        puts_to_bins.insert(bin.name.clone(), bin.value.clone());
                     }
                 }
-                _ => (),
             }
 
             // Now that we have a list of bins to initialize, let's actually
@@ -157,7 +149,7 @@ proptest_async::proptest! {
             // succeeds, the bin value (and type) will be changed according to
             // the write in the operation list.
 
-            for (bin_name, _) in &puts_to_bins {
+            for bin_name in puts_to_bins.keys() {
                 let bins = [as_bin!(bin_name.clone(), 1)];
                 client.put(&write_policy, &key, &bins).await.expect("initializing put should work");
             }
@@ -239,13 +231,11 @@ proptest_async::proptest! {
                                                 // provided by proptests-rs.  That means we must have previously
                                                 // client.put() to establish a default record.  Check to make sure the
                                                 // bin's current contents matches proptest-rs's expected value.
-                                                Some(expected_value) => {
-                                                    if *candidate_name == updated_name {
-                                                        if *candidate_value != *expected_value {
+                                                Some(expected_value)
+                                                    if *candidate_name == updated_name
+                                                        && *candidate_value != *expected_value => {
                                                             panic!("For bin \"{:?}\"\n  Expected: {:?}\n  Actual: {:?}\n", updated_name, expected_value, candidate_value);
                                                         }
-                                                    }
-                                                }
 
                                                 // If we found a bin in the reply that does not exist in the puts_to_bins map,
                                                 // it is because it was created by the server in response to an alternative operation

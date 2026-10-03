@@ -143,7 +143,9 @@ impl Statement {
 
         if let Some(ref agg) = self.aggregation {
             if agg.package_name.is_empty() {
-                return Err(Error::invalid_argument("Empty UDF package name".to_string()));
+                return Err(Error::invalid_argument(
+                    "Empty UDF package name".to_string(),
+                ));
             }
 
             if agg.function_name.is_empty() {

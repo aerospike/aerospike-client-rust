@@ -52,7 +52,7 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
 async fn scan_single_consumer() {
     let client = common::singleton_client().await;
     let namespace = common::namespace();
-    let set_name = create_test_set(&client, EXPECTED).await;
+    let set_name = create_test_set(client, EXPECTED).await;
 
     let pf = PartitionFilter::all();
     let qpolicy = QueryPolicy::default();
@@ -93,7 +93,7 @@ async fn scan_single_consumer_no_setname() {
     let pf = PartitionFilter::all();
     let qpolicy = QueryPolicy::default();
 
-    let stmt = Statement::new(namespace, &set_name, Bins::All);
+    let stmt = Statement::new(namespace, set_name, Bins::All);
     let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
 
     let count = rs
@@ -110,7 +110,7 @@ async fn scan_single_consumer_no_setname() {
 async fn scan_single_consumer_with_cancel() {
     let client = common::singleton_client().await;
     let namespace = common::namespace();
-    let set_name = create_test_set(&client, EXPECTED).await;
+    let set_name = create_test_set(client, EXPECTED).await;
 
     let mut pf = PartitionFilter::all();
     let mut qpolicy = QueryPolicy::default();
@@ -134,10 +134,10 @@ async fn scan_single_consumer_with_cancel() {
         // close the stream
         rs.close();
 
-        assert!(rs.is_active() == false);
+        assert!(!rs.is_active());
         pf = rs.partition_filter().await.unwrap();
         if count == 1000 {
-            assert!(pf.done() == true);
+            assert!(pf.done());
         }
     }
     assert_eq!(count, EXPECTED);
@@ -154,7 +154,7 @@ async fn scan_single_consumer_with_cancel() {
 async fn scan_cancel_midway_resumes_without_loss() {
     let client = common::singleton_client().await;
     let namespace = common::namespace();
-    let set_name = create_test_set(&client, EXPECTED).await;
+    let set_name = create_test_set(client, EXPECTED).await;
 
     let mut qpolicy = QueryPolicy::default();
     qpolicy.max_records = 200;
@@ -204,7 +204,7 @@ async fn scan_cancel_midway_resumes_without_loss() {
 async fn scan_multi_consumer_cancel_resumes_without_loss() {
     let client = common::singleton_client().await;
     let namespace = common::namespace();
-    let set_name = create_test_set(&client, EXPECTED).await;
+    let set_name = create_test_set(client, EXPECTED).await;
 
     let mut qpolicy = QueryPolicy::default();
     qpolicy.max_records = 200;
@@ -229,7 +229,9 @@ async fn scan_multi_consumer_cancel_resumes_without_loss() {
                 while got < n {
                     match stream.next().await {
                         Some(Ok(rec)) => {
-                            seen.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
+                            seen.lock()
+                                .unwrap()
+                                .insert(rec.key.as_ref().unwrap().digest);
                             got += 1;
                         }
                         Some(Err(err)) => panic!("{err:?}"),
@@ -246,7 +248,10 @@ async fn scan_multi_consumer_cancel_resumes_without_loss() {
     }
 
     let distinct = seen.lock().unwrap().len();
-    assert_eq!(distinct, EXPECTED, "records lost across multi-consumer cancel/resume");
+    assert_eq!(
+        distinct, EXPECTED,
+        "records lost across multi-consumer cancel/resume"
+    );
     // At-least-once: duplicates are permitted (a resume may re-deliver
     // records consumed beyond the contiguous prefix), never required.
     assert!(consumed >= distinct);
@@ -260,7 +265,7 @@ async fn scan_multi_consumer_cancel_resumes_without_loss() {
 async fn scan_drop_midway_leaves_client_usable() {
     let client = common::singleton_client().await;
     let namespace = common::namespace();
-    let set_name = create_test_set(&client, EXPECTED).await;
+    let set_name = create_test_set(client, EXPECTED).await;
 
     for _ in 0..3 {
         let stmt = Statement::new(namespace, &set_name, Bins::All);
@@ -279,7 +284,10 @@ async fn scan_drop_midway_leaves_client_usable() {
 
     // The same client must still serve single commands and a full scan.
     let key = as_key!(namespace, &set_name, 0);
-    client.get(&ReadPolicy::default(), &key, Bins::All).await.unwrap();
+    client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
 
     let stmt = Statement::new(namespace, &set_name, Bins::None);
     let rs = client
@@ -298,7 +306,7 @@ async fn scan_drop_midway_leaves_client_usable() {
 async fn scan_single_consumer_with_cursor() {
     let client = common::singleton_client().await;
     let namespace = common::namespace();
-    let set_name = create_test_set(&client, EXPECTED).await;
+    let set_name = create_test_set(client, EXPECTED).await;
 
     let mut pf = PartitionFilter::all();
     let mut qpolicy = QueryPolicy::default();
@@ -315,10 +323,10 @@ async fn scan_single_consumer_with_cursor() {
             .filter(|res| futures::future::ready(res.is_ok()))
             .count()
             .await;
-        assert!(rs.is_active() == false);
+        assert!(!rs.is_active());
         pf = rs.partition_filter().await.unwrap();
         if count == 1000 {
-            assert!(pf.done() == true);
+            assert!(pf.done());
         }
     }
     assert_eq!(count, EXPECTED);
@@ -335,7 +343,7 @@ async fn scan_single_consumer_rps() {
 
     let node_count = client.cluster.nodes().len();
     let namespace = common::namespace();
-    let set_name = create_test_set(&client, EXPECTED).await;
+    let set_name = create_test_set(client, EXPECTED).await;
 
     let mut qpolicy = QueryPolicy::default();
     qpolicy.records_per_second = (EXPECTED / 3 / node_count) as u32;
@@ -361,7 +369,7 @@ async fn scan_single_consumer_rps() {
 async fn scan_multi_consumer() {
     let client = common::singleton_client().await;
     let namespace = common::namespace();
-    let set_name = create_test_set(&client, EXPECTED).await;
+    let set_name = create_test_set(client, EXPECTED).await;
 
     let mut qpolicy = QueryPolicy::default();
     qpolicy.record_queue_size = 4096;
@@ -394,7 +402,7 @@ async fn scan_multi_consumer() {
 async fn scan_single_consumer_stream() {
     let client = common::singleton_client().await;
     let namespace = common::namespace();
-    let set_name = create_test_set(&client, EXPECTED).await;
+    let set_name = create_test_set(client, EXPECTED).await;
 
     let mut qpolicy = QueryPolicy::default();
     qpolicy.record_queue_size = 4096;
@@ -418,7 +426,7 @@ async fn scan_single_consumer_stream() {
 async fn scan_multi_consumer_stream() {
     let client = common::singleton_client().await;
     let namespace = common::namespace();
-    let set_name = create_test_set(&client, EXPECTED).await;
+    let set_name = create_test_set(client, EXPECTED).await;
 
     let mut qpolicy = QueryPolicy::default();
     qpolicy.record_queue_size = 4096;
@@ -443,9 +451,9 @@ async fn scan_multi_consumer_stream() {
     }
 
     for t in threads {
-        #[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
+        #[cfg(all(feature = "rt-tokio", not(feature = "rt-async-std")))]
         t.await.expect("Cannot join thread");
-        #[cfg(all(any(feature = "rt-async-std"), not(feature = "rt-tokio")))]
+        #[cfg(all(feature = "rt-async-std", not(feature = "rt-tokio")))]
         t.await;
     }
 

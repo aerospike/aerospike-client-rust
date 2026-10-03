@@ -180,7 +180,14 @@ fn filter_in_client_scope_after_reduce() {
 
 #[test]
 fn missing_function_is_an_error() {
-    let err = run("pipeline_nofn", "-- empty package", "no_such_fn", vec![], vec![]).unwrap_err();
+    let err = run(
+        "pipeline_nofn",
+        "-- empty package",
+        "no_such_fn",
+        vec![],
+        vec![],
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("no_such_fn"), "{err}");
 }
 
@@ -190,15 +197,9 @@ fn missing_function_is_an_error() {
 async fn missing_package_is_an_error() {
     let (_input_tx, input_rx) = async_channel::unbounded::<Value>();
     let (output_tx, _output_rx) = async_channel::unbounded();
-    let err = run_aggregate_pipeline(
-        "no_such_package_xyz",
-        "f",
-        vec![],
-        input_rx,
-        output_tx,
-    )
-    .await
-    .unwrap_err();
+    let err = run_aggregate_pipeline("no_such_package_xyz", "f", vec![], input_rx, output_tx)
+        .await
+        .unwrap_err();
     assert!(err.to_string().contains("no_such_package_xyz"), "{err}");
 }
 
@@ -379,7 +380,10 @@ fn lua_tables_convert_by_shape() {
 
     // Empty tables become empty maps.
     let empty: mlua::Value = lua.load("return {}").eval().unwrap();
-    assert_eq!(lua_to_value(&empty).unwrap(), Value::HashMap(HashMap::new()));
+    assert_eq!(
+        lua_to_value(&empty).unwrap(),
+        Value::HashMap(HashMap::new())
+    );
 }
 
 #[test]

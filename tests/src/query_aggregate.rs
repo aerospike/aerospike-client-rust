@@ -273,7 +273,10 @@ async fn query_aggregate_missing_client_package_errors() {
             assert!(err.to_string().contains("test_agg_missing"), "{err}");
         }
     }
-    assert!(saw_error, "expected the missing package to surface an error");
+    assert!(
+        saw_error,
+        "expected the missing package to surface an error"
+    );
 
     client.close().await.unwrap();
 }

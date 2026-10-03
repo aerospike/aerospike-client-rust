@@ -21,18 +21,18 @@ pub use self::index_types::{CollectionIndexType, IndexType};
 pub(crate) use self::node_partitions::NodePartitions;
 pub use self::partition_filter::PartitionFilter;
 pub use self::partition_status::PartitionStatus;
+pub(crate) use self::partition_tracker::{PartitionTracker, TrackerShared};
 pub use self::plan::{
     QueryPlan, QuerySelection, QueryWhereWire, FLAG_ENC_VARINT, FLAG_EXPLAIN, FLAG_HARD_HINT,
     FLAG_KNOWN, FLAG_REQUIRE_INDEX,
 };
-pub(crate) use self::partition_tracker::{PartitionTracker, TrackerShared};
-pub(crate) use self::recordset::{StreamEntry, RECORD_BATCH};
-pub use self::sink::QueryHandle;
-pub(crate) use self::sink::{CallbackCtx, QuerySink};
 pub use self::recordset::RecordStream;
 pub use self::recordset::Recordset;
+pub(crate) use self::recordset::{StreamEntry, RECORD_BATCH};
 #[cfg(feature = "lua")]
 pub use self::result_set::{ResultSet, ResultStream};
+pub use self::sink::QueryHandle;
+pub(crate) use self::sink::{CallbackCtx, QuerySink};
 pub use self::statement::Statement;
 pub use self::udf::UDFLang;
 
@@ -45,8 +45,8 @@ mod partition_status;
 mod partition_tracker;
 pub mod plan;
 mod recordset;
-mod sink;
 #[cfg(feature = "lua")]
 mod result_set;
+mod sink;
 mod statement;
 mod udf;

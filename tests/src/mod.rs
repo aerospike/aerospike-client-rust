@@ -47,10 +47,9 @@ mod metrics;
 mod path_expressions;
 mod perf_e2e;
 mod query;
-mod query_selection;
 #[cfg(feature = "lua")]
 mod query_aggregate;
-mod value_order;
+mod query_selection;
 mod scan;
 #[cfg(feature = "serialization")]
 mod serialization;
@@ -60,6 +59,7 @@ mod task;
 mod truncate;
 mod txn;
 mod udf;
+mod value_order;
 
 pub(crate) async fn count_results(rs: Arc<Recordset>) -> usize {
     let mut count = 0;

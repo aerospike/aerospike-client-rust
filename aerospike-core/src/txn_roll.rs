@@ -117,8 +117,7 @@ impl TxnRoll {
                         // this transaction. Flip the client state to Aborted and
                         // clear the in-doubt flag so callers don't treat the
                         // failure as ambiguous.
-                        let is_aborted =
-                            err.server_result_code() == Some(ResultCode::MrtAborted);
+                        let is_aborted = err.server_result_code() == Some(ResultCode::MrtAborted);
 
                         if is_aborted {
                             self.txn.set_in_doubt(false);
@@ -134,8 +133,7 @@ impl TxnRoll {
                         // already in doubt, keep that flag on the commit failure.
                         let in_doubt = if self.txn.in_doubt() {
                             true
-                        } else if err.in_doubt()
-                            || matches!(err.kind(), crate::ErrorKind::Timeout)
+                        } else if err.in_doubt() || matches!(err.kind(), crate::ErrorKind::Timeout)
                         {
                             self.txn.set_in_doubt(true);
                             true
@@ -249,6 +247,8 @@ impl TxnRoll {
             .map(|k| BatchRecord::new(k.clone(), false))
             .collect();
 
+        // `Arc<Node>` hashes and compares by node name, which never changes.
+        #[allow(clippy::mutable_key_type)]
         let groups = self.group_by_node(&keys)?;
         let futures = groups.into_iter().map(|(node, idxs)| {
             let cluster = self.cluster.clone();
@@ -284,9 +284,7 @@ impl TxnRoll {
         if let Some(code) = failure {
             return Err(match code {
                 Some(rc) => Error::server_error_bare(rc),
-                None => {
-                    Error::timeout("Verify: no response for one or more records".to_string())
-                }
+                None => Error::timeout("Verify: no response for one or more records".to_string()),
             });
         }
         Ok(())
@@ -378,6 +376,8 @@ impl TxnRoll {
             .map(|k| BatchRecord::new(k.clone(), true))
             .collect();
 
+        // `Arc<Node>` hashes and compares by node name, which never changes.
+        #[allow(clippy::mutable_key_type)]
         let groups = self.group_by_node(&keys)?;
         let futures = groups.into_iter().map(|(node, idxs)| {
             let cluster = self.cluster.clone();

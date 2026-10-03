@@ -22,8 +22,8 @@ use crate::errors::{Error, Result};
 use crate::metrics::{CloseReason, NodeMetrics, OpenFailure};
 use crate::net::connection::{ConnectPhase, IdleStatus};
 use crate::net::{Connection, ConnectionState, Host};
-use aerospike_rt::time::Instant;
 use crate::policy::ClientPolicy;
+use aerospike_rt::time::Instant;
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
@@ -140,7 +140,11 @@ impl Queue {
     /// Decreases the reserved value by one, opening up capacity for more connections.
     #[cfg(test)]
     fn reserved(&self) -> usize {
-        let reserved = self.0.reserved.lock().unwrap_or_else(|e| e.into_inner());
+        let reserved = self
+            .0
+            .reserved
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *reserved
     }
 
@@ -248,10 +252,7 @@ impl Queue {
         &self,
         mut cached_session: Option<SessionInfo>,
     ) -> std::result::Result<Connection, (AttemptFailure, Error)> {
-        if cached_session.is_none()
-            && self.0.login_only.is_some()
-            && self.0.policy.auth_enabled()
-        {
+        if cached_session.is_none() && self.0.login_only.is_some() && self.0.policy.auth_enabled() {
             cached_session = Some(
                 self.renew_login_session()
                     .await
@@ -472,7 +473,7 @@ impl Queue {
 
 /// Tend's decision about a queue's oldest connection.
 #[derive(Debug)]
-pub(crate) enum TailVerdict {
+pub enum TailVerdict {
     /// The tail needs no attention; everything behind it is fresher.
     Settled,
     /// Expired surplus, taken out of the queue: close it.
@@ -707,7 +708,7 @@ impl ConnectionPool {
     /// Total connections owned by the pool across all queues, including
     /// in-flight connections currently checked out by callers.
     pub fn total_reserved(&self) -> usize {
-        self.queues.iter().map(|q| q.reserved_count()).sum()
+        self.queues.iter().map(Queue::reserved_count).sum()
     }
 
     /// If a connection was dropped in a state that was not [`ConnectionState::Ready`],
@@ -866,7 +867,7 @@ mod tests {
         let q = Queue::with_capacity(3, host.clone(), policy.clone(), None, None, None);
         assert_eq!(q.num_conns(), 0);
         assert_eq!(q.reserved(), 0);
-        assert_eq!(q.get().is_err(), true);
+        assert!(q.get().is_err());
 
         let c = Connection::new(&host, &policy, None)
             .await
@@ -895,29 +896,29 @@ mod tests {
         put_back_with_reserve!(q, c);
         assert_eq!(q.num_conns(), 3);
         assert_eq!(q.reserved(), 3);
-        assert_eq!(q.reserve_capacity(), false);
+        assert!(!(q.reserve_capacity()));
 
         // drain the queue =====================================
 
         // remove and drop; the connection goes back into
         // the queue automatically, because it is in ready state.
-        assert_eq!(q.get().is_err(), false);
+        assert!(q.get().is_ok());
         assert_eq!(q.reserved(), 3);
         assert_eq!(q.num_conns(), 3);
 
-        assert_eq!(get_and_invalidate!(q).is_err(), false);
+        assert!(get_and_invalidate!(q).is_ok());
         assert_eq!(q.reserved(), 2);
         assert_eq!(q.num_conns(), 2);
 
-        assert_eq!(get_and_invalidate!(q).is_err(), false);
+        assert!(get_and_invalidate!(q).is_ok());
         assert_eq!(q.num_conns(), 1);
         assert_eq!(q.reserved(), 1);
 
-        assert_eq!(get_and_invalidate!(q).is_err(), false);
+        assert!(get_and_invalidate!(q).is_ok());
         assert_eq!(q.num_conns(), 0);
         assert_eq!(q.reserved(), 0);
 
-        assert_eq!(get_and_invalidate!(q).is_err(), true);
+        assert!(get_and_invalidate!(q).is_err());
         assert_eq!(q.num_conns(), 0);
         assert_eq!(q.reserved(), 0);
     }
@@ -929,27 +930,27 @@ mod tests {
 
         let p = ConnectionPool::new(host.clone(), policy.clone(), None, None, None);
         assert_eq!(p.num_conns(), 0);
-        assert_eq!(p.get(0).is_err(), true);
+        assert!(p.get(0).is_err());
 
-        assert_eq!(get_or_make!(p, 0).is_err(), false);
+        assert!(get_or_make!(p, 0).is_ok());
         assert_eq!(p.num_conns(), 1);
 
         // connection was returned to the pool after the above.
         // so the number of connections in the pool is still 1.
-        assert_eq!(get_or_make!(p, 0).is_err(), false);
+        assert!(get_or_make!(p, 0).is_ok());
         assert_eq!(p.num_conns(), 1);
 
-        assert_eq!(p.make_conn(0).await.is_err(), false);
+        assert!(p.make_conn(0).await.is_ok());
         assert_eq!(p.num_conns(), 2);
 
-        assert_eq!(p.get(0).is_err(), false);
+        assert!(p.get(0).is_ok());
         assert_eq!(p.num_conns(), 2);
 
-        assert_eq!(pool_get_and_invalidate!(p, 0).is_err(), false);
+        assert!(pool_get_and_invalidate!(p, 0).is_ok());
         assert_eq!(p.num_conns(), 1);
         assert_eq!(p.queues[0].reserved(), 1);
 
-        assert_eq!(pool_get_and_invalidate!(p, 0).is_err(), false);
+        assert!(pool_get_and_invalidate!(p, 0).is_ok());
         assert_eq!(p.num_conns(), 0);
         assert_eq!(p.queues[0].reserved(), 0);
     }
@@ -965,9 +966,9 @@ mod tests {
 
         let p = ConnectionPool::new(host.clone(), policy.clone(), None, None, None);
         assert_eq!(p.num_conns(), 0);
-        assert_eq!(p.get(0).is_err(), true);
+        assert!(p.get(0).is_err());
 
-        assert_eq!(get_or_make!(p, 0).is_err(), false);
+        assert!(get_or_make!(p, 0).is_ok());
         assert_eq!(p.num_conns(), 1);
         assert_eq!(p.queues[0].reserved(), 1);
         assert_eq!(p.queues[0].num_conns(), 1);
@@ -976,42 +977,42 @@ mod tests {
 
         // connection was returned to the pool after the above.
         // so the number of connections in the pool is still 1.
-        assert_eq!(get_or_make!(p, 1).is_err(), false);
+        assert!(get_or_make!(p, 1).is_ok());
         assert_eq!(p.num_conns(), 1);
         assert_eq!(p.queues[0].reserved(), 1);
         assert_eq!(p.queues[0].num_conns(), 1);
         assert_eq!(p.queues[1].reserved(), 0);
         assert_eq!(p.queues[1].num_conns(), 0);
 
-        assert_eq!(p.make_conn(1).await.is_err(), false);
+        assert!(p.make_conn(1).await.is_ok());
         assert_eq!(p.num_conns(), 2);
         assert_eq!(p.queues[0].reserved(), 1);
         assert_eq!(p.queues[0].num_conns(), 1);
         assert_eq!(p.queues[1].reserved(), 1);
         assert_eq!(p.queues[1].num_conns(), 1);
 
-        assert_eq!(p.get(0).is_err(), false);
+        assert!(p.get(0).is_ok());
         assert_eq!(p.num_conns(), 2);
         assert_eq!(p.queues[0].reserved(), 1);
         assert_eq!(p.queues[0].num_conns(), 1);
         assert_eq!(p.queues[1].reserved(), 1);
         assert_eq!(p.queues[1].num_conns(), 1);
 
-        assert_eq!(pool_get_and_invalidate!(p, 0).is_err(), false);
+        assert!(pool_get_and_invalidate!(p, 0).is_ok());
         assert_eq!(p.num_conns(), 1);
         assert_eq!(p.queues[0].reserved(), 0);
         assert_eq!(p.queues[0].num_conns(), 0);
         assert_eq!(p.queues[1].reserved(), 1);
         assert_eq!(p.queues[1].num_conns(), 1);
 
-        assert_eq!(pool_get_and_invalidate!(p, 0).is_err(), false);
+        assert!(pool_get_and_invalidate!(p, 0).is_ok());
         assert_eq!(p.num_conns(), 0);
         assert_eq!(p.queues[0].reserved(), 0);
         assert_eq!(p.queues[0].num_conns(), 0);
         assert_eq!(p.queues[1].reserved(), 0);
         assert_eq!(p.queues[1].num_conns(), 0);
 
-        assert_eq!(pool_get_and_invalidate!(p, 0).is_err(), true);
+        assert!(pool_get_and_invalidate!(p, 0).is_err());
         assert_eq!(p.num_conns(), 0);
         assert_eq!(p.queues[0].reserved(), 0);
         assert_eq!(p.queues[0].num_conns(), 0);
@@ -1020,21 +1021,21 @@ mod tests {
 
         // test for capacity planning
 
-        assert_eq!(p.make_conn(1).await.is_err(), false);
+        assert!(p.make_conn(1).await.is_ok());
         assert_eq!(p.num_conns(), 1);
         assert_eq!(p.queues[0].reserved(), 0);
         assert_eq!(p.queues[0].num_conns(), 0);
         assert_eq!(p.queues[1].reserved(), 1);
         assert_eq!(p.queues[1].num_conns(), 1);
 
-        assert_eq!(p.make_conn(1).await.is_err(), false);
+        assert!(p.make_conn(1).await.is_ok());
         assert_eq!(p.num_conns(), 2);
         assert_eq!(p.queues[0].reserved(), 1);
         assert_eq!(p.queues[0].num_conns(), 1);
         assert_eq!(p.queues[1].reserved(), 1);
         assert_eq!(p.queues[1].num_conns(), 1);
 
-        assert_eq!(p.make_conn(1).await.is_err(), false);
+        assert!(p.make_conn(1).await.is_ok());
         assert_eq!(p.num_conns(), 3);
         assert_eq!(p.queues[0].reserved(), 2);
         assert_eq!(p.queues[0].num_conns(), 2);
@@ -1042,7 +1043,7 @@ mod tests {
         assert_eq!(p.queues[1].num_conns(), 1);
 
         // can't make more, all queues are full
-        assert_eq!(p.make_conn(1).await.is_err(), true);
+        assert!(p.make_conn(1).await.is_err());
         assert_eq!(p.num_conns(), 3);
         assert_eq!(p.queues[0].reserved(), 2);
         assert_eq!(p.queues[0].num_conns(), 2);
@@ -1052,7 +1053,7 @@ mod tests {
         // can't make more, all queues are full
         let mut c = p.get(0).unwrap();
         // we are at capacity, no more connections can be created
-        assert_eq!(p.make_conn(1).await.is_err(), true);
+        assert!(p.make_conn(1).await.is_err());
         // but there is one connection in flight
         assert_eq!(p.num_conns(), 2);
         assert_eq!(p.queues[0].reserved(), 2);
@@ -1072,7 +1073,7 @@ mod tests {
         // can't make more, all queues are full
         let mut c = p.get(1).unwrap();
         // we are at capacity, no more connections can be created
-        assert_eq!(p.make_conn(1).await.is_err(), true);
+        assert!(p.make_conn(1).await.is_err());
         // but there is one connection in flight
         assert_eq!(p.num_conns(), 2);
         assert_eq!(p.queues[0].reserved(), 2);
@@ -1237,7 +1238,7 @@ mod tests {
         assert_eq!(p.num_conns(), 1, "Ready conn must be in the queue");
     }
 
-    /// fill_min_conns fixpoint: non-Ready path leaves reserved at 0 (churn);
+    /// `fill_min_conns` fixpoint: non-Ready path leaves reserved at 0 (churn);
     /// Ready path reaches `min` in one pass so next tend does nothing.
     #[aerospike_macro::test]
     async fn fill_min_conns_fixpoint_bug_vs_fixed() {
@@ -1256,7 +1257,11 @@ mod tests {
             let mut pconn = buggy.make_conn(i).await.expect("make_conn failed");
             pconn.set_state(ConnectionState::Writing);
         }
-        assert_eq!(buggy.total_reserved(), 0, "non-Ready loop never grows the pool");
+        assert_eq!(
+            buggy.total_reserved(),
+            0,
+            "non-Ready loop never grows the pool"
+        );
         assert_eq!(buggy.num_conns(), 0);
 
         // Ready path: pool reaches min in one pass.

@@ -24,7 +24,7 @@ use crate::Result;
 use crate::Value;
 
 /// Argument value for CDT (list/map) operations in the wire protocol.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CdtArgument {
     /// Single byte.
     Byte(u8),
@@ -64,9 +64,7 @@ pub struct CdtOperation {
 /// conservative check that can never produce a false positive.
 impl PartialEq for CdtOperation {
     fn eq(&self, other: &Self) -> bool {
-        self.op == other.op
-            && Arc::ptr_eq(&self.encoder, &other.encoder)
-            && self.args == other.args
+        self.op == other.op && Arc::ptr_eq(&self.encoder, &other.encoder) && self.args == other.args
     }
 }
 

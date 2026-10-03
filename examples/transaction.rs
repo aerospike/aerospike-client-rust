@@ -68,8 +68,14 @@ pub async fn run() {
     let _ = client.delete(&plain, &key2).await;
 
     // Seed two "accounts" outside the transaction.
-    client.put(&plain, &key1, &[as_bin!("balance", 100)]).await.unwrap();
-    client.put(&plain, &key2, &[as_bin!("balance", 0)]).await.unwrap();
+    client
+        .put(&plain, &key1, &[as_bin!("balance", 100)])
+        .await
+        .unwrap();
+    client
+        .put(&plain, &key2, &[as_bin!("balance", 0)])
+        .await
+        .unwrap();
 
     // ---- Commit: transfer 30 from A to B atomically ----
     let txn = Arc::new(Txn::new());
@@ -78,8 +84,14 @@ pub async fn run() {
     let mut wp = WritePolicy::default();
     wp.base_policy.txn = Some(txn.clone());
 
-    client.put(&wp, &key1, &[as_bin!("balance", 70)]).await.unwrap();
-    client.put(&wp, &key2, &[as_bin!("balance", 30)]).await.unwrap();
+    client
+        .put(&wp, &key1, &[as_bin!("balance", 70)])
+        .await
+        .unwrap();
+    client
+        .put(&wp, &key2, &[as_bin!("balance", 30)])
+        .await
+        .unwrap();
 
     let status = client.commit(&txn).await.unwrap();
     println!("commit status: {status:?}");
@@ -99,7 +111,10 @@ pub async fn run() {
     let mut wp = WritePolicy::default();
     wp.base_policy.txn = Some(txn.clone());
 
-    client.put(&wp, &key1, &[as_bin!("balance", -1000)]).await.unwrap();
+    client
+        .put(&wp, &key1, &[as_bin!("balance", -1000)])
+        .await
+        .unwrap();
 
     // Pretend validation failed; abort instead of committing.
     let status = client.abort(&txn).await.unwrap();

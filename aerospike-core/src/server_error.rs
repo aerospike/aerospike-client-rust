@@ -77,7 +77,7 @@ pub mod sub_code {
     pub const PARAM_STRING_OP_PARAMS_INVALID: u32 = 6;
     /// String op code or modifier/read class mismatch on the wire path.
     pub const PARAM_STRING_OP_INVALID: u32 = 7;
-    /// String CONTEXT_EVAL envelope malformed — wrong outer element count, a
+    /// String `CONTEXT_EVAL` envelope malformed — wrong outer element count, a
     /// missing context list, or a context the op cannot apply.
     pub const PARAM_STRING_CTX_MALFORMED: u32 = 8;
 
@@ -214,7 +214,9 @@ pub mod sub_code {
             (R::ParameterError, PARAM_STRING_OP_PARAMS_INVALID) => "PARAM_STRING_OP_PARAMS_INVALID",
             (R::ParameterError, PARAM_STRING_OP_INVALID) => "PARAM_STRING_OP_INVALID",
             (R::ParameterError, PARAM_STRING_CTX_MALFORMED) => "PARAM_STRING_CTX_MALFORMED",
-            (R::ParameterError, PARAM_STRING_INDEX_OUT_OF_BOUNDS) => "PARAM_STRING_INDEX_OUT_OF_BOUNDS",
+            (R::ParameterError, PARAM_STRING_INDEX_OUT_OF_BOUNDS) => {
+                "PARAM_STRING_INDEX_OUT_OF_BOUNDS"
+            }
             (R::ParameterError, PARAM_STRING_REGEX_INVALID) => "PARAM_STRING_REGEX_INVALID",
             (R::ParameterError, PARAM_STRING_UTF8_INVALID) => "PARAM_STRING_UTF8_INVALID",
             (R::PartitionUnavailable, UNAVAIL_INITIAL_BALANCE_UNRESOLVED) => {
@@ -236,12 +238,16 @@ pub mod sub_code {
             (R::FailForbidden, FORBID_SET_COUNT_STOP_WRITES) => "FORBID_SET_COUNT_STOP_WRITES",
             (R::FailForbidden, FORBID_SET_SIZE_STOP_WRITES) => "FORBID_SET_SIZE_STOP_WRITES",
             (R::FailForbidden, FORBID_CLOCK_SKEW_STOP_WRITES) => "FORBID_CLOCK_SKEW_STOP_WRITES",
-            (R::FailForbidden, FORBID_REPLACE_CONFLICT_RESOLVING) => "FORBID_REPLACE_CONFLICT_RESOLVING",
+            (R::FailForbidden, FORBID_REPLACE_CONFLICT_RESOLVING) => {
+                "FORBID_REPLACE_CONFLICT_RESOLVING"
+            }
             (R::FailForbidden, FORBID_TRUNCATED) => "FORBID_TRUNCATED",
             (R::FailForbidden, FORBID_DURABILITY_VIOLATION) => "FORBID_DURABILITY_VIOLATION",
             (R::OpNotApplicable, OPNOT_CDT_INDEX_OUT_OF_BOUNDS) => "OPNOT_CDT_INDEX_OUT_OF_BOUNDS",
             (R::OpNotApplicable, OPNOT_CDT_RANK_OUT_OF_BOUNDS) => "OPNOT_CDT_RANK_OUT_OF_BOUNDS",
-            (R::OpNotApplicable, OPNOT_CDT_BOUNDED_LIST_OVERFLOW) => "OPNOT_CDT_BOUNDED_LIST_OVERFLOW",
+            (R::OpNotApplicable, OPNOT_CDT_BOUNDED_LIST_OVERFLOW) => {
+                "OPNOT_CDT_BOUNDED_LIST_OVERFLOW"
+            }
             (R::OpNotApplicable, OPNOT_HLL_INDEX_BITS_UNSET) => "OPNOT_HLL_INDEX_BITS_UNSET",
             (R::OpNotApplicable, OPNOT_HLL_CANNOT_REDUCE_INDEX_BITS) => {
                 "OPNOT_HLL_CANNOT_REDUCE_INDEX_BITS"
@@ -256,7 +262,9 @@ pub mod sub_code {
             (R::OpNotApplicable, OPNOT_HLL_INTERSECT_MINHASH_MISMATCH) => {
                 "OPNOT_HLL_INTERSECT_MINHASH_MISMATCH"
             }
-            (R::OpNotApplicable, OPNOT_STRING_CONVERSION_FAILED) => "OPNOT_STRING_CONVERSION_FAILED",
+            (R::OpNotApplicable, OPNOT_STRING_CONVERSION_FAILED) => {
+                "OPNOT_STRING_CONVERSION_FAILED"
+            }
             (R::OpNotApplicable, OPNOT_STRING_UTF8_INVALID) => "OPNOT_STRING_UTF8_INVALID",
             (R::OpNotApplicable, OPNOT_STRING_REGEX_LIMIT_EXCEEDED) => {
                 "OPNOT_STRING_REGEX_LIMIT_EXCEEDED"
@@ -865,13 +873,23 @@ mod tests {
             sub_code::name(ResultCode::ParameterError, 1),
             Some("PARAM_TTL_INVALID")
         );
-        assert_eq!(sub_code::name(ResultCode::FilteredOut, 1), Some("FILTERED_META"));
+        assert_eq!(
+            sub_code::name(ResultCode::FilteredOut, 1),
+            Some("FILTERED_META")
+        );
         assert_eq!(
             sub_code::name(ResultCode::OpNotApplicable, 12),
             Some("OPNOT_STRING_REGEX_LIMIT_EXCEEDED")
         );
-        assert_eq!(sub_code::name(ResultCode::KeyNotFoundError, 0), Some("NONE"));
-        assert_eq!(sub_code::name(ResultCode::KeyNotFoundError, 1), None, "no subcodes under this code");
+        assert_eq!(
+            sub_code::name(ResultCode::KeyNotFoundError, 0),
+            Some("NONE")
+        );
+        assert_eq!(
+            sub_code::name(ResultCode::KeyNotFoundError, 1),
+            None,
+            "no subcodes under this code"
+        );
         assert_eq!(sub_code::name(ResultCode::ParameterError, 99), None);
     }
 
@@ -1011,7 +1029,7 @@ mod tests {
         ]);
         let d = parse_error_detail(&detail).unwrap();
         assert_eq!(d.message, "u64");
-        assert_eq!(u64::from(d.sub_code), value as u32 as u64);
+        assert_eq!(u64::from(d.sub_code), u64::from(value as u32));
     }
 
     #[test]

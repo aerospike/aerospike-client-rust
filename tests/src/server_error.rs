@@ -82,7 +82,11 @@ fn assert_subcode_present(err: &Error, rc: ResultCode, substrings: &[&str]) {
     assert_eq!(err.server_result_code(), Some(rc), "result code: {err}");
     let detail = err.server_error_detail().expect("expected error detail");
     assert!(detail.sub_code >= 1, "expected a dispatched subcode: {err}");
-    assert_eq!(err.sub_code(), detail.sub_code, "accessor must agree: {err}");
+    assert_eq!(
+        err.sub_code(),
+        detail.sub_code,
+        "accessor must agree: {err}"
+    );
 
     // The subcode belongs beside the result code in the rendered error, never
     // folded into the server's message.
@@ -100,7 +104,10 @@ fn assert_subcode_present(err: &Error, rc: ResultCode, substrings: &[&str]) {
     let msg = err.server_message().expect("expected a server message");
     let lower = msg.to_lowercase();
     for s in substrings {
-        assert!(lower.contains(&s.to_lowercase()), "message {msg:?} should contain {s:?}");
+        assert!(
+            lower.contains(&s.to_lowercase()),
+            "message {msg:?} should contain {s:?}"
+        );
     }
 }
 
@@ -116,7 +123,10 @@ fn assert_result(err: &Error, rc: ResultCode, substrings: &[&str]) {
         );
         let lower = msg.to_lowercase();
         for s in substrings {
-            assert!(lower.contains(&s.to_lowercase()), "message {msg:?} should contain {s:?}");
+            assert!(
+                lower.contains(&s.to_lowercase()),
+                "message {msg:?} should contain {s:?}"
+            );
         }
     }
 }
@@ -157,7 +167,11 @@ async fn verbosity_disabled_no_server_message() {
 
     // append (string concat) on an integer bin -> BIN_TYPE_ERROR.
     let err = client
-        .operate(&wpolicy_verbosity(0), &key, &[scalar::append(&as_bin!(BIN, "bad"))])
+        .operate(
+            &wpolicy_verbosity(0),
+            &key,
+            &[scalar::append(&as_bin!(BIN, "bad"))],
+        )
         .await
         .expect_err("append to int bin should fail");
     assert_eq!(err.server_result_code(), Some(ResultCode::BinTypeError));
@@ -175,11 +189,18 @@ async fn verbosity_subcode_only_surfaces_a_subcode() {
     put(&client, &key, as_bin!("other-bin", 1)).await;
 
     let err = client
-        .operate(&wpolicy_verbosity(1), &key, &[hll::refresh_count("no-hll-bin")])
+        .operate(
+            &wpolicy_verbosity(1),
+            &key,
+            &[hll::refresh_count("no-hll-bin")],
+        )
         .await
         .expect_err("HLL refresh on missing bin should fail");
     assert_eq!(err.server_result_code(), Some(ResultCode::BinNotFound));
-    assert!(err.sub_code() >= 1, "verbosity 1 must surface a subcode: {err}");
+    assert!(
+        err.sub_code() >= 1,
+        "verbosity 1 must surface a subcode: {err}"
+    );
     assert!(
         err.to_string().contains(", SubCode: "),
         "the subcode should be rendered beside the result code: {err}"
@@ -196,7 +217,11 @@ async fn verbosity_subcode_and_message_surfaces_both() {
     put(&client, &key, as_bin!("other-bin", 1)).await;
 
     let err = client
-        .operate(&wpolicy_verbosity(2), &key, &[hll::refresh_count("no-hll-bin")])
+        .operate(
+            &wpolicy_verbosity(2),
+            &key,
+            &[hll::refresh_count("no-hll-bin")],
+        )
         .await
         .expect_err("HLL refresh on missing bin should fail");
     // The subcode is not in the message any more, so only the server's own text
@@ -218,7 +243,11 @@ async fn append_to_integer_bin_is_bin_type_error() {
     put(&client, &key, as_bin!(BIN, 1)).await;
 
     let err = client
-        .operate(&wpolicy_verbosity(2), &key, &[scalar::append(&as_bin!(BIN, "bad-append"))])
+        .operate(
+            &wpolicy_verbosity(2),
+            &key,
+            &[scalar::append(&as_bin!(BIN, "bad-append"))],
+        )
         .await
         .expect_err("append to int bin should fail");
     assert_result(&err, ResultCode::BinTypeError, &["append"]);
@@ -234,7 +263,11 @@ async fn increment_string_bin_is_bin_type_error() {
     put(&client, &key, as_bin!(BIN, "hello")).await;
 
     let err = client
-        .operate(&wpolicy_verbosity(2), &key, &[scalar::add(&as_bin!(BIN, 1))])
+        .operate(
+            &wpolicy_verbosity(2),
+            &key,
+            &[scalar::add(&as_bin!(BIN, 1))],
+        )
         .await
         .expect_err("increment of string bin should fail");
     assert_result(&err, ResultCode::BinTypeError, &["increment"]);
@@ -293,7 +326,11 @@ async fn hll_refresh_count_missing_bin_is_bin_not_found_with_subcode() {
     put(&client, &key, as_bin!("other-bin", 1)).await;
 
     let err = client
-        .operate(&wpolicy_verbosity(2), &key, &[hll::refresh_count("no-hll-bin")])
+        .operate(
+            &wpolicy_verbosity(2),
+            &key,
+            &[hll::refresh_count("no-hll-bin")],
+        )
         .await
         .expect_err("HLL refresh on missing bin should fail");
     assert_subcode_present(&err, ResultCode::BinNotFound, &["count op"]);
@@ -306,7 +343,12 @@ async fn list_get_index_out_of_bounds_is_op_not_applicable_with_subcode() {
         return;
     }
     let key = fresh_key(&client, "edv-list").await;
-    put(&client, &key, as_bin!(BIN, vec![Value::from(10), Value::from(20), Value::from(30)])).await;
+    put(
+        &client,
+        &key,
+        as_bin!(BIN, vec![Value::from(10), Value::from(20), Value::from(30)]),
+    )
+    .await;
 
     let err = client
         .operate(&wpolicy_verbosity(2), &key, &[lists::get(BIN, 99)])
@@ -322,7 +364,12 @@ async fn list_get_by_rank_out_of_bounds_is_op_not_applicable_with_subcode() {
         return;
     }
     let key = fresh_key(&client, "edv-list").await;
-    put(&client, &key, as_bin!(BIN, vec![Value::from(10), Value::from(20), Value::from(30)])).await;
+    put(
+        &client,
+        &key,
+        as_bin!(BIN, vec![Value::from(10), Value::from(20), Value::from(30)]),
+    )
+    .await;
 
     let err = client
         .operate(
@@ -368,7 +415,11 @@ async fn bit_get_offset_out_of_range_is_parameter_error_with_subcode() {
     put(&client, &key, as_bin!(BIN, vec![0xAAu8, 0xBB, 0xCC, 0xDD])).await;
 
     let err = client
-        .operate(&wpolicy_verbosity(2), &key, &[bitwise::get(BIN, 2_000_000_000, 8)])
+        .operate(
+            &wpolicy_verbosity(2),
+            &key,
+            &[bitwise::get(BIN, 2_000_000_000, 8)],
+        )
         .await
         .expect_err("bit get past the blob should fail");
     assert_result(&err, ResultCode::ParameterError, &[]);
@@ -522,7 +573,10 @@ async fn filter_expression_build_failure_is_parameter_error_at_verbosity_3() {
     assert_result(&err, ResultCode::ParameterError, &["expression"]);
 
     if let Some(trace) = err.server_error_detail().and_then(|d| d.exp_trace.as_ref()) {
-        assert_eq!(trace.phase, Some(aerospike::server_error::EXP_TRACE_PHASE_BUILD));
+        assert_eq!(
+            trace.phase,
+            Some(aerospike::server_error::EXP_TRACE_PHASE_BUILD)
+        );
     }
 }
 
@@ -546,7 +600,10 @@ async fn exp_write_build_failure_is_parameter_error_at_verbosity_3() {
     assert_result(&err, ResultCode::ParameterError, &[]);
 
     if let Some(trace) = err.server_error_detail().and_then(|d| d.exp_trace.as_ref()) {
-        assert_eq!(trace.phase, Some(aerospike::server_error::EXP_TRACE_PHASE_BUILD));
+        assert_eq!(
+            trace.phase,
+            Some(aerospike::server_error::EXP_TRACE_PHASE_BUILD)
+        );
     }
 }
 
@@ -567,7 +624,10 @@ async fn verbosity_set_on_a_successful_command_does_not_break_it() {
         .await
         .unwrap();
 
-    let rec = client.get(&rpolicy_verbosity(2), &key, Bins::All).await.unwrap();
+    let rec = client
+        .get(&rpolicy_verbosity(2), &key, Bins::All)
+        .await
+        .unwrap();
     assert_eq!(rec.bins.get(BIN), Some(&Value::Int(42)));
 }
 
@@ -606,7 +666,9 @@ async fn batch_filtered_out_rows_keep_detail_and_node() {
     }
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
-    let keys: Vec<Key> = (0..3).map(|i| aerospike::as_key!(namespace, &set_name, i)).collect();
+    let keys: Vec<Key> = (0..3)
+        .map(|i| aerospike::as_key!(namespace, &set_name, i))
+        .collect();
     for key in &keys {
         put(&client, key, aerospike::as_bin!(BIN, 1)).await;
     }
@@ -636,8 +698,13 @@ async fn batch_filtered_out_rows_keep_detail_and_node() {
             "row {i}: the server's explanation must survive the parser, got {:?}",
             row.error_detail()
         );
-        let node = row.node().expect("the answering node is recorded on a non-OK row");
-        assert!(node.contains(':'), "row {i}: node is `<name>: <host:port>`, got {node}");
+        let node = row
+            .node()
+            .expect("the answering node is recorded on a non-OK row");
+        assert!(
+            node.contains(':'),
+            "row {i}: node is `<name>: <host:port>`, got {node}"
+        );
         assert_eq!(op.node(), Some(node));
     }
 }

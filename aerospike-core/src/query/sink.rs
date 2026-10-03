@@ -30,8 +30,7 @@ use crate::Record;
 /// before committing the record's cursor. Type-erased so the stream engine
 /// stays non-generic: one small future allocation per record. Resolving to
 /// `false` aborts the query, like the C client's callback contract.
-pub(crate) type QueryCallback =
-    Box<dyn Fn(Result<Record>) -> BoxFuture<'static, bool> + Send + Sync>;
+pub type QueryCallback = Box<dyn Fn(Result<Record>) -> BoxFuture<'static, bool> + Send + Sync>;
 
 /// Where a query's records go: the channel behind a [`Recordset`], or a
 /// user callback invoked inline from the node streams.
@@ -40,7 +39,7 @@ pub(crate) type QueryCallback =
 /// engine — tracker, rounds, retries, parsing — with the mode decided once,
 /// at the `Client` entry point.
 #[derive(Clone)]
-pub(crate) enum QuerySink {
+pub enum QuerySink {
     /// Buffered delivery: records flow through the recordset's channel and
     /// the resume cursor is committed at the consumer edge.
     Channel(Arc<Recordset>),
@@ -68,9 +67,7 @@ impl QuerySink {
     pub(crate) fn reset_task_id(&self) {
         match self {
             QuerySink::Channel(rs) => rs.reset_task_id(),
-            QuerySink::Callback(ctx) => ctx
-                .task_id
-                .store(rand::random::<u64>(), Ordering::Relaxed),
+            QuerySink::Callback(ctx) => ctx.task_id.store(rand::random::<u64>(), Ordering::Relaxed),
         }
     }
 
@@ -139,7 +136,7 @@ impl QuerySink {
 
 /// The engine state of a callback-mode query: what [`Recordset`] is to the
 /// channel mode, minus the channel.
-pub(crate) struct CallbackCtx {
+pub struct CallbackCtx {
     pub(crate) callback: QueryCallback,
     pub(crate) tracker: Arc<TrackerShared>,
     active: AtomicBool,

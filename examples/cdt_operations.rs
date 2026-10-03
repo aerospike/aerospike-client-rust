@@ -62,7 +62,10 @@ pub async fn run() {
         scalar::get_bin("scores"),
     ];
     let rec = client.operate(&wpolicy, &key, &ops).await.unwrap();
-    println!("list: after removing first two => {:?}", rec.bins.get("scores"));
+    println!(
+        "list: after removing first two => {:?}",
+        rec.bins.get("scores")
+    );
 
     // ============================================================
     // Map operations (Java OperateMap)
@@ -101,7 +104,8 @@ pub async fn run() {
         .unwrap();
 
     // Append 4 to doc["prices"] using a map-key context.
-    let op = lists::append(&lpolicy, "doc", as_val!(4)).context(vec![ctx_map_key(as_val!("prices"))]);
+    let op =
+        lists::append(&lpolicy, "doc", as_val!(4)).context(vec![ctx_map_key(as_val!("prices"))]);
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     // Read doc["prices"][3] via a map-key context.
@@ -114,15 +118,22 @@ pub async fn run() {
     let op = maps::get_by_key("doc", as_val!("owner"), MapReturnType::Value)
         .context(vec![ctx_map_key(as_val!("meta"))]);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
-    println!("nested: doc[\"meta\"][\"owner\"] = {:?}", rec.bins.get("doc"));
+    println!(
+        "nested: doc[\"meta\"][\"owner\"] = {:?}",
+        rec.bins.get("doc")
+    );
 
     // A list-index context works the same way on the outer list.
     client
-        .put(&wpolicy, &key, &[as_bin!("matrix", as_list!(as_list!(1, 2), as_list!(3, 4)))])
+        .put(
+            &wpolicy,
+            &key,
+            &[as_bin!("matrix", as_list!(as_list!(1, 2), as_list!(3, 4)))],
+        )
         .await
         .unwrap();
-    let op = lists::get_by_index("matrix", 0, ListReturnType::Values)
-        .context(vec![ctx_list_index(1)]);
+    let op =
+        lists::get_by_index("matrix", 0, ListReturnType::Values).context(vec![ctx_list_index(1)]);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     println!("nested: matrix[1][0] = {:?}", rec.bins.get("matrix"));
 

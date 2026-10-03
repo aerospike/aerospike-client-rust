@@ -460,12 +460,11 @@ async fn partition_map_ready_when_new_returns() {
         "Client::new returned a cluster that cannot route commands"
     );
     // The map must already cover the test namespace...
-    assert_eq!(
+    assert!(
         client
             .cluster
             .is_strong_consistency(common::namespace())
             .is_some(),
-        true,
         "partition map must be populated before Client::new returns"
     );
     // ...and every node must have parsed a partition map at least once.
@@ -688,7 +687,6 @@ async fn prefer_rack_reads_work_with_a_non_empty_rack_list() {
         client.close().await.unwrap();
     }
 }
-
 
 // ---- server-reported cluster name -----------------------------------------
 

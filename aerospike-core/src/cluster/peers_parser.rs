@@ -189,9 +189,7 @@ impl<'a> PeersParser<'a> {
         };
 
         if addr.is_empty() {
-            return Err(Error::parse_peers(
-                "Empty address string for peer",
-            ));
+            return Err(Error::parse_peers("Empty address string for peer"));
         }
 
         // Apply ip_map substitution at parse time, matching Java's
@@ -264,7 +262,7 @@ mod tests {
         .parse()
         .expect("Error parsing peer_string");
 
-        assert_eq!(result.generation, 1234567);
+        assert_eq!(result.generation, 1_234_567);
         assert_eq!(result.peers.len(), 4);
 
         assert_eq!(result.peers[0].node_name, "n1");

@@ -22,11 +22,14 @@ use std::io::Read;
 #[cfg(feature = "rt-tokio")]
 use std::pin::Pin;
 
+#[cfg(not(test))]
 use crate::commands::admin_command::AdminCommand;
 use crate::commands::buffer::{self, Buffer, MAX_BUFFER_SIZE};
 use crate::errors::{Error, Result};
 use crate::net::Host;
-use crate::policy::{AuthMode, ClientPolicy};
+#[cfg(not(test))]
+use crate::policy::AuthMode;
+use crate::policy::ClientPolicy;
 #[cfg(feature = "rt-async-std")]
 use aerospike_rt::async_std::net::Shutdown;
 #[cfg(feature = "rt-tokio")]
@@ -76,7 +79,7 @@ enum Liveness {
 
 /// A pooled connection's position relative to its idle deadline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum IdleStatus {
+pub enum IdleStatus {
     /// No deadline armed (`idle_timeout = 0`), or plenty of time left.
     Fresh,
     /// The deadline falls inside the caller's expiry horizon.
@@ -265,7 +268,8 @@ macro_rules! io_with_timeout {
         }
         #[cfg(feature = "rt-async-std")]
         {
-            aerospike_rt::timeout($timeout, $io).await
+            // Same `Result<_, ()>` shape as the tokio arm so callers match one way.
+            aerospike_rt::timeout($timeout, $io).await.map_err(|_| ())
         }
     }};
 }
@@ -276,7 +280,7 @@ macro_rules! io_with_timeout {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 // The test build's `open` shim never reaches TLS or auth.
 #[cfg_attr(test, allow(dead_code))]
-pub(crate) enum ConnectPhase {
+pub enum ConnectPhase {
     /// The TCP connect (or its timeout) failed; no handshake was attempted.
     Tcp,
     /// The socket was up but the TLS handshake failed.
@@ -289,7 +293,7 @@ pub(crate) enum ConnectPhase {
 /// A failed [`Connection::open`]: the underlying error tagged with the phase
 /// that produced it. Converts into the plain error with `?` / `From`.
 #[derive(Debug)]
-pub(crate) struct ConnectError {
+pub struct ConnectError {
     pub(crate) phase: ConnectPhase,
     pub(crate) error: Error,
 }
@@ -325,7 +329,7 @@ impl Connection {
     /// [`ClientPolicy::for_login_only`](crate::ClientPolicy::for_login_only);
     /// the decision is made once, here, and never revisited for the life of
     /// the connection.
-    #[cfg(feature = "tls")]
+    #[cfg(all(feature = "tls", not(test)))]
     async fn get_netsocket(
         stream: TcpStream,
         host: &Host,
@@ -350,7 +354,7 @@ impl Connection {
         }
     }
 
-    #[cfg(not(feature = "tls"))]
+    #[cfg(all(not(feature = "tls"), not(test)))]
     async fn get_netsocket(
         stream: TcpStream,
         _host: &Host,
@@ -408,15 +412,7 @@ impl Connection {
         // would put credentials on a cleartext socket, which is precisely
         // what the setting exists to avoid, so it is refused.
         let login_only = policy.login_only_active();
-        Self::open_inner(
-            host,
-            policy,
-            hashed_pass,
-            session,
-            !login_only,
-            !login_only,
-        )
-        .await
+        Self::open_inner(host, policy, hashed_pass, session, !login_only, !login_only).await
     }
 
     /// Opens a **TLS** connection and performs the full credential exchange,
@@ -578,13 +574,13 @@ impl Connection {
         let stream = Netsocket::TestDummy;
 
         let idle_timeout = if policy.idle_timeout > 0 {
-            Some(Duration::from_millis(policy.idle_timeout as u64))
+            Some(Duration::from_millis(u64::from(policy.idle_timeout)))
         } else {
             None
         };
 
         let mut conn = Connection {
-            addr: addr.into(),
+            addr,
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
             bytes_read: 0,
             bytes_received: 0,
@@ -593,7 +589,7 @@ impl Connection {
             socket_timeout: policy.login_timeout().as_millis() as u32,
             timeout_delay: 0,
             deadline: None,
-            idle_timeout: idle_timeout,
+            idle_timeout,
             idle_deadline: idle_timeout.map(|timeout| Instant::now() + timeout),
             state: ConnectionState::Ready,
             can_recover_connection: false,
@@ -679,8 +675,7 @@ impl Connection {
         let res = io_with_timeout!(
             self,
             timeout,
-            self.conn
-                .write_counted(&self.buffer.data_buffer, &mut sent)
+            self.conn.write_counted(&self.buffer.data_buffer, &mut sent)
         );
         // Counted before looking at the outcome: a partial write is still
         // bytes the server may have received.
@@ -690,7 +685,7 @@ impl Connection {
             Ok(Ok(())) => (),
             // classify socket I/O errors as Connection err and hence command retries.
             Ok(Err(e)) => return Err(Error::connection(format!("flush: {e}"))),
-            Err(_) => {
+            Err(()) => {
                 return Err(Error::timeout(
                     "Timeout writing to network connection".to_string(),
                 ));
@@ -918,7 +913,7 @@ impl Connection {
         match read_result {
             Ok(Ok(())) => (),
             Ok(Err(e)) => return Err(Error::connection(format!("read: {e}"))),
-            Err(_) => {
+            Err(()) => {
                 return Err(Error::timeout(
                     "Timeout reading from the network connection",
                 ))
@@ -946,7 +941,7 @@ impl Connection {
             Ok(Err(e)) => {
                 return Err(Error::connection(format!("write: {e}")));
             }
-            Err(_) => {
+            Err(()) => {
                 return Err(Error::timeout(
                     "Timeout writing to the network connection".to_string(),
                 ));
@@ -970,7 +965,7 @@ impl Connection {
         match res {
             Ok(Ok(())) => (),
             Ok(Err(e)) => return Err(Error::connection(format!("read_all: {e}"))),
-            Err(_) => {
+            Err(()) => {
                 return Err(Error::timeout(
                     "Timeout reading from the network connection".to_string(),
                 ))
@@ -990,10 +985,9 @@ impl Connection {
     /// within `expiry_horizon` counts as expiring.
     pub(crate) fn idle_status(&self, now: Instant, expiry_horizon: Duration) -> IdleStatus {
         match self.idle_deadline {
-            None => IdleStatus::Fresh,
             Some(deadline) if now >= deadline => IdleStatus::Expired,
             Some(deadline) if now + expiry_horizon >= deadline => IdleStatus::ExpiringSoon,
-            Some(_) => IdleStatus::Fresh,
+            _ => IdleStatus::Fresh,
         }
     }
 
@@ -1071,6 +1065,7 @@ impl Connection {
         }
     }
 
+    #[cfg(not(test))]
     async fn authenticate(
         &mut self,
         auth_mode: &AuthMode,
@@ -1096,6 +1091,7 @@ impl Connection {
     /// when a previous `LOGIN` round-trip on this pool produced a still-
     /// valid token. The token-authenticate path is tried before falling
     /// back to a fresh `login()`.
+    #[cfg(not(test))]
     async fn authenticate_with_session(
         &mut self,
         auth_mode: &AuthMode,
@@ -1159,7 +1155,7 @@ impl Connection {
             Ok(Err(e)) => Err(Error::timeout(format!(
                 "Timeout draining the connection {e}"
             ))),
-            Err(_) => Err(Error::timeout(
+            Err(()) => Err(Error::timeout(
                 "Timeout draining the connection".to_string(),
             )),
         }
@@ -1294,7 +1290,7 @@ impl<'a> BufferedConn<'a> {
             return Ok(size);
         }
 
-        if self.limit <= 0 {
+        if self.limit == 0 {
             return Ok(0);
         }
 
@@ -1320,7 +1316,7 @@ impl<'a> BufferedConn<'a> {
         match read_result {
             Ok(Ok(())) => (),
             Ok(Err(e)) => return Err(Error::connection(format!("buffered_read: {e}"))),
-            Err(_) => {
+            Err(()) => {
                 return Err(Error::timeout(
                     "Timeout reading from the network connection",
                 ))
@@ -1367,7 +1363,7 @@ impl<'a> BufferedConn<'a> {
                     "Timeout draining the connection {e}"
                 )))
             }
-            Err(_) => {
+            Err(()) => {
                 return Err(Error::timeout(
                     "Timeout draining the connection".to_string(),
                 ))
@@ -1385,7 +1381,7 @@ impl<'a> BufferedConn<'a> {
 
     #[inline]
     pub(crate) const fn exhausted(&self) -> bool {
-        self.limit <= 0 && self.decoder_remaining == 0 && self.empty()
+        self.limit == 0 && self.decoder_remaining == 0 && self.empty()
     }
 
     #[inline]
@@ -1426,9 +1422,8 @@ impl<'a> BufferedConn<'a> {
             // we have data left in the buffer, but we need more
             let cached = self.cached_read_rest();
             let remaining = size - cached;
-            if self.decoder.is_some() {
+            if let Some(decoder) = self.decoder.as_mut() {
                 // Decoder mode: decompress directly into data_buffer
-                let decoder = self.decoder.as_mut().unwrap();
                 decoder
                     .read_exact(&mut self.conn.buffer.data_buffer[cached..cached + remaining])
                     .map_err(|e| Error::client_error(format!("Decompression error: {e}")))?;
@@ -1775,6 +1770,7 @@ mod liveness_probe_tests {
     use aerospike_rt::net::{TcpListener, TcpStream};
 
     /// Half-close the accepted socket, so the client side sees FIN.
+    #[cfg_attr(feature = "rt-async-std", allow(unused_mut))] // only tokio's shutdown needs `&mut`
     async fn spawn_finning_peer() -> String {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap().to_string();
@@ -2032,8 +2028,7 @@ mod tests_eof_loopback {
             .expect_err("peer sent 10 of the 100 requested bytes");
         assert!(
             matches!(err.kind(), crate::ErrorKind::Connection),
-            "short read must surface as a connection error, got: {:?}",
-            err
+            "short read must surface as a connection error, got: {err:?}"
         );
         // The failed read still accounts for exactly what arrived, on both
         // the metrics total and the recovery offset.
@@ -2053,8 +2048,16 @@ mod tests_eof_loopback {
         // `flush` writes the command buffer and starts a new count.
         conn.buffer.data_buffer = vec![2u8; 77];
         conn.flush().await.unwrap();
-        assert_eq!(conn.bytes_sent(), 77, "flush restarts the per-command count");
-        assert_eq!(conn.bytes_received(), 0, "a new command starts with nothing read");
+        assert_eq!(
+            conn.bytes_sent(),
+            77,
+            "flush restarts the per-command count"
+        );
+        assert_eq!(
+            conn.bytes_received(),
+            0,
+            "a new command starts with nothing read"
+        );
     }
 
     // ─── Bug 1: socket I/O errors classified as Error::Connection ─────────
@@ -2072,13 +2075,11 @@ mod tests_eof_loopback {
 
         assert!(
             matches!(err.kind(), crate::ErrorKind::Connection),
-            "expected connection error on peer FIN, got: {:?}",
-            err
+            "expected connection error on peer FIN, got: {err:?}"
         );
         assert!(
             is_network_error(&err),
-            "is_network_error must accept this so the retry gate engages; err = {:?}",
-            err
+            "is_network_error must accept this so the retry gate engages; err = {err:?}"
         );
     }
 
@@ -2106,13 +2107,11 @@ mod tests_eof_loopback {
 
         assert!(
             matches!(err.kind(), crate::ErrorKind::Connection),
-            "expected connection error on peer-closed write, got: {:?}",
-            err
+            "expected connection error on peer-closed write, got: {err:?}"
         );
         assert!(
             is_network_error(&err),
-            "is_network_error must accept this; err = {:?}",
-            err
+            "is_network_error must accept this; err = {err:?}"
         );
     }
 

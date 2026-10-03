@@ -12,10 +12,10 @@
 
 //! Multi-Record Transaction (MRT) support.
 
+use crate::locks::{read, write};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering};
 use std::sync::RwLock;
-use crate::locks::{read, write};
 use std::time::Duration;
 
 use crate::errors::{Error, Result};
@@ -161,6 +161,10 @@ impl std::fmt::Display for CommitErrorType {
     }
 }
 
+/// A read inside a transaction: its key and the record version the server
+/// reported for it, if any.
+type TxnRead = (Key, Option<u64>);
+
 /// Multi-Record Transaction.
 ///
 /// Each command in the transaction must use the same namespace.
@@ -168,7 +172,7 @@ impl std::fmt::Display for CommitErrorType {
 /// configuration `transaction-duration` as the timeout (default 10 seconds).
 pub struct Txn {
     id: i64,
-    reads: RwLock<HashMap<[u8; 20], (Key, Option<u64>)>>,
+    reads: RwLock<HashMap<[u8; 20], TxnRead>>,
     writes: RwLock<HashMap<[u8; 20], Key>>,
     state: RwLock<TxnState>,
     namespace: RwLock<Option<String>>,
@@ -186,7 +190,7 @@ impl std::fmt::Debug for Txn {
             .field("namespace", &*read(&self.namespace))
             .field("timeout", &self.timeout)
             .field("deadline", &self.deadline.load(Ordering::Relaxed))
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

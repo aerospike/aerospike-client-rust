@@ -46,13 +46,13 @@ async fn read_touch_ttl() {
     let mut read_policy = ReadPolicy::default();
     read_policy.base_policy.read_touch_ttl = ReadTouchTTL::Percent(80);
     let record = client.get(&read_policy, &key, Bins::All).await.unwrap();
-    assert!(record.bins.get(&bin.clone().name) == Some(&bin.clone().value.into()));
+    assert!(record.bins.get(&bin.clone().name) == Some(&bin.clone().value));
 
     // Read the record again, but don't reset read ttl.
     sleep(Duration::from_secs(1)).await;
     read_policy.base_policy.read_touch_ttl = ReadTouchTTL::DontReset;
     let record = client.get(&read_policy, &key, Bins::All).await.unwrap();
-    assert!(record.bins.get(&bin.clone().name) == Some(&bin.clone().value.into()));
+    assert!(record.bins.get(&bin.clone().name) == Some(&bin.clone().value));
 
     // Read the record after it expires, showing it's gone.
     sleep(Duration::from_secs(2)).await;
@@ -148,7 +148,7 @@ async fn connect() {
     assert!(exists);
 
     let bin = as_bin!("bin999", "test string");
-    let ops = &vec![operations::put(&bin), operations::get()];
+    let ops = &[operations::put(&bin), operations::get()];
     client.operate(&wpolicy, &key, ops).await.unwrap();
 
     let existed = common::delete_durably(&client, &wpolicy, &key)
@@ -178,14 +178,14 @@ async fn operate_multi_op_same_bin_returns_multi_result() {
         .await
         .unwrap();
 
-    let ops = &[
-        operations::get_bin("count"),
-        operations::get_bin("count"),
-    ];
+    let ops = &[operations::get_bin("count"), operations::get_bin("count")];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(
         rec.bins.get("count"),
-        Some(&Value::MultiResult(vec![Value::from(10i64), Value::from(10i64)]))
+        Some(&Value::MultiResult(vec![
+            Value::from(10i64),
+            Value::from(10i64)
+        ]))
     );
 
     client.close().await.unwrap();
@@ -547,7 +547,10 @@ async fn unknown_value_round_trips_as_a_bin_value() {
         as_bin!("foreign", Value::Unknown(JBLOB, payload.clone())),
         as_bin!("plain", 42),
     ];
-    client.put(&WritePolicy::default(), &key, &bins).await.unwrap();
+    client
+        .put(&WritePolicy::default(), &key, &bins)
+        .await
+        .unwrap();
 
     let record = client
         .get(&ReadPolicy::default(), &key, Bins::All)
@@ -563,7 +566,10 @@ async fn unknown_value_round_trips_as_a_bin_value() {
     }
 
     // Also through an operate() bin write, and an empty payload.
-    let ops = [operations::put(&as_bin!("foreign", Value::Unknown(JBLOB, Vec::new())))];
+    let ops = [operations::put(&as_bin!(
+        "foreign",
+        Value::Unknown(JBLOB, Vec::new())
+    ))];
     client
         .operate(&WritePolicy::default(), &key, &ops)
         .await

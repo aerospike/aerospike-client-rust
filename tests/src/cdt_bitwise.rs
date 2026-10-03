@@ -35,7 +35,7 @@ async fn cdt_bitwise() {
     let _ = common::delete_durably(&client, &wpolicy, &key).await;
 
     // Verify the insert and Get Command
-    let ops = &vec![
+    let ops = &[
         bitwise::insert("bin", 0, val, &bpolicy),
         bitwise::get("bin", 9, 5),
     ];
@@ -43,13 +43,13 @@ async fn cdt_bitwise() {
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b10000000]));
 
     // Verify the Count command
-    let ops = &vec![bitwise::count("bin", 20, 4)];
+    let ops = &[bitwise::count("bin", 20, 4)];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Int(2));
 
     // Verify the set command
     let val = Value::Blob(vec![0b11100000]);
-    let ops = &vec![
+    let ops = &[
         bitwise::set("bin", 13, 3, val, &bpolicy),
         bitwise::get("bin", 0, 40),
     ];
@@ -62,7 +62,7 @@ async fn cdt_bitwise() {
     );
 
     // Verify Remove command
-    let ops = &vec![
+    let ops = &[
         bitwise::remove("bin", 0, 1, &bpolicy),
         bitwise::get("bin", 0, 8),
     ];
@@ -71,7 +71,7 @@ async fn cdt_bitwise() {
 
     // Verify OR command
     let val = Value::Blob(vec![0b10101010]);
-    let ops = &vec![
+    let ops = &[
         bitwise::or("bin", 0, 8, val, &bpolicy),
         bitwise::get("bin", 0, 8),
     ];
@@ -80,7 +80,7 @@ async fn cdt_bitwise() {
 
     // Verify XOR command
     let val = Value::Blob(vec![0b10101100]);
-    let ops = &vec![
+    let ops = &[
         bitwise::xor("bin", 0, 8, val, &bpolicy),
         bitwise::get("bin", 0, 8),
     ];
@@ -89,7 +89,7 @@ async fn cdt_bitwise() {
 
     // Verify AND command
     let val = Value::Blob(vec![0b01011010]);
-    let ops = &vec![
+    let ops = &[
         bitwise::and("bin", 0, 8, val, &bpolicy),
         bitwise::get("bin", 0, 8),
     ];
@@ -97,7 +97,7 @@ async fn cdt_bitwise() {
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b01000010]));
 
     // Verify NOT command
-    let ops = &vec![
+    let ops = &[
         bitwise::not("bin", 0, 8, &bpolicy),
         bitwise::get("bin", 0, 8),
     ];
@@ -105,7 +105,7 @@ async fn cdt_bitwise() {
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b10111101]));
 
     // Verify LSHIFT command
-    let ops = &vec![
+    let ops = &[
         bitwise::lshift("bin", 24, 8, 3, &bpolicy),
         bitwise::get("bin", 24, 8),
     ];
@@ -113,7 +113,7 @@ async fn cdt_bitwise() {
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b00101000]));
 
     // Verify RSHIFT command
-    let ops = &vec![
+    let ops = &[
         bitwise::rshift("bin", 0, 9, 1, &bpolicy),
         bitwise::get("bin", 0, 16),
     ];
@@ -124,7 +124,7 @@ async fn cdt_bitwise() {
     );
 
     // Verify Add command
-    let ops = &vec![
+    let ops = &[
         bitwise::add(
             "bin",
             0,
@@ -143,7 +143,7 @@ async fn cdt_bitwise() {
     );
 
     // Verify Subtract command
-    let ops = &vec![
+    let ops = &[
         bitwise::subtract(
             "bin",
             0,
@@ -162,7 +162,7 @@ async fn cdt_bitwise() {
     );
 
     // Verify the set int command
-    let ops = &vec![
+    let ops = &[
         bitwise::set_int("bin", 8, 8, 255, &bpolicy),
         bitwise::get("bin", 0, 32),
     ];
@@ -173,17 +173,17 @@ async fn cdt_bitwise() {
     );
 
     // Verify the get int command
-    let ops = &vec![bitwise::get_int("bin", 8, 8, false)];
+    let ops = &[bitwise::get_int("bin", 8, 8, false)];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Int(255));
 
     // Verify the LSCAN command
-    let ops = &vec![bitwise::lscan("bin", 19, 8, true)];
+    let ops = &[bitwise::lscan("bin", 19, 8, true)];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Int(2));
 
     // Verify the RSCAN command
-    let ops = &vec![bitwise::rscan("bin", 19, 8, true)];
+    let ops = &[bitwise::rscan("bin", 19, 8, true)];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::Int(7));
     client.close().await.unwrap();
@@ -221,7 +221,9 @@ async fn bitwise_b64_encode() {
     let key = as_key!(namespace, set_name, "b64");
 
     // [0x01, 0x42, 0x03, 0x04, 0x05]
-    let blob = Value::Blob(vec![0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]);
+    let blob = Value::Blob(vec![
+        0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101,
+    ]);
 
     for (label, op, expected) in [
         // The whole bin.
@@ -285,14 +287,20 @@ async fn bitwise_b64_encode_past_the_end_is_not_applicable() {
     let key = as_key!(namespace, set_name, "b64-past-end");
     let _ = common::delete_durably(&client, &wpolicy, &key).await;
 
-    let blob = Value::Blob(vec![0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101]);
+    let blob = Value::Blob(vec![
+        0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00000101,
+    ]);
     client
         .put(&wpolicy, &key, &[as_bin!("bin", blob)])
         .await
         .unwrap();
 
     let err = client
-        .operate(&wpolicy, &key, &[bitwise::b64_encode_range("bin", 6, 1, false)])
+        .operate(
+            &wpolicy,
+            &key,
+            &[bitwise::b64_encode_range("bin", 6, 1, false)],
+        )
         .await
         .expect_err("a range past the end of the bitmap must fail");
     assert_eq!(

@@ -75,16 +75,12 @@ async fn close() {
     let client = Client::new(common::client_policy(), &common::hosts())
         .await
         .unwrap();
-    assert_eq!(client.is_connected(), true, "The client is not connected");
+    assert!(client.is_connected(), "The client is not connected");
 
     if let Ok(()) = client.close().await {
-        assert_eq!(
-            client.is_connected(),
-            false,
-            "The client did not disconnect"
-        );
+        assert!(!client.is_connected(), "The client did not disconnect");
     } else {
-        assert!(false, "Failed to close client");
+        panic!("Failed to close client");
     }
 }
 
@@ -96,7 +92,9 @@ async fn tls_client_no_auth() {
     }
 
     let policy = &mut common::client_policy().clone();
-    policy.tls_policy = Some(aerospike::TlsPolicy::new(common::tls_config_no_client_auth()));
+    policy.tls_policy = Some(aerospike::TlsPolicy::new(
+        common::tls_config_no_client_auth(),
+    ));
     let client = Client::new(policy, &common::hosts()).await.unwrap();
     let names = client.node_names();
     assert!(!names.is_empty());

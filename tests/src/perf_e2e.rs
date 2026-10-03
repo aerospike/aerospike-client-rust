@@ -13,6 +13,7 @@
 // concurrency: on v2 that separated a 1.76 ms -> 1.45 ms per-batch change
 // cleanly (5 runs each, no overlap) where latency could not.
 
+#[cfg(feature = "rt-tokio")]
 use std::sync::Arc;
 
 use aerospike::*;
@@ -24,17 +25,31 @@ const ITERS: usize = 25;
 
 fn read_ops(keys: &[Key]) -> Vec<BatchOperation> {
     let brp = BatchReadPolicy::default();
-    keys.iter().map(|k| BatchOperation::read(&brp, k.clone(), Bins::from(["a", "b"]))).collect()
+    keys.iter()
+        .map(|k| BatchOperation::read(&brp, k.clone(), Bins::from(["a", "b"])))
+        .collect()
 }
 
 async fn seed(client: &Client, namespace: &str, set_name: &str, n: usize) -> Vec<Key> {
     let bwp = BatchWritePolicy::default();
-    let bins = [as_bin!("a", 1), as_bin!("b", "some value"), as_bin!("c", 42)];
+    let bins = [
+        as_bin!("a", 1),
+        as_bin!("b", "some value"),
+        as_bin!("c", 42),
+    ];
     let wops: Vec<_> = bins.iter().map(operations::put).collect();
-    let keys: Vec<Key> = (0..n as i64).map(|i| as_key!(namespace, set_name, i)).collect();
+    let keys: Vec<Key> = (0..n as i64)
+        .map(|i| as_key!(namespace, set_name, i))
+        .collect();
     for chunk in keys.chunks(1000) {
-        let mut writes: Vec<_> = chunk.iter().map(|k| BatchOperation::write(&bwp, k.clone(), wops.clone())).collect();
-        client.batch(&BatchPolicy::default(), &mut writes).await.expect("seed batch write");
+        let mut writes: Vec<_> = chunk
+            .iter()
+            .map(|k| BatchOperation::write(&bwp, k.clone(), wops.clone()))
+            .collect();
+        client
+            .batch(&BatchPolicy::default(), &mut writes)
+            .await
+            .expect("seed batch write");
     }
     keys
 }
@@ -62,7 +77,9 @@ async fn time_reads(client: &Client, keys: &[Key], concurrency: Concurrency, lab
         let start = Instant::now();
         client.batch(&policy, &mut ops).await.expect("batch read");
         samples.push(start.elapsed().as_secs_f64() * 1000.0);
-        assert!(ops.iter().all(|o| o.batch_record().result_code() == Some(ResultCode::Ok)));
+        assert!(ops
+            .iter()
+            .all(|o| o.batch_record().result_code() == Some(ResultCode::Ok)));
     }
     report(label, keys.len(), samples);
 }
@@ -145,7 +162,9 @@ async fn perf_e2e_batch_throughput_spawned() {
     }
     let start = Instant::now();
     for _ in 0..ROUNDS {
-        let handles: Vec<_> = (0..IN_FLIGHT).map(|_| fire(&client, &keys, &policy)).collect();
+        let handles: Vec<_> = (0..IN_FLIGHT)
+            .map(|_| fire(&client, &keys, &policy))
+            .collect();
         for h in handles {
             assert_eq!(h.await.expect("join").expect("batch read"), N);
         }

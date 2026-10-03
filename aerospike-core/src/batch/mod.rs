@@ -16,8 +16,8 @@
 pub mod batch_executor;
 #[cfg(test)]
 mod encode_tests;
-pub(crate) mod hook;
-pub(crate) use hook::BatchHook;
+pub mod hook;
+pub use hook::BatchHook;
 pub mod batch_record;
 
 use crate::commands::buffer::{FIELD_HEADER_SIZE, OPERATION_HEADER_SIZE};
@@ -97,7 +97,9 @@ impl BatchReadPolicy {
         rp.replica = parent.replica;
         rp.base_policy.read_touch_ttl = self.read_touch_ttl;
         if self.filter_expression.is_some() {
-            rp.base_policy.filter_expression = self.filter_expression.clone();
+            rp.base_policy
+                .filter_expression
+                .clone_from(&self.filter_expression);
         }
         rp
     }
@@ -177,7 +179,9 @@ impl BatchWritePolicy {
         wp.durable_delete = self.durable_delete;
         wp.on_locking_only = self.on_locking_only;
         if self.filter_expression.is_some() {
-            wp.base_policy.filter_expression = self.filter_expression.clone();
+            wp.base_policy
+                .filter_expression
+                .clone_from(&self.filter_expression);
         }
         // Match Java's batch->single conversion: single-op writes that
         // come from a batch with multi-op shape return per-op results.
@@ -248,7 +252,9 @@ impl BatchDeletePolicy {
         wp.send_key = self.send_key;
         wp.durable_delete = self.durable_delete;
         if self.filter_expression.is_some() {
-            wp.base_policy.filter_expression = self.filter_expression.clone();
+            wp.base_policy
+                .filter_expression
+                .clone_from(&self.filter_expression);
         }
         wp
     }
@@ -314,7 +320,9 @@ impl BatchUDFPolicy {
         wp.durable_delete = self.durable_delete;
         wp.on_locking_only = self.on_locking_only;
         if self.filter_expression.is_some() {
-            wp.base_policy.filter_expression = self.filter_expression.clone();
+            wp.base_policy
+                .filter_expression
+                .clone_from(&self.filter_expression);
         }
         wp.respond_per_each_op = true;
         wp
@@ -427,10 +435,9 @@ impl BatchOperation {
     pub(crate) const fn has_write(&self) -> bool {
         match self {
             Self::Read { .. } | Self::TxnVerify { .. } => false,
-            Self::Write { .. }
-            | Self::Delete { .. }
-            | Self::UDF { .. }
-            | Self::TxnRoll { .. } => true,
+            Self::Write { .. } | Self::Delete { .. } | Self::UDF { .. } | Self::TxnRoll { .. } => {
+                true
+            }
         }
     }
 
@@ -679,12 +686,12 @@ impl BatchOperation {
     }
 
     /// The parsed record for this operation, if the call found one.
-    pub fn record(&self) -> Option<&Record> {
+    pub const fn record(&self) -> Option<&Record> {
         self.batch_record().record.as_ref()
     }
 
     /// Moves the parsed record out of this operation, leaving `None`.
-    pub fn take_record(&mut self) -> Option<Record> {
+    pub const fn take_record(&mut self) -> Option<Record> {
         self.record_mut().record.take()
     }
 
@@ -701,7 +708,7 @@ impl BatchOperation {
 
     /// The failure behind this row, see [`BatchRecord::error`].
     #[must_use]
-    pub fn error(&self) -> Option<&Error> {
+    pub const fn error(&self) -> Option<&Error> {
         self.batch_record().error()
     }
 
@@ -710,8 +717,6 @@ impl BatchOperation {
     pub fn node(&self) -> Option<&str> {
         self.batch_record().node()
     }
-
-
 
     /// Clears any result from a previous execution, so a reused operation
     /// starts a call with a clean row.
@@ -793,14 +798,10 @@ mod repeat_tests {
         let policy = BatchWritePolicy::default();
         let ops = vec![
             operations::put(&as_bin!("a", 1)),
-            lists::append(
-                &lists::ListPolicy::default(),
-                "l",
-                crate::Value::from(1),
-            ),
+            lists::append(&lists::ListPolicy::default(), "l", crate::Value::from(1)),
         ];
         let w1 = BatchOperation::write(&policy, key(1), ops.clone());
-        let w2 = BatchOperation::write(&policy, key(2), ops.clone());
+        let w2 = BatchOperation::write(&policy, key(2), ops);
         assert!(w2.match_header(Some(&w1), None, None));
     }
 
@@ -838,7 +839,7 @@ mod repeat_tests {
         policy.send_key = true;
         let ops = vec![operations::put(&as_bin!("a", 1))];
         let w1 = BatchOperation::write(&policy, key(1), ops.clone());
-        let w2 = BatchOperation::write(&policy, key(2), ops.clone());
+        let w2 = BatchOperation::write(&policy, key(2), ops);
         assert!(!w2.match_header(Some(&w1), None, None));
     }
 
@@ -866,7 +867,13 @@ mod repeat_tests {
         let u2 = BatchOperation::udf(&policy, key(2), "pkg", "fun", args);
         assert!(u2.match_header(Some(&u1), None, None));
 
-        let u3 = BatchOperation::udf(&policy, key(3), "pkg", "fun", Some(vec![crate::Value::from(2)]));
+        let u3 = BatchOperation::udf(
+            &policy,
+            key(3),
+            "pkg",
+            "fun",
+            Some(vec![crate::Value::from(2)]),
+        );
         assert!(!u3.match_header(Some(&u2), None, None));
     }
 
@@ -958,7 +965,11 @@ mod in_doubt_tests {
             message: String::new(),
             exp_trace: None,
         };
-        w.set_error(Error::server_error(ResultCode::BinNotFound, "A1", Some(Box::new(detail))));
+        w.set_error(Error::server_error(
+            ResultCode::BinNotFound,
+            "A1",
+            Some(Box::new(detail)),
+        ));
 
         let br = w.batch_record();
         assert_eq!(br.sub_code(), 3);
@@ -980,7 +991,10 @@ mod in_doubt_tests {
 
         let mut r = read_op("r");
         r.set_error(in_doubt_timeout());
-        assert!(!r.batch_record().in_doubt(), "a read is never in doubt, whatever its error says");
+        assert!(
+            !r.batch_record().in_doubt(),
+            "a read is never in doubt, whatever its error says"
+        );
     }
 
     #[test]
@@ -1020,7 +1034,6 @@ mod in_doubt_tests {
         assert!(!txn.write_in_doubt());
     }
 
-
     #[test]
     #[cfg(feature = "serialization")]
     fn a_row_serializes_field_for_field_with_a_structured_error() {
@@ -1032,12 +1045,19 @@ mod in_doubt_tests {
         };
         w.set_record(None);
         w.set_error(
-            Error::server_error(ResultCode::FilteredOut, "A1: h:3000", Some(Box::new(detail)))
-                .with_retry_context(1, None, vec![Error::timeout("first try")]),
+            Error::server_error(
+                ResultCode::FilteredOut,
+                "A1: h:3000",
+                Some(Box::new(detail)),
+            )
+            .with_retry_context(1, None, vec![Error::timeout("first try")]),
         );
         let json: serde_json::Value = serde_json::to_value(w.batch_record()).unwrap();
 
-        assert!(json["record"].is_null(), "a failure drops the earlier record");
+        assert!(
+            json["record"].is_null(),
+            "a failure drops the earlier record"
+        );
         assert_eq!(json["has_write"], true);
         let e = &json["error"];
         assert_eq!(e["kind"], "Server");
@@ -1049,7 +1069,11 @@ mod in_doubt_tests {
         assert_eq!(e["server_error_detail"]["sub_code"], 2);
         assert_eq!(e["sub_errors"][0]["kind"], "Timeout");
         assert!(e["source"].is_null());
-        assert_eq!(json.as_object().unwrap().len(), 4, "key, record, error, has_write — nothing derived");
+        assert_eq!(
+            json.as_object().unwrap().len(),
+            4,
+            "key, record, error, has_write — nothing derived"
+        );
 
         let mut ok = write_op("ok");
         ok.set_record(None);
@@ -1063,7 +1087,11 @@ mod in_doubt_tests {
         let mut w = write_op("w");
         w.set_record(None);
         w.stamp_unanswered(&Error::timeout("late").set_in_doubt(true, 1), None);
-        assert_eq!(w.result_code(), Some(ResultCode::Ok), "an answered row keeps its answer");
+        assert_eq!(
+            w.result_code(),
+            Some(ResultCode::Ok),
+            "an answered row keeps its answer"
+        );
 
         w.set_error(Error::server_error(ResultCode::KeyBusy, "A1", None));
         w.clear_result();

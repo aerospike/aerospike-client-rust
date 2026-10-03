@@ -13,13 +13,12 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::cmp::Ordering;
 use std::str::FromStr;
 
 use rand::distr::{Distribution, StandardUniform};
 use rand::{Rng, RngExt};
 
-#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Debug)]
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Debug)]
 pub struct Percent(u8);
 
 impl Percent {
@@ -42,12 +41,6 @@ impl FromStr for Percent {
             }
         }
         Err("Invalid percent value".into())
-    }
-}
-
-impl Ord for Percent {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.0.cmp(&other.0)
     }
 }
 

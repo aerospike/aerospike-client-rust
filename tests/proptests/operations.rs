@@ -26,20 +26,18 @@ proptest_async::proptest! {
         // println!("Operate succeeded in {:?}", now.elapsed());
 
         match res {
-            Err(e) if e.server_result_code() == Some(ResultCode::ParameterError) => {
-                if write_policy.respond_per_each_op && ops.into_iter().find(|op| *op == PropOperation::Get).is_some() {
+            Err(e) if e.server_result_code() == Some(ResultCode::ParameterError)
+                && write_policy.respond_per_each_op && ops.into_iter().find(|op| *op == PropOperation::Get).is_some() => {
                     return;
-                }
-            }, // it's fine
+                }, // it's fine
             Err(e) if e.server_result_code() == Some(ResultCode::BinTypeError) => {
             }
             Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError) => {
             },
-            Err(e) if e.server_result_code() == Some(ResultCode::KeyExistsError) => {
-                if write_policy.record_exists_action != RecordExistsAction::CreateOnly {
+            Err(e) if e.server_result_code() == Some(ResultCode::KeyExistsError)
+                && write_policy.record_exists_action != RecordExistsAction::CreateOnly => {
                     panic!("{}",e);
-                 }
-            },
+                 },
             Err(e) if e.server_result_code() == Some(ResultCode::GenerationError) => {
                 if write_policy.generation_policy != GenerationPolicy::None {
                     return; // it's fine

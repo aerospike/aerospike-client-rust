@@ -60,7 +60,9 @@ impl QueryWhereWire {
     /// [`FLAG_EXPLAIN`]; may include [`FLAG_REQUIRE_INDEX`] / [`FLAG_HARD_HINT`]).
     pub fn for_explain_with_flags(flags: u8, ael: &str) -> Result<Vec<u8>> {
         if flags & FLAG_EXPLAIN == 0 {
-            return Err(Error::invalid_argument("explain WHERE flags must include EXPLAIN"));
+            return Err(Error::invalid_argument(
+                "explain WHERE flags must include EXPLAIN",
+            ));
         }
         Self::encode(flags, ael)
     }
@@ -73,7 +75,9 @@ impl QueryWhereWire {
     /// Validates AEL before field `44` encoding.
     pub fn require_ael(ael: &str) -> Result<()> {
         if ael.trim().is_empty() {
-            return Err(Error::invalid_argument("WHERE AEL must not be null or blank"));
+            return Err(Error::invalid_argument(
+                "WHERE AEL must not be null or blank",
+            ));
         }
         Ok(())
     }
@@ -302,7 +306,10 @@ mod tests {
     #[test]
     fn decode_multi_byte_prefix_or_semantic_flags() {
         // Byte 0: CONT + EXPLAIN|REQUIRE_INDEX; byte 1: HARD_HINT only.
-        let prefix = [FLAG_ENC_VARINT | FLAG_EXPLAIN | FLAG_REQUIRE_INDEX, FLAG_HARD_HINT];
+        let prefix = [
+            FLAG_ENC_VARINT | FLAG_EXPLAIN | FLAG_REQUIRE_INDEX,
+            FLAG_HARD_HINT,
+        ];
         let payload = multi_byte_prefix_payload(&prefix, SIMPLE_AEL);
         assert_eq!(
             QueryWhereWire::flags(&payload).unwrap(),
@@ -313,7 +320,10 @@ mod tests {
 
     #[test]
     fn clear_explain_collapses_multi_byte_prefix_to_single_byte() {
-        let prefix = [FLAG_ENC_VARINT | FLAG_EXPLAIN | FLAG_REQUIRE_INDEX, FLAG_HARD_HINT];
+        let prefix = [
+            FLAG_ENC_VARINT | FLAG_EXPLAIN | FLAG_REQUIRE_INDEX,
+            FLAG_HARD_HINT,
+        ];
         let mut payload = multi_byte_prefix_payload(&prefix, COMPOUND_AEL);
         QueryWhereWire::clear_explain_in_place(&mut payload).unwrap();
         assert_eq!(payload, QueryWhereWire::for_execute(COMPOUND_AEL).unwrap());

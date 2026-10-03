@@ -14,7 +14,9 @@
 
 //! Tier D hint-flag integration tests (field `44` EXPLAIN flags).
 
-use super::{explain_plan, supports_query_selection, AGE_BIN, BOGUS_INDEX_NAME, COUNTRY_BIN, SCORE_BIN};
+use super::{
+    explain_plan, supports_query_selection, AGE_BIN, BOGUS_INDEX_NAME, COUNTRY_BIN, SCORE_BIN,
+};
 use crate::common;
 
 use aerospike::query::QuerySelection;
@@ -49,10 +51,7 @@ async fn prepare_hint_fixture(client: &Client) -> HintFixture {
     }
 
     let _index_guard = common::lock_index_ops().await;
-    for (bin, index_name) in [
-        (AGE_BIN, &age_index_name),
-        (SCORE_BIN, &score_index_name),
-    ] {
+    for (bin, index_name) in [(AGE_BIN, &age_index_name), (SCORE_BIN, &score_index_name)] {
         let task = client
             .create_index_on_bin(
                 &apolicy,

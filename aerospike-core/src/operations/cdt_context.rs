@@ -634,7 +634,7 @@ mod tests {
                 assert_eq!(items[0], Value::String("alpha".into()));
                 assert_eq!(items[1], Value::String("gamma".into()));
             }
-            other => panic!("expected Value::List, got {:?}", other),
+            other => panic!("expected Value::List, got {other:?}"),
         }
     }
 
@@ -647,7 +647,7 @@ mod tests {
                 assert_eq!(items[0], Value::Int(1));
                 assert_eq!(items[2], Value::Int(3));
             }
-            other => panic!("expected Value::List, got {:?}", other),
+            other => panic!("expected Value::List, got {other:?}"),
         }
     }
 
@@ -678,7 +678,9 @@ mod tests {
         ];
         let bytes = to_bytes(&original).expect("pack");
         assert_eq!(
-            BASE64.decode(to_base64(&original).expect("encode")).unwrap(),
+            BASE64
+                .decode(to_base64(&original).expect("encode"))
+                .unwrap(),
             bytes
         );
         let restored = ctx_from_bytes(&bytes).expect("unpack");
@@ -733,7 +735,7 @@ mod tests {
                 assert_eq!(items[3], Value::Blob(vec![1, 7, 9]));
                 assert_eq!(items[4], Value::Nil);
             }
-            other => panic!("expected Value::List, got {:?}", other),
+            other => panic!("expected Value::List, got {other:?}"),
         }
     }
 

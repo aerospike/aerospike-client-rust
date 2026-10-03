@@ -672,11 +672,7 @@ impl AdminCommand {
                 );
             }
 
-            AuthMode::PKI => {
-                return Err(Error::client_error(
-                    "Can't change PKI user's password",
-                ))
-            }
+            AuthMode::PKI => return Err(Error::client_error("Can't change PKI user's password")),
             AuthMode::None => AdminCommand::write_field_str(&mut conn, OLD_PASSWORD, ""),
         }
 

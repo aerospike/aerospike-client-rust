@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::locks::lock;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use crate::locks::lock;
 use std::time::SystemTime;
 
 use async_trait::async_trait;
@@ -78,7 +78,10 @@ impl ConfigProvider for YamlFileProvider {
         let metadata = match std::fs::metadata(&self.path) {
             Ok(m) => m,
             Err(err) => {
-                warn!("Dynamic-config file {} unavailable: {err}", self.path.display());
+                warn!(
+                    "Dynamic-config file {} unavailable: {err}",
+                    self.path.display()
+                );
                 return Ok(None);
             }
         };
@@ -90,7 +93,10 @@ impl ConfigProvider for YamlFileProvider {
         let data = match std::fs::read_to_string(&self.path) {
             Ok(d) => d,
             Err(err) => {
-                warn!("Failed to read dynamic-config file {}: {err}", self.path.display());
+                warn!(
+                    "Failed to read dynamic-config file {}: {err}",
+                    self.path.display()
+                );
                 return Ok(None);
             }
         };
@@ -144,7 +150,10 @@ mod tests {
     #[aerospike_macro::test]
     async fn loads_then_returns_none_when_unchanged() {
         let path = temp_path("unchanged");
-        write_file(&path, "version: \"1.0.0\"\ndynamic:\n  read:\n    max_retries: 4\n");
+        write_file(
+            &path,
+            "version: \"1.0.0\"\ndynamic:\n  read:\n    max_retries: 4\n",
+        );
         let provider = YamlFileProvider::new(path.clone());
 
         let first = provider.load().await.unwrap();

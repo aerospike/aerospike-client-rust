@@ -25,7 +25,8 @@
 //! Select this client through the facade crate's `sync` feature; `async` and
 //! `sync` are mutually exclusive there.
 #![warn(missing_docs)]
-
+// The blocking wrappers mirror the async client's signatures argument for argument.
+#![allow(clippy::too_many_arguments)]
 // `docsrs` activates the nightly `doc_cfg` feature during docs.rs builds,
 // configured via `[package.metadata.docs.rs]` in `Cargo.toml`.
 // This automatically adds feature badges to all `#[cfg(feature = "...")]` items,

@@ -22,7 +22,7 @@ use crate::BatchRecord;
 /// The per-row hook of [`Client::batch_foreach`](crate::Client::batch_foreach),
 /// type-erased so the batch engine stays non-generic: one small future
 /// allocation per row, against the microseconds each row already costs.
-pub(crate) type RowHook = Box<dyn Fn(usize, &BatchRecord) -> BoxFuture<'static, bool> + Send + Sync>;
+pub type RowHook = Box<dyn Fn(usize, &BatchRecord) -> BoxFuture<'static, bool> + Send + Sync>;
 
 /// A batch's row hook plus the bookkeeping that makes it fire **exactly once
 /// per row** and stop the moment the caller has lost interest.
@@ -33,7 +33,7 @@ pub(crate) type RowHook = Box<dyn Fn(usize, &BatchRecord) -> BoxFuture<'static, 
 /// `active` is cleared by an abort (`false` from the hook) or by the caller
 /// dropping the `batch_foreach` future — after which nothing fires again and
 /// running groups tear down.
-pub(crate) struct BatchHook {
+pub struct BatchHook {
     hook: RowHook,
     /// Work should continue. Cleared by an abort (`false` from the hook) and
     /// by cancellation. Groups stop reading once it is false.

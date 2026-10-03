@@ -45,7 +45,7 @@ pub async fn run() {
     println!("exists: {}", exists);
 
     let bin = as_bin!("int", "123");
-    let ops = &vec![operations::put(&bin), operations::get()];
+    let ops = &[operations::put(&bin), operations::get()];
     let op_rec = client.operate(&wpolicy, &key, ops).await;
     println!("operate: {}", op_rec.unwrap());
 

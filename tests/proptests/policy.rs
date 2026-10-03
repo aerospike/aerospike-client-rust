@@ -68,7 +68,7 @@ pub fn expiration(min: u32, max: u32) -> impl Strategy<Value = Expiration> {
         Just(Expiration::Never),
         Just(Expiration::DontUpdate),
         Just(Expiration::NamespaceDefault),
-        (min..max).prop_map(|n| Expiration::Seconds(n)),
+        (min..max).prop_map(Expiration::Seconds),
     ]
 }
 
@@ -145,7 +145,7 @@ pub fn base_policy(
         duration_ms(total_timeout_ms, total_timeout_ms * 3),
         duration_ms(0, 10000),
         max_retries(0, 100),
-        100..500 as u32,
+        100..500_u32,
         read_mode_ap(),
         read_mode_sc(),
         read_touch_ttl(),
@@ -278,10 +278,10 @@ pub fn query_policy(
 ) -> impl Strategy<Value = QueryPolicy> {
     (
         base_policy(socket_timeout_ms, total_timeout_ms),
-        0..256 as usize,
-        0..1000 as u64,
+        0..256_usize,
+        0..1000_u64,
         1..u32::MAX,
-        1..10_000 as usize,
+        1..10_000_usize,
         query_duration(),
         replica(),
     )
@@ -313,10 +313,10 @@ pub fn query_policy_scan(
 ) -> impl Strategy<Value = QueryPolicy> {
     (
         base_policy(socket_timeout_ms, total_timeout_ms),
-        0..256 as usize,
-        0..1000 as u64,
+        0..256_usize,
+        0..1000_u64,
         1..u32::MAX,
-        1..10_000 as usize,
+        1..10_000_usize,
         Just(QueryDuration::Long),
         replica(),
     )

@@ -56,7 +56,7 @@ pub struct NodeValidator {
 
 /// Normalizes a `cluster-name` info value: a server without a configured
 /// cluster name answers `null` (or nothing), which is "no name", not a name.
-pub(crate) fn normalize_cluster_name(raw: Option<&String>) -> Option<String> {
+pub fn normalize_cluster_name(raw: Option<&String>) -> Option<String> {
     raw.map(|s| s.trim())
         .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("null"))
         .map(str::to_owned)
@@ -333,13 +333,8 @@ impl NodeValidator {
                     .flatten()
                 {
                     let candidate = Host::new(&resolved.ip().to_string(), resolved.port());
-                    match Connection::open(
-                        &candidate,
-                        &self.client_policy,
-                        None,
-                        session.as_ref(),
-                    )
-                    .await
+                    match Connection::open(&candidate, &self.client_policy, None, session.as_ref())
+                        .await
                     {
                         Ok((mut probe, _)) => {
                             probe.close();

@@ -172,7 +172,9 @@ impl std::ops::BitOr for StringWriteFlags {
     }
 }
 
-/// Per-operation policy carrying [`StringWriteFlags`]. Passed inline to each
+/// Per-operation policy carrying [`StringWriteFlags`].
+///
+/// Passed inline to each
 /// modify builder; it is not part of the client's dynamic configuration.
 /// Mirrors how [`BitPolicy`](crate::operations::bitwise::BitPolicy) is scoped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,7 +189,7 @@ impl StringPolicy {
     }
 
     /// Returns the raw write-flags bitmask carried by this policy.
-    pub(crate) const fn flags(&self) -> i64 {
+    pub(crate) const fn flags(self) -> i64 {
         self.flags
     }
 }
@@ -285,7 +287,9 @@ fn pack_string_op(
 // Read operations
 // -----------------------------------------------------------------
 
-/// `strlen` operation. The server returns the number of Unicode codepoints in
+/// `strlen` operation.
+///
+/// The server returns the number of Unicode codepoints in
 /// the string bin as an `i64`. This is the codepoint count — not the grapheme
 /// cluster count and not the UTF-8 byte length. Use [`byte_length`] for the
 /// byte length.
@@ -300,7 +304,9 @@ pub fn substr_from(bin: &str, start: i64) -> Operation {
 }
 
 /// `substr` operation that reads codepoints in the half-open range
-/// `[start, end)` — `start` inclusive, `end` exclusive. Negative indexes
+/// `[start, end)` — `start` inclusive, `end` exclusive.
+///
+/// Negative indexes
 /// count from the end. If, after negative-index normalization,
 /// `start >= end`, the result is the empty string.
 pub fn substr(bin: &str, start: i64, end: i64) -> Operation {
@@ -500,7 +506,9 @@ pub fn concat_list(policy: &StringPolicy, bin: &str, values: &[&str]) -> Operati
     )
 }
 
-/// `append` operation that appends `value` to the end of the bin. Unlike the
+/// `append` operation that appends `value` to the end of the bin.
+///
+/// Unlike the
 /// legacy byte-level [`crate::operations::append`], this operation is
 /// Unicode/DBCS-aware and shares the consistent [`StringPolicy`] / CTX
 /// interface of the rest of the string module.
@@ -512,7 +520,9 @@ pub fn append(policy: &StringPolicy, bin: &str, value: &str) -> Operation {
     )
 }
 
-/// `prepend` operation that prepends `value` to the start of the bin. Unlike
+/// `prepend` operation that prepends `value` to the start of the bin.
+///
+/// Unlike
 /// the legacy byte-level [`crate::operations::prepend`], this operation is
 /// Unicode/DBCS-aware and shares the consistent [`StringPolicy`] / CTX
 /// interface of the rest of the string module.

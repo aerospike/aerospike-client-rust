@@ -305,8 +305,14 @@ mod tests {
         );
 
         let rebuilt = round_trip(&filter);
-        assert_eq!((rebuilt.begin, rebuilt.count, rebuilt.digest), (10, 5, None));
-        assert!(rebuilt.partitions.is_none(), "no query ran, nothing to resume from");
+        assert_eq!(
+            (rebuilt.begin, rebuilt.count, rebuilt.digest),
+            (10, 5, None)
+        );
+        assert!(
+            rebuilt.partitions.is_none(),
+            "no query ran, nothing to resume from"
+        );
         assert!(!rebuilt.done());
         assert!(rebuilt.retry.load(Ordering::Relaxed));
     }
@@ -331,7 +337,10 @@ mod tests {
             "three partitions still want a retry"
         );
         {
-            let parts = rebuilt.partitions.as_ref().expect("entries were carried over");
+            let parts = rebuilt
+                .partitions
+                .as_ref()
+                .expect("entries were carried over");
             assert_eq!(parts.len(), 4);
             assert!(parts[0].lock().retry);
             let finished = parts[2].lock();
@@ -374,9 +383,19 @@ mod tests {
                 part.digest = digest;
             };
             set(0, true, None, None);
-            set(1, false, Some(42), Some(core::array::from_fn(|i| i as u8 + 1)));
+            set(
+                1,
+                false,
+                Some(42),
+                Some(core::array::from_fn(|i| i as u8 + 1)),
+            );
             set(2, true, Some(u64::MAX), Some([0xFF; 20]));
-            set(3, false, None, Some(core::array::from_fn(|i| if i % 2 == 0 { 0 } else { 255 })));
+            set(
+                3,
+                false,
+                None,
+                Some(core::array::from_fn(|i| if i % 2 == 0 { 0 } else { 255 })),
+            );
         }
         filter
     }
@@ -404,9 +423,19 @@ mod tests {
             snapshot,
             vec![
                 (3, true, None, None),
-                (4, false, Some(42), Some(core::array::from_fn(|i| i as u8 + 1))),
+                (
+                    4,
+                    false,
+                    Some(42),
+                    Some(core::array::from_fn(|i| i as u8 + 1))
+                ),
                 (5, true, Some(u64::MAX), Some([0xFF; 20])),
-                (6, false, None, Some(core::array::from_fn(|i| if i % 2 == 0 { 0 } else { 255 }))),
+                (
+                    6,
+                    false,
+                    None,
+                    Some(core::array::from_fn(|i| if i % 2 == 0 { 0 } else { 255 }))
+                ),
             ]
         );
     }
@@ -418,7 +447,10 @@ mod tests {
     /// depend on field order and count.
     #[test]
     fn the_current_code_still_writes_the_v1_form() {
-        assert_eq!(serde_json::to_string(&reference_filter()).unwrap(), FIXTURE_V1);
+        assert_eq!(
+            serde_json::to_string(&reference_filter()).unwrap(),
+            FIXTURE_V1
+        );
         let reloaded: PartitionFilter = serde_json::from_str(FIXTURE_V1).unwrap();
         assert_eq!(
             serde_json::to_string(&reloaded).unwrap(),
@@ -433,7 +465,11 @@ mod tests {
     #[test]
     fn fields_from_a_newer_client_are_ignored() {
         let newer = FIXTURE_V1
-            .replacen("\"begin\":3,", "\"schema\":2,\"begin\":3,\"owner\":\"job-7\",", 1)
+            .replacen(
+                "\"begin\":3,",
+                "\"schema\":2,\"begin\":3,\"owner\":\"job-7\",",
+                1,
+            )
             .replacen("\"id\":4,", "\"id\":4,\"generation\":9,", 1);
         assert_ne!(newer, FIXTURE_V1);
         let loaded: PartitionFilter =
@@ -456,7 +492,10 @@ mod tests {
         assert!(parse(json(5, 3, &[5, 6])).is_err(), "two entries for three");
         assert!(parse(json(5, 3, &[5, 7, 6])).is_err(), "out of order");
         assert!(parse(json(5, 3, &[5, 6, 7])).is_ok());
-        assert!(parse(json(4096, 1, &[])).is_err(), "begin past the last partition");
+        assert!(
+            parse(json(4096, 1, &[])).is_err(),
+            "begin past the last partition"
+        );
         assert!(parse(json(4000, 97, &[])).is_err(), "range past the end");
         assert!(parse(json(0, 0, &[])).is_err(), "empty range");
     }

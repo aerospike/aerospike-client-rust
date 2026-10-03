@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -56,7 +56,7 @@ pub struct Peers {
     /// Per-tend list of hosts that already failed to validate. Used to
     /// short-circuit retries against hosts whose connection just failed
     /// within this same tend.
-    invalid_hosts: Mutex<HashMap<Host, ()>>,
+    invalid_hosts: Mutex<HashSet<Host>>,
     /// Per-source-node `peers-generation` values waiting to be committed
     /// once every peer parsed by that node has successfully materialized.
     /// Advance the node's generation only when its full peer set is
@@ -77,7 +77,7 @@ impl Peers {
             peers: Mutex::new(Vec::with_capacity(peer_capacity)),
             nodes: Mutex::new(HashMap::with_capacity(add_capacity)),
             nodes_to_remove: Mutex::new(HashMap::with_capacity(add_capacity)),
-            invalid_hosts: Mutex::new(HashMap::with_capacity(8)),
+            invalid_hosts: Mutex::new(HashSet::with_capacity(8)),
             pending_generations: Mutex::new(HashMap::with_capacity(add_capacity)),
             refresh_count: AtomicUsize::new(0),
             gen_changed: AtomicBool::new(true),
@@ -86,13 +86,13 @@ impl Peers {
 
     /// Mark a host as already-failed for the rest of this tend cycle.
     pub fn fail(&self, host: Host) {
-        lock(&self.invalid_hosts).insert(host, ());
+        lock(&self.invalid_hosts).insert(host);
     }
 
     /// `true` when [`fail`](Self::fail) was called on this host earlier in
     /// the same tend cycle.
     pub fn has_failed(&self, host: &Host) -> bool {
-        lock(&self.invalid_hosts).contains_key(host)
+        lock(&self.invalid_hosts).contains(host)
     }
 
     /// Number of hosts that failed to validate during this tend.
@@ -102,7 +102,7 @@ impl Peers {
 
     /// Snapshot of the failed-host set, for diagnostic messages.
     pub fn invalid_hosts(&self) -> Vec<Host> {
-        lock(&self.invalid_hosts).keys().cloned().collect()
+        lock(&self.invalid_hosts).iter().cloned().collect()
     }
 
     /// Stage a `peers-generation` reported by `parsing_node` so it can be

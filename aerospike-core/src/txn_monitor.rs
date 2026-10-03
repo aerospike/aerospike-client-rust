@@ -52,7 +52,7 @@ pub async fn add_key(
         return Ok(());
     }
 
-    let ops = get_txn_ops(txn, cmd_key)?;
+    let ops = get_txn_ops(txn, cmd_key);
     add_write_keys(cluster, policy, txn, &ops).await
 }
 
@@ -82,40 +82,40 @@ pub async fn add_keys_from_records(
         return Ok(());
     }
 
-    let ops = get_txn_ops_from_value_list(txn, &list_policy, digest_values);
+    let ops = get_txn_ops_from_value_list(txn, list_policy, digest_values);
     add_write_keys(cluster, policy, txn, &ops).await
 }
 
-fn get_txn_ops(txn: &Arc<Txn>, cmd_key: &Key) -> Result<Vec<Operation>> {
+fn get_txn_ops(txn: &Arc<Txn>, cmd_key: &Key) -> Vec<Operation> {
     let list_policy = txn_ordered_list_policy();
 
     if txn.monitor_exists() {
-        Ok(vec![lists::append(
+        vec![lists::append(
             &list_policy,
             BIN_NAME_DIGESTS,
             Value::Blob(cmd_key.digest.to_vec()),
-        )])
+        )]
     } else {
         let id_bin = Bin::new(BIN_NAME_ID.to_string(), Value::Int(txn.id()));
-        Ok(vec![
+        vec![
             scalar::put(&id_bin),
             lists::append(
                 &list_policy,
                 BIN_NAME_DIGESTS,
                 Value::Blob(cmd_key.digest.to_vec()),
             ),
-        ])
+        ]
     }
 }
 
 fn get_txn_ops_from_value_list(
     txn: &Arc<Txn>,
-    list_policy: &ListPolicy,
+    list_policy: ListPolicy,
     digest_values: Vec<Value>,
 ) -> Vec<Operation> {
     if txn.monitor_exists() {
         vec![lists::append_items(
-            list_policy,
+            &list_policy,
             BIN_NAME_DIGESTS,
             digest_values,
         )]
@@ -123,7 +123,7 @@ fn get_txn_ops_from_value_list(
         let id_bin = Bin::new(BIN_NAME_ID.to_string(), Value::Int(txn.id()));
         vec![
             scalar::put(&id_bin),
-            lists::append_items(list_policy, BIN_NAME_DIGESTS, digest_values),
+            lists::append_items(&list_policy, BIN_NAME_DIGESTS, digest_values),
         ]
     }
 }
