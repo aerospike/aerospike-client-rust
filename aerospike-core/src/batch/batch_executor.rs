@@ -175,9 +175,8 @@ impl BatchExecutor {
         // fail the call.
         all_results.extend(unroutable);
         // First failure across all per-node groups. The batch keeps running so
-        // every per-key outcome is collected; on failure the full record set is
-        // surfaced via `ErrorKind::BatchFailed` (Java `BatchRecordArray`
-        // parity) instead of being dropped.
+        // every per-key outcome is collected; the rows go back to the caller's
+        // slice whatever happens, and the call returns that first failure.
         let mut first_err: Option<Error> = None;
 
         if !active() {

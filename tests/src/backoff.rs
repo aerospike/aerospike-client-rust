@@ -222,8 +222,8 @@ async fn batch_sequence_retry_resplits_when_breaker_open() {
     // default Sequence replica, the first attempt fails, and each retry
     // re-maps the keys with an advanced replica sequence before failing
     // again. The command must exhaust its retry budget (proving the loop
-    // ran through the re-split branch) and surface the breaker error with
-    // per-record results via BatchFailed.
+    // ran through the re-split branch) and surface the breaker error, with
+    // the per-record results on the caller's rows.
     use aerospike::{BatchOperation, BatchPolicy, BatchReadPolicy, Bins, ErrorKind};
 
     let client = breaker_client(1).await;

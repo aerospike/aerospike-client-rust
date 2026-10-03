@@ -599,7 +599,10 @@ pub enum ClientResultCode {
     /// Transaction failed.
     TxnFailed,
 
-    /// One or more keys failed in a batch.
+    /// One or more keys failed in a batch. Reserved; not produced by this
+    /// client: per-key outcomes live on the rows of the caller's
+    /// [`BatchOperation`](crate::BatchOperation)s, and a batch that fails
+    /// returns the failure that ended it.
     BatchFailed,
 
     /// No response received from server.

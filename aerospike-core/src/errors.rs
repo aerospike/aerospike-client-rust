@@ -100,13 +100,6 @@ pub enum ErrorKind {
         /// Extended server-supplied detail for this row, when attached.
         detail: Option<Box<crate::ServerErrorDetail>>,
     },
-    /// A batch command failed after per-key processing began. Carries every
-    /// [`BatchRecord`](crate::BatchRecord) outcome known to the client
-    /// (successes, per-key errors, and in-doubt marks for unanswered writes).
-    BatchFailed {
-        /// Per-key outcomes in the original request order.
-        records: Vec<crate::BatchRecord>,
-    },
     /// Client-side timeout: the deadline elapsed or the retry budget was
     /// exhausted before a response arrived. Server-reported timeouts are
     /// [`ErrorKind::Server`] with [`ResultCode::Timeout`].
@@ -326,20 +319,6 @@ impl Error {
             None,
         );
         e.0.node = Some(node.into());
-        e
-    }
-
-    /// Batch command failure carrying every per-key outcome known to the
-    /// client. `source` is the failure that aborted the batch.
-    #[must_use]
-    pub fn batch_failed(records: Vec<crate::BatchRecord>, source: Error) -> Error {
-        let mut e = Error::new(
-            ErrorKind::BatchFailed { records },
-            ClientResultCode::BatchFailed.into(),
-            None,
-        );
-        e.0.in_doubt = source.in_doubt();
-        e.0.source = Some(Box::new(source));
         e
     }
 
@@ -634,11 +613,9 @@ impl Error {
     /// [`std::error::Error::source`] also exposes the chain, but as
     /// `&dyn Error`, so reading the cause's [`kind`](Self::kind) or
     /// [`result_code`](Self::result_code) through it needs a downcast. This is
-    /// the same link, typed: an aggregate
-    /// [`ErrorKind::BatchFailed`] reports the
-    /// `BATCH_FAILED` code
-    /// and this reaches the underlying timeout or server failure without
-    /// parsing the message.
+    /// the same link, typed: a retry-decorated error reports
+    /// `MAX_RETRIES_EXCEEDED` on top, and this reaches the underlying timeout
+    /// or server failure without parsing the message.
     ///
     /// Only the direct cause; walk it repeatedly for the whole chain. Returns
     /// `None` for causes that are not this crate's errors (an `io::Error`
@@ -665,9 +642,6 @@ impl Error {
             }
             ErrorKind::BatchRow { index, rc, .. } => {
                 format!("Batch row error: index {index}, {rc}")
-            }
-            ErrorKind::BatchFailed { records } => {
-                format!("Batch failed ({} records)", records.len())
             }
             ErrorKind::Timeout => format!(
                 "Client Timeout: {}",
@@ -988,9 +962,6 @@ impl Clone for Error {
                 last: *last,
                 detail: detail.clone(),
             },
-            ErrorKind::BatchFailed { records } => ErrorKind::BatchFailed {
-                records: records.clone(),
-            },
             ErrorKind::Commit {
                 error_type,
                 verify_records,
@@ -1049,7 +1020,6 @@ impl ErrorKind {
         match self {
             ErrorKind::Server { .. } => "Server",
             ErrorKind::BatchRow { .. } => "BatchRow",
-            ErrorKind::BatchFailed { .. } => "BatchFailed",
             ErrorKind::Timeout => "Timeout",
             ErrorKind::Connection => "Connection",
             ErrorKind::ConnectionPoolEmpty => "ConnectionPoolEmpty",
@@ -1224,10 +1194,6 @@ mod tests {
             Error::client_error("x").result_code(),
             i32::from(ClientResultCode::ClientError)
         );
-        assert_eq!(
-            Error::batch_failed(vec![], Error::timeout("t")).result_code(),
-            i32::from(ClientResultCode::BatchFailed)
-        );
     }
 
     #[test]
@@ -1240,10 +1206,6 @@ mod tests {
         assert_eq!(
             Error::connection("c").client_result_code(),
             Some(ClientResultCode::ServerNotAvailable)
-        );
-        assert_eq!(
-            Error::batch_failed(vec![], Error::timeout("t")).client_result_code(),
-            Some(ClientResultCode::BatchFailed)
         );
         // Server failures and client timeouts (Java TIMEOUT=9) report None.
         assert_eq!(detailed().client_result_code(), None);
@@ -1556,39 +1518,22 @@ mod tests {
         .keep_connection());
     }
 
-    // ---- batch partial results (Java BatchRecordArray parity) ----
-
-    #[test]
-    fn batch_failed_carries_records_and_cause() {
-        let key = crate::Key::new("ns", "set", crate::Value::from("k")).unwrap();
-        let mut rec = crate::BatchRecord::new(key, true);
-        rec.set_error(Error::timeout("Timeout after 2 tries").set_in_doubt(true, 1));
-        let cause = Error::timeout("Timeout after 2 tries").set_in_doubt(true, 1);
-
-        let err = Error::batch_failed(vec![rec], cause);
-        assert_eq!(err.result_code(), i32::from(ClientResultCode::BatchFailed));
-        assert!(err.in_doubt(), "batch failure inherits cause in-doubt");
-        match err.kind() {
-            ErrorKind::BatchFailed { records } => {
-                assert_eq!(records.len(), 1);
-                assert!(records[0].in_doubt());
-            }
-            other => panic!("expected BatchFailed, got {other:?}"),
-        }
-        // Cause chain reachable via std::error::Error.
-        assert!(std::error::Error::source(&err).is_some());
-    }
+    // ---- cause chain ----
 
     #[test]
     fn cause_reaches_the_underlying_failure_typed() {
-        // What a batch failure looks like: BATCH_FAILED on top (Java
-        // BatchRecordArray parity), the real cause one link down.
+        // What a failed command looks like after retries: MAX_RETRIES_EXCEEDED
+        // on top, the real cause one link down.
         let inner = Error::timeout("Timeout reading from the network connection");
-        let middle = Error::max_retries_exceeded("Timeout after 1 tries").chain_cause(Some(inner));
-        let err = Error::batch_failed(vec![], middle.set_in_doubt(true, 1));
+        let err = Error::max_retries_exceeded("Timeout after 1 tries")
+            .chain_cause(Some(inner))
+            .set_in_doubt(true, 1);
 
-        assert_eq!(err.result_code(), i32::from(ClientResultCode::BatchFailed));
-        assert!(err.in_doubt(), "in-doubt is inherited from the cause");
+        assert_eq!(
+            err.result_code(),
+            i32::from(ClientResultCode::MaxRetriesExceeded)
+        );
+        assert!(err.in_doubt());
 
         // The timeout is reachable without parsing the message.
         let timeout_code = i32::from(u8::from(ResultCode::Timeout));
@@ -1598,13 +1543,7 @@ mod tests {
             codes.push(e.result_code());
             link = e.cause();
         }
-        assert_eq!(
-            codes,
-            vec![
-                i32::from(ClientResultCode::MaxRetriesExceeded),
-                timeout_code
-            ]
-        );
+        assert_eq!(codes, vec![timeout_code]);
 
         // A leaf error has no cause.
         assert!(Error::timeout("t").cause().is_none());
@@ -1615,6 +1554,5 @@ mod tests {
         // is_write == false: nothing could have been applied.
         let err = Error::timeout("Timeout").set_in_doubt(false, 3);
         assert!(!err.in_doubt());
-        assert!(!Error::batch_failed(vec![], err).in_doubt());
     }
 }

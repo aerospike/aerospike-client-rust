@@ -413,10 +413,9 @@ impl BatchOperateCommand {
     /// The error mark is what [`SingleCommand::execute_command`]'s `finalize`
     /// does for single-key commands: a write that reached the wire and never
     /// answered may have been applied, so the error has to say so. Without it
-    /// the rows were marked and the error was not, so
-    /// [`Error::in_doubt`](crate::Error::in_doubt) on the aggregate
-    /// [`ErrorKind::BatchFailed`](crate::ErrorKind::BatchFailed) — which
-    /// inherits the cause's mark — reported `false` for an in-doubt batch write.
+    /// the rows were marked and the error the caller received was not, so
+    /// [`Error::in_doubt`](crate::Error::in_doubt) reported `false` for an
+    /// in-doubt batch write.
     /// Re-split a batch for a Sequence/PreferRack retry.
     ///
     /// `routed[i]` is where `ops[i]` goes this round, or `None` when it must
