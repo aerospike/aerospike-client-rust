@@ -96,6 +96,10 @@ pub mod sub_code {
     pub const UNAVAIL_INITIAL_BALANCE_UNRESOLVED: u32 = 1;
     /// A needed replica is unavailable (likely a partition split).
     pub const UNAVAIL_REPLICA_UNAVAILABLE: u32 = 2;
+    /// This node is shutting down (for example an index-checkpoint save or
+    /// park) and is leaving the cluster. Fail over to another node: backing
+    /// off and retrying this one cannot succeed, it is going away.
+    pub const UNAVAIL_NODE_SHUTTING_DOWN: u32 = 3;
 
     // -------------------------------------------------------
     // Pairs with ResultCode::UnsupportedFeature (16)
@@ -178,15 +182,6 @@ pub mod sub_code {
     pub const OPNOT_STRING_B64_INVALID: u32 = 13;
 
     // -------------------------------------------------------
-    // Pairs with ResultCode::FilteredOut (27)
-    // -------------------------------------------------------
-
-    /// Record filtered out by a metadata-only filter expression.
-    pub const FILTERED_META: u32 = 1;
-    /// Record filtered out by a bin-reading filter expression.
-    pub const FILTERED_BINS: u32 = 2;
-
-    // -------------------------------------------------------
     // Pairs with ResultCode::MrtBlocked (120)
     // -------------------------------------------------------
 
@@ -199,8 +194,8 @@ pub mod sub_code {
     ///
     /// `None` when the pair is not one this client knows. Scoped by the pair
     /// because subcode values repeat across parent result codes (`1` is
-    /// `PARAM_TTL_INVALID` under `ParameterError` and `FILTERED_META` under
-    /// `FilteredOut`).
+    /// `PARAM_TTL_INVALID` under `ParameterError` and `MRT_BLOCKED_RECORD_LOCKED`
+    /// under `MrtBlocked`).
     #[must_use]
     pub const fn name(rc: crate::ResultCode, sub_code: u32) -> Option<&'static str> {
         use crate::ResultCode as R;
@@ -223,6 +218,7 @@ pub mod sub_code {
                 "UNAVAIL_INITIAL_BALANCE_UNRESOLVED"
             }
             (R::PartitionUnavailable, UNAVAIL_REPLICA_UNAVAILABLE) => "UNAVAIL_REPLICA_UNAVAILABLE",
+            (R::PartitionUnavailable, UNAVAIL_NODE_SHUTTING_DOWN) => "UNAVAIL_NODE_SHUTTING_DOWN",
             (R::UnsupportedFeature, UNSUPP_FEAT_MRT_REQUIRES_STRONG_CONSISTENCY) => {
                 "UNSUPP_FEAT_MRT_REQUIRES_STRONG_CONSISTENCY"
             }
@@ -270,8 +266,6 @@ pub mod sub_code {
                 "OPNOT_STRING_REGEX_LIMIT_EXCEEDED"
             }
             (R::OpNotApplicable, OPNOT_STRING_B64_INVALID) => "OPNOT_STRING_B64_INVALID",
-            (R::FilteredOut, FILTERED_META) => "FILTERED_META",
-            (R::FilteredOut, FILTERED_BINS) => "FILTERED_BINS",
             (R::MrtBlocked, MRT_BLOCKED_RECORD_LOCKED) => "MRT_BLOCKED_RECORD_LOCKED",
             (R::MrtBlocked, MRT_BLOCKED_ID_MISMATCH) => "MRT_BLOCKED_ID_MISMATCH",
             _ => return None,
@@ -874,9 +868,11 @@ mod tests {
             Some("PARAM_TTL_INVALID")
         );
         assert_eq!(
-            sub_code::name(ResultCode::FilteredOut, 1),
-            Some("FILTERED_META")
+            sub_code::name(ResultCode::PartitionUnavailable, 3),
+            Some("UNAVAIL_NODE_SHUTTING_DOWN")
         );
+        // The server defines no subcodes under FilteredOut.
+        assert_eq!(sub_code::name(ResultCode::FilteredOut, 1), None);
         assert_eq!(
             sub_code::name(ResultCode::OpNotApplicable, 12),
             Some("OPNOT_STRING_REGEX_LIMIT_EXCEEDED")

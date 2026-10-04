@@ -102,9 +102,12 @@ impl Command for TxnMarkRollForwardCommand<'_> {
         // caller (TxnRoll::commit) needs to observe the error so it can
         // flip the client-side state to Aborted.
         match result_code {
-            ResultCode::Ok | ResultCode::MrtCommitted => Ok(()),
-            _ => Err(Error::server_error(result_code, conn.addr.clone(), None)),
-        }?;
+            ResultCode::Ok | ResultCode::MrtCommitted => {}
+            _ => {
+                let detail = SingleCommand::read_error_detail(conn).await?;
+                return Err(Error::server_error(result_code, conn.addr.clone(), detail));
+            }
+        }
 
         SingleCommand::empty_socket(conn).await
     }

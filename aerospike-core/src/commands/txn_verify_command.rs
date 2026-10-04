@@ -105,7 +105,8 @@ impl Command for TxnVerifyCommand<'_> {
             result_code,
             ResultCode::Ok | ResultCode::KeyNotFoundError | ResultCode::FilteredOut
         ) {
-            return Err(Error::server_error(result_code, conn.addr.clone(), None));
+            let detail = SingleCommand::read_error_detail(conn).await?;
+            return Err(Error::server_error(result_code, conn.addr.clone(), detail));
         }
 
         SingleCommand::empty_socket(conn).await

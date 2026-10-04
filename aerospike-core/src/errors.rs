@@ -1426,13 +1426,13 @@ mod tests {
     #[test]
     fn display_names_a_known_subcode() {
         let detail = crate::ServerErrorDetail {
-            sub_code: crate::server_error::sub_code::FILTERED_BINS,
+            sub_code: crate::server_error::sub_code::OPNOT_CDT_INDEX_OUT_OF_BOUNDS,
             message: String::new(),
             exp_trace: None,
         };
-        let err = Error::server_error(ResultCode::FilteredOut, "A1", Some(Box::new(detail)));
+        let err = Error::server_error(ResultCode::OpNotApplicable, "A1", Some(Box::new(detail)));
         let s = err.to_string();
-        assert!(s.contains(", SubCode: 2 (FILTERED_BINS)"), "{s}");
+        assert!(s.contains(", SubCode: 1 (OPNOT_CDT_INDEX_OUT_OF_BOUNDS)"), "{s}");
 
         let detail = crate::ServerErrorDetail {
             sub_code: 77,

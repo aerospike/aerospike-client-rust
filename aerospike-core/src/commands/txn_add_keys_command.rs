@@ -102,7 +102,8 @@ impl Command for TxnAddKeysCommand<'_> {
         let result_code = ResultCode::from(conn.buffer.read_u8(Some(13)));
 
         if result_code != ResultCode::Ok {
-            return Err(Error::server_error(result_code, conn.addr.clone(), None));
+            let detail = SingleCommand::read_error_detail(conn).await?;
+            return Err(Error::server_error(result_code, conn.addr.clone(), detail));
         }
 
         // Parse the deadline from the response fields.

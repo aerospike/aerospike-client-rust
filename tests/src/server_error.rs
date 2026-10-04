@@ -37,10 +37,13 @@ use aerospike::operations::exp::ExpWriteFlags;
 use aerospike::operations::hll::HLLPolicy;
 use aerospike::operations::lists::ListReturnType;
 use aerospike::operations::{bitwise, exp, hll, lists, scalar};
+use aerospike::query::PartitionFilter;
 use aerospike::server_error::sub_code;
 use aerospike::{
-    as_bin, as_key, Bin, Bins, Client, Error, Key, ReadPolicy, ResultCode, Value, WritePolicy,
+    as_bin, as_key, Bin, Bins, Client, Error, Key, QueryPolicy, ReadPolicy, ResultCode, Statement,
+    Value, WritePolicy,
 };
+use futures::StreamExt;
 
 const BIN: &str = "edv-bin";
 
@@ -580,6 +583,74 @@ async fn filter_expression_build_failure_is_parameter_error_at_verbosity_3() {
     }
 }
 
+// A query whose filter expression fails to build dies at start-up, and the
+// server explains why in the same record-shaped message that carries the
+// result code. The stream used to surface a bare PARAMETER_ERROR; the detail
+// now rides along as it does on a single-record read.
+#[aerospike_macro::test]
+async fn query_filter_build_failure_keeps_the_server_detail() {
+    let client = common::client().await;
+    if !supports_error_detail(&client).await {
+        return;
+    }
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    put(&client, &as_key!(namespace, &set_name, 1), as_bin!(BIN, 1)).await;
+
+    let mut qp = QueryPolicy::default();
+    qp.base_policy.error_detail_verbosity = 3;
+    qp.base_policy.filter_expression = Some(bad_exp());
+    let rs = client
+        .query(
+            &qp,
+            PartitionFilter::all(),
+            Statement::new(namespace, &set_name, Bins::All),
+        )
+        .await
+        .expect("the query starts before the server sees the expression");
+    let mut stream = rs.into_stream();
+    let mut failure = None;
+    while let Some(item) = stream.next().await {
+        if let Err(e) = item {
+            failure = Some(e);
+            break;
+        }
+    }
+    let err = failure.expect("type-mismatched filter should fail the query");
+    assert_result(&err, ResultCode::ParameterError, &["expression"]);
+    if let Some(trace) = err.server_error_detail().and_then(|d| d.exp_trace.as_ref()) {
+        assert_eq!(
+            trace.phase,
+            Some(aerospike::server_error::EXP_TRACE_PHASE_BUILD)
+        );
+    }
+}
+
+// The background (server-side) query path reads the same start-failure
+// message through its own parser; it dropped the detail too.
+#[aerospike_macro::test]
+async fn background_query_filter_build_failure_keeps_the_server_detail() {
+    let client = common::client().await;
+    if !supports_error_detail(&client).await {
+        return;
+    }
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    put(&client, &as_key!(namespace, &set_name, 1), as_bin!(BIN, 1)).await;
+
+    let mut wp = wpolicy_verbosity(3);
+    wp.base_policy.filter_expression = Some(bad_exp());
+    let err = client
+        .query_operate(
+            &wp,
+            Statement::new(namespace, &set_name, Bins::All),
+            &[scalar::put(&as_bin!(BIN, 2))],
+        )
+        .await
+        .expect_err("type-mismatched filter should fail the background job");
+    assert_result(&err, ResultCode::ParameterError, &["expression"]);
+}
+
 #[aerospike_macro::test]
 async fn exp_write_build_failure_is_parameter_error_at_verbosity_3() {
     let client = common::client().await;
@@ -691,8 +762,8 @@ async fn batch_filtered_out_rows_keep_detail_and_node() {
     for (i, op) in ops.iter().enumerate() {
         let row = op.batch_record();
         assert_eq!(row.result_code(), Some(ResultCode::FilteredOut), "row {i}");
-        // The server explains a filtered row in words (subcode 0 on 8.2 —
-        // FILTERED_META / FILTERED_BINS are defined but not sent for reads).
+        // The server explains a filtered row in words only: it defines no
+        // subcodes under FilteredOut.
         assert!(
             row.server_message().is_some_and(|m| m.contains("filtered")),
             "row {i}: the server's explanation must survive the parser, got {:?}",

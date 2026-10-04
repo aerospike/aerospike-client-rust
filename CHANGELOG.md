@@ -44,7 +44,9 @@
     cause chain for any of the given codes (Go `Matches` parity); `server_result_code()` still reports
     only the first server code it meets.
   * `server_error::sub_code::name(rc, sub_code)` gives a subcode's constant name, scoped by its parent
-    result code; `Error`'s `Display` shows it beside the number (`SubCode: 2 (FILTERED_BINS)`).
+    result code; `Error`'s `Display` shows it beside the number (`SubCode: 1 (OPNOT_CDT_INDEX_OUT_OF_BOUNDS)`).
+    `sub_code::UNAVAIL_NODE_SHUTTING_DOWN` (3, server 8.2.1+) joins the table: the node is leaving the
+    cluster, so fail over rather than retry it.
   * `ResultCode::InvalidEncoding` (29, "Invalid UTF-8 encoding", server 8.2.0+) and the
     `OpNotApplicable` subcode `OPNOT_STRING_REGEX_LIMIT_EXCEEDED` (12) are decoded instead of
     falling into `Unknown`.
@@ -70,7 +72,7 @@
     client; it used to report the timeout code 9 (which Java keeps behind its `Timeout` exception type,
     mirrored here by `ErrorKind::Timeout`).
   * Batch rows the server answered `KeyNotFound` or `FilteredOut` lost the server's extended error
-    detail (FILTERED_META / FILTERED_BINS): the multi-key parser read it and discarded it.
+    detail (the server's "filtered out by ..." message): the multi-key parser read it and discarded it.
   * The `batch_operations`, `query` and `timeout_configuration` examples defaulted to port 3100 when
     `AEROSPIKE_HOSTS` is unset; every other example and the test harness use 3000.
   * **Breaking**: `ErrorKind::BatchFailed` and `Error::batch_failed` are removed. They carried a copy
@@ -93,6 +95,14 @@
     wrapping the code in a client error; an out-of-range code no longer panics. `BinNameTooLong` reads
     "greater than 15 characters", the server's actual limit, and `FailForbidden` reads "Operation not
     allowed at this time" (a stray rename had produced "OperationType").
+  * A query or scan that fails at start-up (a filter expression the server cannot build, say), a
+    background query or UDF job that fails, and a failed transaction verify, roll, close,
+    mark-roll-forward or add-keys reply all reported a bare result code. The server's extended error
+    detail (subcode, message, expression trace) rides in those replies too and is now surfaced on the
+    error, as it already was for single-record and batch commands.
+  * **Breaking**: `sub_code::FILTERED_META` and `sub_code::FILTERED_BINS` are removed. The server
+    defines no subcodes under `FilteredOut` and never sent them; a filtered-out row explains itself in
+    its message only.
   * The workspace builds clean under `clippy::pedantic` + `clippy::nursery` (core) and default clippy
     (every other crate, the examples, the benchmark tool and the integration tests) for every feature
     set, including `rt-async-std`. Visible side effects: `ToValue`/`FromValue` for `HashMap` accept

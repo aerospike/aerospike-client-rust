@@ -74,6 +74,27 @@ impl<'a> SingleCommand<'a> {
         Ok(())
     }
 
+    /// Read the body of a failed single-record reply and return the server's
+    /// error detail (field 45), if the policy asked for one. Call after
+    /// `read_header`. The whole message is consumed either way, so the socket
+    /// is clean for the next command.
+    pub async fn read_error_detail(
+        conn: &mut Connection,
+    ) -> Result<Option<Box<crate::ServerErrorDetail>>> {
+        conn.buffer.reset_offset();
+        let sz = conn.buffer.read_u64(Some(0));
+        let header_length = conn.buffer.read_u8(Some(8));
+        let field_count = conn.buffer.read_u16(Some(26)) as usize;
+        let receive_size = ((sz & 0xFFFF_FFFF_FFFF) - u64::from(header_length)) as usize;
+        if receive_size == 0 {
+            return Ok(None);
+        }
+        conn.buffer.resize_buffer(receive_size)?;
+        conn.read_body(receive_size).await?;
+        conn.buffer.reset_offset();
+        Ok(conn.buffer.parse_response_fields(field_count).error_detail)
+    }
+
     // EXECUTE
     //
 

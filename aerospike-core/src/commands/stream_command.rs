@@ -96,10 +96,26 @@ impl StreamCommand {
                 }
                 ResultCode::PartitionUnavailable => (),
                 _ => {
+                    // A start failure's explanation (field 45) rides in this
+                    // same record-shaped message, so walk the field section
+                    // before giving up on the stream. The caller drains what
+                    // follows.
+                    conn.buffer().skip(6);
+                    let _ = conn.buffer().read_u32(None); // generation
+                    let _ = conn.buffer().read_u32(None); // expiration
+                    conn.buffer().skip(4);
+                    let field_count = conn.buffer().read_u16(None) as usize;
+                    let _ = conn.buffer().read_u16(None); // op count
+                    // A malformed field section must not mask the server's result
+                    // code; the caller drains the message by size either way.
+                    let error_detail = Self::parse_key_and_version(conn, field_count)
+                        .await
+                        .ok()
+                        .and_then(|(_, _, _, detail)| detail);
                     return Err(Error::server_error(
                         result_code,
                         conn.conn.addr.clone(),
-                        None,
+                        error_detail,
                     ));
                 }
             }

@@ -110,7 +110,8 @@ impl Command for TxnRollCommand<'_> {
         match result_code {
             ResultCode::Ok | ResultCode::KeyNotFoundError => {}
             _ => {
-                return Err(Error::server_error(result_code, conn.addr.clone(), None));
+                let detail = SingleCommand::read_error_detail(conn).await?;
+                return Err(Error::server_error(result_code, conn.addr.clone(), detail));
             }
         }
 

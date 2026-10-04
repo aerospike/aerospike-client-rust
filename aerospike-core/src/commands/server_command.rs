@@ -20,6 +20,7 @@ use flate2::read::ZlibDecoder;
 use crate::cluster::{Cluster, Node};
 use crate::commands::buffer;
 use crate::commands::buffer::QueryDirection;
+use crate::commands::stream_command::StreamCommand;
 use crate::commands::{Command, SingleCommand};
 use crate::errors::{Error, ErrorKind, Result};
 use crate::net::{BufferedConn, Connection};
@@ -229,25 +230,34 @@ impl ServerCommand<'_> {
                 return Ok(false);
             }
 
-            // Check for end of response
             let info3 = conn.buffer().read_u8(Some(3));
-            if info3 & buffer::INFO3_LAST == buffer::INFO3_LAST {
-                if result_code != ResultCode::Ok {
-                    return Err(Error::server_error(
-                        result_code,
-                        conn.conn.addr.clone(),
-                        None,
-                    ));
-                }
-                return Ok(false);
-            }
 
             if result_code != ResultCode::Ok {
+                // The failure's explanation (field 45) rides in this same
+                // message, end marker or not: walk the field section before
+                // failing the job. The caller drains what follows.
+                conn.buffer().skip(6);
+                let _ = conn.buffer().read_u32(None); // generation
+                let _ = conn.buffer().read_u32(None); // expiration
+                conn.buffer().skip(4);
+                let field_count = conn.buffer().read_u16(None) as usize;
+                let _ = conn.buffer().read_u16(None); // op count
+                // A malformed field section must not mask the server's result
+                // code; the caller drains the message by size either way.
+                let error_detail = StreamCommand::parse_key_and_version(conn, field_count)
+                    .await
+                    .ok()
+                    .and_then(|(_, _, _, detail)| detail);
                 return Err(Error::server_error(
                     result_code,
                     conn.conn.addr.clone(),
-                    None,
+                    error_detail,
                 ));
+            }
+
+            // Check for end of response
+            if info3 & buffer::INFO3_LAST == buffer::INFO3_LAST {
+                return Ok(false);
             }
 
             // Skip past remaining header fields
