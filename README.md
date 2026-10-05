@@ -23,7 +23,7 @@ version: `[workspace.package] version` in the root `Cargo.toml`. Requires Rust
 |---|---|
 | Async client, Tokio (default) | `default`, or explicitly `["rt-tokio"]` |
 | Async client, async-std | `default-features = false`, `["async", "serialization", "rt-async-std"]` |
-| Blocking client | `default-features = false`, `["rt-tokio", "sync"]` — **Tokio only**: `aerospike-sync` pulls in its own default `rt-tokio` regardless of what runtime feature you also pass, so `["rt-async-std", "sync"]` is currently broken (compile error) even though it looks valid |
+| Blocking client | `default-features = false`, `["sync", "serialization", "rt-tokio"]` or `["sync", "serialization", "rt-async-std"]` — the sync crate follows whichever runtime feature the root enables |
 | TLS | add `"tls"` (on by default; **requires `rt-tokio`** — not available under async-std) |
 | Runtime config file | add `"dynamic-config"` (on by default) |
 | `query_aggregate` / stream UDFs | add `"lua"` (off by default — compiles a vendored Lua interpreter) |
@@ -100,6 +100,7 @@ it was last published.
   for granular control.
 
 Take a look at the [changelog](https://github.com/aerospike/aerospike-client-rust/blob/v3/CHANGELOG.md) for more details.
+Upgrading from 2.x: see [MIGRATION.md](MIGRATION.md).
 
 ## What’s coming next?
 
@@ -155,15 +156,14 @@ To use the client in your own project, add one of the following to your `Cargo.t
    # The library still supports the old sync interface, but it will be deprecated in the future.
    # This is only for compatibility reasons and will be removed in a later stage.
 
-   # Sync API (Tokio only today — see note below)
-   aerospike = { version = "<version>", default-features = false, features = ["rt-tokio", "sync"]}
+   # Sync API; pick the runtime it blocks on with `rt-tokio` or `rt-async-std`
+   aerospike = { version = "<version>", default-features = false, features = ["sync", "serialization", "rt-tokio"]}
    ```
 
-   > **Note:** the sync API only works with the Tokio runtime right now.
-   > `aerospike-sync` pulls in its own default `rt-tokio` regardless of what
-   > runtime feature you pass at the root, so `features = ["rt-async-std", "sync"]`
-   > looks valid but is currently a compile error ("Please select only one
-   > runtime"). Tracked as a known limitation, not yet fixed.
+   > **Note:** on Tokio the sync client owns a dedicated runtime and can be
+   > called from inside a caller's Tokio runtime. On async-std it uses
+   > `async_std::task::block_on`, which must not be called from inside an
+   > async-std task. `tls` needs `rt-tokio` with either client.
 
    Then run `cargo build` in your project.
 

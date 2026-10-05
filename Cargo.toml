@@ -45,12 +45,14 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 aerospike-core = {path = "aerospike-core", optional = true, version = "3.0.0-alpha.2"}
-aerospike-sync = {path = "aerospike-sync", optional = true, version = "3.0.0-alpha.2"}
+# No default features: the runtime (and tls/serialization) follow the root
+# features below, so `sync` works with either runtime.
+aerospike-sync = {path = "aerospike-sync", optional = true, version = "3.0.0-alpha.2", default-features = false}
 aerospike-macro = {path = "aerospike-macro", optional = true, version = "3.0.0-alpha.2"}
 
 [features]
 default = ["async", "serialization", "rt-tokio", "tls", "dynamic-config"]
-serialization = ["aerospike-core/serialization"]
+serialization = ["aerospike-core?/serialization", "aerospike-sync?/serialization"]
 # Weak refs: applies to whichever client (async core / sync wrapper) is enabled.
 dynamic-config = ["aerospike-core?/dynamic-config", "aerospike-sync?/dynamic-config"]
 # Client-side Lua (query_aggregate / stream UDF). Compiles a vendored Lua 5.4
@@ -58,9 +60,10 @@ dynamic-config = ["aerospike-core?/dynamic-config", "aerospike-sync?/dynamic-con
 lua = ["aerospike-core?/lua", "aerospike-sync?/lua"]
 async = ["aerospike-core"]
 sync = ["aerospike-sync"]
-rt-tokio = ["aerospike-core/rt-tokio", "aerospike-macro/rt-tokio"]
-rt-async-std = ["aerospike-core/rt-async-std", "aerospike-macro/rt-async-std"]
-tls = ["aerospike-core/tls", "aerospike-rt/tls"]
+rt-tokio = ["aerospike-core?/rt-tokio", "aerospike-macro/rt-tokio", "aerospike-sync?/rt-tokio"]
+rt-async-std = ["aerospike-core?/rt-async-std", "aerospike-macro/rt-async-std", "aerospike-sync?/rt-async-std"]
+# TLS is Tokio-only on either client: core's `tls` pulls in tokio-rustls.
+tls = ["aerospike-core?/tls", "aerospike-rt/tls", "aerospike-sync?/tls"]
 
 [[bench]]
 name = "client_server"
@@ -90,7 +93,7 @@ webpki-roots = "1"
 
 [[example]]
 name = "crud_sync"
-required-features = ["sync", "rt-tokio"]
+required-features = ["sync"]
 
 [[example]]
 name = "query_aggregate"

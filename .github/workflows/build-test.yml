@@ -109,6 +109,12 @@ jobs:
             --no-default-features \
             --features serialization,async,${{ matrix.runtime }}
 
+      - name: Build blocking client
+        run: |
+          cargo build --verbose -p aerospike \
+            --no-default-features \
+            --features serialization,sync,${{ matrix.runtime }}
+
       - name: Run integration tests (with coverage)
         run: |
           cargo llvm-cov clean --workspace
@@ -121,8 +127,9 @@ jobs:
             --lcov --output-path coverage-${{ matrix.runtime }}.lcov
 
       - name: Run aerospike-sync doctests
-        if: matrix.runtime == 'rt-tokio'
-        run: cargo test --doc -p aerospike-sync --features rt-tokio
+        run: |
+          cargo test --doc -p aerospike-sync --no-default-features \
+            --features serialization,${{ matrix.runtime }}
 
       - name: Run aerospike-core doctests
         if: matrix.runtime == 'rt-tokio'
@@ -201,6 +208,12 @@ jobs:
             --no-default-features \
             --features serialization,async,${{ matrix.runtime }}
 
+      - name: Build blocking client
+        run: |
+          cargo build --verbose -p aerospike \
+            --no-default-features \
+            --features serialization,sync,${{ matrix.runtime }}
+
       - name: Run integration tests (with coverage)
         env:
           AEROSPIKE_USER: admin
@@ -272,6 +285,12 @@ jobs:
           cargo build --verbose --workspace --exclude aerospike-client-rust-benchmark \
             --no-default-features \
             --features serialization,async,${{ matrix.runtime }}
+
+      - name: Build blocking client
+        run: |
+          cargo build --verbose -p aerospike \
+            --no-default-features \
+            --features serialization,sync,${{ matrix.runtime }}
 
       - name: Run integration tests (with coverage)
         run: |

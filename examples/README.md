@@ -79,10 +79,12 @@ test suite is built with `--features lua`.)
 
 ### Sync example (`crud_sync`)
 
-The `crud_sync` example uses the blocking client and requires the `sync` feature:
+The `crud_sync` example uses the blocking client and requires the `sync` feature.
+The runtime it blocks on follows the `rt-tokio` / `rt-async-std` feature:
 
 ```bash
-cargo run --example crud_sync --no-default-features --features "rt-tokio,sync"
+cargo run --example crud_sync --no-default-features --features "sync,rt-tokio"
+cargo run --example crud_sync --no-default-features --features "sync,rt-async-std"
 ```
 
 Cargo will compile and run the selected example binary.

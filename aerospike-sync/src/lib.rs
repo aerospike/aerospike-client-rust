@@ -1,8 +1,14 @@
 //! A blocking Aerospike client.
 //!
 //! Same API as [`aerospike_core`], with the `async` taken off: every method
-//! here drives the asynchronous client to completion on a runtime this crate
-//! owns, so callers need no runtime of their own and no `.await`.
+//! here drives the asynchronous client to completion, so callers need no
+//! runtime of their own and no `.await`.
+//!
+//! The runtime underneath follows the `rt-tokio` / `rt-async-std` feature.
+//! With Tokio this crate owns a dedicated runtime and may be called from
+//! inside a caller's Tokio runtime as well as from plain threads. With
+//! async-std it blocks on async-std's global executor, which must not be
+//! done from inside an async-std task. TLS requires `rt-tokio`.
 //!
 //! ```no_run
 //! use aerospike_sync::{as_bin, as_key, Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
