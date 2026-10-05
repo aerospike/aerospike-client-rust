@@ -849,6 +849,13 @@ impl Connection {
 
     /// Decompress zlib data and replace the buffer contents with the decompressed data.
     fn inflate(&mut self, compressed_data: &[u8], uncompressed_size: usize) -> Result<()> {
+        // The size is the server's claim; the same cap that bounds every
+        // other buffer bounds the inflated reply.
+        if uncompressed_size > MAX_BUFFER_SIZE {
+            return Err(Error::bad_response(format!(
+                "declared uncompressed size {uncompressed_size} exceeds the {MAX_BUFFER_SIZE} byte buffer limit"
+            )));
+        }
         let mut decoder = ZlibDecoder::new(compressed_data);
         let mut decompressed = vec![0u8; uncompressed_size];
         decoder
@@ -875,6 +882,11 @@ impl Connection {
             // Callers expect the body to start at offset 0 in data_buffer, so
             // shift the body portion to the front.
             let body_start = buffer::MSG_TOTAL_HEADER_SIZE as usize;
+            if body_start + receive_size > self.buffer.data_buffer.len() {
+                return Err(Error::bad_response(
+                    "decompressed reply shorter than its declared body",
+                ));
+            }
             self.buffer
                 .data_buffer
                 .copy_within(body_start..body_start + receive_size, 0);
@@ -1341,7 +1353,7 @@ impl<'a> BufferedConn<'a> {
 
             let _ = self.resize_cache(0);
             self.pos = 0;
-            assert!(self.exhausted());
+            debug_assert!(self.exhausted());
             self.conn.state = ConnectionState::Ready;
             return Ok(());
         }
@@ -1372,7 +1384,7 @@ impl<'a> BufferedConn<'a> {
 
         let _ = self.resize_cache(0);
         self.pos = 0;
-        assert!(self.exhausted());
+        debug_assert!(self.exhausted());
 
         self.conn.state = ConnectionState::Ready;
 
@@ -1410,6 +1422,19 @@ impl<'a> BufferedConn<'a> {
     }
 
     pub async fn read_buffer(&mut self, size: usize) -> Result<usize> {
+        // A declared length larger than what is left of the message is
+        // corruption, not a reason to block on the socket (or underflow
+        // `limit`).
+        let available = if self.decoder.is_some() {
+            self.len() + self.decoder_remaining
+        } else {
+            self.len() + self.limit
+        };
+        if size > available {
+            return Err(Error::bad_response(format!(
+                "response truncated: {size} bytes declared, {available} available"
+            )));
+        }
         self.conn.buffer.resize_buffer(size)?;
 
         if (self.limit > 0 || self.decoder.is_some()) && self.empty() {
@@ -1572,7 +1597,9 @@ impl<'a> ConnectionRecovery<'a> {
             Ok(receive_size)
         } else {
             let header_length = self.conn.buffer.read_u8(Some(8));
-            let receive_size = proto_size - usize::from(header_length);
+            let receive_size = proto_size
+                .checked_sub(usize::from(header_length))
+                .ok_or_else(|| Error::bad_response("proto size shorter than its header"))?;
             Ok(receive_size)
         }
     }

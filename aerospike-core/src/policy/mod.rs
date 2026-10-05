@@ -138,19 +138,24 @@ pub trait Policy {
     }
 }
 
+/// The longest a retry sleep is allowed to grow to, whatever the multiplier.
+const MAX_RETRY_INTERVAL: Duration = Duration::from_secs(60);
+
 /// Next sleep interval for an exponential retry backoff: multiplies `current`
-/// by `multiplier` when it is `> 1.0`, otherwise leaves it unchanged. Mirrors
-/// the Go client's `SleepMultiplier` handling — the interval starts at the
-/// policy's `sleep_between_retries` and grows geometrically after each sleep.
-/// Growth is uncapped, matching Go; command retry loops are bounded by their
-/// deadline, executor loops by tracker completion.
+/// by `multiplier` when it is a finite value `> 1.0`, otherwise leaves it
+/// unchanged. Mirrors the Go client's `SleepMultiplier` handling — the
+/// interval starts at the policy's `sleep_between_retries` and grows
+/// geometrically after each sleep — but caps the result at
+/// [`MAX_RETRY_INTERVAL`] so a large multiplier with no total timeout cannot
+/// stall a command for hours (or overflow `Duration`).
 #[must_use]
 pub(crate) fn next_retry_interval(current: Duration, multiplier: f64) -> Duration {
-    if multiplier > 1.0 {
-        current.mul_f64(multiplier)
-    } else {
-        current
+    if multiplier <= 1.0 || !multiplier.is_finite() {
+        return current;
     }
+    Duration::try_from_secs_f64(current.as_secs_f64() * multiplier)
+        .unwrap_or(MAX_RETRY_INTERVAL)
+        .min(MAX_RETRY_INTERVAL)
 }
 
 /// Policy-like object that encapsulates a base policy instance.

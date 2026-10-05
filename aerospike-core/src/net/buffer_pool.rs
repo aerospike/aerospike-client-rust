@@ -149,10 +149,7 @@ impl TieredBufferPool {
         };
         let tier = &self.tiers[idx];
         let reused = {
-            let mut generations = tier
-                .generations
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut generations = crate::locks::lock(&tier.generations);
             generations
                 .current
                 .pop()
@@ -174,10 +171,7 @@ impl TieredBufferPool {
         };
         buf.clear();
         let tier = &self.tiers[idx];
-        let mut generations = tier
-            .generations
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut generations = crate::locks::lock(&tier.generations);
         if generations.current.len() + generations.victim.len() < tier.max_slots {
             generations.current.push(buf);
         }
@@ -204,10 +198,7 @@ impl TieredBufferPool {
     /// One aging pass: free the victim generation, demote `current`.
     pub(crate) fn age(&self) {
         for tier in &self.tiers {
-            let mut generations = tier
-                .generations
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut generations = crate::locks::lock(&tier.generations);
             generations.victim = std::mem::take(&mut generations.current);
         }
     }
@@ -218,10 +209,7 @@ impl TieredBufferPool {
         self.tiers
             .iter()
             .map(|t| {
-                let generations = t
-                    .generations
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let generations = crate::locks::lock(&t.generations);
                 (generations.current.len() + generations.victim.len()) * t.size
             })
             .sum()

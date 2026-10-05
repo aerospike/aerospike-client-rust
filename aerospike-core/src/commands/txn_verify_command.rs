@@ -88,7 +88,7 @@ impl Command for TxnVerifyCommand<'_> {
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         if let Err(err) = conn.read_header().await {
-            warn!("Parse result error: {err}");
+            debug!("Parse result error: {err}");
             return Err(err);
         }
 

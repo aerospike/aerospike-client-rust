@@ -94,7 +94,7 @@ impl BatchOperateCommand {
             )
             .await;
             if let Ok(res) = res {
-                res?
+                res?;
             } else {
                 // The whole-command deadline elapsed before the inner loop
                 // returned. The in-loop deadline check is mutually
@@ -454,7 +454,7 @@ impl BatchOperateCommand {
         let mut held: Vec<IndexedOp> = Vec::new();
         for (mut pair, bucket) in ops.into_iter().zip(bucket_of) {
             if let Some(b) = bucket {
-                buckets[b].1.push(pair)
+                buckets[b].1.push(pair);
             } else {
                 if pair.0.batch_record().result_code().is_none() {
                     pair.0
@@ -558,7 +558,7 @@ impl BatchOperateCommand {
             // connection), not node ill-health — don't trip the breaker.
             Err(err) if err.is_pool_empty() => return Ok(Some(err)),
             Err(err) => {
-                warn!("Node {node}: {err}");
+                debug!("Node {node}: {err}");
                 node.incr_error_rate();
                 return Ok(Some(err));
             }
@@ -614,7 +614,7 @@ impl BatchOperateCommand {
             // IO errors are considered temporary anomalies. Retry.
             // Close socket to flush out possible garbage. Do not put back in pool.
             conn.invalidate();
-            warn!("Node {node}: {err}");
+            debug!("Node {node}: {err}");
             node.incr_error_rate();
             return Ok(Some(err));
         }
@@ -690,7 +690,7 @@ impl BatchOperateCommand {
                 Ok(Some(batch_record)) => {
                     let batch_op = batch_ops
                         .get_mut(batch_record.batch_index)
-                        .expect("Invalid batch index");
+                        .ok_or_else(|| Error::bad_response("batch row index out of range"))?;
 
                     // Update transaction state with version info
                     if let Some(txn) = txn {
@@ -742,7 +742,7 @@ impl BatchOperateCommand {
                     } => {
                         let batch_op = batch_ops
                             .get_mut(index as usize)
-                            .expect("Invalid batch index");
+                            .ok_or_else(|| Error::bad_response("batch row index out of range"))?;
                         // In-doubt mirrors Java's `Command.batchInDoubt`: a row
                         // error in this response is definitive for this
                         // attempt, so a write is only in doubt when an earlier
@@ -842,7 +842,9 @@ impl BatchOperateCommand {
                 let name_size = conn.buffer().read_u8(None) as usize;
                 conn.read_buffer(name_size).await?;
                 let name = conn.buffer().read_str(name_size)?;
-                let particle_bytes_size = op_size - (4 + name_size);
+                let particle_bytes_size = op_size
+                    .checked_sub(4 + name_size)
+                    .ok_or_else(|| Error::bad_response("operation shorter than its header"))?;
                 conn.read_buffer(particle_bytes_size).await?;
                 let value =
                     value::bytes_to_particle(particle_type, conn.buffer(), particle_bytes_size)?;
@@ -919,9 +921,16 @@ impl BatchOperateCommand {
                 // Read the 8-byte uncompressed size
                 conn.read_buffer(8).await?;
                 let uncompressed_size = conn.buffer().read_u64(Some(0)) as usize;
+                if uncompressed_size > crate::commands::buffer::MAX_BUFFER_SIZE {
+                    return Err(Error::bad_response(format!(
+                        "declared uncompressed size {uncompressed_size} exceeds the buffer limit"
+                    )));
+                }
 
                 // Read all remaining compressed data
-                let compressed_len = size - 8;
+                let compressed_len = size
+                    .checked_sub(8)
+                    .ok_or_else(|| Error::bad_response("compressed reply shorter than its size header"))?;
                 conn.read_buffer(compressed_len).await?;
                 let compressed_data = conn.buffer().data_buffer[..compressed_len].to_vec();
 
@@ -943,7 +952,9 @@ impl BatchOperateCommand {
                 status = false;
                 if inner_size > 0 {
                     // Stream-decompress the rest on demand.
-                    let body_decompressed_size = uncompressed_size - 8;
+                    let body_decompressed_size = uncompressed_size
+                        .checked_sub(8)
+                        .ok_or_else(|| Error::bad_response("uncompressed size shorter than its header"))?;
                     let mut inner_conn =
                         BufferedConn::new_with_decoder(conn.conn, decoder, body_decompressed_size);
 

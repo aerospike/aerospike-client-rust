@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::net::ToSocketAddrs;
 use std::str;
 use std::vec::Vec;
 
@@ -94,6 +93,7 @@ impl NodeValidator {
     #[allow(clippy::option_if_let_else)]
     pub async fn validate_node(&mut self, cluster: &Cluster, host: &Host) -> Result<()> {
         self.resolve_aliases(host)
+            .await
             .map_err(|e| e.chain_error("Failed to resolve host aliases"))?;
 
         let mut last_err = None;
@@ -117,9 +117,10 @@ impl NodeValidator {
         self.aliases.clone()
     }
 
-    fn resolve_aliases(&mut self, host: &Host) -> Result<()> {
-        self.aliases = (host.name.as_ref(), host.port)
-            .to_socket_addrs()?
+    async fn resolve_aliases(&mut self, host: &Host) -> Result<()> {
+        self.aliases = aerospike_rt::lookup_host(host.name.as_ref(), host.port)
+            .await?
+            .into_iter()
             .map(|addr| {
                 Host::new_tls(
                     &addr.ip().to_string(),
@@ -327,10 +328,9 @@ impl NodeValidator {
                         host.name.clone_from(mapped);
                     }
                 }
-                for resolved in (host.name.as_str(), host.port)
-                    .to_socket_addrs()
-                    .into_iter()
-                    .flatten()
+                for resolved in aerospike_rt::lookup_host(host.name.as_str(), host.port)
+                    .await
+                    .unwrap_or_default()
                 {
                     let candidate = Host::new(&resolved.ip().to_string(), resolved.port());
                     match Connection::open(&candidate, &self.client_policy, None, session.as_ref())
@@ -404,10 +404,9 @@ impl NodeValidator {
         // recurse into a full re-validation: the cluster-level seed loop
         // will re-validate via `services()`/peer-discovery anyway.
         for candidate in &real_hosts {
-            for resolved in (candidate.name.as_str(), candidate.port)
-                .to_socket_addrs()
-                .into_iter()
-                .flatten()
+            for resolved in aerospike_rt::lookup_host(candidate.name.as_str(), candidate.port)
+                .await
+                .unwrap_or_default()
             {
                 let addr_str = resolved.ip().to_string();
                 let real_alias = Host::new_tls(

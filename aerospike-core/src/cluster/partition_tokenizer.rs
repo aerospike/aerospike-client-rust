@@ -32,6 +32,10 @@ use super::PartitionTable;
 pub const PARTITION_INFO_COMMANDS: &[&str] = &["replicas", node::PARTITION_GENERATION];
 
 // Validates a Database server node
+/// More replicas than nodes a cluster can hold is a corrupt map, and the
+/// bound keeps the partition table allocation sane.
+const MAX_REPLICAS: usize = 256;
+
 #[derive(Debug, Clone)]
 pub struct PartitionTokenizer {
     buffer: Vec<u8>,
@@ -91,13 +95,18 @@ impl PartitionTokenizer {
                         .parse()
                         .map_err(|err| Error::bad_response(format!("Invalid regime: {err}")))?;
 
-                    let n_replicas = info_section
+                    let n_replicas: usize = info_section
                         .next()
                         .ok_or_else(|| Error::bad_response("Missing replicas count".to_string()))?
                         .parse()
                         .map_err(|err| {
                             Error::bad_response(format!("Invalid replicas count: {err}"))
                         })?;
+                    if n_replicas == 0 || n_replicas > MAX_REPLICAS {
+                        return Err(Error::bad_response(format!(
+                            "Invalid replicas count for `{ns}`: {n_replicas}"
+                        )));
+                    }
 
                     let entry = nmap.entry(ns.to_string()).or_default();
                     entry.sc_mode = reigime != 0;
@@ -117,6 +126,13 @@ impl PartitionTokenizer {
                         info_section.zip(entry.nodes.chunks_mut(node::PARTITIONS))
                     {
                         let restore_buffer = BASE64.decode(section)?;
+                        if restore_buffer.len() < node::PARTITIONS / 8 {
+                            return Err(Error::bad_response(format!(
+                                "Partition bitmap for `{ns}` is {} bytes, expected {}",
+                                restore_buffer.len(),
+                                node::PARTITIONS / 8
+                            )));
+                        }
                         for (idx, (this_reigimes, item)) in replica.iter_mut().enumerate() {
                             if restore_buffer[idx >> 3] & (0x80 >> (idx & 7) as u8) == 0 {
                                 continue;

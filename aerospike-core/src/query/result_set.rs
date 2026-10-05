@@ -129,6 +129,7 @@ impl AsRef<ResultSet> for ResultStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "sync")]
     use std::time::Duration;
 
     use futures::executor::block_on;

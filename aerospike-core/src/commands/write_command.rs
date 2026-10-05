@@ -110,7 +110,7 @@ impl Command for WriteCommand<'_> {
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         // Read header.
         if let Err(err) = conn.read_header().await {
-            warn!("Parse result error: {err}");
+            debug!("Parse result error: {err}");
             return Err(err);
         }
 

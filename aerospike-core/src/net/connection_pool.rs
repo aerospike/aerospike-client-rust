@@ -58,7 +58,7 @@ struct SharedQueue {
     connections: Mutex<VecDeque<Connection>>,
     // Total number of connections associated with the queue.
     // These connections may be in flight and not in the queue.
-    reserved: Mutex<usize>,
+    reserved: AtomicUsize,
     /// Connections currently handed to a background timeout-recovery task
     /// (they keep their `reserved` slot meanwhile). Read at snapshot time as
     /// the `connections_recovering` gauge.
@@ -101,7 +101,7 @@ impl Queue {
         let session = Mutex::new(login_only.as_ref().and_then(|l| l.session.clone()));
         let shared = SharedQueue {
             connections: Mutex::new(VecDeque::with_capacity(capacity)),
-            reserved: Mutex::new(0),
+            reserved: AtomicUsize::new(0),
             recovering: AtomicUsize::new(0),
             capacity,
             host,
@@ -124,40 +124,29 @@ impl Queue {
     /// If so, it will increase the reserved value by one and return true.
     /// Otherwise, return false.
     pub fn reserve_capacity(&self) -> bool {
-        let mut reserved = self
-            .0
+        let capacity = self.0.capacity;
+        self.0
             .reserved
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *reserved < self.0.capacity {
-            *reserved += 1;
-            drop(reserved);
-            return true;
-        }
-        false
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |reserved| {
+                (reserved < capacity).then_some(reserved + 1)
+            })
+            .is_ok()
     }
 
     /// Decreases the reserved value by one, opening up capacity for more connections.
     #[cfg(test)]
     fn reserved(&self) -> usize {
-        let reserved = self
-            .0
-            .reserved
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *reserved
+        self.0.reserved.load(Ordering::Acquire)
     }
 
     /// Decreases the reserved value by one, opening up capacity for more connections.
     pub fn reduce_capacity(&self) {
-        let mut reserved = self
+        let _ = self
             .0
             .reserved
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *reserved > 0 {
-            *reserved -= 1;
-        }
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |reserved| {
+                reserved.checked_sub(1)
+            });
     }
 
     /// Creates a new connection based on the queue's `ClientPolicy`.
@@ -427,11 +416,7 @@ impl Queue {
     /// ones currently out on loan to callers. Reaped conns must have
     /// [`reduce_capacity`] called separately to release their slot.
     pub fn reserved_count(&self) -> usize {
-        *self
-            .0
-            .reserved
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.0.reserved.load(Ordering::Acquire)
     }
 
     /// Inspect the oldest pooled connection and, when it needs attention,
@@ -1146,10 +1131,7 @@ mod tests {
         // Simulate a caller that already holds a reserved slot (e.g. via
         // make_conn which reserves before connecting) but tries to put_back
         // into a full queue. Manually bump reserved to emulate.
-        {
-            let mut r = q.0.reserved.lock().unwrap();
-            *r += 1;
-        }
+        q.0.reserved.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         assert_eq!(q.reserved(), 3);
 
         q.put_back(overflow);

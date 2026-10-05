@@ -159,7 +159,11 @@ impl StreamCommand {
             conn.read_buffer(name_size).await?;
             let name: String = conn.buffer().read_str(name_size)?;
 
-            let particle_bytes_size = op_size - (4 + name_size);
+            let particle_bytes_size = op_size
+
+                .checked_sub(4 + name_size)
+
+                .ok_or_else(|| Error::bad_response("operation shorter than its header"))?;
             conn.read_buffer(particle_bytes_size).await?;
             let value = bytes_to_particle(particle_type, conn.buffer(), particle_bytes_size)?;
 
@@ -210,7 +214,7 @@ impl StreamCommand {
                 .read_buffer(buffer::MSG_REMAINING_HEADER_SIZE as usize)
                 .await
             {
-                warn!("Parse result error: {err}");
+                debug!("Parse result error: {err}");
                 return Err(err);
             }
 
@@ -399,10 +403,12 @@ impl Command for StreamCommand {
         conn.flush().await
     }
 
-    #[allow(unused_variables)]
+    // The stream command drives its own IO from `execute`; these `Command`
+    // hooks are never reached, and answering conservatively costs nothing.
     async fn prepare_buffer(&mut self, _conn: &mut Connection) -> Result<()> {
-        // should be implemented downstream
-        unreachable!()
+        Err(Error::client_error(
+            "StreamCommand does not use the single-command buffer path",
+        ))
     }
 
     fn get_node(&mut self) -> Result<Arc<Node>> {
@@ -410,15 +416,15 @@ impl Command for StreamCommand {
     }
 
     fn hint(&self) -> u8 {
-        unreachable!()
+        0
     }
 
     fn can_retry(&mut self) -> bool {
-        unreachable!()
+        false
     }
 
     fn can_recover_connection(&mut self) -> bool {
-        unreachable!()
+        false
     }
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
@@ -444,9 +450,16 @@ impl Command for StreamCommand {
                 // Read the 8-byte uncompressed size
                 conn.read_buffer(8).await?;
                 let uncompressed_size = conn.buffer().read_u64(Some(0)) as usize;
+                if uncompressed_size > crate::commands::buffer::MAX_BUFFER_SIZE {
+                    return Err(Error::bad_response(format!(
+                        "declared uncompressed size {uncompressed_size} exceeds the buffer limit"
+                    )));
+                }
 
                 // Read all remaining compressed data
-                let compressed_len = size - 8;
+                let compressed_len = size
+                    .checked_sub(8)
+                    .ok_or_else(|| Error::bad_response("compressed reply shorter than its size header"))?;
                 conn.read_buffer(compressed_len).await?;
                 let compressed_data = conn.buffer().data_buffer[..compressed_len].to_vec();
 
@@ -469,7 +482,9 @@ impl Command for StreamCommand {
                 if inner_size > 0 {
                     // Stream-decompress the rest on demand (body after the
                     // 8-byte proto header we already consumed).
-                    let body_decompressed_size = uncompressed_size - 8;
+                    let body_decompressed_size = uncompressed_size
+                        .checked_sub(8)
+                        .ok_or_else(|| Error::bad_response("uncompressed size shorter than its header"))?;
                     let mut inner_conn =
                         BufferedConn::new_with_decoder(conn.conn, decoder, body_decompressed_size);
 

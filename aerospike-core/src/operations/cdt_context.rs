@@ -75,7 +75,7 @@ pub fn to_bytes(ctx: &[CdtContext]) -> Result<Vec<u8>> {
     let size = pack_ctx_for_index(&mut None, ctx)?;
     let mut buf = Buffer::new(0);
     buf.resize_buffer(size)?;
-    let _ = pack_ctx_for_index(&mut Some(&mut buf), ctx);
+    pack_ctx_for_index(&mut Some(&mut buf), ctx)?;
     Ok(std::mem::take(&mut buf.data_buffer))
 }
 

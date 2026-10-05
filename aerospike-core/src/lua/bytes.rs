@@ -31,6 +31,11 @@ use mlua::{Lua, MetaMethod, MultiValue, Table, UserData, UserDataMethods, Value 
 
 use crate::commands::ParticleType;
 
+/// Upper bound on a `bytes` value. The server rejects records far smaller
+/// than this; the cap exists so a stray `b[2^40] = 1` in a script fails the
+/// write instead of exhausting memory.
+const MAX_LEN: usize = 128 * 1024 * 1024;
+
 /// Userdata wrapper for an Aerospike byte array inside the Lua interpreter.
 pub struct LuaBytes {
     pub(crate) bytes: Vec<u8>,
@@ -57,20 +62,32 @@ impl LuaBytes {
         out
     }
 
-    /// Grow (zero-filled) so that `end_offset` bytes are addressable.
-    fn ensure(&mut self, end_offset: usize) {
-        if end_offset > self.bytes.len() {
-            self.bytes.resize(end_offset, 0);
+    /// Grow (zero-filled) so that `len` bytes at `offset` are addressable.
+    /// `false` when that would pass [`MAX_LEN`] (or overflow), in which case
+    /// nothing changes and the mutator reports failure to the script.
+    fn ensure(&mut self, offset: usize, len: usize) -> bool {
+        let Some(end) = offset.checked_add(len) else {
+            return false;
+        };
+        if end > MAX_LEN {
+            return false;
         }
+        if end > self.bytes.len() {
+            self.bytes.resize(end, 0);
+        }
+        true
     }
 
     fn get_byte(&self, offset: usize) -> u8 {
         self.bytes.get(offset).copied().unwrap_or(0)
     }
 
-    fn set_byte(&mut self, offset: usize, value: u8) {
-        self.ensure(offset + 1);
+    fn set_byte(&mut self, offset: usize, value: u8) -> bool {
+        if !self.ensure(offset, 1) {
+            return false;
+        }
         self.bytes[offset] = value;
+        true
     }
 
     fn read<const N: usize>(&self, offset: usize) -> Option<[u8; N]> {
@@ -79,9 +96,12 @@ impl LuaBytes {
             .map(|s| s.try_into().expect("slice length"))
     }
 
-    fn write(&mut self, offset: usize, data: &[u8]) {
-        self.ensure(offset + data.len());
+    fn write(&mut self, offset: usize, data: &[u8]) -> bool {
+        if !self.ensure(offset, data.len()) {
+            return false;
+        }
         self.bytes[offset..offset + data.len()].copy_from_slice(data);
+        true
     }
 
     /// Decode a 7-bit variable-length unsigned int (high bit = continue).
@@ -118,8 +138,11 @@ impl LuaBytes {
         }
         #[allow(clippy::cast_possible_truncation)]
         encoded.push(v as u8);
-        self.write(offset, &encoded);
-        encoded.len() as i64
+        if self.write(offset, &encoded) {
+            encoded.len() as i64
+        } else {
+            0
+        }
     }
 }
 
@@ -138,7 +161,7 @@ impl UserData for LuaBytes {
             |_, this, (index, value): (i64, i64)| {
                 if index >= 1 {
                     #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-                    this.set_byte((index - 1) as usize, value as u8);
+                    let _ = this.set_byte((index - 1) as usize, value as u8);
                 }
                 Ok(())
             },
@@ -294,8 +317,7 @@ pub fn register(lua: &Lua) -> mlua::Result<()> {
                         return Ok(false);
                     };
                     let data: [u8; $width] = $conv(value);
-                    ud.borrow_mut::<LuaBytes>()?.write(o, &data);
-                    Ok(true)
+                    Ok(ud.borrow_mut::<LuaBytes>()?.write(o, &data))
                 })?;
             bytes.set($name, func.clone())?;
             func
@@ -310,8 +332,7 @@ pub fn register(lua: &Lua) -> mlua::Result<()> {
                 let Some(o) = offset0(offset) else {
                     return Ok(false);
                 };
-                ud.borrow_mut::<LuaBytes>()?.set_byte(o, value as u8);
-                Ok(true)
+                Ok(ud.borrow_mut::<LuaBytes>()?.set_byte(o, value as u8))
             })?,
         )?;
 
@@ -346,8 +367,7 @@ pub fn register(lua: &Lua) -> mlua::Result<()> {
                 let Some(o) = offset0(offset) else {
                     return Ok(false);
                 };
-                ud.borrow_mut::<LuaBytes>()?.write(o, &value.as_bytes());
-                Ok(true)
+                Ok(ud.borrow_mut::<LuaBytes>()?.write(o, &value.as_bytes()))
             },
         )?,
     )?;
@@ -371,8 +391,7 @@ pub fn register(lua: &Lua) -> mlua::Result<()> {
                 };
                 let data = source.bytes[..len].to_vec();
                 drop(source); // src and ud may be the same userdata
-                ud.borrow_mut::<LuaBytes>()?.write(o, &data);
-                Ok(true)
+                Ok(ud.borrow_mut::<LuaBytes>()?.write(o, &data))
             },
         )?,
     )?;
@@ -393,8 +412,7 @@ pub fn register(lua: &Lua) -> mlua::Result<()> {
                 let mut b = ud.borrow_mut::<LuaBytes>()?;
                 let end = b.bytes.len();
                 let data = $conv(value);
-                b.write(end, &data);
-                Ok(true)
+                Ok(b.write(end, &data))
             })?;
             bytes.set($name, func.clone())?;
             func
@@ -421,8 +439,7 @@ pub fn register(lua: &Lua) -> mlua::Result<()> {
             |_, (ud, value): (mlua::AnyUserData, mlua::prelude::LuaString)| {
                 let mut b = ud.borrow_mut::<LuaBytes>()?;
                 let end = b.bytes.len();
-                b.write(end, &value.as_bytes());
-                Ok(true)
+                Ok(b.write(end, &value.as_bytes()))
             },
         )?,
     )?;
@@ -439,8 +456,7 @@ pub fn register(lua: &Lua) -> mlua::Result<()> {
                 drop(source);
                 let mut b = ud.borrow_mut::<LuaBytes>()?;
                 let end = b.bytes.len();
-                b.write(end, &data);
-                Ok(true)
+                Ok(b.write(end, &data))
             },
         )?,
     )?;

@@ -38,10 +38,6 @@ pub struct ServerCommand<'a> {
     write_policy: &'a WritePolicy,
     statement: &'a Statement,
     task_id: u64,
-    /// `true` for the UDF-execute payload (statement carries an
-    /// aggregation), `false` for the ops payload
-    /// (`statement.operations` is set).
-    is_udf: bool,
 }
 
 impl<'a> ServerCommand<'a> {
@@ -58,7 +54,6 @@ impl<'a> ServerCommand<'a> {
             write_policy,
             statement,
             task_id,
-            is_udf: false,
         }
     }
 
@@ -75,7 +70,6 @@ impl<'a> ServerCommand<'a> {
             write_policy,
             statement,
             task_id,
-            is_udf: true,
         }
     }
 
@@ -104,9 +98,6 @@ impl Command for ServerCommand<'_> {
         // Both background ops (carried on `statement.operations`) and
         // background UDF execute (carried on `statement.aggregation`)
         // share the same write-header wire path through `set_query`.
-        // `is_udf` is informational — the unified path picks the
-        // payload up directly from the statement.
-        let _ = self.is_udf;
         conn.buffer.set_query(
             QueryDirection::Background(self.write_policy),
             self.statement,
@@ -157,9 +148,16 @@ impl Command for ServerCommand<'_> {
                 // Read the 8-byte uncompressed size
                 conn.read_buffer(8).await?;
                 let uncompressed_size = conn.buffer().read_u64(Some(0)) as usize;
+                if uncompressed_size > crate::commands::buffer::MAX_BUFFER_SIZE {
+                    return Err(Error::bad_response(format!(
+                        "declared uncompressed size {uncompressed_size} exceeds the buffer limit"
+                    )));
+                }
 
                 // Read all remaining compressed data
-                let compressed_len = size - 8;
+                let compressed_len = size
+                    .checked_sub(8)
+                    .ok_or_else(|| Error::bad_response("compressed reply shorter than its size header"))?;
                 conn.read_buffer(compressed_len).await?;
                 let compressed_data = conn.buffer().data_buffer[..compressed_len].to_vec();
 
@@ -179,7 +177,9 @@ impl Command for ServerCommand<'_> {
                 if inner_size > 0 {
                     // Stream-decompress the rest on demand (body after the
                     // 8-byte proto header we already consumed).
-                    let body_decompressed_size = uncompressed_size - 8;
+                    let body_decompressed_size = uncompressed_size
+                        .checked_sub(8)
+                        .ok_or_else(|| Error::bad_response("uncompressed size shorter than its header"))?;
                     let mut inner_conn =
                         BufferedConn::new_with_decoder(conn.conn, decoder, body_decompressed_size);
 
@@ -286,7 +286,9 @@ impl ServerCommand<'_> {
                 let name_size = conn.buffer().read_u8(None) as usize;
                 conn.read_buffer(name_size).await?;
                 conn.buffer().skip(name_size);
-                let particle_bytes_size = op_size - (4 + name_size);
+                let particle_bytes_size = op_size
+                    .checked_sub(4 + name_size)
+                    .ok_or_else(|| Error::bad_response("operation shorter than its header"))?;
                 if particle_bytes_size > 0 {
                     conn.read_buffer(particle_bytes_size).await?;
                     conn.buffer().skip(particle_bytes_size);

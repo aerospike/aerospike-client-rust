@@ -19,10 +19,10 @@
 //! [`NodeMetricsSnapshot`] (an owned, serializable copy) which is aggregated into
 //! the cluster-wide view.
 
-use crate::locks::{lock, read, write};
+use crate::locks::{read, write};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
-use std::sync::{Mutex, RwLock};
+use std::sync::RwLock;
 use std::time::Duration;
 
 use super::histogram::SyncHistogram;
@@ -156,15 +156,24 @@ impl CommandMetric {
 }
 
 type MetricSlots = Box<[Option<CommandMetric>; COMMAND_TYPE_COUNT]>;
-type LiveResultCodeSlots = Box<[Option<Mutex<HashMap<ResultCode, u64>>>; COMMAND_TYPE_COUNT]>;
+/// One counter per result code (the wire code is a byte), bumped with a
+/// relaxed atomic on the command path instead of a mutex round trip.
+type LiveResultCodeCounts = Box<[AtomicU64; 256]>;
+type LiveResultCodeSlots = Box<[Option<LiveResultCodeCounts>; COMMAND_TYPE_COUNT]>;
 type ResultCodeSlots = Box<[Option<HashMap<ResultCode, u64>>; COMMAND_TYPE_COUNT]>;
 
 fn empty_metric_slots() -> MetricSlots {
     Box::new(std::array::from_fn(|_| None))
 }
 
+// Boxed like its sibling slot tables so a namespace entry stays one pointer.
+#[allow(clippy::unnecessary_box_returns)]
 fn empty_live_rc_slots() -> LiveResultCodeSlots {
     Box::new(std::array::from_fn(|_| None))
+}
+
+fn empty_live_rc_counts() -> LiveResultCodeCounts {
+    Box::new(std::array::from_fn(|_| AtomicU64::new(0)))
 }
 
 fn empty_rc_slots() -> ResultCodeSlots {
@@ -638,7 +647,7 @@ impl NodeMetrics {
             let map = read(&self.result_code_counts);
             if let Some(slots) = map.get(namespace) {
                 if let Some(counts) = &slots[idx] {
-                    *lock(counts).entry(rc).or_insert(0) += 1;
+                    counts[usize::from(u8::from(rc))].fetch_add(1, Ordering::Relaxed);
                     return;
                 }
             }
@@ -648,8 +657,8 @@ impl NodeMetrics {
         let slots = map
             .entry(namespace.to_string())
             .or_insert_with(empty_live_rc_slots);
-        let counts = slots[idx].get_or_insert_with(|| Mutex::new(HashMap::new()));
-        *lock(counts).entry(rc).or_insert(0) += 1;
+        let counts = slots[idx].get_or_insert_with(empty_live_rc_counts);
+        counts[usize::from(u8::from(rc))].fetch_add(1, Ordering::Relaxed);
     }
 
     fn with_command_metric<F: FnOnce(&CommandMetric)>(
@@ -770,11 +779,14 @@ impl NodeMetrics {
             let mut tgt = empty_rc_slots();
             for (i, slot) in slots.iter().enumerate() {
                 if let Some(counts) = slot {
-                    let mut guard = lock(counts);
-                    tgt[i] = Some(guard.clone());
-                    for v in guard.values_mut() {
-                        *v = 0;
+                    let mut drained = HashMap::new();
+                    for (code, counter) in counts.iter().enumerate() {
+                        let n = counter.swap(0, Ordering::Relaxed);
+                        if n > 0 {
+                            drained.insert(ResultCode::from(code as u8), n);
+                        }
                     }
+                    tgt[i] = Some(drained);
                 }
             }
             snapshot.result_code_counts.insert(ns.clone(), tgt);

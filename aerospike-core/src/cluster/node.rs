@@ -489,10 +489,7 @@ impl Node {
     /// Stores the server-reported cluster name from a tend response.
     fn record_cluster_name(&self, info_map: &IndexMap<String, String>) {
         let reported = normalize_cluster_name(info_map.get("cluster-name"));
-        let mut current = self
-            .server_cluster_name
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut current = crate::locks::write(&self.server_cluster_name);
         if *current != reported {
             *current = reported;
         }
@@ -506,10 +503,7 @@ impl Node {
     /// against. Use it to select per-cluster settings (`system.<name>`
     /// blocks) without opting into validation.
     pub fn cluster_name(&self) -> Option<String> {
-        self.server_cluster_name
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+        crate::locks::read(&self.server_cluster_name).clone()
     }
 
     fn verify_node_name(&self, info_map: &IndexMap<String, String>) -> Result<()> {
@@ -1094,7 +1088,7 @@ impl Node {
         // failed one frees that queue's reserved slot.
         for (queue, handle) in probe_handles {
             if let Some(conn) = await_spawned_task(handle).await {
-                queue.put_back(conn)
+                queue.put_back(conn);
             } else {
                 queue.reduce_capacity();
                 self.metrics.incr_connections_closed(CloseReason::Error);

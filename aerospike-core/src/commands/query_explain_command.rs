@@ -121,7 +121,7 @@ impl Command for QueryExplainCommand<'_> {
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         if let Err(err) = conn.read_header().await {
-            warn!("Parse query explain result error: {err}");
+            debug!("Parse query explain result error: {err}");
             return Err(err);
         }
 

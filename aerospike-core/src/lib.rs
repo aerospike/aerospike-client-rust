@@ -56,7 +56,11 @@
     // to change when an implementation starts to.
     clippy::unused_async,
     // Integer -> f64 for averages, ratios and percentages is intended.
-    clippy::cast_precision_loss
+    clippy::cast_precision_loss,
+    // Future sizes depend on the runtime's types (the async-std build trips
+    // the threshold where tokio does not); boxing the batch and transaction
+    // drivers would add an allocation per command.
+    clippy::large_futures
 )]
 // The `doc_cfg` feature requires nightly Rust and only runs during docs.rs builds,
 // triggered via `--cfg docsrs` in `aerospike-core/Cargo.toml`. When active, it

@@ -103,6 +103,29 @@
   * **Breaking**: `sub_code::FILTERED_META` and `sub_code::FILTERED_BINS` are removed. The server
     defines no subcodes under `FilteredOut` and never sent them; a filtered-out row explains itself in
     its message only.
+  * Malformed or truncated server replies are reported as `BadResponse` errors instead of
+    panicking the calling task: every length the server declares (field, operation, particle,
+    msgpack element and ext sizes, batch row index, compressed and decompressed sizes, the
+    partition bitmap) is checked before it is trusted, a hostile element count no longer drives a
+    multi-gigabyte allocation, a map key of a type the server never sends is rejected before it
+    reaches `Hash`, and a non-numeric version string no longer panics the tend task. The tend loop
+    also survives a panic in one cycle and logs it rather than silently freezing the cluster view.
+  * A query whose producer task failed could leave `Recordset` consumers waiting forever; the sink
+    is now closed from a drop guard however the task ends.
+  * `Client::close` cancels the dynamic-config watcher and waits for the tend task, so cleanup is
+    complete when it returns. A node's partition map is merged on a scratch copy, so a parse error
+    part-way through no longer leaves the shared map half updated.
+  * Host names are resolved through the async runtime instead of blocking a worker thread on the
+    system resolver during tend and seeding; the YAML config provider reads its file the same way.
+  * The retry backoff ignores non-finite multipliers and caps the sleep at 60 s; an empty `exp_let`
+    or `def` is an `InvalidArgument` instead of an underflow; expression return types for
+    `ListReturnType::None` / `MapReturnType::None` are typed as NIL instead of panicking; more than
+    65535 operations or bins in one request is an `InvalidArgument` instead of a corrupt request.
+  * Per-attempt "Parse result error" and node-error log lines are `debug!` (they were `warn!` at
+    full request rate during an outage); the YAML provider warns once per distinct problem instead
+    of once per poll.
+  * Lua `bytes` values grow to at most 128 MiB; every mutator reports failure past that instead
+    of exhausting memory.
   * The workspace builds clean under `clippy::pedantic` + `clippy::nursery` (core) and default clippy
     (every other crate, the examples, the benchmark tool and the integration tests) for every feature
     set, including `rt-async-std`. Visible side effects: `ToValue`/`FromValue` for `HashMap` accept

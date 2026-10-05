@@ -68,6 +68,20 @@ tls = ["aerospike-core?/tls", "aerospike-rt/tls", "aerospike-sync?/tls"]
 [[bench]]
 name = "client_server"
 harness = false
+required-features = ["async"]
+
+# The integration suites drive the async client.
+[[test]]
+name = "lib"
+required-features = ["async"]
+
+[[test]]
+name = "client"
+required-features = ["async"]
+
+[[test]]
+name = "batch_leak"
+required-features = ["async"]
 
 [workspace]
 members = ["tools/benchmark", "aerospike-core", "aerospike-rt", "aerospike-sync", "aerospike-macro"]
@@ -90,6 +104,58 @@ tokio-rustls = {version = "0.26.5"}
 rustls = {version = "0.23.45"}
 webpki-roots = "1"
 #console-subscriber = "0.1.5"
+
+[[example]]
+name = "batch_operations"
+required-features = ["async"]
+
+[[example]]
+name = "bit_operations"
+required-features = ["async"]
+
+[[example]]
+name = "cdt_operations"
+required-features = ["async"]
+
+[[example]]
+name = "crud"
+required-features = ["async"]
+
+[[example]]
+name = "geo_query"
+required-features = ["async"]
+
+[[example]]
+name = "path_expression"
+required-features = ["async"]
+
+[[example]]
+name = "query"
+required-features = ["async"]
+
+[[example]]
+name = "record_operations"
+required-features = ["async"]
+
+[[example]]
+name = "scan"
+required-features = ["async"]
+
+[[example]]
+name = "server_info"
+required-features = ["async"]
+
+[[example]]
+name = "timeout_configuration"
+required-features = ["async"]
+
+[[example]]
+name = "transaction"
+required-features = ["async"]
+
+[[example]]
+name = "udf"
+required-features = ["async"]
 
 [[example]]
 name = "crud_sync"

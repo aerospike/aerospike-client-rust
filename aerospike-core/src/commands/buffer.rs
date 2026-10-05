@@ -210,7 +210,6 @@ const INITIAL_BUFFER_SIZE: usize = 1024;
 pub struct Buffer {
     pub data_buffer: Vec<u8>,
     pub data_offset: usize,
-    // pub estimated_data_offset: usize,
     pub reclaim_threshold: usize,
     /// When set, allocations larger than `reclaim_threshold` are leased
     /// from the owning cluster's [`crate::net::buffer_pool`] and returned
@@ -241,7 +240,6 @@ impl Buffer {
         Buffer {
             data_buffer: Vec::with_capacity(INITIAL_BUFFER_SIZE),
             data_offset: 0,
-            // estimated_data_offset: 0,
             reclaim_threshold,
             pool: None,
             compress_offset: 0,
@@ -285,8 +283,15 @@ impl Buffer {
 
     pub(crate) fn size_buffer(&mut self) -> Result<()> {
         let offset = self.data_offset;
-        // self.estimated_data_offset = offset;
         self.resize_buffer(offset)
+    }
+
+    /// A wire count field is 16 bits wide; refuse a larger count rather than
+    /// truncate it into a request the server would misparse.
+    fn count_u16(count: usize, what: &str) -> Result<u16> {
+        u16::try_from(count).map_err(|_| {
+            Error::invalid_argument(format!("too many {what}: {count} (at most {})", u16::MAX))
+        })
     }
 
     pub(crate) fn resize_buffer(&mut self, size: usize) -> Result<()> {
@@ -489,12 +494,13 @@ impl Buffer {
         }
 
         self.size_buffer()?;
-        self.write_header_write(policy, 0, INFO2_WRITE, field_count, bins.len() as u16);
+        let bin_count = Self::count_u16(bins.len(), "bins")?;
+        self.write_header_write(policy, 0, INFO2_WRITE, field_count, bin_count);
         self.write_key(key, policy.send_key)?;
         self.write_txn(policy.base_policy.txn.as_ref(), version, true);
 
         if let Some(filter) = policy.filter_expression() {
-            self.write_filter_expression(filter, filter_size);
+            self.write_filter_expression(filter, filter_size)?;
         }
         for bin in bins {
             self.write_operation_for_bin(bin.as_ref(), op_type)?;
@@ -521,7 +527,7 @@ impl Buffer {
         self.write_txn(policy.base_policy.txn.as_ref(), version, true);
 
         if let Some(filter) = policy.filter_expression() {
-            self.write_filter_expression(filter, filter_size);
+            self.write_filter_expression(filter, filter_size)?;
         }
 
         self.end();
@@ -545,7 +551,7 @@ impl Buffer {
         self.write_txn(policy.base_policy.txn.as_ref(), version, true);
 
         if let Some(filter) = policy.filter_expression() {
-            self.write_filter_expression(filter, filter_size);
+            self.write_filter_expression(filter, filter_size)?;
         }
 
         self.write_operation_for_operation_type(OperationType::Touch);
@@ -576,7 +582,7 @@ impl Buffer {
         self.write_txn(policy.base_policy.txn.as_ref(), version, false);
 
         if let Some(filter) = policy.base_policy.filter_expression() {
-            self.write_filter_expression(filter, filter_size);
+            self.write_filter_expression(filter, filter_size)?;
         }
 
         self.end();
@@ -602,12 +608,13 @@ impl Buffer {
                 }
 
                 self.size_buffer()?;
-                self.write_header(policy, INFO1_READ, 0, field_count, bin_names.len() as u16);
+                let bin_count = Self::count_u16(bin_names.len(), "bins")?;
+                self.write_header(policy, INFO1_READ, 0, field_count, bin_count);
                 self.write_key(key, false)?;
                 self.write_txn(policy.txn.as_ref(), version, false);
 
                 if let Some(filter) = policy.filter_expression() {
-                    self.write_filter_expression(filter, filter_size);
+                    self.write_filter_expression(filter, filter_size)?;
                 }
 
                 for bin_name in bin_names {
@@ -638,7 +645,7 @@ impl Buffer {
         self.write_txn(policy.txn.as_ref(), version, false);
 
         if let Some(filter) = policy.filter_expression() {
-            self.write_filter_expression(filter, filter_size);
+            self.write_filter_expression(filter, filter_size)?;
         }
 
         self.write_operation_for_bin_name("", OperationType::Read);
@@ -663,7 +670,7 @@ impl Buffer {
         self.write_txn(policy.txn.as_ref(), version, false);
 
         if let Some(filter) = policy.filter_expression() {
-            self.write_filter_expression(filter, filter_size);
+            self.write_filter_expression(filter, filter_size)?;
         }
 
         self.end();
@@ -682,7 +689,7 @@ impl Buffer {
             let field_count = field_count + 1;
             self.write_batch_fields(key, field_count, op_count);
             let exp_size = filter.size()?;
-            self.write_filter_expression(filter, exp_size);
+            self.write_filter_expression(filter, exp_size)?;
         } else {
             self.write_batch_fields(key, field_count, op_count);
         }
@@ -710,7 +717,7 @@ impl Buffer {
 
         if let Some(filter) = filter {
             let exp_size = filter.size()?;
-            self.write_filter_expression(filter, exp_size);
+            self.write_filter_expression(filter, exp_size)?;
         }
 
         if attr.send_key && key.has_value_to_send() {
@@ -889,7 +896,7 @@ impl Buffer {
         // Write filter expression
         if let Some(filter) = filter {
             let exp_size = filter.size()?;
-            self.write_filter_expression(filter, exp_size);
+            self.write_filter_expression(filter, exp_size)?;
         }
 
         // Write user key
@@ -1005,7 +1012,7 @@ impl Buffer {
         self.write_header(&policy.base_policy, INFO1_BATCH, 0, field_count, 0);
 
         if let Some(filter) = policy.filter_expression() {
-            self.write_filter_expression(filter, filter_size);
+            self.write_filter_expression(filter, filter_size)?;
         }
 
         let field_size_offset = self.data_offset;
@@ -1361,7 +1368,7 @@ impl Buffer {
                 read_attr,
                 write_attr,
                 field_count,
-                operations.len() as u16,
+                Self::count_u16(operations.len(), "operations")?,
             );
         } else {
             self.write_header(
@@ -1369,14 +1376,14 @@ impl Buffer {
                 read_attr,
                 write_attr,
                 field_count,
-                operations.len() as u16,
+                Self::count_u16(operations.len(), "operations")?,
             );
         }
         self.write_key(key, policy.send_key && has_write)?;
         self.write_txn(policy.base_policy.txn.as_ref(), version, has_write);
 
         if let Some(filter) = policy.filter_expression() {
-            self.write_filter_expression(filter, filter_size);
+            self.write_filter_expression(filter, filter_size)?;
         }
 
         for operation in operations {
@@ -1408,7 +1415,7 @@ impl Buffer {
         self.write_key(key, policy.send_key)?;
 
         if let Some(filter) = policy.filter_expression() {
-            self.write_filter_expression(filter, filter_size);
+            self.write_filter_expression(filter, filter_size)?;
         }
 
         self.write_field_string(package_name, FieldType::UdfPackageName);
@@ -1587,12 +1594,12 @@ impl Buffer {
                 }
                 self.data_offset += op.estimate_size()? + OPERATION_HEADER_SIZE as usize;
             }
-            operations.len() as u16
+            Self::count_u16(operations.len(), "operations")?
         } else if let Bins::Some(ref bin_names) = statement.bins {
             for bin_name in bin_names {
                 self.estimate_operation_size_for_bin_name(bin_name)?;
             }
-            bin_names.len() as u16
+            Self::count_u16(bin_names.len(), "bins")?
         } else {
             0
         };
@@ -1691,7 +1698,7 @@ impl Buffer {
         if let Some(where_bytes) = execute_where {
             self.write_field_bytes(where_bytes, FieldType::Where);
         } else if let Some(filter_exp) = direction.filter_expression() {
-            self.write_filter_expression(filter_exp, filter_exp_size);
+            self.write_filter_expression(filter_exp, filter_exp_size)?;
         }
 
         // Partition tracking fields — only present for foreground
@@ -2163,9 +2170,10 @@ impl Buffer {
         Ok(())
     }
 
-    fn write_filter_expression(&mut self, filter: &Expression, size: usize) {
+    fn write_filter_expression(&mut self, filter: &Expression, size: usize) -> Result<()> {
         self.write_field_header(size, FieldType::FilterExp);
-        let _ = filter.pack(&mut Some(self));
+        filter.pack(&mut Some(self))?;
+        Ok(())
     }
 
     fn write_field_header(&mut self, size: usize, ftype: FieldType) {
@@ -2258,6 +2266,25 @@ impl Buffer {
 
     pub(crate) const fn skip(&mut self, count: usize) {
         self.data_offset += count;
+    }
+
+    /// Bytes between the read cursor and the end of the buffer.
+    pub(crate) const fn remaining(&self) -> usize {
+        self.data_buffer.len().saturating_sub(self.data_offset)
+    }
+
+    /// Fails unless `n` more bytes can be read. Every length the server
+    /// declares goes through here before it is trusted, so a truncated or
+    /// corrupt reply is a `BadResponse` error, not an out-of-bounds panic.
+    pub(crate) fn ensure(&self, n: usize) -> Result<()> {
+        if n <= self.remaining() {
+            Ok(())
+        } else {
+            Err(Error::bad_response(format!(
+                "response truncated: {n} bytes declared, {} available",
+                self.remaining()
+            )))
+        }
     }
 
     pub(crate) fn peek(&self) -> u8 {
@@ -2418,23 +2445,21 @@ impl Buffer {
     }
 
     pub(crate) fn read_str(&mut self, len: usize) -> Result<String> {
+        self.ensure(len)?;
         let s = str::from_utf8(&self.data_buffer[self.data_offset..self.data_offset + len])?;
         self.data_offset += len;
         Ok(s.to_owned())
     }
 
-    // pub(crate) fn read_bytes(&mut self, pos: usize, count: usize) -> &[u8] {
-    //     &self.data_buffer[pos..pos + count]
-    // }
-
     pub(crate) fn read_slice(&self, count: usize) -> &[u8] {
         &self.data_buffer[self.data_offset..self.data_offset + count]
     }
 
-    pub(crate) fn read_blob(&mut self, len: usize) -> Vec<u8> {
+    pub(crate) fn read_blob(&mut self, len: usize) -> Result<Vec<u8>> {
+        self.ensure(len)?;
         let val = self.data_buffer[self.data_offset..self.data_offset + len].to_vec();
         self.data_offset += len;
-        val
+        Ok(val)
     }
 
     pub(crate) fn read_bool(&mut self, len: usize) -> bool {
@@ -2621,9 +2646,19 @@ impl Buffer {
     pub(crate) fn parse_response_fields(&mut self, field_count: usize) -> ParsedFields {
         let mut parsed = ParsedFields::default();
         for _ in 0..field_count {
+            // Fields are optional data: on a corrupt length stop walking
+            // rather than read past the reply.
+            if self.remaining() < 5 {
+                break;
+            }
             let field_len = self.read_u32(None) as usize;
             let field_type = self.read_u8(None);
-            let data_size = field_len - 1;
+            let Some(data_size) = field_len.checked_sub(1) else {
+                break;
+            };
+            if self.remaining() < data_size {
+                break;
+            }
 
             if field_type == FieldType::RecordVersion as u8 && data_size == 7 {
                 parsed.version = Some(Self::version_bytes_to_u64(
@@ -2890,7 +2925,7 @@ impl Buffer {
         self.write_u32(policy.expiration.into());
         self.write_u32(0);
         self.write_u16(field_count);
-        self.write_u16(operations.len() as u16);
+        self.write_u16(Self::count_u16(operations.len(), "operations")?);
         self.data_offset = MSG_TOTAL_HEADER_SIZE as usize;
 
         self.write_key(key, false)?;
@@ -3568,6 +3603,35 @@ mod tests {
         out.push(field_type);
         out.extend_from_slice(data);
         out
+    }
+
+    #[test]
+    fn ensure_and_remaining_track_the_read_cursor() {
+        let mut buf = Buffer::new(0);
+        buf.data_buffer = vec![1, 2, 3, 4];
+        buf.data_offset = 1;
+        assert_eq!(buf.remaining(), 3);
+        assert!(buf.ensure(3).is_ok());
+        assert!(buf.ensure(4).is_err());
+        assert!(buf.read_blob(4).is_err());
+        assert!(buf.read_str(4).is_err());
+        assert_eq!(buf.read_blob(3).unwrap(), vec![2, 3, 4]);
+        assert_eq!(buf.remaining(), 0);
+    }
+
+    #[test]
+    fn a_field_length_past_the_reply_stops_the_walk() {
+        let mut buf = Buffer::new(0);
+        // One field claiming 1000 bytes of error detail in a 7-byte reply.
+        buf.data_buffer = vec![0x00, 0x00, 0x03, 0xe9, 45, 0xaa, 0xbb];
+        buf.data_offset = 0;
+        let parsed = buf.parse_response_fields(1);
+        assert!(parsed.error_detail.is_none());
+        // And a zero field length (no room for the type byte).
+        buf.data_buffer = vec![0, 0, 0, 0, 45];
+        buf.data_offset = 0;
+        let parsed = buf.parse_response_fields(1);
+        assert!(parsed.error_detail.is_none() && parsed.version.is_none());
     }
 
     fn parse_fields(fields: &[Vec<u8>]) -> ParsedFields {

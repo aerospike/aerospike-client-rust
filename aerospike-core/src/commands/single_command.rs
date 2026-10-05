@@ -275,7 +275,7 @@ impl<'a> SingleCommand<'a> {
                     return Err(e);
                 }
                 Err(e) => {
-                    warn!("Error selecting node from the partition table: {e}");
+                    debug!("Error selecting node from the partition table: {e}");
                     last_err = Some(e);
                     continue;
                 } // Node is currently inactive. Retry.
@@ -323,7 +323,7 @@ impl<'a> SingleCommand<'a> {
                     continue;
                 }
                 Err(err) => {
-                    warn!("Node {node}: {err}");
+                    debug!("Node {node}: {err}");
                     node.incr_error_rate();
                     last_err = Some(err);
                     continue;
@@ -379,7 +379,7 @@ impl<'a> SingleCommand<'a> {
                 // IO errors are considered temporary anomalies. Retry.
                 // Close socket to flush out possible garbage. Do not put back in pool.
                 conn.invalidate();
-                warn!("Node {node}: {err}");
+                debug!("Node {node}: {err}");
                 node.incr_error_rate();
                 if metrics_on {
                     node.metrics().incr_transaction_retry();

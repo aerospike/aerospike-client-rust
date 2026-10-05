@@ -34,3 +34,27 @@ pub use tokio::{
 
 #[cfg(feature = "rt-async-std")]
 pub use std::time;
+
+/// Resolve `host:port` on the selected runtime without blocking a worker
+/// thread on the system resolver.
+pub async fn lookup_host(host: &str, port: u16) -> std::io::Result<Vec<std::net::SocketAddr>> {
+    #[cfg(feature = "rt-tokio")]
+    {
+        Ok(tokio::net::lookup_host((host, port)).await?.collect())
+    }
+    #[cfg(feature = "rt-async-std")]
+    {
+        use async_std::net::ToSocketAddrs;
+        Ok((host, port).to_socket_addrs().await?.collect())
+    }
+}
+
+/// Cancel a spawned task without waiting for it to finish.
+pub fn abort<T: Send + 'static>(handle: task::JoinHandle<T>) {
+    #[cfg(feature = "rt-tokio")]
+    handle.abort();
+    #[cfg(feature = "rt-async-std")]
+    drop(spawn(async move {
+        handle.cancel().await;
+    }));
+}

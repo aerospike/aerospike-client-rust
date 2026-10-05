@@ -160,25 +160,26 @@ impl<'a> VersionParser<'a> {
             )));
         }
 
-        // 'm' is a 'Match', and 'as_str()' returns the matching part of the haystack.
-        let (major, minor, patch, build) = RE
-            .captures(self.s)
-            .map(|caps| {
-                (
-                    caps.name("major").unwrap().as_str(),
-                    caps.name("minor").unwrap().as_str(),
-                    caps.name("patch").unwrap().as_str(),
-                    caps.name("build").unwrap().as_str(),
-                )
-            })
-            .unwrap();
-
-        let (major, minor, patch, build) = (
-            major.parse::<u64>().unwrap(),
-            minor.parse::<u64>().unwrap(),
-            patch.parse::<u64>().unwrap(),
-            build.parse::<u64>().unwrap(),
-        );
+        let caps = RE.captures(self.s).ok_or_else(|| {
+            Error::client_error(format!("Could not parse node version string `{}`", self.s))
+        })?;
+        // A component that does not fit in u64 is as unusable as a missing one.
+        let part = |name: &str| -> Result<u64> {
+            caps.name(name)
+                .ok_or_else(|| {
+                    Error::client_error(format!("Could not parse node version string `{}`", self.s))
+                })?
+                .as_str()
+                .parse::<u64>()
+                .map_err(|err| {
+                    Error::client_error(format!(
+                        "Could not parse node version string `{}`: {err}",
+                        self.s
+                    ))
+                })
+        };
+        let (major, minor, patch, build) =
+            (part("major")?, part("minor")?, part("patch")?, part("build")?);
 
         Ok(Version {
             major,
@@ -204,6 +205,18 @@ mod tests {
         assert!(Version::new(4, 3, 2, 1) == Version::new(4, 3, 2, 1));
         assert!(Version::new(4, 3, 2, 1) <= Version::new(4, 3, 2, 1));
         assert!(Version::new(4, 3, 2, 1) >= Version::new(4, 3, 2, 1));
+    }
+
+    #[test]
+    fn oversized_components_are_errors_not_panics() {
+        // Each component is parsed as u64; a longer digit run must fail
+        // the parse, not overflow inside an unwrap.
+        assert!(VersionParser::new("99999999999999999999.1.2.3")
+            .parse()
+            .is_err());
+        assert!(VersionParser::new("1.2.3.99999999999999999999")
+            .parse()
+            .is_err());
     }
 
     #[test]

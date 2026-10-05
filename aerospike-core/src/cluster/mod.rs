@@ -25,7 +25,6 @@ use crate::locks::lock;
 use aerospike_rt::time::{Duration, Instant};
 use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::net::ToSocketAddrs;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::vec::Vec;
@@ -105,6 +104,12 @@ pub struct Cluster {
     tend_count: std::sync::atomic::AtomicUsize,
 
     tend_channel: Mutex<Sender<()>>,
+    /// The tend task. `close()` awaits it so the node and alias cleanup the
+    /// task performs as its last act is complete when `close()` returns.
+    tend_task: std::sync::Mutex<Option<aerospike_rt::task::JoinHandle<()>>>,
+    /// The dynamic-config watcher; `close()` cancels it.
+    #[cfg(feature = "dynamic-config")]
+    config_watch_task: std::sync::Mutex<Option<aerospike_rt::task::JoinHandle<()>>>,
     closed: AtomicBool,
 
     // Per-host seed validation errors recorded during the most recent
@@ -197,6 +202,9 @@ impl Cluster {
             tend_count: std::sync::atomic::AtomicUsize::new(0),
 
             tend_channel: Mutex::new(tx),
+            tend_task: std::sync::Mutex::new(None),
+            #[cfg(feature = "dynamic-config")]
+            config_watch_task: std::sync::Mutex::new(None),
             closed: AtomicBool::new(false),
             last_seed_errors: std::sync::Mutex::new(Vec::new()),
 
@@ -260,7 +268,8 @@ impl Cluster {
         cluster.merge_seeds(&discovered);
 
         let cluster_for_tend = cluster.clone();
-        let _res = aerospike_rt::spawn(Cluster::tend_thread(cluster_for_tend, rx));
+        let handle = aerospike_rt::spawn(Cluster::tend_thread(cluster_for_tend, rx));
+        *lock(&cluster.tend_task) = Some(handle);
         debug!("New cluster initialized and ready to be used...");
         Ok(cluster)
     }
@@ -275,8 +284,20 @@ impl Cluster {
                 Ok(()) => unreachable!(),
                 Err(TryRecvError::Closed) => break,
                 Err(TryRecvError::Empty) => {
-                    if let Err(err) = cluster.tend().await {
-                        log_error_chain!(err, "Error tending cluster");
+                    // A panic inside one tend cycle (a malformed partition
+                    // map, say) must not end the tend task: that would freeze
+                    // the cluster view silently for the life of the client.
+                    match std::panic::AssertUnwindSafe(cluster.tend())
+                        .catch_unwind()
+                        .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(err)) => {
+                            log_error_chain!(err, "Error tending cluster");
+                        }
+                        Err(_) => {
+                            error!("Cluster tend cycle panicked; the cluster view was not refreshed");
+                        }
                     }
                     // Sleep until the next cycle, but wake immediately when
                     // `close()` closes the channel — otherwise shutdown
@@ -517,13 +538,15 @@ impl Cluster {
                 if *partitions {
                     match PartitionTokenizer::from_node(node, admin_policy).await {
                         Ok(tokens) => {
-                            let mut map = shared_map
-                                .expect("shared map initialized when any node refreshes partitions")
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner);
-                            match tokens.update_partition(&mut map, node) {
+                            let shared = shared_map
+                                .expect("shared map initialized when any node refreshes partitions");
+                            // Merge into a scratch copy so a parse error part
+                            // way through cannot leave the shared map half
+                            // updated with this node's entries.
+                            let mut scratch = lock(shared).clone();
+                            match tokens.update_partition(&mut scratch, node) {
                                 Ok(()) => {
-                                    drop(map);
+                                    *lock(shared) = scratch;
                                     if metrics_enabled {
                                         node.metrics().incr_partition_map_update();
                                     }
@@ -634,7 +657,7 @@ impl Cluster {
         // `peers` accumulator; actual cluster membership is still committed
         // afterwards by the tend task (add/remove stays single-flow).
         let materialize_tasks = groups.into_iter().map(|(mut peer, sources)| async move {
-            if self.peer_exists(peers, &mut peer) {
+            if self.peer_exists(peers, &mut peer).await {
                 return;
             }
 
@@ -694,7 +717,7 @@ impl Cluster {
     ///   hostname on the node on success.
     /// - If host mismatch on a failing node, mark as `replace_node`.
     /// - Also check if already added during this tend cycle.
-    fn peer_exists(&self, peers: &Peers, peer: &mut Peer) -> bool {
+    async fn peer_exists(&self, peers: &Peers, peer: &mut Peer) -> bool {
         // Check 1: Find by node name in current cluster nodes.
         if let Ok(node) = self.get_node_by_name(&peer.node_name) {
             // Mirrors Java's `findPeerNode`:
@@ -728,7 +751,7 @@ impl Cluster {
                     return true;
                 }
 
-                if let Ok(addrs) = (host.name.as_str(), host.port).to_socket_addrs() {
+                if let Ok(addrs) = aerospike_rt::lookup_host(host.name.as_str(), host.port).await {
                     for addr in addrs {
                         let ip_str = addr.ip().to_string();
                         if ip_str == node_host.name || addr.ip().is_loopback() {
@@ -1598,7 +1621,8 @@ impl Cluster {
         // OnceLock: set once at construction; ignore the (impossible) re-set.
         let _ = self.dyn_config.set(dyn_config);
         let cluster = self.clone();
-        let _res = aerospike_rt::spawn(Cluster::config_watch_thread(cluster));
+        let handle = aerospike_rt::spawn(Cluster::config_watch_thread(cluster));
+        *lock(&self.config_watch_task) = Some(handle);
     }
 
     /// Applies a freshly-loaded config document: the `static` section once (on the
@@ -2193,6 +2217,18 @@ impl Cluster {
         // exiting (see `tend_thread`), preserving the single-writer
         // invariant on those fields.
         self.tend_channel.lock().await.close_channel();
+
+        // The watcher only polls, so cancel it outright. The tend task does
+        // the node and alias cleanup as its last act: wait for it, so that
+        // nothing of this client is still running when `close()` returns.
+        #[cfg(feature = "dynamic-config")]
+        if let Some(handle) = lock(&self.config_watch_task).take() {
+            aerospike_rt::abort(handle);
+        }
+        let tend = lock(&self.tend_task).take();
+        if let Some(handle) = tend {
+            let _ = handle.await;
+        }
         Ok(())
     }
 }

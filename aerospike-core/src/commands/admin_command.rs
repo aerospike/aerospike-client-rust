@@ -489,11 +489,7 @@ impl AdminCommand {
             let len = raw_len - 1;
             match id {
                 SESSION_TOKEN => {
-                    let mut bytes = vec![0u8; len];
-                    for byte in &mut bytes {
-                        *byte = conn.buffer.read_u8(None);
-                    }
-                    session_token = Some(bytes);
+                    session_token = Some(conn.buffer.read_blob(len)?);
                 }
                 SESSION_TTL => {
                     // 4-byte big-endian unsigned seconds. Subtract 60s so

@@ -91,9 +91,6 @@ impl PartialEq for ExpOperation {
 }
 
 impl ExpOperation {
-    // pub(crate) const fn particle_type(&self) -> ParticleType {
-    //     ParticleType::BLOB
-    // }
     pub(crate) fn estimate_size(&self) -> Result<usize> {
         let size: usize = (self.encoder)(&mut None, self)?;
         Ok(size)

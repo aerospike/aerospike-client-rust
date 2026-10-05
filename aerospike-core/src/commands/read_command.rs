@@ -98,6 +98,7 @@ impl<'a> ReadCommand<'a> {
         let version = conn.buffer.parse_fields_for_version(field_count);
 
         for _ in 0..op_count {
+            conn.buffer.ensure(8)?;
             let op_size = conn.buffer.read_u32(None) as usize;
             conn.buffer.skip(1);
             let particle_type = conn.buffer.read_u8(None);
@@ -105,7 +106,9 @@ impl<'a> ReadCommand<'a> {
             let name_size = conn.buffer.read_u8(None) as usize;
             let name: String = conn.buffer.read_str(name_size)?;
 
-            let particle_bytes_size = op_size - (4 + name_size);
+            let particle_bytes_size = op_size
+                .checked_sub(4 + name_size)
+                .ok_or_else(|| Error::bad_response("operation shorter than its header"))?;
             let value = bytes_to_particle(particle_type, &mut conn.buffer, particle_bytes_size)?;
 
             if let Some(r) = results.as_mut() {
@@ -189,7 +192,7 @@ impl Command for ReadCommand<'_> {
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         if let Err(err) = conn.read_header().await {
-            warn!("Parse result error: {err}");
+            debug!("Parse result error: {err}");
             return Err(err);
         }
 
@@ -206,7 +209,7 @@ impl Command for ReadCommand<'_> {
         // Read remaining message bytes
         if receive_size > 0 {
             if let Err(err) = conn.read_body(receive_size).await {
-                warn!("Parse result error: {err}");
+                debug!("Parse result error: {err}");
                 return Err(err);
             }
         }

@@ -27,7 +27,6 @@ pub fn test(_attr: TokenStream, input: TokenStream) -> TokenStream {
                 .is_test(true)
                 .try_init();
 
-                // ::aerospike_rt::tokio::runtime::Runtime::new().unwrap().block_on( async {#body} )
                 // Use a shared runtime for the tests and the client:
                 crate::common::RUNTIME.block_on( async {#body} )
             }
@@ -48,7 +47,9 @@ pub fn test(_attr: TokenStream, input: TokenStream) -> TokenStream {
             }
         }
     } else {
-        panic!("No runtime selected!");
+        quote! {
+            compile_error!("aerospike-macro: enable exactly one of the `rt-tokio` / `rt-async-std` features");
+        }
     };
 
     result.into()

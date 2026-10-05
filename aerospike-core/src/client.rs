@@ -93,6 +93,18 @@ pub struct Client {
 unsafe impl Send for Client {}
 unsafe impl Sync for Client {}
 
+/// Closes a query sink when dropped, so consumers are released whether the
+/// producer task finished, failed or panicked. An explicit `close()` at the
+/// end of the task used to leave a `Recordset` reader waiting forever after
+/// a panic, because the recordset holds both ends of its channel.
+struct CloseSinkOnExit(QuerySink);
+
+impl Drop for CloseSinkOnExit {
+    fn drop(&mut self) {
+        self.0.close();
+    }
+}
+
 impl Client {
     /// Initializes Aerospike client with suitable hosts to seed the cluster map. The client policy
     /// is used to set defaults and size internal data structures. For each host connection that
@@ -1547,11 +1559,11 @@ impl Client {
         ));
 
         let sink = QuerySink::Channel(recordset.clone());
-        let defer_sink = sink.clone();
+        let close_on_exit = CloseSinkOnExit(sink.clone());
         let cluster = self.cluster.clone();
         aerospike_rt::spawn(async move {
             Self::execute_query_timeout(cluster, &t_policy, tracker, statement, sink, None).await;
-            defer_sink.close();
+            drop(close_on_exit);
         });
 
         Ok(recordset)
@@ -1603,11 +1615,11 @@ impl Client {
             tracker.shared(),
         ));
         let sink = QuerySink::Callback(Arc::clone(&ctx));
-        let defer_sink = sink.clone();
+        let close_on_exit = CloseSinkOnExit(sink.clone());
         let cluster = self.cluster.clone();
         let task = aerospike_rt::spawn(async move {
             Self::execute_query_timeout(cluster, &t_policy, tracker, statement, sink, None).await;
-            defer_sink.close();
+            drop(close_on_exit);
         });
 
         Ok(QueryHandle {
@@ -1704,7 +1716,7 @@ impl Client {
         ));
 
         let sink = QuerySink::Channel(recordset.clone());
-        let defer_sink = sink.clone();
+        let close_on_exit = CloseSinkOnExit(sink.clone());
         let cluster = self.cluster.clone();
         aerospike_rt::spawn(async move {
             Self::execute_query_timeout(
@@ -1716,7 +1728,7 @@ impl Client {
                 execute_where,
             )
             .await;
-            defer_sink.close();
+            drop(close_on_exit);
         });
 
         Ok(recordset)
@@ -2281,7 +2293,7 @@ impl Client {
             let size = expression.size()?;
             let mut buf = Buffer::new(0);
             buf.resize_buffer(size)?;
-            let _ = expression.pack(&mut Some(&mut buf));
+            expression.pack(&mut Some(&mut buf))?;
             let exp_str = BASE64.encode(&buf.data_buffer);
 
             format!("xdr-set-filter:dc={datacenter};namespace={namespace};exp={exp_str}")

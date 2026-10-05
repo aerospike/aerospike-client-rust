@@ -219,14 +219,22 @@ impl Expression {
         let mut size = 0;
         if let Some(val) = &self.val {
             // DEF expression
+            let Some(def) = exps.first() else {
+                return Err(Error::invalid_argument("def expression without a value"));
+            };
             size += pack_raw_string(buf, &val.to_string());
-            size += exps[0].pack(buf)?;
+            size += def.pack(buf)?;
         } else {
             // Normal Expressions
             match self.cmd.unwrap() {
                 ExpOp::Let => {
                     // Let wire format: LET <defname1>, <defexp1>, <defname2>, <defexp2>, ..., <scope exp>
-                    let count = (exps.len() - 1) * 2 + 2;
+                    let Some(defs) = exps.len().checked_sub(1) else {
+                        return Err(Error::invalid_argument(
+                            "let expression without a scope expression",
+                        ));
+                    };
+                    let count = defs * 2 + 2;
                     size += pack_array_begin(buf, count);
                 }
                 _ => {

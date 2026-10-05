@@ -1081,13 +1081,16 @@ impl TryFrom<Value> for bool {
 }
 
 pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Value> {
+    // `len` is the server's word; check it once here so every fixed-width
+    // read below stays inside the reply.
+    buf.ensure(len)?;
     let Some(particle_type) = ParticleType::try_from_u8(ptype) else {
         // A particle type this client does not interpret (legacy
         // language-specific serializations, unknown future types): return
         // the raw bytes tagged with their wire code instead of failing the
         // whole record. These values are read-only — they are rejected on
         // every write path.
-        return Ok(Value::Unknown(ptype, buf.read_blob(len)));
+        return Ok(Value::Unknown(ptype, buf.read_blob(len)?));
     };
     match particle_type {
         ParticleType::NULL => Ok(Value::Nil),
@@ -1105,14 +1108,17 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
         }
         ParticleType::GEOJSON => {
             buf.skip(1);
-            let ncells = buf.read_i16(None) as usize;
-            let header_size: usize = ncells * 8;
-
+            let ncells = usize::try_from(buf.read_i16(None))
+                .map_err(|_| Error::bad_response("negative GeoJSON cell count"))?;
+            let header_size = ncells * 8;
+            let text_len = len
+                .checked_sub(header_size + 3)
+                .ok_or_else(|| Error::bad_response("GeoJSON particle shorter than its header"))?;
             buf.skip(header_size);
-            let val = buf.read_str(len - header_size - 3)?;
+            let val = buf.read_str(text_len)?;
             Ok(Value::GeoJSON(val))
         }
-        ParticleType::BLOB => Ok(Value::Blob(buf.read_blob(len))),
+        ParticleType::BLOB => Ok(Value::Blob(buf.read_blob(len)?)),
         ParticleType::LIST => {
             let val = decoder::unpack_value_list(buf)?;
             Ok(val)
@@ -1121,11 +1127,11 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
             let val = decoder::unpack_value_map(buf)?;
             Ok(val)
         }
-        ParticleType::HLL => Ok(Value::HLL(buf.read_blob(len))),
+        ParticleType::HLL => Ok(Value::HLL(buf.read_blob(len)?)),
         ParticleType::BOOL => Ok(Value::Bool(buf.read_bool(len))),
         // Retired server types the client does not interpret: same
         // treatment as unrecognized codes above.
-        ParticleType::DIGEST | ParticleType::LDT => Ok(Value::Unknown(ptype, buf.read_blob(len))),
+        ParticleType::DIGEST | ParticleType::LDT => Ok(Value::Unknown(ptype, buf.read_blob(len)?)),
     }
 }
 
