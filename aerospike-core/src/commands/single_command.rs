@@ -271,7 +271,16 @@ impl<'a> SingleCommand<'a> {
             // set command node, so when you return a record it has the node
             let node = match cmd.get_node() {
                 Ok(node) => node,
-                Err(e) if matches!(e.kind(), crate::ErrorKind::InvalidArgument) => {
+                // An unknown namespace (or a partition map that is still
+                // empty) is not something a retry can fix within one
+                // command's budget: retrying only buries the routing error
+                // under MaxRetriesExceeded.
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        crate::ErrorKind::InvalidArgument | crate::ErrorKind::InvalidNamespace
+                    ) =>
+                {
                     return Err(e);
                 }
                 Err(e) => {

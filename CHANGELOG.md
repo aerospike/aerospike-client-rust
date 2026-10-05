@@ -59,6 +59,10 @@
     `Version::supports_integer_index`; `IndexType::Numeric` remains for older servers.
 
 * **Bug Fixes**
+  * A single-key command on a namespace missing from the partition map (or before the map is
+    populated) now fails at once with `InvalidNamespace` (20), matching the batch path and the Java
+    client. It used to retry the routing failure until the budget ran out and report
+    `MaxRetriesExceeded` (-11), with the real cause buried in `source` and `sub_errors`.
   * Background queries (`query_operate`, `query_execute_udf`) treat `KEY_NOT_FOUND`
     (result code 2) as "set absent on this node" and succeed, matching the Java
     client. A 3-node cluster returns that code from nodes that do not hold a
