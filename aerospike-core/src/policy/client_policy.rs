@@ -284,7 +284,7 @@ pub struct ClientPolicy {
 
     /// Maximum number of synchronous connections allowed per server node.
     ///
-    /// Default: 100
+    /// Default: 256
     #[cfg_attr(
         feature = "dynamic-config",
         config(rename = "max_connections_per_node", startup)
@@ -504,7 +504,7 @@ impl Default for ClientPolicy {
             login_timeout: 5_000,
             idle_timeout: 0,
             min_conns_per_node: 0,
-            max_conns_per_node: 100,
+            max_conns_per_node: 256,
             conn_pools_per_node: 1,
             opening_connection_threshold: 0,
             fail_if_not_connected: true,
