@@ -16,7 +16,8 @@ use aerospike::{
     as_bin, as_blob, as_geo, as_key, as_list, as_map, as_val, Bins, ReadPolicy, Value, WritePolicy,
 };
 use aerospike::{
-    operations, Expiration, GenerationPolicy, Key, ReadTouchTTL, RecordExistsAction, ResultCode,
+    operations, ErrorKind, Expiration, GenerationPolicy, Key, ReadTouchTTL, RecordExistsAction,
+    ResultCode,
 };
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
@@ -65,16 +66,39 @@ async fn read_touch_ttl() {
 }
 
 #[aerospike_macro::test]
-async fn invalid_delete() {
+async fn unknown_namespace_fails_with_invalid_namespace() {
+    // A namespace missing from the partition map cannot appear by retrying,
+    // so every single-key command must fail with the routing error itself,
+    // not retry until the budget is spent and report MaxRetriesExceeded.
     let client = common::client().await;
+    let rpolicy = ReadPolicy::default();
     let wpolicy = WritePolicy::default();
+    let key = as_key!(common::rand_str(14), common::rand_str(10), -1);
+    let bin = as_bin!("a", 1);
 
-    // the namespace will be invalid
-    let invalid_ns_key = as_key!(common::rand_str(14), common::rand_str(10), -1);
-    client
-        .delete(&wpolicy, &invalid_ns_key)
-        .await
-        .expect_err("Should have errored out");
+    let results = [
+        ("get", client.get(&rpolicy, &key, Bins::All).await.map(drop)),
+        ("exists", client.exists(&rpolicy, &key).await.map(drop)),
+        ("put", client.put(&wpolicy, &key, &[bin.clone()]).await),
+        ("delete", client.delete(&wpolicy, &key).await.map(drop)),
+        (
+            "operate",
+            client
+                .operate(&wpolicy, &key, &[operations::put(&bin)])
+                .await
+                .map(drop),
+        ),
+    ];
+
+    for (command, result) in results {
+        let err = result.expect_err(command);
+        assert!(
+            matches!(err.kind(), ErrorKind::InvalidNamespace),
+            "{command}: expected InvalidNamespace, got {err:?}"
+        );
+    }
+
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
