@@ -79,7 +79,7 @@ async fn unknown_namespace_fails_with_invalid_namespace() {
     let results = [
         ("get", client.get(&rpolicy, &key, Bins::All).await.map(drop)),
         ("exists", client.exists(&rpolicy, &key).await.map(drop)),
-        ("put", client.put(&wpolicy, &key, &[bin.clone()]).await),
+        ("put", client.put(&wpolicy, &key, std::slice::from_ref(&bin)).await),
         ("delete", client.delete(&wpolicy, &key).await.map(drop)),
         (
             "operate",

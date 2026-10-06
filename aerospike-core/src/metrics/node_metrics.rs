@@ -28,6 +28,7 @@ use std::time::Duration;
 use super::histogram::SyncHistogram;
 use super::policy::{LatencyUnit, MetricsPolicy};
 use crate::sampler::Sampler;
+#[cfg(test)]
 use crate::xor_shift::XorShift;
 use crate::ResultCode;
 
@@ -46,6 +47,7 @@ pub const COMMAND_TYPE_COUNT: usize = 12;
 /// The discriminants are stable (`None` = 0 .. `BatchWrite` = 11) so exported
 /// metrics line up across clients.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CommandType {
     /// Uncategorized.
     None = 0,
@@ -361,7 +363,7 @@ pub struct NodeMetrics {
 impl NodeMetrics {
     /// Creates a fresh set of node statistics shaped by `policy`.
     #[must_use]
-    pub fn new(policy: MetricsPolicy) -> Self {
+    pub(crate) fn new(policy: MetricsPolicy) -> Self {
         let mut command_metrics: [Option<SyncHistogram>; COMMAND_TYPE_COUNT] =
             std::array::from_fn(|_| None);
         for (_, ct) in command_histograms!() {
@@ -394,7 +396,7 @@ impl NodeMetrics {
     }
 
     /// Enables or disables collection for this node.
-    pub fn set_enabled(&self, enabled: bool) {
+    pub(crate) fn set_enabled(&self, enabled: bool) {
         self.enabled.store(enabled, Ordering::Relaxed);
     }
 
@@ -403,7 +405,7 @@ impl NodeMetrics {
     /// [`operational`](MetricsPolicy::operational) flag set. This is the gate
     /// for the un-sampled operational counters (connection failures, close
     /// reasons, pool overflow/exhaustion); per-command instruments go through
-    /// [`should_sample_draw`](Self::should_sample_draw) instead.
+    /// `should_sample_draw` instead.
     #[must_use]
     pub fn is_operational(&self) -> bool {
         self.is_enabled() && self.operational.load(Ordering::Relaxed)
@@ -419,7 +421,7 @@ impl NodeMetrics {
     /// retries land on different nodes gets the *same* answer from each — one
     /// decision per call, never re-rolled per attempt (`metrics.md` §3.1.1).
     #[must_use]
-    pub fn should_sample_draw(&self, draw: u64) -> bool {
+    pub(crate) fn should_sample_draw(&self, draw: u64) -> bool {
         if !self.is_operational() {
             return false;
         }
@@ -436,7 +438,8 @@ impl NodeMetrics {
     /// [`should_sample_draw`](Self::should_sample_draw) with the draw taken
     /// from `rand`. Only for callers that make exactly one decision per user
     /// call; a retry loop must draw once up front and reuse the value.
-    pub fn should_sample(&self, rand: &mut XorShift) -> bool {
+    #[cfg(test)]
+    pub(crate) fn should_sample(&self, rand: &mut XorShift) -> bool {
         if !self.is_operational() {
             return false;
         }
@@ -444,7 +447,7 @@ impl NodeMetrics {
     }
 
     /// Records a connection-open attempt.
-    pub fn incr_connections_attempt(&self) {
+    pub(crate) fn incr_connections_attempt(&self) {
         if self.is_enabled() {
             self.counters
                 .connections_attempts
@@ -453,7 +456,7 @@ impl NodeMetrics {
     }
 
     /// Records a successfully-opened connection.
-    pub fn incr_connections_successful(&self) {
+    pub(crate) fn incr_connections_successful(&self) {
         if self.is_enabled() {
             self.counters
                 .connections_successful
@@ -463,7 +466,7 @@ impl NodeMetrics {
 
     /// Records a failed connection open (Tier 1 operational): the rollup
     /// `connections_failed` plus one phase-specific counter.
-    pub fn incr_connections_failed(&self, phase: OpenFailure) {
+    pub(crate) fn incr_connections_failed(&self, phase: OpenFailure) {
         if self.is_operational() {
             self.counters
                 .connections_failed
@@ -480,7 +483,7 @@ impl NodeMetrics {
 
     /// Records a closed connection (Tier 0 `closed_connections`) together with
     /// the reason it was closed (Tier 1 operational close-reason counters).
-    pub fn incr_connections_closed(&self, reason: CloseReason) {
+    pub(crate) fn incr_connections_closed(&self, reason: CloseReason) {
         if !self.is_enabled() {
             return;
         }
@@ -500,7 +503,7 @@ impl NodeMetrics {
     }
 
     /// Records a poll against an empty connection pool.
-    pub fn incr_connections_pool_empty(&self) {
+    pub(crate) fn incr_connections_pool_empty(&self) {
         if self.is_operational() {
             self.counters
                 .connections_pool_empty
@@ -510,7 +513,7 @@ impl NodeMetrics {
 
     /// Records a command rejected by the per-node circuit breaker because the
     /// node's error-rate window was exceeded.
-    pub fn incr_circuit_breaker_hits(&self) {
+    pub(crate) fn incr_circuit_breaker_hits(&self) {
         if self.is_operational() {
             self.counters
                 .circuit_breaker_hits
@@ -519,7 +522,7 @@ impl NodeMetrics {
     }
 
     /// Records a command retry.
-    pub fn incr_transaction_retry(&self) {
+    pub(crate) fn incr_transaction_retry(&self) {
         if self.is_operational() {
             self.counters
                 .transaction_retry_count
@@ -528,7 +531,7 @@ impl NodeMetrics {
     }
 
     /// Records a command that ultimately failed.
-    pub fn incr_transaction_error(&self) {
+    pub(crate) fn incr_transaction_error(&self) {
         if self.is_operational() {
             self.counters
                 .transaction_error_count
@@ -537,7 +540,7 @@ impl NodeMetrics {
     }
 
     /// Records a tend attempt against this node, classifying success/failure.
-    pub fn incr_tend(&self, success: bool) {
+    pub(crate) fn incr_tend(&self, success: bool) {
         if self.is_enabled() {
             self.counters.tends_total.fetch_add(1, Ordering::Relaxed);
             if success {
@@ -551,7 +554,7 @@ impl NodeMetrics {
     }
 
     /// Records a partition-map update applied from this node.
-    pub fn incr_partition_map_update(&self) {
+    pub(crate) fn incr_partition_map_update(&self) {
         if self.is_enabled() {
             self.counters
                 .partition_map_updates
@@ -560,14 +563,14 @@ impl NodeMetrics {
     }
 
     /// Records that this node was added to the cluster.
-    pub fn incr_node_added(&self) {
+    pub(crate) fn incr_node_added(&self) {
         if self.is_enabled() {
             self.counters.node_added.fetch_add(1, Ordering::Relaxed);
         }
     }
 
     /// Records that this node was removed from the cluster.
-    pub fn incr_node_removed(&self) {
+    pub(crate) fn incr_node_removed(&self) {
         if self.is_enabled() {
             self.counters.node_removed.fetch_add(1, Ordering::Relaxed);
         }
@@ -575,7 +578,7 @@ impl NodeMetrics {
 
     /// Resolution elapsed times are currently recorded in.
     ///
-    /// Reflects the last policy applied by [`NodeMetrics::reshape`], not the one
+    /// Reflects the last policy applied by `NodeMetrics::reshape`, not the one
     /// this node was constructed with.
     #[must_use]
     pub fn latency_unit(&self) -> LatencyUnit {
@@ -590,14 +593,14 @@ impl NodeMetrics {
 
     /// Records the elapsed time of a completed command against its
     /// per-command-type histogram, in the policy's [`LatencyUnit`].
-    pub fn record_command(&self, ct: CommandType, elapsed: Duration) {
+    pub(crate) fn record_command(&self, ct: CommandType, elapsed: Duration) {
         if let Some(h) = &self.command_metrics[ct.index()] {
             h.add(self.ticks(elapsed));
         }
     }
 
     /// Records connection-acquire time for the detailed per-namespace metrics.
-    pub fn record_connection_aq(&self, namespace: &str, ct: CommandType, elapsed: Duration) {
+    pub(crate) fn record_connection_aq(&self, namespace: &str, ct: CommandType, elapsed: Duration) {
         let ticks = self.ticks(elapsed);
         self.with_command_metric(namespace, ct, |cm| cm.connection_aq.add(ticks));
     }
@@ -608,13 +611,13 @@ impl NodeMetrics {
     /// parsed").
     /// Failed attempts record nothing here; a retried attempt that then
     /// succeeds records its own sample.
-    pub fn record_latency(&self, namespace: &str, ct: CommandType, latency: Duration) {
+    pub(crate) fn record_latency(&self, namespace: &str, ct: CommandType, latency: Duration) {
         let ticks = self.ticks(latency);
         self.with_command_metric(namespace, ct, |cm| cm.latency.add(ticks));
     }
 
     /// Records the response-parse time of one successful RPC attempt.
-    pub fn record_parse(&self, namespace: &str, ct: CommandType, parsing: Duration) {
+    pub(crate) fn record_parse(&self, namespace: &str, ct: CommandType, parsing: Duration) {
         let ticks = self.ticks(parsing);
         self.with_command_metric(namespace, ct, |cm| cm.parsing.add(ticks));
     }
@@ -623,7 +626,7 @@ impl NodeMetrics {
     /// outcome. Callers pass the socket layer's exact count (a write cut
     /// short by a timeout still sent what it sent); a zero is skipped
     /// because nothing crossed the wire. Sizes are never unit-converted.
-    pub fn record_bytes_sent(&self, namespace: &str, ct: CommandType, bytes: u64) {
+    pub(crate) fn record_bytes_sent(&self, namespace: &str, ct: CommandType, bytes: u64) {
         if bytes > 0 {
             self.with_command_metric(namespace, ct, |cm| cm.bytes_sent.add(bytes));
         }
@@ -632,7 +635,7 @@ impl NodeMetrics {
     /// Records the bytes one RPC attempt read off the wire — whatever its
     /// outcome (a server error reply, a parse failure or a partial read
     /// before a timeout all count what actually arrived). Zero is skipped.
-    pub fn record_bytes_received(&self, namespace: &str, ct: CommandType, bytes: u64) {
+    pub(crate) fn record_bytes_received(&self, namespace: &str, ct: CommandType, bytes: u64) {
         if bytes > 0 {
             self.with_command_metric(namespace, ct, |cm| cm.bytes_received.add(bytes));
         }
@@ -640,7 +643,7 @@ impl NodeMetrics {
 
     /// Increments the count for a `(namespace, command type, result code)`
     /// triple.
-    pub fn record_result_code(&self, namespace: &str, ct: CommandType, rc: ResultCode) {
+    pub(crate) fn record_result_code(&self, namespace: &str, ct: CommandType, rc: ResultCode) {
         let idx = ct.index();
         // Fast path: namespace + slot already present.
         {
@@ -697,7 +700,7 @@ impl NodeMetrics {
     /// shape is untouched: microsecond and millisecond samples in one set of
     /// buckets would make the counts, min, max and sum meaningless. Size
     /// histograms (bytes sent/received) are not times and are left alone.
-    pub fn reshape(&self, policy: &MetricsPolicy) {
+    pub(crate) fn reshape(&self, policy: &MetricsPolicy) {
         // Store the applied policy first: anything created lazily from here on
         // (detailed metrics, drain snapshots) must take the new shape, or the
         // shape-checked histogram merges silently drop its samples.
@@ -744,7 +747,7 @@ impl NodeMetrics {
     /// Drains the live counters and histograms into an owned snapshot, resetting
     /// the live values.
     #[must_use]
-    pub fn get_and_reset(&self) -> NodeMetricsSnapshot {
+    pub(crate) fn get_and_reset(&self) -> NodeMetricsSnapshot {
         let mut snapshot = NodeMetricsSnapshot::new(read(&self.policy).clone());
         // The recorders read the unit from the atomic, so stamp the snapshot
         // from the same source they used.

@@ -24,7 +24,7 @@
 //! use aerospike::operations::bitwise::{resize, BitwiseResizeFlags, BitPolicy};
 //! // bin = [[0b00000001, 0b01000010], [0b01011010]]
 //! // Resize first bitmap (in a list of bitmaps) to 3 bytes.
-//! resize("bin", 3, Some(BitwiseResizeFlags::Default), &BitPolicy::default());
+//! let _ = resize("bin", 3, Some(BitwiseResizeFlags::Default), &BitPolicy::default());
 //! // bin result = [[0b00000001, 0b01000010, 0b00000000], [0b01011010]]
 //! ```
 
@@ -136,6 +136,7 @@ impl Default for BitPolicy {
 /// resizeFlags = 0
 /// bin result = [0b00000001, 0b01000010, 0b00000000, 0b00000000]
 /// ```
+#[must_use]
 pub fn resize(
     bin: &str,
     byte_size: i64,
@@ -170,6 +171,7 @@ pub fn resize(
 /// value = [0b11111111, 0b11000111]
 /// bin result = [0b00000001, 0b11111111, 0b11000111, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
 /// ```
+#[must_use]
 pub fn insert(bin: &str, byte_offset: i64, value: Value, policy: &BitPolicy) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Insert as u8,
@@ -200,6 +202,7 @@ pub fn insert(bin: &str, byte_offset: i64, value: Value, policy: &BitPolicy) -> 
 /// byteSize = 3
 /// bin result = [0b00000001, 0b01000010]
 /// ```
+#[must_use]
 pub fn remove(bin: &str, byte_offset: i64, byte_size: i64, policy: &BitPolicy) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Remove as u8,
@@ -231,6 +234,7 @@ pub fn remove(bin: &str, byte_offset: i64, byte_size: i64, policy: &BitPolicy) -
 /// value = [0b11100000]
 /// bin result = [0b00000001, 0b01000111, 0b00000011, 0b00000100, 0b00000101]
 /// ```
+#[must_use]
 pub fn set(
     bin: &str,
     bit_offset: i64,
@@ -269,6 +273,7 @@ pub fn set(
 /// value = [0b10101000]
 /// bin result = [0b00000001, 0b01000010, 0b01010111, 0b00000100, 0b00000101]
 /// ```
+#[must_use]
 pub fn or(
     bin: &str,
     bit_offset: i64,
@@ -307,6 +312,7 @@ pub fn or(
 /// value = [0b10101100]
 /// bin result = [0b00000001, 0b01000010, 0b01010101, 0b00000100, 0b00000101]
 /// ```
+#[must_use]
 pub fn xor(
     bin: &str,
     bit_offset: i64,
@@ -345,6 +351,7 @@ pub fn xor(
 /// value = [0b00111100, 0b10000000]
 /// bin result = [0b00000001, 0b01000010, 0b00000010, 0b00000000, 0b00000101]
 /// ```
+#[must_use]
 pub fn and(
     bin: &str,
     bit_offset: i64,
@@ -382,6 +389,7 @@ pub fn and(
 /// bitSize = 6
 /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b01111010, 0b00000101]
 /// ```
+#[must_use]
 pub fn not(bin: &str, bit_offset: i64, bit_size: i64, policy: &BitPolicy) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Not as u8,
@@ -413,6 +421,7 @@ pub fn not(bin: &str, bit_offset: i64, bit_size: i64, policy: &BitPolicy) -> Ope
 /// shift = 3
 /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00101000]
 /// ```
+#[must_use]
 pub fn lshift(
     bin: &str,
     bit_offset: i64,
@@ -451,6 +460,7 @@ pub fn lshift(
 /// shift = 1
 /// bin result = [0b00000000, 0b11000010, 0b00000011, 0b00000100, 0b00000101]
 /// ```
+#[must_use]
 pub fn rshift(
     bin: &str,
     bit_offset: i64,
@@ -493,6 +503,7 @@ pub fn rshift(
 /// signed = false
 /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b10000101]
 /// ```
+#[must_use]
 pub fn add(
     bin: &str,
     bit_offset: i64,
@@ -543,6 +554,7 @@ pub fn add(
 /// signed = false
 /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b0000011, 0b10000101]
 /// ```
+#[must_use]
 pub fn subtract(
     bin: &str,
     bit_offset: i64,
@@ -589,6 +601,7 @@ pub fn subtract(
 /// value = 127
 /// bin result = [0b00111111, 0b11000010, 0b00000011, 0b0000100, 0b00000101]
 /// ```
+#[must_use]
 pub fn set_int(
     bin: &str,
     bit_offset: i64,
@@ -625,6 +638,7 @@ pub fn set_int(
 /// bitSize = 5
 /// returns [0b1000000]
 /// ```
+#[must_use]
 pub fn get(bin: &str, bit_offset: i64, bit_size: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Get as u8,
@@ -650,6 +664,7 @@ pub fn get(bin: &str, bit_offset: i64, bit_size: i64) -> Operation {
 /// bitSize = 4
 /// returns 2
 /// ```
+#[must_use]
 pub fn count(bin: &str, bit_offset: i64, bit_size: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Count as u8,
@@ -677,6 +692,7 @@ pub fn count(bin: &str, bit_offset: i64, bit_size: i64) -> Operation {
 /// value = true
 /// returns 5
 /// ```
+#[must_use]
 pub fn lscan(bin: &str, bit_offset: i64, bit_size: i64, value: bool) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::LScan as u8,
@@ -708,6 +724,7 @@ pub fn lscan(bin: &str, bit_offset: i64, bit_size: i64, value: bool) -> Operatio
 /// value = true
 /// returns 7
 /// ```
+#[must_use]
 pub fn rscan(bin: &str, bit_offset: i64, bit_size: i64, value: bool) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::RScan as u8,
@@ -739,6 +756,7 @@ pub fn rscan(bin: &str, bit_offset: i64, bit_size: i64, value: bool) -> Operatio
 /// signed = false
 /// returns 16899
 /// ```
+#[must_use]
 pub fn get_int(bin: &str, bit_offset: i64, bit_size: i64, signed: bool) -> Operation {
     let mut args = vec![CdtArgument::Int(bit_offset), CdtArgument::Int(bit_size)];
     if signed {
@@ -773,6 +791,7 @@ const B64_FLAGS_INVERT_SIZE: u8 = 1;
 /// ```
 ///
 /// Requires Aerospike Server version 8.2.0 or later.
+#[must_use]
 pub fn b64_encode(bin: &str) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::B64Encode as u8,
@@ -806,6 +825,7 @@ pub fn b64_encode(bin: &str) -> Operation {
 /// ```
 ///
 /// Requires Aerospike Server version 8.2.0 or later.
+#[must_use]
 pub fn b64_encode_range(
     bin: &str,
     byte_offset: i64,

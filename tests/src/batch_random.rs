@@ -107,7 +107,7 @@ async fn rack_client(rack: usize) -> Client {
 /// Node count and the namespace's replication factor, printed so a run's
 /// output says what topology it actually exercised.
 async fn cluster_facts(client: &Client, namespace: &str) -> (usize, Option<usize>) {
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let key = format!("namespace/{namespace}");
     let rf = match nodes.first() {
         Some(node) => node
@@ -465,7 +465,7 @@ async fn sequence_retry_resplits_onto_the_next_replica_and_succeeds() {
         .collect();
     write_values(&client, &keys, |i| i as i64).await;
 
-    let tripped = client.cluster.nodes()[0].clone();
+    let tripped = client.nodes()[0].clone();
     for _ in 0..16 {
         tripped.incr_error_rate();
     }
@@ -553,7 +553,7 @@ async fn arc_node_refcounts_return_to_baseline_after_many_random_batches() {
     // hold a node briefly, so both readings are the minimum over a settle window.
     async fn settled(client: &Client) -> Vec<usize> {
         let snap = |c: &Client| -> Vec<usize> {
-            c.cluster.nodes().iter().map(Arc::strong_count).collect()
+            c.nodes().iter().map(Arc::strong_count).collect()
         };
         let mut best = snap(client);
         for _ in 0..6 {

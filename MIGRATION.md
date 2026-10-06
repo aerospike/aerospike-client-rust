@@ -107,6 +107,27 @@ whole-node failure; every row that was not answered carries that failure.
 
 The sync client's `batch` has the same new signature.
 
+### Client internals that were reachable
+
+- `Client::cluster` is private. Use `Client::nodes()`, `node_names()`,
+  `get_node(name)`, `random_node()` and `cluster_name()`; the cluster's own
+  methods (`add_seeds`, `update_partitions`, `close`, ...) are not available.
+- The `Node` methods that drive the tend loop (`refresh`, `update_partitions`,
+  `get_connection`, `close`, ...) and the `Txn` state mutators (`set_state`,
+  `on_write`, `clear`, ...) are crate-private. The getters stay.
+- `PartitionFilter`'s `partitions`, `done` and `retry` fields are private;
+  use `done()` and the constructors.
+- `BatchPolicy.filter_expression` is gone. Set `base_policy.filter_expression`,
+  as on every other policy; that is the field the batch encoder reads.
+
+### Enums are non-exhaustive
+
+`ResultCode`, `ClientResultCode`, `Value`, `AuthMode`, `Replica`, `IndexType`,
+`CollectionIndexType`, `PrivilegeCode`, `CommandType`, `CommitStatus`,
+`AbortStatus`, `TxnState`, `QueryDuration`, `ReadTouchTTL`, `UDFLang` and
+`task::Status` carry `#[non_exhaustive]`. An exhaustive `match` on one of them
+needs a `_` arm.
+
 ### Policies
 
 `ClientPolicy`:

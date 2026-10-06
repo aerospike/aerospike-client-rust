@@ -1809,7 +1809,7 @@ async fn test_short_query_not_tracked() {
 // reads require server >= 8.1.2.
 
 async fn server_supports_query_ops_projection_ext(client: &aerospike::Client) -> bool {
-    match client.cluster.get_random_node() {
+    match client.random_node() {
         Ok(node) => node.version().supports_query_ops_projection_ext(),
         Err(_) => false,
     }

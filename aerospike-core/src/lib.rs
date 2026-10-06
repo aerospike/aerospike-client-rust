@@ -180,9 +180,12 @@ pub use bin::{Bin, Bins};
 pub use client::Client;
 pub use cluster::version_parser::Version;
 pub use cluster::Node;
+#[doc(hidden)] // wire-level particle codes; reachable, not documented API
 pub use commands::particle_type::ParticleType;
 pub use errors::{Error, ErrorKind, Result};
-pub use expressions::ael::{from_ael, pack_ael_server_filter, SERVER_COMPILED_AEL_EXPRESSION_OP};
+pub use expressions::ael::from_ael;
+#[doc(hidden)] // AEL wire packing, for tooling
+pub use expressions::ael::{pack_ael_server_filter, SERVER_COMPILED_AEL_EXPRESSION_OP};
 pub use expressions::regex_flag::RegexFlag;
 pub use key::Key;
 pub use mapping::RecordMapper;
@@ -203,17 +206,23 @@ pub use policy::{
 };
 pub use privilege::{Privilege, PrivilegeCode};
 pub use query::{
-    CollectionIndexType, EqFilterValue, IndexType, PartitionFilter, QueryHandle, QueryPlan,
-    QuerySelection, QueryWhereWire, RangeFilterValue, Recordset, Statement, UDFLang,
-    FLAG_ENC_VARINT, FLAG_EXPLAIN, FLAG_HARD_HINT, FLAG_KNOWN, FLAG_REQUIRE_INDEX,
+    CollectionIndexType, EqFilterValue, IndexType, PartitionFilter, QueryHandle, RangeFilterValue,
+    Recordset, Statement, UDFLang,
+};
+// Query-plan wire types: reachable for tooling and the integration tests,
+// not part of the documented API.
+#[doc(hidden)]
+pub use query::{
+    QueryPlan, QuerySelection, QueryWhereWire, FLAG_ENC_VARINT, FLAG_EXPLAIN, FLAG_HARD_HINT,
+    FLAG_KNOWN, FLAG_REQUIRE_INDEX,
 };
 #[cfg(feature = "lua")]
 pub use query::{ResultSet, ResultStream};
-// `CITRUSLEAF_EPOCH` comes along because it is the unit `Record::new`'s
+// The Citrusleaf epoch comes along because it is the origin `Record::new`'s
 // `expiration` argument is counted from, and a caller building a record cannot
 // state one without it.
 pub use indexmap::IndexMap;
-pub use record::{Record, CITRUSLEAF_EPOCH};
+pub use record::{citrusleaf_epoch, Record, CITRUSLEAF_EPOCH_UNIX_SECS};
 pub use result_code::{ClientResultCode, ResultCode};
 pub use role::Role;
 pub use sampler::Sampler;
@@ -224,7 +233,6 @@ pub use txn::{
 };
 pub use user::User;
 pub use value::{FloatValue, MapCollection, MapLike, Value};
-pub use xor_shift::XorShift;
 
 #[macro_use]
 pub mod errors;
@@ -263,7 +271,8 @@ pub mod txn;
 pub(crate) mod txn_monitor;
 pub(crate) mod txn_roll;
 mod user;
-pub mod xor_shift;
+#[cfg(test)]
+pub(crate) mod xor_shift;
 
 #[cfg(test)]
 extern crate hex;

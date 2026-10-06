@@ -293,12 +293,14 @@ fn pack_string_op(
 /// the string bin as an `i64`. This is the codepoint count — not the grapheme
 /// cluster count and not the UTF-8 byte length. Use [`byte_length`] for the
 /// byte length.
+#[must_use]
 pub fn strlen(bin: &str) -> Operation {
     read_op(STR_OP_STRLEN, bin, vec![])
 }
 
 /// `substr` operation that reads from codepoint `start` to the end of the
 /// string. Negative `start` counts from the end.
+#[must_use]
 pub fn substr_from(bin: &str, start: i64) -> Operation {
     read_op(STR_OP_SUBSTR, bin, vec![Value::Int(start)])
 }
@@ -309,18 +311,21 @@ pub fn substr_from(bin: &str, start: i64) -> Operation {
 /// Negative indexes
 /// count from the end. If, after negative-index normalization,
 /// `start >= end`, the result is the empty string.
+#[must_use]
 pub fn substr(bin: &str, start: i64, end: i64) -> Operation {
     read_op(STR_OP_SUBSTR, bin, vec![Value::Int(start), Value::Int(end)])
 }
 
 /// `charAt` operation. Returns the codepoint at `index` as a one-codepoint
 /// string. Negative indexes count from the end.
+#[must_use]
 pub fn char_at(bin: &str, index: i64) -> Operation {
     read_op(STR_OP_CHAR_AT, bin, vec![Value::Int(index)])
 }
 
 /// `find` operation. Returns the codepoint index of the first occurrence of
 /// `needle`, or -1 if not found.
+#[must_use]
 pub fn find(bin: &str, needle: &str) -> Operation {
     read_op(STR_OP_FIND, bin, vec![Value::from(needle)])
 }
@@ -328,6 +333,7 @@ pub fn find(bin: &str, needle: &str) -> Operation {
 /// `find` operation that locates a specific `occurrence` of `needle` (1 = first
 /// match, -1 = last match). Returns the codepoint index of that match, or -1
 /// if not found.
+#[must_use]
 pub fn find_nth(bin: &str, needle: &str, occurrence: i64) -> Operation {
     read_op(
         STR_OP_FIND,
@@ -338,6 +344,7 @@ pub fn find_nth(bin: &str, needle: &str, occurrence: i64) -> Operation {
 
 /// `contains` operation. Returns true if the bin contains `needle` as a
 /// substring, false otherwise.
+#[must_use]
 pub fn contains(bin: &str, needle: &str) -> Operation {
     read_op(STR_OP_CONTAINS, bin, vec![Value::from(needle)])
 }
@@ -347,6 +354,7 @@ pub fn contains(bin: &str, needle: &str) -> Operation {
 ///
 /// Matching is Unicode canonical, not byte-exact: a prefix stored in a
 /// different normalization form than the bin still matches.
+#[must_use]
 pub fn starts_with(bin: &str, prefix: &str) -> Operation {
     read_op(STR_OP_STARTS_WITH, bin, vec![Value::from(prefix)])
 }
@@ -356,18 +364,21 @@ pub fn starts_with(bin: &str, prefix: &str) -> Operation {
 ///
 /// Matching is Unicode canonical, not byte-exact: a suffix stored in a
 /// different normalization form than the bin still matches.
+#[must_use]
 pub fn ends_with(bin: &str, suffix: &str) -> Operation {
     read_op(STR_OP_ENDS_WITH, bin, vec![Value::from(suffix)])
 }
 
 /// `toInteger` operation. The server parses the string as an `i64`. Returns
 /// `PARAMETER_ERROR` if the bin cannot be parsed as an integer.
+#[must_use]
 pub fn to_integer(bin: &str) -> Operation {
     read_op(STR_OP_TO_INTEGER, bin, vec![])
 }
 
 /// `toDouble` operation. The server parses the string as a 64-bit float.
 /// Returns `PARAMETER_ERROR` if the bin cannot be parsed as a double.
+#[must_use]
 pub fn to_double(bin: &str) -> Operation {
     read_op(STR_OP_TO_DOUBLE, bin, vec![])
 }
@@ -375,18 +386,21 @@ pub fn to_double(bin: &str) -> Operation {
 /// `byteLength` operation. Returns the number of UTF-8 bytes in the string
 /// (`i64`). Differs from [`strlen`] for non-ASCII content where one codepoint
 /// can encode to multiple bytes.
+#[must_use]
 pub fn byte_length(bin: &str) -> Operation {
     read_op(STR_OP_BYTE_LENGTH, bin, vec![])
 }
 
 /// `isNumeric` operation. Returns true if the bin contains a valid integer or
 /// float, false otherwise.
+#[must_use]
 pub fn is_numeric(bin: &str) -> Operation {
     read_op(STR_OP_IS_NUMERIC, bin, vec![])
 }
 
 /// `isNumeric` operation that filters by [`StringNumericType`] (e.g. restrict
 /// to integer-only or float-only validation).
+#[must_use]
 pub fn is_numeric_typed(bin: &str, numeric_type: StringNumericType) -> Operation {
     read_op(
         STR_OP_IS_NUMERIC,
@@ -397,23 +411,27 @@ pub fn is_numeric_typed(bin: &str, numeric_type: StringNumericType) -> Operation
 
 /// `isUpper` operation. Returns true if every cased codepoint in the bin is
 /// uppercase, false otherwise.
+#[must_use]
 pub fn is_upper(bin: &str) -> Operation {
     read_op(STR_OP_IS_UPPER, bin, vec![])
 }
 
 /// `isLower` operation. Returns true if every cased codepoint in the bin is
 /// lowercase, false otherwise.
+#[must_use]
 pub fn is_lower(bin: &str) -> Operation {
     read_op(STR_OP_IS_LOWER, bin, vec![])
 }
 
 /// `toBlob` operation. Returns the UTF-8 bytes of the string as a blob.
+#[must_use]
 pub fn to_blob(bin: &str) -> Operation {
     read_op(STR_OP_TO_BLOB, bin, vec![])
 }
 
 /// `split` operation that splits by Unicode codepoint — each codepoint becomes
 /// its own element of the returned list.
+#[must_use]
 pub fn split(bin: &str) -> Operation {
     read_op(STR_OP_SPLIT, bin, vec![])
 }
@@ -421,24 +439,28 @@ pub fn split(bin: &str) -> Operation {
 /// `split` operation that splits the bin by the `separator` substring. If the
 /// separator is absent the result is a singleton list containing the whole
 /// string.
+#[must_use]
 pub fn split_by_separator(bin: &str, separator: &str) -> Operation {
     read_op(STR_OP_SPLIT, bin, vec![Value::from(separator)])
 }
 
 /// `b64Decode` operation. The server treats the bin as base64-encoded text and
 /// returns the decoded bytes as a blob.
+#[must_use]
 pub fn b64_decode(bin: &str) -> Operation {
     read_op(STR_OP_B64_DECODE, bin, vec![])
 }
 
 /// `regexCompare` operation. The server matches `pattern` (ICU regex syntax)
 /// against the bin and returns true on match, false otherwise.
+#[must_use]
 pub fn regex_compare(bin: &str, pattern: &str) -> Operation {
     read_op(STR_OP_REGEX_COMPARE, bin, vec![Value::from(pattern)])
 }
 
 /// `regexCompare` operation that honors [`StringRegexFlags`] (e.g.
 /// `CASE_INSENSITIVE`). Flag values may be combined with bitwise OR.
+#[must_use]
 pub fn regex_compare_with_flags(
     bin: &str,
     pattern: &str,
@@ -457,6 +479,7 @@ pub fn regex_compare_with_flags(
 
 /// `insert` operation that splices `value` into the bin at codepoint `index`.
 /// Negative indexes count from the end of the string.
+#[must_use]
 pub fn insert(policy: &StringPolicy, bin: &str, index: i64, value: &str) -> Operation {
     modify_op(
         STR_OP_INSERT,
@@ -472,6 +495,7 @@ pub fn insert(policy: &StringPolicy, bin: &str, index: i64, value: &str) -> Oper
 /// `overwrite` operation that overwrites codepoints starting at codepoint
 /// `index` with `value`. The result may grow beyond the original length when
 /// `value` extends past the end.
+#[must_use]
 pub fn overwrite(policy: &StringPolicy, bin: &str, index: i64, value: &str) -> Operation {
     modify_op(
         STR_OP_OVERWRITE,
@@ -485,6 +509,7 @@ pub fn overwrite(policy: &StringPolicy, bin: &str, index: i64, value: &str) -> O
 }
 
 /// `concat` operation that appends `value` to the bin.
+#[must_use]
 pub fn concat(policy: &StringPolicy, bin: &str, value: &str) -> Operation {
     modify_op(
         STR_OP_CONCAT,
@@ -497,6 +522,7 @@ pub fn concat(policy: &StringPolicy, bin: &str, value: &str) -> Operation {
 }
 
 /// `concat` operation that appends each element of `values` to the bin in order.
+#[must_use]
 pub fn concat_list(policy: &StringPolicy, bin: &str, values: &[&str]) -> Operation {
     let list: Vec<Value> = values.iter().map(|s| Value::from(*s)).collect();
     modify_op(
@@ -512,6 +538,7 @@ pub fn concat_list(policy: &StringPolicy, bin: &str, values: &[&str]) -> Operati
 /// legacy byte-level [`crate::operations::append`], this operation is
 /// Unicode/DBCS-aware and shares the consistent [`StringPolicy`] / CTX
 /// interface of the rest of the string module.
+#[must_use]
 pub fn append(policy: &StringPolicy, bin: &str, value: &str) -> Operation {
     modify_op(
         STR_OP_APPEND,
@@ -526,6 +553,7 @@ pub fn append(policy: &StringPolicy, bin: &str, value: &str) -> Operation {
 /// the legacy byte-level [`crate::operations::prepend`], this operation is
 /// Unicode/DBCS-aware and shares the consistent [`StringPolicy`] / CTX
 /// interface of the rest of the string module.
+#[must_use]
 pub fn prepend(policy: &StringPolicy, bin: &str, value: &str) -> Operation {
     modify_op(
         STR_OP_PREPEND,
@@ -544,12 +572,14 @@ pub fn prepend(policy: &StringPolicy, bin: &str, value: &str) -> Operation {
 /// silently snip the empty range `[start, 0)`. `policy` is accepted for
 /// signature parity with the other modify builders and is ignored; use [`snip`]
 /// when the write flags have to be honored.
+#[must_use]
 pub fn snip_from(_policy: &StringPolicy, bin: &str, start: i64) -> Operation {
     modify_op(STR_OP_SNIP, bin, vec![Value::Int(start)])
 }
 
 /// `snip` operation that removes the half-open codepoint range
 /// `[start, end)` from the bin.
+#[must_use]
 pub fn snip(policy: &StringPolicy, bin: &str, start: i64, end: i64) -> Operation {
     modify_op(
         STR_OP_SNIP,
@@ -560,6 +590,7 @@ pub fn snip(policy: &StringPolicy, bin: &str, start: i64, end: i64) -> Operation
 
 /// `replace` operation that replaces the first occurrence of `needle` with
 /// `replacement`.
+#[must_use]
 pub fn replace(policy: &StringPolicy, bin: &str, needle: &str, replacement: &str) -> Operation {
     modify_op(
         STR_OP_REPLACE,
@@ -573,6 +604,7 @@ pub fn replace(policy: &StringPolicy, bin: &str, needle: &str, replacement: &str
 
 /// `replaceAll` operation that replaces every occurrence of `needle` with
 /// `replacement`.
+#[must_use]
 pub fn replace_all(policy: &StringPolicy, bin: &str, needle: &str, replacement: &str) -> Operation {
     modify_op(
         STR_OP_REPLACE_ALL,
@@ -585,38 +617,45 @@ pub fn replace_all(policy: &StringPolicy, bin: &str, needle: &str, replacement: 
 }
 
 /// `upper` operation that uppercases the bin in place.
+#[must_use]
 pub fn upper(policy: &StringPolicy, bin: &str) -> Operation {
     modify_op(STR_OP_UPPER, bin, vec![Value::Int(policy.flags)])
 }
 
 /// `lower` operation that lowercases the bin in place.
+#[must_use]
 pub fn lower(policy: &StringPolicy, bin: &str) -> Operation {
     modify_op(STR_OP_LOWER, bin, vec![Value::Int(policy.flags)])
 }
 
 /// `caseFold` operation that applies a locale-independent case fold
 /// (lowercase) to the bin. Useful for normalized comparison keys.
+#[must_use]
 pub fn case_fold(policy: &StringPolicy, bin: &str) -> Operation {
     modify_op(STR_OP_CASE_FOLD, bin, vec![Value::Int(policy.flags)])
 }
 
 /// `normalizeNFC` operation that normalizes the bin to Unicode NFC form.
 /// Already-normalized strings are unchanged.
+#[must_use]
 pub fn normalize_nfc(policy: &StringPolicy, bin: &str) -> Operation {
     modify_op(STR_OP_NORMALIZE_NFC, bin, vec![Value::Int(policy.flags)])
 }
 
 /// `trimStart` operation that removes whitespace from the start of the bin.
+#[must_use]
 pub fn trim_start(policy: &StringPolicy, bin: &str) -> Operation {
     modify_op(STR_OP_TRIM_START, bin, vec![Value::Int(policy.flags)])
 }
 
 /// `trimEnd` operation that removes whitespace from the end of the bin.
+#[must_use]
 pub fn trim_end(policy: &StringPolicy, bin: &str) -> Operation {
     modify_op(STR_OP_TRIM_END, bin, vec![Value::Int(policy.flags)])
 }
 
 /// `trim` operation that removes whitespace from both ends of the bin.
+#[must_use]
 pub fn trim(policy: &StringPolicy, bin: &str) -> Operation {
     modify_op(STR_OP_TRIM, bin, vec![Value::Int(policy.flags)])
 }
@@ -624,6 +663,7 @@ pub fn trim(policy: &StringPolicy, bin: &str) -> Operation {
 /// `padStart` operation that prepends `pad_string` repeatedly until the bin
 /// reaches `target_length` codepoints. No-op when the bin is already at or
 /// above the target length.
+#[must_use]
 pub fn pad_start(
     policy: &StringPolicy,
     bin: &str,
@@ -644,6 +684,7 @@ pub fn pad_start(
 /// `padEnd` operation that appends `pad_string` repeatedly until the bin
 /// reaches `target_length` codepoints. No-op when the bin is already at or
 /// above the target length.
+#[must_use]
 pub fn pad_end(
     policy: &StringPolicy,
     bin: &str,
@@ -663,6 +704,7 @@ pub fn pad_end(
 
 /// `repeat` operation that repeats the bin contents `count` times. `count`
 /// must be non-negative.
+#[must_use]
 pub fn repeat(policy: &StringPolicy, bin: &str, count: i64) -> Operation {
     modify_op(
         STR_OP_REPEAT,
@@ -680,6 +722,7 @@ pub fn repeat(policy: &StringPolicy, bin: &str, count: i64) -> Operation {
 /// This op accepts [`StringWriteFlags::UPDATE_ONLY`] and
 /// [`StringWriteFlags::NO_FAIL`]; it is not create-capable, so
 /// [`StringWriteFlags::CREATE_ONLY`] is refused with `PARAMETER_ERROR`.
+#[must_use]
 pub fn regex_replace(
     policy: &StringPolicy,
     bin: &str,
@@ -718,6 +761,7 @@ pub fn regex_replace(
 /// [`crate::operations::lists::get_by_index`] or
 /// [`crate::operations::maps::get_by_key`] (using the appropriate
 /// [`CdtContext`]) and convert it client-side.
+#[must_use]
 pub fn to_string(bin: &str) -> Operation {
     Operation {
         op: OperationType::ToString,

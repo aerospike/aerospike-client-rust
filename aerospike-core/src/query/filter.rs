@@ -23,16 +23,22 @@ use crate::{CollectionIndexType, Value};
 ///
 /// Supported types: integers (`i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `isize`,
 /// `usize`), strings (`String`, `&str`), and blobs (`Vec<u8>`, `&[u8]`).
-pub trait EqFilterValue {
+pub trait EqFilterValue: sealed::Sealed {
     /// Converts this value into a `Value` for use in a filter.
     fn into_filter_value(self) -> Value;
+}
+
+/// The filter value traits are sealed: the server accepts exactly the types
+/// implemented here, so there is nothing a downstream impl could add.
+mod sealed {
+    pub trait Sealed {}
 }
 
 /// Marker trait for types valid in range filters.
 ///
 /// Only integer types are supported: `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`,
 /// `isize`, `usize`.
-pub trait RangeFilterValue {
+pub trait RangeFilterValue: sealed::Sealed {
     /// Converts this value into a `Value` for use in a range filter.
     fn into_filter_value(self) -> Value;
 }
@@ -43,6 +49,8 @@ pub trait RangeFilterValue {
 macro_rules! impl_eq_filter_int {
     ($($t:ty),*) => {
         $(
+            impl sealed::Sealed for $t {}
+            impl sealed::Sealed for &$t {}
             impl EqFilterValue for $t {
                 fn into_filter_value(self) -> Value { Value::from(self) }
             }
@@ -60,6 +68,14 @@ macro_rules! impl_eq_filter_int {
 }
 
 impl_eq_filter_int!(i8, u8, i16, u16, i32, u32, i64, u64, isize, usize);
+
+impl sealed::Sealed for String {}
+impl sealed::Sealed for &String {}
+impl sealed::Sealed for &str {}
+impl sealed::Sealed for Vec<u8> {}
+impl sealed::Sealed for &Vec<u8> {}
+impl sealed::Sealed for &[u8] {}
+impl sealed::Sealed for Value {}
 
 // String types
 impl EqFilterValue for String {
@@ -242,7 +258,7 @@ impl Filter {
     /// Replay opaque `INDEX_RANGE` field body on execute (field `22`).
     ///
     /// Bytes must already be in execute shape (`bin_name_len = 0` when paired with field `21`).
-    pub fn from_wire_range(
+    pub(crate) fn from_wire_range(
         index_name: &str,
         range_bytes: Vec<u8>,
         collection_index_type: CollectionIndexType,

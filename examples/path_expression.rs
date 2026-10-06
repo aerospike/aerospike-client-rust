@@ -34,8 +34,7 @@ pub async fn run() {
         .expect("Failed to connect to cluster");
 
     let supported = client
-        .cluster
-        .get_random_node()
+        .random_node()
         .map(|n| n.version().supports_cdt_path_expressions())
         .unwrap_or(false);
     if !supported {

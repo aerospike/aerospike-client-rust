@@ -822,7 +822,7 @@ async fn expression_commands() {
 // ============================================================
 
 async fn server_supports_server_compiled_ael(client: &Client) -> bool {
-    let supported = match client.cluster.get_random_node() {
+    let supported = match client.random_node() {
         Ok(node) => node.version().supports_server_compiled_ael(),
         Err(_) => false,
     };

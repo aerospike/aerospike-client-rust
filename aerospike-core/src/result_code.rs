@@ -22,6 +22,7 @@ use serde::Serialize;
 /// Database operation error codes. The error codes are defined in the server-side file proto.h.
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ResultCode {
     /// `OperationType` was successful.
     Ok,
@@ -588,6 +589,7 @@ impl fmt::Display for ResultCode {
 /// therefore do not appear here.
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ClientResultCode {
     /// Transaction has already been aborted.
     TxnAlreadyAborted,

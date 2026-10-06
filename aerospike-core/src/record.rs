@@ -31,12 +31,14 @@ use crate::Value;
 /// beyond 2106 representable. [`Record::time_to_live`] converts against it, and
 /// it is public so callers doing their own void-time arithmetic agree with the
 /// server on the origin.
-pub static CITRUSLEAF_EPOCH: std::sync::LazyLock<SystemTime> =
-    std::sync::LazyLock::new(|| UNIX_EPOCH + Duration::from_secs(CITRUSLEAF_EPOCH_UNIX_SECS));
+#[must_use]
+pub fn citrusleaf_epoch() -> SystemTime {
+    UNIX_EPOCH + Duration::from_secs(CITRUSLEAF_EPOCH_UNIX_SECS)
+}
 
-/// [`CITRUSLEAF_EPOCH`] as whole seconds since the Unix epoch
+/// [`citrusleaf_epoch`] as whole seconds since the Unix epoch
 /// (2010-01-01T00:00:00Z).
-const CITRUSLEAF_EPOCH_UNIX_SECS: u64 = 1_262_304_000;
+pub const CITRUSLEAF_EPOCH_UNIX_SECS: u64 = 1_262_304_000;
 
 /// Container object for a database record.
 #[derive(Debug, Clone)]
@@ -68,7 +70,7 @@ impl Record {
     /// `expiration` is public, so this is the only way to set that one.
     ///
     /// `expiration` is the server's own encoding: **seconds since the Citrusleaf
-    /// epoch** (2010-01-01 UTC, [`CITRUSLEAF_EPOCH`]) at which the record expires,
+    /// epoch** (2010-01-01 UTC, [`citrusleaf_epoch`]) at which the record expires,
     /// with `0` meaning it never does. It is not a TTL, and it is not a Unix
     /// timestamp; [`Record::time_to_live`] converts it to the remaining duration.
     ///
@@ -159,7 +161,7 @@ impl fmt::Display for Record {
 
 #[cfg(test)]
 mod tests {
-    use super::{Record, CITRUSLEAF_EPOCH};
+    use super::{citrusleaf_epoch, Record};
     use crate::IndexMap;
     use std::time::{Duration, SystemTime};
 
@@ -167,7 +169,7 @@ mod tests {
     fn ttl_expiration_future() {
         let expiration = SystemTime::now() + Duration::new(1000, 0);
         let secs_since_epoch = expiration
-            .duration_since(*CITRUSLEAF_EPOCH)
+            .duration_since(citrusleaf_epoch())
             .unwrap()
             .as_secs();
         let record = Record::new(None, IndexMap::new(), None, 0, secs_since_epoch as u32);

@@ -44,7 +44,7 @@ impl BatchAttr {
         self.filter_expression = rp
             .filter_expression
             .clone()
-            .or_else(|| parent.filter_expression.clone());
+            .or_else(|| parent.base_policy.filter_expression.clone());
         self.read_attr = buffer::INFO1_READ;
 
         if parent.base_policy.read_mode_ap == ReadModeAP::All {
@@ -100,7 +100,7 @@ impl BatchAttr {
         self.filter_expression = wp
             .filter_expression
             .clone()
-            .or_else(|| parent.filter_expression.clone());
+            .or_else(|| parent.base_policy.filter_expression.clone());
         self.read_attr = 0;
         self.write_attr = buffer::INFO2_WRITE | buffer::INFO2_RESPOND_ALL_OPS;
         self.info_attr = 0;
@@ -193,7 +193,7 @@ impl BatchAttr {
         self.filter_expression = up
             .filter_expression
             .clone()
-            .or_else(|| parent.filter_expression.clone());
+            .or_else(|| parent.base_policy.filter_expression.clone());
         self.read_attr = 0;
         self.write_attr = buffer::INFO2_WRITE;
         self.info_attr = 0;
@@ -224,7 +224,7 @@ impl BatchAttr {
         self.filter_expression = dp
             .filter_expression
             .clone()
-            .or_else(|| parent.filter_expression.clone());
+            .or_else(|| parent.base_policy.filter_expression.clone());
         self.read_attr = 0;
         self.write_attr =
             buffer::INFO2_WRITE | buffer::INFO2_RESPOND_ALL_OPS | buffer::INFO2_DELETE;

@@ -24,6 +24,7 @@ use crate::Value;
 
 const MODULE: i64 = 0;
 /// Creates expression that appends value to end of list.
+#[must_use]
 pub fn append(
     policy: ListPolicy,
     value: Expression,
@@ -41,6 +42,7 @@ pub fn append(
 }
 
 /// Creates expression that appends list items to end of list.
+#[must_use]
 pub fn append_items(
     policy: ListPolicy,
     list: Expression,
@@ -58,6 +60,7 @@ pub fn append_items(
 }
 
 /// Creates expression that inserts value to specified index of list.
+#[must_use]
 pub fn insert(
     policy: ListPolicy,
     index: Expression,
@@ -76,6 +79,7 @@ pub fn insert(
 }
 
 /// Creates expression that inserts each input list item starting at specified index of list.
+#[must_use]
 pub fn insert_items(
     policy: ListPolicy,
     index: Expression,
@@ -95,6 +99,7 @@ pub fn insert_items(
 
 /// Creates expression that increments `list[index]` by value.
 /// Value expression should resolve to a number.
+#[must_use]
 pub fn increment(
     policy: ListPolicy,
     index: Expression,
@@ -114,6 +119,7 @@ pub fn increment(
 }
 
 /// Creates expression that sets item value at specified index in list.
+#[must_use]
 pub fn set(
     policy: ListPolicy,
     index: Expression,
@@ -132,6 +138,7 @@ pub fn set(
 }
 
 /// Creates expression that removes all items in list.
+#[must_use]
 pub fn clear(bin: Expression, ctx: &[CdtContext]) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::Clear as i64)),
@@ -141,6 +148,7 @@ pub fn clear(bin: Expression, ctx: &[CdtContext]) -> Expression {
 }
 
 /// Creates expression that sorts list according to sortFlags.
+#[must_use]
 pub fn sort(sort_flags: ListSortFlags, bin: Expression, ctx: &[CdtContext]) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::Sort as i64)),
@@ -151,6 +159,7 @@ pub fn sort(sort_flags: ListSortFlags, bin: Expression, ctx: &[CdtContext]) -> E
 }
 
 /// Creates expression that removes list items identified by value.
+#[must_use]
 pub fn remove_by_value<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     value: Expression,
@@ -167,6 +176,7 @@ pub fn remove_by_value<TLR: ToListReturnTypeBitmask>(
 }
 
 /// Creates expression that removes list items identified by values.
+#[must_use]
 pub fn remove_by_value_list<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     values: Expression,
@@ -186,6 +196,7 @@ pub fn remove_by_value_list<TLR: ToListReturnTypeBitmask>(
 ///
 /// If valueBegin is null, the range is less than valueEnd. If valueEnd is null, the range is
 /// greater than equal to valueBegin.
+#[must_use]
 pub fn remove_by_value_range<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     value_begin: Option<Expression>,
@@ -221,6 +232,7 @@ pub fn remove_by_value_range<TLR: ToListReturnTypeBitmask>(
 /// (3,3) = [11,15]
 /// (3,-3) = [0,4,5,9,11,15]
 /// ```
+#[must_use]
 pub fn remove_by_value_relative_rank_range<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     value: Expression,
@@ -250,6 +262,7 @@ pub fn remove_by_value_relative_rank_range<TLR: ToListReturnTypeBitmask>(
 /// (3,3,7) = [11,15]
 /// (3,-3,2) = []
 /// ```
+#[must_use]
 pub fn remove_by_value_relative_rank_range_count<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     value: Expression,
@@ -270,6 +283,7 @@ pub fn remove_by_value_relative_rank_range_count<TLR: ToListReturnTypeBitmask>(
 }
 
 /// Creates expression that removes list item identified by index.
+#[must_use]
 pub fn remove_by_index<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     index: Expression,
@@ -286,6 +300,7 @@ pub fn remove_by_index<TLR: ToListReturnTypeBitmask>(
 }
 
 /// Creates expression that removes list items starting at specified index to the end of list.
+#[must_use]
 pub fn remove_by_index_range<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     index: Expression,
@@ -302,6 +317,7 @@ pub fn remove_by_index_range<TLR: ToListReturnTypeBitmask>(
 }
 
 /// Creates expression that removes "count" list items starting at specified index.
+#[must_use]
 pub fn remove_by_index_range_count<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     index: Expression,
@@ -320,6 +336,7 @@ pub fn remove_by_index_range_count<TLR: ToListReturnTypeBitmask>(
 }
 
 /// Creates expression that removes list item identified by rank.
+#[must_use]
 pub fn remove_by_rank<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     rank: Expression,
@@ -336,6 +353,7 @@ pub fn remove_by_rank<TLR: ToListReturnTypeBitmask>(
 }
 
 /// Creates expression that removes list items starting at specified rank to the last ranked item.
+#[must_use]
 pub fn remove_by_rank_range<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     rank: Expression,
@@ -352,6 +370,7 @@ pub fn remove_by_rank_range<TLR: ToListReturnTypeBitmask>(
 }
 
 /// Creates expression that removes "count" list items starting at specified rank.
+#[must_use]
 pub fn remove_by_rank_range_count<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     rank: Expression,
@@ -375,8 +394,9 @@ pub fn remove_by_rank_range_count<TLR: ToListReturnTypeBitmask>(
 /// // List bin "a" size > 7
 /// use aerospike::expressions::{gt, list_bin, int_val};
 /// use aerospike::expressions::lists::size;
-/// gt(size(list_bin("a".to_string()), &[]), int_val(7));
+/// let _ = gt(size(list_bin("a".to_string()), &[]), int_val(7));
 /// ```
+#[must_use]
 pub fn size(bin: Expression, ctx: &[CdtContext]) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::Size as i64)),
@@ -392,8 +412,9 @@ pub fn size(bin: Expression, ctx: &[CdtContext]) -> Expression {
 /// // The list bin "a" joins to "onetwothree"
 /// use aerospike::expressions::{eq, list_bin, string_val};
 /// use aerospike::expressions::lists::join;
-/// eq(join(list_bin("a".to_string()), &[]), string_val("onetwothree".to_string()));
+/// let _ = eq(join(list_bin("a".to_string()), &[]), string_val("onetwothree".to_string()));
 /// ```
+#[must_use]
 pub fn join(bin: Expression, ctx: &[CdtContext]) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::StringJoin as i64)),
@@ -412,10 +433,11 @@ pub fn join(bin: Expression, ctx: &[CdtContext]) -> Expression {
 /// // The list bin "a" joins to "one|two|three"
 /// use aerospike::expressions::{eq, list_bin, string_val};
 /// use aerospike::expressions::lists::join_by_separator;
-/// eq(
+/// let _ = eq(
 ///   join_by_separator(string_val("|".to_string()), list_bin("a".to_string()), &[]),
 ///   string_val("one|two|three".to_string()));
 /// ```
+#[must_use]
 pub fn join_by_separator(separator: Expression, bin: Expression, ctx: &[CdtContext]) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtListOpType::StringJoin as i64)),
@@ -433,11 +455,12 @@ pub fn join_by_separator(separator: Expression, bin: Expression, ctx: &[CdtConte
 /// use aerospike::expressions::{gt, string_val, list_bin, int_val};
 /// use aerospike::operations::lists::ListReturnType;
 /// use aerospike::expressions::lists::get_by_value;
-/// gt(
+/// let _ = gt(
 ///   get_by_value(ListReturnType::Count, string_val("abc".to_string()), list_bin("a".to_string()), &[]),
 ///   int_val(0));
 /// ```
 ///
+#[must_use]
 pub fn get_by_value<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     value: Expression,
@@ -463,8 +486,9 @@ pub fn get_by_value<TLR: ToListReturnTypeBitmask>(
 /// use aerospike::expressions::lists::get_by_value_range;
 /// use aerospike::expressions::{int_val, list_bin};
 ///
-/// get_by_value_range(ListReturnType::Values, Some(int_val(10)), Some(int_val(20)), list_bin("a".to_string()), &[]);
+/// let _ = get_by_value_range(ListReturnType::Values, Some(int_val(10)), Some(int_val(20)), list_bin("a".to_string()), &[]);
 /// ```
+#[must_use]
 pub fn get_by_value_range<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     value_begin: Option<Expression>,
@@ -491,6 +515,7 @@ pub fn get_by_value_range<TLR: ToListReturnTypeBitmask>(
 
 /// Creates expression that selects list items identified by values and returns selected data
 /// specified by returnType.
+#[must_use]
 pub fn get_by_value_list<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     values: Expression,
@@ -520,6 +545,7 @@ pub fn get_by_value_list<TLR: ToListReturnTypeBitmask>(
 /// (3,3) = [11,15]
 /// (3,-3) = [0,4,5,9,11,15]
 /// ```
+#[must_use]
 pub fn get_by_value_relative_rank_range<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     value: Expression,
@@ -551,6 +577,7 @@ pub fn get_by_value_relative_rank_range<TLR: ToListReturnTypeBitmask>(
 /// (3,3,7) = [11,15]
 /// (3,-3,2) = []
 /// ```
+#[must_use]
 pub fn get_by_value_relative_rank_range_count<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     value: Expression,
@@ -579,11 +606,12 @@ pub fn get_by_value_relative_rank_range_count<TLR: ToListReturnTypeBitmask>(
 /// use aerospike::expressions::{ExpType, eq, int_val, list_bin};
 /// use aerospike::operations::lists::ListReturnType;
 /// use aerospike::expressions::lists::get_by_index;
-/// eq(
+/// let _ = eq(
 ///   get_by_index(ListReturnType::Values, ExpType::INT, int_val(3), list_bin("a".to_string()), &[]),
 ///   int_val(5));
 /// ```
 ///
+#[must_use]
 pub fn get_by_index<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     value_type: ExpType,
@@ -603,6 +631,7 @@ pub fn get_by_index<TLR: ToListReturnTypeBitmask>(
 
 /// Creates expression that selects list items starting at specified index to the end of list
 /// and returns selected data specified by returnType .
+#[must_use]
 pub fn get_by_index_range<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     index: Expression,
@@ -621,6 +650,7 @@ pub fn get_by_index_range<TLR: ToListReturnTypeBitmask>(
 
 /// Creates expression that selects "count" list items starting at specified index
 /// and returns selected data specified by returnType.
+#[must_use]
 pub fn get_by_index_range_count<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     index: Expression,
@@ -647,8 +677,9 @@ pub fn get_by_index_range_count<TLR: ToListReturnTypeBitmask>(
 /// use aerospike::operations::lists::ListReturnType;
 /// use aerospike::expressions::{ExpType, int_val, list_bin};
 /// use aerospike::expressions::lists::get_by_rank;
-/// get_by_rank(ListReturnType::Values, ExpType::STRING, int_val(0), list_bin("a".to_string()), &[]);
+/// let _ = get_by_rank(ListReturnType::Values, ExpType::STRING, int_val(0), list_bin("a".to_string()), &[]);
 /// ```
+#[must_use]
 pub fn get_by_rank<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     value_type: ExpType,
@@ -668,6 +699,7 @@ pub fn get_by_rank<TLR: ToListReturnTypeBitmask>(
 
 /// Creates expression that selects list items starting at specified rank to the last ranked item
 /// and returns selected data specified by returnType.
+#[must_use]
 pub fn get_by_rank_range<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     rank: Expression,
@@ -686,6 +718,7 @@ pub fn get_by_rank_range<TLR: ToListReturnTypeBitmask>(
 
 /// Creates expression that selects "count" list items starting at specified rank and returns
 /// selected data specified by returnType.
+#[must_use]
 pub fn get_by_rank_range_count<TLR: ToListReturnTypeBitmask>(
     return_type: TLR,
     rank: Expression,

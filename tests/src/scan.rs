@@ -341,7 +341,7 @@ async fn scan_single_consumer_rps() {
         return;
     }
 
-    let node_count = client.cluster.nodes().len();
+    let node_count = client.nodes().len();
     let namespace = common::namespace();
     let set_name = create_test_set(client, EXPECTED).await;
 

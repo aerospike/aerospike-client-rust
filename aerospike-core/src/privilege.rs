@@ -19,6 +19,7 @@ use crate::errors::Error;
 
 /// Default privileges defined on the server.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd)]
+#[non_exhaustive]
 pub enum PrivilegeCode {
     /// User can edit/remove other users. Global scope only.
     UserAdmin = 0,

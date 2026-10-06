@@ -25,7 +25,6 @@ use crate::net::Host;
 #[derive(Debug, Clone)]
 pub struct Peer {
     pub node_name: String,
-    pub tls_name: String,
     pub hosts: Vec<Host>,
     /// If set, this peer should replace the given existing node
     /// (e.g. when a node's IP address has changed).
@@ -131,11 +130,6 @@ impl Peers {
     /// Looks up a new node by name.
     pub fn node_by_name(&self, name: &str) -> Option<Arc<Node>> {
         lock(&self.nodes).get(name).cloned()
-    }
-
-    /// Returns a clone of the new nodes map.
-    pub fn nodes(&self) -> HashMap<String, Arc<Node>> {
-        lock(&self.nodes).clone()
     }
 
     /// Removes and returns all newly created nodes. Used by the tend loop

@@ -34,11 +34,13 @@ pub(crate) enum HllExpOp {
 }
 
 /// Creates expression that creates a new HLL or resets an existing HLL.
+#[must_use]
 pub fn init(policy: HLLPolicy, index_bit_count: Expression, bin: Expression) -> Expression {
     init_with_min_hash(policy, index_bit_count, int_val(-1), bin)
 }
 
 /// Creates expression that creates a new HLL or resets an existing HLL with minhash bits.
+#[must_use]
 pub fn init_with_min_hash(
     policy: HLLPolicy,
     index_bit_count: Expression,
@@ -66,8 +68,9 @@ pub fn init_with_min_hash(
 ///
 /// // Add values to HLL bin "a" and check count > 7
 /// let list = vec![Value::from(1)];
-/// gt(add(HLLPolicy::default(), list_val(list), hll_bin("a".to_string())), int_val(7));
+/// let _ = gt(add(HLLPolicy::default(), list_val(list), hll_bin("a".to_string())), int_val(7));
 /// ```
+#[must_use]
 pub fn add(policy: HLLPolicy, list: Expression, bin: Expression) -> Expression {
     add_with_index_and_min_hash(policy, list, int_val(-1), int_val(-1), bin)
 }
@@ -82,8 +85,9 @@ pub fn add(policy: HLLPolicy, list: Expression, bin: Expression) -> Expression {
 ///
 /// // Add values to HLL bin "a" and check count > 7
 /// let list = vec![Value::from(1)];
-/// gt(add_with_index(HLLPolicy::default(), list_val(list), int_val(10), hll_bin("a".to_string())), int_val(7));
+/// let _ = gt(add_with_index(HLLPolicy::default(), list_val(list), int_val(10), hll_bin("a".to_string())), int_val(7));
 /// ```
+#[must_use]
 pub fn add_with_index(
     policy: HLLPolicy,
     list: Expression,
@@ -103,8 +107,9 @@ pub fn add_with_index(
 ///
 /// // Add values to HLL bin "a" and check count > 7
 /// let list = vec![Value::from(1)];
-/// gt(add_with_index_and_min_hash(HLLPolicy::default(), list_val(list), int_val(10), int_val(20), hll_bin("a".to_string())), int_val(7));
+/// let _ = gt(add_with_index_and_min_hash(HLLPolicy::default(), list_val(list), int_val(10), int_val(20), hll_bin("a".to_string())), int_val(7));
 /// ```
+#[must_use]
 pub fn add_with_index_and_min_hash(
     policy: HLLPolicy,
     list: Expression,
@@ -130,8 +135,9 @@ pub fn add_with_index_and_min_hash(
 /// // HLL bin "a" count > 7
 /// use aerospike::expressions::{gt, hll_bin, int_val};
 /// use aerospike::expressions::hll::get_count;
-/// gt(get_count(hll_bin("a".to_string())), int_val(7));
+/// let _ = gt(get_count(hll_bin("a".to_string())), int_val(7));
 /// ```
+#[must_use]
 pub fn get_count(bin: Expression) -> Expression {
     add_read(
         bin,
@@ -150,12 +156,13 @@ pub fn get_count(bin: Expression) -> Expression {
 /// use aerospike::expressions::{hll_bin, blob_val};
 ///
 /// // Union of HLL bins "a" and "b"
-/// get_union(hll_bin("a".to_string()), hll_bin("b".to_string()));
+/// let _ = get_union(hll_bin("a".to_string()), hll_bin("b".to_string()));
 ///
 /// // Union of local HLL list with bin "b"
 /// let blob: Vec<u8> = vec![];
-/// get_union(hll_bin("b".to_string()), blob_val(blob));
+/// let _ = get_union(hll_bin("b".to_string()), blob_val(blob));
 /// ```
+#[must_use]
 pub fn get_union(list: Expression, bin: Expression) -> Expression {
     add_read(
         bin,
@@ -175,12 +182,13 @@ pub fn get_union(list: Expression, bin: Expression) -> Expression {
 /// use aerospike::expressions::{hll_bin, blob_val};
 ///
 /// // Union count of HLL bins "a" and "b"
-/// get_union_count(hll_bin("a".to_string()), hll_bin("b".to_string()));
+/// let _ = get_union_count(hll_bin("a".to_string()), hll_bin("b".to_string()));
 ///
 /// // Union count of local HLL list with bin "b"
 /// let blob: Vec<u8> = vec![];
-/// get_union_count(hll_bin("b".to_string()), blob_val(blob));
+/// let _ = get_union_count(hll_bin("b".to_string()), blob_val(blob));
 /// ```
+#[must_use]
 pub fn get_union_count(list: Expression, bin: Expression) -> Expression {
     add_read(
         bin,
@@ -200,12 +208,13 @@ pub fn get_union_count(list: Expression, bin: Expression) -> Expression {
 /// use aerospike::expressions::hll::get_union_count;
 ///
 /// // Intersect count of HLL bins "a" and "b"
-/// get_union_count(hll_bin("a".to_string()), hll_bin("b".to_string()));
+/// let _ = get_union_count(hll_bin("a".to_string()), hll_bin("b".to_string()));
 ///
 /// // Intersect count of local HLL list with bin "b"
 /// let blob: Vec<u8> = vec![];
-/// get_union_count(hll_bin("b".to_string()), blob_val(blob));
+/// let _ = get_union_count(hll_bin("b".to_string()), blob_val(blob));
 /// ```
+#[must_use]
 pub fn get_intersect_count(list: Expression, bin: Expression) -> Expression {
     add_read(
         bin,
@@ -224,8 +233,9 @@ pub fn get_intersect_count(list: Expression, bin: Expression) -> Expression {
 /// use aerospike::expressions::hll::get_similarity;
 ///
 /// // Similarity of HLL bins "a" and "b" >= 0.75
-/// ge(get_similarity(hll_bin("a".to_string()), hll_bin("b".to_string())), float_val(0.75));
+/// let _ = ge(get_similarity(hll_bin("a".to_string()), hll_bin("b".to_string())), float_val(0.75));
 /// ```
+#[must_use]
 pub fn get_similarity(list: Expression, bin: Expression) -> Expression {
     add_read(
         bin,
@@ -247,8 +257,9 @@ pub fn get_similarity(list: Expression, bin: Expression) -> Expression {
 /// use aerospike::expressions::hll::describe;
 ///
 /// // Bin "a" `indexBitCount` < 10
-/// lt(get_by_index(ListReturnType::Values, ExpType::INT, int_val(0), describe(hll_bin("a".to_string())), &[]), int_val(10));
+/// let _ = lt(get_by_index(ListReturnType::Values, ExpType::INT, int_val(0), describe(hll_bin("a".to_string())), &[]), int_val(10));
 /// ```
+#[must_use]
 pub fn describe(bin: Expression) -> Expression {
     add_read(
         bin,
@@ -268,8 +279,9 @@ pub fn describe(bin: Expression) -> Expression {
 /// let list: Vec<Value> = vec![Value::from("x")];
 ///
 /// // Bin "a" may contain value "x"
-/// eq(may_contain(list_val(list), hll_bin("a".to_string())), int_val(1));
+/// let _ = eq(may_contain(list_val(list), hll_bin("a".to_string())), int_val(1));
 /// ```
+#[must_use]
 pub fn may_contain(list: Expression, bin: Expression) -> Expression {
     add_read(
         bin,

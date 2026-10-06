@@ -121,7 +121,6 @@ impl<'a> PeersParser<'a> {
 
         Ok(Some(Peer {
             node_name,
-            tls_name,
             hosts,
             replace_node: None,
             from_node_name: None,
@@ -266,7 +265,6 @@ mod tests {
         assert_eq!(result.peers.len(), 4);
 
         assert_eq!(result.peers[0].node_name, "n1");
-        assert_eq!(result.peers[0].tls_name, "t1");
         assert_eq!(
             result.peers[0].hosts,
             vec![
@@ -321,12 +319,10 @@ mod tests {
         assert_eq!(result.generation, 7);
         assert_eq!(result.peers.len(), 3);
         assert_eq!(result.peers[0].node_name, "BB924A0A129825A");
-        assert_eq!(result.peers[0].tls_name, "");
         assert_eq!(result.peers[0].hosts, vec![Host::new("127.0.0.1", 3109)]);
         assert_eq!(result.peers[1].node_name, "BB9A14D609EE096");
         assert_eq!(result.peers[1].hosts, vec![Host::new("127.0.0.1", 3110)]);
         assert_eq!(result.peers[2].node_name, "BB9A14D609EE099");
-        assert_eq!(result.peers[2].tls_name, "t1");
         assert_eq!(
             result.peers[2].hosts,
             vec![Host::new_tls("127.0.0.1", "t1", 3000)]

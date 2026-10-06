@@ -117,21 +117,6 @@ impl<'a> Partition<'a> {
         p
     }
 
-    /// Get the replica policy for SC (strong consistency) mode.
-    pub fn get_replica_policy_sc(replica: Replica, read_mode_sc: ReadModeSC) -> Replica {
-        match read_mode_sc {
-            ReadModeSC::Session => Replica::Master,
-            ReadModeSC::Linearize => {
-                if replica == Replica::PreferRack {
-                    Replica::Sequence
-                } else {
-                    replica
-                }
-            }
-            _ => replica,
-        }
-    }
-
     /// Get the appropriate node for this partition, dispatching to
     /// read or write node selection based on `is_write`.
     pub fn get_node(&mut self, cluster: &Cluster) -> Result<Arc<Node>> {

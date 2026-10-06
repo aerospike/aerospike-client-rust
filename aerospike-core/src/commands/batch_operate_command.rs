@@ -1029,7 +1029,6 @@ mod tests {
             aliases: vec![Host::new("127.0.0.1", 3000)],
             address: "127.0.0.1:3000".to_string(),
             client_policy: policy.clone(),
-            use_new_info: true,
             version: Version::default(),
             cluster_name: None,
             session: None,

@@ -138,7 +138,7 @@ impl Drop for Node {
 
 impl Node {
     #![allow(missing_docs)]
-    pub fn new(
+    pub(crate) fn new(
         client_policy: ClientPolicy,
         nv: Arc<NodeValidator>,
         metrics: Arc<NodeMetrics>,
@@ -229,6 +229,7 @@ impl Node {
 
     /// Cache the hostname that resolved to this node's IP. No-op on the
     /// second call — first writer wins.
+    #[doc(hidden)] // test support, not a stable API
     pub fn cache_hostname(&self, name: String) {
         let _ = self.hostname.set(name);
     }
@@ -239,22 +240,26 @@ impl Node {
     }
 
     /// Increments the reference count by 1.
+    #[doc(hidden)] // test support, not a stable API
     pub fn increment_reference_count(&self) {
         self.reference_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Resets the reference count to 0. Called at the start of each tend
     /// cycle, before peer refresh.
+    #[doc(hidden)] // test support, not a stable API
     pub fn reset_reference_count(&self) {
         self.reference_count.store(0, Ordering::Relaxed);
     }
 
     /// Resets the per-tend `partition_changed` flag.
+    #[doc(hidden)] // test support, not a stable API
     pub fn set_partition_changed(&self, changed: bool) {
         self.partition_changed.store(changed, Ordering::Relaxed);
     }
 
     /// Resets the per-tend `rebalance_changed` flag.
+    #[doc(hidden)] // test support, not a stable API
     pub fn set_rebalance_changed(&self, changed: bool) {
         self.rebalance_changed.store(changed, Ordering::Relaxed);
     }
@@ -276,7 +281,7 @@ impl Node {
     /// peers / partition / rebalance generations. Does NOT fetch the full
     /// peer list — that happens in [`refresh_peers`](Self::refresh_peers)
     /// only when `peers.gen_changed` ends up true.
-    pub async fn refresh(&self, peers: &Peers) -> Result<()> {
+    pub(crate) async fn refresh(&self, peers: &Peers) -> Result<()> {
         if !self.is_active() {
             return Ok(());
         }
@@ -360,7 +365,7 @@ impl Node {
     ///
     /// Only called when `peers.gen_changed` is true (i.e., when any node's
     /// peers generation changed during phase 1).
-    pub async fn refresh_peers(&self, peers: &Peers) -> Result<()> {
+    pub(crate) async fn refresh_peers(&self, peers: &Peers) -> Result<()> {
         // Don't refresh peers when node connection has already failed during this tend.
         if self.failures() > 0 || !self.is_active() {
             return Ok(());
@@ -427,6 +432,7 @@ impl Node {
     /// Commit a previously-staged peers-generation. Called by the cluster
     /// after `materialize_peers` confirms that every peer parsed by this
     /// node was reachable.
+    #[doc(hidden)] // test support, not a stable API
     pub fn commit_peers_generation(&self, generation: isize) {
         self.peers_generation.store(generation, Ordering::Relaxed);
     }
@@ -573,27 +579,12 @@ impl Node {
         }
     }
 
-    pub fn update_partitions(&self, info_map: &IndexMap<String, String>) -> Result<()> {
-        match info_map.get(PARTITION_GENERATION) {
-            None => {
-                return Err(Error::bad_response(
-                    "Missing partition generation".to_string(),
-                ))
-            }
-            Some(gen_string) => {
-                let gen = gen_string.parse::<isize>()?;
-                self.partition_generation.store(gen, Ordering::Relaxed);
-            }
-        }
-
-        Ok(())
-    }
-
+    #[doc(hidden)] // test support, not a stable API
     pub fn set_partition_generation(&self, gen: isize) {
         self.partition_generation.store(gen, Ordering::Relaxed);
     }
 
-    pub fn update_rebalance_generation(&self, info_map: &IndexMap<String, String>) -> Result<()> {
+    pub(crate) fn update_rebalance_generation(&self, info_map: &IndexMap<String, String>) -> Result<()> {
         if let Some(gen_string) = info_map.get(REBALANCE_GENERATION) {
             let gen = gen_string.parse::<isize>()?;
             self.rebalance_generation.store(gen, Ordering::Relaxed);
@@ -611,6 +602,7 @@ impl Node {
             .is_some_and(|r| *r == rack_id)
     }
 
+    #[doc(hidden)] // test support, not a stable API
     pub fn parse_rack(&self, buf: &str) -> Result<()> {
         let new_table = buf
             .split(';')
@@ -637,7 +629,7 @@ impl Node {
     }
 
     // Get a connection to the node from the connection pool
-    pub async fn get_connection(&self, hint: u8) -> Result<PooledConnection> {
+    pub(crate) async fn get_connection(&self, hint: u8) -> Result<PooledConnection> {
         if !self.is_active() {
             return Err(Error::invalid_node(format!(
                 "Cannot get a connection for node. The node `{self}` is inactive"
@@ -724,7 +716,7 @@ impl Node {
     }
 
     // Put a connection to the node back in the connection pool
-    pub fn put_connection(&self, mut pconn: PooledConnection) {
+    pub(crate) fn put_connection(&self, mut pconn: PooledConnection) {
         if self.is_active() {
             if let Some(conn) = pconn.conn.take() {
                 pconn.queue.put_back(conn);
@@ -746,7 +738,7 @@ impl Node {
     }
 
     // Adds a failure to the failure count
-    pub fn increase_failures(&self) -> usize {
+    pub(crate) fn increase_failures(&self) -> usize {
         self.failures.fetch_add(1, Ordering::Relaxed)
     }
 
@@ -765,15 +757,8 @@ impl Node {
     }
 
     // Add an alias to the node
-    pub fn add_alias(&self, alias: Host) {
-        let mut aliases = self.aliases();
-        aliases.push(alias);
-        self.aliases.store(Arc::new(aliases));
-        self.reference_count.fetch_add(1, Ordering::Relaxed);
-    }
-
     // Set the node inactive and close all connections in the pool
-    pub fn close(&self) {
+    pub(crate) fn close(&self) {
         self.inactivate();
     }
 
@@ -818,6 +803,17 @@ impl Node {
     /// next call reopens. Use this for tend-time traffic only —
     /// operational commands should go through the pool via
     /// [`info`](Self::info).
+    /// Tear down the tend connection if open, so the next call opens a
+    /// fresh socket.
+    #[doc(hidden)] // test support, not a stable API
+    pub async fn close_tend_connection(&self) {
+        let mut guard = self.tend_connection.lock().await;
+        if let Some(mut c) = guard.take() {
+            c.close();
+        }
+    }
+
+    #[doc(hidden)] // test support, not a stable API
     pub async fn tend_info(
         &self,
         policy: &AdminPolicy,
@@ -864,15 +860,6 @@ impl Node {
         }
     }
 
-    /// Tear down the tend connection if open. Called from `close()` and on
-    /// quick-restart so the next call opens a fresh socket.
-    pub async fn close_tend_connection(&self) {
-        let mut guard = self.tend_connection.lock().await;
-        if let Some(mut c) = guard.take() {
-            c.close();
-        }
-    }
-
     // Get the partition generation
     pub fn partition_generation(&self) -> isize {
         self.partition_generation.load(Ordering::Relaxed)
@@ -895,7 +882,7 @@ impl Node {
         self.peers_count.load(Ordering::Relaxed)
     }
 
-    /// Total number of times [`refresh`](Self::refresh) has been called
+    /// Total number of times the node has been refreshed by the tend loop
     /// (whether or not it succeeded). Used as a split-cluster guard.
     pub fn refresh_count(&self) -> usize {
         self.refresh_count.load(Ordering::Relaxed)
@@ -910,6 +897,7 @@ impl Node {
 
     /// Increment the per-node error counter. No-op when the cluster
     /// breaker is disabled (`max_error_rate == 0`).
+    #[doc(hidden)] // test support, not a stable API
     pub fn incr_error_rate(&self) {
         if self.client_policy.max_error_rate > 0 {
             self.error_rate_count.fetch_add(1, Ordering::Relaxed);
@@ -918,6 +906,7 @@ impl Node {
 
     /// `true` when the breaker is disabled or the count is still under
     /// the cluster-level threshold.
+    #[doc(hidden)] // test support, not a stable API
     pub fn error_rate_within_limit(&self) -> bool {
         let cluster_max = self.client_policy.max_error_rate;
         cluster_max == 0 || self.error_rate_count.load(Ordering::Relaxed) <= cluster_max
@@ -925,6 +914,7 @@ impl Node {
 
     /// Returns `Err(MaxErrorRate(addr))` when the breaker has tripped.
     /// Use before sending a command at this node.
+    #[doc(hidden)] // test support, not a stable API
     pub fn validate_error_count(&self) -> Result<()> {
         if self.error_rate_within_limit() {
             Ok(())
@@ -939,6 +929,7 @@ impl Node {
     /// the cluster cap). Previous window clean → next ceiling doubles
     /// (capped at cluster max); previous window tripped → next ceiling
     /// halves with a floor of 1.
+    #[doc(hidden)] // test support, not a stable API
     pub fn reset_error_rate(&self) {
         let cluster_max = self.client_policy.max_error_rate;
         if cluster_max == 0 {
@@ -1008,7 +999,7 @@ impl Node {
     /// so the pool is settled and the returned count is final.
     ///
     /// Returns the number of connections processed (reaped + refreshed).
-    pub async fn reap_and_refresh_idle_connections(&self) -> usize {
+    pub(crate) async fn reap_and_refresh_idle_connections(&self) -> usize {
         let policy = &self.client_policy;
         if policy.conn_pools_per_node == 0 {
             return 0;
@@ -1167,7 +1158,6 @@ mod node_tests {
             aliases: vec![Host::new("127.0.0.1", 3000)],
             address: "127.0.0.1:3000".to_string(),
             client_policy: policy.clone(),
-            use_new_info: true,
             version: Version::default(),
             cluster_name: None,
             session: None,
@@ -1283,7 +1273,6 @@ mod node_tests {
             aliases: vec![Host::new("127.0.0.1", 3000)],
             address: "127.0.0.1:3000".to_string(),
             client_policy: policy.clone(),
-            use_new_info: true,
             version: Version::default(),
             cluster_name: None,
             session: None,
@@ -1371,7 +1360,6 @@ mod node_tests {
             aliases: vec![Host::new("127.0.0.1", 3000)],
             address: "127.0.0.1:3000".to_string(),
             client_policy: policy.clone(),
-            use_new_info: true,
             version: Version::default(),
             cluster_name: None,
             session: None,
@@ -1416,7 +1404,6 @@ mod node_tests {
             aliases: vec![Host::new("127.0.0.1", 3000)],
             address: "127.0.0.1:3000".to_string(),
             client_policy: policy.clone(),
-            use_new_info: true,
             version: Version::default(),
             cluster_name: None,
             session: None,
@@ -1532,7 +1519,6 @@ mod pool_health_tests {
             aliases: vec![Host::new(&addr.ip().to_string(), addr.port())],
             address: addr.to_string(),
             client_policy: policy.clone(),
-            use_new_info: true,
             version: Version::default(),
             cluster_name: None,
             session: None,

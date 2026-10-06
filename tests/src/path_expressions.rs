@@ -34,7 +34,7 @@ use aerospike::{
 /// Helper to check whether the connected server supports CDT path expressions.
 /// Returns false if the version check can't be made or the version is too old.
 async fn server_supports_cdt_path_expressions(client: &aerospike::Client) -> bool {
-    match client.cluster.get_random_node() {
+    match client.random_node() {
         Ok(node) => node.version().supports_cdt_path_expressions(),
         Err(_) => false,
     }
@@ -43,7 +43,7 @@ async fn server_supports_cdt_path_expressions(client: &aerospike::Client) -> boo
 /// Helper for the enhanced 8.1.2 expression API
 /// (`in_list` / `map_keys` / `map_values` / `ctx_map_keys_in` / `ctx_and_filter`).
 async fn server_supports_enhanced_expression_api(client: &aerospike::Client) -> bool {
-    match client.cluster.get_random_node() {
+    match client.random_node() {
         Ok(node) => node.version().supports_enhanced_expression_api(),
         Err(_) => false,
     }

@@ -59,7 +59,7 @@ pub struct ExecuteTask {
 
 impl ExecuteTask {
     /// Creates a new `ExecuteTask`.
-    pub const fn new(cluster: Arc<Cluster>, task_id: u64, scan: bool) -> Self {
+    pub(crate) const fn new(cluster: Arc<Cluster>, task_id: u64, scan: bool) -> Self {
         ExecuteTask {
             cluster,
             task_id,
@@ -236,6 +236,8 @@ impl ExecuteTask {
         Ok(Status::InProgress)
     }
 }
+
+impl super::task::sealed::Sealed for ExecuteTask {}
 
 #[async_trait::async_trait]
 impl Task for ExecuteTask {

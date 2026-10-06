@@ -48,7 +48,7 @@ use futures::StreamExt;
 const BIN: &str = "edv-bin";
 
 async fn supports_error_detail(client: &Client) -> bool {
-    let ok = match client.cluster.get_random_node() {
+    let ok = match client.random_node() {
         Ok(node) => node.version().supports_extended_error_detail(),
         Err(_) => false,
     };
@@ -746,8 +746,7 @@ async fn batch_filtered_out_rows_keep_detail_and_node() {
 
     let mut bpolicy = aerospike::BatchPolicy::default();
     bpolicy.base_policy.error_detail_verbosity = 2;
-    // The batch-level filter lives on `BatchPolicy` itself, not on its base policy.
-    bpolicy.filter_expression = Some(eq(int_bin(BIN.to_string()), int_val(99)));
+    bpolicy.base_policy.filter_expression = Some(eq(int_bin(BIN.to_string()), int_val(99)));
     let brp = aerospike::BatchReadPolicy::default();
     let mut ops: Vec<aerospike::BatchOperation> = keys
         .iter()

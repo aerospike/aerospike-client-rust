@@ -414,7 +414,7 @@ async fn expression_bitwise() {
 
 /// Same gate as the string operations: op 55 arrived with them.
 async fn server_supports_b64_encode(client: &Client) -> bool {
-    let supported = match client.cluster.get_random_node() {
+    let supported = match client.random_node() {
         Ok(node) => node.version().supports_string_operations(),
         Err(_) => false,
     };

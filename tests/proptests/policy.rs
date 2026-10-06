@@ -369,7 +369,7 @@ pub fn batch_policy(
     )
         .prop_map(
             |(
-                base_policy,
+                mut base_policy,
                 concurrency,
                 allow_inline,
                 allow_inline_ssd,
@@ -377,13 +377,13 @@ pub fn batch_policy(
                 filter_expression,
                 replica,
             )| {
+                base_policy.filter_expression = filter_expression;
                 BatchPolicy {
                     base_policy,
                     concurrency,
                     allow_inline,
                     allow_inline_ssd,
                     respond_all_keys,
-                    filter_expression,
                     replica,
                 }
             },

@@ -962,12 +962,6 @@ impl Cluster {
         (*self.client_policy.load().clone()).clone()
     }
 
-    pub fn add_seeds(&self, new_seeds: &[Host]) {
-        let mut seeds = self.seeds.load().to_vec();
-        seeds.extend_from_slice(new_seeds);
-        self.seeds.store(Arc::new(seeds));
-    }
-
     /// Append only those hosts that aren't already in the seed list.
     /// Used after cluster stabilization to promote discovered nodes to
     /// fallback seeds without creating duplicates on repeated calls.
@@ -983,41 +977,6 @@ impl Cluster {
         if changed {
             self.seeds.store(Arc::new(seeds));
         }
-    }
-
-    pub fn alias_exists(&self, host: &Host) -> bool {
-        let aliases = self.aliases.load();
-        aliases.contains_key(host)
-    }
-
-    pub fn node_partitions(&self, node: &Node, namespace: &str) -> Vec<u16> {
-        let mut res: Vec<u16> = vec![];
-        let partitions = self.partition_map.load();
-
-        if let Some(node_array) = partitions.get(namespace) {
-            for (i, (_, tnode)) in node_array.nodes.iter().enumerate().take(node::PARTITIONS) {
-                if tnode.as_ref().is_some_and(|tnode| tnode.as_ref() == node) {
-                    res.push(i as u16);
-                }
-            }
-        }
-
-        res
-    }
-
-    pub async fn update_partitions(
-        &self,
-        partition_map: &mut PartitionTable,
-        node: &Arc<Node>,
-    ) -> Result<()> {
-        // Issue `replicas` + `partition-generation` over the node's
-        // long-lived tend connection (Java's `tendConnection` reuse).
-        let admin_policy = AdminPolicy {
-            timeout: self.client_policy.load().timeout,
-        };
-        let tokens = PartitionTokenizer::from_node(node, &admin_policy).await?;
-        tokens.update_partition(partition_map, node)?;
-        Ok(())
     }
 
     pub async fn update_rack_ids(&self, node: &Arc<Node>) -> Result<()> {
@@ -2142,11 +2101,6 @@ impl Cluster {
 
     pub fn get_node(&self, partition: &mut Partition<'_>) -> Result<Arc<Node>> {
         partition.get_node(self)
-    }
-
-    pub fn get_master_node(&self, namespace: &str, partition_id: usize) -> Result<Arc<Node>> {
-        let partition = Partition::new(namespace, partition_id);
-        partition.get_master_node(self)
     }
 
     pub fn get_random_node(&self) -> Result<Arc<Node>> {

@@ -992,7 +992,7 @@ impl Buffer {
                 self.data_offset += 12; // header(4) + ttl(4) + field_count(2) + op_count(2) = 12
                 self.data_offset += key.namespace.len() + FIELD_HEADER_SIZE as usize;
                 self.data_offset += key.set_name.len() + FIELD_HEADER_SIZE as usize;
-                self.data_offset += batch_op.size(&policy.filter_expression)?; // + HEADER
+                self.data_offset += batch_op.size(&policy.base_policy.filter_expression)?; // + HEADER
 
                 // Add txn field sizes
                 self.size_txn_batch(txn, ver, batch_op.has_write());
@@ -3792,10 +3792,8 @@ mod tests {
             } else {
                 "without one"
             };
-            let policy = BatchPolicy {
-                filter_expression: filter,
-                ..Default::default()
-            };
+            let mut policy = BatchPolicy::default();
+            policy.base_policy.filter_expression = filter;
 
             let mut buf = Buffer::with_pool(64 * 1024, test_pool());
             buf.set_batch_operate(&policy, &ops).expect("encodes");

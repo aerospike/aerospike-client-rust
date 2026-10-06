@@ -83,11 +83,9 @@ const MAX_PERMITS: usize = 256;
 /// * [`ClientPolicy`] for connection configuration
 pub struct Client {
     /// Cluster management object holding the cluster map and node connections.
-    ///
-    /// # See also
-    ///
-    /// * [`nodes`](Self::nodes), [`node_names`](Self::node_names), [`get_node`](Self::get_node)
-    pub cluster: Arc<Cluster>,
+    /// Reached through [`nodes`](Self::nodes), [`node_names`](Self::node_names),
+    /// [`get_node`](Self::get_node) and [`random_node`](Self::random_node).
+    pub(crate) cluster: Arc<Cluster>,
 }
 
 unsafe impl Send for Client {}
@@ -396,6 +394,32 @@ impl Client {
     /// ```
     pub fn nodes(&self) -> Vec<Arc<Node>> {
         self.cluster.nodes()
+    }
+
+    /// The cluster name this client validates nodes against
+    /// ([`ClientPolicy::cluster_name`]), or `None` when validation is off.
+    pub fn cluster_name(&self) -> Option<String> {
+        self.cluster.cluster_name()
+    }
+
+    /// A random active node, for commands that any node can answer.
+    pub fn random_node(&self) -> Result<Arc<Node>> {
+        self.cluster.get_random_node()
+    }
+
+    #[doc(hidden)] // test support, not a stable API
+    pub fn partition_map_ready(&self) -> bool {
+        self.cluster.partition_map_ready()
+    }
+
+    #[doc(hidden)] // test support, not a stable API
+    pub fn is_strong_consistency(&self, namespace: &str) -> Option<bool> {
+        self.cluster.is_strong_consistency(namespace)
+    }
+
+    #[doc(hidden)] // test support, not a stable API
+    pub fn partition_map_complete(&self) -> bool {
+        self.cluster.partition_map_complete()
     }
 
     /// The cluster name the connected servers report (`cluster-name` info),

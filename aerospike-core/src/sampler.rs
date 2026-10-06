@@ -16,7 +16,7 @@
 //!
 //! A [`Sampler`] is a small `Copy` value (no trait, no dynamic dispatch) that
 //! decides, per command, whether the command is recorded. It samples when a
-//! value drawn from a [`XorShift`] generator falls under `threshold` within
+//! value drawn from the per-node generator falls under `threshold` within
 //! `range`:
 //!
 //! - `range == threshold` → **always** sample.
@@ -26,6 +26,7 @@
 //! The default sampler in [`MetricsPolicy`](crate::metrics::MetricsPolicy) is
 //! [`Sampler::all`], so enabling metrics records every command.
 
+#[cfg(test)]
 use crate::xor_shift::XorShift;
 
 /// A probability sampler.
@@ -87,7 +88,8 @@ impl Sampler {
 
     /// Returns `true` if the event should be sampled, drawing from `rand`.
     #[must_use]
-    pub const fn should_sample(&self, rand: &mut XorShift) -> bool {
+    #[cfg(test)]
+    pub(crate) const fn should_sample(&self, rand: &mut XorShift) -> bool {
         // `range` is always >= 1 via the constructors; guard anyway so a
         // hand-built `Sampler { range: 0, .. }` can't divide by zero.
         if self.range == 0 {

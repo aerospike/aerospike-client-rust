@@ -988,11 +988,6 @@ impl Connection {
         Ok(())
     }
 
-    pub fn is_idle(&self) -> bool {
-        self.idle_deadline
-            .is_some_and(|idle_dl| Instant::now() >= idle_dl)
-    }
-
     /// Where this connection stands relative to its idle deadline. A deadline
     /// within `expiry_horizon` counts as expiring.
     pub(crate) fn idle_status(&self, now: Instant, expiry_horizon: Duration) -> IdleStatus {
@@ -1128,16 +1123,17 @@ impl Connection {
         self.bytes_read = 0;
     }
 
-    pub const fn bytes_read(&self) -> usize {
-        self.bytes_read
-    }
-
     /// Bytes read from the socket by the current command so far — the
     /// per-command total the bytes-received metrics report. Unlike
     /// [`bytes_read`](Self::bytes_read) it survives the header/body/segment
     /// state transitions inside a response, and the parser's closing
     /// `reset_state`; it is cleared only when the next command begins
     /// writing (`flush` / `write_all`).
+    #[cfg(all(test, feature = "rt-tokio"))]
+    pub(crate) const fn bytes_read(&self) -> usize {
+        self.bytes_read
+    }
+
     pub const fn bytes_received(&self) -> usize {
         self.bytes_received
     }

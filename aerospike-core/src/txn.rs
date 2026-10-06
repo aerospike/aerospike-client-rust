@@ -59,6 +59,7 @@ fn create_txn_id() -> i64 {
 
 /// Transaction state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TxnState {
     /// Transaction is open and accepting commands.
     Open,
@@ -88,6 +89,7 @@ pub const COMMIT_FAILED_ABORT_MESSAGE: &str =
 
 /// Transaction commit status code.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CommitStatus {
     /// Commit succeeded.
     Ok,
@@ -105,6 +107,7 @@ pub enum CommitStatus {
 
 /// Transaction abort status code.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AbortStatus {
     /// Abort succeeded.
     Ok,
@@ -124,6 +127,7 @@ pub enum AbortStatus {
 
 /// Transaction commit error status.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CommitErrorType {
     /// Transaction verify failed. Transaction aborted.
     VerifyFail,
@@ -239,7 +243,7 @@ impl Txn {
     }
 
     /// Set the transaction state.
-    pub fn set_state(&self, state: TxnState) {
+    pub(crate) fn set_state(&self, state: TxnState) {
         *write(&self.state) = state;
     }
 
@@ -247,7 +251,7 @@ impl Txn {
     /// state becomes [`TxnState::CommitFailed`] unless the transaction has
     /// already reached a terminal state ([`Committed`](TxnState::Committed) or
     /// [`Aborted`](TxnState::Aborted)), which are left untouched.
-    pub fn mark_commit_failed(&self) {
+    pub(crate) fn mark_commit_failed(&self) {
         let mut state = write(&self.state);
         if !matches!(*state, TxnState::Committed | TxnState::Aborted) {
             *state = TxnState::CommitFailed;
@@ -255,7 +259,7 @@ impl Txn {
     }
 
     /// Process the results of a record read. For internal use only.
-    pub fn on_read(&self, key: &Key, version: Option<u64>) {
+    pub(crate) fn on_read(&self, key: &Key, version: Option<u64>) {
         if let Some(ver) = version {
             let mut reads = write(&self.reads);
             reads.insert(key.digest, (key.clone(), Some(ver)));
@@ -281,7 +285,7 @@ impl Txn {
     }
 
     /// Process the results of a record write. For internal use only.
-    pub fn on_write(&self, key: &Key, version: Option<u64>, result_code: ResultCode) {
+    pub(crate) fn on_write(&self, key: &Key, version: Option<u64>, result_code: ResultCode) {
         if version.is_some() {
             let mut reads = write(&self.reads);
             reads.insert(key.digest, (key.clone(), version));
@@ -294,7 +298,7 @@ impl Txn {
     }
 
     /// Add key to write hash when write command is in doubt (usually caused by timeout).
-    pub fn on_write_in_doubt(&self, key: &Key) {
+    pub(crate) fn on_write_in_doubt(&self, key: &Key) {
         self.write_in_doubt.store(true, Ordering::Relaxed);
         write(&self.writes).insert(key.digest, key.clone());
         write(&self.reads).remove(&key.digest);
@@ -335,7 +339,7 @@ impl Txn {
 
     /// Set transaction namespace only if doesn't already exist.
     /// If namespace already exists, verify new namespace is the same.
-    pub fn set_namespace(&self, ns: &str) -> Result<()> {
+    pub(crate) fn set_namespace(&self, ns: &str) -> Result<()> {
         let mut guard = write(&self.namespace);
         match &*guard {
             None => {
@@ -354,9 +358,14 @@ impl Txn {
         Duration::from_secs(u64::from(self.timeout))
     }
 
-    /// Set transaction timeout in seconds.
-    pub const fn set_timeout(&mut self, timeout: Duration) {
+    /// Returns the transaction with its timeout set. A `Txn` is shared as
+    /// `Arc<Txn>` once commands run under it, so the timeout is chosen here,
+    /// at construction: `Arc::new(Txn::new().with_timeout(t))`. Zero (the
+    /// default) means the server's `transaction-duration` applies.
+    #[must_use]
+    pub const fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout.as_secs() as u32;
+        self
     }
 
     /// Get raw timeout value in seconds (for protocol encoding).
@@ -370,6 +379,7 @@ impl Txn {
     }
 
     /// Set transaction in-doubt status.
+    #[doc(hidden)] // test support, not a stable API
     pub fn set_in_doubt(&self, in_doubt: bool) {
         self.in_doubt.store(in_doubt, Ordering::Relaxed);
     }
@@ -381,7 +391,7 @@ impl Txn {
     }
 
     /// Return if the MRT monitor record should be closed/deleted.
-    pub fn close_monitor(&self) -> bool {
+    pub(crate) fn close_monitor(&self) -> bool {
         self.deadline.load(Ordering::Relaxed) != 0 && !self.write_in_doubt.load(Ordering::Relaxed)
     }
 
@@ -401,7 +411,7 @@ impl Txn {
     }
 
     /// Clear transaction. Remove all tracked keys and reset transient flags.
-    pub fn clear(&self) {
+    pub(crate) fn clear(&self) {
         *write(&self.namespace) = None;
         self.deadline.store(0, Ordering::Relaxed);
         self.write_in_doubt.store(false, Ordering::Relaxed);

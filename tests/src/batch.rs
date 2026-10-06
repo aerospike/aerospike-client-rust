@@ -1052,7 +1052,7 @@ async fn batch_row_error_carries_server_subcode_and_message() {
     let namespace: &str = common::namespace();
     let set_name = &common::rand_str(10);
 
-    let supported = match client.cluster.nodes().first() {
+    let supported = match client.nodes().first() {
         Some(node) => node.version().supports_extended_error_detail(),
         None => false,
     };
@@ -1507,7 +1507,7 @@ async fn batch_single_row_error_carries_server_subcode_and_message() {
     let namespace: &str = common::namespace();
     let set_name = &common::rand_str(10);
 
-    let supported = match client.cluster.nodes().first() {
+    let supported = match client.nodes().first() {
         Some(node) => node.version().supports_extended_error_detail(),
         None => false,
     };

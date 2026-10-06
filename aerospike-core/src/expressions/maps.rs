@@ -23,6 +23,7 @@ pub(crate) const MODULE: i64 = 0;
 
 /// Creates expression that writes key/value item to map bin.
 #[allow(clippy::trivially_copy_pass_by_ref)]
+#[must_use]
 pub fn put(
     policy: &MapPolicy,
     key: Expression,
@@ -52,6 +53,7 @@ pub fn put(
 
 /// Creates expression that writes each map item to map bin.
 #[allow(clippy::trivially_copy_pass_by_ref)]
+#[must_use]
 pub fn put_items(
     policy: &MapPolicy,
     map: Expression,
@@ -79,6 +81,7 @@ pub fn put_items(
 /// Creates expression that increments values by incr for all items identified by key.
 /// Valid only for numbers.
 #[allow(clippy::trivially_copy_pass_by_ref)]
+#[must_use]
 pub fn increment(
     policy: &MapPolicy,
     key: Expression,
@@ -97,6 +100,7 @@ pub fn increment(
 }
 
 /// Creates expression that removes all items in map.
+#[must_use]
 pub fn clear(bin: Expression, ctx: &[CdtContext]) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtMapOpType::Clear as u8)),
@@ -106,6 +110,7 @@ pub fn clear(bin: Expression, ctx: &[CdtContext]) -> Expression {
 }
 
 /// Creates expression that removes map item identified by key.
+#[must_use]
 pub fn remove_by_key<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     key: Expression,
@@ -122,6 +127,7 @@ pub fn remove_by_key<TMR: ToMapReturnTypeBitmask>(
 }
 
 /// Creates expression that removes map items identified by keys.
+#[must_use]
 pub fn remove_by_key_list<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     keys: Expression,
@@ -141,6 +147,7 @@ pub fn remove_by_key_list<TMR: ToMapReturnTypeBitmask>(
 ///
 /// If keyBegin is null, the range is less than keyEnd.
 /// If keyEnd is null, the range is greater than equal to keyBegin.
+#[must_use]
 pub fn remove_by_key_range<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     key_begin: Option<Expression>,
@@ -174,6 +181,7 @@ pub fn remove_by_key_range<TMR: ToMapReturnTypeBitmask>(
 /// * (5,-1) = [{4=2},{5=15},{9=10}]
 /// * (3,2) = [{9=10}]
 /// * (3,-2) = [{0=17},{4=2},{5=15},{9=10}]
+#[must_use]
 pub fn remove_by_key_relative_index_range<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     key: Expression,
@@ -201,6 +209,7 @@ pub fn remove_by_key_relative_index_range<TMR: ToMapReturnTypeBitmask>(
 /// * (5,-1,1) = [{4=2}]
 /// * (3,2,1) = [{9=10}]
 /// * (3,-2,2) = [{0=17}]
+#[must_use]
 pub fn remove_by_key_relative_index_range_count<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     key: Expression,
@@ -221,6 +230,7 @@ pub fn remove_by_key_relative_index_range_count<TMR: ToMapReturnTypeBitmask>(
 }
 
 /// Creates expression that removes map items identified by value.
+#[must_use]
 pub fn remove_by_value<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     value: Expression,
@@ -237,6 +247,7 @@ pub fn remove_by_value<TMR: ToMapReturnTypeBitmask>(
 }
 
 /// Creates expression that removes map items identified by values.
+#[must_use]
 pub fn remove_by_value_list<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     values: Expression,
@@ -256,6 +267,7 @@ pub fn remove_by_value_list<TMR: ToMapReturnTypeBitmask>(
 ///
 /// If valueBegin is null, the range is less than valueEnd.
 /// If valueEnd is null, the range is greater than equal to valueBegin.
+#[must_use]
 pub fn remove_by_value_range<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     value_begin: Option<Expression>,
@@ -286,6 +298,7 @@ pub fn remove_by_value_range<TMR: ToMapReturnTypeBitmask>(
 /// * (value,rank) = [removed items]
 /// * (11,1) = [{0=17}]
 /// * (11,-1) = [{9=10},{5=15},{0=17}]
+#[must_use]
 pub fn remove_by_value_relative_rank_range<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     value: Expression,
@@ -310,6 +323,7 @@ pub fn remove_by_value_relative_rank_range<TMR: ToMapReturnTypeBitmask>(
 /// * (value,rank,count) = [removed items]
 /// * (11,1,1) = [{0=17}]
 /// * (11,-1,1) = [{9=10}]
+#[must_use]
 pub fn remove_by_value_relative_rank_range_count<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     value: Expression,
@@ -330,6 +344,7 @@ pub fn remove_by_value_relative_rank_range_count<TMR: ToMapReturnTypeBitmask>(
 }
 
 /// Creates expression that removes map item identified by index.
+#[must_use]
 pub fn remove_by_index<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     index: Expression,
@@ -346,6 +361,7 @@ pub fn remove_by_index<TMR: ToMapReturnTypeBitmask>(
 }
 
 /// Creates expression that removes map items starting at specified index to the end of map.
+#[must_use]
 pub fn remove_by_index_range<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     index: Expression,
@@ -362,6 +378,7 @@ pub fn remove_by_index_range<TMR: ToMapReturnTypeBitmask>(
 }
 
 /// Creates expression that removes "count" map items starting at specified index.
+#[must_use]
 pub fn remove_by_index_range_count<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     index: Expression,
@@ -380,6 +397,7 @@ pub fn remove_by_index_range_count<TMR: ToMapReturnTypeBitmask>(
 }
 
 /// Creates expression that removes map item identified by rank.
+#[must_use]
 pub fn remove_by_rank<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     rank: Expression,
@@ -396,6 +414,7 @@ pub fn remove_by_rank<TMR: ToMapReturnTypeBitmask>(
 }
 
 /// Creates expression that removes map items starting at specified rank to the last ranked item.
+#[must_use]
 pub fn remove_by_rank_range<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     rank: Expression,
@@ -412,6 +431,7 @@ pub fn remove_by_rank_range<TMR: ToMapReturnTypeBitmask>(
 }
 
 /// Creates expression that removes "count" map items starting at specified rank.
+#[must_use]
 pub fn remove_by_rank_range_count<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     rank: Expression,
@@ -436,9 +456,10 @@ pub fn remove_by_rank_range_count<TMR: ToMapReturnTypeBitmask>(
 /// use aerospike::expressions::{gt, map_bin, int_val};
 /// use aerospike::expressions::maps::size;
 ///
-/// gt(size(map_bin("a".to_string()), &[]), int_val(7));
+/// let _ = gt(size(map_bin("a".to_string()), &[]), int_val(7));
 ///
 /// ```
+#[must_use]
 pub fn size(bin: Expression, ctx: &[CdtContext]) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(CdtMapOpType::Size as u8)),
@@ -456,9 +477,10 @@ pub fn size(bin: Expression, ctx: &[CdtContext]) -> Expression {
 /// use aerospike::MapReturnType;
 /// use aerospike::expressions::maps::get_by_key;
 ///
-/// gt(get_by_key(MapReturnType::Count, ExpType::INT, string_val("B".to_string()), map_bin("a".to_string()), &[]), int_val(0));
+/// let _ = gt(get_by_key(MapReturnType::Count, ExpType::INT, string_val("B".to_string()), map_bin("a".to_string()), &[]), int_val(0));
 /// ```
 ///
+#[must_use]
 pub fn get_by_key<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     value_type: ExpType,
@@ -481,6 +503,7 @@ pub fn get_by_key<TMR: ToMapReturnTypeBitmask>(
 /// If keyBegin is null, the range is less than keyEnd.
 /// If keyEnd is null, the range is greater than equal to keyBegin.
 /// Expression returns selected data specified by returnType.
+#[must_use]
 pub fn get_by_key_range<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     key_begin: Option<Expression>,
@@ -506,6 +529,7 @@ pub fn get_by_key_range<TMR: ToMapReturnTypeBitmask>(
 }
 
 /// Creates expression that selects map items identified by keys and returns selected data specified by returnType
+#[must_use]
 pub fn get_by_key_list<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     keys: Expression,
@@ -533,6 +557,7 @@ pub fn get_by_key_list<TMR: ToMapReturnTypeBitmask>(
 /// * (5,-1) = [{4=2},{5=15},{9=10}]
 /// * (3,2) = [{9=10}]
 /// * (3,-2) = [{0=17},{4=2},{5=15},{9=10}]
+#[must_use]
 pub fn get_by_key_relative_index_range<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     key: Expression,
@@ -562,6 +587,7 @@ pub fn get_by_key_relative_index_range<TMR: ToMapReturnTypeBitmask>(
 /// * (5,-1,1) = [{4=2}]
 /// * (3,2,1) = [{9=10}]
 /// * (3,-2,2) = [{0=17}]
+#[must_use]
 pub fn get_by_key_relative_index_range_count<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     key: Expression,
@@ -591,8 +617,9 @@ pub fn get_by_key_relative_index_range_count<TMR: ToMapReturnTypeBitmask>(
 /// use aerospike::MapReturnType;
 /// use aerospike::expressions::maps::get_by_value;
 ///
-/// gt(get_by_value(MapReturnType::Count, string_val("BBB".to_string()), map_bin("a".to_string()), &[]), int_val(0));
+/// let _ = gt(get_by_value(MapReturnType::Count, string_val("BBB".to_string()), map_bin("a".to_string()), &[]), int_val(0));
 /// ```
+#[must_use]
 pub fn get_by_value<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     value: Expression,
@@ -615,6 +642,7 @@ pub fn get_by_value<TMR: ToMapReturnTypeBitmask>(
 /// If valueEnd is null, the range is greater than equal to valueBegin.
 ///
 /// Expression returns selected data specified by returnType.
+#[must_use]
 pub fn get_by_value_range<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     value_begin: Option<Expression>,
@@ -640,6 +668,7 @@ pub fn get_by_value_range<TMR: ToMapReturnTypeBitmask>(
 }
 
 /// Creates expression that selects map items identified by values and returns selected data specified by returnType.
+#[must_use]
 pub fn get_by_value_list<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     values: Expression,
@@ -664,6 +693,7 @@ pub fn get_by_value_list<TMR: ToMapReturnTypeBitmask>(
 /// * (value,rank) = [selected items]
 /// * (11,1) = [{0=17}]
 /// * (11,-1) = [{9=10},{5=15},{0=17}]
+#[must_use]
 pub fn get_by_value_relative_rank_range<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     value: Expression,
@@ -690,6 +720,7 @@ pub fn get_by_value_relative_rank_range<TMR: ToMapReturnTypeBitmask>(
 /// * (value,rank,count) = [selected items]
 /// * (11,1,1) = [{0=17}]
 /// * (11,-1,1) = [{9=10}]
+#[must_use]
 pub fn get_by_value_relative_rank_range_count<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     value: Expression,
@@ -711,6 +742,7 @@ pub fn get_by_value_relative_rank_range_count<TMR: ToMapReturnTypeBitmask>(
 }
 
 /// Creates expression that selects map item identified by index and returns selected data specified by returnType.
+#[must_use]
 pub fn get_by_index<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     value_type: ExpType,
@@ -730,6 +762,7 @@ pub fn get_by_index<TMR: ToMapReturnTypeBitmask>(
 
 /// Creates expression that selects map items starting at specified index to the end of map and returns selected
 /// data specified by returnType.
+#[must_use]
 pub fn get_by_index_range<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     index: Expression,
@@ -748,6 +781,7 @@ pub fn get_by_index_range<TMR: ToMapReturnTypeBitmask>(
 
 /// Creates expression that selects "count" map items starting at specified index and returns selected data
 /// specified by returnType.
+#[must_use]
 pub fn get_by_index_range_count<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     index: Expression,
@@ -767,6 +801,7 @@ pub fn get_by_index_range_count<TMR: ToMapReturnTypeBitmask>(
 }
 
 /// Creates expression that selects map item identified by rank and returns selected data specified by returnType.
+#[must_use]
 pub fn get_by_rank<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     value_type: ExpType,
@@ -786,6 +821,7 @@ pub fn get_by_rank<TMR: ToMapReturnTypeBitmask>(
 
 /// Creates expression that selects map items starting at specified rank to the last ranked item and
 /// returns selected data specified by returnType.
+#[must_use]
 pub fn get_by_rank_range<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     rank: Expression,
@@ -804,6 +840,7 @@ pub fn get_by_rank_range<TMR: ToMapReturnTypeBitmask>(
 
 /// Creates expression that selects "count" map items starting at specified rank and returns selected
 /// data specified by returnType.
+#[must_use]
 pub fn get_by_rank_range_count<TMR: ToMapReturnTypeBitmask>(
     return_type: TMR,
     rank: Expression,

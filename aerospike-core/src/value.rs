@@ -175,6 +175,7 @@ impl fmt::Display for FloatValue {
 /// [`MapLike`](crate::MapLike)), and maps returned by the server decode
 /// as `OrderedMap` preserving the exact pair order the server sent.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Value {
     /// Empty value.
     Nil,
@@ -1407,9 +1408,17 @@ pub enum MapCollection<K: Eq, V> {
 
 /// Allows a `HashMap`, `IndexMap` or `BTreeMap` to be passed as the map
 /// argument to any map-taking method.
-pub trait MapLike<K: Eq, V> {
+pub trait MapLike<K: Eq, V>: map_like_sealed::Sealed {
     /// Convert into the map-collection sum type.
     fn into_map(self) -> MapCollection<K, V>;
+}
+
+/// `MapLike` is sealed: [`MapCollection`] has exactly three shapes.
+mod map_like_sealed {
+    pub trait Sealed {}
+    impl<K, V> Sealed for std::collections::HashMap<K, V> {}
+    impl<K, V> Sealed for indexmap::IndexMap<K, V> {}
+    impl<K, V> Sealed for std::collections::BTreeMap<K, V> {}
 }
 
 #[allow(clippy::implicit_hasher)]

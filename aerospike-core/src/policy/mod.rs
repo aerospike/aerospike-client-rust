@@ -223,6 +223,7 @@ where
 
 /// Defines algorithm used to determine the target node for a command. The replica algorithm only affects single record and batch commands.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum Replica {
     /// Use node containing key's master partition.
     Master,

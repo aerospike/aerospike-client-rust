@@ -25,7 +25,7 @@ use aerospike::{
 
 /// Check if the server supports MRT (version >= 8.0).
 async fn server_supports_mrt(client: &aerospike::Client) -> bool {
-    match client.cluster.get_random_node() {
+    match client.random_node() {
         Ok(node) => node.version().supports_mrt(),
         Err(_) => false,
     }

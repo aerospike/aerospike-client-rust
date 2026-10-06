@@ -18,7 +18,8 @@ use aerospike_rt::sleep;
 use aerospike_rt::time::{Duration, Instant};
 
 /// Status of task
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Status {
     /// long running task not found
     NotFound,
@@ -30,9 +31,14 @@ pub enum Status {
 
 static POLL_INTERVAL: Duration = Duration::from_secs(1);
 
+/// `Task` is sealed: the client creates every task, callers only wait on them.
+pub mod sealed {
+    pub trait Sealed {}
+}
+
 /// Base task interface
 #[async_trait::async_trait]
-pub trait Task {
+pub trait Task: sealed::Sealed {
     /// interface for query specific task status
     async fn query_status(&self) -> Result<Status>;
 

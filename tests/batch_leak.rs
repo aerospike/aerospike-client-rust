@@ -214,13 +214,13 @@ async fn retry_resplit_path_does_not_leak() {
         .await
         .expect("connect");
     let namespace = common::namespace();
-    if client.cluster.nodes().len() < 2 {
+    if client.nodes().len() < 2 {
         println!("SKIP: retry re-split needs >= 2 nodes");
         client.close().await.unwrap();
         return;
     }
     let keys = seed_keys(&client, namespace, 300).await;
-    let tripped = client.cluster.nodes()[0].clone();
+    let tripped = client.nodes()[0].clone();
     for _ in 0..16 {
         tripped.incr_error_rate();
     }

@@ -20,8 +20,9 @@ pub use self::filter::{EqFilterValue, Filter, RangeFilterValue};
 pub use self::index_types::{CollectionIndexType, IndexType};
 pub(crate) use self::node_partitions::NodePartitions;
 pub use self::partition_filter::PartitionFilter;
-pub use self::partition_status::PartitionStatus;
+pub(crate) use self::partition_status::PartitionStatus;
 pub(crate) use self::partition_tracker::{PartitionTracker, TrackerShared};
+#[doc(hidden)] // wire-level query-plan types, see the crate root
 pub use self::plan::{
     QueryPlan, QuerySelection, QueryWhereWire, FLAG_ENC_VARINT, FLAG_EXPLAIN, FLAG_HARD_HINT,
     FLAG_KNOWN, FLAG_REQUIRE_INDEX,
@@ -43,6 +44,7 @@ mod node_partitions;
 mod partition_filter;
 mod partition_status;
 mod partition_tracker;
+#[doc(hidden)]
 pub mod plan;
 mod recordset;
 #[cfg(feature = "lua")]

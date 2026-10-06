@@ -777,7 +777,7 @@ async fn cdt_list_create_persistent_top_level() {
 /// Whether the server implements `string_list_join`. It arrived with the string
 /// operations, so it carries the same version gate.
 async fn server_supports_list_join(client: &aerospike::Client) -> bool {
-    let supported = match client.cluster.get_random_node() {
+    let supported = match client.random_node() {
         Ok(node) => node.version().supports_string_operations(),
         Err(_) => false,
     };

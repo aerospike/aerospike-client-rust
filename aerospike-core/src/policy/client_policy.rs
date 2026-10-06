@@ -21,8 +21,9 @@ use crate::errors::{Error, Result};
 #[cfg(feature = "tls")]
 use tokio_rustls::rustls::ClientConfig;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 /// Determines authentication mode.
+#[non_exhaustive]
 pub enum AuthMode {
     /// No Authentication will be performed
     None,
@@ -46,6 +47,27 @@ pub enum AuthMode {
     /// password needs to be configured. Requires TLS and a client certificate.
     /// Requires server version 5.7.0+
     PKI,
+}
+
+/// Hand-written so a `{:?}` of a policy never prints a password.
+impl std::fmt::Debug for AuthMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthMode::None => f.write_str("None"),
+            AuthMode::PKI => f.write_str("PKI"),
+            AuthMode::Internal(user, _) => {
+                f.debug_tuple("Internal").field(user).field(&"<redacted>").finish()
+            }
+            AuthMode::External(user, _) => {
+                f.debug_tuple("External").field(user).field(&"<redacted>").finish()
+            }
+            AuthMode::ExternalInsecure(user, _) => f
+                .debug_tuple("ExternalInsecure")
+                .field(user)
+                .field(&"<redacted>")
+                .finish(),
+        }
+    }
 }
 
 /// TLS connection policy for TLS-enabled servers.

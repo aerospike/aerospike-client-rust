@@ -130,6 +130,20 @@
     of once per poll.
   * Lua `bytes` values grow to at most 128 MiB; every mutator reports failure past that instead
     of exhausting memory.
+  * **Breaking**, API lockdown before 3.0.0 (see `MIGRATION.md`):
+    `Client::cluster` is private; use `Client::nodes`, `node_names`, `get_node`, the new
+    `random_node` and `cluster_name`. The `Node`, `NodeMetrics` and `Txn` mutators that drove the
+    tend loop and the transaction state machine are crate-private (`Txn::set_timeout(&mut self)`
+    is `Txn::with_timeout(self, d)`), as are `PartitionFilter`'s bookkeeping fields and
+    `PartitionStatus`. `BatchPolicy::filter_expression` the field is gone: the batch-wide filter
+    is `base_policy.filter_expression`, which is what the encoder always read. `ResultCode`,
+    `ClientResultCode`, `Value`, `AuthMode`, `Replica`, the index, privilege, transaction and task
+    status enums are `#[non_exhaustive]`, so matches need a `_` arm. `EqFilterValue`,
+    `RangeFilterValue`, `MapLike`, `ToListWriteFlagsBitmask` and `Task` are sealed. The wire-level
+    query-plan types, `ParticleType` and the AEL packing helpers are hidden from the documentation;
+    `CITRUSLEAF_EPOCH` is `citrusleaf_epoch()` and `CITRUSLEAF_EPOCH_UNIX_SECS`.
+  * `AuthMode` no longer prints the password in `{:?}`; `task::Status` compares with `==`; every
+    expression and operation builder is `#[must_use]`, so a built-and-dropped expression warns.
   * The workspace builds clean under `clippy::pedantic` + `clippy::nursery` (core) and default clippy
     (every other crate, the examples, the benchmark tool and the integration tests) for every feature
     set, including `rt-async-std`. Visible side effects: `ToValue`/`FromValue` for `HashMap` accept

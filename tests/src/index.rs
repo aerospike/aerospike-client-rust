@@ -93,8 +93,7 @@ async fn create_index_using_expression() {
     let client = common::client().await;
 
     if client
-        .cluster
-        .get_random_node()
+        .random_node()
         .is_ok_and(|node| node.version() < &Version::new(8, 1, 0, 0))
     {
         info!("create_index_using_expression test is only supported in server versions 8.1.0.0+. Skipping.");
@@ -154,7 +153,7 @@ async fn blob_index_serves_a_blob_equality_filter() {
     let ns = common::namespace();
     let apolicy = AdminPolicy::default();
 
-    let supported = match client.cluster.nodes().first() {
+    let supported = match client.nodes().first() {
         Some(node) => node.version().supports_blob_index(),
         None => false,
     };
@@ -270,7 +269,7 @@ async fn integer_index_serves_range_and_equality_filters() {
     let ns = common::namespace();
     let apolicy = AdminPolicy::default();
 
-    let supported = match client.cluster.nodes().first() {
+    let supported = match client.nodes().first() {
         Some(node) => node.version().supports_integer_index(),
         None => false,
     };
@@ -356,8 +355,7 @@ async fn integer_index_serves_range_and_equality_filters() {
 async fn set_index_create_drop_recreate() {
     let client = common::client().await;
     let supported = client
-        .cluster
-        .get_random_node()
+        .random_node()
         .is_ok_and(|node| node.version().supports_set_index());
     if !supported {
         eprintln!("skipped: set indexes need server 8.1.2+");

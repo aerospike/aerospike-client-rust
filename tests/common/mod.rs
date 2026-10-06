@@ -215,8 +215,7 @@ pub async fn lock_index_ops() -> tokio::sync::MutexGuard<'static, ()> {
 
 async fn list_indexes(client: &Client, namespace: &str) -> Vec<HashMap<String, String>> {
     let node = client
-        .cluster
-        .get_random_node()
+        .random_node()
         .expect("no nodes available");
 
     let cmd = format!("sindex-list:namespace={namespace}");
@@ -437,7 +436,7 @@ pub fn rand_str(sz: usize) -> String {
 
 pub async fn enterprise_edition() -> bool {
     let client = client().await;
-    let node = client.cluster.get_random_node();
+    let node = client.random_node();
     if node.is_err() {
         return false;
     }
@@ -505,7 +504,7 @@ pub fn is_index_not_found(err: &Error) -> bool {
 /// Returns `false` on any communication error so tests that key off this
 /// default to the AP-compatible path.
 pub async fn namespace_is_sc(client: &aerospike::Client, ns: &str) -> bool {
-    let node = match client.cluster.get_random_node() {
+    let node = match client.random_node() {
         Ok(n) => n,
         Err(_) => return false,
     };
@@ -619,7 +618,7 @@ async fn explicit_record_ttl_probe(client: &aerospike::Client) -> bool {
 /// `info namespace/{ns}` output -- it's a config value, not something worth a
 /// synthetic behavioral probe like `explicit_record_ttl_probe`.
 async fn sc_allow_expunge_probe(client: &aerospike::Client) -> bool {
-    let node = match client.cluster.get_random_node() {
+    let node = match client.random_node() {
         Ok(n) => n,
         Err(_) => return false,
     };

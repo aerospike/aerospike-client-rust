@@ -17,7 +17,7 @@ async fn main() {
 
 /// True when `ns` is configured with strong consistency (required for MRT).
 async fn namespace_is_sc(client: &Client, ns: &str) -> bool {
-    let Ok(node) = client.cluster.get_random_node() else {
+    let Ok(node) = client.random_node() else {
         return false;
     };
     let info_key = format!("namespace/{ns}");
@@ -42,8 +42,7 @@ pub async fn run() {
         .expect("Failed to connect to cluster");
 
     let supported = client
-        .cluster
-        .get_random_node()
+        .random_node()
         .map(|n| n.version().supports_mrt())
         .unwrap_or(false);
     if !supported {

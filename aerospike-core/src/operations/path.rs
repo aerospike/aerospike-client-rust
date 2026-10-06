@@ -65,6 +65,7 @@ impl ModifyFlag {
 /// let path = Path::new().map_key("book").all_children().map_key("price");
 /// let op = select_by_path("myBin", SelectFlag::VALUE, &path);
 /// ```
+#[must_use]
 pub fn select_by_path(bin: &str, flag: SelectFlag, ctx: impl AsRef<[CdtContext]>) -> Operation {
     Operation {
         op: OperationType::CdtRead,
@@ -95,6 +96,7 @@ pub fn select_by_path(bin: &str, flag: SelectFlag, ctx: impl AsRef<[CdtContext]>
 /// // ...equivalently, via the ready-made wrapper:
 /// let op = remove("myBin", &path);
 /// ```
+#[must_use]
 pub fn modify_by_path(
     bin: &str,
     flag: ModifyFlag,
@@ -121,12 +123,14 @@ pub fn modify_by_path(
 /// location (`SelectFlag::VALUE`). Equivalent to
 /// `select_by_path(bin, SelectFlag::VALUE, ctx)`.
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn select_values(bin: &str, ctx: impl AsRef<[CdtContext]>) -> Operation {
     select_by_path(bin, SelectFlag::VALUE, ctx)
 }
 
 /// Convenience wrapper: select the matching *map keys* (`SelectFlag::MAP_KEY`).
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn select_map_keys(bin: &str, ctx: impl AsRef<[CdtContext]>) -> Operation {
     select_by_path(bin, SelectFlag::MAP_KEY, ctx)
 }
@@ -134,6 +138,7 @@ pub fn select_map_keys(bin: &str, ctx: impl AsRef<[CdtContext]>) -> Operation {
 /// Convenience wrapper: select map *key/value pairs*
 /// (`SelectFlag::MAP_KEY_VALUE`).
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn select_map_entries(bin: &str, ctx: impl AsRef<[CdtContext]>) -> Operation {
     select_by_path(bin, SelectFlag::MAP_KEY_VALUE, ctx)
 }
@@ -141,6 +146,7 @@ pub fn select_map_entries(bin: &str, ctx: impl AsRef<[CdtContext]>) -> Operation
 /// Convenience wrapper: select the *original tree shape* preserving only
 /// matching nodes (`SelectFlag::MATCHING_TREE`).
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn select_matching_tree(bin: &str, ctx: impl AsRef<[CdtContext]>) -> Operation {
     select_by_path(bin, SelectFlag::MATCHING_TREE, ctx)
 }
@@ -151,6 +157,7 @@ pub fn select_matching_tree(bin: &str, ctx: impl AsRef<[CdtContext]>) -> Operati
 /// Equivalent to
 /// `modify_by_path(bin, ModifyFlag::DEFAULT, exp, ctx)`.
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn modify(bin: &str, exp: Expression, ctx: impl AsRef<[CdtContext]>) -> Operation {
     modify_by_path(bin, ModifyFlag::DEFAULT, exp, ctx)
 }
@@ -158,6 +165,7 @@ pub fn modify(bin: &str, exp: Expression, ctx: impl AsRef<[CdtContext]>) -> Oper
 /// Convenience wrapper: modify with `NO_FAIL` so type-mismatched leaves
 /// are silently skipped instead of aborting the whole operation.
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn modify_no_fail(bin: &str, exp: Expression, ctx: impl AsRef<[CdtContext]>) -> Operation {
     modify_by_path(bin, ModifyFlag::NO_FAIL, exp, ctx)
 }
@@ -169,6 +177,7 @@ pub fn modify_no_fail(bin: &str, exp: Expression, ctx: impl AsRef<[CdtContext]>)
 /// Mirrors a common pattern (delete-by-filter / delete-by-key-set) that
 /// would otherwise require importing `expressions::exp_remove_result`.
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn remove(bin: &str, ctx: impl AsRef<[CdtContext]>) -> Operation {
     modify_by_path(
         bin,

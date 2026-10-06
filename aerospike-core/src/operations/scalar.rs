@@ -20,6 +20,7 @@ use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::Bin;
 
 /// Creates read all record bins database operation.
+#[must_use]
 pub const fn get() -> Operation {
     Operation {
         op: OperationType::Read,
@@ -30,6 +31,7 @@ pub const fn get() -> Operation {
 }
 
 /// Creates a read record header database operation.
+#[must_use]
 pub const fn get_header() -> Operation {
     Operation {
         op: OperationType::Read,
@@ -40,6 +42,7 @@ pub const fn get_header() -> Operation {
 }
 
 /// Creates read bin database operation.
+#[must_use]
 pub fn get_bin(bin_name: &str) -> Operation {
     Operation {
         op: OperationType::Read,
@@ -50,6 +53,7 @@ pub fn get_bin(bin_name: &str) -> Operation {
 }
 
 /// Creates set database operation.
+#[must_use]
 pub fn put(bin: &Bin) -> Operation {
     Operation {
         op: OperationType::Write,
@@ -60,6 +64,7 @@ pub fn put(bin: &Bin) -> Operation {
 }
 
 /// Creates string append database operation.
+#[must_use]
 pub fn append(bin: &Bin) -> Operation {
     Operation {
         op: OperationType::Append,
@@ -70,6 +75,7 @@ pub fn append(bin: &Bin) -> Operation {
 }
 
 /// Creates string prepend database operation.
+#[must_use]
 pub fn prepend(bin: &Bin) -> Operation {
     Operation {
         op: OperationType::Prepend,
@@ -80,6 +86,7 @@ pub fn prepend(bin: &Bin) -> Operation {
 }
 
 /// Creates integer add database operation.
+#[must_use]
 pub fn add(bin: &Bin) -> Operation {
     Operation {
         op: OperationType::Incr,
@@ -90,6 +97,7 @@ pub fn add(bin: &Bin) -> Operation {
 }
 
 /// Creates a touch database operation.
+#[must_use]
 pub const fn touch() -> Operation {
     Operation {
         op: OperationType::Touch,
@@ -100,6 +108,7 @@ pub const fn touch() -> Operation {
 }
 
 /// Creates delete database operation
+#[must_use]
 pub const fn delete() -> Operation {
     Operation {
         op: OperationType::Delete,

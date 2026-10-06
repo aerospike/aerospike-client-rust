@@ -54,13 +54,13 @@ pub struct PartitionFilter {
     /// field assignments with no `.await` inside, so an async mutex bought
     /// nothing, and unlike `std::sync::Mutex` this one neither allocates on
     /// first lock nor costs more than a byte per partition.
-    pub partitions: Option<Arc<Vec<Mutex<PartitionStatus>>>>,
+    pub(crate) partitions: Option<Arc<Vec<Mutex<PartitionStatus>>>>,
 
     /// Is partition completely scanned/queried.
-    pub done: AtomicBool,
+    pub(crate) done: AtomicBool,
 
     /// Should the partition be retried.
-    pub retry: AtomicBool,
+    pub(crate) retry: AtomicBool,
 }
 
 impl PartitionFilter {

@@ -31,7 +31,6 @@ pub struct NodeValidator {
     pub aliases: Vec<Host>,
     pub address: String,
     pub client_policy: ClientPolicy,
-    pub use_new_info: bool,
     pub version: Version,
     /// Cluster name the node reported in its `cluster-name` info response,
     /// normalized by [`normalize_cluster_name`]. Captured unconditionally so
@@ -69,7 +68,6 @@ impl NodeValidator {
             aliases: vec![],
             address: String::new(),
             client_policy,
-            use_new_info: true,
             version: Version::default(),
             cluster_name: None,
             session: None,

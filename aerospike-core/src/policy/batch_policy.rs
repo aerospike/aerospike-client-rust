@@ -77,10 +77,6 @@ pub struct BatchPolicy {
     /// Default: true
     pub respond_all_keys: bool, //= true;
 
-    /// Optional Filter Expression
-    #[cfg_attr(feature = "dynamic-config", config(skip))]
-    pub filter_expression: Option<Expression>,
-
     /// Defines algorithm used to determine the target node for a command. The replica algorithm only affects single record and batch commands.
     pub replica: Replica,
 }
@@ -91,9 +87,10 @@ impl BatchPolicy {
         BatchPolicy::default()
     }
 
-    /// Get the current Filter Expression
+    /// The filter expression every row of the batch is evaluated against
+    /// (`base_policy.filter_expression`).
     pub const fn filter_expression(&self) -> &Option<Expression> {
-        &self.filter_expression
+        &self.base_policy.filter_expression
     }
 }
 
@@ -105,7 +102,6 @@ impl Default for BatchPolicy {
             allow_inline: true,
             allow_inline_ssd: false,
             respond_all_keys: true,
-            filter_expression: None,
             replica: Replica::default(),
         }
     }

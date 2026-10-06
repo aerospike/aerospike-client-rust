@@ -151,6 +151,7 @@ impl<T: IntoIterator<Item = ExpReadFlags>> ToExpReadFlagBitmask for T {
 }
 
 /// Creates operation that performs a expression that writes to record bin.
+#[must_use]
 pub fn write_exp<E: ToExpWriteFlagBitmask>(bin: &str, exp: Expression, flags: E) -> Operation {
     let op = ExpOperation {
         encoder: Arc::new(pack_write_exp),
@@ -170,6 +171,7 @@ pub fn write_exp<E: ToExpWriteFlagBitmask>(bin: &str, exp: Expression, flags: E)
 /// For a pre-serialized expression, wrap the packed bytes with
 /// [`expressions::from_packed_bytes`](crate::expressions::from_packed_bytes)
 /// or [`expressions::from_base64`](crate::expressions::from_base64).
+#[must_use]
 pub fn read_exp<E: ToExpReadFlagBitmask>(name: &str, exp: Expression, flags: E) -> Operation {
     let op = ExpOperation {
         encoder: Arc::new(pack_read_exp),
