@@ -21,7 +21,7 @@ use flate2::Compression;
 
 use std::sync::Arc;
 
-use crate::batch::BatchOperation;
+use crate::batch::{BatchOp, BatchOperation};
 use crate::cluster::Node;
 use crate::commands::field_type::FieldType;
 use crate::commands::BatchAttr;
@@ -936,11 +936,11 @@ impl Buffer {
         // Multi-record-transaction verify/roll batches are homogeneous and use
         // a per-record layout that differs from read/write, so they get their
         // own encoders. The send/parse machinery is shared with this path.
-        match batch_ops.first().map(|(op, _)| op) {
-            Some(BatchOperation::TxnVerify { .. }) => {
+        match batch_ops.first().map(|(op, _)| &op.kind) {
+            Some(BatchOp::TxnVerify { .. }) => {
                 return self.set_batch_txn_verify(policy, batch_ops)
             }
-            Some(BatchOperation::TxnRoll { .. }) => {
+            Some(BatchOp::TxnRoll { .. }) => {
                 return self.set_batch_txn_roll(policy, batch_ops)
             }
             _ => {}
@@ -1030,9 +1030,8 @@ impl Buffer {
             if repeats[idx] {
                 self.write_u8(BATCH_MSG_REPEAT);
             } else {
-                match batch_op {
-                    BatchOperation::Read {
-                        br: _,
+                match &batch_op.kind {
+                    BatchOp::Read {
                         policy: brpolicy,
                         bins,
                         ops,
@@ -1080,8 +1079,7 @@ impl Buffer {
                             }
                         }
                     }
-                    BatchOperation::Write {
-                        br: _,
+                    BatchOp::Write {
                         policy: bwpolicy,
                         ops,
                     } => {
@@ -1096,10 +1094,7 @@ impl Buffer {
                             ver,
                         )?;
                     }
-                    BatchOperation::Delete {
-                        br: _,
-                        policy: bdpolicy,
-                    } => {
+                    BatchOp::Delete { policy: bdpolicy } => {
                         attr.set_batch_delete(bdpolicy, policy);
                         self.write_batch_write(
                             key,
@@ -1111,8 +1106,7 @@ impl Buffer {
                             ver,
                         )?;
                     }
-                    BatchOperation::UDF {
-                        br: _,
+                    BatchOp::Udf {
                         policy: bupolicy,
                         udf_name,
                         function_name,
@@ -1133,7 +1127,7 @@ impl Buffer {
                         self.write_args(args.as_deref(), FieldType::UdfArgList)?;
                     }
                     // Dispatched to dedicated encoders above; never reached here.
-                    BatchOperation::TxnVerify { .. } | BatchOperation::TxnRoll { .. } => {
+                    BatchOp::TxnVerify { .. } | BatchOp::TxnRoll { .. } => {
                         unreachable!("txn verify/roll use their own batch encoders")
                     }
                 }
@@ -1155,7 +1149,7 @@ impl Buffer {
     /// `setBatchTxnVerifyForOffsets` (`BATCH_MSG_INFO | BATCH_MSG_INFO4`, read +
     /// no-bindata, `INFO3_SC_READ_TYPE`, `INFO4_MRT_VERIFY_READ`, then the
     /// namespace/set fields and the record-version field). All `batch_ops` must
-    /// be [`BatchOperation::TxnVerify`].
+    /// be transaction verify rows ([`BatchOperation::txn_verify`]).
     pub(crate) fn set_batch_txn_verify(
         &mut self,
         policy: &BatchPolicy,
@@ -1166,7 +1160,8 @@ impl Buffer {
         self.data_offset += FIELD_HEADER_SIZE as usize + 5;
 
         for (op, _) in batch_ops {
-            if let BatchOperation::TxnVerify { br, version } = op {
+            if let BatchOp::TxnVerify { version } = &op.kind {
+                let br = &op.br;
                 self.data_offset += br.key.digest.len() + 4; // offset(4) + digest
                 self.data_offset += 5; // flags + read + write + info3 + info4
                 self.data_offset += 4; // field_count(2) + op_count(2)
@@ -1187,8 +1182,8 @@ impl Buffer {
         self.write_u8(Buffer::get_batch_flags(policy));
 
         for (idx, (op, _)) in batch_ops.iter().enumerate() {
-            if let BatchOperation::TxnVerify { br, version } = op {
-                let key = &br.key;
+            if let BatchOp::TxnVerify { version } = &op.kind {
+                let key = &op.br.key;
                 self.write_u32(idx as u32);
                 self.write_bytes(&key.digest);
                 self.write_u8(BATCH_MSG_INFO | BATCH_MSG_INFO4);
@@ -1218,7 +1213,7 @@ impl Buffer {
     /// whose txn path already emits the `BATCH_MSG_INFO|INFO4|GEN|TTL` header,
     /// durable-delete write attrs, `txn_attr`, and the MRT id/version/deadline
     /// fields — matching the Go client's `setBatchTxnRollForOffsets`. All
-    /// `batch_ops` must be [`BatchOperation::TxnRoll`].
+    /// `batch_ops` must be transaction roll rows ([`BatchOperation::txn_roll`]).
     pub(crate) fn set_batch_txn_roll(
         &mut self,
         policy: &BatchPolicy,
@@ -1228,8 +1223,8 @@ impl Buffer {
         self.data_offset += FIELD_HEADER_SIZE as usize + 5;
 
         for (op, _) in batch_ops {
-            if let BatchOperation::TxnRoll { br, txn, .. } = op {
-                let key = &br.key;
+            if let BatchOp::TxnRoll { txn, .. } = &op.kind {
+                let key = &op.br.key;
                 let ver = txn.get_read_version(key);
                 self.data_offset += key.digest.len() + 4;
                 self.data_offset += 12; // flags+read+write+info + expiration(4) + fc(2)+oc(2)
@@ -1250,8 +1245,8 @@ impl Buffer {
 
         let no_filter: Option<Expression> = None;
         for (idx, (op, _)) in batch_ops.iter().enumerate() {
-            if let BatchOperation::TxnRoll { br, txn, roll_attr } = op {
-                let key = &br.key;
+            if let BatchOp::TxnRoll { txn, roll_attr } = &op.kind {
+                let key = &op.br.key;
                 let ver = txn.get_read_version(key);
                 self.write_u32(idx as u32);
                 self.write_bytes(&key.digest);

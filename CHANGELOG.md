@@ -141,7 +141,9 @@
     status enums are `#[non_exhaustive]`, so matches need a `_` arm. `EqFilterValue`,
     `RangeFilterValue`, `MapLike`, `ToListWriteFlagsBitmask` and `Task` are sealed. The wire-level
     query-plan types, `ParticleType` and the AEL packing helpers are hidden from the documentation;
-    `CITRUSLEAF_EPOCH` is `citrusleaf_epoch()` and `CITRUSLEAF_EPOCH_UNIX_SECS`.
+    `CITRUSLEAF_EPOCH` is `citrusleaf_epoch()` and `CITRUSLEAF_EPOCH_UNIX_SECS`. `BatchOperation`
+    is an opaque struct: its variants (`Read`, `Write`, `Delete`, `UDF` and the hidden transaction
+    rows) can no longer be matched or built by hand; use the constructors and the result accessors.
   * `AuthMode` no longer prints the password in `{:?}`; `task::Status` compares with `==`; every
     expression and operation builder is `#[must_use]`, so a built-and-dropped expression warns.
   * The workspace builds clean under `clippy::pedantic` + `clippy::nursery` (core) and default clippy

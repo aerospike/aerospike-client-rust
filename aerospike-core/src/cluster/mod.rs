@@ -1504,7 +1504,7 @@ impl Cluster {
     ) {
         #[cfg(feature = "dynamic-config")]
         {
-            use crate::batch::BatchOperation;
+            use crate::batch::BatchOp;
             let Some(dc) = self.dyn_config.get() else {
                 return;
             };
@@ -1533,8 +1533,8 @@ impl Cluster {
             }
 
             for (op, _) in ops.iter_mut() {
-                match op {
-                    BatchOperation::Write { policy, .. } => {
+                match &mut op.kind {
+                    BatchOp::Write { policy, .. } => {
                         if let Some(cfg) = &dynamic.batch_write {
                             if let Some(send_key) = cfg.send_key {
                                 policy.send_key = send_key;
@@ -1544,21 +1544,19 @@ impl Cluster {
                             }
                         }
                     }
-                    BatchOperation::Delete { policy, .. } => {
+                    BatchOp::Delete { policy } => {
                         if let Some(cfg) = dynamic.batch_delete.clone() {
                             cfg.merge_into(policy);
                         }
                     }
-                    BatchOperation::UDF { policy, .. } => {
+                    BatchOp::Udf { policy, .. } => {
                         if let Some(cfg) = dynamic.batch_udf.clone() {
                             cfg.merge_into(policy);
                         }
                     }
                     // Reads carry no wire-patchable sub-policy here; txn
                     // verify/roll never flow through the public batch wire path.
-                    BatchOperation::Read { .. }
-                    | BatchOperation::TxnVerify { .. }
-                    | BatchOperation::TxnRoll { .. } => {}
+                    BatchOp::Read { .. } | BatchOp::TxnVerify { .. } | BatchOp::TxnRoll { .. } => {}
                 }
             }
         }

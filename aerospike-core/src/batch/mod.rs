@@ -329,48 +329,53 @@ impl BatchUDFPolicy {
     }
 }
 
-/// Represents a batch operation.
-/// Do not directly create the batch operations. Use the helper methods instead.
+/// One row of a batch call: a key, the operation to run at that key, and
+/// after the call its outcome.
+///
+/// Build rows with [`BatchOperation::read`], [`read_ops`](Self::read_ops),
+/// [`write`](Self::write), [`delete`](Self::delete) and [`udf`](Self::udf),
+/// pass them to [`Client::batch`](crate::Client::batch), then read the
+/// outcome through [`record`](Self::record), [`take_record`](Self::take_record),
+/// [`result_code`](Self::result_code), [`in_doubt`](Self::in_doubt) or the
+/// whole [`batch_record`](Self::batch_record). What the row does, and the
+/// policy it does it with, are fixed at construction and not inspectable.
 #[derive(Clone, Debug)]
-pub enum BatchOperation {
-    #[doc(hidden)]
+pub struct BatchOperation {
+    pub(crate) br: BatchRecord,
+    pub(crate) kind: BatchOp,
+}
+
+/// What a [`BatchOperation`] does at its key. Not exported: the encoders,
+/// the single-key fallback and the dynamic-config patcher match on it; users
+/// only ever see the opaque row.
+#[derive(Clone, Debug)]
+pub enum BatchOp {
     Read {
-        br: BatchRecord,
         policy: BatchReadPolicy,
         bins: Bins,
         ops: Option<Vec<Operation>>,
     },
-    #[doc(hidden)]
     Write {
-        br: BatchRecord,
         policy: BatchWritePolicy,
         ops: Vec<Operation>,
     },
-    #[doc(hidden)]
     Delete {
-        br: BatchRecord,
         policy: BatchDeletePolicy,
     },
-    #[doc(hidden)]
-    UDF {
-        br: BatchRecord,
+    Udf {
         policy: BatchUDFPolicy,
         udf_name: String,
         function_name: String,
         args: Option<Vec<Value>>,
     },
-    /// Multi-record-transaction *verify*: check a record's version. Internal —
-    /// built by the transaction roll/verify path, never by users.
-    #[doc(hidden)]
+    /// Multi-record-transaction *verify*: check a record's version. Built by
+    /// the transaction roll/verify path, never by users.
     TxnVerify {
-        br: BatchRecord,
         version: Option<u64>,
     },
     /// Multi-record-transaction *roll* forward/back. `roll_attr` is one of
-    /// `INFO4_MRT_ROLL_FORWARD` / `INFO4_MRT_ROLL_BACK`. Internal.
-    #[doc(hidden)]
+    /// `INFO4_MRT_ROLL_FORWARD` / `INFO4_MRT_ROLL_BACK`.
     TxnRoll {
-        br: BatchRecord,
         txn: Arc<crate::txn::Txn>,
         roll_attr: u8,
     },
@@ -379,38 +384,46 @@ pub enum BatchOperation {
 impl BatchOperation {
     /// Creates a batch read operation.
     pub fn read(policy: &BatchReadPolicy, key: Key, bins: Bins) -> Self {
-        BatchOperation::Read {
+        Self {
             br: BatchRecord::new(key, false),
-            policy: policy.clone(),
-            bins,
-            ops: None,
+            kind: BatchOp::Read {
+                policy: policy.clone(),
+                bins,
+                ops: None,
+            },
         }
     }
 
     /// Creates a batch read with multiple operations.
     pub fn read_ops(policy: &BatchReadPolicy, key: Key, ops: Vec<Operation>) -> Self {
-        BatchOperation::Read {
+        Self {
             br: BatchRecord::new(key, false),
-            policy: policy.clone(),
-            bins: Bins::None,
-            ops: Some(ops),
+            kind: BatchOp::Read {
+                policy: policy.clone(),
+                bins: Bins::None,
+                ops: Some(ops),
+            },
         }
     }
 
     /// Creates a batch write with multiple operations.
     pub fn write(policy: &BatchWritePolicy, key: Key, ops: Vec<Operation>) -> Self {
-        BatchOperation::Write {
+        Self {
             br: BatchRecord::new(key, true),
-            policy: policy.clone(),
-            ops,
+            kind: BatchOp::Write {
+                policy: policy.clone(),
+                ops,
+            },
         }
     }
 
     /// Creates a batch delete operation.
     pub fn delete(policy: &BatchDeletePolicy, key: Key) -> Self {
-        BatchOperation::Delete {
+        Self {
             br: BatchRecord::new(key, true),
-            policy: policy.clone(),
+            kind: BatchOp::Delete {
+                policy: policy.clone(),
+            },
         }
     }
 
@@ -422,30 +435,51 @@ impl BatchOperation {
         function_name: &str,
         args: Option<Vec<Value>>,
     ) -> Self {
-        BatchOperation::UDF {
+        Self {
             br: BatchRecord::new(key, true),
-            policy: policy.clone(),
-            udf_name: udf_name.into(),
-            function_name: function_name.into(),
-            args,
+            kind: BatchOp::Udf {
+                policy: policy.clone(),
+                udf_name: udf_name.into(),
+                function_name: function_name.into(),
+                args,
+            },
+        }
+    }
+
+    /// A transaction *verify* row: compare the record at `key` against the
+    /// `version` the transaction read. Encoded by the homogeneous
+    /// `set_batch_txn_verify` encoder only.
+    pub(crate) const fn txn_verify(key: Key, version: Option<u64>) -> Self {
+        Self {
+            br: BatchRecord::new(key, false),
+            kind: BatchOp::TxnVerify { version },
+        }
+    }
+
+    /// A transaction *roll* row for `key`. Encoded by the homogeneous
+    /// `set_batch_txn_roll` encoder only.
+    pub(crate) const fn txn_roll(key: Key, txn: Arc<crate::txn::Txn>, roll_attr: u8) -> Self {
+        Self {
+            br: BatchRecord::new(key, true),
+            kind: BatchOp::TxnRoll { txn, roll_attr },
         }
     }
 
     /// Returns true if this batch operation contains a write.
     pub(crate) const fn has_write(&self) -> bool {
-        match self {
-            Self::Read { .. } | Self::TxnVerify { .. } => false,
-            Self::Write { .. } | Self::Delete { .. } | Self::UDF { .. } | Self::TxnRoll { .. } => {
-                true
-            }
+        match self.kind {
+            BatchOp::Read { .. } | BatchOp::TxnVerify { .. } => false,
+            BatchOp::Write { .. }
+            | BatchOp::Delete { .. }
+            | BatchOp::Udf { .. }
+            | BatchOp::TxnRoll { .. } => true,
         }
     }
 
     pub(crate) fn size(&self, parent_fe: &Option<Expression>) -> Result<usize> {
-        match self {
-            Self::Read {
-                policy, bins, ops, ..
-            } => {
+        let br = &self.br;
+        match &self.kind {
+            BatchOp::Read { policy, bins, ops } => {
                 let mut size: usize = 0;
 
                 match (&policy.filter_expression, parent_fe) {
@@ -477,9 +511,7 @@ impl BatchOperation {
 
                 Ok(size)
             }
-            Self::Write {
-                br, policy, ops, ..
-            } => {
+            BatchOp::Write { policy, ops } => {
                 let mut size: usize = 2; // gen(2) = 2
 
                 match (&policy.filter_expression, parent_fe) {
@@ -515,7 +547,7 @@ impl BatchOperation {
                 }
                 Ok(size)
             }
-            Self::Delete { br, policy } => {
+            BatchOp::Delete { policy } => {
                 let mut size: usize = 2; // gen(2) = 2
 
                 match (&policy.filter_expression, parent_fe) {
@@ -537,8 +569,7 @@ impl BatchOperation {
 
                 Ok(size)
             }
-            Self::UDF {
-                br,
+            BatchOp::Udf {
                 policy,
                 udf_name,
                 function_name,
@@ -576,7 +607,7 @@ impl BatchOperation {
             // Txn verify/roll are encoded by dedicated homogeneous encoders
             // (`set_batch_txn_verify` / `set_batch_txn_roll`), not the generic
             // per-op sizing loop, so this is never consulted for them.
-            Self::TxnVerify { .. } | Self::TxnRoll { .. } => Ok(0),
+            BatchOp::TxnVerify { .. } | BatchOp::TxnRoll { .. } => Ok(0),
         }
     }
 
@@ -600,22 +631,8 @@ impl BatchOperation {
         }
 
         // Same namespace & set.
-        let key = match self {
-            Self::Read { br, .. }
-            | Self::Write { br, .. }
-            | Self::Delete { br, .. }
-            | Self::UDF { br, .. }
-            | Self::TxnVerify { br, .. }
-            | Self::TxnRoll { br, .. } => &br.key,
-        };
-        let key_prev = match prev {
-            Self::Read { br, .. }
-            | Self::Write { br, .. }
-            | Self::Delete { br, .. }
-            | Self::UDF { br, .. }
-            | Self::TxnVerify { br, .. }
-            | Self::TxnRoll { br, .. } => &br.key,
-        };
+        let key = &self.br.key;
+        let key_prev = &prev.br.key;
         if key.namespace != key_prev.namespace || key.set_name != key_prev.set_name {
             return false;
         }
@@ -626,48 +643,41 @@ impl BatchOperation {
         // compared by Arc identity — so cloned op lists (the natural
         // "build once, apply to N keys" pattern) repeat, and anything not
         // provably identical conservatively writes a full header.
-        match (self, prev) {
+        match (&self.kind, &prev.kind) {
             (
-                Self::Read {
+                BatchOp::Read {
                     policy: p,
                     bins: b,
                     ops: o,
-                    ..
                 },
-                Self::Read {
+                BatchOp::Read {
                     policy: pp,
                     bins: bp,
                     ops: op,
-                    ..
                 },
             ) => p == pp && b == bp && o == op,
-            (Self::Delete { policy: p, .. }, Self::Delete { policy: pp, .. }) => {
+            (BatchOp::Delete { policy: p }, BatchOp::Delete { policy: pp }) => {
                 !p.send_key && !pp.send_key && p == pp
             }
             (
-                Self::Write {
-                    policy: p, ops: o, ..
-                },
-                Self::Write {
+                BatchOp::Write { policy: p, ops: o },
+                BatchOp::Write {
                     policy: pp,
                     ops: op,
-                    ..
                 },
             ) => !p.send_key && !pp.send_key && p == pp && o == op,
             (
-                Self::UDF {
+                BatchOp::Udf {
                     policy: p,
                     udf_name: n,
                     function_name: f,
                     args: a,
-                    ..
                 },
-                Self::UDF {
+                BatchOp::Udf {
                     policy: pp,
                     udf_name: np,
                     function_name: fp,
                     args: ap,
-                    ..
                 },
             ) => !p.send_key && !pp.send_key && p == pp && n == np && f == fp && a == ap,
             _ => false,
@@ -675,14 +685,7 @@ impl BatchOperation {
     }
 
     pub(crate) fn key(&self) -> Key {
-        match self {
-            Self::Read { br, .. }
-            | Self::Write { br, .. }
-            | Self::Delete { br, .. }
-            | Self::UDF { br, .. }
-            | Self::TxnVerify { br, .. }
-            | Self::TxnRoll { br, .. } => br.key.clone(),
-        }
+        self.br.key.clone()
     }
 
     /// The parsed record for this operation, if the call found one.
@@ -733,25 +736,20 @@ impl BatchOperation {
             user_key: None,
             digest: [0; 20],
         };
-        Self::Read {
+        Self {
             br: BatchRecord::new(key, false),
-            policy: BatchReadPolicy::default(),
-            bins: Bins::None,
-            ops: None,
+            kind: BatchOp::Read {
+                policy: BatchReadPolicy::default(),
+                bins: Bins::None,
+                ops: None,
+            },
         }
     }
 
     /// The operation's batch record: its key, and after execution its
     /// result. Borrowed — the record lives inside the operation.
     pub const fn batch_record(&self) -> &BatchRecord {
-        match self {
-            Self::Read { br, .. }
-            | Self::Write { br, .. }
-            | Self::Delete { br, .. }
-            | Self::UDF { br, .. }
-            | Self::TxnVerify { br, .. }
-            | Self::TxnRoll { br, .. } => br,
-        }
+        &self.br
     }
 
     pub(crate) fn set_record(&mut self, record: Option<Record>) {
@@ -759,14 +757,7 @@ impl BatchOperation {
     }
 
     pub(crate) const fn record_mut(&mut self) -> &mut BatchRecord {
-        match self {
-            Self::Read { br, .. }
-            | Self::Write { br, .. }
-            | Self::Delete { br, .. }
-            | Self::UDF { br, .. }
-            | Self::TxnVerify { br, .. }
-            | Self::TxnRoll { br, .. } => br,
-        }
+        &mut self.br
     }
 
     /// Record this row's failure, see [`BatchRecord::set_error`].

@@ -86,6 +86,7 @@ instead of returning a new vector.
 | `batch(&self, &BatchPolicy, &[BatchOperation]) -> Result<Vec<BatchRecord>>` | `batch(&self, &BatchPolicy, &mut [BatchOperation]) -> Result<()>` |
 | `BatchOperation::batch_record(&self) -> BatchRecord` | `batch_record(&self) -> &BatchRecord`, plus `record()`, `take_record()`, `result_code()`, `in_doubt()`, `error()`, `node()` on the operation itself |
 | `BatchRecord { key, record, result_code, in_doubt }`, all public fields | `key` and `record` stay fields; `result_code()`, `in_doubt()`, `node()`, `error()`, `error_detail()`, `sub_code()`, `server_message()` are methods |
+| `match op { BatchOperation::Read { br, .. } => .. }` on the (hidden) enum variants | `BatchOperation` is a struct; the kind of operation is not inspectable after construction. Read the outcome through `batch_record()`, `record()`, `result_code()`, and keep your own index if you need to know which row was a read, write, delete or UDF |
 
 ```rust
 // 2.x

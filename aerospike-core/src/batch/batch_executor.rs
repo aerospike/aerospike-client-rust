@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::batch::{BatchHook, BatchOperation};
+use crate::batch::{BatchHook, BatchOp, BatchOperation};
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
 use crate::commands::{
@@ -263,10 +263,8 @@ impl BatchExecutor {
 
         // Build the right command for the variant, run it, and
         // capture the resulting record (or per-key error).
-        let result: std::result::Result<Option<crate::Record>, Error> = match batch_op {
-            BatchOperation::Read {
-                policy, bins, ops, ..
-            } => {
+        let result: std::result::Result<Option<crate::Record>, Error> = match &mut batch_op.kind {
+            BatchOp::Read { policy, bins, ops } => {
                 if let Some(op_list) = ops.as_ref() {
                     // Read-with-ops takes the operate path on a write
                     // policy because that's how single-record `operate`
@@ -287,13 +285,13 @@ impl BatchExecutor {
                     cmd.execute().await.map(|()| cmd.record.take())
                 }
             }
-            BatchOperation::Write { policy, ops, .. } => {
+            BatchOp::Write { policy, ops } => {
                 let mut wp = policy.to_write_policy(parent);
                 cluster.apply_batch_write(&mut wp);
                 let mut cmd = OperateCommand::new(&wp, cluster.clone(), &key, ops.as_slice());
                 cmd.execute().await.map(|()| cmd.read_command.record.take())
             }
-            BatchOperation::Delete { policy, .. } => {
+            BatchOp::Delete { policy } => {
                 let mut wp = policy.to_write_policy(parent);
                 cluster.apply_batch_delete(&mut wp);
                 let mut cmd = DeleteCommand::new(&wp, cluster.clone(), &key);
@@ -319,12 +317,11 @@ impl BatchExecutor {
                     Err(e) => Err(e),
                 }
             }
-            BatchOperation::UDF {
+            BatchOp::Udf {
                 policy,
                 udf_name,
                 function_name,
                 args,
-                ..
             } => {
                 let mut wp = policy.to_write_policy(parent);
                 cluster.apply_batch_udf(&mut wp);
@@ -340,7 +337,7 @@ impl BatchExecutor {
             }
             // Txn verify/roll never flow through the public batch executor; the
             // transaction roll path groups and dispatches them itself.
-            BatchOperation::TxnVerify { .. } | BatchOperation::TxnRoll { .. } => {
+            BatchOp::TxnVerify { .. } | BatchOp::TxnRoll { .. } => {
                 unreachable!("txn verify/roll are dispatched by the transaction roll path")
             }
         };
