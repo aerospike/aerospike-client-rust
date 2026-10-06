@@ -179,6 +179,32 @@ async fn query_single_consumer() {
 }
 
 #[aerospike_macro::test]
+async fn query_empty_filter_list_scans() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = create_test_set(&client, 20).await;
+    let qpolicy = QueryPolicy::default();
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.filters = Some(vec![]);
+    let rs = client
+        .query(&qpolicy, PartitionFilter::all(), statement)
+        .await
+        .unwrap();
+    let mut count = 0;
+    let mut rs = rs.into_stream();
+    while let Some(res) = rs.next().await {
+        match res {
+            Ok(_) => count += 1,
+            Err(err) => panic!("{:?}", err),
+        }
+    }
+    assert_eq!(count, 20);
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
 async fn query_single_consumer_with_cursor() {
     let client = common::client().await;
     let namespace = common::namespace();

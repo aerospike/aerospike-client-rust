@@ -117,6 +117,12 @@ impl Statement {
         }
     }
 
+    /// The secondary-index filter this statement queries by, or `None` for a
+    /// scan. An empty `filters` list is a scan, the same as `None`.
+    pub(crate) fn filter(&self) -> Option<&Filter> {
+        self.filters.as_ref().and_then(|filters| filters.first())
+    }
+
     /// Set Lua aggregation function parameters.
     pub fn set_aggregate_function(
         &mut self,

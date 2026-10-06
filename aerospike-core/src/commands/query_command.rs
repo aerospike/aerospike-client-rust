@@ -97,7 +97,7 @@ impl Command for QueryCommand<'_> {
 
     fn command_type(&self) -> crate::metrics::CommandType {
         // A statement with secondary-index filters is a query; otherwise a scan.
-        if self.statement.filters.is_some() {
+        if self.statement.filter().is_some() {
             crate::metrics::CommandType::Query
         } else {
             crate::metrics::CommandType::Scan
