@@ -106,9 +106,9 @@ impl WritePolicy {
         }
     }
 
-    /// Get the current Filter expression
-    pub const fn filter_expression(&self) -> &Option<Expression> {
-        &self.base_policy.filter_expression
+    /// The filter expression, if one is set (`base_policy.filter_expression`).
+    pub const fn filter_expression(&self) -> Option<&Expression> {
+        self.base_policy.filter_expression.as_ref()
     }
 }
 

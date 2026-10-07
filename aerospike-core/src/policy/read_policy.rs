@@ -53,9 +53,9 @@ impl Default for BasePolicy {
 }
 
 impl BasePolicy {
-    /// Get the Optional Filter Expression
-    pub const fn filter_expression(&self) -> &Option<Expression> {
-        &self.filter_expression
+    /// The filter expression, if one is set.
+    pub const fn filter_expression(&self) -> Option<&Expression> {
+        self.filter_expression.as_ref()
     }
 }
 

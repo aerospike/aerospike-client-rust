@@ -102,8 +102,8 @@ impl BatchPolicy {
 
     /// The filter expression every row of the batch is evaluated against
     /// (`base_policy.filter_expression`).
-    pub const fn filter_expression(&self) -> &Option<Expression> {
-        &self.base_policy.filter_expression
+    pub const fn filter_expression(&self) -> Option<&Expression> {
+        self.base_policy.filter_expression.as_ref()
     }
 }
 

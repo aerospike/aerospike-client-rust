@@ -176,6 +176,7 @@ a supported way to build a policy.
 |---|---|
 | `Statement.filters: Option<Vec<Filter>>`, `set_filter(f)` | `Statement.filter: Option<Filter>`, `set_filter(f)`; the server accepts one filter per query, which is all the old list ever allowed |
 | `Statement.aggregation` public field | private; `set_aggregate_function` is unchanged |
+| `filter_expression()` on `BasePolicy`, `WritePolicy`, `QueryPolicy`, `BatchPolicy` returned `&Option<Expression>` | returns `Option<&Expression>` |
 | `Filter::geo_within_region_cit(bin, region, cit)` and the other five `geo_*_cit` constructors | `Filter::geo_within_region(bin, region).collection_type(cit)`; `collection_type` chains on any filter |
 
 ### Acronyms in identifiers

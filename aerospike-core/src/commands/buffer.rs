@@ -63,7 +63,7 @@ impl QueryDirection<'_> {
         }
     }
 
-    const fn filter_expression(&self) -> &Option<Expression> {
+    const fn filter_expression(&self) -> Option<&Expression> {
         match self {
             QueryDirection::Foreground(p) => p.filter_expression(),
             QueryDirection::Background(p) => p.filter_expression(),
@@ -992,7 +992,7 @@ impl Buffer {
                 self.data_offset += 12; // header(4) + ttl(4) + field_count(2) + op_count(2) = 12
                 self.data_offset += key.namespace.len() + FIELD_HEADER_SIZE as usize;
                 self.data_offset += key.set_name.len() + FIELD_HEADER_SIZE as usize;
-                self.data_offset += batch_op.size(&policy.base_policy.filter_expression)?; // + HEADER
+                self.data_offset += batch_op.size(policy.filter_expression())?; // + HEADER
 
                 // Add txn field sizes
                 self.size_txn_batch(txn, ver, batch_op.has_write());
@@ -1809,8 +1809,8 @@ impl Buffer {
     }
 
     #[allow(clippy::ref_option)]
-    fn estimate_filter_size(&mut self, filter: &Option<Expression>) -> Result<usize> {
-        filter.as_ref().map_or(Ok(0), |filter| {
+    fn estimate_filter_size(&mut self, filter: Option<&Expression>) -> Result<usize> {
+        filter.map_or(Ok(0), |filter| {
             let filter_size = filter.pack(&mut None)?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             // filter_size + FIELD_HEADER_SIZE as usize

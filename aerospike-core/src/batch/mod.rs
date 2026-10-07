@@ -475,7 +475,7 @@ impl BatchOperation {
         }
     }
 
-    pub(crate) fn size(&self, parent_fe: &Option<Expression>) -> Result<usize> {
+    pub(crate) fn size(&self, parent_fe: Option<&Expression>) -> Result<usize> {
         let br = &self.br;
         match &self.kind {
             BatchOp::Read { policy, bins, ops } => {
