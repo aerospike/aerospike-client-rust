@@ -12,7 +12,7 @@ proptest_async::proptest! {
     ) {
         let client = common::singleton_client().await;
         let namespace = common::namespace();
-        let set_name = &common::prop_setname();
+        let set_name = common::prop_setname();
 
         let rpolicy = ReadPolicy::default();
         let wpolicy = WritePolicy::default();

@@ -153,7 +153,9 @@
     getters return `Option<&Expression>`. Every builder that stores a name or string value takes
     `impl Into<String>` (the expression bin builders, `Bin::new`, the operation builders, `Filter`,
     `Statement::new`), so `int_bin("a")` and `Bin::new("a", v)` work; an argument spelled
-    `"a".into()` no longer infers. `exp_*_loop_var` are `*_loop_var`. The `Policy` trait is no longer
+    `"a".into()` no longer infers. `exp_*_loop_var` are `*_loop_var`. `Key::new` takes its two
+    strings independently and `Key::key_with_digest` is the infallible `Key::with_digest`. The
+    `Policy` trait is no longer
     exported. Acronyms in
     identifiers are `UpperCamelCase`: `BatchUdfPolicy`, `UdfLang`, `ReadModeAp`/`ReadModeSc`,
     `ReadTouchTtl`, `HllPolicy`/`HllWriteFlags`, `Value::GeoJson`/`Value::Hll`, `AuthMode::Pki`,

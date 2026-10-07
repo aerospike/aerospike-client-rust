@@ -51,14 +51,15 @@ pub struct Key {
 impl Key {
     /// Construct a new key given a namespace, a set name and a user key value.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Only integers, strings and blobs (`Vec<u8>`) can be used as user keys. The constructor will
-    /// panic if any other value type is passed.
-    pub fn new<S>(namespace: S, set_name: S, key: Value) -> Result<Self>
-    where
-        S: Into<String>,
-    {
+    /// Only integers, strings and blobs (`Vec<u8>`) can be used as user keys;
+    /// any other value type is rejected with `InvalidArgument`.
+    pub fn new(
+        namespace: impl Into<String>,
+        set_name: impl Into<String>,
+        key: Value,
+    ) -> Result<Self> {
         let mut key = Key {
             namespace: namespace.into(),
             set_name: set_name.into(),
@@ -70,24 +71,24 @@ impl Key {
         Ok(key)
     }
 
-    /// Construct a new key from namespace, optional set name, user key and digest.
-    /// The server handles record identifiers by digest only.
-    /// The digest will be set to the provided value and not validated.
-    pub fn key_with_digest<S>(
-        namespace: String,
-        set_name: Option<String>,
-        key: Option<Value>,
+    /// Construct a key from a digest the caller already has, for example one
+    /// read back from a record or stored elsewhere. The server addresses
+    /// records by digest only, so the digest is taken as given and not
+    /// validated; an empty `set_name` means no set, and `user_key` is sent to
+    /// the server only when a write policy asks for it.
+    #[must_use]
+    pub fn with_digest(
+        namespace: impl Into<String>,
+        set_name: impl Into<String>,
+        user_key: Option<Value>,
         digest: [u8; 20],
-    ) -> Result<Self>
-    where
-        S: Into<String>,
-    {
-        Ok(Self {
-            namespace,
-            set_name: set_name.unwrap_or_default(),
-            user_key: key,
+    ) -> Self {
+        Self {
+            namespace: namespace.into(),
+            set_name: set_name.into(),
+            user_key,
             digest,
-        })
+        }
     }
 
     fn compute_digest(&mut self) -> Result<()> {
@@ -165,6 +166,24 @@ mod tests {
         ($c:expr, $n:expr) => {
             std::iter::repeat_n($c, $n).collect::<String>()
         };
+    }
+
+    #[test]
+    fn mixed_string_types_and_unsupported_user_keys() {
+        let ns = String::from("test");
+        let key = crate::Key::new(ns, "set", crate::Value::from(1)).unwrap();
+        assert_eq!(key.namespace, "test");
+        assert!(crate::Key::new("test", "set", crate::Value::from(1.5)).is_err());
+        assert!(crate::Key::new("test", "set", crate::Value::Nil).is_err());
+    }
+
+    #[test]
+    fn with_digest_keeps_the_digest_as_given() {
+        let digest = [7u8; 20];
+        let key = crate::Key::with_digest("test", "", None, digest);
+        assert_eq!(key.digest, digest);
+        assert_eq!(key.set_name, "");
+        assert!(key.user_key.is_none());
     }
 
     #[test]

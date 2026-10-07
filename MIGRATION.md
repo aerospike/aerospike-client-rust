@@ -180,6 +180,8 @@ a supported way to build a policy.
 | `int_bin("a".to_string())`, `string_val(s.to_string())`, `Bin::new("a".to_string(), v)` | the name parameters are `impl Into<String>`: `int_bin("a")`, `Bin::new("a", v)`; the old spelling still compiles, but `int_bin("a".into())` no longer infers and becomes `int_bin("a")` |
 | operation builders, `Filter` constructors and `Statement::new` took `&str` | `impl Into<String>`; a `String` can now be passed without borrowing |
 | `exp_int_loop_var(part)`, `exp_map_loop_var(part)`, … | `int_loop_var(part)`, `map_loop_var(part)`, … |
+| `Key::new<S>(ns: S, set: S, key)`, one string type for both | `Key::new(ns: impl Into<String>, set: impl Into<String>, key)`; still returns `Result` because unsupported user-key types are rejected |
+| `Key::key_with_digest::<S>(ns: String, set: Option<String>, key: Option<Value>, digest) -> Result<Key>` | `Key::with_digest(ns, set, key, digest) -> Key`; an empty set name means no set |
 | `Filter::geo_within_region_cit(bin, region, cit)` and the other five `geo_*_cit` constructors | `Filter::geo_within_region(bin, region).collection_type(cit)`; `collection_type` chains on any filter |
 
 ### Acronyms in identifiers
