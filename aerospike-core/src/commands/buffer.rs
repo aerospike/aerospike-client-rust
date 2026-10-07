@@ -1443,7 +1443,7 @@ impl Buffer {
         node_partitions: Option<&NodePartitions>,
         execute_where: Option<&[u8]>,
     ) -> Result<()> {
-        let filter = statement.filters.as_ref().map(|filters| &filters[0]);
+        let filter = statement.filter();
         let is_background = direction.is_background();
         let supports_ops_ext = node.version().supports_query_ops_projection_ext();
         let records_per_second = direction.records_per_second();

@@ -1960,7 +1960,7 @@ impl Client {
         }
 
         let task_id: u64 = rand::random();
-        let scan = statement.filters.is_none();
+        let scan = statement.filter().is_none();
 
         let mut last_err: Option<Error> = None;
         for node in &nodes {
@@ -2034,7 +2034,7 @@ impl Client {
         }
 
         let task_id: u64 = rand::random();
-        let scan = statement.filters.is_none();
+        let scan = statement.filter().is_none();
 
         let mut last_err: Option<Error> = None;
         for node in &nodes {
