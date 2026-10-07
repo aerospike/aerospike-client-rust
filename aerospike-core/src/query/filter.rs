@@ -236,14 +236,14 @@ fn bound_particle_type(value: &Value) -> u8 {
 impl Filter {
     /// Creates a new filter instance. For internal use only.
     pub(crate) fn new(
-        bin_name: &str,
+        bin_name: impl Into<String>,
         collection_index_type: CollectionIndexType,
         value_particle_type: u8,
         begin: Value,
         end: Value,
     ) -> Self {
         Filter {
-            bin_name: bin_name.to_owned(),
+            bin_name: bin_name.into(),
             collection_index_type,
             value_particle_type,
             begin,
@@ -259,7 +259,7 @@ impl Filter {
     ///
     /// Bytes must already be in execute shape (`bin_name_len = 0` when paired with field `21`).
     pub(crate) fn from_wire_range(
-        index_name: &str,
+        index_name: impl Into<String>,
         range_bytes: Vec<u8>,
         collection_index_type: CollectionIndexType,
     ) -> Self {
@@ -269,7 +269,7 @@ impl Filter {
             value_particle_type: ParticleType::Integer as u8,
             begin: Value::from(0_i64),
             end: Value::from(0_i64),
-            index_name: Some(index_name.to_owned()),
+            index_name: Some(index_name.into()),
             context: None,
             expression: None,
             wire_range_bytes: Some(range_bytes),
@@ -282,7 +282,7 @@ impl Filter {
 
     /// Creates a new filter instance that targets a specific secondary index by name.
     pub(crate) fn new_by_index(
-        index_name: &str,
+        index_name: impl Into<String>,
         collection_index_type: CollectionIndexType,
         value_particle_type: u8,
         begin: Value,
@@ -294,7 +294,7 @@ impl Filter {
             value_particle_type,
             begin,
             end,
-            index_name: Some(index_name.to_owned()),
+            index_name: Some(index_name.into()),
             context: None,
             expression: None,
             wire_range_bytes: None,
@@ -316,7 +316,7 @@ impl Filter {
     /// let f = Filter::equal("bin_name", "hello");
     /// let f = Filter::equal("bin_name", vec![1u8, 2, 3]);
     /// ```
-    pub fn equal(bin_name: &str, value: impl EqFilterValue) -> Self {
+    pub fn equal(bin_name: impl Into<String>, value: impl EqFilterValue) -> Self {
         let val = value.into_filter_value();
         Filter::new(
             bin_name,
@@ -328,7 +328,7 @@ impl Filter {
     }
 
     /// Creates an equality filter for query targeting a specific secondary index by name.
-    pub fn equal_by_index(index_name: &str, value: impl EqFilterValue) -> Self {
+    pub fn equal_by_index(index_name: impl Into<String>, value: impl EqFilterValue) -> Self {
         let val = value.into_filter_value();
         Filter::new_by_index(
             index_name,
@@ -351,7 +351,7 @@ impl Filter {
     /// # use aerospike_core::query::Filter;
     /// let f = Filter::range("bin_name", 0_i64, 100_i64);
     /// ```
-    pub fn range(bin_name: &str, begin: impl RangeFilterValue, end: impl RangeFilterValue) -> Self {
+    pub fn range(bin_name: impl Into<String>, begin: impl RangeFilterValue, end: impl RangeFilterValue) -> Self {
         let begin = begin.into_filter_value();
         let end = end.into_filter_value();
         Filter::new(
@@ -365,7 +365,7 @@ impl Filter {
 
     /// Creates a range filter for query targeting a specific secondary index by name.
     pub fn range_by_index(
-        index_name: &str,
+        index_name: impl Into<String>,
         begin: impl RangeFilterValue,
         end: impl RangeFilterValue,
     ) -> Self {
@@ -394,7 +394,7 @@ impl Filter {
     /// # use aerospike_core::CollectionIndexType;
     /// let f = Filter::contains("bin_name", 42_i64, CollectionIndexType::List);
     /// ```
-    pub fn contains(bin_name: &str, value: impl EqFilterValue, cit: CollectionIndexType) -> Self {
+    pub fn contains(bin_name: impl Into<String>, value: impl EqFilterValue, cit: CollectionIndexType) -> Self {
         let val = value.into_filter_value();
         Filter::new(bin_name, cit, bound_particle_type(&val), val.clone(), val)
     }
@@ -402,7 +402,7 @@ impl Filter {
     /// Creates a contains filter for query on a collection index targeting a specific secondary
     /// index by name.
     pub fn contains_by_index(
-        index_name: &str,
+        index_name: impl Into<String>,
         value: impl EqFilterValue,
         cit: CollectionIndexType,
     ) -> Self {
@@ -424,7 +424,7 @@ impl Filter {
     /// let f = Filter::contains_range("bin_name", 0_i64, 100_i64, CollectionIndexType::List);
     /// ```
     pub fn contains_range(
-        bin_name: &str,
+        bin_name: impl Into<String>,
         begin: impl RangeFilterValue,
         end: impl RangeFilterValue,
         cit: CollectionIndexType,
@@ -437,7 +437,7 @@ impl Filter {
     /// Creates a contains range filter for query on a collection index targeting a specific
     /// secondary index by name.
     pub fn contains_range_by_index(
-        index_name: &str,
+        index_name: impl Into<String>,
         begin: impl RangeFilterValue,
         end: impl RangeFilterValue,
         cit: CollectionIndexType,
@@ -454,7 +454,7 @@ impl Filter {
     /// Creates a geo-spatial "points within region" filter for queries.
     ///
     /// For a collection index, chain [`collection_type`](Self::collection_type).
-    pub fn geo_within_region(bin_name: &str, region: &str) -> Self {
+    pub fn geo_within_region(bin_name: impl Into<String>, region: &str) -> Self {
         let region = Value::String(region.to_owned());
         Filter::new(
             bin_name,
@@ -467,7 +467,7 @@ impl Filter {
 
     /// Creates a geo-spatial "points within region" filter targeting a specific secondary index
     /// by name.
-    pub fn geo_within_region_by_index(index_name: &str, region: &str) -> Self {
+    pub fn geo_within_region_by_index(index_name: impl Into<String>, region: &str) -> Self {
         let region = Value::String(region.to_owned());
         Filter::new_by_index(
             index_name,
@@ -485,7 +485,7 @@ impl Filter {
     /// Creates a geo-spatial "points within radius" filter for queries.
     ///
     /// For a collection index, chain [`collection_type`](Self::collection_type).
-    pub fn geo_within_radius(bin_name: &str, lng: f64, lat: f64, radius: f64) -> Self {
+    pub fn geo_within_radius(bin_name: impl Into<String>, lng: f64, lat: f64, radius: f64) -> Self {
         let geo_json = geo_circle_json(lng, lat, radius);
         Filter::new(
             bin_name,
@@ -498,7 +498,7 @@ impl Filter {
 
     /// Creates a geo-spatial "points within radius" filter targeting a specific secondary index
     /// by name.
-    pub fn geo_within_radius_by_index(index_name: &str, lng: f64, lat: f64, radius: f64) -> Self {
+    pub fn geo_within_radius_by_index(index_name: impl Into<String>, lng: f64, lat: f64, radius: f64) -> Self {
         let geo_json = geo_circle_json(lng, lat, radius);
         Filter::new_by_index(
             index_name,
@@ -516,7 +516,7 @@ impl Filter {
     /// Creates a geo-spatial "regions containing point" filter for queries.
     ///
     /// For a collection index, chain [`collection_type`](Self::collection_type).
-    pub fn geo_contains(bin_name: &str, point: &str) -> Self {
+    pub fn geo_contains(bin_name: impl Into<String>, point: &str) -> Self {
         let point = Value::String(point.to_owned());
         Filter::new(
             bin_name,
@@ -529,7 +529,7 @@ impl Filter {
 
     /// Creates a geo-spatial "regions containing point" filter targeting a specific secondary
     /// index by name.
-    pub fn geo_contains_by_index(index_name: &str, point: &str) -> Self {
+    pub fn geo_contains_by_index(index_name: impl Into<String>, point: &str) -> Self {
         let point = Value::String(point.to_owned());
         Filter::new_by_index(
             index_name,

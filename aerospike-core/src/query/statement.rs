@@ -72,10 +72,10 @@ impl Statement {
     ///
     /// let stmt = Statement::new("foo", "bar", Bins::from(["name", "age"]));
     /// ```
-    pub fn new(namespace: &str, set_name: &str, bins: Bins) -> Self {
+    pub fn new(namespace: impl Into<String>, set_name: impl Into<String>, bins: Bins) -> Self {
         Statement {
-            namespace: namespace.to_owned(),
-            set_name: set_name.to_owned(),
+            namespace: namespace.into(),
+            set_name: set_name.into(),
             bins,
             aggregation: None,
             filter: None,
@@ -116,13 +116,13 @@ impl Statement {
     /// Set Lua aggregation function parameters.
     pub fn set_aggregate_function(
         &mut self,
-        package_name: &str,
-        function_name: &str,
+        package_name: impl Into<String>,
+        function_name: impl Into<String>,
         function_args: Option<&[Value]>,
     ) {
         let agg = Aggregation {
-            package_name: package_name.to_owned(),
-            function_name: function_name.to_owned(),
+            package_name: package_name.into(),
+            function_name: function_name.into(),
             function_args: function_args.map(<[Value]>::to_vec),
         };
         self.aggregation = Some(agg);

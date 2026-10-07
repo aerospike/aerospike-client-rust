@@ -177,6 +177,9 @@ a supported way to build a policy.
 | `Statement.filters: Option<Vec<Filter>>`, `set_filter(f)` | `Statement.filter: Option<Filter>`, `set_filter(f)`; the server accepts one filter per query, which is all the old list ever allowed |
 | `Statement.aggregation` public field | private; `set_aggregate_function` is unchanged |
 | `filter_expression()` on `BasePolicy`, `WritePolicy`, `QueryPolicy`, `BatchPolicy` returned `&Option<Expression>` | returns `Option<&Expression>` |
+| `int_bin("a".to_string())`, `string_val(s.to_string())`, `Bin::new("a".to_string(), v)` | the name parameters are `impl Into<String>`: `int_bin("a")`, `Bin::new("a", v)`; the old spelling still compiles, but `int_bin("a".into())` no longer infers and becomes `int_bin("a")` |
+| operation builders, `Filter` constructors and `Statement::new` took `&str` | `impl Into<String>`; a `String` can now be passed without borrowing |
+| `exp_int_loop_var(part)`, `exp_map_loop_var(part)`, … | `int_loop_var(part)`, `map_loop_var(part)`, … |
 | `Filter::geo_within_region_cit(bin, region, cit)` and the other five `geo_*_cit` constructors | `Filter::geo_within_region(bin, region).collection_type(cit)`; `collection_type` chains on any filter |
 
 ### Acronyms in identifiers

@@ -109,7 +109,7 @@ crate::flags::bit_flags! {
 
 /// Creates operation that performs a expression that writes to record bin.
 #[must_use]
-pub fn write_exp(bin: &str, exp: Expression, flags: ExpWriteFlags) -> Operation {
+pub fn write_exp(bin: impl Into<String>, exp: Expression, flags: ExpWriteFlags) -> Operation {
     let op = ExpOperation {
         encoder: Arc::new(pack_write_exp),
         policy: flags.bits(),
@@ -129,7 +129,7 @@ pub fn write_exp(bin: &str, exp: Expression, flags: ExpWriteFlags) -> Operation 
 /// [`expressions::from_packed_bytes`](crate::expressions::from_packed_bytes)
 /// or [`expressions::from_base64`](crate::expressions::from_base64).
 #[must_use]
-pub fn read_exp(name: &str, exp: Expression, flags: ExpReadFlags) -> Operation {
+pub fn read_exp(name: impl Into<String>, exp: Expression, flags: ExpReadFlags) -> Operation {
     let op = ExpOperation {
         encoder: Arc::new(pack_read_exp),
         policy: flags.bits(),

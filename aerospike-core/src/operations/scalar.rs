@@ -43,7 +43,7 @@ pub const fn get_header() -> Operation {
 
 /// Creates read bin database operation.
 #[must_use]
-pub fn get_bin(bin_name: &str) -> Operation {
+pub fn get_bin(bin_name: impl Into<String>) -> Operation {
     Operation {
         op: OperationType::Read,
         ctx: DEFAULT_CTX,

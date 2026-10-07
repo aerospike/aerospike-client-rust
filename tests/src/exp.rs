@@ -635,7 +635,7 @@ async fn test_geo_val_bug() {
 
     // geo_compare with a literal GeoJSON circle via geo_val()
     let circle = r#"{"type":"AeroCircle","coordinates":[[-122.0,37.5],1000]}"#;
-    let expr = geo_compare(geo_bin("point".into()), geo_val(circle.into()));
+    let expr = geo_compare(geo_bin("point"), geo_val(circle));
 
     let mut qp = QueryPolicy::default();
     qp.base_policy.filter_expression = Some(expr);

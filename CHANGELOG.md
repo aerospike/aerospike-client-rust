@@ -150,7 +150,10 @@
     `is_pool_empty`), are crate-private. `Statement.filters`/`add_filter` are `filter`/`set_filter`
     and `Statement.aggregation` is private. The six `Filter::geo_*_cit` constructors are replaced by
     `Filter::collection_type(cit)`, which chains on any filter. The policies' `filter_expression()`
-    getters return `Option<&Expression>`. The `Policy` trait is no longer
+    getters return `Option<&Expression>`. Every builder that stores a name or string value takes
+    `impl Into<String>` (the expression bin builders, `Bin::new`, the operation builders, `Filter`,
+    `Statement::new`), so `int_bin("a")` and `Bin::new("a", v)` work; an argument spelled
+    `"a".into()` no longer infers. `exp_*_loop_var` are `*_loop_var`. The `Policy` trait is no longer
     exported. Acronyms in
     identifiers are `UpperCamelCase`: `BatchUdfPolicy`, `UdfLang`, `ReadModeAp`/`ReadModeSc`,
     `ReadTouchTtl`, `HllPolicy`/`HllWriteFlags`, `Value::GeoJson`/`Value::Hll`, `AuthMode::Pki`,

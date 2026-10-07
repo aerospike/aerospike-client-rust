@@ -353,7 +353,7 @@ const fn map_order_arg(policy: &MapPolicy) -> Option<CdtArgument> {
 ///
 /// If ctx is empty, this is equivalent to [`set_order`].
 #[must_use]
-pub fn create(bin: &str, map_order: MapOrder, ctx: Vec<CdtContext>) -> Operation {
+pub fn create(bin: impl Into<String>, map_order: MapOrder, ctx: Vec<CdtContext>) -> Operation {
     if ctx.is_empty() {
         return set_order(bin, map_order);
     }
@@ -378,7 +378,7 @@ pub fn create(bin: &str, map_order: MapOrder, ctx: Vec<CdtContext>) -> Operation
 /// Server creates map at the top level with a persisted index. The persisted index flag (0x10)
 /// is OR'd with the map order to signal the server to maintain a separate index data structure.
 #[must_use]
-pub fn create_with_index(bin: &str, map_order: MapOrder) -> Operation {
+pub fn create_with_index(bin: impl Into<String>, map_order: MapOrder) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::SetType as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -398,7 +398,7 @@ pub fn create_with_index(bin: &str, map_order: MapOrder) -> Operation {
 /// The required map policy attributes can be changed after the map has been created.
 /// Supports optional CDT context for nested map operations.
 #[must_use]
-pub fn set_policy(policy: &MapPolicy, bin: &str, ctx: Vec<CdtContext>) -> Operation {
+pub fn set_policy(policy: &MapPolicy, bin: impl Into<String>, ctx: Vec<CdtContext>) -> Operation {
     let mut attr = policy.order_attr();
     // If nested context, remove persist flag if present
     if !ctx.is_empty() {
@@ -422,7 +422,7 @@ pub fn set_policy(policy: &MapPolicy, bin: &str, ctx: Vec<CdtContext>) -> Operat
 ///
 /// The required map policy attributes can be changed after the map has been created.
 #[must_use]
-pub fn set_order(bin: &str, map_order: MapOrder) -> Operation {
+pub fn set_order(bin: impl Into<String>, map_order: MapOrder) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::SetType as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -442,7 +442,7 @@ pub fn set_order(bin: &str, map_order: MapOrder) -> Operation {
 /// The required map policy dictates the type of map to create when it does not exist. The map
 /// policy also specifies the mode used when writing items to the map.
 #[must_use]
-pub fn put(policy: &MapPolicy, bin: &str, key: Value, val: Value) -> Operation {
+pub fn put(policy: &MapPolicy, bin: impl Into<String>, key: Value, val: Value) -> Operation {
     if policy.flags != MapWriteFlags::DEFAULT {
         // Use flags-based put (server 4.3+)
         let args = vec![
@@ -494,7 +494,7 @@ pub fn put(policy: &MapPolicy, bin: &str, key: Value, val: Value) -> Operation {
 /// `HashMap` and `IndexMap` items are sorted client-side and sent with the key-ordered wire
 /// header, so the server can merge them without re-sorting.
 #[allow(clippy::implicit_hasher)]
-pub fn put_items<M: MapLike<Value, Value>>(policy: &MapPolicy, bin: &str, items: M) -> Operation {
+pub fn put_items<M: MapLike<Value, Value>>(policy: &MapPolicy, bin: impl Into<String>, items: M) -> Operation {
     // With an ordered map policy the items are sent pre-sorted with the
     // K-ordered wire header (like Java packing a `TreeMap`), so the server
     // can merge them into the ordered map without re-sorting.
@@ -554,7 +554,7 @@ pub fn put_items<M: MapLike<Value, Value>>(policy: &MapPolicy, bin: &str, items:
 /// The required map policy dictates the type of map to create when it does not exist. The map
 /// policy also specifies the mode used when writing items to the map.
 #[must_use]
-pub fn increment_value(policy: &MapPolicy, bin: &str, key: Value, incr: Value) -> Operation {
+pub fn increment_value(policy: &MapPolicy, bin: impl Into<String>, key: Value, incr: Value) -> Operation {
     let mut args = vec![CdtArgument::Value(key)];
     if !incr.is_nil() {
         args.push(CdtArgument::Value(incr));
@@ -581,7 +581,7 @@ pub fn increment_value(policy: &MapPolicy, bin: &str, key: Value, incr: Value) -
 /// The required map policy dictates the type of map to create when it does not exist. The map
 /// policy also specifies the mode used when writing items to the map.
 #[must_use]
-pub fn decrement_value(policy: &MapPolicy, bin: &str, key: Value, decr: Value) -> Operation {
+pub fn decrement_value(policy: &MapPolicy, bin: impl Into<String>, key: Value, decr: Value) -> Operation {
     let mut args = vec![CdtArgument::Value(key)];
     if !decr.is_nil() {
         args.push(CdtArgument::Value(decr));
@@ -605,7 +605,7 @@ pub fn decrement_value(policy: &MapPolicy, bin: &str, key: Value, decr: Value) -
 /// Creates map clear operation. Server removes all items in the map. Server does not return a
 /// result.
 #[must_use]
-pub fn clear(bin: &str) -> Operation {
+pub fn clear(bin: impl Into<String>) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::Clear as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -623,7 +623,7 @@ pub fn clear(bin: &str) -> Operation {
 /// the removed data specified by `return_type`.
 #[must_use]
 pub fn remove_by_key(
-    bin: &str,
+    bin: impl Into<String>,
     key: Value,
     return_type: MapReturnType,
 ) -> Operation {
@@ -647,7 +647,7 @@ pub fn remove_by_key(
 /// removed data specified by `return_type`.
 #[must_use]
 pub fn remove_by_key_list(
-    bin: &str,
+    bin: impl Into<String>,
     keys: Vec<Value>,
     return_type: MapReturnType,
 ) -> Operation {
@@ -674,7 +674,7 @@ pub fn remove_by_key_list(
 /// range is greater than equal to `begin`. Server returns removed data specified by `return_type`.
 #[must_use]
 pub fn remove_by_key_range(
-    bin: &str,
+    bin: impl Into<String>,
     begin: Value,
     end: Value,
     return_type: MapReturnType,
@@ -703,7 +703,7 @@ pub fn remove_by_key_range(
 /// the removed data specified by `return_type`.
 #[must_use]
 pub fn remove_by_value(
-    bin: &str,
+    bin: impl Into<String>,
     value: Value,
     return_type: MapReturnType,
 ) -> Operation {
@@ -727,7 +727,7 @@ pub fn remove_by_value(
 /// the removed data specified by `return_type`.
 #[must_use]
 pub fn remove_by_value_list(
-    bin: &str,
+    bin: impl Into<String>,
     values: Vec<Value>,
     return_type: MapReturnType,
 ) -> Operation {
@@ -755,7 +755,7 @@ pub fn remove_by_value_list(
 /// `return_type`.
 #[must_use]
 pub fn remove_by_value_range(
-    bin: &str,
+    bin: impl Into<String>,
     begin: Value,
     end: Value,
     return_type: MapReturnType,
@@ -784,7 +784,7 @@ pub fn remove_by_value_range(
 /// the removed data specified by `return_type`.
 #[must_use]
 pub fn remove_by_index(
-    bin: &str,
+    bin: impl Into<String>,
     index: i64,
     return_type: MapReturnType,
 ) -> Operation {
@@ -808,7 +808,7 @@ pub fn remove_by_index(
 /// index and returns the removed data specified by `return_type`.
 #[must_use]
 pub fn remove_by_index_range(
-    bin: &str,
+    bin: impl Into<String>,
     index: i64,
     count: i64,
     return_type: MapReturnType,
@@ -834,7 +834,7 @@ pub fn remove_by_index_range(
 /// to the end of the map and returns the removed data specified by `return_type`.
 #[must_use]
 pub fn remove_by_index_range_from(
-    bin: &str,
+    bin: impl Into<String>,
     index: i64,
     return_type: MapReturnType,
 ) -> Operation {
@@ -858,7 +858,7 @@ pub fn remove_by_index_range_from(
 /// removed data specified by `return_type`.
 #[must_use]
 pub fn remove_by_rank(
-    bin: &str,
+    bin: impl Into<String>,
     rank: i64,
     return_type: MapReturnType,
 ) -> Operation {
@@ -882,7 +882,7 @@ pub fn remove_by_rank(
 /// rank and returns the removed data specified by `return_type`.
 #[must_use]
 pub fn remove_by_rank_range(
-    bin: &str,
+    bin: impl Into<String>,
     rank: i64,
     count: i64,
     return_type: MapReturnType,
@@ -908,7 +908,7 @@ pub fn remove_by_rank_range(
 /// the last ranked item and returns the removed data specified by `return_type`.
 #[must_use]
 pub fn remove_by_rank_range_from(
-    bin: &str,
+    bin: impl Into<String>,
     rank: i64,
     return_type: MapReturnType,
 ) -> Operation {
@@ -930,7 +930,7 @@ pub fn remove_by_rank_range_from(
 
 /// Creates map size operation. Server returns the size of the map.
 #[must_use]
-pub fn size(bin: &str) -> Operation {
+pub fn size(bin: impl Into<String>) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::Size as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -948,7 +948,7 @@ pub fn size(bin: &str) -> Operation {
 /// returns the selected data specified by `return_type`.
 #[must_use]
 pub fn get_by_key(
-    bin: &str,
+    bin: impl Into<String>,
     key: Value,
     return_type: MapReturnType,
 ) -> Operation {
@@ -976,7 +976,7 @@ pub fn get_by_key(
 /// specified by `return_type`.
 #[must_use]
 pub fn get_by_key_range(
-    bin: &str,
+    bin: impl Into<String>,
     begin: Value,
     end: Value,
     return_type: MapReturnType,
@@ -1005,7 +1005,7 @@ pub fn get_by_key_range(
 /// returns the selected data specified by `return_type`.
 #[must_use]
 pub fn get_by_value(
-    bin: &str,
+    bin: impl Into<String>,
     value: Value,
     return_type: MapReturnType,
 ) -> Operation {
@@ -1033,7 +1033,7 @@ pub fn get_by_value(
 /// specified by `return_type`.
 #[must_use]
 pub fn get_by_value_range(
-    bin: &str,
+    bin: impl Into<String>,
     begin: Value,
     end: Value,
     return_type: MapReturnType,
@@ -1062,7 +1062,7 @@ pub fn get_by_value_range(
 /// returns the selected data specified by `return_type`.
 #[must_use]
 pub fn get_by_index(
-    bin: &str,
+    bin: impl Into<String>,
     index: i64,
     return_type: MapReturnType,
 ) -> Operation {
@@ -1086,7 +1086,7 @@ pub fn get_by_index(
 /// specified index and returns the selected data specified by `return_type`.
 #[must_use]
 pub fn get_by_index_range(
-    bin: &str,
+    bin: impl Into<String>,
     index: i64,
     count: i64,
     return_type: MapReturnType,
@@ -1113,7 +1113,7 @@ pub fn get_by_index_range(
 /// `return_type`.
 #[must_use]
 pub fn get_by_index_range_from(
-    bin: &str,
+    bin: impl Into<String>,
     index: i64,
     return_type: MapReturnType,
 ) -> Operation {
@@ -1137,7 +1137,7 @@ pub fn get_by_index_range_from(
 /// returns the selected data specified by `return_type`.
 #[must_use]
 pub fn get_by_rank(
-    bin: &str,
+    bin: impl Into<String>,
     rank: i64,
     return_type: MapReturnType,
 ) -> Operation {
@@ -1161,7 +1161,7 @@ pub fn get_by_rank(
 /// rank and returns the selected data specified by `return_type`.
 #[must_use]
 pub fn get_by_rank_range(
-    bin: &str,
+    bin: impl Into<String>,
     rank: i64,
     count: i64,
     return_type: MapReturnType,
@@ -1188,7 +1188,7 @@ pub fn get_by_rank_range(
 /// `return_type`.
 #[must_use]
 pub fn get_by_rank_range_from(
-    bin: &str,
+    bin: impl Into<String>,
     rank: i64,
     return_type: MapReturnType,
 ) -> Operation {
@@ -1222,7 +1222,7 @@ pub fn get_by_rank_range_from(
 /// (3,-2) = [{0=17},{4=2},{5=15},{9=10}]
 #[must_use]
 pub fn remove_by_key_relative_index_range(
-    bin: &str,
+    bin: impl Into<String>,
     key: Value,
     index: i64,
     return_type: MapReturnType,
@@ -1258,7 +1258,7 @@ pub fn remove_by_key_relative_index_range(
 /// (3,-2,2) = [{0=17}]
 #[must_use]
 pub fn remove_by_key_relative_index_range_count(
-    bin: &str,
+    bin: impl Into<String>,
     key: Value,
     index: i64,
     count: i64,
@@ -1293,7 +1293,7 @@ pub fn remove_by_key_relative_index_range_count(
 /// (11,-1) = [{9=10},{5=15},{0=17}]
 #[must_use]
 pub fn remove_by_value_relative_rank_range(
-    bin: &str,
+    bin: impl Into<String>,
     value: Value,
     rank: i64,
     return_type: MapReturnType,
@@ -1327,7 +1327,7 @@ pub fn remove_by_value_relative_rank_range(
 /// (11,-1,1) = [{9=10}]
 #[must_use]
 pub fn remove_by_value_relative_rank_range_count(
-    bin: &str,
+    bin: impl Into<String>,
     value: Value,
     rank: i64,
     count: i64,
@@ -1355,7 +1355,7 @@ pub fn remove_by_value_relative_rank_range_count(
 /// Server selects map items identified by keys and returns selected data specified by returnType.
 #[must_use]
 pub fn get_by_key_list(
-    bin: &str,
+    bin: impl Into<String>,
     keys: Vec<Value>,
     return_type: MapReturnType,
 ) -> Operation {
@@ -1379,7 +1379,7 @@ pub fn get_by_key_list(
 /// Server selects map items identified by values and returns selected data specified by returnType.
 #[must_use]
 pub fn get_by_value_list(
-    bin: &str,
+    bin: impl Into<String>,
     values: Vec<Value>,
     return_type: MapReturnType,
 ) -> Operation {
@@ -1413,7 +1413,7 @@ pub fn get_by_value_list(
 /// (3,-2) = [{0=17},{4=2},{5=15},{9=10}]
 #[must_use]
 pub fn get_by_key_relative_index_range(
-    bin: &str,
+    bin: impl Into<String>,
     key: Value,
     index: i64,
     return_type: MapReturnType,
@@ -1449,7 +1449,7 @@ pub fn get_by_key_relative_index_range(
 /// (3,-2,2) = [{0=17}]
 #[must_use]
 pub fn get_by_key_relative_index_range_count(
-    bin: &str,
+    bin: impl Into<String>,
     key: Value,
     index: i64,
     count: i64,
@@ -1484,7 +1484,7 @@ pub fn get_by_key_relative_index_range_count(
 /// (11,-1) = [{9=10},{5=15},{0=17}]
 #[must_use]
 pub fn get_by_value_relative_rank_range(
-    bin: &str,
+    bin: impl Into<String>,
     value: Value,
     rank: i64,
     return_type: MapReturnType,
@@ -1518,7 +1518,7 @@ pub fn get_by_value_relative_rank_range(
 /// (11,-1,1) = [{9=10}]
 #[must_use]
 pub fn get_by_value_relative_rank_range_count(
-    bin: &str,
+    bin: impl Into<String>,
     value: Value,
     rank: i64,
     count: i64,

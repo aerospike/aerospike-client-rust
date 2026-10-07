@@ -627,13 +627,13 @@ async fn query_large_i64() {
     let apolicy = AdminPolicy::default();
 
     let res = client
-        .put(&wpolicy, &key, &[aerospike::Bin::new(BIN.into(), value)])
+        .put(&wpolicy, &key, &[aerospike::Bin::new(BIN, value)])
         .await;
 
     assert!(res.is_ok());
 
     let mut qpolicy = aerospike::QueryPolicy::new();
-    let bin_name = aerospike::expressions::int_bin(BIN.into());
+    let bin_name = aerospike::expressions::int_bin(BIN);
     let bin_val = aerospike::expressions::int_val(i64::MAX);
     qpolicy
         .base_policy

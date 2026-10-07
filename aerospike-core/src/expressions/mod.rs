@@ -550,10 +550,10 @@ pub fn key_exists() -> Expression {
 /// type is known at compile time; this generic form is for callers whose
 /// bin types are only known at run time.
 #[must_use]
-pub fn bin(name: String, exp_type: ExpType) -> Expression {
+pub fn bin(name: impl Into<String>, exp_type: ExpType) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
         Some(exp_type),
@@ -568,10 +568,10 @@ pub fn bin(name: String, exp_type: ExpType) -> Expression {
 /// let _ = eq(int_bin("a".to_string()), int_val(500));
 /// ```
 #[must_use]
-pub fn int_bin(name: String) -> Expression {
+pub fn int_bin(name: impl Into<String>) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
         Some(ExpType::Int),
@@ -586,10 +586,10 @@ pub fn int_bin(name: String) -> Expression {
 /// let _ = eq(bool_bin("a".to_string()), bool_val(true));
 /// ```
 #[must_use]
-pub fn bool_bin(name: String) -> Expression {
+pub fn bool_bin(name: impl Into<String>) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
         Some(ExpType::Bool),
@@ -604,10 +604,10 @@ pub fn bool_bin(name: String) -> Expression {
 /// let _ = eq(string_bin("a".to_string()), string_val("views".to_string()));
 /// ```
 #[must_use]
-pub fn string_bin(name: String) -> Expression {
+pub fn string_bin(name: impl Into<String>) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
         Some(ExpType::String),
@@ -623,10 +623,10 @@ pub fn string_bin(name: String) -> Expression {
 /// let _ = eq(blob_bin("a".to_string()), blob_val(blob));
 /// ```
 #[must_use]
-pub fn blob_bin(name: String) -> Expression {
+pub fn blob_bin(name: impl Into<String>) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
         Some(ExpType::Blob),
@@ -641,10 +641,10 @@ pub fn blob_bin(name: String) -> Expression {
 /// let _ = eq(float_bin("a".to_string()), float_val(500.5));
 /// ```
 #[must_use]
-pub fn float_bin(name: String) -> Expression {
+pub fn float_bin(name: impl Into<String>) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
         Some(ExpType::Float),
@@ -660,10 +660,10 @@ pub fn float_bin(name: String) -> Expression {
 /// let _ = eq(geo_bin("a".to_string()), string_val(region.to_string()));
 /// ```
 #[must_use]
-pub fn geo_bin(name: String) -> Expression {
+pub fn geo_bin(name: impl Into<String>) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
         Some(ExpType::Geo),
@@ -680,10 +680,10 @@ pub fn geo_bin(name: String) -> Expression {
 /// let _ = eq(get_by_index(ListReturnType::VALUES, ExpType::Int, int_val(2), list_bin("a".to_string()), &[]), int_val(3));
 /// ```
 #[must_use]
-pub fn list_bin(name: String) -> Expression {
+pub fn list_bin(name: impl Into<String>) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
         Some(ExpType::List),
@@ -704,10 +704,10 @@ pub fn list_bin(name: String) -> Expression {
 ///     string_val("value".to_string()));
 /// ```
 #[must_use]
-pub fn map_bin(name: String) -> Expression {
+pub fn map_bin(name: impl Into<String>) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
         Some(ExpType::Map),
@@ -728,10 +728,10 @@ pub fn map_bin(name: String) -> Expression {
 /// let _ = gt(add(HllPolicy::default(), list_val(list), hll_bin("a".to_string())), int_val(7));
 /// ```
 #[must_use]
-pub fn hll_bin(name: String) -> Expression {
+pub fn hll_bin(name: impl Into<String>) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
         Some(ExpType::Hll),
@@ -746,7 +746,7 @@ pub fn hll_bin(name: String) -> Expression {
 /// let _ = bin_exists("a".to_string());
 /// ```
 #[must_use]
-pub fn bin_exists(name: String) -> Expression {
+pub fn bin_exists(name: impl Into<String>) -> Expression {
     ne(bin_type(name), int_val(ParticleType::Null as i64))
 }
 
@@ -758,10 +758,10 @@ pub fn bin_exists(name: String) -> Expression {
 /// let _ = eq(bin_type("a".to_string()), int_val(ParticleType::List as i64));
 /// ```
 #[must_use]
-pub fn bin_type(name: String) -> Expression {
+pub fn bin_type(name: impl Into<String>) -> Expression {
     Expression::new(
         Some(ExpOp::BinType),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
         None,
@@ -926,10 +926,10 @@ pub fn digest_modulo(modulo: i64) -> Expression {
 /// );
 /// ```
 #[must_use]
-pub fn regex_compare(regex: String, flags: RegexFlags, bin: Expression) -> Expression {
+pub fn regex_compare(regex: impl Into<String>, flags: RegexFlags, bin: Expression) -> Expression {
     Expression::new(
         Some(ExpOp::Regex),
-        Some(Value::from(regex)),
+        Some(Value::String(regex.into())),
         Some(bin),
         Some(flags.bits()),
         None,
@@ -970,8 +970,8 @@ pub fn bool_val(val: bool) -> Expression {
 
 /// Creates a string bin value.
 #[must_use]
-pub fn string_val(val: String) -> Expression {
-    Expression::new(None, Some(Value::from(val)), None, None, None, None)
+pub fn string_val(val: impl Into<String>) -> Expression {
+    Expression::new(None, Some(Value::String(val.into())), None, None, None, None)
 }
 
 /// Creates a 64-bit float bin value.
@@ -1024,8 +1024,8 @@ pub fn map_val<M: MapLike<Value, Value>>(val: M) -> Expression {
 
 /// Creates a geospatial JSON string value.
 #[must_use]
-pub fn geo_val(val: String) -> Expression {
-    Expression::new(None, Some(Value::GeoJson(val)), None, None, None, None)
+pub fn geo_val(val: impl Into<String>) -> Expression {
+    Expression::new(None, Some(Value::GeoJson(val.into())), None, None, None, None)
 }
 
 /// Creates a nil value.
@@ -1885,10 +1885,10 @@ pub const fn exp_let(exps: Vec<Expression>) -> Expression {
 /// );
 /// ```
 #[must_use]
-pub fn def(name: String, value: Expression) -> Expression {
+pub fn def(name: impl Into<String>, value: Expression) -> Expression {
     Expression {
         cmd: None,
-        val: Some(Value::from(name)),
+        val: Some(Value::String(name.into())),
         bin: None,
         flags: None,
         module: None,
@@ -1901,10 +1901,10 @@ pub fn def(name: String, value: Expression) -> Expression {
 /// Retrieve expression value from a variable.
 /// Requires server version 5.6.0+.
 #[must_use]
-pub fn var(name: String) -> Expression {
+pub fn var(name: impl Into<String>) -> Expression {
     Expression {
         cmd: Some(ExpOp::Var),
-        val: Some(Value::from(name)),
+        val: Some(Value::String(name.into())),
         bin: None,
         flags: None,
         module: None,
@@ -2241,7 +2241,7 @@ pub fn exp_select_by_path(
 /// use aerospike::operations::path::ModifyFlag;
 ///
 /// let path = Path::new().map_key("book").all_children().map_key("price");
-/// let bin_exp = aerospike::expressions::map_bin("myBin".into());
+/// let bin_exp = aerospike::expressions::map_bin("myBin");
 ///
 /// // Remove every matching "price" entry...
 /// let exp = exp_modify_by_path(ExpType::Map, ModifyFlag::DEFAULT, bin_exp.clone(), exp_remove_result(), &path);
@@ -2511,7 +2511,7 @@ mod tests {
         let direct = exp_select_by_path(
             ExpType::List,
             SelectFlag::VALUE,
-            list_bin("b".into()),
+            list_bin("b"),
             &path,
         )
         .base64()
@@ -2519,7 +2519,7 @@ mod tests {
         let via_slice = exp_select_by_path(
             ExpType::List,
             SelectFlag::VALUE,
-            list_bin("b".into()),
+            list_bin("b"),
             path.as_slice(),
         )
         .base64()
@@ -2530,13 +2530,13 @@ mod tests {
     #[test]
     fn exp_select_values_matches_raw_value_flag() {
         let ctx = vec![ctx_map_key(Value::from("book"))];
-        let wrapper = exp_select_values(ExpType::List, list_bin("b".into()), &ctx)
+        let wrapper = exp_select_values(ExpType::List, list_bin("b"), &ctx)
             .base64()
             .unwrap();
         let raw = exp_select_by_path(
             ExpType::List,
             SelectFlag::VALUE,
-            list_bin("b".into()),
+            list_bin("b"),
             ctx.as_slice(),
         )
         .base64()
@@ -2547,13 +2547,13 @@ mod tests {
     #[test]
     fn exp_select_map_keys_matches_raw_map_key_flag() {
         let ctx = vec![ctx_map_key(Value::from("book"))];
-        let wrapper = exp_select_map_keys(ExpType::List, map_bin("m".into()), &ctx)
+        let wrapper = exp_select_map_keys(ExpType::List, map_bin("m"), &ctx)
             .base64()
             .unwrap();
         let raw = exp_select_by_path(
             ExpType::List,
             SelectFlag::MAP_KEY,
-            map_bin("m".into()),
+            map_bin("m"),
             ctx.as_slice(),
         )
         .base64()
@@ -2564,13 +2564,13 @@ mod tests {
     #[test]
     fn exp_select_map_entries_matches_raw_map_key_value_flag() {
         let ctx = vec![ctx_map_key(Value::from("book"))];
-        let wrapper = exp_select_map_entries(ExpType::List, map_bin("m".into()), &ctx)
+        let wrapper = exp_select_map_entries(ExpType::List, map_bin("m"), &ctx)
             .base64()
             .unwrap();
         let raw = exp_select_by_path(
             ExpType::List,
             SelectFlag::MAP_KEY_VALUE,
-            map_bin("m".into()),
+            map_bin("m"),
             ctx.as_slice(),
         )
         .base64()
@@ -2581,13 +2581,13 @@ mod tests {
     #[test]
     fn exp_select_matching_tree_matches_raw_matching_tree_flag() {
         let ctx = vec![ctx_map_key(Value::from("book"))];
-        let wrapper = exp_select_matching_tree(ExpType::Map, map_bin("m".into()), &ctx)
+        let wrapper = exp_select_matching_tree(ExpType::Map, map_bin("m"), &ctx)
             .base64()
             .unwrap();
         let raw = exp_select_by_path(
             ExpType::Map,
             SelectFlag::MATCHING_TREE,
-            map_bin("m".into()),
+            map_bin("m"),
             ctx.as_slice(),
         )
         .base64()
@@ -2599,13 +2599,13 @@ mod tests {
     fn exp_modify_matches_raw_default_flag() {
         let ctx = vec![ctx_map_key(Value::from("book"))];
         let modify_exp = int_val(7);
-        let wrapper = exp_modify(ExpType::Map, map_bin("m".into()), modify_exp.clone(), &ctx)
+        let wrapper = exp_modify(ExpType::Map, map_bin("m"), modify_exp.clone(), &ctx)
             .base64()
             .unwrap();
         let raw = exp_modify_by_path(
             ExpType::Map,
             ModifyFlag::DEFAULT,
-            map_bin("m".into()),
+            map_bin("m"),
             modify_exp,
             ctx.as_slice(),
         )
@@ -2619,13 +2619,13 @@ mod tests {
         let ctx = vec![ctx_map_key(Value::from("book"))];
         let modify_exp = int_val(7);
         let wrapper =
-            exp_modify_no_fail(ExpType::Map, map_bin("m".into()), modify_exp.clone(), &ctx)
+            exp_modify_no_fail(ExpType::Map, map_bin("m"), modify_exp.clone(), &ctx)
                 .base64()
                 .unwrap();
         let raw = exp_modify_by_path(
             ExpType::Map,
             ModifyFlag::NO_FAIL,
-            map_bin("m".into()),
+            map_bin("m"),
             modify_exp,
             ctx.as_slice(),
         )
@@ -2637,13 +2637,13 @@ mod tests {
     #[test]
     fn exp_remove_matches_raw_remove_result_modify() {
         let ctx = vec![ctx_map_key(Value::from("book"))];
-        let wrapper = exp_remove(ExpType::Map, map_bin("m".into()), &ctx)
+        let wrapper = exp_remove(ExpType::Map, map_bin("m"), &ctx)
             .base64()
             .unwrap();
         let raw = exp_modify_by_path(
             ExpType::Map,
             ModifyFlag::DEFAULT,
-            map_bin("m".into()),
+            map_bin("m"),
             exp_remove_result(),
             ctx.as_slice(),
         )
@@ -2676,7 +2676,7 @@ mod tests {
 
     #[test]
     fn map_keys_base64_roundtrips() {
-        let expr = map_keys(map_bin("m".into()));
+        let expr = map_keys(map_bin("m"));
         let b64 = expr.base64().unwrap();
         let decoded = from_base64(&b64).unwrap();
         assert_eq!(b64, decoded.base64().unwrap());
@@ -2684,7 +2684,7 @@ mod tests {
 
     #[test]
     fn map_values_base64_roundtrips() {
-        let expr = map_values(map_bin("m".into()));
+        let expr = map_values(map_bin("m"));
         let b64 = expr.base64().unwrap();
         let decoded = from_base64(&b64).unwrap();
         assert_eq!(b64, decoded.base64().unwrap());
@@ -2693,7 +2693,7 @@ mod tests {
     #[test]
     fn in_list_composes_with_map_keys() {
         // membership test against the keyset of a map bin
-        let expr = in_list(string_val("book".into()), map_keys(map_bin("m".into())));
+        let expr = in_list(string_val("book"), map_keys(map_bin("m")));
         let b64 = expr.base64().unwrap();
         let decoded = from_base64(&b64).unwrap();
         assert_eq!(b64, decoded.base64().unwrap());

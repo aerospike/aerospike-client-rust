@@ -136,7 +136,7 @@ impl Default for BitPolicy {
 /// ```
 #[must_use]
 pub fn resize(
-    bin: &str,
+    bin: impl Into<String>,
     byte_size: i64,
     resize_flags: BitwiseResizeFlags,
     policy: &BitPolicy,
@@ -171,7 +171,7 @@ pub fn resize(
 /// bin result = [0b00000001, 0b11111111, 0b11000111, 0b01000010, 0b00000011, 0b00000100, 0b00000101]
 /// ```
 #[must_use]
-pub fn insert(bin: &str, byte_offset: i64, value: Value, policy: &BitPolicy) -> Operation {
+pub fn insert(bin: impl Into<String>, byte_offset: i64, value: Value, policy: &BitPolicy) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Insert as u8,
         encoder: Arc::new(pack_cdt_bit_op),
@@ -202,7 +202,7 @@ pub fn insert(bin: &str, byte_offset: i64, value: Value, policy: &BitPolicy) -> 
 /// bin result = [0b00000001, 0b01000010]
 /// ```
 #[must_use]
-pub fn remove(bin: &str, byte_offset: i64, byte_size: i64, policy: &BitPolicy) -> Operation {
+pub fn remove(bin: impl Into<String>, byte_offset: i64, byte_size: i64, policy: &BitPolicy) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Remove as u8,
         encoder: Arc::new(pack_cdt_bit_op),
@@ -235,7 +235,7 @@ pub fn remove(bin: &str, byte_offset: i64, byte_size: i64, policy: &BitPolicy) -
 /// ```
 #[must_use]
 pub fn set(
-    bin: &str,
+    bin: impl Into<String>,
     bit_offset: i64,
     bit_size: i64,
     value: Value,
@@ -274,7 +274,7 @@ pub fn set(
 /// ```
 #[must_use]
 pub fn or(
-    bin: &str,
+    bin: impl Into<String>,
     bit_offset: i64,
     bit_size: i64,
     value: Value,
@@ -313,7 +313,7 @@ pub fn or(
 /// ```
 #[must_use]
 pub fn xor(
-    bin: &str,
+    bin: impl Into<String>,
     bit_offset: i64,
     bit_size: i64,
     value: Value,
@@ -352,7 +352,7 @@ pub fn xor(
 /// ```
 #[must_use]
 pub fn and(
-    bin: &str,
+    bin: impl Into<String>,
     bit_offset: i64,
     bit_size: i64,
     value: Value,
@@ -389,7 +389,7 @@ pub fn and(
 /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b01111010, 0b00000101]
 /// ```
 #[must_use]
-pub fn not(bin: &str, bit_offset: i64, bit_size: i64, policy: &BitPolicy) -> Operation {
+pub fn not(bin: impl Into<String>, bit_offset: i64, bit_size: i64, policy: &BitPolicy) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Not as u8,
         encoder: Arc::new(pack_cdt_bit_op),
@@ -422,7 +422,7 @@ pub fn not(bin: &str, bit_offset: i64, bit_size: i64, policy: &BitPolicy) -> Ope
 /// ```
 #[must_use]
 pub fn lshift(
-    bin: &str,
+    bin: impl Into<String>,
     bit_offset: i64,
     bit_size: i64,
     shift: i64,
@@ -461,7 +461,7 @@ pub fn lshift(
 /// ```
 #[must_use]
 pub fn rshift(
-    bin: &str,
+    bin: impl Into<String>,
     bit_offset: i64,
     bit_size: i64,
     shift: i64,
@@ -504,7 +504,7 @@ pub fn rshift(
 /// ```
 #[must_use]
 pub fn add(
-    bin: &str,
+    bin: impl Into<String>,
     bit_offset: i64,
     bit_size: i64,
     value: i64,
@@ -555,7 +555,7 @@ pub fn add(
 /// ```
 #[must_use]
 pub fn subtract(
-    bin: &str,
+    bin: impl Into<String>,
     bit_offset: i64,
     bit_size: i64,
     value: i64,
@@ -602,7 +602,7 @@ pub fn subtract(
 /// ```
 #[must_use]
 pub fn set_int(
-    bin: &str,
+    bin: impl Into<String>,
     bit_offset: i64,
     bit_size: i64,
     value: i64,
@@ -638,7 +638,7 @@ pub fn set_int(
 /// returns [0b1000000]
 /// ```
 #[must_use]
-pub fn get(bin: &str, bit_offset: i64, bit_size: i64) -> Operation {
+pub fn get(bin: impl Into<String>, bit_offset: i64, bit_size: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Get as u8,
         encoder: Arc::new(pack_cdt_bit_op),
@@ -664,7 +664,7 @@ pub fn get(bin: &str, bit_offset: i64, bit_size: i64) -> Operation {
 /// returns 2
 /// ```
 #[must_use]
-pub fn count(bin: &str, bit_offset: i64, bit_size: i64) -> Operation {
+pub fn count(bin: impl Into<String>, bit_offset: i64, bit_size: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::Count as u8,
         encoder: Arc::new(pack_cdt_bit_op),
@@ -692,7 +692,7 @@ pub fn count(bin: &str, bit_offset: i64, bit_size: i64) -> Operation {
 /// returns 5
 /// ```
 #[must_use]
-pub fn lscan(bin: &str, bit_offset: i64, bit_size: i64, value: bool) -> Operation {
+pub fn lscan(bin: impl Into<String>, bit_offset: i64, bit_size: i64, value: bool) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::LScan as u8,
         encoder: Arc::new(pack_cdt_bit_op),
@@ -724,7 +724,7 @@ pub fn lscan(bin: &str, bit_offset: i64, bit_size: i64, value: bool) -> Operatio
 /// returns 7
 /// ```
 #[must_use]
-pub fn rscan(bin: &str, bit_offset: i64, bit_size: i64, value: bool) -> Operation {
+pub fn rscan(bin: impl Into<String>, bit_offset: i64, bit_size: i64, value: bool) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::RScan as u8,
         encoder: Arc::new(pack_cdt_bit_op),
@@ -756,7 +756,7 @@ pub fn rscan(bin: &str, bit_offset: i64, bit_size: i64, value: bool) -> Operatio
 /// returns 16899
 /// ```
 #[must_use]
-pub fn get_int(bin: &str, bit_offset: i64, bit_size: i64, signed: bool) -> Operation {
+pub fn get_int(bin: impl Into<String>, bit_offset: i64, bit_size: i64, signed: bool) -> Operation {
     let mut args = vec![CdtArgument::Int(bit_offset), CdtArgument::Int(bit_size)];
     if signed {
         args.push(CdtArgument::Byte(1));
@@ -791,7 +791,7 @@ const B64_FLAGS_INVERT_SIZE: u8 = 1;
 ///
 /// Requires Aerospike Server version 8.2.0 or later.
 #[must_use]
-pub fn b64_encode(bin: &str) -> Operation {
+pub fn b64_encode(bin: impl Into<String>) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtBitwiseOpType::B64Encode as u8,
         encoder: Arc::new(pack_cdt_bit_op),
@@ -826,7 +826,7 @@ pub fn b64_encode(bin: &str) -> Operation {
 /// Requires Aerospike Server version 8.2.0 or later.
 #[must_use]
 pub fn b64_encode_range(
-    bin: &str,
+    bin: impl Into<String>,
     byte_offset: i64,
     byte_size: i64,
     invert_size: bool,

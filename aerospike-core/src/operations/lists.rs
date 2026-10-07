@@ -213,7 +213,7 @@ pub(crate) const fn list_order_flag(order: ListOrderType, pad: bool) -> u8 {
 /// after fixing one of the two flags.
 #[must_use]
 pub fn create_persistent(
-    bin: &str,
+    bin: impl Into<String>,
     list_order: ListOrderType,
     pad: bool,
     persist_index: bool,
@@ -256,7 +256,7 @@ pub fn create_persistent(
 /// Convenience wrapper for [`create_persistent`] without a persisted
 /// index.
 #[must_use]
-pub fn create(bin: &str, list_order: ListOrderType, pad: bool) -> Operation {
+pub fn create(bin: impl Into<String>, list_order: ListOrderType, pad: bool) -> Operation {
     create_persistent(bin, list_order, pad, false)
 }
 
@@ -269,14 +269,14 @@ pub fn create(bin: &str, list_order: ListOrderType, pad: bool) -> Operation {
 /// Convenience wrapper for [`create_persistent`] with `pad=false` and
 /// `persist_index=true`.
 #[must_use]
-pub fn create_with_index(bin: &str, list_order: ListOrderType) -> Operation {
+pub fn create_with_index(bin: impl Into<String>, list_order: ListOrderType) -> Operation {
     create_persistent(bin, list_order, false, true)
 }
 
 /// Creates a set list order operation.
 /// Server sets list order. Server returns null.
 #[must_use]
-pub fn set_order(bin: &str, list_order: ListOrderType) -> Operation {
+pub fn set_order(bin: impl Into<String>, list_order: ListOrderType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::SetType as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -295,7 +295,7 @@ pub fn set_order(bin: &str, list_order: ListOrderType) -> Operation {
 /// The persisted index flag (0x10) is OR'd with the list order to signal the server.
 /// Server returns null.
 #[must_use]
-pub fn set_order_with_index(bin: &str, list_order: ListOrderType) -> Operation {
+pub fn set_order_with_index(bin: impl Into<String>, list_order: ListOrderType) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::SetType as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -312,7 +312,7 @@ pub fn set_order_with_index(bin: &str, list_order: ListOrderType) -> Operation {
 /// Creates list append operation. Server appends value to the end of list bin. Server returns
 /// list size.
 #[must_use]
-pub fn append(policy: &ListPolicy, bin: &str, value: Value) -> Operation {
+pub fn append(policy: &ListPolicy, bin: impl Into<String>, value: Value) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Append as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -336,7 +336,7 @@ pub fn append(policy: &ListPolicy, bin: &str, value: Value) -> Operation {
 /// # Panics
 /// Will panic if values is empty
 #[must_use]
-pub fn append_items(policy: &ListPolicy, bin: &str, values: Vec<Value>) -> Operation {
+pub fn append_items(policy: &ListPolicy, bin: impl Into<String>, values: Vec<Value>) -> Operation {
     assert!(!values.is_empty());
 
     let cdt_op = CdtOperation {
@@ -359,7 +359,7 @@ pub fn append_items(policy: &ListPolicy, bin: &str, values: Vec<Value>) -> Opera
 /// Creates list insert operation. Server inserts value to the specified index of the list bin.
 /// Server returns list size.
 #[must_use]
-pub fn insert(policy: &ListPolicy, bin: &str, index: i64, value: Value) -> Operation {
+pub fn insert(policy: &ListPolicy, bin: impl Into<String>, index: i64, value: Value) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Insert as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -383,7 +383,7 @@ pub fn insert(policy: &ListPolicy, bin: &str, index: i64, value: Value) -> Opera
 /// # Panics
 /// will panic if values is empty
 #[must_use]
-pub fn insert_items(policy: &ListPolicy, bin: &str, index: i64, values: Vec<Value>) -> Operation {
+pub fn insert_items(policy: &ListPolicy, bin: impl Into<String>, index: i64, values: Vec<Value>) -> Operation {
     assert!(!values.is_empty());
 
     let cdt_op = CdtOperation {
@@ -406,7 +406,7 @@ pub fn insert_items(policy: &ListPolicy, bin: &str, index: i64, values: Vec<Valu
 /// Creates list pop operation. Server returns the item at the specified index and removes the
 /// item from the list bin.
 #[must_use]
-pub fn pop(bin: &str, index: i64) -> Operation {
+pub fn pop(bin: impl Into<String>, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Pop as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -423,7 +423,7 @@ pub fn pop(bin: &str, index: i64) -> Operation {
 /// Creates list pop range operation. Server returns `count` items starting at the specified
 /// index and removes the items from the list bin.
 #[must_use]
-pub fn pop_range(bin: &str, index: i64, count: i64) -> Operation {
+pub fn pop_range(bin: impl Into<String>, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::PopRange as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -440,7 +440,7 @@ pub fn pop_range(bin: &str, index: i64, count: i64) -> Operation {
 /// Creates list pop range operation. Server returns the items starting at the specified index
 /// to the end of the list and removes those items from the list bin.
 #[must_use]
-pub fn pop_range_from(bin: &str, index: i64) -> Operation {
+pub fn pop_range_from(bin: impl Into<String>, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::PopRange as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -457,7 +457,7 @@ pub fn pop_range_from(bin: &str, index: i64) -> Operation {
 /// Creates list remove operation. Server removes the item at the specified index from the list
 /// bin. Server returns the number of items removed.
 #[must_use]
-pub fn remove(bin: &str, index: i64) -> Operation {
+pub fn remove(bin: impl Into<String>, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Remove as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -474,7 +474,7 @@ pub fn remove(bin: &str, index: i64) -> Operation {
 /// Creates list remove range operation. Server removes `count` items starting at the specified
 /// index from the list bin. Server returns the number of items removed.
 #[must_use]
-pub fn remove_range(bin: &str, index: i64, count: i64) -> Operation {
+pub fn remove_range(bin: impl Into<String>, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveRange as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -491,7 +491,7 @@ pub fn remove_range(bin: &str, index: i64, count: i64) -> Operation {
 /// Creates list remove range operation. Server removes the items starting at the specified
 /// index to the end of the list. Server returns the number of items removed.
 #[must_use]
-pub fn remove_range_from(bin: &str, index: i64) -> Operation {
+pub fn remove_range_from(bin: impl Into<String>, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::RemoveRange as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -509,7 +509,7 @@ pub fn remove_range_from(bin: &str, index: i64) -> Operation {
 /// specified value. Server returns the number of items removed.
 #[must_use]
 pub fn remove_by_value(
-    bin: &str,
+    bin: impl Into<String>,
     value: Value,
     return_type: ListReturnType,
 ) -> Operation {
@@ -533,7 +533,7 @@ pub fn remove_by_value(
 /// one of the specified values. Server returns the number of items removed
 #[must_use]
 pub fn remove_by_value_list(
-    bin: &str,
+    bin: impl Into<String>,
     values: Vec<Value>,
     return_type: ListReturnType,
 ) -> Operation {
@@ -561,7 +561,7 @@ pub fn remove_by_value_list(
 /// Server returns removed data specified by returnType
 #[must_use]
 pub fn remove_by_value_range(
-    bin: &str,
+    bin: impl Into<String>,
     return_type: ListReturnType,
     begin: Value,
     end: Value,
@@ -604,7 +604,7 @@ pub fn remove_by_value_range(
 /// ```
 #[must_use]
 pub fn remove_by_value_relative_rank_range(
-    bin: &str,
+    bin: impl Into<String>,
     return_type: ListReturnType,
     value: Value,
     rank: i64,
@@ -643,7 +643,7 @@ pub fn remove_by_value_relative_rank_range(
 /// ```
 #[must_use]
 pub fn remove_by_value_relative_rank_range_count(
-    bin: &str,
+    bin: impl Into<String>,
     return_type: ListReturnType,
     value: Value,
     rank: i64,
@@ -671,7 +671,7 @@ pub fn remove_by_value_relative_rank_range_count(
 /// Server removes list item identified by index and returns removed data specified by returnType.
 #[must_use]
 pub fn remove_by_index(
-    bin: &str,
+    bin: impl Into<String>,
     index: i64,
     return_type: ListReturnType,
 ) -> Operation {
@@ -696,7 +696,7 @@ pub fn remove_by_index(
 /// data specified by returnType.
 #[must_use]
 pub fn remove_by_index_range(
-    bin: &str,
+    bin: impl Into<String>,
     index: i64,
     return_type: ListReturnType,
 ) -> Operation {
@@ -720,7 +720,7 @@ pub fn remove_by_index_range(
 /// Server removes "count" list items starting at specified index and returns removed data specified by returnType.
 #[must_use]
 pub fn remove_by_index_range_count(
-    bin: &str,
+    bin: impl Into<String>,
     index: i64,
     count: i64,
     return_type: ListReturnType,
@@ -746,7 +746,7 @@ pub fn remove_by_index_range_count(
 /// Server removes list item identified by rank and returns removed data specified by returnType.
 #[must_use]
 pub fn remove_by_rank(
-    bin: &str,
+    bin: impl Into<String>,
     rank: i64,
     return_type: ListReturnType,
 ) -> Operation {
@@ -771,7 +771,7 @@ pub fn remove_by_rank(
 /// data specified by returnType.
 #[must_use]
 pub fn remove_by_rank_range(
-    bin: &str,
+    bin: impl Into<String>,
     rank: i64,
     return_type: ListReturnType,
 ) -> Operation {
@@ -795,7 +795,7 @@ pub fn remove_by_rank_range(
 /// Server removes "count" list items starting at specified rank and returns removed data specified by returnType.
 #[must_use]
 pub fn remove_by_rank_range_count(
-    bin: &str,
+    bin: impl Into<String>,
     rank: i64,
     count: i64,
     return_type: ListReturnType,
@@ -823,7 +823,7 @@ pub fn remove_by_rank_range_count(
 /// # Panics
 /// Panics if value is empty
 #[must_use]
-pub fn set(bin: &str, index: i64, value: Value) -> Operation {
+pub fn set(bin: impl Into<String>, index: i64, value: Value) -> Operation {
     assert!(!value.is_nil());
 
     let cdt_op = CdtOperation {
@@ -846,7 +846,7 @@ pub fn set(bin: &str, index: i64, value: Value) -> Operation {
 /// # Panics
 /// Panics if value is empty
 #[must_use]
-pub fn set_with_policy(policy: &ListPolicy, bin: &str, index: i64, value: Value) -> Operation {
+pub fn set_with_policy(policy: &ListPolicy, bin: impl Into<String>, index: i64, value: Value) -> Operation {
     assert!(!value.is_nil());
 
     let cdt_op = CdtOperation {
@@ -872,7 +872,7 @@ pub fn set_with_policy(policy: &ListPolicy, bin: &str, index: i64, value: Value)
 /// `index` and `count`. If the range is out of bounds, then all items will be removed.
 /// Server returns list size after trim.
 #[must_use]
-pub fn trim(bin: &str, index: i64, count: i64) -> Operation {
+pub fn trim(bin: impl Into<String>, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Trim as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -889,7 +889,7 @@ pub fn trim(bin: &str, index: i64, count: i64) -> Operation {
 /// Creates list clear operation. Server removes all items in the list bin. Server does not
 /// return a result by default.
 #[must_use]
-pub fn clear(bin: &str) -> Operation {
+pub fn clear(bin: impl Into<String>) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Clear as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -906,7 +906,7 @@ pub fn clear(bin: &str) -> Operation {
 /// Creates list increment operation. Server increments the item value at the specified index by the
 /// given amount and returns the final result.
 #[must_use]
-pub fn increment(policy: &ListPolicy, bin: &str, index: i64, value: i64) -> Operation {
+pub fn increment(policy: &ListPolicy, bin: impl Into<String>, index: i64, value: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Increment as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -927,7 +927,7 @@ pub fn increment(policy: &ListPolicy, bin: &str, index: i64, value: i64) -> Oper
 /// Creates list increment by one operation. Server increments the item value at the specified
 /// index by 1 and returns the final result.
 #[must_use]
-pub fn increment_by_one(bin: &str, index: i64) -> Operation {
+pub fn increment_by_one(bin: impl Into<String>, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Increment as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -944,7 +944,7 @@ pub fn increment_by_one(bin: &str, index: i64) -> Operation {
 /// Creates list increment by one operation with policy. Server increments the item value at the
 /// specified index by 1 and returns the final result.
 #[must_use]
-pub fn increment_by_one_with_policy(policy: &ListPolicy, bin: &str, index: i64) -> Operation {
+pub fn increment_by_one_with_policy(policy: &ListPolicy, bin: impl Into<String>, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Increment as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -965,7 +965,7 @@ pub fn increment_by_one_with_policy(policy: &ListPolicy, bin: &str, index: i64) 
 
 /// Creates list size operation. Server returns size of the list.
 #[must_use]
-pub fn size(bin: &str) -> Operation {
+pub fn size(bin: impl Into<String>) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Size as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -981,7 +981,7 @@ pub fn size(bin: &str) -> Operation {
 
 /// Creates list get operation. Server returns the item at the specified index in the list bin.
 #[must_use]
-pub fn get(bin: &str, index: i64) -> Operation {
+pub fn get(bin: impl Into<String>, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Get as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -998,7 +998,7 @@ pub fn get(bin: &str, index: i64) -> Operation {
 /// Creates list get range operation. Server returns `count` items starting at the specified
 /// index in the list bin.
 #[must_use]
-pub fn get_range(bin: &str, index: i64, count: i64) -> Operation {
+pub fn get_range(bin: impl Into<String>, index: i64, count: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetRange as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -1015,7 +1015,7 @@ pub fn get_range(bin: &str, index: i64, count: i64) -> Operation {
 /// Creates list get range operation. Server returns items starting at the index to the end of
 /// the list.
 #[must_use]
-pub fn get_range_from(bin: &str, index: i64) -> Operation {
+pub fn get_range_from(bin: impl Into<String>, index: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::GetRange as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -1037,7 +1037,7 @@ pub fn get_range_from(bin: &str, index: i64) -> Operation {
 /// This is the inverse of [`operations::string::split`](crate::operations::string::split)
 /// with no separator. Requires Aerospike Server version 8.2.0 or later.
 #[must_use]
-pub fn join(bin: &str) -> Operation {
+pub fn join(bin: impl Into<String>) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::StringJoin as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -1062,11 +1062,11 @@ pub fn join(bin: &str) -> Operation {
 /// [`operations::string::split_by_separator`](crate::operations::string::split_by_separator).
 /// Requires Aerospike Server version 8.2.0 or later.
 #[must_use]
-pub fn join_by_separator(bin: &str, separator: &str) -> Operation {
+pub fn join_by_separator(bin: impl Into<String>, separator: impl Into<String>) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::StringJoin as u8,
         encoder: Arc::new(pack_cdt_op),
-        args: vec![CdtArgument::Value(Value::from(separator))],
+        args: vec![CdtArgument::Value(Value::String(separator.into()))],
     };
     Operation {
         op: OperationType::CdtRead,
@@ -1080,7 +1080,7 @@ pub fn join_by_separator(bin: &str, separator: &str) -> Operation {
 /// Server selects list items identified by value and returns selected data specified by returnType.
 #[must_use]
 pub fn get_by_value(
-    bin: &str,
+    bin: impl Into<String>,
     value: Value,
     return_type: ListReturnType,
 ) -> Operation {
@@ -1105,7 +1105,7 @@ pub fn get_by_value(
 /// Server selects list items identified by values and returns selected data specified by returnType.
 #[must_use]
 pub fn get_by_value_list(
-    bin: &str,
+    bin: impl Into<String>,
     values: Vec<Value>,
     return_type: ListReturnType,
 ) -> Operation {
@@ -1133,7 +1133,7 @@ pub fn get_by_value_list(
 /// Server returns selected data specified by returnType.
 #[must_use]
 pub fn get_by_value_range(
-    bin: &str,
+    bin: impl Into<String>,
     begin: Value,
     end: Value,
     return_type: ListReturnType,
@@ -1164,7 +1164,7 @@ pub fn get_by_value_range(
 /// Server selects list item identified by index and returns selected data specified by returnType
 #[must_use]
 pub fn get_by_index(
-    bin: &str,
+    bin: impl Into<String>,
     index: i64,
     return_type: ListReturnType,
 ) -> Operation {
@@ -1190,7 +1190,7 @@ pub fn get_by_index(
 /// data specified by returnType.
 #[must_use]
 pub fn get_by_index_range(
-    bin: &str,
+    bin: impl Into<String>,
     index: i64,
     return_type: ListReturnType,
 ) -> Operation {
@@ -1216,7 +1216,7 @@ pub fn get_by_index_range(
 /// by returnType.
 #[must_use]
 pub fn get_by_index_range_count(
-    bin: &str,
+    bin: impl Into<String>,
     index: i64,
     count: i64,
     return_type: ListReturnType,
@@ -1243,7 +1243,7 @@ pub fn get_by_index_range_count(
 /// Server selects list item identified by rank and returns selected data specified by returnType.
 #[must_use]
 pub fn get_by_rank(
-    bin: &str,
+    bin: impl Into<String>,
     rank: i64,
     return_type: ListReturnType,
 ) -> Operation {
@@ -1268,7 +1268,7 @@ pub fn get_by_rank(
 /// data specified by returnType.
 #[must_use]
 pub fn get_by_rank_range(
-    bin: &str,
+    bin: impl Into<String>,
     rank: i64,
     return_type: ListReturnType,
 ) -> Operation {
@@ -1292,7 +1292,7 @@ pub fn get_by_rank_range(
 /// Server selects "count" list items starting at specified rank and returns selected data specified by returnType.
 #[must_use]
 pub fn get_by_rank_range_count(
-    bin: &str,
+    bin: impl Into<String>,
     rank: i64,
     count: i64,
     return_type: ListReturnType,
@@ -1330,7 +1330,7 @@ pub fn get_by_rank_range_count(
 /// ```
 #[must_use]
 pub fn get_by_value_relative_rank_range(
-    bin: &str,
+    bin: impl Into<String>,
     value: Value,
     rank: i64,
     return_type: ListReturnType,
@@ -1369,7 +1369,7 @@ pub fn get_by_value_relative_rank_range(
 /// ```
 #[must_use]
 pub fn get_by_value_relative_rank_range_count(
-    bin: &str,
+    bin: impl Into<String>,
     value: Value,
     rank: i64,
     count: i64,
@@ -1397,7 +1397,7 @@ pub fn get_by_value_relative_rank_range_count(
 /// Server sorts list according to sortFlags.
 /// Server does not return a result by default.
 #[must_use]
-pub fn sort(bin: &str, sort_flags: ListSortFlags) -> Operation {
+pub fn sort(bin: impl Into<String>, sort_flags: ListSortFlags) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtListOpType::Sort as u8,
         encoder: Arc::new(pack_cdt_op),

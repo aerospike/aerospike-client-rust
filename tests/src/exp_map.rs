@@ -736,7 +736,7 @@ async fn ordered_map_expression_comparisons() {
             &wpolicy,
             &key,
             &[Bin::new(
-                "m".into(),
+                "m",
                 as_sorted_map!("a" => 1, "b" => 2, "c" => 3),
             )],
         )
@@ -750,37 +750,37 @@ async fn ordered_map_expression_comparisons() {
     let cases: Vec<(&str, Expression, bool)> = vec![
         (
             "eq same",
-            eq(map_bin("m".into()), map_val(same.clone())),
+            eq(map_bin("m"), map_val(same.clone())),
             true,
         ),
         (
             "ne same",
-            ne(map_bin("m".into()), map_val(same.clone())),
+            ne(map_bin("m"), map_val(same.clone())),
             false,
         ),
         (
             "ne smaller",
-            ne(map_bin("m".into()), map_val(smaller.clone())),
+            ne(map_bin("m"), map_val(smaller.clone())),
             true,
         ),
         // Canonical map order is length-first: a 3-entry map sorts after
         // a 2-entry map.
         (
             "gt smaller",
-            gt(map_bin("m".into()), map_val(smaller.clone())),
+            gt(map_bin("m"), map_val(smaller.clone())),
             true,
         ),
         (
             "lt smaller",
-            lt(map_bin("m".into()), map_val(smaller)),
+            lt(map_bin("m"), map_val(smaller)),
             false,
         ),
         (
             "ge same",
-            ge(map_bin("m".into()), map_val(same.clone())),
+            ge(map_bin("m"), map_val(same.clone())),
             true,
         ),
-        ("le same", le(map_bin("m".into()), map_val(same)), true),
+        ("le same", le(map_bin("m"), map_val(same)), true),
     ];
 
     for (label, filter, expect_match) in cases {

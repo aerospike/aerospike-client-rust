@@ -672,7 +672,7 @@ mod tests {
             ctx_map_key(Value::String("book".into())),
             ctx_list_index(2),
             ctx_all_children_with_filter(expressions::gt(
-                expressions::int_bin("score".into()),
+                expressions::int_bin("score"),
                 expressions::int_val(10),
             )),
         ];

@@ -1958,7 +1958,7 @@ impl Client {
     /// # async fn example(client: &Client) -> Result<()> {
     /// let wpolicy = WritePolicy::default();
     /// let statement = Statement::new("ns", "set", Bins::All);
-    /// let ops = vec![operations::put(&Bin::new("bin".into(), Value::Int(42)))];
+    /// let ops = vec![operations::put(&Bin::new("bin", Value::Int(42)))];
     /// let task = client.query_operate(&wpolicy, statement, &ops).await?;
     /// task.wait_till_complete(None).await?;
     /// # Ok(())

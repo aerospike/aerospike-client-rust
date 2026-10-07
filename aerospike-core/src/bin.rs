@@ -30,8 +30,11 @@ pub struct Bin {
 
 impl Bin {
     /// Construct a new bin given a name and a value.
-    pub const fn new(name: String, val: Value) -> Self {
-        Bin { name, value: val }
+    pub fn new(name: impl Into<String>, val: Value) -> Self {
+        Bin {
+            name: name.into(),
+            value: val,
+        }
     }
 }
 
@@ -45,10 +48,10 @@ impl AsRef<Bin> for Bin {
 #[macro_export]
 macro_rules! as_bin {
     ($bin_name:expr, None) => {{
-        $crate::Bin::new($bin_name.into(), $crate::Value::Nil)
+        $crate::Bin::new($bin_name, $crate::Value::Nil)
     }};
     ($bin_name:expr, $val:expr) => {{
-        $crate::Bin::new($bin_name.into(), $crate::Value::from($val))
+        $crate::Bin::new($bin_name, $crate::Value::from($val))
     }};
 }
 
