@@ -778,7 +778,7 @@ async fn strlen_on_string_nested_in_list_via_expression() {
 
     let nested = list_get_by_index(
         ListReturnType::Values,
-        ExpType::STRING,
+        ExpType::String,
         int_val(2),
         list_bin(BIN.into()),
         &[],
@@ -805,7 +805,7 @@ async fn upper_on_string_nested_in_map_via_expression() {
 
     let nested = map_get_by_key(
         MapReturnType::Value,
-        ExpType::STRING,
+        ExpType::String,
         string_val("a".into()),
         map_bin(BIN.into()),
         &[],

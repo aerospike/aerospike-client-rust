@@ -402,7 +402,7 @@ pub fn size(bin: Expression, ctx: &[CdtContext]) -> Expression {
         ExpressionArgument::Value(Value::from(CdtListOpType::Size as i64)),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
-    add_read(bin, ExpType::INT, args)
+    add_read(bin, ExpType::Int, args)
 }
 
 /// Creates an expression that concatenates the string items of `bin`. The list
@@ -420,7 +420,7 @@ pub fn join(bin: Expression, ctx: &[CdtContext]) -> Expression {
         ExpressionArgument::Value(Value::from(CdtListOpType::StringJoin as i64)),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
-    add_read(bin, ExpType::STRING, args)
+    add_read(bin, ExpType::String, args)
 }
 
 /// Creates an expression that joins the string items of `bin` with a separator.
@@ -444,7 +444,7 @@ pub fn join_by_separator(separator: Expression, bin: Expression, ctx: &[CdtConte
         ExpressionArgument::FilterExpression(separator),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
-    add_read(bin, ExpType::STRING, args)
+    add_read(bin, ExpType::String, args)
 }
 
 /// Creates expression that selects list items identified by value and returns selected
@@ -607,7 +607,7 @@ pub fn get_by_value_relative_rank_range_count<TLR: ToListReturnTypeBitmask>(
 /// use aerospike::operations::lists::ListReturnType;
 /// use aerospike::expressions::lists::get_by_index;
 /// let _ = eq(
-///   get_by_index(ListReturnType::Values, ExpType::INT, int_val(3), list_bin("a".to_string()), &[]),
+///   get_by_index(ListReturnType::Values, ExpType::Int, int_val(3), list_bin("a".to_string()), &[]),
 ///   int_val(5));
 /// ```
 ///
@@ -677,7 +677,7 @@ pub fn get_by_index_range_count<TLR: ToListReturnTypeBitmask>(
 /// use aerospike::operations::lists::ListReturnType;
 /// use aerospike::expressions::{ExpType, int_val, list_bin};
 /// use aerospike::expressions::lists::get_by_rank;
-/// let _ = get_by_rank(ListReturnType::Values, ExpType::STRING, int_val(0), list_bin("a".to_string()), &[]);
+/// let _ = get_by_rank(ListReturnType::Values, ExpType::String, int_val(0), list_bin("a".to_string()), &[]);
 /// ```
 #[must_use]
 pub fn get_by_rank<TLR: ToListReturnTypeBitmask>(
@@ -761,11 +761,11 @@ pub(crate) fn add_write(
 ) -> Expression {
     let return_type: ExpType;
     if ctx.is_empty() {
-        return_type = ExpType::LIST;
+        return_type = ExpType::List;
     } else if (ctx[0].id & CtxType::ListIndex as u16) == 0 {
-        return_type = ExpType::MAP;
+        return_type = ExpType::Map;
     } else {
-        return_type = ExpType::LIST;
+        return_type = ExpType::List;
     }
 
     Expression {
@@ -789,14 +789,14 @@ pub(crate) fn get_value_type(return_type: i64) -> ExpType {
             || t == ListReturnType::Rank as i64
             || t == ListReturnType::ReverseRank as i64 =>
         {
-            ExpType::LIST
+            ExpType::List
         }
 
-        t if t == ListReturnType::Count as i64 => ExpType::INT,
+        t if t == ListReturnType::Count as i64 => ExpType::Int,
 
-        t if t == ListReturnType::Values as i64 => ExpType::LIST,
+        t if t == ListReturnType::Values as i64 => ExpType::List,
 
-        t if t == ListReturnType::Exists as i64 => ExpType::BOOL,
+        t if t == ListReturnType::Exists as i64 => ExpType::Bool,
 
         _ => panic!("Invalid ListReturnType: {return_type}"),
     }

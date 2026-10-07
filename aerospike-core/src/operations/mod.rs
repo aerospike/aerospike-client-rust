@@ -165,7 +165,7 @@ impl Operation {
 
         match &self.data {
             OperationData::None => {
-                size += self.write_op_header_to(buffer, ParticleType::NULL as u8);
+                size += self.write_op_header_to(buffer, ParticleType::Null as u8);
             }
             OperationData::Value(value) => {
                 size += self.write_op_header_to(buffer, value.particle_type()?);
@@ -179,19 +179,19 @@ impl Operation {
                 size += cdt_op.write_to(buffer, &self.ctx)?;
             }
             OperationData::EXPOp(ref exp) => {
-                size += self.write_op_header_to(buffer, ParticleType::BLOB as u8);
+                size += self.write_op_header_to(buffer, ParticleType::Blob as u8);
                 size += exp.write_to(buffer)?;
             }
             OperationData::CdtSelectByPath(ctx, flag) => {
-                size += self.write_op_header_to(buffer, ParticleType::BLOB as u8);
+                size += self.write_op_header_to(buffer, ParticleType::Blob as u8);
                 size += pack_path_select(&mut Some(buffer), ctx, flag.0)?;
             }
             OperationData::CdtModifyByPath(ctx, flag, exp) => {
-                size += self.write_op_header_to(buffer, ParticleType::BLOB as u8);
+                size += self.write_op_header_to(buffer, ParticleType::Blob as u8);
                 size += pack_path_modify_exp(&mut Some(buffer), ctx, flag.0, exp)?;
             }
             OperationData::StringOp(ref s_op) => {
-                size += self.write_op_header_to(buffer, ParticleType::STRING as u8);
+                size += self.write_op_header_to(buffer, ParticleType::String as u8);
                 size += s_op.write_to(buffer, &self.ctx)?;
             }
         }

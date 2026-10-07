@@ -71,7 +71,7 @@ pub async fn run() {
     let ctx_cheap = ctx_all_children_with_filter(le(
         get_by_key(
             MapReturnType::Value,
-            ExpType::FLOAT,
+            ExpType::Float,
             string_val("price".to_string()),
             exp_map_loop_var(LoopVarPart::VALUE),
             &[],

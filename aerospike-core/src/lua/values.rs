@@ -66,10 +66,10 @@ pub fn value_to_lua(lua: &Lua, value: Value) -> mlua::Result<LuaValue> {
         // An opaque foreign payload has no Lua notion either, so it travels
         // as plain bytes like a blob.
         Value::Blob(b) | Value::Unknown(_, b) => {
-            LuaValue::UserData(lua.create_userdata(LuaBytes::new(b, ParticleType::BLOB))?)
+            LuaValue::UserData(lua.create_userdata(LuaBytes::new(b, ParticleType::Blob))?)
         }
         Value::Hll(b) => {
-            LuaValue::UserData(lua.create_userdata(LuaBytes::new(b, ParticleType::HLL))?)
+            LuaValue::UserData(lua.create_userdata(LuaBytes::new(b, ParticleType::Hll))?)
         }
         Value::List(items) | Value::MultiResult(items) => {
             LuaValue::UserData(lua.create_userdata(LuaList(items))?)
@@ -112,7 +112,7 @@ pub fn lua_to_value(value: &LuaValue) -> mlua::Result<Value> {
             } else if let Ok(map) = ud.borrow::<LuaMap>() {
                 Value::HashMap(map.0.clone())
             } else if let Ok(bytes) = ud.borrow::<LuaBytes>() {
-                if bytes.particle_type == ParticleType::HLL as u8 {
+                if bytes.particle_type == ParticleType::Hll as u8 {
                     Value::Hll(bytes.bytes.clone())
                 } else {
                     Value::Blob(bytes.bytes.clone())

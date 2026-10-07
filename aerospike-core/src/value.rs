@@ -405,19 +405,19 @@ impl Value {
     /// caller mistake and is reported as `PARAMETER_ERROR`.
     pub fn particle_type(&self) -> Result<u8> {
         let code = match *self {
-            Value::Nil => ParticleType::NULL as u8,
-            Value::Int(_) => ParticleType::INTEGER as u8,
-            Value::Float(_) => ParticleType::FLOAT as u8,
-            Value::String(_) => ParticleType::STRING as u8,
-            Value::Blob(_) => ParticleType::BLOB as u8,
-            Value::Bool(_) => ParticleType::BOOL as u8,
-            Value::MultiResult(_) | Value::List(_) => ParticleType::LIST as u8,
+            Value::Nil => ParticleType::Null as u8,
+            Value::Int(_) => ParticleType::Integer as u8,
+            Value::Float(_) => ParticleType::Float as u8,
+            Value::String(_) => ParticleType::String as u8,
+            Value::Blob(_) => ParticleType::Blob as u8,
+            Value::Bool(_) => ParticleType::Bool as u8,
+            Value::MultiResult(_) | Value::List(_) => ParticleType::List as u8,
             Value::HashMap(_)
             | Value::OrderedMap(_)
             | Value::SortedMap(_)
-            | Value::KeyValueList(_) => ParticleType::MAP as u8,
-            Value::GeoJson(_) => ParticleType::GEOJSON as u8,
-            Value::Hll(_) => ParticleType::HLL as u8,
+            | Value::KeyValueList(_) => ParticleType::Map as u8,
+            Value::GeoJson(_) => ParticleType::GeoJson as u8,
+            Value::Hll(_) => ParticleType::Hll as u8,
             Value::Unknown(code, _) => code,
             Value::Infinity => {
                 return Err(Error::invalid_argument(
@@ -1094,20 +1094,20 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
         return Ok(Value::Unknown(ptype, buf.read_blob(len)?));
     };
     match particle_type {
-        ParticleType::NULL => Ok(Value::Nil),
-        ParticleType::INTEGER => {
+        ParticleType::Null => Ok(Value::Nil),
+        ParticleType::Integer => {
             let val = buf.read_i64(None);
             Ok(Value::Int(val))
         }
-        ParticleType::FLOAT => {
+        ParticleType::Float => {
             let val = buf.read_f64(None);
             Ok(Value::Float(FloatValue::from(val)))
         }
-        ParticleType::STRING => {
+        ParticleType::String => {
             let val = buf.read_str(len)?;
             Ok(Value::String(val))
         }
-        ParticleType::GEOJSON => {
+        ParticleType::GeoJson => {
             buf.skip(1);
             let ncells = usize::try_from(buf.read_i16(None))
                 .map_err(|_| Error::bad_response("negative GeoJSON cell count"))?;
@@ -1119,20 +1119,20 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
             let val = buf.read_str(text_len)?;
             Ok(Value::GeoJson(val))
         }
-        ParticleType::BLOB => Ok(Value::Blob(buf.read_blob(len)?)),
-        ParticleType::LIST => {
+        ParticleType::Blob => Ok(Value::Blob(buf.read_blob(len)?)),
+        ParticleType::List => {
             let val = decoder::unpack_value_list(buf)?;
             Ok(val)
         }
-        ParticleType::MAP => {
+        ParticleType::Map => {
             let val = decoder::unpack_value_map(buf)?;
             Ok(val)
         }
-        ParticleType::HLL => Ok(Value::Hll(buf.read_blob(len)?)),
-        ParticleType::BOOL => Ok(Value::Bool(buf.read_bool(len))),
+        ParticleType::Hll => Ok(Value::Hll(buf.read_blob(len)?)),
+        ParticleType::Bool => Ok(Value::Bool(buf.read_bool(len))),
         // Retired server types the client does not interpret: same
         // treatment as unrecognized codes above.
-        ParticleType::DIGEST | ParticleType::LDT => Ok(Value::Unknown(ptype, buf.read_blob(len)?)),
+        ParticleType::Digest | ParticleType::Ldt => Ok(Value::Unknown(ptype, buf.read_blob(len)?)),
     }
 }
 
@@ -1516,7 +1516,7 @@ mod tests {
 
         let val = Value::from(m.clone());
         assert!(matches!(val, Value::OrderedMap(_)));
-        assert_eq!(val.particle_type().unwrap(), ParticleType::MAP as u8);
+        assert_eq!(val.particle_type().unwrap(), ParticleType::Map as u8);
 
         // Insertion order is preserved by the container.
         let back: IndexMap<Value, Value> = val.try_into().unwrap();
@@ -1545,19 +1545,19 @@ mod tests {
         // The guard must not have swallowed the ordinary cases.
         assert_eq!(
             Value::Nil.particle_type().unwrap(),
-            ParticleType::NULL as u8
+            ParticleType::Null as u8
         );
         assert_eq!(
             Value::from(1).particle_type().unwrap(),
-            ParticleType::INTEGER as u8
+            ParticleType::Integer as u8
         );
         assert_eq!(
             Value::from("s").particle_type().unwrap(),
-            ParticleType::STRING as u8
+            ParticleType::String as u8
         );
         assert_eq!(
             Value::from(vec![1_u8]).particle_type().unwrap(),
-            ParticleType::BLOB as u8
+            ParticleType::Blob as u8
         );
         // `Unknown` still carries its uninterpreted code through.
         assert_eq!(Value::Unknown(99, vec![]).particle_type().unwrap(), 99);

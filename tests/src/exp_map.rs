@@ -39,7 +39,7 @@ fn expression_map() {
         eq(
             get_by_key(
                 MapReturnType::Value,
-                ExpType::INT,
+                ExpType::Int,
                 string_val("test3".to_string()),
                 put(
                     &MapPolicy::default(),
@@ -234,7 +234,7 @@ fn expression_map() {
         eq(
             get_by_index(
                 MapReturnType::Value,
-                ExpType::INT,
+                ExpType::Int,
                 int_val(0),
                 map_bin("bin".to_string()),
                 &[],
@@ -287,7 +287,7 @@ fn expression_map() {
         eq(
             get_by_rank(
                 MapReturnType::Value,
-                ExpType::INT,
+                ExpType::Int,
                 int_val(0),
                 map_bin("bin".to_string()),
                 &[],

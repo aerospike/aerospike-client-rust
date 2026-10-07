@@ -111,7 +111,7 @@ async fn expression_hll() {
         lt(
             get_by_index(
                 ListReturnType::Values,
-                ExpType::INT,
+                ExpType::Int,
                 int_val(0),
                 describe(hll_bin("hllbin".to_string())),
                 &[],

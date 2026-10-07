@@ -219,7 +219,7 @@ async fn expression_data_types() {
         &client,
         ne(
             bin_type("bin".to_string()),
-            int_val(ParticleType::NULL as i64),
+            int_val(ParticleType::Null as i64),
         ),
         &set_name,
     )
@@ -585,7 +585,7 @@ fn expression_rec_ops() {
     let count = count_results(rs).await;
     assert!(count > 0 && count < 100, "DIGEST MODULO Test Failed");
 
-    let rs = test_filter(&client, eq(key(ExpType::INT), int_val(50)), &set_name).await;
+    let rs = test_filter(&client, eq(key(ExpType::Int), int_val(50)), &set_name).await;
     let count = count_results(rs).await;
     // 0 because key is not saved
     assert_eq!(count, 0, "KEY Test Failed");
@@ -603,7 +603,7 @@ fn expression_rec_ops() {
         &client,
         regex_compare(
             "[1-5]".to_string(),
-            RegexFlag::ICASE as i64,
+            RegexFlag::Icase as i64,
             string_bin("bin2".to_string()),
         ),
         &set_name,

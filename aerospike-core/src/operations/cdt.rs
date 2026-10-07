@@ -70,7 +70,7 @@ impl PartialEq for CdtOperation {
 
 impl CdtOperation {
     pub const fn particle_type(&self) -> ParticleType {
-        ParticleType::BLOB
+        ParticleType::Blob
     }
 
     pub fn estimate_size(&self, ctx: &[CdtContext]) -> Result<usize> {

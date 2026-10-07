@@ -189,7 +189,7 @@ pub fn register(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|_, (_this, capacity): (Table, Option<usize>)| {
             Ok(LuaBytes {
                 bytes: Vec::with_capacity(capacity.unwrap_or(0)),
-                particle_type: ParticleType::BLOB as u8,
+                particle_type: ParticleType::Blob as u8,
             })
         })?,
     )?;
@@ -293,7 +293,7 @@ pub fn register(lua: &Lua) -> mlua::Result<()> {
                         let end = (start + len).min(b.bytes.len());
                         b.bytes[start..end].to_vec()
                     });
-            Ok(LuaBytes::new(payload, ParticleType::BLOB))
+            Ok(LuaBytes::new(payload, ParticleType::Blob))
         })?,
     )?;
     bytes.set(

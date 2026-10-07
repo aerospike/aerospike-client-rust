@@ -141,7 +141,7 @@ pub fn add_with_index_and_min_hash(
 pub fn get_count(bin: Expression) -> Expression {
     add_read(
         bin,
-        ExpType::INT,
+        ExpType::Int,
         vec![ExpressionArgument::Value(Value::from(
             HllExpOp::Count as i64,
         ))],
@@ -166,7 +166,7 @@ pub fn get_count(bin: Expression) -> Expression {
 pub fn get_union(list: Expression, bin: Expression) -> Expression {
     add_read(
         bin,
-        ExpType::HLL,
+        ExpType::Hll,
         vec![
             ExpressionArgument::Value(Value::from(HllExpOp::Union as i64)),
             ExpressionArgument::FilterExpression(list),
@@ -192,7 +192,7 @@ pub fn get_union(list: Expression, bin: Expression) -> Expression {
 pub fn get_union_count(list: Expression, bin: Expression) -> Expression {
     add_read(
         bin,
-        ExpType::INT,
+        ExpType::Int,
         vec![
             ExpressionArgument::Value(Value::from(HllExpOp::UnionCount as i64)),
             ExpressionArgument::FilterExpression(list),
@@ -218,7 +218,7 @@ pub fn get_union_count(list: Expression, bin: Expression) -> Expression {
 pub fn get_intersect_count(list: Expression, bin: Expression) -> Expression {
     add_read(
         bin,
-        ExpType::INT,
+        ExpType::Int,
         vec![
             ExpressionArgument::Value(Value::from(HllExpOp::IntersectCount as i64)),
             ExpressionArgument::FilterExpression(list),
@@ -239,7 +239,7 @@ pub fn get_intersect_count(list: Expression, bin: Expression) -> Expression {
 pub fn get_similarity(list: Expression, bin: Expression) -> Expression {
     add_read(
         bin,
-        ExpType::FLOAT,
+        ExpType::Float,
         vec![
             ExpressionArgument::Value(Value::from(HllExpOp::Similarity as i64)),
             ExpressionArgument::FilterExpression(list),
@@ -257,13 +257,13 @@ pub fn get_similarity(list: Expression, bin: Expression) -> Expression {
 /// use aerospike::expressions::hll::describe;
 ///
 /// // Bin "a" `indexBitCount` < 10
-/// let _ = lt(get_by_index(ListReturnType::Values, ExpType::INT, int_val(0), describe(hll_bin("a".to_string())), &[]), int_val(10));
+/// let _ = lt(get_by_index(ListReturnType::Values, ExpType::Int, int_val(0), describe(hll_bin("a".to_string())), &[]), int_val(10));
 /// ```
 #[must_use]
 pub fn describe(bin: Expression) -> Expression {
     add_read(
         bin,
-        ExpType::LIST,
+        ExpType::List,
         vec![ExpressionArgument::Value(Value::from(
             HllExpOp::Describe as i64,
         ))],
@@ -285,7 +285,7 @@ pub fn describe(bin: Expression) -> Expression {
 pub fn may_contain(list: Expression, bin: Expression) -> Expression {
     add_read(
         bin,
-        ExpType::INT,
+        ExpType::Int,
         vec![
             ExpressionArgument::Value(Value::from(HllExpOp::MayContain as i64)),
             ExpressionArgument::FilterExpression(list),
@@ -316,7 +316,7 @@ pub(crate) fn add_write(bin: Expression, arguments: Vec<ExpressionArgument>) -> 
         val: None,
         bin: Some(Box::new(bin)),
         flags: Some(MODULE | MODIFY),
-        module: Some(ExpType::HLL),
+        module: Some(ExpType::Hll),
         exps: None,
         arguments: Some(arguments),
         bytes: None,

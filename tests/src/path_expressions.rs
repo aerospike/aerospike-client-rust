@@ -84,7 +84,7 @@ async fn select_by_path_price_filter() {
     let ctx2 = ctx_all_children_with_filter(le(
         get_by_key(
             MapReturnType::Value,
-            ExpType::FLOAT,
+            ExpType::Float,
             string_val("price".to_string()),
             exp_map_loop_var(LoopVarPart::VALUE),
             &[],
@@ -148,7 +148,7 @@ async fn select_by_path_empty_result() {
     let ctx2 = ctx_all_children_with_filter(le(
         get_by_key(
             MapReturnType::Value,
-            ExpType::FLOAT,
+            ExpType::Float,
             string_val("price".to_string()),
             exp_map_loop_var(LoopVarPart::VALUE),
             &[],
@@ -275,7 +275,7 @@ async fn select_by_path_complex_nested() {
         eq(
             get_by_key(
                 MapReturnType::Value,
-                ExpType::STRING,
+                ExpType::String,
                 string_val("category".to_string()),
                 exp_map_loop_var(LoopVarPart::VALUE),
                 &[],
@@ -285,7 +285,7 @@ async fn select_by_path_complex_nested() {
         lt(
             get_by_key(
                 MapReturnType::Value,
-                ExpType::FLOAT,
+                ExpType::Float,
                 string_val("price".to_string()),
                 exp_map_loop_var(LoopVarPart::VALUE),
                 &[],
@@ -418,7 +418,7 @@ async fn exp_select_by_path_filter() {
     let ctx2 = ctx_all_children_with_filter(le(
         get_by_key(
             MapReturnType::Value,
-            ExpType::FLOAT,
+            ExpType::Float,
             string_val("price".to_string()),
             exp_map_loop_var(LoopVarPart::VALUE),
             &[],
@@ -427,7 +427,7 @@ async fn exp_select_by_path_filter() {
     ));
 
     let bin_exp = aerospike::expressions::map_bin("testbin".to_string());
-    let exp = exp_select_by_path(ExpType::LIST, SelectFlag::VALUE, bin_exp, &[ctx1, ctx2]);
+    let exp = exp_select_by_path(ExpType::List, SelectFlag::VALUE, bin_exp, &[ctx1, ctx2]);
 
     let ops = &[aerospike::operations::exp::read_exp(
         "result",
@@ -474,7 +474,7 @@ async fn exp_modify_by_path_multiply() {
 
     let bin_exp = aerospike::expressions::map_bin("testbin".to_string());
     let exp = exp_modify_by_path(
-        ExpType::MAP,
+        ExpType::Map,
         aerospike::operations::path::ModifyFlag::DEFAULT,
         bin_exp,
         modify_exp,
@@ -820,7 +820,7 @@ async fn remove_books_with_low_prices() {
     let ctx2 = ctx_all_children_with_filter(le(
         get_by_key(
             MapReturnType::Value,
-            ExpType::FLOAT,
+            ExpType::Float,
             string_val("price".to_string()),
             exp_map_loop_var(LoopVarPart::VALUE),
             &[],
@@ -1006,7 +1006,7 @@ async fn remove_nested_items_complex_path() {
     let ctx3 = ctx_all_children_with_filter(lt(
         get_by_key(
             MapReturnType::Value,
-            ExpType::INT,
+            ExpType::Int,
             string_val("sales".to_string()),
             exp_map_loop_var(LoopVarPart::VALUE),
             &[],
@@ -1496,7 +1496,7 @@ async fn exp_select_values_with_path_builder() {
 
     let path = Path::new().map_key("nums").all_children();
     let bin_exp = aerospike::expressions::map_bin("testbin".to_string());
-    let exp = exp_select_values(ExpType::LIST, bin_exp, &path);
+    let exp = exp_select_values(ExpType::List, bin_exp, &path);
 
     let ops = &[aerospike::operations::exp::read_exp(
         "result",
@@ -1714,7 +1714,7 @@ async fn exp_remove_through_write_exp_drops_leaves() {
         ctx_all_children_with_filter(ge(exp_int_loop_var(LoopVarPart::VALUE), int_val(10))),
     ];
     let bin_exp = aerospike::expressions::map_bin("testbin".to_string());
-    let exp = exp_remove(ExpType::MAP, bin_exp, &ctx);
+    let exp = exp_remove(ExpType::Map, bin_exp, &ctx);
 
     let ops = &[aerospike::operations::exp::write_exp(
         "testbin",
@@ -1778,7 +1778,7 @@ async fn loop_var_bool_filters_features() {
         ctx_all_children_with_filter(eq(
             get_by_key(
                 MapReturnType::Value,
-                ExpType::BOOL,
+                ExpType::Bool,
                 string_val("enabled".to_string()),
                 exp_map_loop_var(LoopVarPart::VALUE),
                 &[],

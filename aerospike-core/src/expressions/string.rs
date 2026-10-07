@@ -104,7 +104,7 @@ use crate::operations::string::StringNumericType;
 /// `i64`. For UTF-8 byte length, use [`byte_length`].
 #[must_use]
 pub fn strlen(src: Expression) -> Expression {
-    add_read(src, ExpType::INT, vec![sub(STRLEN)])
+    add_read(src, ExpType::Int, vec![sub(STRLEN)])
 }
 
 /// Expression that returns the substring of `src` from codepoint `start` to
@@ -113,7 +113,7 @@ pub fn strlen(src: Expression) -> Expression {
 pub fn substr(src: Expression, start: Expression) -> Expression {
     add_read(
         src,
-        ExpType::STRING,
+        ExpType::String,
         vec![sub(SUBSTR), ExpressionArgument::FilterExpression(start)],
     )
 }
@@ -128,7 +128,7 @@ pub fn substr(src: Expression, start: Expression) -> Expression {
 pub fn substr_range(src: Expression, start: Expression, end: Expression) -> Expression {
     add_read(
         src,
-        ExpType::STRING,
+        ExpType::String,
         vec![
             sub(SUBSTR),
             ExpressionArgument::FilterExpression(start),
@@ -143,7 +143,7 @@ pub fn substr_range(src: Expression, start: Expression, end: Expression) -> Expr
 pub fn char_at(src: Expression, index: Expression) -> Expression {
     add_read(
         src,
-        ExpType::STRING,
+        ExpType::String,
         vec![sub(CHAR_AT), ExpressionArgument::FilterExpression(index)],
     )
 }
@@ -154,7 +154,7 @@ pub fn char_at(src: Expression, index: Expression) -> Expression {
 pub fn find(src: Expression, needle: Expression) -> Expression {
     add_read(
         src,
-        ExpType::INT,
+        ExpType::Int,
         vec![sub(FIND), ExpressionArgument::FilterExpression(needle)],
     )
 }
@@ -165,7 +165,7 @@ pub fn find(src: Expression, needle: Expression) -> Expression {
 pub fn find_nth(src: Expression, needle: Expression, occurrence: Expression) -> Expression {
     add_read(
         src,
-        ExpType::INT,
+        ExpType::Int,
         vec![
             sub(FIND),
             ExpressionArgument::FilterExpression(needle),
@@ -179,7 +179,7 @@ pub fn find_nth(src: Expression, needle: Expression, occurrence: Expression) -> 
 pub fn contains(src: Expression, needle: Expression) -> Expression {
     add_read(
         src,
-        ExpType::BOOL,
+        ExpType::Bool,
         vec![sub(CONTAINS), ExpressionArgument::FilterExpression(needle)],
     )
 }
@@ -192,7 +192,7 @@ pub fn contains(src: Expression, needle: Expression) -> Expression {
 pub fn starts_with(src: Expression, prefix: Expression) -> Expression {
     add_read(
         src,
-        ExpType::BOOL,
+        ExpType::Bool,
         vec![
             sub(STARTS_WITH),
             ExpressionArgument::FilterExpression(prefix),
@@ -208,7 +208,7 @@ pub fn starts_with(src: Expression, prefix: Expression) -> Expression {
 pub fn ends_with(src: Expression, suffix: Expression) -> Expression {
     add_read(
         src,
-        ExpType::BOOL,
+        ExpType::Bool,
         vec![sub(ENDS_WITH), ExpressionArgument::FilterExpression(suffix)],
     )
 }
@@ -217,27 +217,27 @@ pub fn ends_with(src: Expression, suffix: Expression) -> Expression {
 /// time if the source cannot be parsed as an integer.
 #[must_use]
 pub fn to_integer(src: Expression) -> Expression {
-    add_read(src, ExpType::INT, vec![sub(TO_INTEGER)])
+    add_read(src, ExpType::Int, vec![sub(TO_INTEGER)])
 }
 
 /// Expression that parses `src` as a 64-bit float. Returns an error at
 /// evaluation time if the source cannot be parsed as a double.
 #[must_use]
 pub fn to_double(src: Expression) -> Expression {
-    add_read(src, ExpType::FLOAT, vec![sub(TO_DOUBLE)])
+    add_read(src, ExpType::Float, vec![sub(TO_DOUBLE)])
 }
 
 /// Expression that returns the UTF-8 byte length of `src` as an `i64`.
 /// Differs from [`strlen`] for non-ASCII content.
 #[must_use]
 pub fn byte_length(src: Expression) -> Expression {
-    add_read(src, ExpType::INT, vec![sub(BYTE_LENGTH)])
+    add_read(src, ExpType::Int, vec![sub(BYTE_LENGTH)])
 }
 
 /// Expression that tests whether `src` contains a valid integer or float.
 #[must_use]
 pub fn is_numeric(src: Expression) -> Expression {
-    add_read(src, ExpType::BOOL, vec![sub(IS_NUMERIC)])
+    add_read(src, ExpType::Bool, vec![sub(IS_NUMERIC)])
 }
 
 /// Expression that tests whether `src` parses as a number of the requested
@@ -246,7 +246,7 @@ pub fn is_numeric(src: Expression) -> Expression {
 pub fn is_numeric_typed(src: Expression, numeric_type: StringNumericType) -> Expression {
     add_read(
         src,
-        ExpType::BOOL,
+        ExpType::Bool,
         vec![
             sub(IS_NUMERIC),
             ExpressionArgument::Value(Value::Int(numeric_type as i64)),
@@ -257,26 +257,26 @@ pub fn is_numeric_typed(src: Expression, numeric_type: StringNumericType) -> Exp
 /// Expression that tests whether every cased codepoint in `src` is uppercase.
 #[must_use]
 pub fn is_upper(src: Expression) -> Expression {
-    add_read(src, ExpType::BOOL, vec![sub(IS_UPPER)])
+    add_read(src, ExpType::Bool, vec![sub(IS_UPPER)])
 }
 
 /// Expression that tests whether every cased codepoint in `src` is lowercase.
 #[must_use]
 pub fn is_lower(src: Expression) -> Expression {
-    add_read(src, ExpType::BOOL, vec![sub(IS_LOWER)])
+    add_read(src, ExpType::Bool, vec![sub(IS_LOWER)])
 }
 
 /// Expression that returns the UTF-8 bytes of `src` as a blob.
 #[must_use]
 pub fn to_blob(src: Expression) -> Expression {
-    add_read(src, ExpType::BLOB, vec![sub(TO_BLOB)])
+    add_read(src, ExpType::Blob, vec![sub(TO_BLOB)])
 }
 
 /// Expression that splits `src` by Unicode codepoint — each codepoint becomes
 /// its own list element.
 #[must_use]
 pub fn split(src: Expression) -> Expression {
-    add_read(src, ExpType::LIST, vec![sub(SPLIT)])
+    add_read(src, ExpType::List, vec![sub(SPLIT)])
 }
 
 /// Expression that splits `src` by the `separator` substring. If the
@@ -286,7 +286,7 @@ pub fn split(src: Expression) -> Expression {
 pub fn split_by_separator(src: Expression, separator: Expression) -> Expression {
     add_read(
         src,
-        ExpType::LIST,
+        ExpType::List,
         vec![sub(SPLIT), ExpressionArgument::FilterExpression(separator)],
     )
 }
@@ -295,7 +295,7 @@ pub fn split_by_separator(src: Expression, separator: Expression) -> Expression 
 /// blob.
 #[must_use]
 pub fn b64_decode(src: Expression) -> Expression {
-    add_read(src, ExpType::BLOB, vec![sub(B64_DECODE)])
+    add_read(src, ExpType::Blob, vec![sub(B64_DECODE)])
 }
 
 /// Expression that tests whether `pattern` (ICU regex syntax) matches `src`.
@@ -303,7 +303,7 @@ pub fn b64_decode(src: Expression) -> Expression {
 pub fn regex_compare(src: Expression, pattern: Expression) -> Expression {
     add_read(
         src,
-        ExpType::BOOL,
+        ExpType::Bool,
         vec![
             sub(REGEX_COMPARE),
             ExpressionArgument::FilterExpression(pattern),
@@ -321,7 +321,7 @@ pub fn regex_compare_with_flags(
 ) -> Expression {
     add_read(
         src,
-        ExpType::BOOL,
+        ExpType::Bool,
         vec![
             sub(REGEX_COMPARE),
             ExpressionArgument::FilterExpression(pattern),
@@ -713,7 +713,7 @@ fn add_modify(src: Expression, arguments: Vec<ExpressionArgument>) -> Expression
         val: None,
         bin: Some(Box::new(src)),
         flags: Some(MODULE | MODIFY),
-        module: Some(ExpType::STRING),
+        module: Some(ExpType::String),
         exps: None,
         arguments: Some(arguments),
         bytes: None,

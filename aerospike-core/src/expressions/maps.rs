@@ -465,7 +465,7 @@ pub fn size(bin: Expression, ctx: &[CdtContext]) -> Expression {
         ExpressionArgument::Value(Value::from(CdtMapOpType::Size as u8)),
         ExpressionArgument::Context(ctx.to_vec()),
     ];
-    add_read(bin, ExpType::INT, args)
+    add_read(bin, ExpType::Int, args)
 }
 
 /// Creates expression that selects map item identified by key and returns selected data
@@ -477,7 +477,7 @@ pub fn size(bin: Expression, ctx: &[CdtContext]) -> Expression {
 /// use aerospike::MapReturnType;
 /// use aerospike::expressions::maps::get_by_key;
 ///
-/// let _ = gt(get_by_key(MapReturnType::Count, ExpType::INT, string_val("B".to_string()), map_bin("a".to_string()), &[]), int_val(0));
+/// let _ = gt(get_by_key(MapReturnType::Count, ExpType::Int, string_val("B".to_string()), map_bin("a".to_string()), &[]), int_val(0));
 /// ```
 ///
 #[must_use]
@@ -882,9 +882,9 @@ pub(crate) fn add_write(
     arguments: Vec<ExpressionArgument>,
 ) -> Expression {
     let return_type = if ctx.is_empty() || (ctx[0].id & CtxType::ListIndex as u16) == 0 {
-        ExpType::MAP
+        ExpType::Map
     } else {
-        ExpType::LIST
+        ExpType::List
     };
 
     Expression {
@@ -908,21 +908,21 @@ pub(crate) fn get_value_type(return_type: i64) -> ExpType {
             || t == MapReturnType::Rank as i64
             || t == MapReturnType::ReverseRank as i64 =>
         {
-            ExpType::LIST
+            ExpType::List
         }
 
-        t if t == MapReturnType::Count as i64 => ExpType::INT,
+        t if t == MapReturnType::Count as i64 => ExpType::Int,
 
-        t if t == MapReturnType::Key as i64 || t == MapReturnType::Value as i64 => ExpType::LIST,
+        t if t == MapReturnType::Key as i64 || t == MapReturnType::Value as i64 => ExpType::List,
 
         t if t == MapReturnType::KeyValue as i64
             || t == MapReturnType::OrderedMap as i64
             || t == MapReturnType::UnorderedMap as i64 =>
         {
-            ExpType::MAP
+            ExpType::Map
         }
 
-        t if t == MapReturnType::Exists as i64 => ExpType::BOOL,
+        t if t == MapReturnType::Exists as i64 => ExpType::Bool,
 
         _ => panic!("Invalid MapReturnType: {return_type}"),
     }

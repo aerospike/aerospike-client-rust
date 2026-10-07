@@ -194,6 +194,8 @@ alphas:
 | `PrivilegeCode::UDFAdmin`, `SIndexAdmin`, `ReadWriteUDF` | `UdfAdmin`, `SindexAdmin`, `ReadWriteUdf` |
 | `ResultCode::XDRKeyBusy` | `ResultCode::XdrKeyBusy` |
 | `QueryDuration::LongRelaxAP` | `QueryDuration::LongRelaxAp` |
+| `ExpType::{NIL, BOOL, INT, STRING, LIST, MAP, BLOB, FLOAT, GEO, HLL}` | `ExpType::{Nil, Bool, Int, String, List, Map, Blob, Float, Geo, Hll}` |
+| `RegexFlag::{NONE, EXTENDED, ICASE, NOSUB, NEWLINE}` | `RegexFlag::{None, Extended, Icase, Nosub, Newline}` |
 
 ### Values and records
 

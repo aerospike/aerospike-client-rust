@@ -45,26 +45,26 @@ use std::fmt::Debug;
 /// Expression data types for use in filter expressions on Map and List operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpType {
-    /// NIL Expression Type
-    NIL = 0,
-    /// BOOLEAN Expression Type
-    BOOL = 1,
-    /// INTEGER Expression Type
-    INT = 2,
-    /// STRING Expression Type
-    STRING = 3,
-    /// LIST Expression Type
-    LIST = 4,
-    /// MAP Expression Type
-    MAP = 5,
-    /// BLOB Expression Type
-    BLOB = 6,
-    /// FLOAT Expression Type
-    FLOAT = 7,
-    /// GEO String Expression Type
-    GEO = 8,
-    /// HLL Expression Type
-    HLL = 9,
+    /// Nil.
+    Nil = 0,
+    /// Boolean.
+    Bool = 1,
+    /// Integer.
+    Int = 2,
+    /// String.
+    String = 3,
+    /// List.
+    List = 4,
+    /// Map.
+    Map = 5,
+    /// Blob (bytes).
+    Blob = 6,
+    /// Float.
+    Float = 7,
+    /// Geospatial value (a `GeoJSON` string).
+    Geo = 8,
+    /// `HyperLogLog` sketch.
+    Hll = 9,
 }
 
 #[allow(clippy::upper_case_acronyms)]
@@ -482,7 +482,7 @@ impl Expression {
 /// ```
 /// use aerospike::expressions::{ExpType, ge, int_val, key};
 /// // Integer record key >= 100000
-/// let _ = ge(key(ExpType::INT), int_val(10000));
+/// let _ = ge(key(ExpType::Int), int_val(10000));
 /// ```
 #[must_use]
 pub fn key(exp_type: ExpType) -> Expression {
@@ -573,7 +573,7 @@ pub fn int_bin(name: String) -> Expression {
         Some(Value::from(name)),
         None,
         None,
-        Some(ExpType::INT),
+        Some(ExpType::Int),
         None,
     )
 }
@@ -591,7 +591,7 @@ pub fn bool_bin(name: String) -> Expression {
         Some(Value::from(name)),
         None,
         None,
-        Some(ExpType::BOOL),
+        Some(ExpType::Bool),
         None,
     )
 }
@@ -609,7 +609,7 @@ pub fn string_bin(name: String) -> Expression {
         Some(Value::from(name)),
         None,
         None,
-        Some(ExpType::STRING),
+        Some(ExpType::String),
         None,
     )
 }
@@ -628,7 +628,7 @@ pub fn blob_bin(name: String) -> Expression {
         Some(Value::from(name)),
         None,
         None,
-        Some(ExpType::BLOB),
+        Some(ExpType::Blob),
         None,
     )
 }
@@ -646,7 +646,7 @@ pub fn float_bin(name: String) -> Expression {
         Some(Value::from(name)),
         None,
         None,
-        Some(ExpType::FLOAT),
+        Some(ExpType::Float),
         None,
     )
 }
@@ -665,7 +665,7 @@ pub fn geo_bin(name: String) -> Expression {
         Some(Value::from(name)),
         None,
         None,
-        Some(ExpType::GEO),
+        Some(ExpType::Geo),
         None,
     )
 }
@@ -676,7 +676,7 @@ pub fn geo_bin(name: String) -> Expression {
 /// use aerospike::operations::lists::ListReturnType;
 /// use aerospike::expressions::lists::get_by_index;
 /// // String bin a[2] == 3
-/// let _ = eq(get_by_index(ListReturnType::Values, ExpType::INT, int_val(2), list_bin("a".to_string()), &[]), int_val(3));
+/// let _ = eq(get_by_index(ListReturnType::Values, ExpType::Int, int_val(2), list_bin("a".to_string()), &[]), int_val(3));
 /// ```
 #[must_use]
 pub fn list_bin(name: String) -> Expression {
@@ -685,7 +685,7 @@ pub fn list_bin(name: String) -> Expression {
         Some(Value::from(name)),
         None,
         None,
-        Some(ExpType::LIST),
+        Some(ExpType::List),
         None,
     )
 }
@@ -699,7 +699,7 @@ pub fn list_bin(name: String) -> Expression {
 /// use aerospike::expressions::maps::get_by_key;
 ///
 /// let _ = eq(
-///     get_by_key(MapReturnType::Value, ExpType::STRING, string_val("key".to_string()), map_bin("a".to_string()), &[]),
+///     get_by_key(MapReturnType::Value, ExpType::String, string_val("key".to_string()), map_bin("a".to_string()), &[]),
 ///     string_val("value".to_string()));
 /// ```
 #[must_use]
@@ -709,7 +709,7 @@ pub fn map_bin(name: String) -> Expression {
         Some(Value::from(name)),
         None,
         None,
-        Some(ExpType::MAP),
+        Some(ExpType::Map),
         None,
     )
 }
@@ -733,7 +733,7 @@ pub fn hll_bin(name: String) -> Expression {
         Some(Value::from(name)),
         None,
         None,
-        Some(ExpType::HLL),
+        Some(ExpType::Hll),
         None,
     )
 }
@@ -746,7 +746,7 @@ pub fn hll_bin(name: String) -> Expression {
 /// ```
 #[must_use]
 pub fn bin_exists(name: String) -> Expression {
-    ne(bin_type(name), int_val(ParticleType::NULL as i64))
+    ne(bin_type(name), int_val(ParticleType::Null as i64))
 }
 
 /// Creates an expression that returns bin's integer particle type.
@@ -754,7 +754,7 @@ pub fn bin_exists(name: String) -> Expression {
 /// use aerospike::ParticleType;
 /// use aerospike::expressions::{eq, bin_type, int_val};
 /// // Bin "a" particle type is a list
-/// let _ = eq(bin_type("a".to_string()), int_val(ParticleType::LIST as i64));
+/// let _ = eq(bin_type("a".to_string()), int_val(ParticleType::List as i64));
 /// ```
 #[must_use]
 pub fn bin_type(name: String) -> Expression {
@@ -918,7 +918,7 @@ pub fn digest_modulo(modulo: i64) -> Expression {
 /// use aerospike::expressions::{regex_compare, string_bin};
 /// // Select string bin "a" that starts with "prefix" and ends with "suffix".
 /// // Ignore case and do not match newline.
-/// let _ = regex_compare("prefix.*suffix".to_string(), RegexFlag::ICASE as i64 | RegexFlag::NEWLINE as i64, string_bin("a".to_string()));
+/// let _ = regex_compare("prefix.*suffix".to_string(), RegexFlag::Icase as i64 | RegexFlag::Newline as i64, string_bin("a".to_string()));
 /// ```
 #[must_use]
 pub fn regex_compare(regex: String, flags: i64, bin: Expression) -> Expression {
@@ -2001,7 +2001,7 @@ pub fn exp_bool_loop_var(part: LoopVarPart) -> Expression {
         Some(ExpOp::VarBuiltIn),
         Some(Value::Int(part.0)),
         None,
-        Some(ExpType::BOOL as i64),
+        Some(ExpType::Bool as i64),
         None,
         None,
     )
@@ -2015,7 +2015,7 @@ pub fn exp_int_loop_var(part: LoopVarPart) -> Expression {
         Some(ExpOp::VarBuiltIn),
         Some(Value::Int(part.0)),
         None,
-        Some(ExpType::INT as i64),
+        Some(ExpType::Int as i64),
         None,
         None,
     )
@@ -2029,7 +2029,7 @@ pub fn exp_float_loop_var(part: LoopVarPart) -> Expression {
         Some(ExpOp::VarBuiltIn),
         Some(Value::Int(part.0)),
         None,
-        Some(ExpType::FLOAT as i64),
+        Some(ExpType::Float as i64),
         None,
         None,
     )
@@ -2043,7 +2043,7 @@ pub fn exp_string_loop_var(part: LoopVarPart) -> Expression {
         Some(ExpOp::VarBuiltIn),
         Some(Value::Int(part.0)),
         None,
-        Some(ExpType::STRING as i64),
+        Some(ExpType::String as i64),
         None,
         None,
     )
@@ -2057,7 +2057,7 @@ pub fn exp_list_loop_var(part: LoopVarPart) -> Expression {
         Some(ExpOp::VarBuiltIn),
         Some(Value::Int(part.0)),
         None,
-        Some(ExpType::LIST as i64),
+        Some(ExpType::List as i64),
         None,
         None,
     )
@@ -2071,7 +2071,7 @@ pub fn exp_map_loop_var(part: LoopVarPart) -> Expression {
         Some(ExpOp::VarBuiltIn),
         Some(Value::Int(part.0)),
         None,
-        Some(ExpType::MAP as i64),
+        Some(ExpType::Map as i64),
         None,
         None,
     )
@@ -2085,7 +2085,7 @@ pub fn exp_blob_loop_var(part: LoopVarPart) -> Expression {
         Some(ExpOp::VarBuiltIn),
         Some(Value::Int(part.0)),
         None,
-        Some(ExpType::BLOB as i64),
+        Some(ExpType::Blob as i64),
         None,
         None,
     )
@@ -2099,7 +2099,7 @@ pub fn exp_hll_loop_var(part: LoopVarPart) -> Expression {
         Some(ExpOp::VarBuiltIn),
         Some(Value::Int(part.0)),
         None,
-        Some(ExpType::HLL as i64),
+        Some(ExpType::Hll as i64),
         None,
         None,
     )
@@ -2113,7 +2113,7 @@ pub fn exp_nil_loop_var(part: LoopVarPart) -> Expression {
         Some(ExpOp::VarBuiltIn),
         Some(Value::Int(part.0)),
         None,
-        Some(ExpType::NIL as i64),
+        Some(ExpType::Nil as i64),
         None,
         None,
     )
@@ -2127,7 +2127,7 @@ pub fn exp_geo_json_loop_var(part: LoopVarPart) -> Expression {
         Some(ExpOp::VarBuiltIn),
         Some(Value::Int(part.0)),
         None,
-        Some(ExpType::GEO as i64),
+        Some(ExpType::Geo as i64),
         None,
         None,
     )
@@ -2239,9 +2239,9 @@ pub fn exp_select_by_path(
 /// let bin_exp = aerospike::expressions::map_bin("myBin".into());
 ///
 /// // Remove every matching "price" entry...
-/// let exp = exp_modify_by_path(ExpType::MAP, ModifyFlag::DEFAULT, bin_exp.clone(), exp_remove_result(), &path);
+/// let exp = exp_modify_by_path(ExpType::Map, ModifyFlag::DEFAULT, bin_exp.clone(), exp_remove_result(), &path);
 /// // ...equivalently, via the ready-made wrapper:
-/// let exp = exp_remove(ExpType::MAP, bin_exp, &path);
+/// let exp = exp_remove(ExpType::Map, bin_exp, &path);
 /// ```
 #[must_use]
 pub fn exp_modify_by_path(
@@ -2410,15 +2410,15 @@ mod tests {
     #[test]
     fn generic_bin_matches_typed_accessors() {
         assert_eq!(
-            bin("a".to_string(), ExpType::INT).base64().unwrap(),
+            bin("a".to_string(), ExpType::Int).base64().unwrap(),
             int_bin("a".to_string()).base64().unwrap()
         );
         assert_eq!(
-            bin("a".to_string(), ExpType::STRING).base64().unwrap(),
+            bin("a".to_string(), ExpType::String).base64().unwrap(),
             string_bin("a".to_string()).base64().unwrap()
         );
         assert_ne!(
-            bin("a".to_string(), ExpType::FLOAT).base64().unwrap(),
+            bin("a".to_string(), ExpType::Float).base64().unwrap(),
             int_bin("a".to_string()).base64().unwrap()
         );
     }
@@ -2504,7 +2504,7 @@ mod tests {
         // AsRef<[CdtContext]>.
         let path = sample_path();
         let direct = exp_select_by_path(
-            ExpType::LIST,
+            ExpType::List,
             SelectFlag::VALUE,
             list_bin("b".into()),
             &path,
@@ -2512,7 +2512,7 @@ mod tests {
         .base64()
         .unwrap();
         let via_slice = exp_select_by_path(
-            ExpType::LIST,
+            ExpType::List,
             SelectFlag::VALUE,
             list_bin("b".into()),
             path.as_slice(),
@@ -2525,11 +2525,11 @@ mod tests {
     #[test]
     fn exp_select_values_matches_raw_value_flag() {
         let ctx = vec![ctx_map_key(Value::from("book"))];
-        let wrapper = exp_select_values(ExpType::LIST, list_bin("b".into()), &ctx)
+        let wrapper = exp_select_values(ExpType::List, list_bin("b".into()), &ctx)
             .base64()
             .unwrap();
         let raw = exp_select_by_path(
-            ExpType::LIST,
+            ExpType::List,
             SelectFlag::VALUE,
             list_bin("b".into()),
             ctx.as_slice(),
@@ -2542,11 +2542,11 @@ mod tests {
     #[test]
     fn exp_select_map_keys_matches_raw_map_key_flag() {
         let ctx = vec![ctx_map_key(Value::from("book"))];
-        let wrapper = exp_select_map_keys(ExpType::LIST, map_bin("m".into()), &ctx)
+        let wrapper = exp_select_map_keys(ExpType::List, map_bin("m".into()), &ctx)
             .base64()
             .unwrap();
         let raw = exp_select_by_path(
-            ExpType::LIST,
+            ExpType::List,
             SelectFlag::MAP_KEY,
             map_bin("m".into()),
             ctx.as_slice(),
@@ -2559,11 +2559,11 @@ mod tests {
     #[test]
     fn exp_select_map_entries_matches_raw_map_key_value_flag() {
         let ctx = vec![ctx_map_key(Value::from("book"))];
-        let wrapper = exp_select_map_entries(ExpType::LIST, map_bin("m".into()), &ctx)
+        let wrapper = exp_select_map_entries(ExpType::List, map_bin("m".into()), &ctx)
             .base64()
             .unwrap();
         let raw = exp_select_by_path(
-            ExpType::LIST,
+            ExpType::List,
             SelectFlag::MAP_KEY_VALUE,
             map_bin("m".into()),
             ctx.as_slice(),
@@ -2576,11 +2576,11 @@ mod tests {
     #[test]
     fn exp_select_matching_tree_matches_raw_matching_tree_flag() {
         let ctx = vec![ctx_map_key(Value::from("book"))];
-        let wrapper = exp_select_matching_tree(ExpType::MAP, map_bin("m".into()), &ctx)
+        let wrapper = exp_select_matching_tree(ExpType::Map, map_bin("m".into()), &ctx)
             .base64()
             .unwrap();
         let raw = exp_select_by_path(
-            ExpType::MAP,
+            ExpType::Map,
             SelectFlag::MATCHING_TREE,
             map_bin("m".into()),
             ctx.as_slice(),
@@ -2594,11 +2594,11 @@ mod tests {
     fn exp_modify_matches_raw_default_flag() {
         let ctx = vec![ctx_map_key(Value::from("book"))];
         let modify_exp = int_val(7);
-        let wrapper = exp_modify(ExpType::MAP, map_bin("m".into()), modify_exp.clone(), &ctx)
+        let wrapper = exp_modify(ExpType::Map, map_bin("m".into()), modify_exp.clone(), &ctx)
             .base64()
             .unwrap();
         let raw = exp_modify_by_path(
-            ExpType::MAP,
+            ExpType::Map,
             ModifyFlag::DEFAULT,
             map_bin("m".into()),
             modify_exp,
@@ -2614,11 +2614,11 @@ mod tests {
         let ctx = vec![ctx_map_key(Value::from("book"))];
         let modify_exp = int_val(7);
         let wrapper =
-            exp_modify_no_fail(ExpType::MAP, map_bin("m".into()), modify_exp.clone(), &ctx)
+            exp_modify_no_fail(ExpType::Map, map_bin("m".into()), modify_exp.clone(), &ctx)
                 .base64()
                 .unwrap();
         let raw = exp_modify_by_path(
-            ExpType::MAP,
+            ExpType::Map,
             ModifyFlag::NO_FAIL,
             map_bin("m".into()),
             modify_exp,
@@ -2632,11 +2632,11 @@ mod tests {
     #[test]
     fn exp_remove_matches_raw_remove_result_modify() {
         let ctx = vec![ctx_map_key(Value::from("book"))];
-        let wrapper = exp_remove(ExpType::MAP, map_bin("m".into()), &ctx)
+        let wrapper = exp_remove(ExpType::Map, map_bin("m".into()), &ctx)
             .base64()
             .unwrap();
         let raw = exp_modify_by_path(
-            ExpType::MAP,
+            ExpType::Map,
             ModifyFlag::DEFAULT,
             map_bin("m".into()),
             exp_remove_result(),

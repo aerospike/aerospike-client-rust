@@ -493,7 +493,7 @@ pub fn pack_blob(buf: &mut Option<&mut Buffer>, value: &[u8]) -> usize {
 
     size += pack_string_begin(buf, size);
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(ParticleType::BLOB as u8);
+        buf.write_u8(ParticleType::Blob as u8);
         buf.write_bytes(value);
     }
 
@@ -505,7 +505,7 @@ pub fn pack_hll(buf: &mut Option<&mut Buffer>, value: &[u8]) -> usize {
 
     size += pack_string_begin(buf, size);
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(ParticleType::HLL as u8);
+        buf.write_u8(ParticleType::Hll as u8);
         buf.write_bytes(value);
     }
 
@@ -517,7 +517,7 @@ pub fn pack_string(buf: &mut Option<&mut Buffer>, value: &str) -> usize {
 
     size += pack_string_begin(buf, size);
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(ParticleType::STRING as u8);
+        buf.write_u8(ParticleType::String as u8);
         buf.write_str(value);
     }
 
@@ -540,7 +540,7 @@ pub fn pack_geo_json(buf: &mut Option<&mut Buffer>, value: &str) -> usize {
 
     size += pack_string_begin(buf, size);
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(ParticleType::GEOJSON as u8);
+        buf.write_u8(ParticleType::GeoJson as u8);
         buf.write_str(value);
     }
 

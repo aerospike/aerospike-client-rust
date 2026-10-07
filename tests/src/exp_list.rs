@@ -156,7 +156,7 @@ async fn expression_list() {
         eq(
             get_by_index(
                 ListReturnType::Values,
-                ExpType::INT,
+                ExpType::Int,
                 int_val(3),
                 increment(
                     ListPolicy::default(),
@@ -180,7 +180,7 @@ async fn expression_list() {
         eq(
             get_by_index(
                 ListReturnType::Values,
-                ExpType::INT,
+                ExpType::Int,
                 int_val(3),
                 set(
                     ListPolicy::default(),
@@ -239,7 +239,7 @@ async fn expression_list() {
         eq(
             get_by_rank(
                 ListReturnType::Values,
-                ExpType::INT,
+                ExpType::Int,
                 int_val(3),
                 list_bin("bin".to_string()),
                 &[],

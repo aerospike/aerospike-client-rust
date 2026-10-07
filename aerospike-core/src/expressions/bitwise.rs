@@ -480,7 +480,7 @@ pub fn get(bit_offset: Expression, bit_size: Expression, bin: Expression) -> Exp
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
     ];
-    add_read(bin, ExpType::BLOB, args)
+    add_read(bin, ExpType::Blob, args)
 }
 
 /// Creates expression that returns integer count of set bits from byte[] bin starting at
@@ -504,7 +504,7 @@ pub fn count(bit_offset: Expression, bit_size: Expression, bin: Expression) -> E
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
     ];
-    add_read(bin, ExpType::INT, args)
+    add_read(bin, ExpType::Int, args)
 }
 
 /// Creates expression that returns integer bit offset of the first specified value bit in byte[] bin
@@ -535,7 +535,7 @@ pub fn lscan(
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(value),
     ];
-    add_read(bin, ExpType::INT, args)
+    add_read(bin, ExpType::Int, args)
 }
 
 /// Creates expression that returns integer bit offset of the last specified value bit in byte[] bin
@@ -568,7 +568,7 @@ pub fn rscan(
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(value),
     ];
-    add_read(bin, ExpType::INT, args)
+    add_read(bin, ExpType::Int, args)
 }
 
 /// Creates expression that returns integer from byte[] bin starting at bitOffset for bitSize.
@@ -600,7 +600,7 @@ pub fn get_int(
     if signed {
         args.push(ExpressionArgument::Value(Value::from(INT_FLAGS_SIGNED)));
     }
-    add_read(bin, ExpType::INT, args)
+    add_read(bin, ExpType::Int, args)
 }
 
 /// Creates an expression that returns the base64 text of the whole blob `bin`.
@@ -619,7 +619,7 @@ pub fn b64_encode(bin: Expression) -> Expression {
         BitExpOp::B64Encode as i64,
     ))];
 
-    add_read(bin, ExpType::STRING, args)
+    add_read(bin, ExpType::String, args)
 }
 
 /// Creates an expression that returns the base64 text of a byte range of `bin`.
@@ -656,7 +656,7 @@ pub fn b64_encode_range(
         )));
     }
 
-    add_read(bin, ExpType::STRING, args)
+    add_read(bin, ExpType::String, args)
 }
 
 pub(crate) fn add_write(bin: Expression, arguments: Vec<ExpressionArgument>) -> Expression {
@@ -665,7 +665,7 @@ pub(crate) fn add_write(bin: Expression, arguments: Vec<ExpressionArgument>) -> 
         val: None,
         bin: Some(Box::new(bin)),
         flags: Some(MODULE | MODIFY),
-        module: Some(ExpType::BLOB),
+        module: Some(ExpType::Blob),
         exps: None,
         arguments: Some(arguments),
         bytes: None,

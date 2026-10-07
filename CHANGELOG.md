@@ -152,7 +152,9 @@
     identifiers are `UpperCamelCase`: `BatchUdfPolicy`, `UdfLang`, `ReadModeAp`/`ReadModeSc`,
     `ReadTouchTtl`, `HllPolicy`/`HllWriteFlags`, `Value::GeoJson`/`Value::Hll`, `AuthMode::Pki`,
     `PrivilegeCode::{UdfAdmin, SindexAdmin, ReadWriteUdf}`, `ResultCode::XdrKeyBusy`,
-    `QueryDuration::LongRelaxAp`. Policies stay plain structs with public fields, built from
+    `QueryDuration::LongRelaxAp`; enum variants are too: `ExpType::{Nil, Bool, Int, String, List,
+    Map, Blob, Float, Geo, Hll}`, `RegexFlag::{None, Extended, Icase, Nosub, Newline}`. Policies
+    stay plain structs with public fields, built from
     `Default` by mutation or struct-update syntax (see the `policy` module docs).
   * **Breaking**: `replica` moved from `ReadPolicy`, `QueryPolicy` and `BatchPolicy` to
     `BasePolicy`, so write policies carry it too. A write with `Sequence` or `PreferRack` now
