@@ -1,7 +1,7 @@
 use crate::common;
 
 use aerospike::operations::hll;
-use aerospike::operations::hll::HLLPolicy;
+use aerospike::operations::hll::HllPolicy;
 use aerospike::{as_key, as_list, as_val, Bins, FloatValue, ReadPolicy, Value, WritePolicy};
 
 #[aerospike_macro::test]
@@ -12,7 +12,7 @@ async fn hll() {
 
     let key = as_key!(namespace, set_name, common::prop_setname());
 
-    let hpolicy = HLLPolicy::default();
+    let hpolicy = HllPolicy::default();
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
 
@@ -83,7 +83,7 @@ async fn hll() {
 
     let ops = &[hll::get_union("bin", bin2val.clone())];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
-    let val = Value::HLL(vec![
+    let val = Value::Hll(vec![
         0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ]);
     assert_eq!(*rec.bins.get("bin").unwrap(), val, "Union does not match");

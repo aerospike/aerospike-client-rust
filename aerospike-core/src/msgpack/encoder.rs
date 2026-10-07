@@ -35,7 +35,7 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
             FloatValue::F32(_) => pack_f32(buf, f32::from(val)),
         },
         Value::Blob(ref val) => pack_blob(buf, val),
-        Value::HLL(ref val) => pack_hll(buf, val),
+        Value::Hll(ref val) => pack_hll(buf, val),
         Value::List(ref val) => pack_array(buf, val)?,
         Value::HashMap(ref val) => pack_map(buf, val)?,
         Value::OrderedMap(ref val) => pack_index_map(buf, val)?,
@@ -57,7 +57,7 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
                  inside lists, maps, CDT arguments or expressions."
             )))
         }
-        Value::GeoJSON(ref val) => pack_geo_json(buf, val),
+        Value::GeoJson(ref val) => pack_geo_json(buf, val),
         Value::Infinity => pack_infinity(buf),
         Value::Wildcard => pack_wildcard(buf),
     };

@@ -417,7 +417,7 @@ async fn main() {
 	"#;
 
     let task = client
-        .register_udf(&apolicy, udf_body.as_bytes(), "test_udf.lua", UDFLang::Lua)
+        .register_udf(&apolicy, udf_body.as_bytes(), "test_udf.lua", UdfLang::Lua)
         .await
         .unwrap();
     task.wait_till_complete(None).await.unwrap();
@@ -452,7 +452,7 @@ async fn main() {
     let bpr = BatchReadPolicy::default();
     let bpw = BatchWritePolicy::default();
     let bpd = BatchDeletePolicy::default();
-    let bpu = BatchUDFPolicy::default();
+    let bpu = BatchUdfPolicy::default();
 
     let batch = vec![
         BatchOperation::write(&bpw, key1.clone(), wops.clone()),
@@ -518,7 +518,7 @@ use aerospike::query::PartitionFilter;
 
 let policy = QueryPolicy::default();
 let mut stmt = Statement::new(namespace, set_name, Bins::All);
-stmt.add_filter(as_eq!("bin_name", 5));
+stmt.set_filter(as_eq!("bin_name", 5));
 
 let rs = client.query(&policy, PartitionFilter::all(), stmt).await.unwrap();
 let mut rs = rs.into_stream();
@@ -535,7 +535,7 @@ Query records where a bin value falls within a range:
 ```rust
 let policy = QueryPolicy::default();
 let mut stmt = Statement::new(namespace, set_name, Bins::All);
-stmt.add_filter(as_range!("bin_name", 0, 100));
+stmt.set_filter(as_range!("bin_name", 0, 100));
 
 let rs = client.query(&policy, PartitionFilter::all(), stmt).await.unwrap();
 let mut rs = rs.into_stream();
@@ -552,7 +552,7 @@ Query records but only retrieve metadata (no bin data):
 ```rust
 let policy = QueryPolicy::default();
 let mut stmt = Statement::new(namespace, set_name, Bins::None);
-stmt.add_filter(as_range!("bin_name", 0, 100));
+stmt.set_filter(as_range!("bin_name", 0, 100));
 
 let rs = client.query(&policy, PartitionFilter::all(), stmt).await.unwrap();
 let mut rs = rs.into_stream();
@@ -595,7 +595,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 let policy = QueryPolicy::default();
 let mut stmt = Statement::new(namespace, set_name, Bins::All);
-stmt.add_filter(as_range!("bin_name", 0, 100));
+stmt.set_filter(as_range!("bin_name", 0, 100));
 
 let rs = client.query(&policy, PartitionFilter::all(), stmt).await.unwrap();
 let count = Arc::new(AtomicUsize::new(0));
@@ -650,7 +650,7 @@ let mut policy = QueryPolicy::default();
 policy.records_per_second = 100;  // Limit to 100 records/second
 
 let mut stmt = Statement::new(namespace, set_name, Bins::All);
-stmt.add_filter(as_range!("bin_name", 0, 1000));
+stmt.set_filter(as_range!("bin_name", 0, 1000));
 
 let rs = client.query(&policy, PartitionFilter::all(), stmt).await.unwrap();
 let mut rs = rs.into_stream();

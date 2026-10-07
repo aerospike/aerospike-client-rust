@@ -17,7 +17,7 @@ use crate::batch::{BatchHook, BatchOp, BatchOperation};
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
 use crate::commands::{
-    BatchOperateCommand, DeleteCommand, ExecuteUDFCommand, OperateCommand, ReadCommand,
+    BatchOperateCommand, DeleteCommand, ExecuteUdfCommand, OperateCommand, ReadCommand,
 };
 use crate::errors::Result;
 use crate::policy::{BatchPolicy, Concurrency};
@@ -38,7 +38,7 @@ impl BatchExecutor {
         key: &Key,
         has_write: bool,
         replica: crate::policy::Replica,
-        read_mode_sc: crate::policy::ReadModeSC,
+        read_mode_sc: crate::policy::ReadModeSc,
     ) -> Result<Arc<Node>> {
         // Java BatchNodeList parity: write records route via the
         // write-side replica logic (master, or the sequence walk for
@@ -325,7 +325,7 @@ impl BatchExecutor {
             } => {
                 let mut wp = policy.to_write_policy(parent);
                 cluster.apply_batch_udf(&mut wp);
-                let mut cmd = ExecuteUDFCommand::new(
+                let mut cmd = ExecuteUdfCommand::new(
                     &wp,
                     cluster.clone(),
                     &key,
@@ -430,7 +430,7 @@ impl BatchExecutor {
         &self,
         rows: Vec<(BatchOperation, usize)>,
         replica: crate::policy::Replica,
-        read_mode_sc: crate::policy::ReadModeSC,
+        read_mode_sc: crate::policy::ReadModeSc,
     ) -> Result<BatchSplit> {
         #![allow(clippy::type_complexity)]
         // Grouped by node in first-seen order. A `HashMap<Arc<Node>, _>` did

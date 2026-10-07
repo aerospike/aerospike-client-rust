@@ -22,11 +22,11 @@ proptest_async::proptest! {
     {
         let client = common::singleton_client().await;
 
-        // `LongRelaxAP` is rejected with `ParameterError` on strong-consistency namespaces; keep
+        // `LongRelaxAp` is rejected with `ParameterError` on strong-consistency namespaces; keep
         // randomized policies for AP unchanged by only adjusting when `namespace_sc!` is true.
         let mut query_policy = query_policy;
         if namespace_sc!(&client)
-            && query_policy.expected_duration == QueryDuration::LongRelaxAP
+            && query_policy.expected_duration == QueryDuration::LongRelaxAp
         {
             query_policy.expected_duration = QueryDuration::Long;
         }
@@ -101,7 +101,7 @@ prop_compose! {
     pub fn statement(ns: String, set_name: String)(bins in latin_bins(50), filter in filter("bin_i".into()), with_filter in any::<bool>()) -> Statement {
        let mut stmt = Statement::new(&ns, &set_name, bins);
        if with_filter {
-            stmt.add_filter(filter);
+            stmt.set_filter(filter);
        }
        stmt
    }

@@ -20,7 +20,7 @@ use crate::src::count_results;
 use aerospike::expressions::hll::*;
 use aerospike::expressions::lists::*;
 use aerospike::expressions::*;
-use aerospike::operations::hll::HLLPolicy;
+use aerospike::operations::hll::HllPolicy;
 use aerospike::operations::lists::ListReturnType;
 use aerospike::query::PartitionFilter;
 use aerospike::*;
@@ -46,14 +46,14 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
         let data2 = vec![Value::from("asd"), Value::from(i), Value::from(i + 1)];
         let ops = [
             operations::hll::add_with_index_and_min_hash(
-                &HLLPolicy::default(),
+                &HllPolicy::default(),
                 "hllbin",
                 data,
                 8,
                 0,
             ),
             operations::hll::add_with_index_and_min_hash(
-                &HLLPolicy::default(),
+                &HllPolicy::default(),
                 "hllbin2",
                 data2,
                 8,
@@ -77,7 +77,7 @@ async fn expression_hll() {
         &client,
         eq(
             get_count(add_with_index_and_min_hash(
-                HLLPolicy::default(),
+                HllPolicy::default(),
                 list_val(vec![Value::from(48715414)]),
                 int_val(8),
                 int_val(0),

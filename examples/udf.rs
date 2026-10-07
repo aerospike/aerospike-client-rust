@@ -8,7 +8,7 @@ use std::env;
 
 use aerospike::{as_bin, as_key, as_val};
 use aerospike::{
-    AdminPolicy, Bins, Client, ClientPolicy, ReadPolicy, Statement, Task, UDFLang, Value,
+    AdminPolicy, Bins, Client, ClientPolicy, ReadPolicy, Statement, Task, UdfLang, Value,
     WritePolicy,
 };
 
@@ -46,7 +46,7 @@ pub async fn run() {
 
     // ---- Register the UDF module and wait for cluster-wide distribution ----
     let task = client
-        .register_udf(&apolicy, UDF.as_bytes(), "example_udf.lua", UDFLang::Lua)
+        .register_udf(&apolicy, UDF.as_bytes(), "example_udf.lua", UdfLang::Lua)
         .await
         .unwrap();
     task.wait_till_complete(None).await.unwrap();

@@ -24,7 +24,7 @@ async fn main() {
 
 async fn count_matching(client: &Client, filter: Filter) -> usize {
     let mut stmt = Statement::new("test", SET, Bins::All);
-    stmt.add_filter(filter);
+    stmt.set_filter(filter);
     client
         .query(&QueryPolicy::default(), PartitionFilter::all(), stmt)
         .await

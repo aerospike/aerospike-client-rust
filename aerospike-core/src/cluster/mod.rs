@@ -2179,7 +2179,12 @@ impl Cluster {
         }
         let tend = lock(&self.tend_task).take();
         if let Some(handle) = tend {
+            // Tokio hands back a `Result` (a panicked tend task was already
+            // logged by the task itself); async-std hands back `()`.
+            #[cfg(feature = "rt-tokio")]
             let _ = handle.await;
+            #[cfg(feature = "rt-async-std")]
+            handle.await;
         }
         Ok(())
     }

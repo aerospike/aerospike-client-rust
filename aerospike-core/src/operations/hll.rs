@@ -24,9 +24,9 @@ use crate::operations::cdt_context::DEFAULT_CTX;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::Value;
 
-/// `HLLWriteFlags` determines write flags for HLL
+/// `HllWriteFlags` determines write flags for HLL
 #[derive(Debug, Clone, Copy)]
-pub enum HLLWriteFlags {
+pub enum HllWriteFlags {
     /// Default. Allow create or update.
     Default = 0,
     /// If the bin already exists, the operation will be denied.
@@ -43,19 +43,19 @@ pub enum HLLWriteFlags {
     AllowFold = 8,
 }
 
-/// Something that can be resolved into a set of `ExpWriteFlags`. Either a single [`HLLWriteFlags`], `Option<HLLWriteFlags>`, [`HLLWriteFlags`], etc.
-pub trait ToHLLWriteFlagsBitmask {
+/// Something that can be resolved into a set of `ExpWriteFlags`. Either a single [`HllWriteFlags`], `Option<HllWriteFlags>`, [`HllWriteFlags`], etc.
+pub trait ToHllWriteFlagsBitmask {
     /// Convert to an i64 bitmask
     fn to_bitmask(self) -> i64;
 }
 
-impl ToHLLWriteFlagsBitmask for HLLWriteFlags {
+impl ToHllWriteFlagsBitmask for HllWriteFlags {
     fn to_bitmask(self) -> i64 {
         self as i64
     }
 }
 
-impl<T: IntoIterator<Item = HLLWriteFlags>> ToHLLWriteFlagsBitmask for T {
+impl<T: IntoIterator<Item = HllWriteFlags>> ToHllWriteFlagsBitmask for T {
     fn to_bitmask(self) -> i64 {
         let mut out = 0;
         for val in self {
@@ -65,33 +65,33 @@ impl<T: IntoIterator<Item = HLLWriteFlags>> ToHLLWriteFlagsBitmask for T {
     }
 }
 
-/// `HLLPolicy` operation policy.
+/// `HllPolicy` operation policy.
 #[derive(Debug, Clone, Copy)]
-pub struct HLLPolicy {
+pub struct HllPolicy {
     /// `CdtListWriteFlags`
     pub flags: i64,
 }
 
-impl HLLPolicy {
-    /// Use specified `HLLWriteFlags` when performing `HLL` operations
-    pub const fn new(write_flags: HLLWriteFlags) -> Self {
-        HLLPolicy {
+impl HllPolicy {
+    /// Use specified `HllWriteFlags` when performing `HLL` operations
+    pub const fn new(write_flags: HllWriteFlags) -> Self {
+        HllPolicy {
             flags: write_flags as i64,
         }
     }
 
-    /// Use specified `HLLWriteFlags` or combination thereof when performing `HLL` operations
-    pub fn new_with_flags<HWF: ToHLLWriteFlagsBitmask>(write_flags: HWF) -> Self {
-        HLLPolicy {
+    /// Use specified `HllWriteFlags` or combination thereof when performing `HLL` operations
+    pub fn new_with_flags<HWF: ToHllWriteFlagsBitmask>(write_flags: HWF) -> Self {
+        HllPolicy {
             flags: write_flags.to_bitmask(),
         }
     }
 }
 
-impl Default for HLLPolicy {
+impl Default for HllPolicy {
     /// Returns the default policy for HLL operations.
     fn default() -> Self {
-        HLLPolicy::new(HLLWriteFlags::Default)
+        HllPolicy::new(HllWriteFlags::Default)
     }
 }
 
@@ -114,7 +114,7 @@ pub(crate) enum HLLOpType {
 /// Server creates a new HLL or resets an existing HLL.
 /// Server does not return a value.
 #[must_use]
-pub fn init(policy: &HLLPolicy, bin: &str, index_bit_count: i64) -> Operation {
+pub fn init(policy: &HllPolicy, bin: &str, index_bit_count: i64) -> Operation {
     init_with_min_hash(policy, bin, index_bit_count, -1)
 }
 
@@ -123,7 +123,7 @@ pub fn init(policy: &HLLPolicy, bin: &str, index_bit_count: i64) -> Operation {
 /// Server does not return a value.
 #[must_use]
 pub fn init_with_min_hash(
-    policy: &HLLPolicy,
+    policy: &HllPolicy,
     bin: &str,
     index_bit_count: i64,
     min_hash_bit_count: i64,
@@ -149,7 +149,7 @@ pub fn init_with_min_hash(
 /// Server adds values to the HLL set.
 /// Server returns number of entries that caused HLL to update a register.
 #[must_use]
-pub fn add(policy: &HLLPolicy, bin: &str, list: Vec<Value>) -> Operation {
+pub fn add(policy: &HllPolicy, bin: &str, list: Vec<Value>) -> Operation {
     add_with_index_and_min_hash(policy, bin, list, -1, -1)
 }
 
@@ -158,7 +158,7 @@ pub fn add(policy: &HLLPolicy, bin: &str, list: Vec<Value>) -> Operation {
 /// Server returns number of entries that caused HLL to update a register.
 #[must_use]
 pub fn add_with_index(
-    policy: &HLLPolicy,
+    policy: &HllPolicy,
     bin: &str,
     list: Vec<Value>,
     index_bit_count: i64,
@@ -172,7 +172,7 @@ pub fn add_with_index(
 /// to create HLL bin. Server returns number of entries that caused HLL to update a register.
 #[must_use]
 pub fn add_with_index_and_min_hash(
-    policy: &HLLPolicy,
+    policy: &HllPolicy,
     bin: &str,
     list: Vec<Value>,
     index_bit_count: i64,
@@ -200,7 +200,7 @@ pub fn add_with_index_and_min_hash(
 /// Server sets union of specified HLL objects with HLL bin.
 /// Server does not return a value.
 #[must_use]
-pub fn set_union(policy: &HLLPolicy, bin: &str, list: Vec<Value>) -> Operation {
+pub fn set_union(policy: &HllPolicy, bin: &str, list: Vec<Value>) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::SetUnion as u8,
         encoder: Arc::new(pack_hll_op),

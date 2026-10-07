@@ -10,7 +10,7 @@ pub enum PropBatchOperation {
     ReadOps(BatchReadPolicy, Vec<PropOperation>),
     Write(BatchWritePolicy, Vec<PropOperation>),
     Delete(BatchDeletePolicy),
-    Udf(BatchUDFPolicy, String, String, Option<Vec<Value>>),
+    Udf(BatchUdfPolicy, String, String, Option<Vec<Value>>),
 }
 
 impl PropBatchOperation {

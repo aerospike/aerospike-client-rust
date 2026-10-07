@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use super::{BasePolicy, BatchPolicy, PolicyLike, ReadModeSC, Replica};
+use super::{BasePolicy, BatchPolicy, PolicyLike, ReadModeSc, Replica};
 #[cfg(feature = "dynamic-config")]
 use crate::policy::BatchPolicyConfig;
 
@@ -37,7 +37,7 @@ impl Default for TxnVerifyPolicy {
         // Matches Go's `NewTxnVerifyPolicy`: linearized SC reads, master
         // replica, 5 retries, 3s socket / 10s total timeout, 1s sleep.
         let mut bp = BatchPolicy::default();
-        bp.base_policy.read_mode_sc = ReadModeSC::Linearize;
+        bp.base_policy.read_mode_sc = ReadModeSc::Linearize;
         bp.base_policy.max_retries = 5;
         bp.base_policy.socket_timeout = 3_000;
         bp.base_policy.total_timeout = 10_000;
@@ -94,7 +94,7 @@ mod tests {
         let p = TxnVerifyPolicy::default();
         assert_eq!(
             p.batch_policy.base_policy.read_mode_sc,
-            ReadModeSC::Linearize
+            ReadModeSc::Linearize
         );
         assert_eq!(p.batch_policy.base_policy.max_retries, 5);
         assert_eq!(p.batch_policy.base_policy.socket_timeout, 3_000);
@@ -112,6 +112,6 @@ mod tests {
         assert_eq!(p.batch_policy.base_policy.sleep_between_retries, 1_000);
         assert_eq!(p.batch_policy.replica, Replica::Master);
         // Roll does not force a read mode — stays at the BasePolicy default.
-        assert_eq!(p.batch_policy.base_policy.read_mode_sc, ReadModeSC::Session);
+        assert_eq!(p.batch_policy.base_policy.read_mode_sc, ReadModeSc::Session);
     }
 }

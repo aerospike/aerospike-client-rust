@@ -66,7 +66,7 @@ async fn register_udf(client: &Client, package: &str, source: &str) {
             &AdminPolicy::default(),
             source.as_bytes(),
             &format!("{package}.lua"),
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
         .unwrap();
@@ -201,7 +201,7 @@ async fn query_aggregate_loads_package_from_lua_path() {
             &AdminPolicy::default(),
             SUM_UDF.as_bytes(),
             "test_agg_file.lua",
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
         .unwrap();
@@ -245,7 +245,7 @@ async fn query_aggregate_missing_client_package_errors() {
             &AdminPolicy::default(),
             SUM_UDF.as_bytes(),
             "test_agg_missing.lua",
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
         .unwrap();

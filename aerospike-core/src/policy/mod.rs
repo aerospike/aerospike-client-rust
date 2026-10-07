@@ -14,6 +14,29 @@
 // the License.
 
 //! Policy types encapsulate optional parameters for various client operations.
+//!
+//! # Constructing policies
+//!
+//! Every policy is a plain struct with public fields and a `Default`. Start
+//! from the default and set the fields you need, by mutation or with
+//! struct-update syntax:
+//!
+//! ```
+//! use aerospike::{Expiration, WritePolicy};
+//!
+//! let mut by_mutation = WritePolicy::default();
+//! by_mutation.expiration = Expiration::Seconds(60);
+//!
+//! let by_update = WritePolicy {
+//!     expiration: Expiration::Seconds(60),
+//!     ..WritePolicy::default()
+//! };
+//! # let _ = (by_mutation, by_update);
+//! ```
+//!
+//! Policies gain fields in minor releases. Both forms above keep compiling
+//! when that happens; a literal that names every field does not, and is not a
+//! supported way to build a policy.
 #![allow(clippy::missing_errors_doc)]
 
 use std::cmp::min;
@@ -49,10 +72,10 @@ pub use self::expiration::Expiration;
 pub use self::generation_policy::GenerationPolicy;
 pub use self::query_duration::QueryDuration;
 pub use self::query_policy::QueryPolicy;
-pub use self::read_mode_ap::ReadModeAP;
-pub use self::read_mode_sc::ReadModeSC;
+pub use self::read_mode_ap::ReadModeAp;
+pub use self::read_mode_sc::ReadModeSc;
 pub use self::read_policy::ReadPolicy;
-pub use self::read_touch_ttl_percent::ReadTouchTTL;
+pub use self::read_touch_ttl_percent::ReadTouchTtl;
 pub use self::record_exists_action::RecordExistsAction;
 pub(crate) use self::stream_policy::StreamPolicy;
 pub use self::txn_policy::{TxnRollPolicy, TxnVerifyPolicy};
@@ -77,11 +100,10 @@ use aerospike_rt::time::{Duration, Instant};
 use std::option::Option;
 use std::sync::Arc;
 
-/// Trait implemented by most policy types; policies that implement this trait typically encompass
-/// an instance of `BasePolicy`.
-pub trait Policy {
-    #[doc(hidden)]
-    /// Deadline for current transaction based on specified timeout. For internal use only.
+/// Uniform read access to the `BasePolicy` settings of every command policy,
+/// for the command runners. Not exported: user code reads the fields.
+pub(crate) trait Policy {
+    /// Deadline for the current command, from `total_timeout`.
     fn deadline(&self) -> Option<Instant>;
 
     /// Server timeout.
@@ -122,20 +144,8 @@ pub trait Policy {
 
     /// Minimum command-buffer size at which compression actually fires.
     /// Buffers `<=` this value are sent uncompressed even when
-    /// [`use_compression`](Self::use_compression) is true.
+    /// [`use_compression`](field@Self::use_compression) is true.
     fn compression_threshold(&self) -> usize;
-
-    /// Read policy for AP (availability) namespaces.
-    fn read_mode_ap(&self) -> ReadModeAP;
-
-    /// Read policy for SC (strong consistency) namespaces.
-    fn read_mode_sc(&self) -> ReadModeSC;
-
-    /// Requested level of server error detail (0-3). See
-    /// [`BasePolicy::error_detail_verbosity`]. Default: 0 (disabled).
-    fn error_detail_verbosity(&self) -> u8 {
-        0
-    }
 }
 
 /// The longest a retry sleep is allowed to grow to, whatever the multiplier.
@@ -168,13 +178,6 @@ impl<T> Policy for T
 where
     T: PolicyLike,
 {
-    fn read_mode_ap(&self) -> ReadModeAP {
-        self.base().read_mode_ap()
-    }
-
-    fn read_mode_sc(&self) -> ReadModeSC {
-        self.base().read_mode_sc()
-    }
 
     fn use_compression(&self) -> bool {
         self.base().use_compression()
@@ -214,10 +217,6 @@ where
 
     fn sleep_multiplier(&self) -> f64 {
         self.base().sleep_multiplier()
-    }
-
-    fn error_detail_verbosity(&self) -> u8 {
-        self.base().error_detail_verbosity()
     }
 }
 
@@ -280,11 +279,11 @@ pub struct BasePolicy {
     /// Read policy for AP (availability) namespaces.
     /// Indicates how duplicates should be consulted in a read operation.
     /// Only makes a difference during migrations and only applicable in AP mode.
-    pub read_mode_ap: ReadModeAP,
+    pub read_mode_ap: ReadModeAp,
 
     /// Read policy for SC (strong consistency) namespaces.
     /// Determines SC read consistency options.
-    pub read_mode_sc: ReadModeSC,
+    pub read_mode_sc: ReadModeSc,
 
     /// Socket idle timeout when processing a database command.
     ///
@@ -347,9 +346,9 @@ pub struct BasePolicy {
     ///
     /// Supported in server v8+.
     ///
-    /// Default: `ReadTouchTTL::ServerDefault`
+    /// Default: `ReadTouchTtl::ServerDefault`
     #[cfg_attr(feature = "dynamic-config", config(skip))]
-    pub read_touch_ttl: ReadTouchTTL,
+    pub read_touch_ttl: ReadTouchTtl,
 
     /// Duration to sleep between retries if a command fails and
     /// the timeout was not exceeded. Enter zero to skip sleep.
@@ -359,13 +358,13 @@ pub struct BasePolicy {
 
     /// Multiplying factor for exponential backoff between retries. After each
     /// retry sleep, the interval is multiplied by this factor. A value `<= 1.0`
-    /// keeps the sleep constant at [`sleep_between_retries`](Self::sleep_between_retries).
+    /// keeps the sleep constant at [`sleep_between_retries`](field@Self::sleep_between_retries).
     ///
     /// Default: 1.0 (no backoff growth).
     pub sleep_multiplier: f64,
 
     /// Use zlib compression on command buffers sent to the server and responses received
-    /// from the server when the buffer size is greater than [`compression_threshold`](Self::compression_threshold).
+    /// from the server when the buffer size is greater than [`compression_threshold`](field@Self::compression_threshold).
     ///
     /// This option will increase cpu and memory usage (for extra compressed buffers), but
     /// decrease the size of data sent over the network.
@@ -378,7 +377,7 @@ pub struct BasePolicy {
 
     /// Minimum command buffer size, in bytes, before compression is applied.
     /// Buffers smaller than or equal to this value are sent uncompressed
-    /// even when [`use_compression`](Self::use_compression) is enabled —
+    /// even when [`use_compression`](field@Self::use_compression) is enabled —
     /// the per-command CPU cost of zlib outweighs the savings on small
     /// payloads.
     ///
@@ -387,7 +386,7 @@ pub struct BasePolicy {
     /// `0` makes every command go through zlib whenever `use_compression`
     /// is on.
     ///
-    /// No effect when [`use_compression`](Self::use_compression) is `false`.
+    /// No effect when [`use_compression`](field@Self::use_compression) is `false`.
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub compression_threshold: usize,
 
@@ -505,13 +504,7 @@ impl Policy for BasePolicy {
         self.sleep_multiplier
     }
 
-    fn read_mode_ap(&self) -> ReadModeAP {
-        self.read_mode_ap
-    }
 
-    fn read_mode_sc(&self) -> ReadModeSC {
-        self.read_mode_sc
-    }
 
     fn use_compression(&self) -> bool {
         self.use_compression
@@ -519,10 +512,6 @@ impl Policy for BasePolicy {
 
     fn compression_threshold(&self) -> usize {
         self.compression_threshold
-    }
-
-    fn error_detail_verbosity(&self) -> u8 {
-        self.error_detail_verbosity
     }
 }
 

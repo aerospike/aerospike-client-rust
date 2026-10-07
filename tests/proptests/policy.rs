@@ -10,24 +10,24 @@ use aerospike::Concurrency;
 use aerospike::GenerationPolicy;
 use aerospike::QueryDuration;
 use aerospike::QueryPolicy;
-use aerospike::ReadTouchTTL;
+use aerospike::ReadTouchTtl;
 use aerospike::RecordExistsAction;
 
 use aerospike::{
-    BatchDeletePolicy, BatchPolicy, BatchReadPolicy, BatchUDFPolicy, BatchWritePolicy, Expiration,
+    BatchDeletePolicy, BatchPolicy, BatchReadPolicy, BatchUdfPolicy, BatchWritePolicy, Expiration,
     ReadPolicy, WritePolicy,
 };
 
 use proptest::bool;
 use proptest::prelude::*;
 
-use aerospike::{ReadModeAP, ReadModeSC};
+use aerospike::{ReadModeAp, ReadModeSc};
 
-pub fn read_touch_ttl() -> impl Strategy<Value = ReadTouchTTL> {
+pub fn read_touch_ttl() -> impl Strategy<Value = ReadTouchTtl> {
     prop_oneof![
-        Just(ReadTouchTTL::ServerDefault),
-        Just(ReadTouchTTL::DontReset),
-        any::<u32>().prop_map(|pct| ReadTouchTTL::Percent((pct % 100) as u8)),
+        Just(ReadTouchTtl::ServerDefault),
+        Just(ReadTouchTtl::DontReset),
+        any::<u32>().prop_map(|pct| ReadTouchTtl::Percent((pct % 100) as u8)),
     ]
 }
 
@@ -35,16 +35,16 @@ pub fn concurrency() -> impl Strategy<Value = Concurrency> {
     prop_oneof![Just(Concurrency::Sequential), Just(Concurrency::Parallel),]
 }
 
-pub fn read_mode_ap() -> impl Strategy<Value = ReadModeAP> {
-    prop_oneof![Just(ReadModeAP::One), Just(ReadModeAP::All),]
+pub fn read_mode_ap() -> impl Strategy<Value = ReadModeAp> {
+    prop_oneof![Just(ReadModeAp::One), Just(ReadModeAp::All),]
 }
 
-pub fn read_mode_sc() -> impl Strategy<Value = ReadModeSC> {
+pub fn read_mode_sc() -> impl Strategy<Value = ReadModeSc> {
     prop_oneof![
-        Just(ReadModeSC::Session),
-        // Just(ReadModeSC::Linearize),
-        // Just(ReadModeSC::AllowReplica),
-        // Just(ReadModeSC::AllowUnavailable),
+        Just(ReadModeSc::Session),
+        // Just(ReadModeSc::Linearize),
+        // Just(ReadModeSc::AllowReplica),
+        // Just(ReadModeSc::AllowUnavailable),
     ]
 }
 
@@ -90,7 +90,7 @@ pub fn query_duration() -> impl Strategy<Value = QueryDuration> {
     prop_oneof![
         Just(QueryDuration::Long),
         Just(QueryDuration::Short),
-        Just(QueryDuration::LongRelaxAP),
+        Just(QueryDuration::LongRelaxAp),
     ]
 }
 
@@ -448,8 +448,8 @@ prop_compose! {
         send_key in any::<bool>(),
         filter_expression in true_or_false_filter_expression(),
     )
-    -> BatchUDFPolicy {
-        BatchUDFPolicy {
+    -> BatchUdfPolicy {
+        BatchUdfPolicy {
             commit_level,
             expiration,
             durable_delete,

@@ -39,7 +39,7 @@ fn corpus() -> Vec<Value> {
         as_map!("b" => 0),
         as_map!("a" => 1, "b" => 2),
         as_map!(),
-        Value::GeoJSON(r#"{"type":"Point","coordinates":[1.0,1.0]}"#.into()),
+        Value::GeoJson(r#"{"type":"Point","coordinates":[1.0,1.0]}"#.into()),
         Value::from(1000),
         Value::from(2),
         Value::from(2.0),

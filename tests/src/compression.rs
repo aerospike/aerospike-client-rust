@@ -407,7 +407,7 @@ async fn query_with_compression() {
 
     // Range query: int in [10, 50)
     let mut stmt = Statement::new(namespace, &set_name, Bins::All);
-    stmt.add_filter(Filter::equal("int", 25));
+    stmt.set_filter(Filter::equal("int", 25));
 
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, stmt).await.unwrap();

@@ -31,7 +31,7 @@ use crate::msgpack::encoder;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::policy::{
     BasePolicy, BatchPolicy, CommitLevel, GenerationPolicy, Policy, QueryDuration, QueryPolicy,
-    ReadModeAP, ReadModeSC, ReadPolicy, RecordExistsAction, WritePolicy,
+    ReadModeAp, ReadModeSc, ReadPolicy, RecordExistsAction, WritePolicy,
 };
 use crate::query::NodePartitions;
 use crate::txn::Txn;
@@ -1438,7 +1438,7 @@ impl Buffer {
         node_partitions: Option<&NodePartitions>,
         execute_where: Option<&[u8]>,
     ) -> Result<()> {
-        let filter = statement.filters.as_ref().map(|filters| &filters[0]);
+        let filter = statement.filter.as_ref();
         let is_background = direction.is_background();
         let supports_ops_ext = node.version().supports_query_ops_projection_ext();
         let records_per_second = direction.records_per_second();
@@ -1614,7 +1614,7 @@ impl Buffer {
                 }
                 match qpolicy.expected_duration {
                     QueryDuration::Short => info1 |= INFO1_SHORT_QUERY,
-                    QueryDuration::LongRelaxAP => info2 |= INFO2_RELAX_AP_LONG_QUERY,
+                    QueryDuration::LongRelaxAp => info2 |= INFO2_RELAX_AP_LONG_QUERY,
                     QueryDuration::Long => (),
                 }
                 self.write_header_read(
@@ -1898,15 +1898,15 @@ impl Buffer {
         let mut info_attr: u8 = 0;
 
         match policy.read_mode_sc {
-            ReadModeSC::Session => {}
-            ReadModeSC::Linearize => info_attr |= INFO3_SC_READ_TYPE,
-            ReadModeSC::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
-            ReadModeSC::AllowUnavailable => {
+            ReadModeSc::Session => {}
+            ReadModeSc::Linearize => info_attr |= INFO3_SC_READ_TYPE,
+            ReadModeSc::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
+            ReadModeSc::AllowUnavailable => {
                 info_attr |= INFO3_SC_READ_TYPE | INFO3_SC_READ_RELAX;
             }
         }
 
-        if policy.read_mode_ap == ReadModeAP::All {
+        if policy.read_mode_ap == ReadModeAp::All {
             read_attr |= INFO1_READ_MODE_AP_ALL;
         }
 
@@ -1961,15 +1961,15 @@ impl Buffer {
         let mut info_attr = info_attr;
 
         match policy.read_mode_sc {
-            ReadModeSC::Session => {}
-            ReadModeSC::Linearize => info_attr |= INFO3_SC_READ_TYPE,
-            ReadModeSC::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
-            ReadModeSC::AllowUnavailable => {
+            ReadModeSc::Session => {}
+            ReadModeSc::Linearize => info_attr |= INFO3_SC_READ_TYPE,
+            ReadModeSc::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
+            ReadModeSc::AllowUnavailable => {
                 info_attr |= INFO3_SC_READ_TYPE | INFO3_SC_READ_RELAX;
             }
         }
 
-        if policy.read_mode_ap == ReadModeAP::All {
+        if policy.read_mode_ap == ReadModeAp::All {
             read_attr |= INFO1_READ_MODE_AP_ALL;
         }
 
@@ -2107,15 +2107,15 @@ impl Buffer {
             }
 
             match policy.base_policy.read_mode_sc {
-                ReadModeSC::Session => {}
-                ReadModeSC::Linearize => info_attr |= INFO3_SC_READ_TYPE,
-                ReadModeSC::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
-                ReadModeSC::AllowUnavailable => {
+                ReadModeSc::Session => {}
+                ReadModeSc::Linearize => info_attr |= INFO3_SC_READ_TYPE,
+                ReadModeSc::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
+                ReadModeSc::AllowUnavailable => {
                     info_attr |= INFO3_SC_READ_TYPE | INFO3_SC_READ_RELAX;
                 }
             }
 
-            if policy.base_policy.read_mode_ap == ReadModeAP::All {
+            if policy.base_policy.read_mode_ap == ReadModeAp::All {
                 read_attr |= INFO1_READ_MODE_AP_ALL;
             }
         }
@@ -2991,8 +2991,8 @@ mod tests {
 
     fn read_heavy_write_policy() -> WritePolicy {
         let mut policy = WritePolicy::default();
-        policy.base_policy.read_mode_sc = ReadModeSC::Linearize;
-        policy.base_policy.read_mode_ap = ReadModeAP::All;
+        policy.base_policy.read_mode_sc = ReadModeSc::Linearize;
+        policy.base_policy.read_mode_ap = ReadModeAp::All;
         policy.base_policy.use_compression = true;
         policy
     }

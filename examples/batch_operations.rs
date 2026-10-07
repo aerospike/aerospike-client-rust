@@ -1,9 +1,9 @@
 use aerospike::{as_bin, as_key, as_val};
 
 use aerospike::operations;
-use aerospike::{BatchPolicy, BatchRecord, Bins, Client, ClientPolicy, UDFLang};
+use aerospike::{BatchPolicy, BatchRecord, Bins, Client, ClientPolicy, UdfLang};
 use aerospike_core::{
-    AdminPolicy, BatchDeletePolicy, BatchOperation, BatchReadPolicy, BatchUDFPolicy,
+    AdminPolicy, BatchDeletePolicy, BatchOperation, BatchReadPolicy, BatchUdfPolicy,
     BatchWritePolicy, Task,
 };
 use rand::distr::Alphanumeric;
@@ -45,7 +45,7 @@ end
     println!("Registering UDF...");
     let apolicy = AdminPolicy::default();
     let task = client
-        .register_udf(&apolicy, udf_body.as_bytes(), "test_udf.lua", UDFLang::Lua)
+        .register_udf(&apolicy, udf_body.as_bytes(), "test_udf.lua", UdfLang::Lua)
         .await
         .unwrap();
     task.wait_till_complete(None).await.unwrap();
@@ -81,7 +81,7 @@ end
     let bpr = BatchReadPolicy::default();
     let bpw = BatchWritePolicy::default();
     let bpd = BatchDeletePolicy::default();
-    let bpu = BatchUDFPolicy::default();
+    let bpu = BatchUdfPolicy::default();
 
     // WRITE Operations
     println!("\n--- Batch WRITE operations ---");

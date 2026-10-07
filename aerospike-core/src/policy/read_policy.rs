@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use super::{PolicyLike, ReadModeAP, ReadModeSC, Replica};
+use super::{PolicyLike, ReadModeAp, ReadModeSc, Replica};
 use crate::expressions::Expression;
 use crate::policy::BasePolicy;
 #[cfg(feature = "dynamic-config")]
@@ -41,9 +41,9 @@ impl Default for BasePolicy {
             max_retries: 2,
             sleep_between_retries: 0,
             sleep_multiplier: 1.0,
-            read_mode_ap: ReadModeAP::One,
-            read_mode_sc: ReadModeSC::Session,
-            read_touch_ttl: super::ReadTouchTTL::ServerDefault,
+            read_mode_ap: ReadModeAp::One,
+            read_mode_sc: ReadModeSc::Session,
+            read_touch_ttl: super::ReadTouchTtl::ServerDefault,
             use_compression: false,
             compression_threshold: 128,
             filter_expression: None,

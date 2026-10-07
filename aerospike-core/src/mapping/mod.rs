@@ -316,7 +316,7 @@ impl ToValue for Vec<u8> {
 impl FromValue for Vec<u8> {
     fn from_value(value: &Value) -> Result<Self> {
         match value {
-            Value::Blob(bytes) | Value::HLL(bytes) => Ok(bytes.clone()),
+            Value::Blob(bytes) | Value::Hll(bytes) => Ok(bytes.clone()),
             other => type_mismatch("a blob", other),
         }
     }
@@ -418,7 +418,7 @@ where
 // -- Aerospike-specific wrapper types ------------------------------------------
 
 /// A field stored as the server's native `GeoJSON` particle
-/// ([`Value::GeoJSON`]) instead of a plain string — queryable with
+/// ([`Value::GeoJson`]) instead of a plain string — queryable with
 /// geospatial filters.
 ///
 /// Works in both derive engines; under serde-based
@@ -449,20 +449,20 @@ impl GeoJson {
 
 impl ToValue for GeoJson {
     fn to_value(&self) -> Result<Value> {
-        Ok(Value::GeoJSON(self.0.clone()))
+        Ok(Value::GeoJson(self.0.clone()))
     }
 }
 
 impl FromValue for GeoJson {
     fn from_value(value: &Value) -> Result<Self> {
         match value {
-            Value::GeoJSON(s) | Value::String(s) => Ok(GeoJson(s.clone())),
+            Value::GeoJson(s) | Value::String(s) => Ok(GeoJson(s.clone())),
             other => type_mismatch("a GeoJSON document", other),
         }
     }
 }
 
-/// A field stored as the server's `HyperLogLog` particle ([`Value::HLL`])
+/// A field stored as the server's `HyperLogLog` particle ([`Value::Hll`])
 /// instead of a plain blob — as written by HLL operations or backup
 /// restores.
 ///
@@ -493,14 +493,14 @@ impl Hll {
 
 impl ToValue for Hll {
     fn to_value(&self) -> Result<Value> {
-        Ok(Value::HLL(self.0.clone()))
+        Ok(Value::Hll(self.0.clone()))
     }
 }
 
 impl FromValue for Hll {
     fn from_value(value: &Value) -> Result<Self> {
         match value {
-            Value::HLL(bytes) | Value::Blob(bytes) => Ok(Hll(bytes.clone())),
+            Value::Hll(bytes) | Value::Blob(bytes) => Ok(Hll(bytes.clone())),
             other => type_mismatch("an HLL value", other),
         }
     }
@@ -628,7 +628,7 @@ mod tests {
         );
         // HLL reads back as bytes too.
         assert_eq!(
-            Vec::<u8>::from_value(&Value::HLL(vec![9])).unwrap(),
+            Vec::<u8>::from_value(&Value::Hll(vec![9])).unwrap(),
             vec![9]
         );
         // Other integer vecs are lists.

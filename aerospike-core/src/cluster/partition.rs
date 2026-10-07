@@ -21,7 +21,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use crate::cluster::node;
 use crate::cluster::{Cluster, Node};
 use crate::errors::{Error, Result};
-use crate::policy::{ReadModeSC, Replica};
+use crate::policy::{ReadModeSc, Replica};
 use crate::Key;
 
 /// Partition encapsulates partition information used for node selection.
@@ -79,12 +79,12 @@ impl<'a> Partition<'a> {
     }
 
     /// Create a partition for read operations, applying SC mode overrides
-    /// based on the namespace's SC mode and the policy's `ReadModeSC` setting.
+    /// based on the namespace's SC mode and the policy's `ReadModeSc` setting.
     pub fn for_read(
         cluster: &Cluster,
         key: &'a Key,
         replica: Replica,
-        read_mode_sc: ReadModeSC,
+        read_mode_sc: ReadModeSc,
     ) -> Self {
         let mut p = Self::new_by_key(key);
         p.replica = replica;
@@ -94,11 +94,11 @@ impl<'a> Partition<'a> {
         if let Some(partitions) = pmap.get(&key.namespace) {
             if partitions.sc_mode {
                 match read_mode_sc {
-                    ReadModeSC::Session => {
+                    ReadModeSc::Session => {
                         p.replica = Replica::Master;
                         p.linearize = false;
                     }
-                    ReadModeSC::Linearize => {
+                    ReadModeSc::Linearize => {
                         p.replica = if replica == Replica::PreferRack {
                             Replica::Sequence
                         } else {

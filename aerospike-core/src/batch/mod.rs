@@ -29,7 +29,7 @@ use crate::CommitLevel;
 use crate::Expiration;
 use crate::GenerationPolicy;
 use crate::Key;
-use crate::ReadTouchTTL;
+use crate::ReadTouchTtl;
 use crate::Record;
 use crate::RecordExistsAction;
 use crate::ResultCode;
@@ -65,8 +65,8 @@ pub struct BatchReadPolicy {
     ///
     /// Supported in server v8+.
     ///
-    /// Default: `ReadTouchTTL::ServerDefault`
-    pub read_touch_ttl: ReadTouchTTL,
+    /// Default: `ReadTouchTtl::ServerDefault`
+    pub read_touch_ttl: ReadTouchTtl,
 
     /// Filter Expression is the optional expression filter. If filter Expression exists and evaluates to false, the specific batch key
     /// request is not performed and BatchRecord.ResultCode is set to `ResultCode::FILTERED_OUT`.
@@ -78,7 +78,7 @@ pub struct BatchReadPolicy {
 impl Default for BatchReadPolicy {
     fn default() -> Self {
         Self {
-            read_touch_ttl: ReadTouchTTL::ServerDefault,
+            read_touch_ttl: ReadTouchTtl::ServerDefault,
             filter_expression: None,
         }
     }
@@ -263,7 +263,7 @@ impl BatchDeletePolicy {
 /// Policy for a single batch udf operation.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
-pub struct BatchUDFPolicy {
+pub struct BatchUdfPolicy {
     /// Desired consistency guarantee when committing a transaction on the server. The default
     /// (`CommitAll`) indicates that the server should wait for master and all replica commits to
     /// be successful before returning success to the client.
@@ -294,7 +294,7 @@ pub struct BatchUDFPolicy {
     pub filter_expression: Option<Expression>,
 }
 
-impl Default for BatchUDFPolicy {
+impl Default for BatchUdfPolicy {
     fn default() -> Self {
         Self {
             commit_level: CommitLevel::CommitAll,
@@ -307,7 +307,7 @@ impl Default for BatchUDFPolicy {
     }
 }
 
-impl BatchUDFPolicy {
+impl BatchUdfPolicy {
     pub(crate) fn to_write_policy(
         &self,
         parent: &crate::policy::BatchPolicy,
@@ -363,7 +363,7 @@ pub enum BatchOp {
         policy: BatchDeletePolicy,
     },
     Udf {
-        policy: BatchUDFPolicy,
+        policy: BatchUdfPolicy,
         udf_name: String,
         function_name: String,
         args: Option<Vec<Value>>,
@@ -429,7 +429,7 @@ impl BatchOperation {
 
     /// Creates a batch UDF operation.
     pub fn udf(
-        policy: &BatchUDFPolicy,
+        policy: &BatchUdfPolicy,
         key: Key,
         udf_name: &str,
         function_name: &str,
@@ -852,7 +852,7 @@ mod repeat_tests {
     // Identical UDF invocations repeat; different args do not.
     #[test]
     fn udf_repeats_for_equal_invocations() {
-        let policy = BatchUDFPolicy::default();
+        let policy = BatchUdfPolicy::default();
         let args = Some(vec![crate::Value::from(1)]);
         let u1 = BatchOperation::udf(&policy, key(1), "pkg", "fun", args.clone());
         let u2 = BatchOperation::udf(&policy, key(2), "pkg", "fun", args);

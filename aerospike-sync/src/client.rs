@@ -31,7 +31,7 @@ use aerospike_core::{
     AdminPolicy, BatchOperation, BatchPolicy, BatchRecord, Bin, Bins, ClientPolicy,
     CollectionIndexType, ExecuteTask, IndexTask, IndexType, Key, Node, Privilege, QueryPolicy,
     ReadPolicy, Record, Recordset, RegisterTask, Role, Statement, ToHosts, TxnRollPolicy,
-    TxnVerifyPolicy, UDFLang, User, Value, WritePolicy,
+    TxnVerifyPolicy, UdfLang, User, Value, WritePolicy,
 };
 
 #[cfg(feature = "rt-tokio")]
@@ -545,14 +545,14 @@ impl Client {
     /// "#;
     ///
     /// client.register_udf(&AdminPolicy::default(), code.as_bytes(),
-    ///                     "example.lua", UDFLang::Lua).unwrap();
+    ///                     "example.lua", UdfLang::Lua).unwrap();
     /// ```
     pub fn register_udf(
         &self,
         policy: &AdminPolicy,
         udf_body: &[u8],
         server_path: &str,
-        language: UDFLang,
+        language: UdfLang,
     ) -> Result<RegisterTask> {
         block_on(
             self.async_client
@@ -571,7 +571,7 @@ impl Client {
         policy: &AdminPolicy,
         client_path: &str,
         server_path: &str,
-        language: UDFLang,
+        language: UdfLang,
     ) -> Result<RegisterTask> {
         block_on(self.async_client.register_udf_from_file(
             policy,

@@ -667,7 +667,7 @@ end
             &ap,
             udf_body.as_bytes(),
             "test_udf_proptests1.lua",
-            aerospike::UDFLang::Lua,
+            aerospike::UdfLang::Lua,
         )
         .await
         .unwrap();

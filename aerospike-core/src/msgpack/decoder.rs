@@ -201,11 +201,11 @@ fn unpack_blob(buf: &mut Buffer, count: usize) -> Result<Value> {
         }
 
         Some(ParticleType::BLOB) => Ok(Value::Blob(buf.read_blob(count)?)),
-        Some(ParticleType::HLL) => Ok(Value::HLL(buf.read_blob(count)?)),
+        Some(ParticleType::HLL) => Ok(Value::Hll(buf.read_blob(count)?)),
 
         Some(ParticleType::GEOJSON) => {
             let val = buf.read_str(count)?;
-            Ok(Value::GeoJSON(val))
+            Ok(Value::GeoJson(val))
         }
 
         _ => Ok(Value::Unknown(vtype, buf.read_blob(count)?)),

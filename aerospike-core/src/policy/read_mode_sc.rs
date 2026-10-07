@@ -13,10 +13,10 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-/// `ReadModeSC` is the read policy for SC (strong consistency) namespaces.
+/// `ReadModeSc` is the read policy for SC (strong consistency) namespaces.
 /// Determines SC read consistency options.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
-pub enum ReadModeSC {
+pub enum ReadModeSc {
     /// Ensures this client will only see an increasing sequence of record versions.
     /// Client only reads from master. This is the default.
     #[default]
@@ -37,14 +37,14 @@ pub enum ReadModeSC {
 
 // Case-insensitive YAML/config parsing (mirrors the Go client's `ToUpper`).
 #[cfg(feature = "dynamic-config")]
-impl<'de> serde::Deserialize<'de> for ReadModeSC {
+impl<'de> serde::Deserialize<'de> for ReadModeSc {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = String::deserialize(deserializer)?;
         match value.to_ascii_uppercase().as_str() {
-            "SESSION" => Ok(ReadModeSC::Session),
-            "LINEARIZE" => Ok(ReadModeSC::Linearize),
-            "ALLOW_REPLICA" => Ok(ReadModeSC::AllowReplica),
-            "ALLOW_UNAVAILABLE" => Ok(ReadModeSC::AllowUnavailable),
+            "SESSION" => Ok(ReadModeSc::Session),
+            "LINEARIZE" => Ok(ReadModeSc::Linearize),
+            "ALLOW_REPLICA" => Ok(ReadModeSc::AllowReplica),
+            "ALLOW_UNAVAILABLE" => Ok(ReadModeSc::AllowUnavailable),
             other => Err(serde::de::Error::custom(format!(
                 "invalid ReadModeSc value: {other}"
             ))),

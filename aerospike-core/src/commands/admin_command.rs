@@ -437,7 +437,7 @@ impl AdminCommand {
                 AdminCommand::write_field_bytes(conn, CREDENTIAL, hashed_pass.unwrap().as_bytes());
                 AdminCommand::write_field_str(conn, CLEAR_PASSWORD, password);
             }
-            AuthMode::PKI => AdminCommand::write_header(conn, LOGIN, 0),
+            AuthMode::Pki => AdminCommand::write_header(conn, LOGIN, 0),
             AuthMode::None => return Ok(None),
         }
 
@@ -552,7 +552,7 @@ impl AdminCommand {
                 AdminCommand::write_field_str(conn, USER, user);
                 AdminCommand::write_field_bytes(conn, SESSION_TOKEN, token);
             }
-            AuthMode::PKI => {
+            AuthMode::Pki => {
                 AdminCommand::write_header(conn, AUTHENTICATE, 1);
                 AdminCommand::write_field_bytes(conn, SESSION_TOKEN, token);
             }
@@ -668,7 +668,7 @@ impl AdminCommand {
                 );
             }
 
-            AuthMode::PKI => return Err(Error::client_error("Can't change PKI user's password")),
+            AuthMode::Pki => return Err(Error::client_error("Can't change PKI user's password")),
             AuthMode::None => AdminCommand::write_field_str(&mut conn, OLD_PASSWORD, ""),
         }
 

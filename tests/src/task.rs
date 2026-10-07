@@ -39,7 +39,7 @@ async fn register_task_test() {
     let udf_file_name = "my_udf_task.lua";
 
     let register_task = client
-        .register_udf(&apolicy, code.as_bytes(), udf_file_name, UDFLang::Lua)
+        .register_udf(&apolicy, code.as_bytes(), udf_file_name, UdfLang::Lua)
         .await
         .unwrap();
 

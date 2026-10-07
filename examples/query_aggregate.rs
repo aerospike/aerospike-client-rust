@@ -9,7 +9,7 @@ use std::env;
 
 use aerospike::{as_bin, as_key, as_val};
 use aerospike::{
-    AdminPolicy, Bins, Client, ClientPolicy, QueryPolicy, Statement, Task, UDFLang, Value,
+    AdminPolicy, Bins, Client, ClientPolicy, QueryPolicy, Statement, Task, UdfLang, Value,
     WritePolicy,
 };
 use futures::StreamExt;
@@ -77,7 +77,7 @@ pub async fn run() {
             &AdminPolicy::default(),
             UDF.as_bytes(),
             "example_aggregate.lua",
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
         .unwrap();

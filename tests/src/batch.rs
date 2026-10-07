@@ -18,7 +18,7 @@ use aerospike::operations::lists;
 use aerospike::*;
 
 use crate::common;
-use aerospike::{Expiration, ReadTouchTTL};
+use aerospike::{Expiration, ReadTouchTtl};
 use aerospike_rt::sleep;
 use aerospike_rt::time::{Duration, Instant};
 
@@ -189,7 +189,7 @@ end
             &apolicy,
             udf_body.as_bytes(),
             "batch_read_echo.lua",
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
         .unwrap();
@@ -227,7 +227,7 @@ end
     if namespace_sc!(&client) {
         bpd.durable_delete = true;
     }
-    let bpu = BatchUDFPolicy::default();
+    let bpu = BatchUdfPolicy::default();
 
     let mut batch = vec![
         BatchOperation::write(&bpw, key1.clone(), wops.clone()),
@@ -500,10 +500,10 @@ async fn batch_operate_read_touch_ttl() {
     // Read records before they expire and reset read ttl on one record.
     sleep(Duration::from_secs(8)).await;
     let mut brp1 = BatchReadPolicy::default();
-    brp1.read_touch_ttl = ReadTouchTTL::Percent(80);
+    brp1.read_touch_ttl = ReadTouchTtl::Percent(80);
 
     let mut brp2 = BatchReadPolicy::default();
-    brp2.read_touch_ttl = ReadTouchTTL::DontReset;
+    brp2.read_touch_ttl = ReadTouchTtl::DontReset;
 
     let br1 = BatchOperation::read(&brp1, key1.clone(), Bins::Some(vec!["a".into()]));
     let br2 = BatchOperation::read(&brp2, key2.clone(), Bins::Some(vec!["a".into()]));
@@ -516,8 +516,8 @@ async fn batch_operate_read_touch_ttl() {
 
     // Read records again, but don't reset read ttl.
     sleep(Duration::from_secs(3)).await;
-    brp1.read_touch_ttl = ReadTouchTTL::DontReset;
-    brp2.read_touch_ttl = ReadTouchTTL::DontReset;
+    brp1.read_touch_ttl = ReadTouchTtl::DontReset;
+    brp2.read_touch_ttl = ReadTouchTtl::DontReset;
 
     let br1 = BatchOperation::read(&brp1, key1.clone(), Bins::Some(vec!["a".into()]));
     let br2 = BatchOperation::read(&brp2, key2.clone(), Bins::Some(vec!["a".into()]));

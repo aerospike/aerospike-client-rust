@@ -34,7 +34,7 @@ use crate::common;
 
 use aerospike::expressions::{eq, float_val, int_bin, int_val, Expression};
 use aerospike::operations::exp::ExpWriteFlags;
-use aerospike::operations::hll::HLLPolicy;
+use aerospike::operations::hll::HllPolicy;
 use aerospike::operations::lists::ListReturnType;
 use aerospike::operations::{bitwise, exp, hll, lists, scalar};
 use aerospike::query::PartitionFilter;
@@ -286,7 +286,7 @@ async fn hll_add_on_integer_bin_is_bin_type_error() {
     put(&client, &key, as_bin!(BIN, 1)).await;
 
     let op = hll::add_with_index_and_min_hash(
-        &HLLPolicy::default(),
+        &HllPolicy::default(),
         BIN,
         vec![Value::from("element1")],
         8,
@@ -396,7 +396,7 @@ async fn hll_fold_target_too_large_is_op_not_applicable_with_subcode() {
         .operate(
             &WritePolicy::default(),
             &key,
-            &[hll::init_with_min_hash(&HLLPolicy::default(), BIN, 8, 0)],
+            &[hll::init_with_min_hash(&HllPolicy::default(), BIN, 8, 0)],
         )
         .await
         .unwrap();

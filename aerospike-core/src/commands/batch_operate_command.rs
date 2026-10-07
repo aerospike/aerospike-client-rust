@@ -33,6 +33,24 @@ use crate::{value, Record, ResultCode, Value};
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
 
+/// One parsed row of a batch response.
+#[allow(clippy::large_enum_variant)] // transient parse result; boxing the row costs an allocation per record
+enum RowParse {
+    /// The end marker: no more rows in this response.
+    End,
+    /// A row with its record, or a per-row outcome the server explains in the
+    /// record header itself (`KEY_NOT_FOUND`, `FILTERED_OUT`, a UDF failure).
+    Record(BatchRecordIndex),
+    /// A row the server rejected. It lands on that row's `BatchRecord`;
+    /// `last` means it also closed the response stream.
+    Error {
+        index: u32,
+        rc: ResultCode,
+        last: bool,
+        detail: Option<Box<crate::ServerErrorDetail>>,
+    },
+}
+
 /// A batch operation paired with the index it had in the caller's input.
 type IndexedOp = (BatchOperation, usize);
 
@@ -318,7 +336,7 @@ impl BatchOperateCommand {
                 sequence_ap += 1;
                 if !matches!(
                     self.policy.base_policy.read_mode_sc,
-                    crate::policy::ReadModeSC::Linearize
+                    crate::policy::ReadModeSc::Linearize
                 ) || e.client_result_code() == Some(crate::ClientResultCode::ServerNotAvailable)
                 {
                     sequence_sc += 1;
@@ -685,9 +703,9 @@ impl BatchOperateCommand {
         while conn.bytes_read() < size {
             conn.read_buffer(commands::buffer::MSG_REMAINING_HEADER_SIZE as usize)
                 .await?;
-            match Self::parse_record(conn).await {
-                Ok(None) => return Ok(false),
-                Ok(Some(batch_record)) => {
+            match Self::parse_record(conn).await? {
+                RowParse::End => return Ok(false),
+                RowParse::Record(batch_record) => {
                     let batch_op = batch_ops
                         .get_mut(batch_record.batch_index)
                         .ok_or_else(|| Error::bad_response("batch row index out of range"))?;
@@ -725,50 +743,42 @@ impl BatchOperateCommand {
                         }
                     }
                 }
-                Err(err) => match *err.kind() {
-                    // Per-key row error. Record it on the individual
-                    // BatchRecord — do not propagate as a batch-level
-                    // failure, matching Java's behavior
-                    // (BatchStatus.setRowError keeps other records).
+                // Per-key row error. Record it on the individual BatchRecord —
+                // do not propagate as a batch-level failure, matching Java's
+                // behavior (BatchStatus.setRowError keeps other records).
+                RowParse::Error {
+                    index,
+                    rc,
+                    last,
+                    detail,
+                } => {
+                    let batch_op = batch_ops
+                        .get_mut(index as usize)
+                        .ok_or_else(|| Error::bad_response("batch row index out of range"))?;
                     // In-doubt mirrors Java's `Command.batchInDoubt`: a row
                     // error in this response is definitive for this attempt,
                     // so a write is only in doubt when an earlier attempt was
                     // also sent. A `last` row additionally ends the stream.
-                    ErrorKind::BatchRow {
-                        index,
-                        rc,
-                        last,
-                        ref detail,
-                    } => {
-                        let batch_op = batch_ops
-                            .get_mut(index as usize)
-                            .ok_or_else(|| Error::bad_response("batch row index out of range"))?;
-                        // In-doubt mirrors Java's `Command.batchInDoubt`: a row
-                        // error in this response is definitive for this
-                        // attempt, so a write is only in doubt when an earlier
-                        // attempt was also sent.
-                        let mut row_error = Error::server_error(rc, node_label, detail.clone());
-                        if batch_op.0.has_write() && commands_sent > 1 {
-                            row_error.force_in_doubt();
-                        }
-                        batch_op.0.set_error(row_error);
-                        if let Some(hook) = hook {
-                            if !hook.fire(batch_op.1, batch_op.0.batch_record()).await {
-                                return Err(Error::stream_terminated(None));
-                            }
-                        }
-                        if last {
-                            return Ok(false);
+                    let mut row_error = Error::server_error(rc, node_label, detail);
+                    if batch_op.0.has_write() && commands_sent > 1 {
+                        row_error.force_in_doubt();
+                    }
+                    batch_op.0.set_error(row_error);
+                    if let Some(hook) = hook {
+                        if !hook.fire(batch_op.1, batch_op.0.batch_record()).await {
+                            return Err(Error::stream_terminated(None));
                         }
                     }
-                    _ => return Err(err),
-                },
+                    if last {
+                        return Ok(false);
+                    }
+                }
             }
         }
         Ok(true)
     }
 
-    async fn parse_record(conn: &mut BufferedConn<'_>) -> Result<Option<BatchRecordIndex>> {
+    async fn parse_record(conn: &mut BufferedConn<'_>) -> Result<RowParse> {
         // if cmd is the end marker of the response, do not proceed further
         let info3 = conn.buffer().read_u8(Some(3));
         let last_record = info3 & commands::buffer::INFO3_LAST == commands::buffer::INFO3_LAST;
@@ -794,7 +804,7 @@ impl BatchOperateCommand {
 
         // The end marker carries no body, so nothing to parse past the header.
         if last_record && row_error.is_none() {
-            return Ok(None);
+            return Ok(RowParse::End);
         }
 
         let found_key = matches!(result_code, ResultCode::Ok | ResultCode::UdfBadResponse);
@@ -820,13 +830,12 @@ impl BatchOperateCommand {
                 conn.read_buffer(remaining).await?;
                 conn.buffer().skip(remaining);
             }
-            return Err(Error::batch_row(
-                row_index,
+            return Ok(RowParse::Error {
+                index: row_index,
                 rc,
-                last_record,
-                conn.conn.addr.clone(),
-                error_detail,
-            ));
+                last: last_record,
+                detail: error_detail,
+            });
         }
 
         let record = if found_key {
@@ -879,7 +888,7 @@ impl BatchOperateCommand {
         } else {
             None
         };
-        Ok(Some(BatchRecordIndex {
+        Ok(RowParse::Record(BatchRecordIndex {
             batch_index: batch_index as usize,
             record,
             result_code,

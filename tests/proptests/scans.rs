@@ -20,7 +20,7 @@ async fn adjust_query_policy_for_scan_proptest(
         return policy;
     }
 
-    if policy.expected_duration == QueryDuration::LongRelaxAP {
+    if policy.expected_duration == QueryDuration::LongRelaxAp {
         policy.expected_duration = QueryDuration::Long;
     }
     policy.records_per_second = 0;

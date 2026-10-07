@@ -44,7 +44,7 @@ use std::sync::Arc;
 pub use self::batch_attr::BatchAttr;
 pub use self::batch_operate_command::BatchOperateCommand;
 pub use self::delete_command::DeleteCommand;
-pub use self::execute_udf_command::ExecuteUDFCommand;
+pub use self::execute_udf_command::ExecuteUdfCommand;
 pub use self::exists_command::ExistsCommand;
 pub use self::info_command::Message;
 pub use self::operate_command::OperateCommand;
@@ -135,7 +135,7 @@ pub fn is_network_error(err: &Error) -> bool {
 /// transitional state.
 pub fn is_retriable_server_error(err: &Error) -> bool {
     match err.kind() {
-        crate::ErrorKind::Server { rc, .. } | crate::ErrorKind::BatchRow { rc, .. } => matches!(
+        crate::ErrorKind::Server { rc, .. } => matches!(
             rc,
             ResultCode::Timeout
                 | ResultCode::DeviceOverload

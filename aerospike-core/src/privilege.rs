@@ -35,12 +35,12 @@ pub enum PrivilegeCode {
     /// User can perform user-defined function(UDF) administration actions.
     /// Examples include create/drop UDF. Global scope only.
     /// Requires server version 6+
-    UDFAdmin = 3,
+    UdfAdmin = 3,
 
     /// User can perform secondary index administration actions.
     /// Examples include create/drop index. Global scope only.
     /// Requires server version 6+.
-    SIndexAdmin = 4,
+    SindexAdmin = 4,
 
     /// User can read data only.
     Read = 10,
@@ -49,7 +49,7 @@ pub enum PrivilegeCode {
     ReadWrite = 11,
 
     /// User can read and write data through user-defined functions.
-    ReadWriteUDF = 12,
+    ReadWriteUdf = 12,
 
     /// User can read and write data through user-defined functions.
     Write = 13,
@@ -118,11 +118,11 @@ impl TryFrom<u8> for PrivilegeCode {
             0 => Ok(PrivilegeCode::UserAdmin),
             1 => Ok(PrivilegeCode::SysAdmin),
             2 => Ok(PrivilegeCode::DataAdmin),
-            3 => Ok(PrivilegeCode::UDFAdmin),
-            4 => Ok(PrivilegeCode::SIndexAdmin),
+            3 => Ok(PrivilegeCode::UdfAdmin),
+            4 => Ok(PrivilegeCode::SindexAdmin),
             10 => Ok(PrivilegeCode::Read),
             11 => Ok(PrivilegeCode::ReadWrite),
-            12 => Ok(PrivilegeCode::ReadWriteUDF),
+            12 => Ok(PrivilegeCode::ReadWriteUdf),
             13 => Ok(PrivilegeCode::Write),
             14 => Ok(PrivilegeCode::Truncate),
             15 => Ok(PrivilegeCode::MaskingAdmin),
@@ -139,11 +139,11 @@ impl From<&PrivilegeCode> for u8 {
             PrivilegeCode::UserAdmin => 0,
             PrivilegeCode::SysAdmin => 1,
             PrivilegeCode::DataAdmin => 2,
-            PrivilegeCode::UDFAdmin => 3,
-            PrivilegeCode::SIndexAdmin => 4,
+            PrivilegeCode::UdfAdmin => 3,
+            PrivilegeCode::SindexAdmin => 4,
             PrivilegeCode::Read => 10,
             PrivilegeCode::ReadWrite => 11,
-            PrivilegeCode::ReadWriteUDF => 12,
+            PrivilegeCode::ReadWriteUdf => 12,
             PrivilegeCode::Write => 13,
             PrivilegeCode::Truncate => 14,
             PrivilegeCode::MaskingAdmin => 15,
@@ -159,11 +159,11 @@ impl From<&PrivilegeCode> for String {
             PrivilegeCode::UserAdmin => "user-admin".into(),
             PrivilegeCode::SysAdmin => "sys-admin".into(),
             PrivilegeCode::DataAdmin => "data-admin".into(),
-            PrivilegeCode::UDFAdmin => "udf-admin".into(),
-            PrivilegeCode::SIndexAdmin => "sindex-admin".into(),
+            PrivilegeCode::UdfAdmin => "udf-admin".into(),
+            PrivilegeCode::SindexAdmin => "sindex-admin".into(),
             PrivilegeCode::Read => "read".into(),
             PrivilegeCode::ReadWrite => "read-write".into(),
-            PrivilegeCode::ReadWriteUDF => "read-write-udf".into(),
+            PrivilegeCode::ReadWriteUdf => "read-write-udf".into(),
             PrivilegeCode::Write => "write".into(),
             PrivilegeCode::Truncate => "truncate".into(),
             PrivilegeCode::MaskingAdmin => "masking-admin".into(),
@@ -180,11 +180,11 @@ impl TryFrom<&str> for PrivilegeCode {
             "user-admin" => Ok(PrivilegeCode::UserAdmin),
             "sys-admin" => Ok(PrivilegeCode::SysAdmin),
             "data-admin" => Ok(PrivilegeCode::DataAdmin),
-            "udf-admin" => Ok(PrivilegeCode::UDFAdmin),
-            "sindex-admin" => Ok(PrivilegeCode::SIndexAdmin),
+            "udf-admin" => Ok(PrivilegeCode::UdfAdmin),
+            "sindex-admin" => Ok(PrivilegeCode::SindexAdmin),
             "read" => Ok(PrivilegeCode::Read),
             "read-write" => Ok(PrivilegeCode::ReadWrite),
-            "read-write-udf" => Ok(PrivilegeCode::ReadWriteUDF),
+            "read-write-udf" => Ok(PrivilegeCode::ReadWriteUdf),
             "write" => Ok(PrivilegeCode::Write),
             "truncate" => Ok(PrivilegeCode::Truncate),
             "masking-admin" => Ok(PrivilegeCode::MaskingAdmin),

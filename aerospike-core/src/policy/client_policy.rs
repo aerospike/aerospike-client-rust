@@ -46,7 +46,7 @@ pub enum AuthMode {
     /// Allows authentication and authorization based on a certificate. No user name or
     /// password needs to be configured. Requires TLS and a client certificate.
     /// Requires server version 5.7.0+
-    PKI,
+    Pki,
 }
 
 /// Hand-written so a `{:?}` of a policy never prints a password.
@@ -54,7 +54,7 @@ impl std::fmt::Debug for AuthMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AuthMode::None => f.write_str("None"),
-            AuthMode::PKI => f.write_str("PKI"),
+            AuthMode::Pki => f.write_str("PKI"),
             AuthMode::Internal(user, _) => {
                 f.debug_tuple("Internal").field(user).field(&"<redacted>").finish()
             }
@@ -611,7 +611,7 @@ impl ClientPolicy {
 
         // PKI authentication identifies the user by the client TLS
         // certificate, so it cannot work at all without a TLS config.
-        if matches!(self.auth_mode, AuthMode::PKI) {
+        if matches!(self.auth_mode, AuthMode::Pki) {
             #[cfg(feature = "tls")]
             let tls_enabled = self.tls_policy.is_some();
             #[cfg(not(feature = "tls"))]
@@ -619,7 +619,7 @@ impl ClientPolicy {
 
             if !tls_enabled {
                 return Err(Error::client_error(
-                    "TLS is required for AuthMode::PKI: the server identifies the user \
+                    "TLS is required for AuthMode::Pki: the server identifies the user \
                      by the client TLS certificate",
                 ));
             }
@@ -1065,7 +1065,7 @@ mod tests {
         // this branch rejects PKI unconditionally (same shape as the
         // External guard above).
         let policy = ClientPolicy {
-            auth_mode: AuthMode::PKI,
+            auth_mode: AuthMode::Pki,
             ..ClientPolicy::default()
         };
         let err = policy.validate().unwrap_err();
@@ -1083,7 +1083,7 @@ mod tests {
                 .with_root_certificates(RootCertStore::empty())
                 .with_no_client_auth();
             let policy = ClientPolicy {
-                auth_mode: AuthMode::PKI,
+                auth_mode: AuthMode::Pki,
                 tls_policy: Some(TlsPolicy::new(tls_config)),
                 ..ClientPolicy::default()
             };

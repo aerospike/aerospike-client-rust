@@ -19,7 +19,8 @@ use crate::commands::{Command, SingleCommand};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::policy::ReadPolicy;
-use crate::{Key, Policy, ResultCode};
+use crate::policy::Policy;
+use crate::{Key, ResultCode};
 
 pub struct ExistsCommand<'a> {
     single_command: SingleCommand<'a>,

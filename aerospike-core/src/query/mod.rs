@@ -35,7 +35,7 @@ pub use self::result_set::{ResultSet, ResultStream};
 pub use self::sink::QueryHandle;
 pub(crate) use self::sink::{CallbackCtx, QuerySink};
 pub use self::statement::Statement;
-pub use self::udf::UDFLang;
+pub use self::udf::UdfLang;
 
 /// Query filter definitions and filter value traits.
 pub mod filter;

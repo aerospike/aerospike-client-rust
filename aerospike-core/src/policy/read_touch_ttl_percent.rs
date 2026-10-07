@@ -29,7 +29,7 @@ const DONT_RESET: u32 = 0xFFFF_FFFF; // -1 as i32
 /// Supported in server v8+.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum ReadTouchTTL {
+pub enum ReadTouchTtl {
     /// 1 - 100 : Reset record TTL on reads when within this percentage of the most recent write TTL
     Percent(u8),
 
@@ -40,12 +40,12 @@ pub enum ReadTouchTTL {
     DontReset,
 }
 
-impl From<ReadTouchTTL> for u32 {
-    fn from(exp: ReadTouchTTL) -> u32 {
+impl From<ReadTouchTtl> for u32 {
+    fn from(exp: ReadTouchTtl) -> u32 {
         match exp {
-            ReadTouchTTL::Percent(pct) => u32::from(pct),
-            ReadTouchTTL::ServerDefault => SERVER_DEFAULT,
-            ReadTouchTTL::DontReset => DONT_RESET,
+            ReadTouchTtl::Percent(pct) => u32::from(pct),
+            ReadTouchTtl::ServerDefault => SERVER_DEFAULT,
+            ReadTouchTtl::DontReset => DONT_RESET,
         }
     }
 }

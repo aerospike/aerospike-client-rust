@@ -42,7 +42,7 @@ pub use yaml::YamlFileProvider;
 
 use serde::Deserialize;
 
-use crate::batch::{BatchDeletePolicyConfig, BatchUDFPolicyConfig};
+use crate::batch::{BatchDeletePolicyConfig, BatchUdfPolicyConfig};
 use crate::metrics::MetricsPolicyConfig;
 use crate::policy::{
     BatchPolicyConfig, ClientPolicyConfig, QueryPolicyConfig, ReadPolicyConfig,
@@ -104,7 +104,7 @@ pub struct DynamicConfig {
     pub batch_delete: Option<BatchDeletePolicyConfig>,
     /// Overrides for per-record batch *UDF* sub-policies (`send_key`,
     /// `durable_delete`).
-    pub batch_udf: Option<BatchUDFPolicyConfig>,
+    pub batch_udf: Option<BatchUdfPolicyConfig>,
     /// Overrides for the multi-record-transaction *verify* policy (applied by
     /// `commit`). Carries the `BasePolicy` knobs (timeouts, retries, read
     /// modes).
@@ -198,10 +198,10 @@ pub struct OperationalMetricsConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::batch::{BatchDeletePolicy, BatchUDFPolicy};
+    use crate::batch::{BatchDeletePolicy, BatchUdfPolicy};
     use crate::metrics::MetricsPolicy;
     use crate::policy::{
-        BatchPolicy, ClientPolicy, QueryDuration, QueryPolicy, ReadModeAP, ReadModeSC, ReadPolicy,
+        BatchPolicy, ClientPolicy, QueryDuration, QueryPolicy, ReadModeAp, ReadModeSc, ReadPolicy,
         Replica, TxnRollPolicy, TxnVerifyPolicy, WritePolicy,
     };
 
@@ -267,7 +267,7 @@ dynamic:
         let read = document().dynamic.unwrap().read.unwrap();
         let mut policy = ReadPolicy::default();
         read.merge_into(&mut policy);
-        assert_eq!(policy.base_policy.read_mode_ap, ReadModeAP::All);
+        assert_eq!(policy.base_policy.read_mode_ap, ReadModeAp::All);
         assert_eq!(policy.base_policy.socket_timeout, 1234);
         assert_eq!(policy.base_policy.total_timeout, 5678);
         assert_eq!(policy.base_policy.max_retries, 9);
@@ -449,7 +449,7 @@ labels:
         assert_eq!(vp.batch_policy.base_policy.max_retries, 9);
         assert_eq!(
             vp.batch_policy.base_policy.read_mode_sc,
-            ReadModeSC::Linearize
+            ReadModeSc::Linearize
         );
         // Batch knob (replica) flows through — the whole point of wrapping BatchPolicy.
         assert_eq!(vp.batch_policy.replica, Replica::PreferRack);
@@ -484,33 +484,33 @@ labels:
 
     #[test]
     fn read_mode_ap_enum_deserialization() {
-        assert_eq!(parse::<ReadModeAP>("ONE").unwrap(), ReadModeAP::One);
-        assert_eq!(parse::<ReadModeAP>("ALL").unwrap(), ReadModeAP::All);
-        assert_eq!(parse::<ReadModeAP>("one").unwrap(), ReadModeAP::One); // case-insensitive
-        assert!(parse::<ReadModeAP>("\"foo\"").is_err());
-        assert!(parse::<ReadModeAP>("\"\"").is_err());
-        assert!(parse::<ReadModeAP>("\"123\"").is_err());
+        assert_eq!(parse::<ReadModeAp>("ONE").unwrap(), ReadModeAp::One);
+        assert_eq!(parse::<ReadModeAp>("ALL").unwrap(), ReadModeAp::All);
+        assert_eq!(parse::<ReadModeAp>("one").unwrap(), ReadModeAp::One); // case-insensitive
+        assert!(parse::<ReadModeAp>("\"foo\"").is_err());
+        assert!(parse::<ReadModeAp>("\"\"").is_err());
+        assert!(parse::<ReadModeAp>("\"123\"").is_err());
     }
 
     #[test]
     fn read_mode_sc_enum_deserialization() {
-        assert_eq!(parse::<ReadModeSC>("SESSION").unwrap(), ReadModeSC::Session);
+        assert_eq!(parse::<ReadModeSc>("SESSION").unwrap(), ReadModeSc::Session);
         assert_eq!(
-            parse::<ReadModeSC>("LINEARIZE").unwrap(),
-            ReadModeSC::Linearize
+            parse::<ReadModeSc>("LINEARIZE").unwrap(),
+            ReadModeSc::Linearize
         );
         assert_eq!(
-            parse::<ReadModeSC>("ALLOW_REPLICA").unwrap(),
-            ReadModeSC::AllowReplica
+            parse::<ReadModeSc>("ALLOW_REPLICA").unwrap(),
+            ReadModeSc::AllowReplica
         );
         assert_eq!(
-            parse::<ReadModeSC>("ALLOW_UNAVAILABLE").unwrap(),
-            ReadModeSC::AllowUnavailable
+            parse::<ReadModeSc>("ALLOW_UNAVAILABLE").unwrap(),
+            ReadModeSc::AllowUnavailable
         );
-        assert_eq!(parse::<ReadModeSC>("session").unwrap(), ReadModeSC::Session);
-        assert!(parse::<ReadModeSC>("\"foo\"").is_err());
-        assert!(parse::<ReadModeSC>("\"\"").is_err());
-        assert!(parse::<ReadModeSC>("\"123\"").is_err());
+        assert_eq!(parse::<ReadModeSc>("session").unwrap(), ReadModeSc::Session);
+        assert!(parse::<ReadModeSc>("\"foo\"").is_err());
+        assert!(parse::<ReadModeSc>("\"\"").is_err());
+        assert!(parse::<ReadModeSc>("\"123\"").is_err());
     }
 
     #[test]
@@ -540,7 +540,7 @@ labels:
         );
         assert_eq!(
             parse::<QueryDuration>("LONG_RELAX_AP").unwrap(),
-            QueryDuration::LongRelaxAP
+            QueryDuration::LongRelaxAp
         );
         assert_eq!(parse::<QueryDuration>("long").unwrap(), QueryDuration::Long);
         assert!(parse::<QueryDuration>("\"foo\"").is_err());
@@ -560,8 +560,8 @@ labels:
         .unwrap();
         let mut p = ReadPolicy::default();
         cfg.merge_into(&mut p);
-        assert_eq!(p.base_policy.read_mode_ap, ReadModeAP::All);
-        assert_eq!(p.base_policy.read_mode_sc, ReadModeSC::Linearize);
+        assert_eq!(p.base_policy.read_mode_ap, ReadModeAp::All);
+        assert_eq!(p.base_policy.read_mode_sc, ReadModeSc::Linearize);
         assert_eq!(p.base_policy.socket_timeout, 3);
         assert_eq!(p.base_policy.total_timeout, 5);
         assert_eq!(p.base_policy.max_retries, 3);
@@ -746,7 +746,7 @@ labels:
         .unwrap();
         let mut p = ReadPolicy::default();
         cfg.read.merge_into(&mut p);
-        assert_eq!(p.base_policy.read_mode_ap, ReadModeAP::All);
+        assert_eq!(p.base_policy.read_mode_ap, ReadModeAp::All);
         assert_eq!(p.base_policy.socket_timeout, 3);
         assert_eq!(p.base_policy.total_timeout, 15);
         assert_eq!(p.replica, Replica::Master);
@@ -802,8 +802,8 @@ labels:
 
     #[test]
     fn batch_udf_section_merges_send_key_and_durable_delete() {
-        let cfg: BatchUDFPolicyConfig = parse("durable_delete: true\nsend_key: true\n").unwrap();
-        let mut p = BatchUDFPolicy::default();
+        let cfg: BatchUdfPolicyConfig = parse("durable_delete: true\nsend_key: true\n").unwrap();
+        let mut p = BatchUdfPolicy::default();
         cfg.merge_into(&mut p);
         assert!(p.durable_delete);
         assert!(p.send_key);

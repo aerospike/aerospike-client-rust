@@ -38,12 +38,13 @@ pub struct Statement {
     /// Optional list of bin names to return in query.
     pub bins: Bins,
 
-    /// Optional list of query filters. Currently, only one filter is allowed by the server on a
-    /// secondary index lookup.
-    pub filters: Option<Vec<Filter>>,
+    /// Optional secondary-index filter. The server accepts one filter per
+    /// query; without one the statement scans the whole set.
+    pub filter: Option<Filter>,
 
-    /// Optional Lua aggregation function parameters.
-    pub aggregation: Option<Aggregation>,
+    /// Lua aggregation function parameters, set by
+    /// [`set_aggregate_function`](Self::set_aggregate_function).
+    pub(crate) aggregation: Option<Aggregation>,
 
     /// Optional ops projection. When set, the server returns the result
     /// of these operations for each matching record instead of the full
@@ -77,7 +78,7 @@ impl Statement {
             set_name: set_name.to_owned(),
             bins,
             aggregation: None,
-            filters: None,
+            filter: None,
             operations: None,
         }
     }
@@ -93,8 +94,8 @@ impl Statement {
         self.operations = Some(operations);
     }
 
-    /// Add a query filter to the statement. Currently, only one filter is allowed by the server on
-    /// a secondary index lookup.
+    /// Set the statement's secondary-index filter, replacing any previous one.
+    /// The server accepts one filter per query.
     ///
     /// # Example
     ///
@@ -106,15 +107,10 @@ impl Statement {
     /// # use aerospike::query::Filter;
     ///
     /// let mut stmt = Statement::new("foo", "bar", Bins::from(["name", "age"]));
-    /// stmt.add_filter(Filter::range("baz", 0, 100));
+    /// stmt.set_filter(Filter::range("baz", 0, 100));
     /// ```
-    pub fn add_filter(&mut self, filter: Filter) {
-        if let Some(ref mut filters) = self.filters {
-            filters.push(filter);
-        } else {
-            let filters = vec![filter];
-            self.filters = Some(filters);
-        }
+    pub fn set_filter(&mut self, filter: Filter) {
+        self.filter = Some(filter);
     }
 
     /// Set Lua aggregation function parameters.
@@ -133,14 +129,6 @@ impl Statement {
     }
 
     pub(crate) fn validate(&self) -> Result<()> {
-        if let Some(ref filters) = self.filters {
-            if filters.len() > 1 {
-                return Err(Error::invalid_argument(
-                    "Too many filter expressions".to_string(),
-                ));
-            }
-        }
-
         if let Some(ref agg) = self.aggregation {
             if agg.package_name.is_empty() {
                 return Err(Error::invalid_argument(

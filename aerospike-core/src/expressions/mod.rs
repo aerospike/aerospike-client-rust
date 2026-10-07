@@ -718,13 +718,13 @@ pub fn map_bin(name: String) -> Expression {
 ///
 /// ```
 /// use aerospike::expressions::{gt, list_val, hll_bin, int_val};
-/// use aerospike::operations::hll::HLLPolicy;
+/// use aerospike::operations::hll::HllPolicy;
 /// use aerospike::Value;
 /// use aerospike::expressions::hll::add;
 ///
 /// // Add values to HLL bin "a" and check count > 7
 /// let list = vec![Value::from(1)];
-/// let _ = gt(add(HLLPolicy::default(), list_val(list), hll_bin("a".to_string())), int_val(7));
+/// let _ = gt(add(HllPolicy::default(), list_val(list), hll_bin("a".to_string())), int_val(7));
 /// ```
 #[must_use]
 pub fn hll_bin(name: String) -> Expression {
@@ -1020,7 +1020,7 @@ pub fn map_val<M: MapLike<Value, Value>>(val: M) -> Expression {
 /// Creates a geospatial JSON string value.
 #[must_use]
 pub fn geo_val(val: String) -> Expression {
-    Expression::new(None, Some(Value::GeoJSON(val)), None, None, None, None)
+    Expression::new(None, Some(Value::GeoJson(val)), None, None, None, None)
 }
 
 /// Creates a nil value.

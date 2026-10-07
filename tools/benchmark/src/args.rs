@@ -20,7 +20,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use aerospike::{
-    BatchPolicy, BatchReadPolicy, BatchWritePolicy, Bin, Expiration, Key, ReadPolicy, ReadTouchTTL,
+    BatchPolicy, BatchReadPolicy, BatchWritePolicy, Bin, Expiration, Key, ReadPolicy, ReadTouchTtl,
     RecordExistsAction, Value, WritePolicy,
 };
 use rand::rngs::StdRng;
@@ -103,8 +103,8 @@ impl Args {
 
         // ---- read-touch TTL ----
         if let Some(pct) = opts.read_touch_ttl_percent {
-            read_policy.base_policy.read_touch_ttl = ReadTouchTTL::Percent(pct);
-            batch_policy.base_policy.read_touch_ttl = ReadTouchTTL::Percent(pct);
+            read_policy.base_policy.read_touch_ttl = ReadTouchTtl::Percent(pct);
+            batch_policy.base_policy.read_touch_ttl = ReadTouchTtl::Percent(pct);
         }
 
         // ---- timeouts & retries ----

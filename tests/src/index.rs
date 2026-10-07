@@ -192,7 +192,7 @@ async fn blob_index_serves_a_blob_equality_filter() {
     // Causation check: the same filter without an index has nothing to run on,
     // so success below is the index doing the work rather than a silent scan.
     let mut unindexed = Statement::new(ns, &set, Bins::All);
-    unindexed.add_filter(aerospike::query::Filter::equal(bin, needle.clone()));
+    unindexed.set_filter(aerospike::query::Filter::equal(bin, needle.clone()));
     let unindexed_result = client
         .query(&QueryPolicy::default(), PartitionFilter::all(), unindexed)
         .await;
@@ -234,7 +234,7 @@ async fn blob_index_serves_a_blob_equality_filter() {
     task.wait_till_complete(None).await.unwrap();
 
     let mut statement = Statement::new(ns, &set, Bins::All);
-    statement.add_filter(aerospike::query::Filter::equal(bin, needle.clone()));
+    statement.set_filter(aerospike::query::Filter::equal(bin, needle.clone()));
     let qpolicy = QueryPolicy::default();
     let rs = client
         .query(&qpolicy, PartitionFilter::all(), statement)
@@ -304,7 +304,7 @@ async fn integer_index_serves_range_and_equality_filters() {
 
     // Range filter: 10..=19 -> exactly ten records, all inside the range.
     let mut statement = Statement::new(ns, &set, Bins::All);
-    statement.add_filter(aerospike::query::Filter::range(bin, 10_i64, 19_i64));
+    statement.set_filter(aerospike::query::Filter::range(bin, 10_i64, 19_i64));
     let rs = client
         .query(&qpolicy, PartitionFilter::all(), statement)
         .await
@@ -324,7 +324,7 @@ async fn integer_index_serves_range_and_equality_filters() {
 
     // Equality filter: exactly one record.
     let mut statement = Statement::new(ns, &set, Bins::All);
-    statement.add_filter(aerospike::query::Filter::equal(bin, 42_i64));
+    statement.set_filter(aerospike::query::Filter::equal(bin, 42_i64));
     let rs = client
         .query(&qpolicy, PartitionFilter::all(), statement)
         .await

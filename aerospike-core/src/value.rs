@@ -268,10 +268,10 @@ pub enum Value {
     KeyValueList(Vec<(Value, Value)>),
 
     /// `GeoJSON` data type are JSON formatted strings to encode geo-spatial information.
-    GeoJSON(String),
+    GeoJson(String),
 
     /// HLL value
-    HLL(Vec<u8>),
+    Hll(Vec<u8>),
 
     /// Infinity Value
     Infinity,
@@ -338,8 +338,8 @@ impl PartialEq for Value {
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::Float(a), Value::Float(b)) => a == b,
-            (Value::String(a), Value::String(b)) | (Value::GeoJSON(a), Value::GeoJSON(b)) => a == b,
-            (Value::Blob(a), Value::Blob(b)) | (Value::HLL(a), Value::HLL(b)) => a == b,
+            (Value::String(a), Value::String(b)) | (Value::GeoJson(a), Value::GeoJson(b)) => a == b,
+            (Value::Blob(a), Value::Blob(b)) | (Value::Hll(a), Value::Hll(b)) => a == b,
             (Value::List(a), Value::List(b)) | (Value::MultiResult(a), Value::MultiResult(b)) => {
                 a == b
             }
@@ -368,9 +368,9 @@ impl Hash for Value {
             Value::Int(ref val) => val.hash(state),
             Value::Float(_) => panic!("Floats cannot be used as map keys."),
             Value::String(ref val) => val.hash(state),
-            Value::GeoJSON(_) => panic!("GeoJson cannot be used as map keys."),
+            Value::GeoJson(_) => panic!("GeoJson cannot be used as map keys."),
             Value::Blob(ref val) => val.hash(state),
-            Value::HLL(_) => panic!("HLL cannot be used as map keys."),
+            Value::Hll(_) => panic!("HLL cannot be used as map keys."),
             Value::MultiResult(_) => panic!("MultiValues cannot be used as map keys."),
             Value::List(_) => panic!("Lists cannot be used as map keys."),
             Value::HashMap(_) => panic!("HashMaps cannot be used as map keys."),
@@ -416,8 +416,8 @@ impl Value {
             | Value::OrderedMap(_)
             | Value::SortedMap(_)
             | Value::KeyValueList(_) => ParticleType::MAP as u8,
-            Value::GeoJSON(_) => ParticleType::GEOJSON as u8,
-            Value::HLL(_) => ParticleType::HLL as u8,
+            Value::GeoJson(_) => ParticleType::GEOJSON as u8,
+            Value::Hll(_) => ParticleType::HLL as u8,
             Value::Unknown(code, _) => code,
             Value::Infinity => {
                 return Err(Error::invalid_argument(
@@ -455,8 +455,8 @@ impl Value {
             Value::OrderedMap(_) => "ordered map".to_string(),
             Value::SortedMap(_) => "sorted map".to_string(),
             Value::KeyValueList(_) => "key-value list".to_string(),
-            Value::GeoJSON(_) => "geo-json".to_string(),
-            Value::HLL(_) => "hll".to_string(),
+            Value::GeoJson(_) => "geo-json".to_string(),
+            Value::Hll(_) => "hll".to_string(),
             Value::Infinity => "INF".to_string(),
             Value::Wildcard => "wildcard".to_string(),
             Value::Unknown(code, _) => {
@@ -472,8 +472,8 @@ impl Value {
             Value::Int(ref val) => val.to_string(),
             Value::Bool(ref val) => val.to_string(),
             Value::Float(ref val) => val.to_string(),
-            Value::String(ref val) | Value::GeoJSON(ref val) => val.clone(),
-            Value::Blob(ref val) | Value::HLL(ref val) => format!("{val:?}"),
+            Value::String(ref val) | Value::GeoJson(ref val) => val.clone(),
+            Value::Blob(ref val) | Value::Hll(ref val) => format!("{val:?}"),
             Value::MultiResult(ref val) | Value::List(ref val) => format!("{val:?}"),
             Value::HashMap(ref val) => format!("{val:?}"),
             Value::OrderedMap(ref val) => format!("{val:?}"),
@@ -510,8 +510,8 @@ impl Value {
                     "The library never passes ordered maps to the server.",
                 ));
             }
-            Value::GeoJSON(ref s) => 1 + 2 + s.len(), // flags + ncells + jsonstr
-            Value::HLL(ref h) => h.len(),
+            Value::GeoJson(ref s) => 1 + 2 + s.len(), // flags + ncells + jsonstr
+            Value::Hll(ref h) => h.len(),
             Value::Nil | Value::Infinity | Value::Wildcard => 0,
             // A whole-bin write of a foreign particle: the payload goes back
             // exactly as it was read, under its own particle-type code.
@@ -530,7 +530,7 @@ impl Value {
             Value::Bool(ref val) => buf.write_bool(*val),
             Value::Float(ref val) => buf.write_f64(val.as_f64()),
             Value::String(ref val) => buf.write_str(val),
-            Value::Blob(ref val) | Value::HLL(ref val) => buf.write_bytes(val),
+            Value::Blob(ref val) | Value::Hll(ref val) => buf.write_bytes(val),
             Value::MultiResult(_) => {
                 return Err(Error::invalid_argument("MultiValues are only returned as results from the server and never from the client."));
             }
@@ -542,7 +542,7 @@ impl Value {
                     "The library never passes ordered maps to the server.",
                 ));
             }
-            Value::GeoJSON(ref val) => buf.write_geo(val),
+            Value::GeoJson(ref val) => buf.write_geo(val),
             Value::Infinity => encoder::pack_infinity(&mut Some(buf)),
             Value::Wildcard => encoder::pack_wildcard(&mut Some(buf)),
             // Verbatim payload; `particle_type()` supplies the original code.
@@ -594,9 +594,9 @@ impl Value {
             Value::List(_) => 4,
             Value::HashMap(_) | Value::OrderedMap(_) | Value::SortedMap(_) => 5,
             Value::Blob(_) => 6,
-            Value::HLL(_) => 7,
+            Value::Hll(_) => 7,
             Value::Float(_) => 8,
-            Value::GeoJSON(_) => 9,
+            Value::GeoJson(_) => 9,
             Value::Infinity => 10,
             Value::Wildcard => 11,
             Value::MultiResult(_) => 12,
@@ -647,8 +647,8 @@ impl Ord for Value {
                 match (self, other) {
                     (Value::Int(a_val), Value::Int(b_val)) => a_val.cmp(b_val),
                     (Value::String(a_val), Value::String(b_val))
-                    | (Value::GeoJSON(a_val), Value::GeoJSON(b_val)) => a_val.cmp(b_val),
-                    (Value::HLL(a_val), Value::HLL(b_val))
+                    | (Value::GeoJson(a_val), Value::GeoJson(b_val)) => a_val.cmp(b_val),
+                    (Value::Hll(a_val), Value::Hll(b_val))
                     | (Value::Blob(a_val), Value::Blob(b_val)) => a_val.cmp(b_val),
                     (Value::Bool(a_val), Value::Bool(b_val)) => a_val.cmp(b_val),
                     // Element-wise, like the server (Vec's lexicographic
@@ -956,7 +956,7 @@ impl TryFrom<Value> for String {
     type Error = String;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
-            Value::String(v) | Value::GeoJSON(v) => Ok(v),
+            Value::String(v) | Value::GeoJson(v) => Ok(v),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.type_label(),
@@ -970,7 +970,7 @@ impl TryFrom<Value> for Vec<u8> {
     type Error = String;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
-            Value::Blob(v) | Value::HLL(v) => Ok(v),
+            Value::Blob(v) | Value::Hll(v) => Ok(v),
             _ => Err(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.type_label(),
@@ -1117,7 +1117,7 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
                 .ok_or_else(|| Error::bad_response("GeoJSON particle shorter than its header"))?;
             buf.skip(header_size);
             let val = buf.read_str(text_len)?;
-            Ok(Value::GeoJSON(val))
+            Ok(Value::GeoJson(val))
         }
         ParticleType::BLOB => Ok(Value::Blob(buf.read_blob(len)?)),
         ParticleType::LIST => {
@@ -1128,7 +1128,7 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
             let val = decoder::unpack_value_map(buf)?;
             Ok(val)
         }
-        ParticleType::HLL => Ok(Value::HLL(buf.read_blob(len)?)),
+        ParticleType::HLL => Ok(Value::Hll(buf.read_blob(len)?)),
         ParticleType::BOOL => Ok(Value::Bool(buf.read_bool(len))),
         // Retired server types the client does not interpret: same
         // treatment as unrecognized codes above.
@@ -1148,7 +1148,7 @@ macro_rules! as_val {
 #[macro_export]
 macro_rules! as_geo {
     ($val:expr) => {{
-        $crate::Value::GeoJSON($val.to_owned())
+        $crate::Value::GeoJson($val.to_owned())
     }};
 }
 
@@ -1341,10 +1341,10 @@ impl Serialize for Value {
                 FloatValue::F32(u) => serializer.serialize_f32(f32::from_bits(*u)),
                 FloatValue::F64(u) => serializer.serialize_f64(f64::from_bits(*u)),
             },
-            Value::String(s) | Value::GeoJSON(s) => serializer.serialize_str(s),
+            Value::String(s) | Value::GeoJson(s) => serializer.serialize_str(s),
             // An unknown particle serializes as its raw payload too: the type is
             // not representable in most formats and the bytes are opaque anyway.
-            Value::Blob(b) | Value::HLL(b) | Value::Unknown(_, b) => {
+            Value::Blob(b) | Value::Hll(b) | Value::Unknown(_, b) => {
                 serializer.serialize_bytes(&b[..])
             }
             Value::List(l) => {
@@ -1591,7 +1591,7 @@ mod tests {
             as_map!("k" => 1),
             Value::Blob(vec![0]),
             Value::from(-1.5),
-            Value::GeoJSON("{}".into()),
+            Value::GeoJson("{}".into()),
         ];
         for pair in ranked.windows(2) {
             assert_eq!(
@@ -1705,11 +1705,11 @@ mod tests {
         let _: i64 = Value::Int(42).try_into().unwrap();
         let _: f64 = Value::from(42.1).try_into().unwrap();
         let _: String = Value::String("hello".into()).try_into().unwrap();
-        let _: String = Value::GeoJSON(r#"{"type":"Point"}"#.into())
+        let _: String = Value::GeoJson(r#"{"type":"Point"}"#.into())
             .try_into()
             .unwrap();
         let _: Vec<u8> = Value::Blob("hello!".into()).try_into().unwrap();
-        let _: Vec<u8> = Value::HLL("hello!".into()).try_into().unwrap();
+        let _: Vec<u8> = Value::Hll("hello!".into()).try_into().unwrap();
         let _: bool = Value::Bool(false).try_into().unwrap();
         let _: HashMap<Value, Value> = Value::HashMap(HashMap::new()).try_into().unwrap();
         let _: BTreeMap<Value, Value> = Value::SortedMap(BTreeMap::new()).try_into().unwrap();

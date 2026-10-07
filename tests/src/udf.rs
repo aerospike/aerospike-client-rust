@@ -56,7 +56,7 @@ end
             &apolicy,
             udf_body1.as_bytes(),
             "test_udf1.lua",
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
         .unwrap();
@@ -67,7 +67,7 @@ end
             &apolicy,
             udf_body2.as_bytes(),
             "test_udf2.lua",
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
         .unwrap();
@@ -155,7 +155,7 @@ end
             &apolicy,
             udf_body.as_bytes(),
             "test_bg_udf.lua",
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
         .unwrap();
@@ -163,7 +163,7 @@ end
 
     // Apply UDF to records in range [0, 9] using a filter
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.add_filter(Filter::range("bin", 0, 9));
+    statement.set_filter(Filter::range("bin", 0, 9));
     let task = client
         .query_execute_udf(&wpolicy, statement, "test_bg_udf", "double_bin", None)
         .await
@@ -220,7 +220,7 @@ end
             &apolicy,
             udf_body.as_bytes(),
             "test_bg_udf2.lua",
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
         .unwrap();
@@ -279,7 +279,7 @@ end
             &apolicy,
             udf_body.as_bytes(),
             "test_bg_udf3.lua",
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
         .unwrap();

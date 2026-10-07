@@ -24,8 +24,8 @@ use rand::RngExt;
 use aerospike::operations;
 use aerospike::{as_bin, as_key, as_val};
 use aerospike::{
-    AdminPolicy, BatchDeletePolicy, BatchOperation, BatchPolicy, BatchReadPolicy, BatchUDFPolicy,
-    BatchWritePolicy, Bins, ReadPolicy, Task, UDFLang, WritePolicy,
+    AdminPolicy, BatchDeletePolicy, BatchOperation, BatchPolicy, BatchReadPolicy, BatchUdfPolicy,
+    BatchWritePolicy, Bins, ReadPolicy, Task, UdfLang, WritePolicy,
 };
 
 use bencher::Bencher;
@@ -148,7 +148,7 @@ function echo(rec, val)
 end
 "#;
     let task = common::RUNTIME
-        .block_on(client.register_udf(&apolicy, udf_body.as_bytes(), "test_udf.lua", UDFLang::Lua))
+        .block_on(client.register_udf(&apolicy, udf_body.as_bytes(), "test_udf.lua", UdfLang::Lua))
         .unwrap();
 
     common::RUNTIME
@@ -172,7 +172,7 @@ end
     let bpr = BatchReadPolicy::default();
     let bpw = BatchWritePolicy::default();
     let bpd = BatchDeletePolicy::default();
-    let bpu = BatchUDFPolicy::default();
+    let bpu = BatchUdfPolicy::default();
 
     let wops = vec![
         operations::put(&bin1),

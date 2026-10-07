@@ -60,7 +60,7 @@ async fn simple_equality_query(client: &Client, namespace: &str, set_name: &str)
 
     let policy = QueryPolicy::default();
     let mut stmt = Statement::new(namespace, set_name, Bins::All);
-    stmt.add_filter(Filter::equal(BIN_NAME, 5));
+    stmt.set_filter(Filter::equal(BIN_NAME, 5));
 
     let rs = client
         .query(&policy, PartitionFilter::all(), stmt)
@@ -78,7 +78,7 @@ async fn range_query(client: &Client, namespace: &str, set_name: &str) {
 
     let policy = QueryPolicy::default();
     let mut stmt = Statement::new(namespace, set_name, Bins::All);
-    stmt.add_filter(Filter::range(BIN_NAME, 0, 9));
+    stmt.set_filter(Filter::range(BIN_NAME, 0, 9));
 
     let rs = client
         .query(&policy, PartitionFilter::all(), stmt)
@@ -96,7 +96,7 @@ async fn metadata_only_query(client: &Client, namespace: &str, set_name: &str) {
 
     let policy = QueryPolicy::default();
     let mut stmt = Statement::new(namespace, set_name, Bins::None);
-    stmt.add_filter(Filter::range(BIN_NAME, 0, 4));
+    stmt.set_filter(Filter::range(BIN_NAME, 0, 4));
 
     let rs = client
         .query(&policy, PartitionFilter::all(), stmt)
@@ -138,7 +138,7 @@ async fn parallel_query(client: &Client, namespace: &str, set_name: &str) {
     const NUM_WORKERS: usize = 4;
     let policy = QueryPolicy::default();
     let mut stmt = Statement::new(namespace, set_name, Bins::All);
-    stmt.add_filter(Filter::range(BIN_NAME, 0, 9));
+    stmt.set_filter(Filter::range(BIN_NAME, 0, 9));
 
     let rs = client
         .query(&policy, PartitionFilter::all(), stmt)
@@ -204,7 +204,7 @@ async fn rate_limited_query(client: &Client, namespace: &str, _set_name: &str) {
 
     // Query only a subset of records, matching the test pattern
     let mut stmt = Statement::new(namespace, &test_set_name, Bins::All);
-    stmt.add_filter(Filter::range(BIN_NAME, 0, range_end));
+    stmt.set_filter(Filter::range(BIN_NAME, 0, range_end));
 
     let expected_count = range_end + 1;
     println!("Rate limit set to {} records/second", RATE_LIMIT);
@@ -300,7 +300,7 @@ async fn collection_index_query(client: &Client, namespace: &str) {
     // Filter::contains matches records whose indexed collection contains
     // the value; the CollectionIndexType must match the index.
     let mut stmt = Statement::new(namespace, &set_name, Bins::All);
-    stmt.add_filter(Filter::contains(bin, 7_i64, CollectionIndexType::List));
+    stmt.set_filter(Filter::contains(bin, 7_i64, CollectionIndexType::List));
 
     let rs = client
         .query(&QueryPolicy::default(), PartitionFilter::all(), stmt)

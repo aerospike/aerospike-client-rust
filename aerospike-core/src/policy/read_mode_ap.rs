@@ -13,12 +13,12 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-/// `ReadModeAP` is the read policy for AP (availability) namespaces.
+/// `ReadModeAp` is the read policy for AP (availability) namespaces.
 ///
 /// It indicates how duplicates should be consulted in a read operation.
 /// Only makes a difference during migrations and only applicable in AP mode.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
-pub enum ReadModeAP {
+pub enum ReadModeAp {
     /// A single node should be involved in the read operation.
     #[default]
     One = 0,
@@ -30,12 +30,12 @@ pub enum ReadModeAP {
 // Case-insensitive YAML/config parsing (mirrors the Go client's `ToUpper`
 // handling): accepts `ONE`/`ALL` in any case; anything else is an error.
 #[cfg(feature = "dynamic-config")]
-impl<'de> serde::Deserialize<'de> for ReadModeAP {
+impl<'de> serde::Deserialize<'de> for ReadModeAp {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = String::deserialize(deserializer)?;
         match value.to_ascii_uppercase().as_str() {
-            "ONE" => Ok(ReadModeAP::One),
-            "ALL" => Ok(ReadModeAP::All),
+            "ONE" => Ok(ReadModeAp::One),
+            "ALL" => Ok(ReadModeAp::All),
             other => Err(serde::de::Error::custom(format!(
                 "invalid ReadModeAp value: {other}"
             ))),

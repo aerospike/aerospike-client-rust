@@ -29,7 +29,7 @@ use crate::cluster::{Cluster, Node};
 use crate::commands::admin_command::AdminCommand;
 use crate::commands::buffer::Buffer;
 use crate::commands::{
-    DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand, ReadCommand,
+    DeleteCommand, ExecuteUdfCommand, ExistsCommand, OperateCommand, QueryCommand, ReadCommand,
     ServerCommand, TouchCommand, WriteCommand,
 };
 use crate::errors::{Error, ErrorKind, Result};
@@ -50,9 +50,10 @@ use crate::txn::{AbortStatus, CommitStatus, Txn, TxnState};
 use crate::txn_roll::TxnRoll;
 use crate::{
     BatchRecord, Bin, Bins, CollectionIndexType, IndexType, Key, Privilege, Record, Recordset,
-    ResultCode, Role, Statement, UDFLang, User, Value,
+    ResultCode, Role, Statement, UdfLang, User, Value,
 };
-use crate::{Policy, Version};
+use crate::policy::Policy;
+use crate::Version;
 use aerospike_rt::fs::File;
 #[cfg(feature = "rt-tokio")]
 use aerospike_rt::io::AsyncReadExt;
@@ -1209,7 +1210,7 @@ impl Client {
     /// * `policy` — Admin policy (timeout).
     /// * `udf_body` — Raw UDF source bytes (e.g. Lua code).
     /// * `server_path` — Path name on the server (e.g. `"example.lua"`).
-    /// * `language` — [`UDFLang`] (e.g. [`UDFLang::Lua`]).
+    /// * `language` — [`UdfLang`] (e.g. [`UdfLang::Lua`]).
     ///
     /// # Returns
     ///
@@ -1258,7 +1259,7 @@ impl Client {
     /// "#;
     ///
     /// match client.register_udf(&AdminPolicy::default(), code.as_bytes(),
-    ///                           "example.lua", UDFLang::Lua).await {
+    ///                           "example.lua", UdfLang::Lua).await {
     ///     Ok(_task) => { /* wait for task or use it */ }
     ///     Err(err) => println!("Failed to register UDF: {}", err),
     /// }
@@ -1269,7 +1270,7 @@ impl Client {
         policy: &AdminPolicy,
         udf_body: &[u8],
         server_path: &str,
-        language: UDFLang,
+        language: UdfLang,
     ) -> Result<RegisterTask> {
         let udf_body = BASE64.encode(udf_body);
 
@@ -1302,7 +1303,7 @@ impl Client {
     /// * `policy` — Admin policy (timeout).
     /// * `client_path` — Local file path to the UDF source file.
     /// * `server_path` — Path name on the server (e.g. `"example.lua"`).
-    /// * `language` — [`UDFLang`] (e.g. [`UDFLang::Lua`]).
+    /// * `language` — [`UdfLang`] (e.g. [`UdfLang::Lua`]).
     ///
     /// # Returns
     ///
@@ -1319,7 +1320,7 @@ impl Client {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// # use aerospike::{Client, ClientPolicy, AdminPolicy, UDFLang};
+    /// # use aerospike::{Client, ClientPolicy, AdminPolicy, UdfLang};
     /// # #[tokio::main]
     /// # async fn main() {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
@@ -1328,7 +1329,7 @@ impl Client {
     ///     &AdminPolicy::default(),
     ///     "/path/to/my_udf.lua",
     ///     "my_udf.lua",
-    ///     UDFLang::Lua,
+    ///     UdfLang::Lua,
     /// ).await {
     ///     Ok(task) => { /* wait for task.wait_till_complete(None).await */ }
     ///     Err(err) => eprintln!("Failed to register UDF from file: {}", err),
@@ -1340,7 +1341,7 @@ impl Client {
         policy: &AdminPolicy,
         client_path: &str,
         server_path: &str,
-        language: UDFLang,
+        language: UdfLang,
     ) -> Result<RegisterTask> {
         let path = Path::new(client_path);
         let mut file = File::open(&path).await?;
@@ -1457,7 +1458,7 @@ impl Client {
         function_name: &str,
         args: Option<&[Value]>,
     ) -> Result<Option<Value>> {
-        let mut command = ExecuteUDFCommand::new(
+        let mut command = ExecuteUdfCommand::new(
             policy,
             self.cluster.clone(),
             key,
@@ -1720,7 +1721,7 @@ impl Client {
             return Err(Error::server_error_bare(ResultCode::FilteredOut));
         }
 
-        statement.filters = plan.filter_for_execute()?.map(|filter| vec![filter]);
+        statement.filter = plan.filter_for_execute()?;
 
         let execute_where = Some(Arc::from(plan.into_execute_where_bytes()));
         statement.validate()?;
@@ -1984,7 +1985,7 @@ impl Client {
         }
 
         let task_id: u64 = rand::random();
-        let scan = statement.filters.is_none();
+        let scan = statement.filter.is_none();
 
         let mut last_err: Option<Error> = None;
         for node in &nodes {
@@ -2058,7 +2059,7 @@ impl Client {
         }
 
         let task_id: u64 = rand::random();
-        let scan = statement.filters.is_none();
+        let scan = statement.filter.is_none();
 
         let mut last_err: Option<Error> = None;
         for node in &nodes {
@@ -2975,7 +2976,7 @@ impl Client {
             {
                 AdminCommand::change_password(policy, &cluster, user, password).await
             }
-            crate::AuthMode::PKI => Err(Error::client_error("Can't change PKI user's password")),
+            crate::AuthMode::Pki => Err(Error::client_error("Can't change PKI user's password")),
             _ => AdminCommand::set_password(policy, &cluster, user, password).await,
         }
     }

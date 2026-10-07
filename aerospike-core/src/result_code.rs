@@ -117,7 +117,7 @@ pub enum ResultCode {
     InvalidEncoding,
 
     /// Write can't complete until XDR finishes shipping.
-    XDRKeyBusy,
+    XdrKeyBusy,
 
     /// Transaction record blocked by another transaction.
     MrtBlocked,
@@ -306,7 +306,7 @@ impl ResultCode {
             27 => ResultCode::FilteredOut,
             28 => ResultCode::LostConflict,
             29 => ResultCode::InvalidEncoding,
-            32 => ResultCode::XDRKeyBusy,
+            32 => ResultCode::XdrKeyBusy,
             120 => ResultCode::MrtBlocked,
             121 => ResultCode::MrtVersionMismatch,
             122 => ResultCode::MrtExpired,
@@ -396,7 +396,7 @@ impl ResultCode {
             ResultCode::FilteredOut => String::from("Command filtered out"),
             ResultCode::LostConflict => String::from("Command failed due to conflict with XDR"),
             ResultCode::InvalidEncoding => String::from("Invalid UTF-8 encoding"),
-            ResultCode::XDRKeyBusy => {
+            ResultCode::XdrKeyBusy => {
                 String::from("Write can't complete until XDR finishes shipping")
             }
             ResultCode::MrtBlocked => {
@@ -500,7 +500,7 @@ impl From<ResultCode> for u8 {
             ResultCode::FilteredOut => 27,
             ResultCode::LostConflict => 28,
             ResultCode::InvalidEncoding => 29,
-            ResultCode::XDRKeyBusy => 32,
+            ResultCode::XdrKeyBusy => 32,
             ResultCode::MrtBlocked => 120,
             ResultCode::MrtVersionMismatch => 121,
             ResultCode::MrtExpired => 122,

@@ -174,7 +174,7 @@ pub use batch::BatchDeletePolicy;
 pub use batch::BatchOperation;
 pub use batch::BatchReadPolicy;
 pub use batch::BatchRecord;
-pub use batch::BatchUDFPolicy;
+pub use batch::BatchUdfPolicy;
 pub use batch::BatchWritePolicy;
 pub use bin::{Bin, Bins};
 pub use client::Client;
@@ -201,13 +201,13 @@ pub use operations::{MapPolicy, MapReturnType, MapWriteFlags, MapWriteMode};
 pub use policy::TlsPolicy;
 pub use policy::{
     AdminPolicy, AuthMode, BasePolicy, BatchPolicy, ClientPolicy, CommitLevel, Concurrency,
-    Expiration, GenerationPolicy, Policy, QueryDuration, QueryPolicy, ReadModeAP, ReadModeSC,
-    ReadPolicy, ReadTouchTTL, RecordExistsAction, TxnRollPolicy, TxnVerifyPolicy, WritePolicy,
+    Expiration, GenerationPolicy, QueryDuration, QueryPolicy, ReadModeAp, ReadModeSc,
+    ReadPolicy, ReadTouchTtl, RecordExistsAction, TxnRollPolicy, TxnVerifyPolicy, WritePolicy,
 };
 pub use privilege::{Privilege, PrivilegeCode};
 pub use query::{
     CollectionIndexType, EqFilterValue, IndexType, PartitionFilter, QueryHandle, RangeFilterValue,
-    Recordset, Statement, UDFLang,
+    Recordset, Statement, UdfLang,
 };
 // Query-plan wire types: reachable for tooling and the integration tests,
 // not part of the documented API.

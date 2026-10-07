@@ -16,7 +16,7 @@ use aerospike::{
     as_bin, as_blob, as_geo, as_key, as_list, as_map, as_val, Bins, ReadPolicy, Value, WritePolicy,
 };
 use aerospike::{
-    operations, ErrorKind, Expiration, GenerationPolicy, Key, ReadTouchTTL, RecordExistsAction,
+    operations, ErrorKind, Expiration, GenerationPolicy, Key, ReadTouchTtl, RecordExistsAction,
     ResultCode,
 };
 use aerospike_rt::sleep;
@@ -45,13 +45,13 @@ async fn read_touch_ttl() {
     // Read the record before it expires and reset read ttl.
     sleep(Duration::from_secs(1)).await;
     let mut read_policy = ReadPolicy::default();
-    read_policy.base_policy.read_touch_ttl = ReadTouchTTL::Percent(80);
+    read_policy.base_policy.read_touch_ttl = ReadTouchTtl::Percent(80);
     let record = client.get(&read_policy, &key, Bins::All).await.unwrap();
     assert!(record.bins.get(&bin.clone().name) == Some(&bin.clone().value));
 
     // Read the record again, but don't reset read ttl.
     sleep(Duration::from_secs(1)).await;
-    read_policy.base_policy.read_touch_ttl = ReadTouchTTL::DontReset;
+    read_policy.base_policy.read_touch_ttl = ReadTouchTtl::DontReset;
     let record = client.get(&read_policy, &key, Bins::All).await.unwrap();
     assert!(record.bins.get(&bin.clone().name) == Some(&bin.clone().value));
 

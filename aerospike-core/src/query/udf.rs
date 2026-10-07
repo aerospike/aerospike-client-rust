@@ -18,25 +18,25 @@ use std::fmt;
 /// User-defined function (UDF) language
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum UDFLang {
+pub enum UdfLang {
     /// Lua embedded programming language.
     Lua,
 }
 
-impl fmt::Display for UDFLang {
+impl fmt::Display for UdfLang {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         let s = match *self {
-            UDFLang::Lua => "LUA",
+            UdfLang::Lua => "LUA",
         };
 
         write!(f, "{s}")
     }
 }
 
-impl<'a> From<UDFLang> for &'a str {
-    fn from(val: UDFLang) -> &'a str {
+impl<'a> From<UdfLang> for &'a str {
+    fn from(val: UdfLang) -> &'a str {
         match val {
-            UDFLang::Lua => "LUA",
+            UdfLang::Lua => "LUA",
         }
     }
 }

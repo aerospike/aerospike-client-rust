@@ -144,6 +144,16 @@
     `CITRUSLEAF_EPOCH` is `citrusleaf_epoch()` and `CITRUSLEAF_EPOCH_UNIX_SECS`. `BatchOperation`
     is an opaque struct: its variants (`Read`, `Write`, `Delete`, `UDF` and the hidden transaction
     rows) can no longer be matched or built by hand; use the constructors and the result accessors.
+    `ErrorKind` drops the `Base64`, `PwHash`, `Async` and `BatchRow` variants, and the error
+    constructors other than `client_error`, `invalid_argument` and `chain_error`, plus the retry
+    bookkeeping (`set_in_doubt`, `with_retry_context`, `wrap`, `chain_cause`, `keep_connection`,
+    `is_pool_empty`), are crate-private. `Statement.filters`/`add_filter` are `filter`/`set_filter`
+    and `Statement.aggregation` is private. The `Policy` trait is no longer exported. Acronyms in
+    identifiers are `UpperCamelCase`: `BatchUdfPolicy`, `UdfLang`, `ReadModeAp`/`ReadModeSc`,
+    `ReadTouchTtl`, `HllPolicy`/`HllWriteFlags`, `Value::GeoJson`/`Value::Hll`, `AuthMode::Pki`,
+    `PrivilegeCode::{UdfAdmin, SindexAdmin, ReadWriteUdf}`, `ResultCode::XdrKeyBusy`,
+    `QueryDuration::LongRelaxAp`. Policies stay plain structs with public fields, built from
+    `Default` by mutation or struct-update syntax (see the `policy` module docs).
   * `AuthMode` no longer prints the password in `{:?}`; `task::Status` compares with `==`; every
     expression and operation builder is `#[must_use]`, so a built-and-dropped expression warns.
   * The workspace builds clean under `clippy::pedantic` + `clippy::nursery` (core) and default clippy
