@@ -83,7 +83,7 @@ async fn select_by_path_price_filter() {
     let ctx1 = ctx_map_key(Value::from("book"));
     let ctx2 = ctx_all_children_with_filter(le(
         get_by_key(
-            MapReturnType::Value,
+            MapReturnType::VALUE,
             ExpType::Float,
             string_val("price".to_string()),
             exp_map_loop_var(LoopVarPart::VALUE),
@@ -147,7 +147,7 @@ async fn select_by_path_empty_result() {
     let ctx1 = ctx_map_key(Value::from("book"));
     let ctx2 = ctx_all_children_with_filter(le(
         get_by_key(
-            MapReturnType::Value,
+            MapReturnType::VALUE,
             ExpType::Float,
             string_val("price".to_string()),
             exp_map_loop_var(LoopVarPart::VALUE),
@@ -274,7 +274,7 @@ async fn select_by_path_complex_nested() {
     let ctx3 = ctx_all_children_with_filter(and(vec![
         eq(
             get_by_key(
-                MapReturnType::Value,
+                MapReturnType::VALUE,
                 ExpType::String,
                 string_val("category".to_string()),
                 exp_map_loop_var(LoopVarPart::VALUE),
@@ -284,7 +284,7 @@ async fn select_by_path_complex_nested() {
         ),
         lt(
             get_by_key(
-                MapReturnType::Value,
+                MapReturnType::VALUE,
                 ExpType::Float,
                 string_val("price".to_string()),
                 exp_map_loop_var(LoopVarPart::VALUE),
@@ -417,7 +417,7 @@ async fn exp_select_by_path_filter() {
     let ctx1 = ctx_map_key(Value::from("book"));
     let ctx2 = ctx_all_children_with_filter(le(
         get_by_key(
-            MapReturnType::Value,
+            MapReturnType::VALUE,
             ExpType::Float,
             string_val("price".to_string()),
             exp_map_loop_var(LoopVarPart::VALUE),
@@ -432,7 +432,7 @@ async fn exp_select_by_path_filter() {
     let ops = &[aerospike::operations::exp::read_exp(
         "result",
         exp,
-        aerospike::operations::exp::ExpReadFlags::Default,
+        aerospike::operations::exp::ExpReadFlags::DEFAULT,
     )];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
 
@@ -484,7 +484,7 @@ async fn exp_modify_by_path_multiply() {
     let ops = &[aerospike::operations::exp::write_exp(
         "testbin",
         exp,
-        aerospike::operations::exp::ExpWriteFlags::Default,
+        aerospike::operations::exp::ExpWriteFlags::DEFAULT,
     )];
     client.operate(&wpolicy, &key, ops).await.unwrap();
 
@@ -819,7 +819,7 @@ async fn remove_books_with_low_prices() {
     let ctx1 = ctx_map_key(Value::from("books"));
     let ctx2 = ctx_all_children_with_filter(le(
         get_by_key(
-            MapReturnType::Value,
+            MapReturnType::VALUE,
             ExpType::Float,
             string_val("price".to_string()),
             exp_map_loop_var(LoopVarPart::VALUE),
@@ -1005,7 +1005,7 @@ async fn remove_nested_items_complex_path() {
     let ctx2 = ctx_all_children(); // iterate over "sales" and "engineering" lists
     let ctx3 = ctx_all_children_with_filter(lt(
         get_by_key(
-            MapReturnType::Value,
+            MapReturnType::VALUE,
             ExpType::Int,
             string_val("sales".to_string()),
             exp_map_loop_var(LoopVarPart::VALUE),
@@ -1501,7 +1501,7 @@ async fn exp_select_values_with_path_builder() {
     let ops = &[aerospike::operations::exp::read_exp(
         "result",
         exp,
-        aerospike::operations::exp::ExpReadFlags::Default,
+        aerospike::operations::exp::ExpReadFlags::DEFAULT,
     )];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
 
@@ -1548,12 +1548,12 @@ async fn in_list_returns_true_for_present_value() {
         aerospike::operations::exp::read_exp(
             "present",
             present,
-            aerospike::operations::exp::ExpReadFlags::Default,
+            aerospike::operations::exp::ExpReadFlags::DEFAULT,
         ),
         aerospike::operations::exp::read_exp(
             "absent",
             absent,
-            aerospike::operations::exp::ExpReadFlags::Default,
+            aerospike::operations::exp::ExpReadFlags::DEFAULT,
         ),
     ];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
@@ -1585,7 +1585,7 @@ async fn map_keys_extracts_all_keys() {
     let ops = &[aerospike::operations::exp::read_exp(
         "keys",
         exp,
-        aerospike::operations::exp::ExpReadFlags::Default,
+        aerospike::operations::exp::ExpReadFlags::DEFAULT,
     )];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
 
@@ -1623,7 +1623,7 @@ async fn map_values_extracts_all_values() {
     let ops = &[aerospike::operations::exp::read_exp(
         "values",
         exp,
-        aerospike::operations::exp::ExpReadFlags::Default,
+        aerospike::operations::exp::ExpReadFlags::DEFAULT,
     )];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
 
@@ -1671,12 +1671,12 @@ async fn in_list_composes_with_map_keys() {
         aerospike::operations::exp::read_exp(
             "alpha_in",
             has_alpha,
-            aerospike::operations::exp::ExpReadFlags::Default,
+            aerospike::operations::exp::ExpReadFlags::DEFAULT,
         ),
         aerospike::operations::exp::read_exp(
             "zeta_in",
             has_zeta,
-            aerospike::operations::exp::ExpReadFlags::Default,
+            aerospike::operations::exp::ExpReadFlags::DEFAULT,
         ),
     ];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
@@ -1719,7 +1719,7 @@ async fn exp_remove_through_write_exp_drops_leaves() {
     let ops = &[aerospike::operations::exp::write_exp(
         "testbin",
         exp,
-        aerospike::operations::exp::ExpWriteFlags::Default,
+        aerospike::operations::exp::ExpWriteFlags::DEFAULT,
     )];
     client.operate(&wpolicy, &key, ops).await.unwrap();
 
@@ -1777,7 +1777,7 @@ async fn loop_var_bool_filters_features() {
         ctx_map_key(Value::from("features")),
         ctx_all_children_with_filter(eq(
             get_by_key(
-                MapReturnType::Value,
+                MapReturnType::VALUE,
                 ExpType::Bool,
                 string_val("enabled".to_string()),
                 exp_map_loop_var(LoopVarPart::VALUE),

@@ -70,7 +70,7 @@ async fn expression_bitwise() {
                 resize(
                     &BitPolicy::default(),
                     int_val(4),
-                    BitwiseResizeFlags::Default,
+                    BitwiseResizeFlags::DEFAULT,
                     blob_bin("bin".to_string()),
                 ),
             ),

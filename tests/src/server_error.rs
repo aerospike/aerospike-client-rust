@@ -378,7 +378,7 @@ async fn list_get_by_rank_out_of_bounds_is_op_not_applicable_with_subcode() {
         .operate(
             &wpolicy_verbosity(2),
             &key,
-            &[lists::get_by_rank(BIN, 99, ListReturnType::Values)],
+            &[lists::get_by_rank(BIN, 99, ListReturnType::VALUES)],
         )
         .await
         .expect_err("list get by rank out of bounds should fail");
@@ -664,7 +664,7 @@ async fn exp_write_build_failure_is_parameter_error_at_verbosity_3() {
         .operate(
             &wpolicy_verbosity(3),
             &key,
-            &[exp::write_exp(BIN, bad_exp(), ExpWriteFlags::Default)],
+            &[exp::write_exp(BIN, bad_exp(), ExpWriteFlags::DEFAULT)],
         )
         .await
         .expect_err("type-mismatched exp_write should fail to build");

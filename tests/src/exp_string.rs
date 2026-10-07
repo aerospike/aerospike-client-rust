@@ -59,7 +59,7 @@ async fn put_str(client: &aerospike::Client, wpolicy: &WritePolicy, key: &Key, s
 }
 
 async fn eval(client: &aerospike::Client, key: &Key, exp: Expression) -> Record {
-    let ops = &[read_exp(VAR, exp, ExpReadFlags::Default)];
+    let ops = &[read_exp(VAR, exp, ExpReadFlags::DEFAULT)];
     client
         .operate(&WritePolicy::default(), key, ops)
         .await
@@ -692,7 +692,7 @@ async fn to_string_converts_integer_bin_via_expression() {
     let ops = &[read_exp(
         VAR,
         str_exp::to_string(aerospike::expressions::int_bin("n".into())),
-        ExpReadFlags::Default,
+        ExpReadFlags::DEFAULT,
     )];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(rec.bins.get(VAR).unwrap(), &Value::from("42"));
@@ -777,7 +777,7 @@ async fn strlen_on_string_nested_in_list_via_expression() {
         .unwrap();
 
     let nested = list_get_by_index(
-        ListReturnType::Values,
+        ListReturnType::VALUES,
         ExpType::String,
         int_val(2),
         list_bin(BIN.into()),
@@ -804,7 +804,7 @@ async fn upper_on_string_nested_in_map_via_expression() {
         .unwrap();
 
     let nested = map_get_by_key(
-        MapReturnType::Value,
+        MapReturnType::VALUE,
         ExpType::String,
         string_val("a".into()),
         map_bin(BIN.into()),
@@ -931,7 +931,7 @@ async fn create_only_on_an_existing_source_fails() {
             string_bin(BIN.to_string()),
             string_val(" there".to_string()),
         ),
-        ExpReadFlags::Default,
+        ExpReadFlags::DEFAULT,
     )];
 
     // The operation path reports `BIN_EXISTS_ERROR` here; the expression VM
@@ -965,7 +965,7 @@ async fn create_only_with_update_only_fails_in_an_expression() {
             string_bin(BIN.to_string()),
             string_val(" there".to_string()),
         ),
-        ExpReadFlags::Default,
+        ExpReadFlags::DEFAULT,
     )];
 
     // Same collapse as above: the operation path reports `PARAMETER_ERROR` for
@@ -1106,7 +1106,7 @@ async fn regex_replace_no_fail_via_expression() {
             string_val("x".to_string()),
             StringRegexFlags::DEFAULT,
         ),
-        ExpReadFlags::Default,
+        ExpReadFlags::DEFAULT,
     )];
     let err = client
         .operate(&wpolicy, &key, ops)

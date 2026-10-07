@@ -38,7 +38,7 @@ fn expression_map() {
         &client,
         eq(
             get_by_key(
-                MapReturnType::Value,
+                MapReturnType::VALUE,
                 ExpType::Int,
                 string_val("test3".to_string()),
                 put(
@@ -65,7 +65,7 @@ fn expression_map() {
         &client,
         eq(
             get_by_key_list(
-                MapReturnType::Value,
+                MapReturnType::VALUE,
                 list_val(vec![Value::from("test4"), Value::from("test5")]),
                 put_items(
                     &MapPolicy::default(),
@@ -87,7 +87,7 @@ fn expression_map() {
         &client,
         eq(
             get_by_value(
-                MapReturnType::Count,
+                MapReturnType::COUNT,
                 int_val(5),
                 increment(
                     &MapPolicy::default(),
@@ -122,7 +122,7 @@ fn expression_map() {
         &client,
         eq(
             get_by_value_list(
-                MapReturnType::Count,
+                MapReturnType::COUNT,
                 list_val(vec![Value::from(1), Value::from("a")]),
                 map_bin("bin".to_string()),
                 &[],
@@ -139,7 +139,7 @@ fn expression_map() {
         &client,
         eq(
             get_by_value_relative_rank_range(
-                MapReturnType::Count,
+                MapReturnType::COUNT,
                 int_val(1),
                 int_val(0),
                 map_bin("bin".to_string()),
@@ -157,7 +157,7 @@ fn expression_map() {
         &client,
         eq(
             get_by_value_relative_rank_range_count(
-                MapReturnType::Count,
+                MapReturnType::COUNT,
                 int_val(1),
                 int_val(0),
                 int_val(1),
@@ -176,7 +176,7 @@ fn expression_map() {
         &client,
         eq(
             get_by_value_relative_rank_range_count(
-                MapReturnType::Count,
+                MapReturnType::COUNT,
                 int_val(1),
                 int_val(0),
                 int_val(1),
@@ -195,7 +195,7 @@ fn expression_map() {
         &client,
         eq(
             get_by_value_relative_rank_range_count(
-                MapReturnType::Count,
+                MapReturnType::COUNT,
                 int_val(1),
                 int_val(0),
                 int_val(1),
@@ -214,7 +214,7 @@ fn expression_map() {
         &client,
         eq(
             get_by_value_relative_rank_range_count(
-                MapReturnType::Count,
+                MapReturnType::COUNT,
                 int_val(1),
                 int_val(0),
                 int_val(1),
@@ -233,7 +233,7 @@ fn expression_map() {
         &client,
         eq(
             get_by_index(
-                MapReturnType::Value,
+                MapReturnType::VALUE,
                 ExpType::Int,
                 int_val(0),
                 map_bin("bin".to_string()),
@@ -251,7 +251,7 @@ fn expression_map() {
         &client,
         eq(
             get_by_index_range(
-                MapReturnType::Count,
+                MapReturnType::COUNT,
                 int_val(0),
                 map_bin("bin".to_string()),
                 &[],
@@ -268,7 +268,7 @@ fn expression_map() {
         &client,
         eq(
             get_by_index_range_count(
-                MapReturnType::Value,
+                MapReturnType::VALUE,
                 int_val(0),
                 int_val(1),
                 map_bin("bin".to_string()),
@@ -286,7 +286,7 @@ fn expression_map() {
         &client,
         eq(
             get_by_rank(
-                MapReturnType::Value,
+                MapReturnType::VALUE,
                 ExpType::Int,
                 int_val(0),
                 map_bin("bin".to_string()),
@@ -304,7 +304,7 @@ fn expression_map() {
         &client,
         eq(
             get_by_rank_range(
-                MapReturnType::Value,
+                MapReturnType::VALUE,
                 int_val(1),
                 map_bin("bin".to_string()),
                 &[],
@@ -321,7 +321,7 @@ fn expression_map() {
         &client,
         eq(
             get_by_rank_range_count(
-                MapReturnType::Value,
+                MapReturnType::VALUE,
                 int_val(0),
                 int_val(1),
                 map_bin("bin".to_string()),
@@ -339,7 +339,7 @@ fn expression_map() {
         &client,
         eq(
             get_by_value_range(
-                MapReturnType::Count,
+                MapReturnType::COUNT,
                 Some(int_val(0)),
                 Some(int_val(18)),
                 map_bin("bin".to_string()),
@@ -357,7 +357,7 @@ fn expression_map() {
         &client,
         eq(
             get_by_key_range(
-                MapReturnType::Count,
+                MapReturnType::COUNT,
                 None,
                 Some(string_val("test25".to_string())),
                 map_bin("bin".to_string()),
@@ -375,7 +375,7 @@ fn expression_map() {
         &client,
         eq(
             get_by_key_relative_index_range(
-                MapReturnType::Count,
+                MapReturnType::COUNT,
                 string_val("test".to_string()),
                 int_val(0),
                 map_bin("bin".to_string()),
@@ -393,7 +393,7 @@ fn expression_map() {
         &client,
         eq(
             get_by_key_relative_index_range_count(
-                MapReturnType::Count,
+                MapReturnType::COUNT,
                 string_val("test".to_string()),
                 int_val(0),
                 int_val(1),
@@ -413,7 +413,7 @@ fn expression_map() {
         eq(
             size(
                 remove_by_key(
-                    MapReturnType::None,
+                    MapReturnType::NONE,
                     string_val("test".to_string()),
                     map_bin("bin".to_string()),
                     &[],
@@ -433,7 +433,7 @@ fn expression_map() {
         eq(
             size(
                 remove_by_key_list(
-                    MapReturnType::None,
+                    MapReturnType::NONE,
                     list_val(vec![Value::from("test"), Value::from("test2")]),
                     map_bin("bin".to_string()),
                     &[],
@@ -453,7 +453,7 @@ fn expression_map() {
         eq(
             size(
                 remove_by_key_range(
-                    MapReturnType::None,
+                    MapReturnType::NONE,
                     Some(string_val("test".to_string())),
                     None,
                     map_bin("bin".to_string()),
@@ -474,7 +474,7 @@ fn expression_map() {
         eq(
             size(
                 remove_by_key_relative_index_range(
-                    MapReturnType::None,
+                    MapReturnType::NONE,
                     string_val("test".to_string()),
                     int_val(0),
                     map_bin("bin".to_string()),
@@ -495,7 +495,7 @@ fn expression_map() {
         eq(
             size(
                 remove_by_key_relative_index_range_count(
-                    MapReturnType::None,
+                    MapReturnType::NONE,
                     string_val("test".to_string()),
                     int_val(0),
                     int_val(1),
@@ -520,7 +520,7 @@ fn expression_map() {
         eq(
             size(
                 remove_by_value(
-                    MapReturnType::None,
+                    MapReturnType::NONE,
                     int_val(5),
                     map_bin("bin".to_string()),
                     &[],
@@ -540,7 +540,7 @@ fn expression_map() {
         eq(
             size(
                 remove_by_value_list(
-                    MapReturnType::None,
+                    MapReturnType::NONE,
                     list_val(vec![Value::from("a"), Value::from(15)]),
                     map_bin("bin".to_string()),
                     &[],
@@ -560,7 +560,7 @@ fn expression_map() {
         eq(
             size(
                 remove_by_value_range(
-                    MapReturnType::None,
+                    MapReturnType::NONE,
                     Some(int_val(5)),
                     Some(int_val(15)),
                     map_bin("bin".to_string()),
@@ -581,7 +581,7 @@ fn expression_map() {
         eq(
             size(
                 remove_by_index(
-                    MapReturnType::None,
+                    MapReturnType::NONE,
                     int_val(0),
                     map_bin("bin".to_string()),
                     &[],
@@ -601,7 +601,7 @@ fn expression_map() {
         eq(
             size(
                 remove_by_index_range(
-                    MapReturnType::None,
+                    MapReturnType::NONE,
                     int_val(0),
                     map_bin("bin".to_string()),
                     &[],
@@ -621,7 +621,7 @@ fn expression_map() {
         eq(
             size(
                 remove_by_index_range_count(
-                    MapReturnType::None,
+                    MapReturnType::NONE,
                     int_val(0),
                     int_val(1),
                     map_bin("bin".to_string()),
@@ -642,7 +642,7 @@ fn expression_map() {
         eq(
             size(
                 remove_by_rank(
-                    MapReturnType::None,
+                    MapReturnType::NONE,
                     int_val(0),
                     map_bin("bin".to_string()),
                     &[],
@@ -662,7 +662,7 @@ fn expression_map() {
         eq(
             size(
                 remove_by_rank_range(
-                    MapReturnType::None,
+                    MapReturnType::NONE,
                     int_val(0),
                     map_bin("bin".to_string()),
                     &[],
@@ -682,7 +682,7 @@ fn expression_map() {
         eq(
             size(
                 remove_by_rank_range_count(
-                    MapReturnType::None,
+                    MapReturnType::NONE,
                     int_val(0),
                     int_val(1),
                     map_bin("bin".to_string()),

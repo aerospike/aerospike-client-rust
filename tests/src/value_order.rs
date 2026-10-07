@@ -59,7 +59,7 @@ async fn value_ord_matches_server_sort_order() {
         .put(&wp, &key, &[as_bin!("l", Value::List(values.clone()))])
         .await
         .unwrap();
-    let op = lists::sort("l", ListSortFlags::Default);
+    let op = lists::sort("l", ListSortFlags::DEFAULT);
     client.operate(&wp, &key, &[op]).await.unwrap();
     let rec = client
         .get(&ReadPolicy::default(), &key, Bins::All)

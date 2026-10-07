@@ -23,6 +23,7 @@ pub mod hll;
 pub mod lists;
 pub mod maps;
 pub mod regex_flag;
+pub use regex_flag::RegexFlags;
 pub mod string;
 
 pub use ael::from_ael;
@@ -322,7 +323,7 @@ impl Expression {
                                 // Write [0xfe, flat_ctx, flag] as 3 direct args
                                 size += pack_integer(buf, 0xfe);
                                 size += pack_flat_ctx(buf, ctx)?;
-                                size += pack_integer(buf, flag.0);
+                                size += pack_integer(buf, flag.bits());
                             }
                             ExpressionArgument::CdtModifyPathArg(
                                 flag,
@@ -333,7 +334,7 @@ impl Expression {
                                 // Write [0xfe, flat_ctx, flag|0x04, modify_exp] as 4 direct args
                                 size += pack_integer(buf, 0xfe);
                                 size += pack_flat_ctx(buf, ctx)?;
-                                size += pack_integer(buf, flag.0 | 0x04);
+                                size += pack_integer(buf, flag.bits() | 0x04);
                                 size += modify_exp.pack(buf)?;
                                 bin_from_arg = Some(bin_exp);
                             }
@@ -676,7 +677,7 @@ pub fn geo_bin(name: String) -> Expression {
 /// use aerospike::operations::lists::ListReturnType;
 /// use aerospike::expressions::lists::get_by_index;
 /// // String bin a[2] == 3
-/// let _ = eq(get_by_index(ListReturnType::Values, ExpType::Int, int_val(2), list_bin("a".to_string()), &[]), int_val(3));
+/// let _ = eq(get_by_index(ListReturnType::VALUES, ExpType::Int, int_val(2), list_bin("a".to_string()), &[]), int_val(3));
 /// ```
 #[must_use]
 pub fn list_bin(name: String) -> Expression {
@@ -699,7 +700,7 @@ pub fn list_bin(name: String) -> Expression {
 /// use aerospike::expressions::maps::get_by_key;
 ///
 /// let _ = eq(
-///     get_by_key(MapReturnType::Value, ExpType::String, string_val("key".to_string()), map_bin("a".to_string()), &[]),
+///     get_by_key(MapReturnType::VALUE, ExpType::String, string_val("key".to_string()), map_bin("a".to_string()), &[]),
 ///     string_val("value".to_string()));
 /// ```
 #[must_use]
@@ -914,19 +915,23 @@ pub fn digest_modulo(modulo: i64) -> Expression {
 
 /// Creates a regular expression string comparison expression.
 /// ```
-/// use aerospike::RegexFlag;
+/// use aerospike::RegexFlags;
 /// use aerospike::expressions::{regex_compare, string_bin};
 /// // Select string bin "a" that starts with "prefix" and ends with "suffix".
 /// // Ignore case and do not match newline.
-/// let _ = regex_compare("prefix.*suffix".to_string(), RegexFlag::Icase as i64 | RegexFlag::Newline as i64, string_bin("a".to_string()));
+/// let _ = regex_compare(
+///     "prefix.*suffix".to_string(),
+///     RegexFlags::ICASE | RegexFlags::NEWLINE,
+///     string_bin("a".to_string()),
+/// );
 /// ```
 #[must_use]
-pub fn regex_compare(regex: String, flags: i64, bin: Expression) -> Expression {
+pub fn regex_compare(regex: String, flags: RegexFlags, bin: Expression) -> Expression {
     Expression::new(
         Some(ExpOp::Regex),
         Some(Value::from(regex)),
         Some(bin),
-        Some(flags),
+        Some(flags.bits()),
         None,
         None,
     )
@@ -1911,8 +1916,8 @@ pub fn var(name: String) -> Expression {
 
 /// Creates unknown value. Used to intentionally fail an expression.
 ///
-/// The failure can be ignored with [`ExpWriteFlags::EvalNoFail`](crate::operations::exp::ExpWriteFlags::EvalNoFail)
-/// or [`ExpReadFlags::EvalNoFail`](crate::operations::exp::ExpReadFlags::EvalNoFail).
+/// The failure can be ignored with [`ExpWriteFlags::EVAL_NO_FAIL`](crate::operations::exp::ExpWriteFlags::EVAL_NO_FAIL)
+/// or [`ExpReadFlags::EVAL_NO_FAIL`](crate::operations::exp::ExpReadFlags::EVAL_NO_FAIL).
 /// Requires server version 5.6.0+.
 ///
 /// ```

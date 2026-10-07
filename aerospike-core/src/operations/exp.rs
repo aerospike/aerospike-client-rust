@@ -25,48 +25,26 @@ use crate::msgpack::encoder::{pack_array_begin, pack_integer};
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::Result;
 
-/// Expression write Flags
-#[derive(Clone, Copy)]
-pub enum ExpWriteFlags {
+crate::flags::bit_flags! {
+    /// Flags for [`write_exp`]. Combine with `|`.
+    pub struct ExpWriteFlags(i64);
     /// Default. Allow create or update.
-    Default = 0,
+    const DEFAULT = 0;
     /// If bin does not exist, a new bin will be created.
     /// If bin exists, the operation will be denied.
     /// If bin exists, fail with Bin Exists
-    CreateOnly = 1 << 0,
+    const CREATE_ONLY = 1 << 0;
     /// If bin exists, the bin will be overwritten.
     /// If bin does not exist, the operation will be denied.
     /// If bin does not exist, fail with Bin Not Found
-    UpdateOnly = 1 << 1,
+    const UPDATE_ONLY = 1 << 1;
     /// If expression results in nil value, then delete the bin.
-    /// Otherwise, return OP Not Applicable when `NoFail` is not set
-    AllowDelete = 1 << 2,
+    /// Otherwise, return OP Not Applicable when `POLICY_NO_FAIL` is not set
+    const ALLOW_DELETE = 1 << 2;
     /// Do not raise error if operation is denied.
-    PolicyNoFail = 1 << 3,
+    const POLICY_NO_FAIL = 1 << 3;
     /// Ignore failures caused by the expression resolving to unknown or a non-bin type.
-    EvalNoFail = 1 << 4,
-}
-
-/// Something that can be resolved into a set of `ExpWriteFlags`. Either a single `ExpWriteFlag`, `Option<ExpWriteFlag>`, `ExpWriteFlag`, etc.
-pub trait ToExpWriteFlagBitmask {
-    /// Convert to an i64 bitmask
-    fn to_bitmask(self) -> i64;
-}
-
-impl ToExpWriteFlagBitmask for ExpWriteFlags {
-    fn to_bitmask(self) -> i64 {
-        self as i64
-    }
-}
-
-impl<T: IntoIterator<Item = ExpWriteFlags>> ToExpWriteFlagBitmask for T {
-    fn to_bitmask(self) -> i64 {
-        let mut out = 0;
-        for val in self {
-            out |= val.to_bitmask();
-        }
-        out
-    }
+    const EVAL_NO_FAIL = 1 << 4;
 }
 
 pub(crate) type ExpressionEncoder =
@@ -120,42 +98,21 @@ impl fmt::Debug for ExpOperation {
     }
 }
 
-/// Expression read Flags
-pub enum ExpReadFlags {
-    /// Default
-    Default = 0,
+crate::flags::bit_flags! {
+    /// Flags for [`read_exp`]. Combine with `|`.
+    pub struct ExpReadFlags(i64);
+    /// Default.
+    const DEFAULT = 0;
     /// Ignore failures caused by the expression resolving to unknown or a non-bin type.
-    EvalNoFail = 1 << 4,
-}
-
-/// Something that can be resolved into a set of `ExpWriteFlags`. Either a single `ExpWriteFlag`, `Option<ExpWriteFlag>`, `ExpWriteFlag`, etc.
-pub trait ToExpReadFlagBitmask {
-    /// Convert to an i64 bitmask
-    fn to_bitmask(self) -> i64;
-}
-
-impl ToExpReadFlagBitmask for ExpReadFlags {
-    fn to_bitmask(self) -> i64 {
-        self as i64
-    }
-}
-
-impl<T: IntoIterator<Item = ExpReadFlags>> ToExpReadFlagBitmask for T {
-    fn to_bitmask(self) -> i64 {
-        let mut out = 0;
-        for val in self {
-            out |= val.to_bitmask();
-        }
-        out
-    }
+    const EVAL_NO_FAIL = 1 << 4;
 }
 
 /// Creates operation that performs a expression that writes to record bin.
 #[must_use]
-pub fn write_exp<E: ToExpWriteFlagBitmask>(bin: &str, exp: Expression, flags: E) -> Operation {
+pub fn write_exp(bin: &str, exp: Expression, flags: ExpWriteFlags) -> Operation {
     let op = ExpOperation {
         encoder: Arc::new(pack_write_exp),
-        policy: flags.to_bitmask(),
+        policy: flags.bits(),
         exp,
     };
     Operation {
@@ -172,10 +129,10 @@ pub fn write_exp<E: ToExpWriteFlagBitmask>(bin: &str, exp: Expression, flags: E)
 /// [`expressions::from_packed_bytes`](crate::expressions::from_packed_bytes)
 /// or [`expressions::from_base64`](crate::expressions::from_base64).
 #[must_use]
-pub fn read_exp<E: ToExpReadFlagBitmask>(name: &str, exp: Expression, flags: E) -> Operation {
+pub fn read_exp(name: &str, exp: Expression, flags: ExpReadFlags) -> Operation {
     let op = ExpOperation {
         encoder: Arc::new(pack_read_exp),
-        policy: flags.to_bitmask(),
+        policy: flags.bits(),
         exp,
     };
     Operation {

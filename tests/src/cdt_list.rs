@@ -176,7 +176,7 @@ fn cdt_list() {
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!(8, 7, 1, 2.1f64, -1));
 
     let rval = Value::from(9);
-    let ops = &[lists::remove_by_value("bin", rval, ListReturnType::Count)];
+    let ops = &[lists::remove_by_value("bin", rval, ListReturnType::COUNT)];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::from(1));
 
@@ -184,7 +184,7 @@ fn cdt_list() {
     let ops = &[lists::remove_by_value_list(
         "bin",
         rval,
-        ListReturnType::Count,
+        ListReturnType::COUNT,
     )];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::from(2));
@@ -205,7 +205,7 @@ fn cdt_list() {
     let end = Value::from(9);
     let ops = &[lists::remove_by_value_range(
         "bin",
-        ListReturnType::Count,
+        ListReturnType::COUNT,
         beg,
         end,
     )];
@@ -224,7 +224,7 @@ fn cdt_list() {
         Value::MultiResult(as_values!(7, as_list!("0", 9, 8, 7, 1, 2.1f64, -1)))
     );
 
-    let ops = &[lists::sort("bin", ListSortFlags::Default)];
+    let ops = &[lists::sort("bin", ListSortFlags::DEFAULT)];
     client.operate(&wpolicy, &key, ops).await.unwrap();
 
     let ops = &[operations::get_bin("bin")];
@@ -234,14 +234,14 @@ fn cdt_list() {
         as_list!(-1, 1, 7, 8, 9, "0", 2.1f64)
     );
 
-    let ops = &[lists::remove_by_index("bin", 1, ListReturnType::Values)];
+    let ops = &[lists::remove_by_index("bin", 1, ListReturnType::VALUES)];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::from(1));
 
     let ops = &[lists::remove_by_index_range(
         "bin",
         4,
-        ListReturnType::Values,
+        ListReturnType::VALUES,
     )];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!("0", 2.1f64));
@@ -262,19 +262,19 @@ fn cdt_list() {
         "bin",
         0,
         2,
-        ListReturnType::Values,
+        ListReturnType::VALUES,
     )];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!("0", 9));
 
-    let ops = &[lists::remove_by_rank("bin", 2, ListReturnType::Values)];
+    let ops = &[lists::remove_by_rank("bin", 2, ListReturnType::VALUES)];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::from(7));
 
     let ops = &[lists::remove_by_rank_range(
         "bin",
         2,
-        ListReturnType::Values,
+        ListReturnType::VALUES,
     )];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!(8, 2.1f64));
@@ -295,7 +295,7 @@ fn cdt_list() {
         "bin",
         2,
         2,
-        ListReturnType::Values,
+        ListReturnType::VALUES,
     )];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!(8, 7));
@@ -315,7 +315,7 @@ fn cdt_list() {
     let val = Value::from(1);
     let ops = &[lists::remove_by_value_relative_rank_range(
         "bin",
-        ListReturnType::Values,
+        ListReturnType::VALUES,
         val,
         1,
     )];
@@ -340,7 +340,7 @@ fn cdt_list() {
     let val = Value::from(1);
     let ops = &[lists::remove_by_value_relative_rank_range_count(
         "bin",
-        ListReturnType::Values,
+        ListReturnType::VALUES,
         val,
         1,
         2,
@@ -366,18 +366,18 @@ fn cdt_list() {
         val,
         2,
         2,
-        ListReturnType::Values,
+        ListReturnType::VALUES,
     )];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!(8, 9));
 
     let val = Value::from(1);
-    let ops = &[lists::get_by_value("bin", val, ListReturnType::Count)];
+    let ops = &[lists::get_by_value("bin", val, ListReturnType::COUNT)];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::from(1));
 
     let val = vec![Value::from(1), Value::from("0")];
-    let ops = &[lists::get_by_value_list("bin", val, ListReturnType::Count)];
+    let ops = &[lists::get_by_value_list("bin", val, ListReturnType::COUNT)];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::from(2));
 
@@ -387,16 +387,16 @@ fn cdt_list() {
         "bin",
         beg,
         end,
-        ListReturnType::Count,
+        ListReturnType::COUNT,
     )];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::from(3));
 
-    let ops = &[lists::get_by_index("bin", 3, ListReturnType::Values)];
+    let ops = &[lists::get_by_index("bin", 3, ListReturnType::VALUES)];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::from(7));
 
-    let ops = &[lists::get_by_index_range("bin", 3, ListReturnType::Values)];
+    let ops = &[lists::get_by_index_range("bin", 3, ListReturnType::VALUES)];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!(7, 1, 2.1f64, -1));
 
@@ -404,7 +404,7 @@ fn cdt_list() {
         "bin",
         0,
         2,
-        ListReturnType::Values,
+        ListReturnType::VALUES,
     )];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!("0", 9));
@@ -421,11 +421,11 @@ fn cdt_list() {
         Value::MultiResult(as_values!(7, as_list!("0", 9, 8, 7, 1, 2.1f64, -1)))
     );
 
-    let ops = &[lists::get_by_rank("bin", 2, ListReturnType::Values)];
+    let ops = &[lists::get_by_rank("bin", 2, ListReturnType::VALUES)];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), Value::from(7));
 
-    let ops = &[lists::get_by_rank_range("bin", 4, ListReturnType::Values)];
+    let ops = &[lists::get_by_rank_range("bin", 4, ListReturnType::VALUES)];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!(9, "0", 2.1f64));
 
@@ -433,7 +433,7 @@ fn cdt_list() {
         "bin",
         2,
         2,
-        ListReturnType::Values,
+        ListReturnType::VALUES,
     )];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!(8, 7));
@@ -443,7 +443,7 @@ fn cdt_list() {
         "bin",
         val,
         2,
-        ListReturnType::Values,
+        ListReturnType::VALUES,
     )];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!(8, 9, "0", 2.1f64));
@@ -454,7 +454,7 @@ fn cdt_list() {
         val,
         2,
         2,
-        ListReturnType::Values,
+        ListReturnType::VALUES,
     )];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(*rec.bins.get("bin").unwrap(), as_list!(8, 9));
@@ -482,7 +482,7 @@ fn cdt_list_wildcard() {
     let val = as_list!(Value::from("Jim"), Value::Wildcard);
     let ops = &[
         lists::append_items(&lpolicy, "bin", list),
-        lists::get_by_value("bin", val, ListReturnType::Values),
+        lists::get_by_value("bin", val, ListReturnType::VALUES),
     ];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(
@@ -568,7 +568,7 @@ fn cdt_list_set_with_policy() {
     client.operate(&wpolicy, &key, ops).await.unwrap();
 
     // Set index 1 to value 99 using set_with_policy
-    let set_policy = ListPolicy::new(ListOrderType::Unordered, ListWriteFlags::Default);
+    let set_policy = ListPolicy::new(ListOrderType::Unordered, ListWriteFlags::DEFAULT);
     let ops = &[
         lists::set_with_policy(&set_policy, "bin", 1, as_val!(99)),
         operations::get_bin("bin"),
@@ -659,23 +659,23 @@ async fn list_get_by_value_range_nil_end_returns_empty() {
         "int_bin",
         Value::from(7),
         Value::from(9),
-        ListReturnType::Values,
+        ListReturnType::VALUES,
     ); // expect: [7, 8]
     let op2 = lists::get_by_value_range(
         "int_bin",
         Value::from(7),
         Value::Nil,
-        ListReturnType::Values,
+        ListReturnType::VALUES,
     ); // expect: [7, 8, 9, 10]
     let op3 =
-        lists::get_by_value_range("int_bin", Value::from(7), Value::Nil, ListReturnType::Index); // expect: [0, 3, 4, 5]
+        lists::get_by_value_range("int_bin", Value::from(7), Value::Nil, ListReturnType::INDEX); // expect: [0, 3, 4, 5]
     let op4 =
-        lists::get_by_value_range("int_bin", Value::from(7), Value::Nil, ListReturnType::Rank); // expect: [2, 3, 4, 5]
+        lists::get_by_value_range("int_bin", Value::from(7), Value::Nil, ListReturnType::RANK); // expect: [2, 3, 4, 5]
     let op5 = lists::get_by_value_range(
         "int_bin",
         Value::Nil,
         Value::from(9),
-        ListReturnType::Values,
+        ListReturnType::VALUES,
     ); // expect: [7, 6, 5, 8]
     let ops = &[op1, op2, op3, op4, op5];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
@@ -692,7 +692,7 @@ async fn list_get_by_value_range_nil_end_returns_empty() {
 
     // Remove
     let op6 =
-        lists::remove_by_value_range("int_bin", ListReturnType::Index, Value::from(7), Value::Nil); // expect: [0, 3, 4, 5]
+        lists::remove_by_value_range("int_bin", ListReturnType::INDEX, Value::from(7), Value::Nil); // expect: [0, 3, 4, 5]
     let ops = &[op6];
     let rec2 = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(rec2.bins.get("int_bin").unwrap(), &as_list!(0, 3, 4, 5));

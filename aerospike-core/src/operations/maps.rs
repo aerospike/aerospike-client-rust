@@ -153,123 +153,77 @@ impl MapOrder {
     }
 }
 
-/// Map return type. Type of data to return when selecting or removing items from the map.
-#[derive(Debug, Clone, Copy)]
-pub enum MapReturnType {
+crate::flags::return_type! {
+    /// What a map operation returns: one selector, optionally
+    /// [`inverted`](Self::inverted).
+    ///
+    /// ```
+    /// use aerospike::MapReturnType;
+    ///
+    /// let outside = MapReturnType::KEY_VALUE.inverted();
+    /// assert!(outside.is_inverted());
+    /// ```
+    pub struct MapReturnType;
     /// Do not return a result.
-    None = 0,
-
+    const NONE = 0;
     /// Return key index order.
     ///
     /// * 0 = first key
     /// * N = Nth key
     /// * -1 = last key
-    Index = 1,
-
+    const INDEX = 1;
     /// Return reverse key order.
     ///
     /// * 0 = last key
     /// * -1 = first key
-    ReverseIndex = 2,
-
+    const REVERSE_INDEX = 2;
     /// Return value order.
     ///
     /// * 0 = smallest value
     /// * N = Nth smallest value
     /// * -1 = largest value
-    Rank = 3,
-
-    /// Return reserve value order.
+    const RANK = 3;
+    /// Return reverse value order.
     ///
     /// * 0 = largest value
     /// * N = Nth largest value
     /// * -1 = smallest value
-    ReverseRank = 4,
-
+    const REVERSE_RANK = 4;
     /// Return count of items selected.
-    Count = 5,
-
+    const COUNT = 5;
     /// Return key for single key read and key list for range read.
-    Key = 6,
-
+    const KEY = 6;
     /// Return value for single key read and value list for range read.
-    Value = 7,
-
+    const VALUE = 7;
     /// Return key/value items. The possible return types are:
     ///
     /// * `Value::HashMap`: Returned for unordered maps
     /// * `Value::KeyValueList`: Returned for range results where range order needs to be preserved.
-    KeyValue = 8,
-
+    const KEY_VALUE = 8;
     /// Returns true if count > 0.
-    Exists = 13,
-
+    const EXISTS = 13;
     /// Returns an unordered map.
-    UnorderedMap = 16,
-
+    const UNORDERED_MAP = 16;
     /// Returns an ordered map.
-    OrderedMap = 17,
-
-    /// Inverts the meaning of the map command and return values.
-    /// With the INVERTED flag enabled, the keys outside the specified key range will be removed and returned.
-    Inverted = 0x10000,
+    const ORDERED_MAP = 17;
 }
 
-#[derive(Debug, Clone, Copy)]
-/// Inverts the returned values in CDT Map operations.
-///
-/// The field is public because this type exists to be constructed by a caller:
-/// every map operation that takes a return type accepts either a plain
-/// [`MapReturnType`] or one of these, and a private field would leave a caller
-/// outside this crate unable to build one at all.
-///
-/// ```
-/// use aerospike::operations::maps::{InvertedMapReturn, MapReturnType};
-///
-/// let inverted = InvertedMapReturn(MapReturnType::KeyValue);
-/// ```
-pub struct InvertedMapReturn(pub MapReturnType);
-
-/// Something that can be resolved into a set of [`MapReturnType`]. Either a single
-/// [`MapReturnType`], or [`InvertedMapReturn`].
-pub trait ToMapReturnTypeBitmask {
-    /// Converts to a u64 bitmask
-    fn to_bitmask(self) -> i64;
-}
-
-impl ToMapReturnTypeBitmask for MapReturnType {
-    fn to_bitmask(self) -> i64 {
-        self as i64
-    }
-}
-
-impl ToMapReturnTypeBitmask for InvertedMapReturn {
-    fn to_bitmask(self) -> i64 {
-        MapReturnType::Inverted as i64 ^ self.0.to_bitmask()
-    }
-}
-
-/// Map write bit flags.
-/// Requires server version 4.3+.
-#[allow(non_snake_case)]
-pub mod MapWriteFlags {
+crate::flags::bit_flags! {
+    /// Map write flags. Combine with `|`. Requires server version 4.3+.
+    pub struct MapWriteFlags(u8);
     /// Default. Allow create or update.
-    pub const DEFAULT: u8 = 0;
-
+    const DEFAULT = 0;
     /// If the key already exists, the item will be denied.
     /// If the key does not exist, a new item will be created.
-    pub const CREATE_ONLY: u8 = 1;
-
+    const CREATE_ONLY = 1;
     /// If the key already exists, the item will be overwritten.
     /// If the key does not exist, the item will be denied.
-    pub const UPDATE_ONLY: u8 = 2;
-
+    const UPDATE_ONLY = 2;
     /// Do not raise error if a map item is denied due to write flag constraints.
-    pub const NO_FAIL: u8 = 4;
-
+    const NO_FAIL = 4;
     /// Allow other valid map items to be committed if a map item is denied due to
     /// write flag constraints.
-    pub const PARTIAL: u8 = 8;
+    const PARTIAL = 8;
 }
 
 /// Unique key map write type.
@@ -295,10 +249,9 @@ pub struct MapPolicy {
     pub order: MapOrder,
     /// The Map Write Mode
     pub write_mode: MapWriteMode,
-    /// The map write flags (see [`MapWriteFlags`]).
-    /// When flags are non-zero, they are used instead of `write_mode` for put operations.
-    /// Requires server version 4.3+.
-    pub flags: u8,
+    /// The map write flags. When set (not `DEFAULT`), they are used instead
+    /// of `write_mode` for put operations. Requires server version 4.3+.
+    pub flags: MapWriteFlags,
     /// Whether to persist the index for this map.
     pub persist_index: bool,
 }
@@ -317,7 +270,7 @@ impl MapPolicy {
     /// Creates a new map policy with write flags instead of a write mode.
     /// When flags are non-zero, they take precedence over write mode for put operations.
     /// Requires server version 4.3+.
-    pub const fn new_with_flags(order: MapOrder, flags: u8) -> Self {
+    pub const fn new_with_flags(order: MapOrder, flags: MapWriteFlags) -> Self {
         MapPolicy {
             order,
             write_mode: MapWriteMode::Update,
@@ -329,7 +282,7 @@ impl MapPolicy {
     /// Creates a new map policy with write flags and a persisted index.
     /// The persisted index flag (0x10) is OR'd into the map order attribute.
     /// Requires server version 4.3+.
-    pub const fn new_with_flags_and_persisted_index(order: MapOrder, flags: u8) -> Self {
+    pub const fn new_with_flags_and_persisted_index(order: MapOrder, flags: MapWriteFlags) -> Self {
         MapPolicy {
             order,
             write_mode: MapWriteMode::Update,
@@ -490,13 +443,13 @@ pub fn set_order(bin: &str, map_order: MapOrder) -> Operation {
 /// policy also specifies the mode used when writing items to the map.
 #[must_use]
 pub fn put(policy: &MapPolicy, bin: &str, key: Value, val: Value) -> Operation {
-    if policy.flags != 0 {
+    if policy.flags != MapWriteFlags::DEFAULT {
         // Use flags-based put (server 4.3+)
         let args = vec![
             CdtArgument::Value(key),
             CdtArgument::Value(val),
             CdtArgument::Byte(policy.order_attr()),
-            CdtArgument::Byte(policy.flags),
+            CdtArgument::Byte(policy.flags.bits()),
         ];
         let cdt_op = CdtOperation {
             op: CdtMapOpType::Put as u8,
@@ -558,12 +511,12 @@ pub fn put_items<M: MapLike<Value, Value>>(policy: &MapPolicy, bin: &str, items:
         crate::value::MapCollection::Sorted(m) => CdtArgument::SortedMap(m),
     };
 
-    if policy.flags != 0 {
+    if policy.flags != MapWriteFlags::DEFAULT {
         // Use flags-based put items (server 4.3+)
         let args = vec![
             items,
             CdtArgument::Byte(policy.order_attr()),
-            CdtArgument::Byte(policy.flags),
+            CdtArgument::Byte(policy.flags.bits()),
         ];
         let cdt_op = CdtOperation {
             op: CdtMapOpType::PutItems as u8,
@@ -669,16 +622,16 @@ pub fn clear(bin: &str) -> Operation {
 /// Creates map remove operation. Server removes the map item identified by the key and returns
 /// the removed data specified by `return_type`.
 #[must_use]
-pub fn remove_by_key<TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_key(
     bin: &str,
     key: Value,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByKey as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Value(key),
         ],
     };
@@ -693,16 +646,16 @@ pub fn remove_by_key<TMR: ToMapReturnTypeBitmask>(
 /// Creates map remove operation. Server removes map items identified by keys and returns
 /// removed data specified by `return_type`.
 #[must_use]
-pub fn remove_by_key_list<TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_key_list(
     bin: &str,
     keys: Vec<Value>,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveKeyList as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::List(keys),
         ],
     };
@@ -720,14 +673,14 @@ pub fn remove_by_key_list<TMR: ToMapReturnTypeBitmask>(
 /// If `begin` is `Value::Nil`, the range is less than `end`. If `end` is `Value::Nil`, the
 /// range is greater than equal to `begin`. Server returns removed data specified by `return_type`.
 #[must_use]
-pub fn remove_by_key_range<TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_key_range(
     bin: &str,
     begin: Value,
     end: Value,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let mut args = vec![
-        CdtArgument::Int(return_type.to_bitmask()),
+        CdtArgument::Int(return_type.bits()),
         CdtArgument::Value(begin),
     ];
     if !end.is_nil() {
@@ -749,16 +702,16 @@ pub fn remove_by_key_range<TMR: ToMapReturnTypeBitmask>(
 /// Creates map remove operation. Server removes the map items identified by value and returns
 /// the removed data specified by `return_type`.
 #[must_use]
-pub fn remove_by_value<TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_value(
     bin: &str,
     value: Value,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByValue as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Value(value),
         ],
     };
@@ -773,16 +726,16 @@ pub fn remove_by_value<TMR: ToMapReturnTypeBitmask>(
 /// Creates map remove operation. Server removes the map items identified by values and returns
 /// the removed data specified by `return_type`.
 #[must_use]
-pub fn remove_by_value_list<TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_value_list(
     bin: &str,
     values: Vec<Value>,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveValueList as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::List(values),
         ],
     };
@@ -801,14 +754,14 @@ pub fn remove_by_value_list<TMR: ToMapReturnTypeBitmask>(
 /// range is greater than equal to `begin`. Server returns the removed data specified by
 /// `return_type`.
 #[must_use]
-pub fn remove_by_value_range<TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_value_range(
     bin: &str,
     begin: Value,
     end: Value,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let mut args = vec![
-        CdtArgument::Int(return_type.to_bitmask()),
+        CdtArgument::Int(return_type.bits()),
         CdtArgument::Value(begin),
     ];
     if !end.is_nil() {
@@ -830,16 +783,16 @@ pub fn remove_by_value_range<TMR: ToMapReturnTypeBitmask>(
 /// Creates map remove operation. Server removes the map item identified by the index and return
 /// the removed data specified by `return_type`.
 #[must_use]
-pub fn remove_by_index<TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_index(
     bin: &str,
     index: i64,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByIndex as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Int(index),
         ],
     };
@@ -854,17 +807,17 @@ pub fn remove_by_index<TMR: ToMapReturnTypeBitmask>(
 /// Creates map remove operation. Server removes `count` map items starting at the specified
 /// index and returns the removed data specified by `return_type`.
 #[must_use]
-pub fn remove_by_index_range<TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_index_range(
     bin: &str,
     index: i64,
     count: i64,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByIndexRange as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Int(index),
             CdtArgument::Int(count),
         ],
@@ -880,16 +833,16 @@ pub fn remove_by_index_range<TMR: ToMapReturnTypeBitmask>(
 /// Creates map remove operation. Server removes the map items starting at the specified index
 /// to the end of the map and returns the removed data specified by `return_type`.
 #[must_use]
-pub fn remove_by_index_range_from<TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_index_range_from(
     bin: &str,
     index: i64,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByIndexRange as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Int(index),
         ],
     };
@@ -904,16 +857,16 @@ pub fn remove_by_index_range_from<TMR: ToMapReturnTypeBitmask>(
 /// Creates map remove operation. Server removes the map item identified by rank and returns the
 /// removed data specified by `return_type`.
 #[must_use]
-pub fn remove_by_rank<TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_rank(
     bin: &str,
     rank: i64,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByRank as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Int(rank),
         ],
     };
@@ -928,17 +881,17 @@ pub fn remove_by_rank<TMR: ToMapReturnTypeBitmask>(
 /// Creates map remove operation. Server removes `count` map items starting at the specified
 /// rank and returns the removed data specified by `return_type`.
 #[must_use]
-pub fn remove_by_rank_range<TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_rank_range(
     bin: &str,
     rank: i64,
     count: i64,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByRankRange as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Int(rank),
             CdtArgument::Int(count),
         ],
@@ -954,16 +907,16 @@ pub fn remove_by_rank_range<TMR: ToMapReturnTypeBitmask>(
 /// Creates map remove operation. Server removes the map items starting at the specified rank to
 /// the last ranked item and returns the removed data specified by `return_type`.
 #[must_use]
-pub fn remove_by_rank_range_from<TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_rank_range_from(
     bin: &str,
     rank: i64,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByRankRange as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Int(rank),
         ],
     };
@@ -994,16 +947,16 @@ pub fn size(bin: &str) -> Operation {
 /// Creates map get by key operation. Server selects the map item identified by the key and
 /// returns the selected data specified by `return_type`.
 #[must_use]
-pub fn get_by_key<TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_key(
     bin: &str,
     key: Value,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByKey as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Value(key),
         ],
     };
@@ -1022,14 +975,14 @@ pub fn get_by_key<TMR: ToMapReturnTypeBitmask>(
 /// `Value::Nil` the range is greater than equal to `begin`. Server returns the selected data
 /// specified by `return_type`.
 #[must_use]
-pub fn get_by_key_range<TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_key_range(
     bin: &str,
     begin: Value,
     end: Value,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let mut args = vec![
-        CdtArgument::Int(return_type.to_bitmask()),
+        CdtArgument::Int(return_type.bits()),
         CdtArgument::Value(begin),
     ];
     if !end.is_nil() {
@@ -1051,16 +1004,16 @@ pub fn get_by_key_range<TMR: ToMapReturnTypeBitmask>(
 /// Creates map get by value operation. Server selects the map items identified by value and
 /// returns the selected data specified by `return_type`.
 #[must_use]
-pub fn get_by_value<TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_value(
     bin: &str,
     value: Value,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByValue as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Value(value),
         ],
     };
@@ -1079,14 +1032,14 @@ pub fn get_by_value<TMR: ToMapReturnTypeBitmask>(
 /// `Value::Nil`, the range is greater than equal to `begin`. Server returns the selected data
 /// specified by `return_type`.
 #[must_use]
-pub fn get_by_value_range<TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_value_range(
     bin: &str,
     begin: Value,
     end: Value,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let mut args = vec![
-        CdtArgument::Int(return_type.to_bitmask()),
+        CdtArgument::Int(return_type.bits()),
         CdtArgument::Value(begin),
     ];
     if !end.is_nil() {
@@ -1108,16 +1061,16 @@ pub fn get_by_value_range<TMR: ToMapReturnTypeBitmask>(
 /// Creates map get by index operation. Server selects the map item identified by index and
 /// returns the selected data specified by `return_type`.
 #[must_use]
-pub fn get_by_index<TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_index(
     bin: &str,
     index: i64,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByIndex as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Int(index),
         ],
     };
@@ -1132,17 +1085,17 @@ pub fn get_by_index<TMR: ToMapReturnTypeBitmask>(
 /// Creates map get by index range operation. Server selects `count` map items starting at the
 /// specified index and returns the selected data specified by `return_type`.
 #[must_use]
-pub fn get_by_index_range<TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_index_range(
     bin: &str,
     index: i64,
     count: i64,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByIndexRange as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Int(index),
             CdtArgument::Int(count),
         ],
@@ -1159,16 +1112,16 @@ pub fn get_by_index_range<TMR: ToMapReturnTypeBitmask>(
 /// specified index to the end of the map and returns the selected data specified by
 /// `return_type`.
 #[must_use]
-pub fn get_by_index_range_from<TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_index_range_from(
     bin: &str,
     index: i64,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByIndexRange as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Int(index),
         ],
     };
@@ -1183,16 +1136,16 @@ pub fn get_by_index_range_from<TMR: ToMapReturnTypeBitmask>(
 /// Creates map get by rank operation. Server selects the map item identified by rank and
 /// returns the selected data specified by `return_type`.
 #[must_use]
-pub fn get_by_rank<TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_rank(
     bin: &str,
     rank: i64,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByRank as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Int(rank),
         ],
     };
@@ -1207,17 +1160,17 @@ pub fn get_by_rank<TMR: ToMapReturnTypeBitmask>(
 /// Creates map get rank range operation. Server selects `count` map items at the specified
 /// rank and returns the selected data specified by `return_type`.
 #[must_use]
-pub fn get_by_rank_range<TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_rank_range(
     bin: &str,
     rank: i64,
     count: i64,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByRankRange as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Int(rank),
             CdtArgument::Int(count),
         ],
@@ -1234,16 +1187,16 @@ pub fn get_by_rank_range<TMR: ToMapReturnTypeBitmask>(
 /// specified rank to the last ranked item and returns the selected data specified by
 /// `return_type`.
 #[must_use]
-pub fn get_by_rank_range_from<TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_rank_range_from(
     bin: &str,
     rank: i64,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByRankRange as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Int(rank),
         ],
     };
@@ -1268,17 +1221,17 @@ pub fn get_by_rank_range_from<TMR: ToMapReturnTypeBitmask>(
 /// (3,2) = [{9=10}]
 /// (3,-2) = [{0=17},{4=2},{5=15},{9=10}]
 #[must_use]
-pub fn remove_by_key_relative_index_range<TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_key_relative_index_range(
     bin: &str,
     key: Value,
     index: i64,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByKeyRelIndexRange as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Value(key),
             CdtArgument::Int(index),
         ],
@@ -1304,18 +1257,18 @@ pub fn remove_by_key_relative_index_range<TMR: ToMapReturnTypeBitmask>(
 /// (3,2,1) = [{9=10}]
 /// (3,-2,2) = [{0=17}]
 #[must_use]
-pub fn remove_by_key_relative_index_range_count<TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_key_relative_index_range_count(
     bin: &str,
     key: Value,
     index: i64,
     count: i64,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByKeyRelIndexRange as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Value(key),
             CdtArgument::Int(index),
             CdtArgument::Int(count),
@@ -1339,17 +1292,17 @@ pub fn remove_by_key_relative_index_range_count<TMR: ToMapReturnTypeBitmask>(
 /// (11,1) = [{0=17}]
 /// (11,-1) = [{9=10},{5=15},{0=17}]
 #[must_use]
-pub fn remove_by_value_relative_rank_range<TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_value_relative_rank_range(
     bin: &str,
     value: Value,
     rank: i64,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByValueRelRankRange as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Value(value),
             CdtArgument::Int(rank),
         ],
@@ -1373,18 +1326,18 @@ pub fn remove_by_value_relative_rank_range<TMR: ToMapReturnTypeBitmask>(
 /// (11,1,1) = [{0=17}]
 /// (11,-1,1) = [{9=10}]
 #[must_use]
-pub fn remove_by_value_relative_rank_range_count<TMR: ToMapReturnTypeBitmask>(
+pub fn remove_by_value_relative_rank_range_count(
     bin: &str,
     value: Value,
     rank: i64,
     count: i64,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::RemoveByValueRelRankRange as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Value(value),
             CdtArgument::Int(rank),
             CdtArgument::Int(count),
@@ -1401,16 +1354,16 @@ pub fn remove_by_value_relative_rank_range_count<TMR: ToMapReturnTypeBitmask>(
 /// Creates a map get by key list operation.
 /// Server selects map items identified by keys and returns selected data specified by returnType.
 #[must_use]
-pub fn get_by_key_list<TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_key_list(
     bin: &str,
     keys: Vec<Value>,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByKeyList as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::List(keys),
         ],
     };
@@ -1425,16 +1378,16 @@ pub fn get_by_key_list<TMR: ToMapReturnTypeBitmask>(
 /// Creates a map get by value list operation.
 /// Server selects map items identified by values and returns selected data specified by returnType.
 #[must_use]
-pub fn get_by_value_list<TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_value_list(
     bin: &str,
     values: Vec<Value>,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByValueList as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::List(values),
         ],
     };
@@ -1459,17 +1412,17 @@ pub fn get_by_value_list<TMR: ToMapReturnTypeBitmask>(
 /// (3,2) = [{9=10}]
 /// (3,-2) = [{0=17},{4=2},{5=15},{9=10}]
 #[must_use]
-pub fn get_by_key_relative_index_range<TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_key_relative_index_range(
     bin: &str,
     key: Value,
     index: i64,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByKeyRelIndexRange as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Value(key),
             CdtArgument::Int(index),
         ],
@@ -1495,18 +1448,18 @@ pub fn get_by_key_relative_index_range<TMR: ToMapReturnTypeBitmask>(
 /// (3,2,1) = [{9=10}]
 /// (3,-2,2) = [{0=17}]
 #[must_use]
-pub fn get_by_key_relative_index_range_count<TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_key_relative_index_range_count(
     bin: &str,
     key: Value,
     index: i64,
     count: i64,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByKeyRelIndexRange as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Value(key),
             CdtArgument::Int(index),
             CdtArgument::Int(count),
@@ -1530,17 +1483,17 @@ pub fn get_by_key_relative_index_range_count<TMR: ToMapReturnTypeBitmask>(
 /// (11,1) = [{0=17}]
 /// (11,-1) = [{9=10},{5=15},{0=17}]
 #[must_use]
-pub fn get_by_value_relative_rank_range<TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_value_relative_rank_range(
     bin: &str,
     value: Value,
     rank: i64,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByValueRelRankRange as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Value(value),
             CdtArgument::Int(rank),
         ],
@@ -1564,18 +1517,18 @@ pub fn get_by_value_relative_rank_range<TMR: ToMapReturnTypeBitmask>(
 /// (11,1,1) = [{0=17}]
 /// (11,-1,1) = [{9=10}]
 #[must_use]
-pub fn get_by_value_relative_rank_range_count<TMR: ToMapReturnTypeBitmask>(
+pub fn get_by_value_relative_rank_range_count(
     bin: &str,
     value: Value,
     rank: i64,
     count: i64,
-    return_type: TMR,
+    return_type: MapReturnType,
 ) -> Operation {
     let cdt_op = CdtOperation {
         op: CdtMapOpType::GetByValueRelRankRange as u8,
         encoder: Arc::new(pack_cdt_op),
         args: vec![
-            CdtArgument::Int(return_type.to_bitmask()),
+            CdtArgument::Int(return_type.bits()),
             CdtArgument::Value(value),
             CdtArgument::Int(rank),
             CdtArgument::Int(count),

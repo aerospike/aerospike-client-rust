@@ -186,7 +186,7 @@ pub use errors::{Error, ErrorKind, Result};
 pub use expressions::ael::from_ael;
 #[doc(hidden)] // AEL wire packing, for tooling
 pub use expressions::ael::{pack_ael_server_filter, SERVER_COMPILED_AEL_EXPRESSION_OP};
-pub use expressions::regex_flag::RegexFlag;
+pub use expressions::regex_flag::RegexFlags;
 pub use key::Key;
 pub use mapping::RecordMapper;
 pub use metrics::{
@@ -250,6 +250,7 @@ mod common;
 #[cfg(feature = "dynamic-config")]
 pub mod config;
 pub mod expressions;
+mod flags;
 mod locks;
 #[cfg(feature = "lua")]
 pub mod lua;

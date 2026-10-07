@@ -58,7 +58,7 @@ pub(crate) enum BitExpOp {
 /// use aerospike::expressions::bitwise::{count, resize};
 /// let _ = eq(
 ///   count(int_val(0), int_val(3),
-///     resize(&BitPolicy::default(), int_val(4), BitwiseResizeFlags::Default, blob_bin("a".to_string()))),
+///     resize(&BitPolicy::default(), int_val(4), BitwiseResizeFlags::DEFAULT, blob_bin("a".to_string()))),
 ///   int_val(2));
 /// ```
 #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -72,8 +72,8 @@ pub fn resize(
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::Resize as i64)),
         ExpressionArgument::FilterExpression(byte_size),
-        ExpressionArgument::Value(Value::from(policy.flags)),
-        ExpressionArgument::Value(Value::from(resize_flags as u8)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
+        ExpressionArgument::Value(Value::from(resize_flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -108,7 +108,7 @@ pub fn insert(
         ExpressionArgument::Value(Value::from(BitExpOp::Insert as i64)),
         ExpressionArgument::FilterExpression(byte_offset),
         ExpressionArgument::FilterExpression(value),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -141,7 +141,7 @@ pub fn remove(
         ExpressionArgument::Value(Value::from(BitExpOp::Remove as i64)),
         ExpressionArgument::FilterExpression(byte_offset),
         ExpressionArgument::FilterExpression(byte_size),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -178,7 +178,7 @@ pub fn set(
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(value),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -207,7 +207,7 @@ pub fn or(
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(value),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -236,7 +236,7 @@ pub fn xor(
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(value),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -265,7 +265,7 @@ pub fn and(
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(value),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -290,7 +290,7 @@ pub fn not(
         ExpressionArgument::Value(Value::from(BitExpOp::Not as i64)),
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -318,7 +318,7 @@ pub fn lshift(
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(shift),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -346,7 +346,7 @@ pub fn rshift(
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(shift),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -384,7 +384,7 @@ pub fn add(
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(value),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
         ExpressionArgument::Value(Value::from(flags)),
     ];
     add_write(bin, args)
@@ -423,7 +423,7 @@ pub fn subtract(
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(value),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
         ExpressionArgument::Value(Value::from(flags)),
     ];
     add_write(bin, args)
@@ -453,7 +453,7 @@ pub fn set_int(
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(value),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
     ];
     add_write(bin, args)
 }

@@ -603,7 +603,7 @@ fn expression_rec_ops() {
         &client,
         regex_compare(
             "[1-5]".to_string(),
-            RegexFlag::Icase as i64,
+            RegexFlags::ICASE,
             string_bin("bin2".to_string()),
         ),
         &set_name,

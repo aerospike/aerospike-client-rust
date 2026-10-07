@@ -153,7 +153,16 @@
     `ReadTouchTtl`, `HllPolicy`/`HllWriteFlags`, `Value::GeoJson`/`Value::Hll`, `AuthMode::Pki`,
     `PrivilegeCode::{UdfAdmin, SindexAdmin, ReadWriteUdf}`, `ResultCode::XdrKeyBusy`,
     `QueryDuration::LongRelaxAp`; enum variants are too: `ExpType::{Nil, Bool, Int, String, List,
-    Map, Blob, Float, Geo, Hll}`, `RegexFlag::{None, Extended, Icase, Nosub, Newline}`. Policies
+    Map, Blob, Float, Geo, Hll}`. Every flag set is one shape, a newtype with SCREAMING constants
+    combined with `|` (`ListWriteFlags::ADD_UNIQUE | ListWriteFlags::NO_FAIL`), `bits()` and an
+    unchecked `from_bits()` for flags the server knows before the client does: `ListWriteFlags`,
+    `ListSortFlags`, `MapWriteFlags`, `BitwiseWriteFlags`, `BitwiseResizeFlags`, `HllWriteFlags`,
+    `ExpWriteFlags`, `ExpReadFlags`, `RegexFlags` (was `RegexFlag`, and `regex_compare` takes it),
+    plus the existing string and path flags with a private field. Policy `flags` fields are typed,
+    the `To*FlagsBitmask` traits and the flag-combining `new_with_flags` constructors are gone,
+    and `bitwise::resize` takes `BitwiseResizeFlags` instead of an `Option`. `ListReturnType` and
+    `MapReturnType` are newtypes with selector constants and `.inverted()`; the `Inverted`
+    variant, the `Inverted*Return` wrappers and the `To*ReturnTypeBitmask` traits are gone. Policies
     stay plain structs with public fields, built from
     `Default` by mutation or struct-update syntax (see the `policy` module docs).
   * **Breaking**: `replica` moved from `ReadPolicy`, `QueryPolicy` and `BatchPolicy` to

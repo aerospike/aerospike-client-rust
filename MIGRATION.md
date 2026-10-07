@@ -195,7 +195,40 @@ alphas:
 | `ResultCode::XDRKeyBusy` | `ResultCode::XdrKeyBusy` |
 | `QueryDuration::LongRelaxAP` | `QueryDuration::LongRelaxAp` |
 | `ExpType::{NIL, BOOL, INT, STRING, LIST, MAP, BLOB, FLOAT, GEO, HLL}` | `ExpType::{Nil, Bool, Int, String, List, Map, Blob, Float, Geo, Hll}` |
-| `RegexFlag::{NONE, EXTENDED, ICASE, NOSUB, NEWLINE}` | `RegexFlag::{None, Extended, Icase, Nosub, Newline}` |
+| `RegexFlag::{NONE, EXTENDED, ICASE, NOSUB, NEWLINE}` enum, `regex_compare(regex, flags: i64, bin)` with `RegexFlag::ICASE as i64` | `RegexFlags` with the same constants, combined with `\|`; `regex_compare(regex, flags: RegexFlags, bin)` |
+
+### Flags and return types
+
+Every flag set in the operation and expression builders is one shape: a
+newtype with SCREAMING constants, combined with `|`. `bits()` gives the raw
+value and `from_bits(raw)` accepts one, so a flag the server supports before
+this client names it can still be sent.
+
+| 2.x / 3.0 alphas | 3.0 |
+|---|---|
+| `ListPolicy::new_with_flags(order, vec![ListWriteFlags::AddUnique, ListWriteFlags::NoFail])` | `ListPolicy::new(order, ListWriteFlags::ADD_UNIQUE \| ListWriteFlags::NO_FAIL)` |
+| `HllPolicy::new_with_flags([HllWriteFlags::CreateOnly, HllWriteFlags::NoFail])` | `HllPolicy::new(HllWriteFlags::CREATE_ONLY \| HllWriteFlags::NO_FAIL)` |
+| `BitPolicy::new(BitwiseWriteFlags::CreateOnly as u8 \| BitwiseWriteFlags::NoFail as u8)` | `BitPolicy::new(BitwiseWriteFlags::CREATE_ONLY \| BitwiseWriteFlags::NO_FAIL)` |
+| `MapPolicy::new_with_flags(order, flags: u8)`, `MapWriteFlags` a module of `u8` constants | same call, `flags: MapWriteFlags` |
+| `write_exp(bin, exp, vec![ExpWriteFlags::AllowDelete, ExpWriteFlags::PolicyNoFail])` | `write_exp(bin, exp, ExpWriteFlags::ALLOW_DELETE \| ExpWriteFlags::POLICY_NO_FAIL)` |
+| `read_exp(bin, exp, ExpReadFlags::EvalNoFail)` | `read_exp(bin, exp, ExpReadFlags::EVAL_NO_FAIL)` |
+| `bitwise::resize(bin, size, Some(BitwiseResizeFlags::FromFront), &policy)` | `bitwise::resize(bin, size, BitwiseResizeFlags::FROM_FRONT, &policy)`; `None` is `DEFAULT` |
+| `lists::sort(bin, ListSortFlags::DropDuplicates)` | `lists::sort(bin, ListSortFlags::DESCENDING \| ListSortFlags::DROP_DUPLICATES)` |
+| `ListPolicy.flags: u8`, `HllPolicy.flags: i64`, `BitPolicy.flags: u8`, `MapPolicy.flags: u8` | the typed flag set |
+| `StringWriteFlags(raw)`, `SelectFlag(raw)` (public field) | `StringWriteFlags::from_bits(raw)`; the field is private |
+| `ToListWriteFlagsBitmask`, `ToHllWriteFlagsBitmask`, `ToExpWriteFlagBitmask`, `ToExpReadFlagBitmask` | removed |
+
+`ListReturnType` and `MapReturnType` are newtypes with selector constants and
+an `inverted()` method; the `Inverted` variant, the `InvertedListReturn` /
+`InvertedMapReturn` wrappers and the `ToListReturnTypeBitmask` /
+`ToMapReturnTypeBitmask` traits are gone, and the builders take the return
+type by value. Selectors are numbers, not bits, so there is no `|` on them.
+
+| 2.x / 3.0 alphas | 3.0 |
+|---|---|
+| `ListReturnType::Values`, `MapReturnType::KeyValue`, … | `ListReturnType::VALUES`, `MapReturnType::KEY_VALUE`, … |
+| `InvertedListReturn(ListReturnType::Values)` | `ListReturnType::VALUES.inverted()` |
+| `InvertedMapReturn(MapReturnType::KeyValue)` | `MapReturnType::KEY_VALUE.inverted()` |
 
 ### Values and records
 

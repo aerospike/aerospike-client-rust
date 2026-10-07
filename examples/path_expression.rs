@@ -70,7 +70,7 @@ pub async fn run() {
     let ctx_book = ctx_map_key(Value::from("book"));
     let ctx_cheap = ctx_all_children_with_filter(le(
         get_by_key(
-            MapReturnType::Value,
+            MapReturnType::VALUE,
             ExpType::Float,
             string_val("price".to_string()),
             exp_map_loop_var(LoopVarPart::VALUE),

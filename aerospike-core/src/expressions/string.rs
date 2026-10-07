@@ -325,7 +325,7 @@ pub fn regex_compare_with_flags(
         vec![
             sub(REGEX_COMPARE),
             ExpressionArgument::FilterExpression(pattern),
-            ExpressionArgument::Value(Value::Int(regex_flags.0)),
+            ExpressionArgument::Value(Value::Int(regex_flags.bits())),
         ],
     )
 }
@@ -651,7 +651,7 @@ pub fn regex_replace(
         vec![
             sub(REGEX_REPLACE),
             ExpressionArgument::QuotedExpressions(vec![pattern, replacement]),
-            ExpressionArgument::Value(Value::Int(regex_flags.0)),
+            ExpressionArgument::Value(Value::Int(regex_flags.bits())),
             ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )

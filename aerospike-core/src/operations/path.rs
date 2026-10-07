@@ -19,36 +19,32 @@ use crate::expressions::Expression;
 use crate::operations::cdt_context::{CdtContext, DEFAULT_CTX};
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 
-/// Flags for `select_by_path` operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SelectFlag(pub i64);
-
-impl SelectFlag {
+crate::flags::bit_flags! {
+    /// Flags for [`select_by_path`]. Combine with `|`.
+    pub struct SelectFlag(i64);
     /// Return a tree from root to the bottom, with only non-filtered nodes.
-    pub const MATCHING_TREE: SelectFlag = SelectFlag(0);
+    const MATCHING_TREE = 0;
     /// Return values of the finally-selected nodes.
-    pub const VALUE: SelectFlag = SelectFlag(1);
-    /// Synonym for VALUE — clarifies list element expectations.
-    pub const LIST_VALUE: SelectFlag = SelectFlag(1);
-    /// Synonym for VALUE — clarifies map value expectations.
-    pub const MAP_VALUE: SelectFlag = SelectFlag(1);
+    const VALUE = 1;
+    /// Synonym for `VALUE` — clarifies list element expectations.
+    const LIST_VALUE = 1;
+    /// Synonym for `VALUE` — clarifies map value expectations.
+    const MAP_VALUE = 1;
     /// Return only map keys of the finally-selected nodes.
-    pub const MAP_KEY: SelectFlag = SelectFlag(2);
+    const MAP_KEY = 2;
     /// Return map key-value pairs of the finally-selected nodes.
-    pub const MAP_KEY_VALUE: SelectFlag = SelectFlag(3);
+    const MAP_KEY_VALUE = 3;
     /// Ignore invalid type mismatches instead of failing.
-    pub const NO_FAIL: SelectFlag = SelectFlag(0x10);
+    const NO_FAIL = 0x10;
 }
 
-/// Flags for `modify_by_path` operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ModifyFlag(pub i64);
-
-impl ModifyFlag {
+crate::flags::bit_flags! {
+    /// Flags for [`modify_by_path`]. Combine with `|`.
+    pub struct ModifyFlag(i64);
     /// Default behavior. Fails on type mismatches.
-    pub const DEFAULT: ModifyFlag = ModifyFlag(0);
+    const DEFAULT = 0;
     /// Ignore type errors instead of failing.
-    pub const NO_FAIL: ModifyFlag = ModifyFlag(0x10);
+    const NO_FAIL = 0x10;
 }
 
 /// Creates a CDT operate read operation using a CDT path expression context.

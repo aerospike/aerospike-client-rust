@@ -32,9 +32,12 @@ const BIN_NAME_DIGESTS: &str = "keyds";
 const fn txn_ordered_list_policy() -> ListPolicy {
     ListPolicy {
         attributes: ListOrderType::Ordered,
-        flags: ListWriteFlags::AddUnique as u8
-            | ListWriteFlags::NoFail as u8
-            | ListWriteFlags::Partial as u8,
+        // `|` is not const; the three flags OR'd by hand.
+        flags: ListWriteFlags::from_bits(
+            ListWriteFlags::ADD_UNIQUE.bits()
+                | ListWriteFlags::NO_FAIL.bits()
+                | ListWriteFlags::PARTIAL.bits(),
+        ),
     }
 }
 

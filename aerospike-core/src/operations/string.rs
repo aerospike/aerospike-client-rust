@@ -90,40 +90,29 @@ pub enum StringNumericType {
     Float = 2,
 }
 
-/// Regex behavior flags for [`regex_compare_with_flags`] and [`regex_replace`].
-/// Combine values with bitwise OR.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StringRegexFlags(pub i64);
-
-impl StringRegexFlags {
+crate::flags::bit_flags! {
+    /// Regex behavior flags for [`regex_compare_with_flags`] and [`regex_replace`].
+    /// Combine with `|`.
+    pub struct StringRegexFlags(i64);
     /// Default ICU regex flags (no options).
-    pub const DEFAULT: StringRegexFlags = StringRegexFlags(0);
+    const DEFAULT = 0;
     /// Case-insensitive matching.
-    pub const CASE_INSENSITIVE: StringRegexFlags = StringRegexFlags(1 << 0);
+    const CASE_INSENSITIVE = 1 << 0;
     /// Multi-line: `^` and `$` match the start and end of any line.
-    pub const MULTILINE: StringRegexFlags = StringRegexFlags(1 << 1);
+    const MULTILINE = 1 << 1;
     /// `.` matches any character including line terminators.
-    pub const DOT_ALL: StringRegexFlags = StringRegexFlags(1 << 2);
+    const DOT_ALL = 1 << 2;
     /// Only `\n` is treated as a line terminator (Unix-style line endings).
-    pub const UNIX_LINES: StringRegexFlags = StringRegexFlags(1 << 3);
+    const UNIX_LINES = 1 << 3;
     /// Replace every match. Only meaningful for regex replace operations.
-    pub const GLOBAL: StringRegexFlags = StringRegexFlags(1 << 4);
+    const GLOBAL = 1 << 4;
 }
 
-impl std::ops::BitOr for StringRegexFlags {
-    type Output = StringRegexFlags;
-    fn bitor(self, rhs: StringRegexFlags) -> StringRegexFlags {
-        StringRegexFlags(self.0 | rhs.0)
-    }
-}
-
-/// Write semantics for string modify operations. Combine values with bitwise OR.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StringWriteFlags(pub i64);
-
-impl StringWriteFlags {
+crate::flags::bit_flags! {
+    /// Write semantics for string modify operations. Combine with `|`.
+    pub struct StringWriteFlags(i64);
     /// Allow create or update.
-    pub const DEFAULT: StringWriteFlags = StringWriteFlags(0);
+    const DEFAULT = 0;
 
     /// Apply the operation only if the bin does not already exist. A live bin
     /// fails with `BIN_EXISTS_ERROR`.
@@ -139,13 +128,13 @@ impl StringWriteFlags {
     /// `PARAMETER_ERROR`. The server resolves all three of these while parsing
     /// arguments, so [`NO_FAIL`](StringWriteFlags::NO_FAIL) does not suppress
     /// them.
-    pub const CREATE_ONLY: StringWriteFlags = StringWriteFlags(1);
+    const CREATE_ONLY = 1;
 
     /// Apply the operation only to an existing bin, disabling bin creation. An
     /// absent bin is a no-op rather than a create. Valid on every string modify
     /// operation. Cannot be combined with
     /// [`CREATE_ONLY`](StringWriteFlags::CREATE_ONLY).
-    pub const UPDATE_ONLY: StringWriteFlags = StringWriteFlags(2);
+    const UPDATE_ONLY = 2;
 
     /// Suppress the failure if the operation cannot be applied, leaving the bin
     /// unchanged. The bin — and the value a modify expression evaluates to —
@@ -162,14 +151,7 @@ impl StringWriteFlags {
     /// create-capable operations listed under
     /// [`CREATE_ONLY`](StringWriteFlags::CREATE_ONLY) create it, every other
     /// operation is a no-op.
-    pub const NO_FAIL: StringWriteFlags = StringWriteFlags(4);
-}
-
-impl std::ops::BitOr for StringWriteFlags {
-    type Output = StringWriteFlags;
-    fn bitor(self, rhs: StringWriteFlags) -> StringWriteFlags {
-        StringWriteFlags(self.0 | rhs.0)
-    }
+    const NO_FAIL = 4;
 }
 
 /// Per-operation policy carrying [`StringWriteFlags`].
@@ -185,7 +167,9 @@ pub struct StringPolicy {
 impl StringPolicy {
     /// Construct a new policy with the supplied write flags.
     pub const fn new(flags: StringWriteFlags) -> Self {
-        StringPolicy { flags: flags.0 }
+        StringPolicy {
+            flags: flags.bits(),
+        }
     }
 
     /// Returns the raw write-flags bitmask carried by this policy.
@@ -469,7 +453,7 @@ pub fn regex_compare_with_flags(
     read_op(
         STR_OP_REGEX_COMPARE,
         bin,
-        vec![Value::from(pattern), Value::Int(regex_flags.0)],
+        vec![Value::from(pattern), Value::Int(regex_flags.bits())],
     )
 }
 
@@ -735,7 +719,7 @@ pub fn regex_replace(
         bin,
         vec![
             Value::List(vec![Value::from(pattern), Value::from(replacement)]),
-            Value::Int(regex_flags.0),
+            Value::Int(regex_flags.bits()),
             Value::Int(policy.flags),
         ],
     )

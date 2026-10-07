@@ -140,9 +140,9 @@ impl Operation {
             OperationData::None => 0,
             OperationData::Value(value) => value.estimate_size()?,
             OperationData::EXPOp(ref exp_op) => exp_op.estimate_size()?,
-            OperationData::CdtSelectByPath(ctx, flag) => pack_path_select(&mut None, ctx, flag.0)?,
+            OperationData::CdtSelectByPath(ctx, flag) => pack_path_select(&mut None, ctx, flag.bits())?,
             OperationData::CdtModifyByPath(ctx, flag, exp) => {
-                pack_path_modify_exp(&mut None, ctx, flag.0, exp)?
+                pack_path_modify_exp(&mut None, ctx, flag.bits(), exp)?
             }
             OperationData::CdtListOp(ref cdt_op)
             | OperationData::CdtMapOp(ref cdt_op)
@@ -184,11 +184,11 @@ impl Operation {
             }
             OperationData::CdtSelectByPath(ctx, flag) => {
                 size += self.write_op_header_to(buffer, ParticleType::Blob as u8);
-                size += pack_path_select(&mut Some(buffer), ctx, flag.0)?;
+                size += pack_path_select(&mut Some(buffer), ctx, flag.bits())?;
             }
             OperationData::CdtModifyByPath(ctx, flag, exp) => {
                 size += self.write_op_header_to(buffer, ParticleType::Blob as u8);
-                size += pack_path_modify_exp(&mut Some(buffer), ctx, flag.0, exp)?;
+                size += pack_path_modify_exp(&mut Some(buffer), ctx, flag.bits(), exp)?;
             }
             OperationData::StringOp(ref s_op) => {
                 size += self.write_op_header_to(buffer, ParticleType::String as u8);

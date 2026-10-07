@@ -451,7 +451,7 @@ async fn batch_operate_read_multi_op_single_bin() {
         key.clone(),
         vec![
             lists::size("lbin"),
-            lists::get_by_index("lbin", -1, lists::ListReturnType::Values),
+            lists::get_by_index("lbin", -1, lists::ListReturnType::VALUES),
         ],
     );
     let mut list = vec![br];

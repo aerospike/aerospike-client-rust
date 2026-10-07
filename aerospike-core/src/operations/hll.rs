@@ -24,74 +24,43 @@ use crate::operations::cdt_context::DEFAULT_CTX;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::Value;
 
-/// `HllWriteFlags` determines write flags for HLL
-#[derive(Debug, Clone, Copy)]
-pub enum HllWriteFlags {
+crate::flags::bit_flags! {
+    /// Write flags for HLL operations, carried by [`HllPolicy`]. Combine with `|`.
+    pub struct HllWriteFlags(u8);
     /// Default. Allow create or update.
-    Default = 0,
+    const DEFAULT = 0;
     /// If the bin already exists, the operation will be denied.
     /// If the bin does not exist, a new bin will be created.
-    CreateOnly = 1,
+    const CREATE_ONLY = 1;
     /// If the bin already exists, the bin will be overwritten.
     /// If the bin does not exist, the operation will be denied.
-    UpdateOnly = 2,
+    const UPDATE_ONLY = 2;
     /// Do not raise error if operation is denied.
-    NoFail = 4,
+    const NO_FAIL = 4;
     /// Allow the resulting set to be the minimum of provided index bits.
     /// Also, allow the usage of less precise HLL algorithms when minHash bits
     /// of all participating sets do not match.
-    AllowFold = 8,
-}
-
-/// Something that can be resolved into a set of `ExpWriteFlags`. Either a single [`HllWriteFlags`], `Option<HllWriteFlags>`, [`HllWriteFlags`], etc.
-pub trait ToHllWriteFlagsBitmask {
-    /// Convert to an i64 bitmask
-    fn to_bitmask(self) -> i64;
-}
-
-impl ToHllWriteFlagsBitmask for HllWriteFlags {
-    fn to_bitmask(self) -> i64 {
-        self as i64
-    }
-}
-
-impl<T: IntoIterator<Item = HllWriteFlags>> ToHllWriteFlagsBitmask for T {
-    fn to_bitmask(self) -> i64 {
-        let mut out = 0;
-        for val in self {
-            out |= val.to_bitmask();
-        }
-        out
-    }
+    const ALLOW_FOLD = 8;
 }
 
 /// `HllPolicy` operation policy.
 #[derive(Debug, Clone, Copy)]
 pub struct HllPolicy {
-    /// `CdtListWriteFlags`
-    pub flags: i64,
+    /// The write flags.
+    pub flags: HllWriteFlags,
 }
 
 impl HllPolicy {
-    /// Use specified `HllWriteFlags` when performing `HLL` operations
+    /// Use the given [`HllWriteFlags`] (combine them with `|`) when performing HLL operations.
     pub const fn new(write_flags: HllWriteFlags) -> Self {
-        HllPolicy {
-            flags: write_flags as i64,
-        }
-    }
-
-    /// Use specified `HllWriteFlags` or combination thereof when performing `HLL` operations
-    pub fn new_with_flags<HWF: ToHllWriteFlagsBitmask>(write_flags: HWF) -> Self {
-        HllPolicy {
-            flags: write_flags.to_bitmask(),
-        }
+        HllPolicy { flags: write_flags }
     }
 }
 
 impl Default for HllPolicy {
     /// Returns the default policy for HLL operations.
     fn default() -> Self {
-        HllPolicy::new(HllWriteFlags::Default)
+        HllPolicy::new(HllWriteFlags::DEFAULT)
     }
 }
 
@@ -134,7 +103,7 @@ pub fn init_with_min_hash(
         args: vec![
             CdtArgument::Int(index_bit_count),
             CdtArgument::Int(min_hash_bit_count),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags.bits()),
         ],
     };
     Operation {
@@ -185,7 +154,7 @@ pub fn add_with_index_and_min_hash(
             CdtArgument::List(list),
             CdtArgument::Int(index_bit_count),
             CdtArgument::Int(min_hash_bit_count),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags.bits()),
         ],
     };
     Operation {
@@ -206,7 +175,7 @@ pub fn set_union(policy: &HllPolicy, bin: &str, list: Vec<Value>) -> Operation {
         encoder: Arc::new(pack_hll_op),
         args: vec![
             CdtArgument::List(list),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags.bits()),
         ],
     };
     Operation {

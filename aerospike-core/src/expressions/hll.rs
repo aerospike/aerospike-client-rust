@@ -53,7 +53,7 @@ pub fn init_with_min_hash(
             ExpressionArgument::Value(Value::from(HllExpOp::Init as i64)),
             ExpressionArgument::FilterExpression(index_bit_count),
             ExpressionArgument::FilterExpression(min_hash_count),
-            ExpressionArgument::Value(Value::from(policy.flags)),
+            ExpressionArgument::Value(Value::from(policy.flags.bits())),
         ],
     )
 }
@@ -124,7 +124,7 @@ pub fn add_with_index_and_min_hash(
             ExpressionArgument::FilterExpression(list),
             ExpressionArgument::FilterExpression(index_bit_count),
             ExpressionArgument::FilterExpression(min_hash_count),
-            ExpressionArgument::Value(Value::from(policy.flags)),
+            ExpressionArgument::Value(Value::from(policy.flags.bits())),
         ],
     )
 }
@@ -257,7 +257,7 @@ pub fn get_similarity(list: Expression, bin: Expression) -> Expression {
 /// use aerospike::expressions::hll::describe;
 ///
 /// // Bin "a" `indexBitCount` < 10
-/// let _ = lt(get_by_index(ListReturnType::Values, ExpType::Int, int_val(0), describe(hll_bin("a".to_string())), &[]), int_val(10));
+/// let _ = lt(get_by_index(ListReturnType::VALUES, ExpType::Int, int_val(0), describe(hll_bin("a".to_string())), &[]), int_val(10));
 /// ```
 #[must_use]
 pub fn describe(bin: Expression) -> Expression {
