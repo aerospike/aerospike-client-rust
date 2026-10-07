@@ -624,6 +624,10 @@ impl Client {
     ///
     /// * [`BatchOperation`], [`BatchRecord`], [`get`](Self::get)
     ///
+    /// `policy` is the batch-wide parent policy. A batch of reads takes
+    /// [`BatchPolicy::default`]; a batch with writes, deletes or UDF calls
+    /// should take [`BatchPolicy::write_default`], which does not retry.
+    ///
     /// # Examples
     ///
     /// ```rust,edition2021

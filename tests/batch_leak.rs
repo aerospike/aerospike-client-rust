@@ -112,7 +112,7 @@ fn random_batch(r: &mut Rng, keys: &[Key]) -> (BatchPolicy, Vec<BatchOperation>)
         })
         .collect();
     let mut policy = BatchPolicy::default();
-    policy.replica = if r.below(2) == 0 {
+    policy.base_policy.replica = if r.below(2) == 0 {
         Replica::Master
     } else {
         Replica::Sequence
@@ -225,7 +225,7 @@ async fn retry_resplit_path_does_not_leak() {
         tripped.incr_error_rate();
     }
     let mut bpolicy = BatchPolicy::default();
-    bpolicy.replica = Replica::Sequence;
+    bpolicy.base_policy.replica = Replica::Sequence;
     bpolicy.base_policy.max_retries = 3;
     bpolicy.base_policy.sleep_between_retries = 0;
     bpolicy.base_policy.total_timeout = 10_000;

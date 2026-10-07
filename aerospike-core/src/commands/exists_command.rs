@@ -33,7 +33,7 @@ impl<'a> ExistsCommand<'a> {
         let partition = crate::cluster::partition::Partition::for_read(
             &cluster,
             key,
-            policy.replica,
+            policy.base_policy.replica,
             policy.base_policy.read_mode_sc,
         );
         ExistsCommand {

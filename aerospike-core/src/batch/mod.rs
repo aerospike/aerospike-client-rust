@@ -94,7 +94,6 @@ impl BatchReadPolicy {
     ) -> crate::policy::ReadPolicy {
         let mut rp = crate::policy::ReadPolicy::default();
         rp.base_policy = parent.base_policy.clone();
-        rp.replica = parent.replica;
         rp.base_policy.read_touch_ttl = self.read_touch_ttl;
         if self.filter_expression.is_some() {
             rp.base_policy

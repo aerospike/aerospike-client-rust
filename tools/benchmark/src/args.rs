@@ -81,8 +81,8 @@ impl Args {
         let mut batch_write_policy = BatchWritePolicy::default();
 
         // ---- replica & read modes ----
-        read_policy.replica = opts.replica;
-        batch_policy.replica = opts.replica;
+        read_policy.base_policy.replica = opts.replica;
+        batch_policy.base_policy.replica = opts.replica;
         read_policy.base_policy.read_mode_ap = opts.read_mode_ap;
         read_policy.base_policy.read_mode_sc = opts.read_mode_sc;
         batch_policy.base_policy.read_mode_ap = opts.read_mode_ap;

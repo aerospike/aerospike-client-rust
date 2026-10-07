@@ -874,11 +874,11 @@ impl Error {
             ErrorKind::Server { rc, .. } => {
                 commands_sent > 1 || (commands_sent == 1 && matches!(rc, ResultCode::Timeout))
             }
-            // Client-side timeouts / connection failures on a write command
-            // where at least one command reached the wire are always
-            // in-doubt: the request may have been applied without a response.
-            ErrorKind::Timeout | ErrorKind::Connection => commands_sent >= 1,
-            _ => false,
+            // Any client-side failure on a write command after at least one
+            // attempt reached the wire is in doubt (the Go rule): the request
+            // may have been applied without a readable response, whatever
+            // stopped the client from reading it.
+            _ => commands_sent >= 1,
         };
         if eligible {
             self.0.in_doubt = true;
@@ -1309,6 +1309,20 @@ mod tests {
         let err = Error::connection("read: early eof").set_in_doubt(true, 1);
         assert!(err.in_doubt());
         assert!(err.to_string().contains("In Doubt: true"), "{err}");
+    }
+
+    #[test]
+    fn any_client_side_failure_after_a_send_is_in_doubt() {
+        // Go's rule: once a write reached the wire, a failure the client
+        // produced itself (here: an unreadable response) leaves the write in
+        // doubt; before the first send nothing is.
+        assert!(Error::bad_response("truncated").set_in_doubt(true, 1).in_doubt());
+        assert!(Error::pool_empty().set_in_doubt(true, 2).in_doubt());
+        assert!(!Error::bad_response("truncated").set_in_doubt(true, 0).in_doubt());
+        // A definitive server answer is not in doubt after one send.
+        assert!(!Error::server_error(ResultCode::KeyNotFoundError, "n", None)
+            .set_in_doubt(true, 1)
+            .in_doubt());
     }
 
     #[test]

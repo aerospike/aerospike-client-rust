@@ -75,6 +75,15 @@ match client.get(&policy, &key, Bins::All).await {
   `err.server_error_detail()` when `BasePolicy::error_detail_verbosity` is set.
   `ErrorKind`, `ClientResultCode`, `ServerErrorDetail` and `ExpressionTrace`
   are exported at the crate root.
+- `ErrorKind` no longer wraps third-party error types. `Base64`, `PwHash` and
+  `Async` are gone; those failures arrive as `BadResponse` and `Client` with the
+  cause in the message. The internal `BatchRow` variant is gone too. The
+  std-type variants (`Io`, `InvalidUtf8`, `ParseAddr`, `ParseInt`) remain.
+- User code constructs errors with `Error::client_error`,
+  `Error::invalid_argument` and `Error::chain_error`. The kind-specific
+  constructors and the retry bookkeeping (`set_in_doubt`, `with_retry_context`,
+  `wrap`, `chain_cause`, `keep_connection`, `is_pool_empty`) are crate-private.
+  The accessors are unchanged.
 
 ### Batch
 
@@ -84,6 +93,7 @@ instead of returning a new vector.
 | 2.x | 3.0 |
 |---|---|
 | `batch(&self, &BatchPolicy, &[BatchOperation]) -> Result<Vec<BatchRecord>>` | `batch(&self, &BatchPolicy, &mut [BatchOperation]) -> Result<()>` |
+| one `BatchPolicy::default()` for every batch | `BatchPolicy::default()` for reads, `BatchPolicy::write_default()` (`max_retries` 0) for batches with writes, deletes or UDF calls |
 | `BatchOperation::batch_record(&self) -> BatchRecord` | `batch_record(&self) -> &BatchRecord`, plus `record()`, `take_record()`, `result_code()`, `in_doubt()`, `error()`, `node()` on the operation itself |
 | `BatchRecord { key, record, result_code, in_doubt }`, all public fields | `key` and `record` stay fields; `result_code()`, `in_doubt()`, `node()`, `error()`, `error_detail()`, `sub_code()`, `server_message()` are methods |
 | `match op { BatchOperation::Read { br, .. } => .. }` on the (hidden) enum variants | `BatchOperation` is a struct; the kind of operation is not inspectable after construction. Read the outcome through `batch_record()`, `record()`, `result_code()`, and keep your own index if you need to know which row was a read, write, delete or UDF |
@@ -125,7 +135,7 @@ The sync client's `batch` has the same new signature.
 
 `ResultCode`, `ClientResultCode`, `Value`, `AuthMode`, `Replica`, `IndexType`,
 `CollectionIndexType`, `PrivilegeCode`, `CommandType`, `CommitStatus`,
-`AbortStatus`, `TxnState`, `QueryDuration`, `ReadTouchTTL`, `UDFLang` and
+`AbortStatus`, `TxnState`, `QueryDuration`, `ReadTouchTtl`, `UdfLang` and
 `task::Status` carry `#[non_exhaustive]`. An exhaustive `match` on one of them
 needs a `_` arm.
 
@@ -145,11 +155,45 @@ needs a `_` arm.
 
 | 2.x | 3.0 |
 |---|---|
-| `consistency_level: ConsistencyLevel` (`ConsistencyOne`, `ConsistencyAll`) | `read_mode_ap: ReadModeAP` (`One`, `All`) for AP namespaces, plus `read_mode_sc: ReadModeSC` (`Session`, `Linearize`, `AllowReplica`) for strong-consistency namespaces |
+| `consistency_level: ConsistencyLevel` (`ConsistencyOne`, `ConsistencyAll`) | `read_mode_ap: ReadModeAp` (`One`, `All`) for AP namespaces, plus `read_mode_sc: ReadModeSc` (`Session`, `Linearize`, `AllowReplica`) for strong-consistency namespaces |
 | — | `txn`, `use_compression`, `compression_threshold`, `sleep_multiplier`, `error_detail_verbosity`, `populate_positional_results` |
+| `replica` on `ReadPolicy`, `QueryPolicy`, `BatchPolicy` | `base_policy.replica` on every policy, writes included; a write with `Sequence` or `PreferRack` fails over to the next replica on retry |
 
-`ConsistencyLevel` is removed from the crate root; `ReadModeAP`, `ReadModeSC`,
-`TlsPolicy`, `TxnVerifyPolicy` and `TxnRollPolicy` are exported there.
+`ConsistencyLevel` is removed from the crate root; `ReadModeAp`, `ReadModeSc`,
+`TlsPolicy`, `TxnVerifyPolicy` and `TxnRollPolicy` are exported there. The
+`Policy` trait is not: read the fields on `BasePolicy` instead of calling its
+getters.
+
+Policies remain plain structs with public fields and no `#[non_exhaustive]`.
+Build them from `Default`, by mutation or with struct-update syntax
+(`WritePolicy { expiration: Expiration::Seconds(60), ..WritePolicy::default() }`).
+Fields are added in minor releases, so a literal that names every field is not
+a supported way to build a policy.
+
+### Queries
+
+| 2.x | 3.0 |
+|---|---|
+| `Statement.filters: Option<Vec<Filter>>`, `set_filter(f)` | `Statement.filter: Option<Filter>`, `set_filter(f)`; the server accepts one filter per query, which is all the old list ever allowed |
+| `Statement.aggregation` public field | private; `set_aggregate_function` is unchanged |
+
+### Acronyms in identifiers
+
+Acronyms are `UpperCamelCase` words. Names that existed in 2.x or in the 3.0
+alphas:
+
+| before | 3.0 |
+|---|---|
+| `BatchUDFPolicy` | `BatchUdfPolicy` |
+| `UDFLang` | `UdfLang` |
+| `ReadModeAP`, `ReadModeSC` | `ReadModeAp`, `ReadModeSc` |
+| `ReadTouchTTL` | `ReadTouchTtl` |
+| `HLLPolicy`, `HLLWriteFlags`, `ToHLLWriteFlagsBitmask` | `HllPolicy`, `HllWriteFlags`, `ToHllWriteFlagsBitmask` |
+| `Value::GeoJSON`, `Value::HLL` | `Value::GeoJson`, `Value::Hll` |
+| `AuthMode::PKI` | `AuthMode::Pki` |
+| `PrivilegeCode::UDFAdmin`, `SIndexAdmin`, `ReadWriteUDF` | `UdfAdmin`, `SindexAdmin`, `ReadWriteUdf` |
+| `ResultCode::XDRKeyBusy` | `ResultCode::XdrKeyBusy` |
+| `QueryDuration::LongRelaxAP` | `QueryDuration::LongRelaxAp` |
 
 ### Values and records
 
@@ -197,7 +241,13 @@ needs a `_` arm.
 - `ClientPolicy.rack_ids = Some(vec![])` is rejected at validation instead of
   enabling rack awareness with no rack to prefer.
 - Default policy values are aligned with the Java client (see the tables
-  above for the ones that changed).
+  above for the ones that changed), with four deliberate exceptions:
+  `max_conns_per_node` 256 (Java 100); `idle_timeout` 0 disables idle reaping
+  (Java trims to `min_conns_per_node` after 55 s); `AdminPolicy.timeout` 0
+  falls back to 3 s (Java: no timeout); `QueryPolicy.record_queue_size` 1024
+  (Java 5000).
+- A write command that fails on the client after its request was sent is
+  always in doubt. 2.x marked only timeouts and connection failures.
 
 ### New in 3.0
 

@@ -575,7 +575,7 @@ async fn prefer_rack_read_routing() {
         .unwrap();
 
     let mut rpolicy = ReadPolicy::default();
-    rpolicy.replica = Replica::PreferRack;
+    rpolicy.base_policy.replica = Replica::PreferRack;
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
     assert_eq!(rec.bins.get("a"), Some(&as_val!(1)));
 
@@ -585,7 +585,7 @@ async fn prefer_rack_read_routing() {
     // node split.
     use aerospike::{BatchOperation, BatchPolicy, BatchReadPolicy, BatchWritePolicy, Bins as B};
     let mut bpolicy = BatchPolicy::default();
-    bpolicy.replica = Replica::PreferRack;
+    bpolicy.base_policy.replica = Replica::PreferRack;
     let wkey = as_key!(namespace, &set_name, "rack_batch_write");
     let mut batch = vec![
         BatchOperation::write(
@@ -672,7 +672,7 @@ async fn prefer_rack_reads_work_with_a_non_empty_rack_list() {
             .unwrap_or_else(|e| panic!("rack_ids={rack_ids:?} should build a client: {e}"));
 
         let mut rpolicy = ReadPolicy::default();
-        rpolicy.replica = Replica::PreferRack;
+        rpolicy.base_policy.replica = Replica::PreferRack;
 
         // A rack that matches reads from the preferred node; one that does not
         // reaches an active node through fallback. Both are reads, not

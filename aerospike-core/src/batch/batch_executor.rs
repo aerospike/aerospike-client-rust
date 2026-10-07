@@ -46,9 +46,7 @@ impl BatchExecutor {
         // replica), read records via the read-side logic including
         // PreferRack and the SC read-mode overrides.
         let mut partition = if has_write {
-            let mut partition = Partition::for_write(key);
-            partition.replica = replica;
-            partition
+            Partition::for_write(key, replica)
         } else {
             Partition::for_read(&self.cluster, key, replica, read_mode_sc)
         };
@@ -129,7 +127,7 @@ impl BatchExecutor {
         let BatchSplit {
             groups: batch_nodes,
             unroutable,
-        } = self.get_batch_operate_nodes(rows, policy.replica, policy.base_policy.read_mode_sc)?;
+        } = self.get_batch_operate_nodes(rows, policy.base_policy.replica, policy.base_policy.read_mode_sc)?;
 
         // Unroutable keys are decided already: report them now rather than
         // making the hook wait on the nodes that can answer.

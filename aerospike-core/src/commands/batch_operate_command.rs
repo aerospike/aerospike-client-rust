@@ -189,7 +189,7 @@ impl BatchOperateCommand {
         // policy walks a sequence (Java prepareRetry returns true for
         // Master/MasterProles/Random).
         let same_node_retry =
-            !matches!(self.policy.replica, Replica::Sequence | Replica::PreferRack);
+            !matches!(self.policy.base_policy.replica, Replica::Sequence | Replica::PreferRack);
 
         // Execute command until successful, timed out or maximum iterations have been reached.
         loop {
@@ -240,14 +240,12 @@ impl BatchOperateCommand {
                     // Borrow the key: `key()` clones two Strings per call.
                     let key = &op.batch_record().key;
                     let mut partition = if op.has_write() {
-                        let mut partition = Partition::for_write(key);
-                        partition.replica = self.policy.replica;
-                        partition
+                        Partition::for_write(key, self.policy.base_policy.replica)
                     } else {
                         Partition::for_read(
                             &cluster,
                             key,
-                            self.policy.replica,
+                            self.policy.base_policy.replica,
                             self.policy.base_policy.read_mode_sc,
                         )
                     };

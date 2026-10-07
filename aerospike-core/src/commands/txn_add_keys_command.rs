@@ -38,7 +38,7 @@ impl<'a> TxnAddKeysCommand<'a> {
         operations: Vec<Operation>,
         txn: Arc<Txn>,
     ) -> Self {
-        let partition = crate::cluster::partition::Partition::for_write(key);
+        let partition = crate::cluster::partition::Partition::for_write(key, policy.base_policy.replica);
         TxnAddKeysCommand {
             single_command: SingleCommand::new(cluster, key, partition),
             policy,

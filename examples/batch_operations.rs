@@ -51,7 +51,10 @@ end
     task.wait_till_complete(None).await.unwrap();
     println!("UDF registered successfully!");
 
+    // Reads take the default parent policy; batches that write take the
+    // write default, which does not retry.
     let bpolicy = BatchPolicy::default();
+    let bpolicy_w = BatchPolicy::write_default();
 
     let bin1 = as_bin!("a", "a value");
     let bin2 = as_bin!("b", "another value");
@@ -90,7 +93,7 @@ end
         BatchOperation::write(&bpw, key2.clone(), wops.clone()),
         BatchOperation::write(&bpw, key3.clone(), wops.clone()),
     ];
-    client.batch(&bpolicy, &mut batch).await.unwrap();
+    client.batch(&bpolicy_w, &mut batch).await.unwrap();
     let results: Vec<&BatchRecord> = batch.iter().map(BatchOperation::batch_record).collect();
     println!("Write results:");
     dbg!(&results);
@@ -121,7 +124,7 @@ end
         BatchOperation::udf(&bpu, key3.clone(), "test_udf", "echo", Some(args3)),
         BatchOperation::udf(&bpu, key4.clone(), "test_udf", "echo", Some(args4)),
     ];
-    client.batch(&bpolicy, &mut batch).await.unwrap();
+    client.batch(&bpolicy_w, &mut batch).await.unwrap();
     let results: Vec<&BatchRecord> = batch.iter().map(BatchOperation::batch_record).collect();
     println!("UDF results:");
     dbg!(&results);
@@ -134,7 +137,7 @@ end
         BatchOperation::delete(&bpd, key3.clone()),
         BatchOperation::delete(&bpd, key4.clone()),
     ];
-    client.batch(&bpolicy, &mut batch).await.unwrap();
+    client.batch(&bpolicy_w, &mut batch).await.unwrap();
     let results: Vec<&BatchRecord> = batch.iter().map(BatchOperation::batch_record).collect();
     println!("Delete results:");
     dbg!(&results);

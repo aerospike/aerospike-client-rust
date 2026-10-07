@@ -35,7 +35,7 @@ impl<'a> OperateCommand<'a> {
         key: &'a Key,
         operations: &'a [Operation],
     ) -> Self {
-        let partition = crate::cluster::partition::Partition::for_write(key);
+        let partition = crate::cluster::partition::Partition::for_write(key, policy.base_policy.replica);
         let mut read_command = ReadCommand::new_with_partition(
             &policy.base_policy,
             cluster,

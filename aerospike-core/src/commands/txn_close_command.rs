@@ -28,7 +28,7 @@ pub struct TxnCloseCommand<'a> {
 
 impl<'a> TxnCloseCommand<'a> {
     pub fn new(policy: &'a WritePolicy, cluster: Arc<Cluster>, key: &'a Key) -> Self {
-        let partition = crate::cluster::partition::Partition::for_write(key);
+        let partition = crate::cluster::partition::Partition::for_write(key, policy.base_policy.replica);
         TxnCloseCommand {
             single_command: SingleCommand::new(cluster, key, partition),
             policy,

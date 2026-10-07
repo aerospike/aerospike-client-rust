@@ -379,7 +379,7 @@ async fn same_random_read_batch_agrees_across_replica_policies() {
         seed: u64,
     ) -> Vec<Row> {
         let mut policy = BatchPolicy::default();
-        policy.replica = replica;
+        policy.base_policy.replica = replica;
         run(client, &policy, ops.to_vec())
             .await
             .unwrap_or_else(|e| panic!("seed {seed} {replica:?}: {e}"))
@@ -455,7 +455,7 @@ async fn sequence_retry_resplits_onto_the_next_replica_and_succeeds() {
 
     let brp = BatchReadPolicy::default();
     let mut policy = BatchPolicy::default();
-    policy.replica = Replica::Sequence;
+    policy.base_policy.replica = Replica::Sequence;
     policy.base_policy.sleep_between_retries = 0;
     policy.base_policy.total_timeout = 10_000;
 
@@ -581,7 +581,7 @@ async fn arc_node_refcounts_return_to_baseline_after_many_random_batches() {
             })
             .collect();
         let mut policy = BatchPolicy::default();
-        policy.replica = if r.chance(2) {
+        policy.base_policy.replica = if r.chance(2) {
             Replica::Master
         } else {
             Replica::Sequence

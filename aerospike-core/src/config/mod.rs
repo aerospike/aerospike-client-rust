@@ -263,7 +263,7 @@ dynamic:
 
     #[test]
     fn read_section_merges_base_and_replica() {
-        // Flattened base-policy keys + the read-specific replica key both apply.
+        // Every flattened base-policy key applies, `replica` included.
         let read = document().dynamic.unwrap().read.unwrap();
         let mut policy = ReadPolicy::default();
         read.merge_into(&mut policy);
@@ -271,7 +271,7 @@ dynamic:
         assert_eq!(policy.base_policy.socket_timeout, 1234);
         assert_eq!(policy.base_policy.total_timeout, 5678);
         assert_eq!(policy.base_policy.max_retries, 9);
-        assert_eq!(policy.replica, Replica::PreferRack);
+        assert_eq!(policy.base_policy.replica, Replica::PreferRack);
     }
 
     #[test]
@@ -452,7 +452,7 @@ labels:
             ReadModeSc::Linearize
         );
         // Batch knob (replica) flows through — the whole point of wrapping BatchPolicy.
-        assert_eq!(vp.batch_policy.replica, Replica::PreferRack);
+        assert_eq!(vp.batch_policy.base_policy.replica, Replica::PreferRack);
         // total_timeout is absent → the TxnVerifyPolicy default (10s) is preserved.
         assert_eq!(vp.batch_policy.base_policy.total_timeout, 10_000);
 
@@ -568,7 +568,7 @@ labels:
         assert_eq!(p.base_policy.sleep_between_retries, 2);
         assert_eq!(p.base_policy.timeout_delay, 7);
         assert_eq!(p.base_policy.error_detail_verbosity, 2);
-        assert_eq!(p.replica, Replica::PreferRack);
+        assert_eq!(p.base_policy.replica, Replica::PreferRack);
     }
 
     #[test]
@@ -578,7 +578,7 @@ labels:
         let mut p = ReadPolicy::default();
         cfg.merge_into(&mut p);
         assert_eq!(p.base_policy.socket_timeout, 3); // overridden
-        assert_eq!(p.replica, Replica::PreferRack); // overridden
+        assert_eq!(p.base_policy.replica, Replica::PreferRack); // overridden
         assert_eq!(
             p.base_policy.total_timeout,
             default.base_policy.total_timeout
@@ -619,7 +619,7 @@ labels:
         assert_eq!(p.base_policy.total_timeout, 3000);
         assert_eq!(p.base_policy.max_retries, 3);
         assert_eq!(p.base_policy.sleep_between_retries, 2);
-        assert_eq!(p.replica, Replica::PreferRack);
+        assert_eq!(p.base_policy.replica, Replica::PreferRack);
         assert!(!p.include_bin_data);
         assert_eq!(p.record_queue_size, 50);
         assert_eq!(p.expected_duration, QueryDuration::Short);
@@ -632,7 +632,7 @@ labels:
         let mut p = QueryPolicy::default();
         cfg.merge_into(&mut p);
         assert_eq!(p.base_policy.socket_timeout, 3);
-        assert_eq!(p.replica, Replica::PreferRack);
+        assert_eq!(p.base_policy.replica, Replica::PreferRack);
         assert_eq!(p.base_policy.max_retries, default.base_policy.max_retries); // kept (5)
         assert_eq!(p.expected_duration, default.expected_duration); // kept (Long)
         assert_eq!(p.include_bin_data, default.include_bin_data); // kept (true)
@@ -650,7 +650,7 @@ labels:
         assert_eq!(p.base_policy.socket_timeout, 3);
         assert_eq!(p.base_policy.total_timeout, 15);
         assert_eq!(p.base_policy.max_retries, 5);
-        assert_eq!(p.replica, Replica::Master);
+        assert_eq!(p.base_policy.replica, Replica::Master);
         assert!(!p.allow_inline);
         assert!(p.allow_inline_ssd);
         assert!(!p.respond_all_keys);
@@ -665,7 +665,7 @@ labels:
         assert!(!p.allow_inline); // overridden
         assert_eq!(p.allow_inline_ssd, default.allow_inline_ssd); // kept
         assert_eq!(p.respond_all_keys, default.respond_all_keys); // kept
-        assert_eq!(p.replica, default.replica); // kept
+        assert_eq!(p.base_policy.replica, default.base_policy.replica); // kept
     }
 
     #[test]
@@ -749,7 +749,7 @@ labels:
         assert_eq!(p.base_policy.read_mode_ap, ReadModeAp::All);
         assert_eq!(p.base_policy.socket_timeout, 3);
         assert_eq!(p.base_policy.total_timeout, 15);
-        assert_eq!(p.replica, Replica::Master);
+        assert_eq!(p.base_policy.replica, Replica::Master);
         // Batch wire flags parse into the section (applied to the parent policy).
         assert_eq!(cfg.allow_inline, Some(false));
         assert_eq!(cfg.respond_all_keys, Some(false));

@@ -126,7 +126,7 @@ pub(crate) trait Policy {
     /// the timeout has not yet been exceeded.
     fn max_retries(&self) -> usize;
 
-    /// Time to sleep between retries. Set to zero to skip sleep. Default: 500ms.
+    /// Time to sleep between retries. `None` skips the sleep. Default: none.
     fn sleep_between_retries(&self) -> Option<Duration>;
 
     /// Exponential-backoff multiplier applied to the retry sleep after each
@@ -285,6 +285,15 @@ pub struct BasePolicy {
     /// Determines SC read consistency options.
     pub read_mode_sc: ReadModeSc,
 
+    /// Algorithm used to pick the node a command is sent to: single-record
+    /// commands, batch rows and query partition reads. A write with
+    /// `Sequence` or `PreferRack` moves to the next replica when it is
+    /// retried, as in the Java and Go clients; `Master`, `MasterProles` and
+    /// `Random` always write to the master.
+    ///
+    /// Default: `Replica::Sequence`
+    pub replica: Replica,
+
     /// Socket idle timeout when processing a database command.
     ///
     /// If `socket_timeout` is zero and `total_timeout` is non-zero, then `socket_timeout` will be set
@@ -295,12 +304,15 @@ pub struct BasePolicy {
     /// If `socket_timeout` is non-zero and the socket has been idle for at least `socket_timeout`,
     /// both `max_retries` and `total_timeout` are checked. If `max_retries` and `total_timeout` are not
     /// exceeded, the command is retried.
+    ///
+    /// Default: 30000
     pub socket_timeout: u32,
 
-    /// Total command timeout.
+    /// Total command timeout in milliseconds.
     /// This timeout is used to set the socket timeout and is also sent to the
-    /// server along with the command in the wire protocol.
-    /// Default to no timeout (0).
+    /// server along with the command in the wire protocol. `0` means no limit.
+    ///
+    /// Default: 1000
     pub total_timeout: u32,
 
     /// Delay milliseconds after socket read timeout in an attempt to recover the socket
@@ -331,8 +343,10 @@ pub struct BasePolicy {
 
     /// `max_retries` determines maximum number of retries before aborting the current transaction.
     /// A retry is attempted when there is a network error other than timeout.
-    /// If maxRetries is exceeded, the abort will occur even if the timeout
+    /// If `max_retries` is exceeded, the abort will occur even if the timeout
     /// has not yet been exceeded.
+    ///
+    /// Default: 2
     pub max_retries: usize,
 
     /// Determines how record TTL (time to live) is affected on reads. When enabled, the server can
@@ -350,10 +364,10 @@ pub struct BasePolicy {
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub read_touch_ttl: ReadTouchTtl,
 
-    /// Duration to sleep between retries if a command fails and
-    /// the timeout was not exceeded. Enter zero to skip sleep.
+    /// Milliseconds to sleep between retries if a command fails and
+    /// the timeout was not exceeded. Zero skips the sleep.
     ///
-    /// Default: 500
+    /// Default: 0
     pub sleep_between_retries: u32,
 
     /// Multiplying factor for exponential backoff between retries. After each

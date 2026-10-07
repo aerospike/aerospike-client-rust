@@ -42,7 +42,7 @@ impl Default for TxnVerifyPolicy {
         bp.base_policy.socket_timeout = 3_000;
         bp.base_policy.total_timeout = 10_000;
         bp.base_policy.sleep_between_retries = 1_000;
-        bp.replica = Replica::Master;
+        bp.base_policy.replica = Replica::Master;
         Self { batch_policy: bp }
     }
 }
@@ -74,7 +74,7 @@ impl Default for TxnRollPolicy {
         bp.base_policy.socket_timeout = 3_000;
         bp.base_policy.total_timeout = 10_000;
         bp.base_policy.sleep_between_retries = 1_000;
-        bp.replica = Replica::Master;
+        bp.base_policy.replica = Replica::Master;
         Self { batch_policy: bp }
     }
 }
@@ -100,7 +100,7 @@ mod tests {
         assert_eq!(p.batch_policy.base_policy.socket_timeout, 3_000);
         assert_eq!(p.batch_policy.base_policy.total_timeout, 10_000);
         assert_eq!(p.batch_policy.base_policy.sleep_between_retries, 1_000);
-        assert_eq!(p.batch_policy.replica, Replica::Master);
+        assert_eq!(p.batch_policy.base_policy.replica, Replica::Master);
     }
 
     #[test]
@@ -110,7 +110,7 @@ mod tests {
         assert_eq!(p.batch_policy.base_policy.socket_timeout, 3_000);
         assert_eq!(p.batch_policy.base_policy.total_timeout, 10_000);
         assert_eq!(p.batch_policy.base_policy.sleep_between_retries, 1_000);
-        assert_eq!(p.batch_policy.replica, Replica::Master);
+        assert_eq!(p.batch_policy.base_policy.replica, Replica::Master);
         // Roll does not force a read mode — stays at the BasePolicy default.
         assert_eq!(p.batch_policy.base_policy.read_mode_sc, ReadModeSc::Session);
     }

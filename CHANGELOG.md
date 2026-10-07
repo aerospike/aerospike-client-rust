@@ -154,6 +154,12 @@
     `PrivilegeCode::{UdfAdmin, SindexAdmin, ReadWriteUdf}`, `ResultCode::XdrKeyBusy`,
     `QueryDuration::LongRelaxAp`. Policies stay plain structs with public fields, built from
     `Default` by mutation or struct-update syntax (see the `policy` module docs).
+  * **Breaking**: `replica` moved from `ReadPolicy`, `QueryPolicy` and `BatchPolicy` to
+    `BasePolicy`, so write policies carry it too. A write with `Sequence` or `PreferRack` now
+    moves to the next replica when retried, as in the Java and Go clients, instead of always
+    targeting the master. `BatchPolicy::write_default()` (`max_retries` 0) is the parent policy
+    for batches with writes. A write command's client-side failure after the request was sent is
+    always in doubt, not only on timeout and connection errors.
   * `AuthMode` no longer prints the password in `{:?}`; `task::Status` compares with `==`; every
     expression and operation builder is `#[must_use]`, so a built-and-dropped expression warns.
   * The workspace builds clean under `clippy::pedantic` + `clippy::nursery` (core) and default clippy
@@ -210,7 +216,10 @@
   * [CLIENT-4624][CLIENT-2185][CLIENT-2089] Ordered and sorted map variants.
   * [CLIENT-5118] Admin commands pace on an empty connection pool instead of failing.
   * `Client::new` returns on cluster convergence; `close()` stops tend at once.
-  * [CLIENT-5081] `ClientPolicy` and `MetricsPolicy` defaults aligned with the Java client.
+  * [CLIENT-5081] `ClientPolicy` and `MetricsPolicy` defaults aligned with the Java client, with
+    four deliberate exceptions: `max_conns_per_node` is 256 (Java 100); `idle_timeout` 0 disables
+    idle reaping (Java trims to `min_conns_per_node` after 55 s); `AdminPolicy.timeout` 0 falls back
+    to 3 s (Java: no timeout); `QueryPolicy.record_queue_size` is 1024 (Java 5000, Go 50).
   * [CLIENT-5265] `Concurrency::Sequential` no longer claims to be the default, which it is not.
   * Fewer per-query allocations in scan and query partition tracking.
   * TLS is required for External and PKI auth modes.

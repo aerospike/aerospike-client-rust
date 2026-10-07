@@ -40,7 +40,7 @@ impl<'a> TxnRollCommand<'a> {
         txn: Arc<Txn>,
         txn_attr: u8,
     ) -> Self {
-        let partition = crate::cluster::partition::Partition::for_write(key);
+        let partition = crate::cluster::partition::Partition::for_write(key, policy.replica);
         TxnRollCommand {
             single_command: SingleCommand::new(cluster, key, partition),
             policy,

@@ -296,7 +296,7 @@ impl TxnRoll {
     fn group_by_node(&self, keys: &[Key]) -> Result<HashMap<Arc<Node>, Vec<usize>>> {
         let mut groups: HashMap<Arc<Node>, Vec<usize>> = HashMap::new();
         for (i, key) in keys.iter().enumerate() {
-            let mut partition = Partition::for_write(key);
+            let mut partition = Partition::for_write(key, crate::policy::Replica::Master);
             let node = partition.get_node(&self.cluster)?;
             groups.entry(node).or_default().push(i);
         }

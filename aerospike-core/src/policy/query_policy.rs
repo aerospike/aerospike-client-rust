@@ -16,7 +16,7 @@
 use crate::expressions::Expression;
 #[cfg(feature = "dynamic-config")]
 use crate::policy::BasePolicyConfig;
-use crate::policy::{BasePolicy, Policy, PolicyLike, QueryDuration, Replica, StreamPolicy};
+use crate::policy::{BasePolicy, Policy, PolicyLike, QueryDuration, StreamPolicy};
 use aerospike_rt::time::{Duration, Instant};
 
 /// `QueryPolicy` encapsulates parameters for query operations.
@@ -70,9 +70,6 @@ pub struct QueryPolicy {
     ///
     /// Default: `true`
     pub include_bin_data: bool,
-
-    /// Defines algorithm used to determine the target node for a command. The replica algorithm only affects single record and batch commands.
-    pub replica: Replica,
 }
 
 impl QueryPolicy {
@@ -97,7 +94,6 @@ impl Default for QueryPolicy {
             record_queue_size: 1024,
             expected_duration: QueryDuration::Long,
             include_bin_data: true,
-            replica: Replica::default(),
         };
 
         res.base_policy.total_timeout = 0;
@@ -133,7 +129,7 @@ impl StreamPolicy for &QueryPolicy {
         self.base_policy.total_timeout
     }
     fn replica(&self) -> crate::policy::Replica {
-        self.replica
+        self.base_policy.replica
     }
     fn max_retries(&self) -> usize {
         self.base_policy.max_retries

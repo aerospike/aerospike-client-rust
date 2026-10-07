@@ -150,6 +150,7 @@ pub fn base_policy(
         read_mode_sc(),
         read_touch_ttl(),
         Just(None), //true_or_false_filter_expression(),
+        replica(),
     )
         .prop_map(
             |(
@@ -162,6 +163,7 @@ pub fn base_policy(
                 read_mode_sc,
                 read_touch_ttl,
                 filter_expression,
+                replica,
             )| BasePolicy {
                 socket_timeout,
                 total_timeout,
@@ -172,6 +174,7 @@ pub fn base_policy(
                 read_mode_ap,
                 read_mode_sc,
                 read_touch_ttl,
+                replica,
                 use_compression: false,
                 compression_threshold: 128,
                 filter_expression,
@@ -283,7 +286,6 @@ pub fn query_policy(
         1..u32::MAX,
         1..10_000_usize,
         query_duration(),
-        replica(),
     )
         .prop_map(
             |(
@@ -293,7 +295,6 @@ pub fn query_policy(
                 records_per_second,
                 record_queue_size,
                 expected_duration,
-                replica,
             )| QueryPolicy {
                 base_policy,
                 max_concurrent_nodes,
@@ -302,7 +303,6 @@ pub fn query_policy(
                 record_queue_size,
                 expected_duration,
                 include_bin_data: true,
-                replica,
             },
         )
 }
@@ -318,7 +318,6 @@ pub fn query_policy_scan(
         1..u32::MAX,
         1..10_000_usize,
         Just(QueryDuration::Long),
-        replica(),
     )
         .prop_map(
             |(
@@ -328,7 +327,6 @@ pub fn query_policy_scan(
                 records_per_second,
                 record_queue_size,
                 expected_duration,
-                replica,
             )| QueryPolicy {
                 base_policy,
                 max_concurrent_nodes,
@@ -337,7 +335,6 @@ pub fn query_policy_scan(
                 record_queue_size,
                 expected_duration,
                 include_bin_data: true,
-                replica,
             },
         )
 }
@@ -346,12 +343,7 @@ pub fn read_policy(
     socket_timeout_ms: u32,
     total_timeout_ms: u32,
 ) -> impl Strategy<Value = ReadPolicy> {
-    (base_policy(socket_timeout_ms, total_timeout_ms), replica()).prop_map(
-        |(base_policy, replica)| ReadPolicy {
-            base_policy,
-            replica,
-        },
-    )
+    base_policy(socket_timeout_ms, total_timeout_ms).prop_map(|base_policy| ReadPolicy { base_policy })
 }
 
 pub fn batch_policy(
@@ -365,7 +357,6 @@ pub fn batch_policy(
         any::<bool>(),
         any::<bool>(),
         true_or_false_filter_expression(),
-        replica(),
     )
         .prop_map(
             |(
@@ -375,7 +366,6 @@ pub fn batch_policy(
                 allow_inline_ssd,
                 respond_all_keys,
                 filter_expression,
-                replica,
             )| {
                 base_policy.filter_expression = filter_expression;
                 BatchPolicy {
@@ -384,7 +374,6 @@ pub fn batch_policy(
                     allow_inline,
                     allow_inline_ssd,
                     respond_all_keys,
-                    replica,
                 }
             },
         )

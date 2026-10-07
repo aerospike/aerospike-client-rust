@@ -234,7 +234,7 @@ proptest_async::proptest! {
             // A rack-preferring read may find no replica on the preferred rack.
             Err(e)
                 if matches!(e.kind(), aerospike::ErrorKind::InvalidArgument)
-                    && read_policy.replica == Replica::PreferRack => {}
+                    && read_policy.base_policy.replica == Replica::PreferRack => {}
             Err(e) => panic!("{}", e),
             _ => (),
         }
@@ -255,7 +255,7 @@ proptest_async::proptest! {
             // A rack-preferring read may find no replica on the preferred rack.
             Err(e)
                 if matches!(e.kind(), aerospike::ErrorKind::InvalidArgument)
-                    && read_policy.replica == Replica::PreferRack => {}
+                    && read_policy.base_policy.replica == Replica::PreferRack => {}
             Err(e) => panic!("{}", e),
             _ => (),
         }

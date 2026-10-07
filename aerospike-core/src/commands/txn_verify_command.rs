@@ -32,7 +32,7 @@ pub struct TxnVerifyCommand<'a> {
 
 impl<'a> TxnVerifyCommand<'a> {
     pub fn new(policy: &'a BasePolicy, cluster: Arc<Cluster>, key: &'a Key, version: u64) -> Self {
-        let partition = crate::cluster::partition::Partition::for_write(key);
+        let partition = crate::cluster::partition::Partition::for_write(key, policy.replica);
         TxnVerifyCommand {
             single_command: SingleCommand::new(cluster, key, partition),
             policy,

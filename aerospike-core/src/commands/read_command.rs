@@ -41,7 +41,7 @@ impl<'a> ReadCommand<'a> {
         let partition = Partition::for_read(
             &cluster,
             key,
-            policy.replica,
+            policy.base_policy.replica,
             policy.base_policy.read_mode_sc,
         );
         ReadCommand {

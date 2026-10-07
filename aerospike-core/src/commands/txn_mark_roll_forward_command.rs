@@ -32,7 +32,7 @@ pub struct TxnMarkRollForwardCommand<'a> {
 
 impl<'a> TxnMarkRollForwardCommand<'a> {
     pub fn new(policy: &'a WritePolicy, cluster: Arc<Cluster>, key: &'a Key) -> Self {
-        let partition = crate::cluster::partition::Partition::for_write(key);
+        let partition = crate::cluster::partition::Partition::for_write(key, policy.base_policy.replica);
         TxnMarkRollForwardCommand {
             single_command: SingleCommand::new(cluster, key, partition),
             policy,

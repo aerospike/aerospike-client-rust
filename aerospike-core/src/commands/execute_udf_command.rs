@@ -40,7 +40,7 @@ impl<'a> ExecuteUdfCommand<'a> {
         function_name: &'a str,
         args: Option<&'a [Value]>,
     ) -> Self {
-        let partition = crate::cluster::partition::Partition::for_write(key);
+        let partition = crate::cluster::partition::Partition::for_write(key, policy.base_policy.replica);
         ExecuteUdfCommand {
             read_command: ReadCommand::new_with_partition(
                 &policy.base_policy,

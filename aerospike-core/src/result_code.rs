@@ -194,7 +194,7 @@ pub enum ResultCode {
     /// Privilege is invalid.
     InvalidPrivilege,
 
-    /// Invalid IP address allowlist.
+    /// Invalid IP address allowlist (`INVALID_WHITELIST` in the server and the Java/Go clients).
     InvalidAllowlist,
 
     /// Quotas not enabled on server.
@@ -209,7 +209,8 @@ pub enum ResultCode {
     /// User does not posses the required role to perform the database operation.
     RoleViolation,
 
-    /// Command not allowed because sender IP address not allowlisted.
+    /// Command not allowed because the sender IP address is not allowlisted
+    /// (`NOT_WHITELISTED` in the server and the Java/Go clients).
     NotAllowlisted,
 
     /// Quota exceeded.
@@ -230,7 +231,8 @@ pub enum ResultCode {
     /// Invalid `GeoJSON` on insert/update
     InvalidGeojson,
 
-    /// Secondary index already exists.
+    /// Secondary index already exists (`INDEX_FOUND` in the server and Go,
+    /// `INDEX_ALREADY_EXISTS` in Java).
     IndexFound,
 
     /// Requested secondary index does not exist.

@@ -70,10 +70,11 @@ impl<'a> Partition<'a> {
         }
     }
 
-    /// Create a partition for write operations.
-    pub fn for_write(key: &'a Key) -> Self {
+    /// Create a partition for write operations. `Sequence` and `PreferRack`
+    /// walk the replicas on retry; the other modes always target the master.
+    pub fn for_write(key: &'a Key, replica: Replica) -> Self {
         let mut p = Self::new_by_key(key);
-        p.replica = Replica::Master;
+        p.replica = replica;
         p.is_write = true;
         p
     }

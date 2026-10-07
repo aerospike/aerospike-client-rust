@@ -37,7 +37,7 @@ impl<'a> WriteCommand<'a> {
         bins: &'a [Bin],
         operation: OperationType,
     ) -> Self {
-        let partition = crate::cluster::partition::Partition::for_write(key);
+        let partition = crate::cluster::partition::Partition::for_write(key, policy.base_policy.replica);
         WriteCommand {
             single_command: SingleCommand::new(cluster, key, partition),
             bins,

@@ -27,9 +27,6 @@ pub struct ReadPolicy {
     /// Base policy instance
     #[cfg_attr(feature = "dynamic-config", config(flatten))]
     pub base_policy: BasePolicy,
-
-    /// Defines algorithm used to determine the target node for a command. The replica algorithm only affects single record and batch commands.
-    pub replica: Replica,
 }
 
 impl Default for BasePolicy {
@@ -43,6 +40,7 @@ impl Default for BasePolicy {
             sleep_multiplier: 1.0,
             read_mode_ap: ReadModeAp::One,
             read_mode_sc: ReadModeSc::Session,
+            replica: Replica::default(),
             read_touch_ttl: super::ReadTouchTtl::ServerDefault,
             use_compression: false,
             compression_threshold: 128,
