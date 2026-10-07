@@ -148,7 +148,9 @@
     constructors other than `client_error`, `invalid_argument` and `chain_error`, plus the retry
     bookkeeping (`set_in_doubt`, `with_retry_context`, `wrap`, `chain_cause`, `keep_connection`,
     `is_pool_empty`), are crate-private. `Statement.filters`/`add_filter` are `filter`/`set_filter`
-    and `Statement.aggregation` is private. The `Policy` trait is no longer exported. Acronyms in
+    and `Statement.aggregation` is private. The six `Filter::geo_*_cit` constructors are replaced by
+    `Filter::collection_type(cit)`, which chains on any filter. The `Policy` trait is no longer
+    exported. Acronyms in
     identifiers are `UpperCamelCase`: `BatchUdfPolicy`, `UdfLang`, `ReadModeAp`/`ReadModeSc`,
     `ReadTouchTtl`, `HllPolicy`/`HllWriteFlags`, `Value::GeoJson`/`Value::Hll`, `AuthMode::Pki`,
     `PrivilegeCode::{UdfAdmin, SindexAdmin, ReadWriteUdf}`, `ResultCode::XdrKeyBusy`,

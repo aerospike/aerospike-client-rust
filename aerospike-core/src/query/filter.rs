@@ -453,24 +453,12 @@ impl Filter {
 
     /// Creates a geo-spatial "points within region" filter for queries.
     ///
-    /// For queries on a collection index, use [`Filter::geo_within_region_cit`].
+    /// For a collection index, chain [`collection_type`](Self::collection_type).
     pub fn geo_within_region(bin_name: &str, region: &str) -> Self {
         let region = Value::String(region.to_owned());
         Filter::new(
             bin_name,
             CollectionIndexType::Default,
-            ParticleType::GeoJson as u8,
-            region.clone(),
-            region,
-        )
-    }
-
-    /// Creates a geo-spatial "points within region" filter for queries on a collection index.
-    pub fn geo_within_region_cit(bin_name: &str, region: &str, cit: CollectionIndexType) -> Self {
-        let region = Value::String(region.to_owned());
-        Filter::new(
-            bin_name,
-            cit,
             ParticleType::GeoJson as u8,
             region.clone(),
             region,
@@ -490,53 +478,18 @@ impl Filter {
         )
     }
 
-    /// Creates a geo-spatial "points within region" filter targeting a specific secondary index
-    /// by name on a collection index.
-    pub fn geo_within_region_by_index_cit(
-        index_name: &str,
-        region: &str,
-        cit: CollectionIndexType,
-    ) -> Self {
-        let region = Value::String(region.to_owned());
-        Filter::new_by_index(
-            index_name,
-            cit,
-            ParticleType::GeoJson as u8,
-            region.clone(),
-            region,
-        )
-    }
-
     // ========================================================================
     // Geo "within radius" filters
     // ========================================================================
 
     /// Creates a geo-spatial "points within radius" filter for queries.
     ///
-    /// For queries on a collection index, use [`Filter::geo_within_radius_cit`].
+    /// For a collection index, chain [`collection_type`](Self::collection_type).
     pub fn geo_within_radius(bin_name: &str, lng: f64, lat: f64, radius: f64) -> Self {
         let geo_json = geo_circle_json(lng, lat, radius);
         Filter::new(
             bin_name,
             CollectionIndexType::Default,
-            ParticleType::GeoJson as u8,
-            geo_json.clone(),
-            geo_json,
-        )
-    }
-
-    /// Creates a geo-spatial "points within radius" filter for queries on a collection index.
-    pub fn geo_within_radius_cit(
-        bin_name: &str,
-        lng: f64,
-        lat: f64,
-        radius: f64,
-        cit: CollectionIndexType,
-    ) -> Self {
-        let geo_json = geo_circle_json(lng, lat, radius);
-        Filter::new(
-            bin_name,
-            cit,
             ParticleType::GeoJson as u8,
             geo_json.clone(),
             geo_json,
@@ -556,49 +509,18 @@ impl Filter {
         )
     }
 
-    /// Creates a geo-spatial "points within radius" filter targeting a specific secondary index
-    /// by name on a collection index.
-    pub fn geo_within_radius_by_index_cit(
-        index_name: &str,
-        lng: f64,
-        lat: f64,
-        radius: f64,
-        cit: CollectionIndexType,
-    ) -> Self {
-        let geo_json = geo_circle_json(lng, lat, radius);
-        Filter::new_by_index(
-            index_name,
-            cit,
-            ParticleType::GeoJson as u8,
-            geo_json.clone(),
-            geo_json,
-        )
-    }
-
     // ========================================================================
     // Geo "regions containing point" filters
     // ========================================================================
 
     /// Creates a geo-spatial "regions containing point" filter for queries.
     ///
-    /// For queries on a collection index, use [`Filter::geo_contains_cit`].
+    /// For a collection index, chain [`collection_type`](Self::collection_type).
     pub fn geo_contains(bin_name: &str, point: &str) -> Self {
         let point = Value::String(point.to_owned());
         Filter::new(
             bin_name,
             CollectionIndexType::Default,
-            ParticleType::GeoJson as u8,
-            point.clone(),
-            point,
-        )
-    }
-
-    /// Creates a geo-spatial "regions containing point" filter for queries on a collection index.
-    pub fn geo_contains_cit(bin_name: &str, point: &str, cit: CollectionIndexType) -> Self {
-        let point = Value::String(point.to_owned());
-        Filter::new(
-            bin_name,
-            cit,
             ParticleType::GeoJson as u8,
             point.clone(),
             point,
@@ -618,26 +540,26 @@ impl Filter {
         )
     }
 
-    /// Creates a geo-spatial "regions containing point" filter targeting a specific secondary
-    /// index by name on a collection index.
-    pub fn geo_contains_by_index_cit(
-        index_name: &str,
-        point: &str,
-        cit: CollectionIndexType,
-    ) -> Self {
-        let point = Value::String(point.to_owned());
-        Filter::new_by_index(
-            index_name,
-            cit,
-            ParticleType::GeoJson as u8,
-            point.clone(),
-            point,
-        )
-    }
-
     // ========================================================================
     // Builder methods
     // ========================================================================
+
+    /// Queries a collection index: the bin holds a list or map and the
+    /// secondary index was created with the given [`CollectionIndexType`].
+    /// Without it a filter targets an index on the bin's own value.
+    ///
+    /// # Examples
+    /// ```
+    /// # use aerospike_core::query::Filter;
+    /// # use aerospike_core::CollectionIndexType;
+    /// let f = Filter::geo_within_radius("geo_list", -122.0, 37.5, 50_000.0)
+    ///     .collection_type(CollectionIndexType::List);
+    /// ```
+    #[must_use]
+    pub const fn collection_type(mut self, cit: CollectionIndexType) -> Self {
+        self.collection_index_type = cit;
+        self
+    }
 
     /// Specifies which **expression-based secondary index** to use for this query filter.
     ///
@@ -806,8 +728,8 @@ macro_rules! as_contains_range {
 
 /// Creates geo-spatial "points within region" filter for queries.
 ///
-/// **Deprecated**: Use [`Filter::geo_within_region`] or [`Filter::geo_within_region_cit`]
-/// instead.
+/// **Deprecated**: Use [`Filter::geo_within_region`], chaining
+/// [`Filter::collection_type`] for a collection index, instead.
 #[deprecated(note = "Use Filter::geo_within_region() instead")]
 #[macro_export]
 macro_rules! as_within_region {
@@ -835,8 +757,8 @@ macro_rules! as_within_region {
 
 /// Creates geo-spatial "points within radius" filter for queries.
 ///
-/// **Deprecated**: Use [`Filter::geo_within_radius`] or [`Filter::geo_within_radius_cit`]
-/// instead.
+/// **Deprecated**: Use [`Filter::geo_within_radius`], chaining
+/// [`Filter::collection_type`] for a collection index, instead.
 #[deprecated(note = "Use Filter::geo_within_radius() instead")]
 #[macro_export]
 macro_rules! as_within_radius {
@@ -876,7 +798,8 @@ macro_rules! as_within_radius {
 
 /// Creates geo-spatial "regions containing point" filter for queries.
 ///
-/// **Deprecated**: Use [`Filter::geo_contains`] or [`Filter::geo_contains_cit`] instead.
+/// **Deprecated**: Use [`Filter::geo_contains`], chaining
+/// [`Filter::collection_type`] for a collection index, instead.
 #[deprecated(note = "Use Filter::geo_contains() instead")]
 #[macro_export]
 macro_rules! as_regions_containing_point {
@@ -1031,8 +954,9 @@ mod tests {
         let f = Filter::geo_within_region("bin1", "{}");
         assert_eq!(f.bin_name, "bin1");
 
-        let f = Filter::geo_within_region_cit("bin1", "{}", CollectionIndexType::MapValues);
+        let f = Filter::geo_within_region("bin1", "{}").collection_type(CollectionIndexType::MapValues);
         assert_eq!(f.bin_name, "bin1");
+        assert!(matches!(f.collection_index_type, CollectionIndexType::MapValues));
     }
 
     #[test]
@@ -1043,7 +967,8 @@ mod tests {
         let f = Filter::geo_within_region("bin1", "{}").expression(exp.clone());
         assert!(f.expression.is_some());
 
-        let f = Filter::geo_within_region_cit("bin1", "{}", CollectionIndexType::MapValues)
+        let f = Filter::geo_within_region("bin1", "{}")
+            .collection_type(CollectionIndexType::MapValues)
             .expression(exp);
         assert!(f.expression.is_some());
     }
@@ -1053,11 +978,8 @@ mod tests {
         let f = Filter::geo_within_region_by_index("my_index", "{}");
         assert_eq!(f.index_name, Some("my_index".to_owned()));
 
-        let f = Filter::geo_within_region_by_index_cit(
-            "my_index",
-            "{}",
-            CollectionIndexType::MapValues,
-        );
+        let f = Filter::geo_within_region_by_index("my_index", "{}")
+            .collection_type(CollectionIndexType::MapValues);
         assert_eq!(f.index_name, Some("my_index".to_owned()));
     }
 
@@ -1066,8 +988,10 @@ mod tests {
         let f = Filter::geo_within_radius("bin1", 3.0, 1.0, 7.0);
         assert_eq!(f.bin_name, "bin1");
 
-        let f = Filter::geo_within_radius_cit("bin1", 3.0, 1.0, 7.0, CollectionIndexType::List);
+        let f = Filter::geo_within_radius("bin1", 3.0, 1.0, 7.0)
+            .collection_type(CollectionIndexType::List);
         assert_eq!(f.bin_name, "bin1");
+        assert!(matches!(f.collection_index_type, CollectionIndexType::List));
     }
 
     #[test]
@@ -1078,7 +1002,8 @@ mod tests {
         let f = Filter::geo_within_radius("bin1", 3.0, 1.0, 7.0).expression(exp.clone());
         assert!(f.expression.is_some());
 
-        let f = Filter::geo_within_radius_cit("bin1", 3.0, 1.0, 7.0, CollectionIndexType::List)
+        let f = Filter::geo_within_radius("bin1", 3.0, 1.0, 7.0)
+            .collection_type(CollectionIndexType::List)
             .expression(exp);
         assert!(f.expression.is_some());
     }
@@ -1088,13 +1013,8 @@ mod tests {
         let f = Filter::geo_within_radius_by_index("my_index", 3.0, 1.0, 7.0);
         assert_eq!(f.index_name, Some("my_index".to_owned()));
 
-        let f = Filter::geo_within_radius_by_index_cit(
-            "my_index",
-            3.0,
-            1.0,
-            7.0,
-            CollectionIndexType::List,
-        );
+        let f = Filter::geo_within_radius_by_index("my_index", 3.0, 1.0, 7.0)
+            .collection_type(CollectionIndexType::List);
         assert_eq!(f.index_name, Some("my_index".to_owned()));
     }
 
@@ -1103,8 +1023,9 @@ mod tests {
         let f = Filter::geo_contains("bin1", "{}");
         assert_eq!(f.bin_name, "bin1");
 
-        let f = Filter::geo_contains_cit("bin1", "{}", CollectionIndexType::MapValues);
+        let f = Filter::geo_contains("bin1", "{}").collection_type(CollectionIndexType::MapValues);
         assert_eq!(f.bin_name, "bin1");
+        assert!(matches!(f.collection_index_type, CollectionIndexType::MapValues));
     }
 
     #[test]
@@ -1115,8 +1036,9 @@ mod tests {
         let f = Filter::geo_contains("bin1", "{}").expression(exp.clone());
         assert!(f.expression.is_some());
 
-        let f =
-            Filter::geo_contains_cit("bin1", "{}", CollectionIndexType::MapValues).expression(exp);
+        let f = Filter::geo_contains("bin1", "{}")
+            .collection_type(CollectionIndexType::MapValues)
+            .expression(exp);
         assert!(f.expression.is_some());
     }
 
@@ -1125,7 +1047,8 @@ mod tests {
         let f = Filter::geo_contains_by_index("my_index", "{}");
         assert_eq!(f.index_name, Some("my_index".to_owned()));
 
-        let f = Filter::geo_contains_by_index_cit("my_index", "{}", CollectionIndexType::MapValues);
+        let f = Filter::geo_contains_by_index("my_index", "{}")
+            .collection_type(CollectionIndexType::MapValues);
         assert_eq!(f.index_name, Some("my_index".to_owned()));
     }
 
