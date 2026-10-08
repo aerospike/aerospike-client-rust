@@ -47,7 +47,6 @@ pub const COMMAND_TYPE_COUNT: usize = 12;
 /// The discriminants are stable (`None` = 0 .. `BatchWrite` = 11) so exported
 /// metrics line up across clients.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum CommandType {
     /// Uncategorized.
     None = 0,

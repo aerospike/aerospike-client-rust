@@ -133,12 +133,14 @@
   * **Breaking**, API lockdown before 3.0.0 (see `MIGRATION.md`):
     `Client::cluster` is private; use `Client::nodes`, `node_names`, `get_node`, the new
     `random_node` and `cluster_name`. The `Node`, `NodeMetrics` and `Txn` mutators that drove the
-    tend loop and the transaction state machine are crate-private (`Txn::set_timeout(&mut self)`
-    is `Txn::with_timeout(self, d)`), as are `PartitionFilter`'s bookkeeping fields and
+    tend loop and the transaction state machine are crate-private (Rust code sets the timeout
+    at construction with `Txn::with_timeout(self, d)`), as are `PartitionFilter`'s bookkeeping fields and
     `PartitionStatus`. `BatchPolicy::filter_expression` the field is gone: the batch-wide filter
-    is `base_policy.filter_expression`, which is what the encoder always read. `ResultCode`,
-    `ClientResultCode`, `Value`, `AuthMode`, `Replica`, the index, privilege, transaction and task
-    status enums are `#[non_exhaustive]`, so matches need a `_` arm. `EqFilterValue`,
+    is `base_policy.filter_expression`, which is what the encoder always read. The server-defined
+    enums `ResultCode`, `ClientResultCode`, `ErrorKind`, `PrivilegeCode` and `Value` are
+    `#[non_exhaustive]`, so matches on them need a `_` arm; the client-side sets (`AuthMode`,
+    `Replica`, `QueryDuration`, `ReadTouchTtl`, the index, UDF-language, command-type, transaction
+    and task status enums) stay exhaustive, so adding a variant to one is a breaking change. `EqFilterValue`,
     `RangeFilterValue`, `MapLike`, `ToListWriteFlagsBitmask` and `Task` are sealed. The wire-level
     query-plan types, `ParticleType` and the AEL packing helpers are hidden from the documentation;
     `CITRUSLEAF_EPOCH` is `citrusleaf_epoch()` and `CITRUSLEAF_EPOCH_UNIX_SECS`. `BatchOperation`
@@ -233,9 +235,16 @@
     for existing users and may be removed in a later major release.
   * Repository: `CONTRIBUTING.md` and `SECURITY.md`; the README's sync section describes the
     self-driving blocking client (no Tokio runtime to set up).
-  * Three internals stay reachable for language bindings, hidden from the documentation:
+  * Four internals stay reachable for language bindings, hidden from the documentation:
     `query::PartitionStatus` with `PartitionFilter::partitions` (rebuilding a cursor),
-    `Statement::set_aggregate_function` and the `Txn::set_state` test hook.
+    `Statement::set_aggregate_function`, the `Txn::set_state` test hook and `Txn::set_timeout`
+    (a settable timeout attribute on a transaction the binding already built).
+  * `Client::is_strong_consistency(namespace)` is a documented API: a synchronous lookup in the
+    cached partition map that bindings call per command to pick the AP or SC policy.
+  * `BatchOperation::into_batch_record(self)` moves a finished row's `BatchRecord` out without
+    cloning the key, for callers that hand rows on by value.
+  * `PrivilegeCode::Unknown(u8)`: a privilege code the server reports that this client has no
+    name for is kept with its raw value instead of failing the role query as a bad response.
   * CI: pull requests now gate on clippy with warnings denied across every documented feature
     set, rustdoc with warnings denied, a docs.rs-style nightly build, a packaging dry run, each
     feature compiled on its own (`cargo hack`), and a build on current stable beside the MSRV;

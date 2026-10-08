@@ -18,55 +18,64 @@ use std::fmt;
 use crate::errors::Error;
 
 /// Default privileges defined on the server.
+///
+/// The server defines this set and extends it over time. A code this client
+/// has no name for comes back as [`Unknown`](Self::Unknown) with the raw
+/// value, so a role listing from a newer server still succeeds.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd)]
 #[non_exhaustive]
 pub enum PrivilegeCode {
     /// User can edit/remove other users. Global scope only.
-    UserAdmin = 0,
+    UserAdmin,
 
     /// User can perform systems administration functions on a database that do not involve user
     /// administration. Examples include server configuration.
     /// Global scope only.
-    SysAdmin = 1,
+    SysAdmin,
 
     /// User can perform UDF and SINDEX administration actions. Global scope only.
-    DataAdmin = 2,
+    DataAdmin,
 
     /// User can perform user-defined function(UDF) administration actions.
     /// Examples include create/drop UDF. Global scope only.
     /// Requires server version 6+
-    UdfAdmin = 3,
+    UdfAdmin,
 
     /// User can perform secondary index administration actions.
     /// Examples include create/drop index. Global scope only.
     /// Requires server version 6+.
-    SindexAdmin = 4,
+    SindexAdmin,
 
     /// User can read data only.
-    Read = 10,
+    Read,
 
     /// User can read and write data.
-    ReadWrite = 11,
+    ReadWrite,
 
     /// User can read and write data through user-defined functions.
-    ReadWriteUdf = 12,
+    ReadWriteUdf,
 
     /// User can read and write data through user-defined functions.
-    Write = 13,
+    Write,
 
     /// User can truncate data only.
     /// Requires server version 6+
-    Truncate = 14,
+    Truncate,
 
     /// User can perform data masking administration actions.
     /// Global scope only.
-    MaskingAdmin = 15,
+    MaskingAdmin,
 
     /// User can read masked data only.
-    ReadMasked = 16,
+    ReadMasked,
 
     /// User can write masked data only.
-    WriteMasked = 17,
+    WriteMasked,
+
+    /// A privilege code the server reported that this client has no name
+    /// for, with the raw value. Scoped like a data privilege, and never sent
+    /// back to the server by name.
+    Unknown(u8),
 }
 
 impl PrivilegeCode {
@@ -111,6 +120,8 @@ impl Privilege {
     }
 }
 
+/// Every code converts: one this client has no name for becomes
+/// [`PrivilegeCode::Unknown`], so this never fails.
 impl TryFrom<u8> for PrivilegeCode {
     type Error = Error;
     fn try_from(pc: u8) -> std::result::Result<Self, Self::Error> {
@@ -128,7 +139,7 @@ impl TryFrom<u8> for PrivilegeCode {
             15 => Ok(PrivilegeCode::MaskingAdmin),
             16 => Ok(PrivilegeCode::ReadMasked),
             17 => Ok(PrivilegeCode::WriteMasked),
-            _ => Err(Error::bad_response(format!("invalid privilege code {pc}"))),
+            _ => Ok(PrivilegeCode::Unknown(pc)),
         }
     }
 }
@@ -149,6 +160,7 @@ impl From<&PrivilegeCode> for u8 {
             PrivilegeCode::MaskingAdmin => 15,
             PrivilegeCode::ReadMasked => 16,
             PrivilegeCode::WriteMasked => 17,
+            PrivilegeCode::Unknown(code) => *code,
         }
     }
 }
@@ -169,6 +181,7 @@ impl From<&PrivilegeCode> for String {
             PrivilegeCode::MaskingAdmin => "masking-admin".into(),
             PrivilegeCode::ReadMasked => "read-masked".into(),
             PrivilegeCode::WriteMasked => "write-masked".into(),
+            PrivilegeCode::Unknown(code) => format!("unknown-{code}"),
         }
     }
 }
@@ -192,5 +205,24 @@ impl TryFrom<&str> for PrivilegeCode {
             "write-masked" => Ok(PrivilegeCode::WriteMasked),
             _ => Err(Error::bad_response(format!("invalid privilege code {pc}"))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_code_round_trips_and_scopes() {
+        let code = PrivilegeCode::try_from(200u8).expect("unknown codes are kept, not rejected");
+        assert_eq!(code, PrivilegeCode::Unknown(200));
+        assert_eq!(u8::from(&code), 200);
+        assert_eq!(String::from(&code), "unknown-200");
+        assert!(code.can_scope());
+        assert_eq!(
+            PrivilegeCode::try_from(11u8).expect("named code"),
+            PrivilegeCode::ReadWrite
+        );
+        assert!(PrivilegeCode::try_from("no-such-privilege").is_err());
     }
 }

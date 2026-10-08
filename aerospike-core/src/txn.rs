@@ -59,7 +59,6 @@ fn create_txn_id() -> i64 {
 
 /// Transaction state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum TxnState {
     /// Transaction is open and accepting commands.
     Open,
@@ -89,7 +88,6 @@ pub const COMMIT_FAILED_ABORT_MESSAGE: &str =
 
 /// Transaction commit status code.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum CommitStatus {
     /// Commit succeeded.
     Ok,
@@ -107,7 +105,6 @@ pub enum CommitStatus {
 
 /// Transaction abort status code.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum AbortStatus {
     /// Abort succeeded.
     Ok,
@@ -127,7 +124,6 @@ pub enum AbortStatus {
 
 /// Transaction commit error status.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum CommitErrorType {
     /// Transaction verify failed. Transaction aborted.
     VerifyFail,
@@ -382,6 +378,18 @@ impl Txn {
         self
     }
 
+    /// Sets the transaction timeout in place.
+    ///
+    /// Hidden: for language bindings that expose the timeout as a settable
+    /// attribute on an already-constructed transaction. Needs unique access,
+    /// so it cannot change a transaction that commands already share (reach
+    /// it through `Arc::get_mut`). Rust code sets the timeout at construction
+    /// with [`with_timeout`](Self::with_timeout).
+    #[doc(hidden)]
+    pub const fn set_timeout(&mut self, timeout: Duration) {
+        self.timeout = timeout.as_secs() as u32;
+    }
+
     /// Get raw timeout value in seconds (for protocol encoding).
     pub(crate) const fn timeout_secs(&self) -> u32 {
         self.timeout
@@ -489,6 +497,23 @@ mod tests {
             .expect_err("a CommitFailed transaction must not accept commands");
         assert!(err.to_string().contains("ended by a commit or abort"));
         assert!(txn.prepare_read("test").is_err());
+    }
+
+    #[test]
+    fn set_timeout_matches_with_timeout() {
+        let mut txn = Txn::new();
+        assert_eq!(txn.timeout(), Duration::ZERO);
+        txn.set_timeout(Duration::from_secs(30));
+        assert_eq!(txn.timeout(), Duration::from_secs(30));
+        assert_eq!(txn.timeout_secs(), 30);
+        assert_eq!(
+            Txn::new().with_timeout(Duration::from_secs(30)).timeout_secs(),
+            txn.timeout_secs()
+        );
+
+        // Sub-second durations truncate to whole seconds on both paths.
+        txn.set_timeout(Duration::from_millis(1500));
+        assert_eq!(txn.timeout_secs(), 1);
     }
 
     #[test]

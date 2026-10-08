@@ -336,7 +336,8 @@ impl BatchUdfPolicy {
 /// pass them to [`Client::batch`](crate::Client::batch), then read the
 /// outcome through [`record`](Self::record), [`take_record`](Self::take_record),
 /// [`result_code`](Self::result_code), [`in_doubt`](Self::in_doubt) or the
-/// whole [`batch_record`](Self::batch_record). What the row does, and the
+/// whole [`batch_record`](Self::batch_record) (by value:
+/// [`into_batch_record`](Self::into_batch_record)). What the row does, and the
 /// policy it does it with, are fixed at construction and not inspectable.
 #[derive(Clone, Debug)]
 pub struct BatchOperation {
@@ -754,6 +755,15 @@ impl BatchOperation {
     /// result. Borrowed — the record lives inside the operation.
     pub const fn batch_record(&self) -> &BatchRecord {
         &self.br
+    }
+
+    /// Consumes the operation and returns its batch record: the key and,
+    /// after execution, the result. Moving the row out this way costs no
+    /// allocation, where cloning [`batch_record`](Self::batch_record) copies
+    /// the key and any record.
+    #[must_use]
+    pub fn into_batch_record(self) -> BatchRecord {
+        self.br
     }
 
     pub(crate) fn set_record(&mut self, record: Option<Record>) {
