@@ -233,6 +233,13 @@
     for existing users and may be removed in a later major release.
   * Repository: `CONTRIBUTING.md` and `SECURITY.md`; the README's sync section describes the
     self-driving blocking client (no Tokio runtime to set up).
+  * CI: pull requests now gate on clippy with warnings denied across every documented feature
+    set, rustdoc with warnings denied, a docs.rs-style nightly build, a packaging dry run, each
+    feature compiled on its own (`cargo hack`), and a build on current stable beside the MSRV;
+    the server legs test the default feature set (`tls`, `dynamic-config`) and `lua` on Tokio,
+    `dynamic-config` on async-std, and the blocking client's own suite; one server version
+    (8.2.0.0) everywhere; every action pinned to a commit; the legacy Travis/AppVeyor-era
+    `build.yml` and `.appveyor.yml` removed.
 
 ## [3.0.0-alpha.2]
 
