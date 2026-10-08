@@ -51,10 +51,6 @@
     clippy::field_reassign_with_default,
     clippy::ref_option,
     clippy::struct_field_names,
-    // `async fn` is part of the API contract even where the body does not
-    // await yet (query entry points, pool checkout): callers must not have
-    // to change when an implementation starts to.
-    clippy::unused_async,
     // Integer -> f64 for averages, ratios and percentages is intended.
     clippy::cast_precision_loss,
     // Future sizes depend on the runtime's types (the async-std build trips

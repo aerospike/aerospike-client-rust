@@ -193,6 +193,7 @@ a supported way to build a policy.
 | `key.namespace`, `key.set_name`, `key.user_key`, `key.digest` (public fields) | `key.namespace()`, `key.set_name()`, `key.user_key()` (`Option<&Value>`), `key.digest()` (`[u8; 20]`); keys are built only through `Key::new` and `Key::with_digest` |
 | `Sampler { range, threshold }` public fields | `range()` / `threshold()`; build with `Sampler::new`, `all`, `never`, `probability` |
 | `CdtContext { id, flags, value }` public fields, `LoopVarPart(pub i64)` | private; use the `ctx_*` builders, and `LoopVarPart::{MAP_KEY, VALUE, INDEX}` or `from_bits` |
+| `recordset.partition_filter().await`, `handle.partition_filter().await` | plain methods, no `.await` |
 | `ClientPolicy::set_auth_mode(..) -> Result<()>` | returns nothing; it cannot fail. A password bcrypt refuses is reported by `Client::new` |
 | `RecordMapper::id(&self) -> Value` (the derive panicked on an unconvertible key) | `-> Result<Value>` |
 | `i64::try_from(value)` and the other `TryFrom<Value>` impls erred with a `String` | they err with the crate `Error` (`InvalidArgument`) |

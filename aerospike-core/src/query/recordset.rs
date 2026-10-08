@@ -213,7 +213,7 @@ impl Recordset {
     /// that was buffered but never consumed, so cancelling early never loses
     /// records — at-least-once, with duplicates possible only for records a
     /// concurrent consumer delivered ahead of a sibling's unclosed gap.
-    pub async fn partition_filter(&self) -> Option<PartitionFilter> {
+    pub fn partition_filter(&self) -> Option<PartitionFilter> {
         if !self.is_active() {
             return Some(self.tracker.partition_filter());
         }
@@ -299,8 +299,8 @@ impl AsRef<Recordset> for RecordStream {
 /// If the record stream is inactive, it will return the `PartitionFilter` cursor to use in a future scan/query.
 impl RecordStream {
     /// Returns the partition filter from the recordset.
-    pub async fn partition_filter(&self) -> Option<PartitionFilter> {
-        self.0.partition_filter().await
+    pub fn partition_filter(&self) -> Option<PartitionFilter> {
+        self.0.partition_filter()
     }
 }
 

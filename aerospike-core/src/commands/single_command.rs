@@ -310,7 +310,7 @@ impl<'a> SingleCommand<'a> {
             }
 
             let aq_start = Instant::now();
-            let mut conn = match node.get_connection(cmd.hint()).await {
+            let mut conn = match node.get_connection(cmd.hint()) {
                 Ok(conn) => conn,
                 Err(err)
                     if err.is_pool_empty() && pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS =>

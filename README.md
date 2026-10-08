@@ -581,7 +581,7 @@ while !pf.done() {
     }
     
     // Get the next partition filter to continue pagination
-    pf = rs.partition_filter().await.unwrap();
+    pf = rs.partition_filter().unwrap();
 }
 ```
 

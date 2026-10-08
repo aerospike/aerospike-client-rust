@@ -1567,6 +1567,9 @@ impl Client {
     /// }
     /// # }
     /// ```
+    // Spawns the per-partition workers on the caller's runtime and may grow a
+    // server round trip; the call shape must not change when it does.
+    #[allow(clippy::unused_async)]
     pub async fn query(
         &self,
         policy: &QueryPolicy,
@@ -1621,6 +1624,9 @@ impl Client {
     /// The returned [`QueryHandle`] can [`wait`](QueryHandle::wait) for
     /// completion or [`cancel`](QueryHandle::cancel); dropping it detaches,
     /// leaving the query running.
+    // Spawns the per-partition workers on the caller's runtime and may grow a
+    // server round trip; the call shape must not change when it does.
+    #[allow(clippy::unused_async)]
     pub async fn query_foreach<F, Fut>(
         &self,
         policy: &QueryPolicy,
@@ -1716,6 +1722,9 @@ impl Client {
     /// [`Version::supports_query_selection`](crate::Version::supports_query_selection);
     /// do not call with a filtered-out plan (orchestration belongs in the binding layer).
     #[doc(hidden)]
+    // Spawns the per-partition workers on the caller's runtime and may grow a
+    // server round trip; the call shape must not change when it does.
+    #[allow(clippy::unused_async)]
     pub async fn query_with_plan(
         &self,
         policy: &QueryPolicy,

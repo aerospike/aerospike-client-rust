@@ -568,7 +568,7 @@ impl BatchOperateCommand {
 
         let node_label = node.to_string();
         let aq_start = Instant::now();
-        let mut conn = match node.get_connection(Self::queue_hint(batch_ops)).await {
+        let mut conn = match node.get_connection(Self::queue_hint(batch_ops)) {
             Ok(conn) => conn,
             // Pool-empty is a pacing signal (a background task is opening a
             // connection), not node ill-health — don't trip the breaker.

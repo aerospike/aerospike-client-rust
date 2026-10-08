@@ -69,7 +69,7 @@ proptest_async::proptest! {
                 }
             }
 
-            pf = rs.partition_filter().await.unwrap();
+            pf = rs.partition_filter().unwrap();
         }
         // println!("Scan succeeded in {:?} for {} records", now.elapsed(), count);
 

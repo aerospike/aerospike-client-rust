@@ -583,7 +583,7 @@ impl AdminCommand {
     async fn get_paced_connection(node: &Node) -> Result<PooledConnection> {
         let mut pool_empty_waits = 0;
         loop {
-            match node.get_connection(0).await {
+            match node.get_connection(0) {
                 Err(err)
                     if err.is_pool_empty() && pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS =>
                 {

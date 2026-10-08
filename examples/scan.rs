@@ -83,7 +83,7 @@ pub async fn run() {
         page += 1;
         total += n;
         println!("page {page}: {n} records");
-        pf = rs.partition_filter().await.unwrap();
+        pf = rs.partition_filter().unwrap();
     }
     println!("paged scan: {total} records over {page} pages");
 

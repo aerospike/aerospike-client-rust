@@ -330,6 +330,7 @@ impl Connection {
     /// the decision is made once, here, and never revisited for the life of
     /// the connection.
     #[cfg(all(feature = "tls", not(test)))]
+    #[allow(clippy::unused_async)] // the TLS build awaits the handshake here
     async fn get_netsocket(
         stream: TcpStream,
         host: &Host,
@@ -355,6 +356,7 @@ impl Connection {
     }
 
     #[cfg(all(not(feature = "tls"), not(test)))]
+    #[allow(clippy::unused_async)] // the TLS build awaits the handshake here
     async fn get_netsocket(
         stream: TcpStream,
         _host: &Host,
@@ -565,6 +567,7 @@ impl Connection {
     }
 
     #[cfg(test)]
+    #[allow(clippy::unused_async)] // mirrors the real constructor's signature
     pub async fn new(
         host: &Host,
         policy: &ClientPolicy,

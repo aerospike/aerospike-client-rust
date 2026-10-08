@@ -135,7 +135,7 @@ async fn scan_single_consumer_with_cancel() {
         rs.close();
 
         assert!(!rs.is_active());
-        pf = rs.partition_filter().await.unwrap();
+        pf = rs.partition_filter().unwrap();
         if count == 1000 {
             assert!(pf.done());
         }
@@ -184,7 +184,7 @@ async fn scan_cancel_midway_resumes_without_loss() {
         consumed += got;
         drop(stream);
         rs.close();
-        pf = rs.partition_filter().await.unwrap();
+        pf = rs.partition_filter().unwrap();
     }
 
     // The contract is at-least-once: every record seen, duplicates
@@ -244,7 +244,7 @@ async fn scan_multi_consumer_cancel_resumes_without_loss() {
         let (a, b) = futures::join!(consume(50), consume(50));
         consumed += a + b;
         rs.close();
-        pf = rs.partition_filter().await.unwrap();
+        pf = rs.partition_filter().unwrap();
     }
 
     let distinct = seen.lock().unwrap().len();
@@ -324,7 +324,7 @@ async fn scan_single_consumer_with_cursor() {
             .count()
             .await;
         assert!(!rs.is_active());
-        pf = rs.partition_filter().await.unwrap();
+        pf = rs.partition_filter().unwrap();
         if count == 1000 {
             assert!(pf.done());
         }

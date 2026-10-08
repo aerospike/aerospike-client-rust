@@ -128,7 +128,7 @@ async fn cursor_pagination(client: &Client, namespace: &str, set_name: &str) {
         while let Some(r) = rs.next().await {
             println!("Cursor record: {:?}", r.unwrap());
         }
-        pf = rs.partition_filter().await.unwrap();
+        pf = rs.partition_filter().unwrap();
     }
 }
 

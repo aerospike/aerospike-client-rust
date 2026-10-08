@@ -203,7 +203,7 @@ async fn query_single_consumer_with_cursor() {
                 Err(err) => panic!("{:?}", err),
             }
         }
-        pf = rs.partition_filter().await.unwrap();
+        pf = rs.partition_filter().unwrap();
     }
     assert_eq!(count, 1);
 
@@ -229,7 +229,7 @@ async fn query_single_consumer_with_cursor() {
                 Err(err) => panic!("{:?}", err),
             }
         }
-        pf = rs.partition_filter().await.unwrap();
+        pf = rs.partition_filter().unwrap();
     }
     assert_eq!(count, 10);
     assert_eq!(iter, 11);
@@ -253,7 +253,7 @@ async fn query_single_consumer_with_cursor() {
                 Err(err) => panic!("{:?}", err),
             }
         }
-        pf = rs.partition_filter().await.unwrap();
+        pf = rs.partition_filter().unwrap();
     }
     assert_eq!(count, EXPECTED);
     assert_eq!(iter, 4);
@@ -336,7 +336,7 @@ async fn query_foreach_abort_and_resume_exactly_once() {
             .unwrap();
         handle.wait().await.unwrap();
 
-        pf = handle.partition_filter().await.unwrap();
+        pf = handle.partition_filter().unwrap();
         if pf.done() {
             break;
         }
@@ -391,7 +391,7 @@ async fn query_foreach_cancel_and_resume_exactly_once() {
     handle.cancel();
     assert!(!handle.is_active());
     handle.wait().await.unwrap();
-    let mut pf = handle.partition_filter().await.unwrap();
+    let mut pf = handle.partition_filter().unwrap();
 
     // Resume to completion.
     let mut rounds = 0usize;
@@ -413,7 +413,7 @@ async fn query_foreach_cancel_and_resume_exactly_once() {
             .await
             .unwrap();
         handle.wait().await.unwrap();
-        pf = handle.partition_filter().await.unwrap();
+        pf = handle.partition_filter().unwrap();
     }
 
     assert_eq!(
@@ -464,7 +464,7 @@ async fn query_si_cancel_midway_resumes_without_loss() {
         }
         drop(stream);
         rs.close();
-        pf = rs.partition_filter().await.unwrap();
+        pf = rs.partition_filter().unwrap();
     }
 
     assert_eq!(seen.len(), EXPECTED, "records lost across si cancel/resume");
@@ -2270,7 +2270,7 @@ async fn query_resumes_from_a_serialized_cursor() {
             let v = i64::try_from(&rec.bins["bin"]).unwrap();
             assert!(seen.insert(v), "record {v} delivered twice");
         }
-        let pf = rs.partition_filter().await.unwrap();
+        let pf = rs.partition_filter().unwrap();
         stored = serde_json::to_string(&pf).unwrap();
     }
     assert_eq!(seen.len(), RECORDS as usize, "every record exactly once");

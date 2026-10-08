@@ -629,7 +629,7 @@ impl Node {
     }
 
     // Get a connection to the node from the connection pool
-    pub(crate) async fn get_connection(&self, hint: u8) -> Result<PooledConnection> {
+    pub(crate) fn get_connection(&self, hint: u8) -> Result<PooledConnection> {
         if !self.is_active() {
             return Err(Error::invalid_node(format!(
                 "Cannot get a connection for node. The node `{self}` is inactive"
@@ -778,7 +778,7 @@ impl Node {
         let deadline = aerospike_rt::time::Instant::now()
             + std::time::Duration::from_millis(u64::from(policy.timeout()).max(1000));
         let mut conn = loop {
-            match self.get_connection(0).await {
+            match self.get_connection(0) {
                 Ok(conn) => break conn,
                 Err(err)
                     if err.is_pool_empty() && aerospike_rt::time::Instant::now() < deadline =>
@@ -1196,7 +1196,7 @@ mod node_tests {
         node.close();
         assert!(!node.is_active());
 
-        let err = node.get_connection(0).await.unwrap_err();
+        let err = node.get_connection(0).unwrap_err();
         assert!(
             matches!(err.kind(), crate::ErrorKind::InvalidNode),
             "expected InvalidNode, got {err:?}"
@@ -1214,7 +1214,6 @@ mod node_tests {
         let node = create_node_with_connection().await;
         let pconn = node
             .get_connection(0)
-            .await
             .expect("active node with one mock conn in pool");
         assert_eq!(node.connection_pool.num_conns(), 0);
 
@@ -1235,7 +1234,6 @@ mod node_tests {
         let queue_witness = {
             let pconn = arc
                 .get_connection(0)
-                .await
                 .expect("pool should have one connection");
             let q = pconn.queue.clone();
             arc.put_connection(pconn);
@@ -1293,7 +1291,7 @@ mod node_tests {
         // Trigger 4 pool misses with distinct hints — each reports pool-empty
         // and spawns a background fill on its own queue.
         for hint in 0..4u8 {
-            let err = node.get_connection(hint).await.unwrap_err();
+            let err = node.get_connection(hint).unwrap_err();
             assert!(
                 err.is_pool_empty(),
                 "pool miss must report ConnectionPoolEmpty, got {err:?}"
@@ -1327,7 +1325,7 @@ mod node_tests {
     async fn get_connection_retry_picks_up_background_fill() {
         let node = test_node();
 
-        let err = node.get_connection(0).await.unwrap_err();
+        let err = node.get_connection(0).unwrap_err();
         assert!(err.is_pool_empty());
 
         // Let the spawned fill task run (dummy connection, completes fast).
@@ -1340,7 +1338,6 @@ mod node_tests {
 
         let conn = node
             .get_connection(0)
-            .await
             .expect("retry must pick up the background-filled connection");
         drop(conn);
     }
@@ -1379,8 +1376,8 @@ mod node_tests {
 
         // On a current-thread runtime no spawned task runs until we await, so
         // both calls observe the first fill still "in flight".
-        let _ = node.get_connection(0).await.unwrap_err(); // spawns (1 <= threshold)
-        let _ = node.get_connection(0).await.unwrap_err(); // capped (2 > threshold)
+        let _ = node.get_connection(0).unwrap_err(); // spawns (1 <= threshold)
+        let _ = node.get_connection(0).unwrap_err(); // capped (2 > threshold)
 
         for _ in 0..20 {
             aerospike_rt::sleep(aerospike_rt::time::Duration::from_millis(1)).await;

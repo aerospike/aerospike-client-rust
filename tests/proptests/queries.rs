@@ -55,7 +55,7 @@ proptest_async::proptest! {
                 }
             }
 
-            pf = rs.partition_filter().await.unwrap();
+            pf = rs.partition_filter().unwrap();
         }
 
         // println!("Query returned {} records in {:?}", count, now.elapsed());
