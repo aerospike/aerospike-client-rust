@@ -183,39 +183,7 @@ struct ConvergenceState {
 impl Cluster {
     pub async fn new(policy: ClientPolicy, hosts: &[Host]) -> Result<Arc<Self>> {
         let (tx, rx) = mpsc::channel(100);
-        let buffer_pool = crate::net::buffer_pool::TieredBufferPool::from_policy(&policy);
-        let cluster = Arc::new(Cluster {
-            hashed_pass: AtomicArc::from(policy.hashed_pass()?),
-            client_policy: AtomicArc::from(policy),
-            buffer_pool,
-
-            seeds: AtomicArc::from(hosts.to_vec()),
-            aliases: AtomicArc::from(HashMap::new()),
-            nodes: AtomicArc::from(vec![]),
-
-            partition_map: AtomicArc::from(HashMap::default()),
-            node_index: AtomicIsize::new(0),
-            replica_index: AtomicIsize::new(0),
-            tend_count: std::sync::atomic::AtomicUsize::new(0),
-
-            tend_channel: Mutex::new(tx),
-            tend_task: std::sync::Mutex::new(None),
-            #[cfg(feature = "dynamic-config")]
-            config_watch_task: std::sync::Mutex::new(None),
-            closed: AtomicBool::new(false),
-            last_seed_errors: std::sync::Mutex::new(Vec::new()),
-
-            metrics_enabled: AtomicBool::new(false),
-            metrics_policy: AtomicArc::from(MetricsPolicy::default()),
-            metrics: std::sync::Mutex::new(HashMap::new()),
-            max_retries_exceeded_count: AtomicU64::new(0),
-            total_timeout_exceeded_count: AtomicU64::new(0),
-            nodes_invalid_count: AtomicU64::new(0),
-            opening_connections: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-
-            #[cfg(feature = "dynamic-config")]
-            dyn_config: std::sync::OnceLock::new(),
-        });
+        let cluster = Self::assemble(policy, hosts, tx)?;
         // Seed the cluster and tend until the partition table is fully
         // formed and stable, so the returned client can route its very
         // first command.
@@ -269,6 +237,51 @@ impl Cluster {
         *lock(&cluster.tend_task) = Some(handle);
         debug!("New cluster initialized and ready to be used...");
         Ok(cluster)
+    }
+
+    fn assemble(policy: ClientPolicy, hosts: &[Host], tx: Sender<()>) -> Result<Arc<Self>> {
+        let buffer_pool = crate::net::buffer_pool::TieredBufferPool::from_policy(&policy);
+        Ok(Arc::new(Cluster {
+            hashed_pass: AtomicArc::from(policy.hashed_pass()?),
+            client_policy: AtomicArc::from(policy),
+            buffer_pool,
+
+            seeds: AtomicArc::from(hosts.to_vec()),
+            aliases: AtomicArc::from(HashMap::new()),
+            nodes: AtomicArc::from(vec![]),
+
+            partition_map: AtomicArc::from(HashMap::default()),
+            node_index: AtomicIsize::new(0),
+            replica_index: AtomicIsize::new(0),
+            tend_count: std::sync::atomic::AtomicUsize::new(0),
+
+            tend_channel: Mutex::new(tx),
+            tend_task: std::sync::Mutex::new(None),
+            #[cfg(feature = "dynamic-config")]
+            config_watch_task: std::sync::Mutex::new(None),
+            closed: AtomicBool::new(false),
+            last_seed_errors: std::sync::Mutex::new(Vec::new()),
+
+            metrics_enabled: AtomicBool::new(false),
+            metrics_policy: AtomicArc::from(MetricsPolicy::default()),
+            metrics: std::sync::Mutex::new(HashMap::new()),
+            max_retries_exceeded_count: AtomicU64::new(0),
+            total_timeout_exceeded_count: AtomicU64::new(0),
+            nodes_invalid_count: AtomicU64::new(0),
+            opening_connections: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+
+            #[cfg(feature = "dynamic-config")]
+            dyn_config: std::sync::OnceLock::new(),
+        }))
+    }
+
+    /// A cluster that has never tended: no nodes and an empty partition map.
+    /// Routing code that only consults the partition map can be exercised
+    /// against it without a server.
+    #[cfg(test)]
+    pub(crate) fn new_unconnected(policy: ClientPolicy) -> Arc<Self> {
+        let (tx, _rx) = mpsc::channel(1);
+        Self::assemble(policy, &[], tx).expect("default test policy assembles")
     }
 
     async fn tend_thread(cluster: Arc<Cluster>, mut rx: Receiver<()>) {
