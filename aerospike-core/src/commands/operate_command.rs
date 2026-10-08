@@ -51,6 +51,7 @@ impl<'a> OperateCommand<'a> {
             ReadCommand::new_with_partition(base, cluster, key, Bins::All, partition);
         read_command.is_write = has_write;
         read_command.wants_results = true;
+        read_command.keep_nil_bins = true;
         OperateCommand {
             read_command,
             policy,

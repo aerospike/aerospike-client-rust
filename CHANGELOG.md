@@ -259,6 +259,9 @@ Upgrading from 2.x: see the [migration guide](https://github.com/aerospike/aeros
     of the second, and two seconds less when a second ticked between write and read.
   * [CLIENT-5581] A batch row whose key is alone on its node now carries the same bins as a row
     grouped with other keys on one node.
+  * [CLIENT-5562] A batch UDF row whose UDF returns nil carries `SUCCESS: Nil` when its key is alone
+    on its node, as a grouped row does, instead of no bins. `Client::execute_udf` still returns
+    `Ok(None)` for a nil return.
 
 * **Breaking Change**
   * **Breaking**, API lockdown before 3.0.0 (see `MIGRATION.md`):
