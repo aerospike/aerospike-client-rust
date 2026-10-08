@@ -135,10 +135,13 @@ The sync client's `batch` has the same new signature.
   `get_node(name)`, `random_node()` and `cluster_name()`; the cluster's own
   methods (`add_seeds`, `update_partitions`, `close`, ...) are not available.
 - The `Node` methods that drive the tend loop (`refresh`, `update_partitions`,
-  `get_connection`, `close`, ...) and the `Txn` state mutators (`set_state`,
-  `on_write`, `clear`, ...) are crate-private. The getters stay.
-- `PartitionFilter`'s `partitions`, `done` and `retry` fields are private;
-  use `done()` and the constructors.
+  `get_connection`, `close`, ...) and the `Txn` state mutators (`on_write`,
+  `clear`, ...) are crate-private. The getters stay. `Txn::set_state` remains
+  public as a hidden test hook for language bindings.
+- `PartitionFilter`'s `done` and `retry` fields are private; use `done()` and
+  the constructors. `partitions` and `query::PartitionStatus` stay reachable
+  but hidden from the documentation: they exist for language bindings that
+  rebuild a cursor, and are not part of the supported API.
 - `BatchPolicy.filter_expression` is gone. Set `base_policy.filter_expression`,
   as on every other policy; that is the field the batch encoder reads.
 
@@ -190,7 +193,6 @@ a supported way to build a policy.
 | `filter_expression()` on `BasePolicy`, `WritePolicy`, `QueryPolicy`, `BatchPolicy` returned `&Option<Expression>` | returns `Option<&Expression>` |
 | `int_bin("a".to_string())`, `string_val(s.to_string())`, `Bin::new("a".to_string(), v)` | the name parameters are `impl Into<String>`: `int_bin("a")`, `Bin::new("a", v)`; the old spelling still compiles, but `int_bin("a".into())` no longer infers and becomes `int_bin("a")` |
 | operation builders, `Filter` constructors and `Statement::new` took `&str` | `impl Into<String>`; a `String` can now be passed without borrowing |
-| `exp_int_loop_var(part)`, `exp_map_loop_var(part)`, … | `int_loop_var(part)`, `map_loop_var(part)`, … |
 | `Key::new<S>(ns: S, set: S, key)`, one string type for both | `Key::new(ns: impl Into<String>, set: impl Into<String>, key)`; still returns `Result` because unsupported user-key types are rejected |
 | `Key::key_with_digest::<S>(ns: String, set: Option<String>, key: Option<Value>, digest) -> Result<Key>` | `Key::with_digest(ns, set, key, digest) -> Key`; an empty set name means no set |
 | `Client::get<T: Into<Bins> + Send + Sync + 'static>` | `bins: impl Into<Bins>`; a borrowed slice of names no longer needs `Bins::from(..)` first |
@@ -200,7 +202,7 @@ a supported way to build a policy.
 | `Client::batch_foreach(policy, ops: Vec<BatchOperation>, hook)` | `ops: &mut [BatchOperation]`, like `batch`; the rows carry their results after the call as well as being handed to the hook |
 | path and expression builders took `ctx: impl AsRef<[CdtContext]>` | `ctx: &[CdtContext]`, like every other builder; `&path` still works because `Path` derefs to the slice |
 | `query_operate(policy, statement, ops: &[Operation])` | `query_operate(policy, statement)` after `statement.set_operations(ops)`; a statement without operations is `ParameterError` |
-| `Statement::set_aggregate_function(..)` | crate-private; pass the package, function and arguments to `query_aggregate` / `query_execute_udf` |
+| `Statement::set_aggregate_function(..)` | hidden from the documentation and takes `&[Value]`; Rust code passes the package, function and arguments to `query_aggregate` / `query_execute_udf` instead |
 | `key.namespace`, `key.set_name`, `key.user_key`, `key.digest` (public fields) | `key.namespace()`, `key.set_name()`, `key.user_key()` (`Option<&Value>`), `key.digest()` (`[u8; 20]`); keys are built only through `Key::new` and `Key::with_digest` |
 | `Sampler { range, threshold }` public fields | `range()` / `threshold()`; build with `Sampler::new`, `all`, `never`, `probability` |
 | `CdtContext { id, flags, value }` public fields, `LoopVarPart(pub i64)` | private; use the `ctx_*` builders, and `LoopVarPart::{MAP_KEY, VALUE, INDEX}` or `from_bits` |

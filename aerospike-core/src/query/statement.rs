@@ -120,7 +120,12 @@ impl Statement {
     /// Lua aggregation function parameters, set by
     /// [`Client::query_aggregate`](crate::Client::query_aggregate) and
     /// [`Client::query_execute_udf`](crate::Client::query_execute_udf).
-    pub(crate) fn set_aggregate_function(
+    ///
+    /// Hidden: not part of the documented API. Language bindings that carry
+    /// the parameters on the statement call it; Rust code passes them to the
+    /// client methods instead.
+    #[doc(hidden)]
+    pub fn set_aggregate_function(
         &mut self,
         package_name: impl Into<String>,
         function_name: impl Into<String>,

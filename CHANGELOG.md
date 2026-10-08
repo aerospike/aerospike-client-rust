@@ -153,7 +153,7 @@
     getters return `Option<&Expression>`. Every builder that stores a name or string value takes
     `impl Into<String>` (the expression bin builders, `Bin::new`, the operation builders, `Filter`,
     `Statement::new`), so `int_bin("a")` and `Bin::new("a", v)` work; an argument spelled
-    `"a".into()` no longer infers. `exp_*_loop_var` are `*_loop_var`. `Key::new` takes its two
+    `"a".into()` no longer infers. `Key::new` takes its two
     strings independently and `Key::key_with_digest` is the infallible `Key::with_digest`.
     `Client::get` takes `bins: impl Into<Bins>` without the `Send + Sync + 'static` bounds. Lists
     have one shape: stored lists (`BatchOperation::write/read_ops/udf`, `Statement::set_operations`,
@@ -233,13 +233,17 @@
     for existing users and may be removed in a later major release.
   * Repository: `CONTRIBUTING.md` and `SECURITY.md`; the README's sync section describes the
     self-driving blocking client (no Tokio runtime to set up).
+  * Three internals stay reachable for language bindings, hidden from the documentation:
+    `query::PartitionStatus` with `PartitionFilter::partitions` (rebuilding a cursor),
+    `Statement::set_aggregate_function` and the `Txn::set_state` test hook.
   * CI: pull requests now gate on clippy with warnings denied across every documented feature
     set, rustdoc with warnings denied, a docs.rs-style nightly build, a packaging dry run, each
     feature compiled on its own (`cargo hack`), and a build on current stable beside the MSRV;
     the server legs test the default feature set (`tls`, `dynamic-config`) and `lua` on Tokio,
     `dynamic-config` on async-std, and the blocking client's own suite; one server version
     (8.2.0.0) everywhere; every action pinned to a commit; the legacy Travis/AppVeyor-era
-    `build.yml` and `.appveyor.yml` removed.
+    `build.yml` and `.appveyor.yml` removed. The tag-push release workflow runs the same gate
+    before it packages anything.
 
 ## [3.0.0-alpha.2]
 

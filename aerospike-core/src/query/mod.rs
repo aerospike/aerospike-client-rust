@@ -20,7 +20,9 @@ pub use self::filter::{EqFilterValue, Filter, RangeFilterValue};
 pub use self::index_types::{CollectionIndexType, IndexType};
 pub(crate) use self::node_partitions::NodePartitions;
 pub use self::partition_filter::PartitionFilter;
-pub(crate) use self::partition_status::PartitionStatus;
+// Hidden: reachable for language bindings that rebuild cursors; not API.
+#[doc(hidden)]
+pub use self::partition_status::PartitionStatus;
 pub(crate) use self::partition_tracker::{PartitionTracker, TrackerShared};
 #[doc(hidden)] // wire-level query-plan types, see the crate root
 pub use self::plan::{

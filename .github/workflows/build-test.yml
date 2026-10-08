@@ -6,6 +6,8 @@ on:
       - main
       - v3
   workflow_dispatch:
+  # The release workflow runs this whole gate before it packages anything.
+  workflow_call:
 
 permissions:
   contents: read

@@ -54,7 +54,10 @@ pub struct PartitionFilter {
     /// field assignments with no `.await` inside, so an async mutex bought
     /// nothing, and unlike `std::sync::Mutex` this one neither allocates on
     /// first lock nor costs more than a byte per partition.
-    pub(crate) partitions: Option<Arc<Vec<Mutex<PartitionStatus>>>>,
+    ///
+    /// Hidden: reachable for language bindings that rebuild cursors; not API.
+    #[doc(hidden)]
+    pub partitions: Option<Arc<Vec<Mutex<PartitionStatus>>>>,
 
     /// Is partition completely scanned/queried.
     pub(crate) done: AtomicBool,

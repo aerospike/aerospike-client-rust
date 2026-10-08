@@ -252,7 +252,12 @@ impl Txn {
     }
 
     /// Set the transaction state.
-    pub(crate) fn set_state(&self, state: TxnState) {
+    ///
+    /// Hidden: a test hook for language bindings that need to force a
+    /// non-open state without a cluster. `commit` and `abort` drive the
+    /// transitions in real use.
+    #[doc(hidden)]
+    pub fn set_state(&self, state: TxnState) {
         *write(&self.state) = state;
     }
 
