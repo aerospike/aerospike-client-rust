@@ -1944,14 +1944,16 @@ impl Client {
         )))
     }
 
-    /// Execute a query and apply operations to matching records on the server.
-    /// This method sends the command to all nodes and returns an `ExecuteTask`
-    /// that can be used to monitor the progress of the background job.
+    /// Apply the statement's operations to every matching record on the
+    /// server. This method sends the command to all nodes and returns an
+    /// `ExecuteTask` that can be used to monitor the progress of the
+    /// background job.
     ///
-    /// The statement's filters determine which records are affected. If no filter
-    /// is specified, all records in the namespace/set are processed (scan mode).
-    ///
-    /// Only write operations are allowed. Read operations will result in an error.
+    /// The statement's filter determines which records are affected. If no
+    /// filter is specified, all records in the namespace/set are processed
+    /// (scan mode). The operations come from
+    /// [`Statement::set_operations`]; only write operations are allowed, and a
+    /// statement without operations is rejected with `ParameterError`.
     ///
     /// # Examples
     ///
@@ -1959,9 +1961,9 @@ impl Client {
     /// # use aerospike::*;
     /// # async fn example(client: &Client) -> Result<()> {
     /// let wpolicy = WritePolicy::default();
-    /// let statement = Statement::new("ns", "set", Bins::All);
-    /// let ops = vec![operations::put(&Bin::new("bin", Value::Int(42)))];
-    /// let task = client.query_operate(&wpolicy, statement, &ops).await?;
+    /// let mut statement = Statement::new("ns", "set", Bins::All);
+    /// statement.set_operations([operations::put(&Bin::new("bin", Value::Int(42)))]);
+    /// let task = client.query_operate(&wpolicy, statement).await?;
     /// task.wait_till_complete(None).await?;
     /// # Ok(())
     /// # }
@@ -1969,20 +1971,14 @@ impl Client {
     pub async fn query_operate(
         &self,
         write_policy: &WritePolicy,
-        mut statement: Statement,
-        operations: &[Operation],
+        statement: Statement,
     ) -> Result<ExecuteTask> {
-        if operations.is_empty() {
+        if statement.operations.as_ref().is_none_or(Vec::is_empty) {
             return Err(Error::server_error_with_message(
                 ResultCode::ParameterError,
                 "no operations defined",
             ));
         }
-        // Inject the ops into `statement.operations` so the unified
-        // `set_query` background path consumes them via the Statement.
-        // The legacy `&[Operation]` parameter is preserved on the
-        // public API for backwards compatibility.
-        statement.operations = Some(operations.to_vec());
         statement.validate()?;
 
         let nodes = self.cluster.nodes();

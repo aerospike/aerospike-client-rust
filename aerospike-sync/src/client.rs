@@ -659,19 +659,15 @@ impl Client {
         ))
     }
 
-    /// Execute a query and apply operations to matching records on the server.
-    /// Returns an `ExecuteTask` that can be used to monitor the progress of the
-    /// background job.
+    /// Apply the statement's operations ([`Statement::set_operations`]) to
+    /// every matching record on the server. Returns an `ExecuteTask` that can
+    /// be used to monitor the progress of the background job.
     pub fn query_operate(
         &self,
         write_policy: &WritePolicy,
         statement: Statement,
-        operations: &[Operation],
     ) -> Result<ExecuteTask> {
-        block_on(
-            self.async_client
-                .query_operate(write_policy, statement, operations),
-        )
+        block_on(self.async_client.query_operate(write_policy, statement))
     }
 
     /// Apply a user-defined function to records matching the statement filter.

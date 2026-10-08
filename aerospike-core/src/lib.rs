@@ -196,7 +196,7 @@ pub use metrics::{
 pub use net::Host;
 pub use net::ToHosts;
 pub use operations::{ListOrderType, ListPolicy, ListReturnType, ListSortFlags, ListWriteFlags};
-pub use operations::{MapPolicy, MapReturnType, MapWriteFlags, MapWriteMode};
+pub use operations::{MapPolicy, MapReturnType, MapWriteFlags};
 #[cfg(feature = "tls")]
 pub use policy::TlsPolicy;
 pub use policy::{

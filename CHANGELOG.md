@@ -160,7 +160,11 @@
     `Operation::context`, `Filter::context`) take `impl Into<Vec<_>>`, borrowed lists (`operate`,
     the UDF `args`, every builder `ctx`) take `&[_]`, and no list is wrapped in `Option`;
     `batch_foreach` takes `&mut [BatchOperation]` like `batch`; the UDF module parameter is
-    `package_name` on `execute_udf` and `BatchOperation::udf`. The
+    `package_name` on `execute_udf` and `BatchOperation::udf`. `query_operate` applies the
+    statement's own operations (`Statement::set_operations`) instead of a second list;
+    `Statement::set_aggregate_function` is crate-private, the client's aggregate methods take the
+    UDF; `MapWriteMode` is removed in favour of `MapWriteFlags` (`MapPolicy::new(order, flags)`,
+    `with_persisted_index`), and the expression `put`/`put_items` now send the policy's flags. The
     `Policy` trait is no longer
     exported. Acronyms in
     identifiers are `UpperCamelCase`: `BatchUdfPolicy`, `UdfLang`, `ReadModeAp`/`ReadModeSc`,

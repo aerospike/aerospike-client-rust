@@ -452,10 +452,10 @@ async fn query_operate_with_compression() {
         let mut wpolicy = WritePolicy::default();
         wpolicy.base_policy.use_compression = use_compression;
 
-        let statement = Statement::new(namespace, &set_name, Bins::All);
-        let ops = vec![operations::add(&as_bin!("int", 100))];
+        let mut statement = Statement::new(namespace, &set_name, Bins::All);
+        statement.set_operations([operations::add(&as_bin!("int", 100))]);
         let task = client
-            .query_operate(&wpolicy, statement, &ops)
+            .query_operate(&wpolicy, statement)
             .await
             .unwrap_or_else(|e| panic!("query_operate ({}) failed: {:?}", label, e));
         task.wait_till_complete(Some(Duration::from_secs(30)))

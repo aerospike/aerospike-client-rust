@@ -28,7 +28,7 @@ pub mod string;
 
 use self::cdt::CdtOperation;
 pub use self::lists::{ListOrderType, ListPolicy, ListReturnType, ListSortFlags, ListWriteFlags};
-pub use self::maps::{MapOrder, MapPolicy, MapReturnType, MapWriteFlags, MapWriteMode};
+pub use self::maps::{MapOrder, MapPolicy, MapReturnType, MapWriteFlags};
 pub use self::scalar::*;
 use self::string::StringOp;
 

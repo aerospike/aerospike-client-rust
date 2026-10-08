@@ -16,7 +16,7 @@
 //! Map Cdt Aerospike Filter Expressions.
 use crate::expressions::{nil, ExpOp, ExpType, Expression, ExpressionArgument, MODIFY};
 use crate::operations::cdt_context::{CdtContext, CtxType};
-use crate::operations::maps::{map_write_op, CdtMapOpType};
+use crate::operations::maps::{CdtMapOpType, MapWriteFlags};
 use crate::{MapPolicy, MapReturnType, Value};
 
 pub(crate) const MODULE: i64 = 0;
@@ -31,23 +31,16 @@ pub fn put(
     bin: Expression,
     ctx: &[CdtContext],
 ) -> Expression {
-    let op = map_write_op(policy, false);
-    let args: Vec<ExpressionArgument> = if op as u8 == CdtMapOpType::Replace as u8 {
-        vec![
-            ExpressionArgument::Context(ctx.to_vec()),
-            ExpressionArgument::Value(Value::from(op as u8)),
-            ExpressionArgument::FilterExpression(key),
-            ExpressionArgument::FilterExpression(value),
-        ]
-    } else {
-        vec![
-            ExpressionArgument::Context(ctx.to_vec()),
-            ExpressionArgument::Value(Value::from(op as u8)),
-            ExpressionArgument::FilterExpression(key),
-            ExpressionArgument::FilterExpression(value),
-            ExpressionArgument::Value(Value::from(policy.order as u8)),
-        ]
-    };
+    let mut args = vec![
+        ExpressionArgument::Context(ctx.to_vec()),
+        ExpressionArgument::Value(Value::from(CdtMapOpType::Put as u8)),
+        ExpressionArgument::FilterExpression(key),
+        ExpressionArgument::FilterExpression(value),
+        ExpressionArgument::Value(Value::from(policy.order as u8)),
+    ];
+    if policy.flags != MapWriteFlags::DEFAULT {
+        args.push(ExpressionArgument::Value(Value::from(policy.flags.bits())));
+    }
     add_write(bin, ctx, args)
 }
 
@@ -60,21 +53,15 @@ pub fn put_items(
     bin: Expression,
     ctx: &[CdtContext],
 ) -> Expression {
-    let op = map_write_op(policy, true);
-    let args: Vec<ExpressionArgument> = if op as u8 == CdtMapOpType::Replace as u8 {
-        vec![
-            ExpressionArgument::Context(ctx.to_vec()),
-            ExpressionArgument::Value(Value::from(op as u8)),
-            ExpressionArgument::FilterExpression(map),
-        ]
-    } else {
-        vec![
-            ExpressionArgument::Context(ctx.to_vec()),
-            ExpressionArgument::Value(Value::from(op as u8)),
-            ExpressionArgument::FilterExpression(map),
-            ExpressionArgument::Value(Value::from(policy.order as u8)),
-        ]
-    };
+    let mut args = vec![
+        ExpressionArgument::Context(ctx.to_vec()),
+        ExpressionArgument::Value(Value::from(CdtMapOpType::PutItems as u8)),
+        ExpressionArgument::FilterExpression(map),
+        ExpressionArgument::Value(Value::from(policy.order as u8)),
+    ];
+    if policy.flags != MapWriteFlags::DEFAULT {
+        args.push(ExpressionArgument::Value(Value::from(policy.flags.bits())));
+    }
     add_write(bin, ctx, args)
 }
 

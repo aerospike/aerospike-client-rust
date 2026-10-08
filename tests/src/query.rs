@@ -1027,9 +1027,9 @@ async fn query_operate_write() {
     // Use query_operate to add 100 to every record's "bin" value in range [0, 99]
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
     statement.set_filter(Filter::range("bin", 0, 99));
-    let ops = vec![operations::add(&as_bin!("bin", 100))];
+    statement.set_operations([operations::add(&as_bin!("bin", 100))]);
     let task = client
-        .query_operate(&wpolicy, statement, &ops)
+        .query_operate(&wpolicy, statement)
         .await
         .expect("query_operate failed");
     task.wait_till_complete(Some(Duration::from_secs(30)))
@@ -1057,10 +1057,10 @@ async fn query_operate_scan_all() {
     let wpolicy = WritePolicy::default();
 
     // Use query_operate without filter (scan mode) to set a new bin on all records
-    let statement = Statement::new(namespace, &set_name, Bins::All);
-    let ops = vec![operations::put(&as_bin!("new_bin", 999))];
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_operations([operations::put(&as_bin!("new_bin", 999))]);
     let task = client
-        .query_operate(&wpolicy, statement, &ops)
+        .query_operate(&wpolicy, statement)
         .await
         .expect("query_operate scan failed");
     task.wait_till_complete(Some(Duration::from_secs(30)))
@@ -1097,12 +1097,12 @@ async fn query_operate_empty_set() {
 
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
-    let statement = Statement::new(namespace, &set_name, Bins::All);
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
     let wpolicy = WritePolicy::default();
-    let ops = vec![operations::put(&as_bin!("bin", 1))];
+    statement.set_operations([operations::put(&as_bin!("bin", 1))]);
 
     let task = client
-        .query_operate(&wpolicy, statement, &ops)
+        .query_operate(&wpolicy, statement)
         .await
         .expect("background operate on an empty set should succeed");
     task.wait_till_complete(Some(Duration::from_secs(30)))
@@ -1126,7 +1126,7 @@ async fn query_operate_empty_ops_returns_parameter_error() {
     // contains "no operations" so the assertion would not be satisfied by an
     // accidental server-returned ParameterError (server fills the node addr
     // in that field instead).
-    let result = client.query_operate(&wpolicy, statement, &[]).await;
+    let result = client.query_operate(&wpolicy, statement).await;
 
     match result {
         Err(ref e)
@@ -2069,10 +2069,11 @@ async fn query_operate_rejects_read_op() {
     let namespace = common::namespace();
     let set_name = create_test_set(&client, 1).await;
 
-    let statement = Statement::new(namespace, &set_name, Bins::All);
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_operations([operations::get_bin("bin")]);
     let wpolicy = WritePolicy::default();
     let result = client
-        .query_operate(&wpolicy, statement, &[operations::get_bin("bin")])
+        .query_operate(&wpolicy, statement)
         .await;
 
     match result {
@@ -2089,10 +2090,11 @@ async fn query_operate_rejects_get_op() {
     let namespace = common::namespace();
     let set_name = create_test_set(&client, 1).await;
 
-    let statement = Statement::new(namespace, &set_name, Bins::All);
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_operations([operations::get()]);
     let wpolicy = WritePolicy::default();
     let result = client
-        .query_operate(&wpolicy, statement, &[operations::get()])
+        .query_operate(&wpolicy, statement)
         .await;
 
     match result {
@@ -2109,17 +2111,11 @@ async fn query_operate_rejects_mixed_ops() {
     let namespace = common::namespace();
     let set_name = create_test_set(&client, 1).await;
 
-    let statement = Statement::new(namespace, &set_name, Bins::All);
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_operations([operations::get_bin("bin"), operations::put(&as_bin!("tag", "mixed"))]);
     let wpolicy = WritePolicy::default();
     let result = client
-        .query_operate(
-            &wpolicy,
-            statement,
-            &[
-                operations::get_bin("bin"),
-                operations::put(&as_bin!("tag", "mixed")),
-            ],
-        )
+        .query_operate(&wpolicy, statement)
         .await;
 
     match result {

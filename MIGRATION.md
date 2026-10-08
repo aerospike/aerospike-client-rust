@@ -188,6 +188,9 @@ a supported way to build a policy.
 | `BatchOperation::write(.., ops: Vec<Operation>)`, `read_ops`, `Statement::set_operations(Vec<..>)`, `Operation::context(Vec<CdtContext>)`, `Filter::context(Vec<..>)` | `impl Into<Vec<_>>`: a `Vec`, an array or a slice of clonable items |
 | `Client::batch_foreach(policy, ops: Vec<BatchOperation>, hook)` | `ops: &mut [BatchOperation]`, like `batch`; the rows carry their results after the call as well as being handed to the hook |
 | path and expression builders took `ctx: impl AsRef<[CdtContext]>` | `ctx: &[CdtContext]`, like every other builder; `&path` still works because `Path` derefs to the slice |
+| `query_operate(policy, statement, ops: &[Operation])` | `query_operate(policy, statement)` after `statement.set_operations(ops)`; a statement without operations is `ParameterError` |
+| `Statement::set_aggregate_function(..)` | crate-private; pass the package, function and arguments to `query_aggregate` / `query_execute_udf` |
+| `MapPolicy::new(order, MapWriteMode::Update)`, `MapPolicy::new_with_flags(order, flags)`, `MapWriteMode::{UpdateOnly, CreateOnly}` | `MapPolicy::new(order, MapWriteFlags::DEFAULT)`, `MapPolicy::new(order, flags)`, `MapWriteFlags::{UPDATE_ONLY, CREATE_ONLY}`; `new_with_flags_and_persisted_index` is `with_persisted_index`. `MapWriteMode` is removed |
 | `Filter::geo_within_region_cit(bin, region, cit)` and the other five `geo_*_cit` constructors | `Filter::geo_within_region(bin, region).collection_type(cit)`; `collection_type` chains on any filter |
 
 ### Acronyms in identifiers

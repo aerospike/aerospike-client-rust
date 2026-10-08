@@ -133,7 +133,7 @@ async fn value_ord_matches_server_map_key_order() {
 #[aerospike_macro::test]
 async fn map_order_policy_selects_variant_not_order() {
     use aerospike::operations::{maps, MapOrder};
-    use aerospike::{MapPolicy, MapWriteMode};
+    use aerospike::{MapPolicy, MapWriteFlags};
 
     // Verified server behavior (8.1): the MapOrder in a MapPolicy
     // controls the wire representation of returns, not the pair order —
@@ -148,12 +148,12 @@ async fn map_order_policy_selects_variant_not_order() {
     for (label, policy, expect_sorted_variant) in [
         (
             "unordered",
-            MapPolicy::new(MapOrder::Unordered, MapWriteMode::Update),
+            MapPolicy::new(MapOrder::Unordered, MapWriteFlags::DEFAULT),
             false,
         ),
         (
             "key-ordered",
-            MapPolicy::new(MapOrder::KeyOrdered, MapWriteMode::Update),
+            MapPolicy::new(MapOrder::KeyOrdered, MapWriteFlags::DEFAULT),
             true,
         ),
     ] {

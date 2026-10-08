@@ -42,8 +42,8 @@ pub struct Statement {
     /// query; without one the statement scans the whole set.
     pub filter: Option<Filter>,
 
-    /// Lua aggregation function parameters, set by
-    /// [`set_aggregate_function`](Self::set_aggregate_function).
+    /// Lua aggregation function parameters, set by the client's
+    /// aggregate and background-UDF methods.
     pub(crate) aggregation: Option<Aggregation>,
 
     /// Optional ops projection. When set, the server returns the result
@@ -83,13 +83,17 @@ impl Statement {
         }
     }
 
-    /// Attach an ops projection to the statement. On a foreground query
-    /// the server returns the result of these operations for each
-    /// matching record instead of the bins selected by `bins`. Mutually
-    /// exclusive with `bins` (server uses `operations` if both are set).
+    /// Attach operations to the statement. On a foreground query
+    /// ([`Client::query`](crate::Client::query)) the server returns the
+    /// result of these operations for each matching record instead of the
+    /// bins selected by `bins`; mutually exclusive with `bins` (the server
+    /// uses `operations` if both are set). On a background job
+    /// ([`Client::query_operate`](crate::Client::query_operate)) the server
+    /// applies them to each matching record.
     ///
-    /// Foreground queries (`Client::query`) accept only read ops; server
-    /// versions before 8.1.2 only accept the basic `Read` op here.
+    /// Foreground queries accept only read ops, and server versions before
+    /// 8.1.2 only accept the basic `Read` op; background jobs accept only
+    /// write ops.
     pub fn set_operations(&mut self, operations: impl Into<Vec<Operation>>) {
         self.operations = Some(operations.into());
     }
@@ -113,8 +117,10 @@ impl Statement {
         self.filter = Some(filter);
     }
 
-    /// Set Lua aggregation function parameters.
-    pub fn set_aggregate_function(
+    /// Lua aggregation function parameters, set by
+    /// [`Client::query_aggregate`](crate::Client::query_aggregate) and
+    /// [`Client::query_execute_udf`](crate::Client::query_execute_udf).
+    pub(crate) fn set_aggregate_function(
         &mut self,
         package_name: impl Into<String>,
         function_name: impl Into<String>,

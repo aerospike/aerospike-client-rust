@@ -21,7 +21,7 @@ use aerospike::operations::cdt_context::{ctx_map_key, ctx_map_key_create};
 use aerospike::operations::{maps, MapOrder};
 use aerospike::{
     as_bin, as_key, as_list, as_map, as_ord_map, as_sorted_map, as_val, as_values, Bins, MapPolicy,
-    MapReturnType, MapWriteFlags, MapWriteMode, ReadPolicy, Value, WritePolicy,
+    MapReturnType, MapWriteFlags, ReadPolicy, Value, WritePolicy,
 };
 
 #[aerospike_macro::test]
@@ -566,7 +566,7 @@ async fn map_set_policy_op() {
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     // Change to key-ordered using set_policy
-    let ordered_policy = MapPolicy::new(MapOrder::KeyOrdered, MapWriteMode::Update);
+    let ordered_policy = MapPolicy::new(MapOrder::KeyOrdered, MapWriteFlags::DEFAULT);
     let op = maps::set_policy(&ordered_policy, "bin", vec![]);
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
@@ -592,7 +592,7 @@ async fn map_put_with_flags_create_only() {
         .unwrap();
 
     // Use CREATE_ONLY flag - first put should succeed
-    let policy = MapPolicy::new_with_flags(MapOrder::Unordered, MapWriteFlags::CREATE_ONLY);
+    let policy = MapPolicy::new(MapOrder::Unordered, MapWriteFlags::CREATE_ONLY);
     let op = maps::put(&policy, "bin", as_val!("a"), as_val!(1));
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
@@ -628,7 +628,7 @@ async fn map_put_with_flags_no_fail() {
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     // Use CREATE_ONLY | NO_FAIL - should silently skip existing key
-    let policy = MapPolicy::new_with_flags(
+    let policy = MapPolicy::new(
         MapOrder::Unordered,
         MapWriteFlags::CREATE_ONLY | MapWriteFlags::NO_FAIL,
     );
@@ -662,7 +662,7 @@ async fn map_put_with_flags_update_only() {
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
     // UPDATE_ONLY on existing key should succeed
-    let policy = MapPolicy::new_with_flags(MapOrder::Unordered, MapWriteFlags::UPDATE_ONLY);
+    let policy = MapPolicy::new(MapOrder::Unordered, MapWriteFlags::UPDATE_ONLY);
     let op = maps::put(&policy, "bin", as_val!("a"), as_val!(2));
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
@@ -697,7 +697,7 @@ async fn map_new_with_flags_and_persisted_index() {
 
     // Create key-ordered map with persisted index via flags constructor
     let policy =
-        MapPolicy::new_with_flags_and_persisted_index(MapOrder::KeyOrdered, MapWriteFlags::DEFAULT);
+        MapPolicy::with_persisted_index(MapOrder::KeyOrdered, MapWriteFlags::DEFAULT);
     let op = maps::put(&policy, "bin", as_val!("c"), as_val!(3));
     client.operate(&wpolicy, &key, &[op]).await.unwrap();
 
@@ -758,7 +758,7 @@ async fn map_apis_accept_all_three_map_collections() {
 
     // ---- put_items under an ORDERED policy: HashMap/IndexMap items are
     // sorted client-side and sent with the K-ordered wire header ----
-    let opolicy = MapPolicy::new(MapOrder::KeyOrdered, MapWriteMode::Update);
+    let opolicy = MapPolicy::new(MapOrder::KeyOrdered, MapWriteFlags::DEFAULT);
     let okey = as_key!(namespace, set_name, "ordered_put_items");
     let hash: HashMap<Value, Value> = [pair("z", 26), pair("a", 1), pair("m", 13)].into();
     let ordered: IndexMap<Value, Value> = [pair("z", 6), pair("q", 7)].into_iter().collect();

@@ -640,12 +640,10 @@ async fn background_query_filter_build_failure_keeps_the_server_detail() {
 
     let mut wp = wpolicy_verbosity(3);
     wp.base_policy.filter_expression = Some(bad_exp());
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_operations([scalar::put(&as_bin!(BIN, 2))]);
     let err = client
-        .query_operate(
-            &wp,
-            Statement::new(namespace, &set_name, Bins::All),
-            &[scalar::put(&as_bin!(BIN, 2))],
-        )
+        .query_operate(&wp, statement)
         .await
         .expect_err("type-mismatched filter should fail the background job");
     assert_result(&err, ResultCode::ParameterError, &["expression"]);

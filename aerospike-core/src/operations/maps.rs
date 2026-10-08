@@ -86,12 +86,10 @@ use crate::Value;
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum CdtMapOpType {
     SetType = 64,
-    Add = 65,
-    AddItems = 66,
+    // 65 ADD, 66 ADD_ITEMS, 69 REPLACE and 70 REPLACE_ITEMS are the pre-4.3
+    // write modes; the client sends PUT with write flags instead.
     Put = 67,
     PutItems = 68,
-    Replace = 69,
-    ReplaceItems = 70,
     Increment = 73,
     Decrement = 74,
     Clear = 75,
@@ -226,72 +224,39 @@ crate::flags::bit_flags! {
     const PARTIAL = 8;
 }
 
-/// Unique key map write type.
-#[derive(Debug, Clone, Copy)]
-pub enum MapWriteMode {
-    /// If the key already exists, the item will be overwritten.
-    /// If the key does not exist, a new item will be created.
-    Update,
-
-    /// If the key already exists, the item will be overwritten.
-    /// If the key does not exist, the write will fail.
-    UpdateOnly,
-
-    /// If the key already exists, the write will fail.
-    /// If the key does not exist, a new item will be created.
-    CreateOnly,
-}
-
 /// [`MapPolicy`] directives when creating a map and writing map items.
 #[derive(Debug, Clone, Copy)]
 pub struct MapPolicy {
     /// The Order of the Map
     pub order: MapOrder,
-    /// The Map Write Mode
-    pub write_mode: MapWriteMode,
-    /// The map write flags. When set (not `DEFAULT`), they are used instead
-    /// of `write_mode` for put operations. Requires server version 4.3+.
+    /// The map write flags.
     pub flags: MapWriteFlags,
     /// Whether to persist the index for this map.
     pub persist_index: bool,
 }
 
 impl MapPolicy {
-    /// Creates a new map policy given the ordering for the map and the write mode.
-    pub const fn new(order: MapOrder, write_mode: MapWriteMode) -> Self {
+    /// A map policy with the given ordering and write flags (combine them
+    /// with `|`; `MapWriteFlags::DEFAULT` allows create or update).
+    pub const fn new(order: MapOrder, flags: MapWriteFlags) -> Self {
         MapPolicy {
             order,
-            write_mode,
-            flags: MapWriteFlags::DEFAULT,
-            persist_index: false,
-        }
-    }
-
-    /// Creates a new map policy with write flags instead of a write mode.
-    /// When flags are non-zero, they take precedence over write mode for put operations.
-    /// Requires server version 4.3+.
-    pub const fn new_with_flags(order: MapOrder, flags: MapWriteFlags) -> Self {
-        MapPolicy {
-            order,
-            write_mode: MapWriteMode::Update,
             flags,
             persist_index: false,
         }
     }
 
-    /// Creates a new map policy with write flags and a persisted index.
-    /// The persisted index flag (0x10) is OR'd into the map order attribute.
-    /// Requires server version 4.3+.
-    pub const fn new_with_flags_and_persisted_index(order: MapOrder, flags: MapWriteFlags) -> Self {
+    /// Like [`new`](Self::new), and the server also persists the map's
+    /// index (the 0x10 bit of the order attribute), on servers that support
+    /// persisted map indexes.
+    pub const fn with_persisted_index(order: MapOrder, flags: MapWriteFlags) -> Self {
         MapPolicy {
             order,
-            write_mode: MapWriteMode::Update,
             flags,
             persist_index: true,
         }
     }
 
-    /// Returns the order attribute byte, including the persist index flag if set.
     pub(crate) const fn order_attr(self) -> u8 {
         if self.persist_index {
             self.order as u8 | 0x10
@@ -303,55 +268,12 @@ impl MapPolicy {
 
 impl Default for MapPolicy {
     fn default() -> Self {
-        MapPolicy::new(MapOrder::Unordered, MapWriteMode::Update)
+        MapPolicy::new(MapOrder::Unordered, MapWriteFlags::DEFAULT)
     }
 }
 
 /// Determines the correct operation to use when setting one or more map values, depending on the
 /// map policy.
-#[allow(clippy::trivially_copy_pass_by_ref)]
-pub(crate) const fn map_write_op(policy: &MapPolicy, multi: bool) -> CdtMapOpType {
-    match policy.write_mode {
-        MapWriteMode::Update => {
-            if multi {
-                CdtMapOpType::PutItems
-            } else {
-                CdtMapOpType::Put
-            }
-        }
-        MapWriteMode::UpdateOnly => {
-            if multi {
-                CdtMapOpType::ReplaceItems
-            } else {
-                CdtMapOpType::Replace
-            }
-        }
-        MapWriteMode::CreateOnly => {
-            if multi {
-                CdtMapOpType::AddItems
-            } else {
-                CdtMapOpType::Add
-            }
-        }
-    }
-}
-
-#[allow(clippy::trivially_copy_pass_by_ref)]
-const fn map_order_arg(policy: &MapPolicy) -> Option<CdtArgument> {
-    match policy.write_mode {
-        MapWriteMode::UpdateOnly => None,
-        _ => Some(CdtArgument::Byte(policy.order_attr())),
-    }
-}
-
-/// Creates map create operation.
-///
-/// Server creates map at given context level. The map-order create flag is OR'd into the
-/// last context element, so the final context element itself may address a not-yet-existing
-/// map key; earlier elements must exist or use a create-type context (e.g.,
-/// [`ctx_map_key_create`](crate::operations::cdt_context::ctx_map_key_create)).
-///
-/// If ctx is empty, this is equivalent to [`set_order`].
 #[must_use]
 pub fn create(bin: impl Into<String>, map_order: MapOrder, ctx: Vec<CdtContext>) -> Operation {
     if ctx.is_empty() {
@@ -443,36 +365,17 @@ pub fn set_order(bin: impl Into<String>, map_order: MapOrder) -> Operation {
 /// policy also specifies the mode used when writing items to the map.
 #[must_use]
 pub fn put(policy: &MapPolicy, bin: impl Into<String>, key: Value, val: Value) -> Operation {
-    if policy.flags != MapWriteFlags::DEFAULT {
-        // Use flags-based put (server 4.3+)
-        let args = vec![
-            CdtArgument::Value(key),
-            CdtArgument::Value(val),
-            CdtArgument::Byte(policy.order_attr()),
-            CdtArgument::Byte(policy.flags.bits()),
-        ];
-        let cdt_op = CdtOperation {
-            op: CdtMapOpType::Put as u8,
-            encoder: Arc::new(pack_cdt_op),
-            args,
-        };
-        return Operation {
-            op: OperationType::CdtWrite,
-            ctx: DEFAULT_CTX,
-            bin: OperationBin::Name(bin.into()),
-            data: OperationData::CdtMapOp(cdt_op),
-        };
-    }
-
+    let with_flags = policy.flags != MapWriteFlags::DEFAULT;
     let mut args = vec![CdtArgument::Value(key)];
-    if !val.is_nil() {
+    if with_flags || !val.is_nil() {
         args.push(CdtArgument::Value(val));
     }
-    if let Some(arg) = map_order_arg(policy) {
-        args.push(arg);
+    args.push(CdtArgument::Byte(policy.order_attr()));
+    if with_flags {
+        args.push(CdtArgument::Byte(policy.flags.bits()));
     }
     let cdt_op = CdtOperation {
-        op: map_write_op(policy, false) as u8,
+        op: CdtMapOpType::Put as u8,
         encoder: Arc::new(pack_cdt_op),
         args,
     };
@@ -511,32 +414,12 @@ pub fn put_items<M: MapLike<Value, Value>>(policy: &MapPolicy, bin: impl Into<St
         crate::value::MapCollection::Sorted(m) => CdtArgument::SortedMap(m),
     };
 
+    let mut args = vec![items, CdtArgument::Byte(policy.order_attr())];
     if policy.flags != MapWriteFlags::DEFAULT {
-        // Use flags-based put items (server 4.3+)
-        let args = vec![
-            items,
-            CdtArgument::Byte(policy.order_attr()),
-            CdtArgument::Byte(policy.flags.bits()),
-        ];
-        let cdt_op = CdtOperation {
-            op: CdtMapOpType::PutItems as u8,
-            encoder: Arc::new(pack_cdt_op),
-            args,
-        };
-        return Operation {
-            op: OperationType::CdtWrite,
-            ctx: DEFAULT_CTX,
-            bin: OperationBin::Name(bin.into()),
-            data: OperationData::CdtMapOp(cdt_op),
-        };
-    }
-
-    let mut args = vec![items];
-    if let Some(arg) = map_order_arg(policy) {
-        args.push(arg);
+        args.push(CdtArgument::Byte(policy.flags.bits()));
     }
     let cdt_op = CdtOperation {
-        op: map_write_op(policy, true) as u8,
+        op: CdtMapOpType::PutItems as u8,
         encoder: Arc::new(pack_cdt_op),
         args,
     };
@@ -559,9 +442,7 @@ pub fn increment_value(policy: &MapPolicy, bin: impl Into<String>, key: Value, i
     if !incr.is_nil() {
         args.push(CdtArgument::Value(incr));
     }
-    if let Some(arg) = map_order_arg(policy) {
-        args.push(arg);
-    }
+    args.push(CdtArgument::Byte(policy.order_attr()));
     let cdt_op = CdtOperation {
         op: CdtMapOpType::Increment as u8,
         encoder: Arc::new(pack_cdt_op),
@@ -586,9 +467,7 @@ pub fn decrement_value(policy: &MapPolicy, bin: impl Into<String>, key: Value, d
     if !decr.is_nil() {
         args.push(CdtArgument::Value(decr));
     }
-    if let Some(arg) = map_order_arg(policy) {
-        args.push(arg);
-    }
+    args.push(CdtArgument::Byte(policy.order_attr()));
     let cdt_op = CdtOperation {
         op: CdtMapOpType::Decrement as u8,
         encoder: Arc::new(pack_cdt_op),
