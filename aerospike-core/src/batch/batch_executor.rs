@@ -90,11 +90,17 @@ impl BatchExecutor {
     pub async fn execute_foreach(
         &self,
         policy: &BatchPolicy,
-        ops: Vec<BatchOperation>,
+        ops: &mut [BatchOperation],
         hook: Arc<BatchHook>,
     ) -> Result<()> {
-        let rows: Vec<(BatchOperation, usize)> =
-            ops.into_iter().enumerate().map(|(i, op)| (op, i)).collect();
+        let rows: Vec<(BatchOperation, usize)> = ops
+            .iter_mut()
+            .enumerate()
+            .map(|(i, op)| {
+                op.clear_result();
+                (std::mem::replace(op, BatchOperation::placeholder()), i)
+            })
+            .collect();
         let (rows, first_err) = self.run_rows(policy, rows, Some(hook.clone())).await?;
         // Whatever never fired — unanswered, unroutable, or abandoned by an
         // abort — fires now with the outcome it carries, so the hook is the
@@ -104,6 +110,9 @@ impl BatchExecutor {
                 break;
             }
             hook.fire(*idx, op.batch_record()).await;
+        }
+        for (op, idx) in rows {
+            ops[idx] = op;
         }
         match first_err {
             None => Ok(()),
@@ -317,7 +326,7 @@ impl BatchExecutor {
             }
             BatchOp::Udf {
                 policy,
-                udf_name,
+                package_name,
                 function_name,
                 args,
             } => {
@@ -327,9 +336,9 @@ impl BatchExecutor {
                     &wp,
                     cluster.clone(),
                     &key,
-                    udf_name,
+                    package_name,
                     function_name,
-                    args.as_deref(),
+                    args,
                 );
                 cmd.execute().await.map(|()| cmd.read_command.record.take())
             }

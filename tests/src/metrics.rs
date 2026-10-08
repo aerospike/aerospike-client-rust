@@ -878,7 +878,7 @@ async fn metrics_bytes_received_single_key_commands() {
     }
     let udf = register_echo_udf(&client).await;
     let echoed = client
-        .execute_udf(&wpolicy, &key, udf, "echo", Some(&[as_val!(blob.as_str())]))
+        .execute_udf(&wpolicy, &key, udf, "echo", &[as_val!(blob.as_str())])
         .await
         .unwrap();
     assert_eq!(echoed, Some(as_val!(blob.as_str())));
@@ -954,7 +954,7 @@ async fn metrics_bytes_received_batch_commands() {
                 k.clone(),
                 udf,
                 "echo",
-                Some(vec![as_val!(blob.as_str())]),
+                vec![as_val!(blob.as_str())],
             )
         })
         .collect();

@@ -28,7 +28,7 @@ pub struct ExecuteUdfCommand<'a> {
     policy: &'a WritePolicy,
     package_name: &'a str,
     function_name: &'a str,
-    args: Option<&'a [Value]>,
+    args: &'a [Value],
 }
 
 impl<'a> ExecuteUdfCommand<'a> {
@@ -38,7 +38,7 @@ impl<'a> ExecuteUdfCommand<'a> {
         key: &'a Key,
         package_name: &'a str,
         function_name: &'a str,
-        args: Option<&'a [Value]>,
+        args: &'a [Value],
     ) -> Self {
         let partition = crate::cluster::partition::Partition::for_write(key, policy.base_policy.replica);
         ExecuteUdfCommand {

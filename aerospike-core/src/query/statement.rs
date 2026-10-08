@@ -23,7 +23,7 @@ use crate::Value;
 pub struct Aggregation {
     pub package_name: String,
     pub function_name: String,
-    pub function_args: Option<Vec<Value>>,
+    pub function_args: Vec<Value>,
 }
 
 /// Query statement parameters.
@@ -90,8 +90,8 @@ impl Statement {
     ///
     /// Foreground queries (`Client::query`) accept only read ops; server
     /// versions before 8.1.2 only accept the basic `Read` op here.
-    pub fn set_operations(&mut self, operations: Vec<Operation>) {
-        self.operations = Some(operations);
+    pub fn set_operations(&mut self, operations: impl Into<Vec<Operation>>) {
+        self.operations = Some(operations.into());
     }
 
     /// Set the statement's secondary-index filter, replacing any previous one.
@@ -118,12 +118,12 @@ impl Statement {
         &mut self,
         package_name: impl Into<String>,
         function_name: impl Into<String>,
-        function_args: Option<&[Value]>,
+        function_args: &[Value],
     ) {
         let agg = Aggregation {
             package_name: package_name.into(),
             function_name: function_name.into(),
-            function_args: function_args.map(<[Value]>::to_vec),
+            function_args: function_args.to_vec(),
         };
         self.aggregation = Some(agg);
     }

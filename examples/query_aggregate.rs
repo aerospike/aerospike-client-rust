@@ -105,7 +105,7 @@ pub async fn run() {
             stmt,
             "example_aggregate",
             "sum_single_bin",
-            Some(&[as_val!("score")]),
+            &[as_val!("score")],
         )
         .await
         .unwrap();
@@ -124,7 +124,7 @@ pub async fn run() {
             stmt,
             "example_aggregate",
             "average",
-            Some(&[as_val!("score")]),
+            &[as_val!("score")],
         )
         .await
         .unwrap();

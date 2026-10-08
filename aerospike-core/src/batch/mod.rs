@@ -363,9 +363,9 @@ pub enum BatchOp {
     },
     Udf {
         policy: BatchUdfPolicy,
-        udf_name: String,
+        package_name: String,
         function_name: String,
-        args: Option<Vec<Value>>,
+        args: Vec<Value>,
     },
     /// Multi-record-transaction *verify*: check a record's version. Built by
     /// the transaction roll/verify path, never by users.
@@ -394,24 +394,32 @@ impl BatchOperation {
     }
 
     /// Creates a batch read with multiple operations.
-    pub fn read_ops(policy: &BatchReadPolicy, key: Key, ops: Vec<Operation>) -> Self {
+    pub fn read_ops(
+        policy: &BatchReadPolicy,
+        key: Key,
+        ops: impl Into<Vec<Operation>>,
+    ) -> Self {
         Self {
             br: BatchRecord::new(key, false),
             kind: BatchOp::Read {
                 policy: policy.clone(),
                 bins: Bins::None,
-                ops: Some(ops),
+                ops: Some(ops.into()),
             },
         }
     }
 
     /// Creates a batch write with multiple operations.
-    pub fn write(policy: &BatchWritePolicy, key: Key, ops: Vec<Operation>) -> Self {
+    pub fn write(
+        policy: &BatchWritePolicy,
+        key: Key,
+        ops: impl Into<Vec<Operation>>,
+    ) -> Self {
         Self {
             br: BatchRecord::new(key, true),
             kind: BatchOp::Write {
                 policy: policy.clone(),
-                ops,
+                ops: ops.into(),
             },
         }
     }
@@ -426,21 +434,22 @@ impl BatchOperation {
         }
     }
 
-    /// Creates a batch UDF operation.
+    /// Creates a batch UDF operation: `function_name` from the registered
+    /// package `package_name`, called with `args` (`[]` for none).
     pub fn udf(
         policy: &BatchUdfPolicy,
         key: Key,
-        udf_name: &str,
-        function_name: &str,
-        args: Option<Vec<Value>>,
+        package_name: impl Into<String>,
+        function_name: impl Into<String>,
+        args: impl Into<Vec<Value>>,
     ) -> Self {
         Self {
             br: BatchRecord::new(key, true),
             kind: BatchOp::Udf {
                 policy: policy.clone(),
-                udf_name: udf_name.into(),
+                package_name: package_name.into(),
                 function_name: function_name.into(),
-                args,
+                args: args.into(),
             },
         }
     }
@@ -570,7 +579,7 @@ impl BatchOperation {
             }
             BatchOp::Udf {
                 policy,
-                udf_name,
+                package_name,
                 function_name,
                 args,
             } => {
@@ -593,13 +602,9 @@ impl BatchOperation {
                     }
                 }
 
-                size += udf_name.len() + FIELD_HEADER_SIZE as usize;
+                size += package_name.len() + FIELD_HEADER_SIZE as usize;
                 size += function_name.len() + FIELD_HEADER_SIZE as usize;
-                if let Some(args) = args {
-                    size += encoder::pack_array(&mut None, args)? + FIELD_HEADER_SIZE as usize;
-                } else {
-                    size += encoder::pack_empty_args_array(&mut None) + FIELD_HEADER_SIZE as usize;
-                }
+                size += encoder::pack_array(&mut None, args)? + FIELD_HEADER_SIZE as usize;
 
                 Ok(size)
             }
@@ -668,13 +673,13 @@ impl BatchOperation {
             (
                 BatchOp::Udf {
                     policy: p,
-                    udf_name: n,
+                    package_name: n,
                     function_name: f,
                     args: a,
                 },
                 BatchOp::Udf {
                     policy: pp,
-                    udf_name: np,
+                    package_name: np,
                     function_name: fp,
                     args: ap,
                 },
@@ -852,7 +857,7 @@ mod repeat_tests {
     #[test]
     fn udf_repeats_for_equal_invocations() {
         let policy = BatchUdfPolicy::default();
-        let args = Some(vec![crate::Value::from(1)]);
+        let args = vec![crate::Value::from(1)];
         let u1 = BatchOperation::udf(&policy, key(1), "pkg", "fun", args.clone());
         let u2 = BatchOperation::udf(&policy, key(2), "pkg", "fun", args);
         assert!(u2.match_header(Some(&u1), None, None));
@@ -862,7 +867,7 @@ mod repeat_tests {
             key(3),
             "pkg",
             "fun",
-            Some(vec![crate::Value::from(2)]),
+            vec![crate::Value::from(2)],
         );
         assert!(!u3.match_header(Some(&u2), None, None));
     }

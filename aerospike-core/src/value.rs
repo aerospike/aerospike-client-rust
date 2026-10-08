@@ -1210,7 +1210,7 @@ macro_rules! as_list {
 /// let func = "myFunction";
 /// let args = as_values!("a", "b", "c");
 /// client.execute_udf(&WritePolicy::default(), &key,
-///     &module, &func, Some(&args)).await.unwrap();
+///     module, func, &args).await.unwrap();
 /// # }
 /// ```
 #[macro_export]

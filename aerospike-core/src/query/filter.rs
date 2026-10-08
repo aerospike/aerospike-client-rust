@@ -601,7 +601,8 @@ impl Filter {
     ///     .context(vec![ctx_list_index(0)]);
     /// ```
     #[must_use]
-    pub fn context(mut self, ctx: Vec<CdtContext>) -> Self {
+    pub fn context(mut self, ctx: impl Into<Vec<CdtContext>>) -> Self {
+        let ctx = ctx.into();
         if !ctx.is_empty() {
             self.context = Some(ctx);
         }

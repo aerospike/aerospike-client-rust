@@ -18,14 +18,14 @@ impl PropBatchOperation {
         match self {
             PropBatchOperation::ReadBins(brp, bins) => BatchOperation::read(brp, key, bins.clone()),
             PropBatchOperation::ReadOps(brp, ops) => {
-                BatchOperation::read_ops(brp, key, ops.iter().map(|op| op.to_op()).collect())
+                BatchOperation::read_ops(brp, key, ops.iter().map(|op| op.to_op()).collect::<Vec<_>>())
             }
             PropBatchOperation::Write(bwp, ops) => {
-                BatchOperation::write(bwp, key, ops.iter().map(|op| op.to_op()).collect())
+                BatchOperation::write(bwp, key, ops.iter().map(|op| op.to_op()).collect::<Vec<_>>())
             }
             PropBatchOperation::Delete(bdp) => BatchOperation::delete(bdp, key),
             PropBatchOperation::Udf(bup, server_path, function_name, args) => {
-                BatchOperation::udf(bup, key, server_path, function_name, args.clone())
+                BatchOperation::udf(bup, key, server_path, function_name, args.clone().unwrap_or_default())
             }
         }
     }

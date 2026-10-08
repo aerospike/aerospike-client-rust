@@ -183,6 +183,11 @@ a supported way to build a policy.
 | `Key::new<S>(ns: S, set: S, key)`, one string type for both | `Key::new(ns: impl Into<String>, set: impl Into<String>, key)`; still returns `Result` because unsupported user-key types are rejected |
 | `Key::key_with_digest::<S>(ns: String, set: Option<String>, key: Option<Value>, digest) -> Result<Key>` | `Key::with_digest(ns, set, key, digest) -> Key`; an empty set name means no set |
 | `Client::get<T: Into<Bins> + Send + Sync + 'static>` | `bins: impl Into<Bins>`; a borrowed slice of names no longer needs `Bins::from(..)` first |
+| `execute_udf(.., server_path, function_name, args: Option<&[Value]>)`, `query_aggregate(.., function_args: Option<&[Value]>)`, `query_execute_udf(.., args: Option<&[Value]>)`, `Statement::set_aggregate_function(.., Option<&[Value]>)` | `args: &[Value]`; pass `&[]` for no arguments. The single-record parameter is `package_name` |
+| `BatchOperation::udf(policy, key, udf_name, function_name, args: Option<Vec<Value>>)` | `BatchOperation::udf(policy, key, package_name, function_name, args: impl Into<Vec<Value>>)`; a `Vec`, an array or `[]` |
+| `BatchOperation::write(.., ops: Vec<Operation>)`, `read_ops`, `Statement::set_operations(Vec<..>)`, `Operation::context(Vec<CdtContext>)`, `Filter::context(Vec<..>)` | `impl Into<Vec<_>>`: a `Vec`, an array or a slice of clonable items |
+| `Client::batch_foreach(policy, ops: Vec<BatchOperation>, hook)` | `ops: &mut [BatchOperation]`, like `batch`; the rows carry their results after the call as well as being handed to the hook |
+| path and expression builders took `ctx: impl AsRef<[CdtContext]>` | `ctx: &[CdtContext]`, like every other builder; `&path` still works because `Path` derefs to the slice |
 | `Filter::geo_within_region_cit(bin, region, cit)` and the other five `geo_*_cit` constructors | `Filter::geo_within_region(bin, region).collection_type(cit)`; `collection_type` chains on any filter |
 
 ### Acronyms in identifiers

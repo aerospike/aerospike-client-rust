@@ -704,7 +704,7 @@ impl Client {
     pub async fn batch_foreach<F, Fut>(
         &self,
         policy: &BatchPolicy,
-        ops: Vec<BatchOperation>,
+        ops: &mut [BatchOperation],
         on_row: F,
     ) -> Result<()>
     where
@@ -727,7 +727,7 @@ impl Client {
                 self.cluster.clone(),
                 &policy.base_policy,
                 txn,
-                &ops,
+                ops,
             )
             .await?;
         }
@@ -1448,7 +1448,7 @@ impl Client {
     ///     &key,
     ///     "my_module",
     ///     "my_function",
-    ///     Some(&[as_val!(42)]),
+    ///     &[as_val!(42)],
     /// ).await {
     ///     Ok(Some(val)) => println!("UDF returned: {:?}", val),
     ///     Ok(None) => println!("UDF returned nothing"),
@@ -1460,15 +1460,15 @@ impl Client {
         &self,
         policy: &WritePolicy,
         key: &Key,
-        server_path: &str,
+        package_name: &str,
         function_name: &str,
-        args: Option<&[Value]>,
+        args: &[Value],
     ) -> Result<Option<Value>> {
         let mut command = ExecuteUdfCommand::new(
             policy,
             self.cluster.clone(),
             key,
-            server_path,
+            package_name,
             function_name,
             args,
         );
@@ -1807,7 +1807,7 @@ impl Client {
     ///         stmt,
     ///         "sum_example",
     ///         "sum_single_bin",
-    ///         Some(&[as_val!("score")]),
+    ///         &[as_val!("score")],
     ///     )
     ///     .await?;
     /// let mut stream = rs.into_stream();
@@ -1824,7 +1824,7 @@ impl Client {
         mut statement: Statement,
         package_name: &str,
         function_name: &str,
-        function_args: Option<&[Value]>,
+        function_args: &[Value],
     ) -> Result<Arc<ResultSet>> {
         use futures::StreamExt;
 
@@ -1855,7 +1855,7 @@ impl Client {
         // is tied up per aggregation.
         let package = package_name.to_owned();
         let function = function_name.to_owned();
-        let args: Vec<Value> = function_args.map(<[Value]>::to_vec).unwrap_or_default();
+        let args: Vec<Value> = function_args.to_vec();
         aerospike_rt::spawn(async move {
             use futures::FutureExt;
             // `output_tx` moves into the pipeline and is dropped when it
@@ -2042,7 +2042,7 @@ impl Client {
     ///     statement,
     ///     "my_udf_package",
     ///     "my_function",
-    ///     Some(&[as_val!(42)]),
+    ///     &[as_val!(42)],
     /// ).await?;
     /// task.wait_till_complete(None).await?;
     /// # Ok(())
@@ -2054,7 +2054,7 @@ impl Client {
         mut statement: Statement,
         package_name: &str,
         function_name: &str,
-        args: Option<&[Value]>,
+        args: &[Value],
     ) -> Result<ExecuteTask> {
         statement.set_aggregate_function(package_name, function_name, args);
         statement.validate()?;

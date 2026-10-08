@@ -208,7 +208,7 @@ fn batch_foreach_reports_all_rows() {
     let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let s = seen.clone();
     client
-        .batch_foreach(&BatchPolicy::default(), ops, move |idx, row| {
+        .batch_foreach(&BatchPolicy::default(), &mut ops, move |idx, row| {
             s.lock().unwrap().push((idx, row.record.is_some()));
             std::future::ready(true)
         })

@@ -107,7 +107,7 @@ async fn single_key_udf_client_timeout_marks_in_doubt() {
             &key,
             "wait_udf",
             "wait_and_update",
-            Some(&[Value::from(WAIT_ITERS)]),
+            &[Value::from(WAIT_ITERS)],
         )
         .await
         .expect_err("the UDF outruns the socket timeout");
@@ -158,7 +158,7 @@ async fn batch_udf_client_timeout_marks_in_doubt() {
                 key,
                 "wait_udf",
                 "wait_and_update",
-                Some(vec![Value::from(WAIT_ITERS)]),
+                vec![Value::from(WAIT_ITERS)],
             )
         })
         .collect();
@@ -265,7 +265,7 @@ async fn singleton_group_client_timeout_stamps_row_like_grouped() {
             key,
             "wait_udf",
             "wait_and_update",
-            Some(vec![Value::from(WAIT_ITERS)]),
+            vec![Value::from(WAIT_ITERS)],
         )
     };
 
@@ -339,7 +339,7 @@ async fn timeout_reports_the_attempts_actually_made() {
                 &key,
                 "wait_udf",
                 "wait_and_update",
-                Some(&[Value::from(WAIT_ITERS)]),
+                &[Value::from(WAIT_ITERS)],
             )
             .await
             .expect_err("the UDF outruns the socket timeout");

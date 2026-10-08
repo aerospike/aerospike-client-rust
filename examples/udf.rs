@@ -65,7 +65,7 @@ pub async fn run() {
             &key,
             "example_udf",
             "double_bin",
-            Some(&[as_val!("n")]),
+            &[as_val!("n")],
         )
         .await
         .unwrap();
@@ -80,7 +80,7 @@ pub async fn run() {
             &key,
             "example_udf",
             "echo",
-            Some(&[as_val!("pong")]),
+            &[as_val!("pong")],
         )
         .await
         .unwrap();
@@ -103,7 +103,7 @@ pub async fn run() {
             stmt,
             "example_udf",
             "double_bin",
-            Some(&[as_val!("n")]),
+            &[as_val!("n")],
         )
         .await
         .unwrap();

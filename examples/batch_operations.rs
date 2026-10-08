@@ -119,10 +119,10 @@ end
     let args3 = vec![as_val!(3)];
     let args4 = vec![as_val!(4)];
     let mut batch = vec![
-        BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", Some(args1)),
-        BatchOperation::udf(&bpu, key2.clone(), "test_udf", "echo", Some(args2)),
-        BatchOperation::udf(&bpu, key3.clone(), "test_udf", "echo", Some(args3)),
-        BatchOperation::udf(&bpu, key4.clone(), "test_udf", "echo", Some(args4)),
+        BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", args1),
+        BatchOperation::udf(&bpu, key2.clone(), "test_udf", "echo", args2),
+        BatchOperation::udf(&bpu, key3.clone(), "test_udf", "echo", args3),
+        BatchOperation::udf(&bpu, key4.clone(), "test_udf", "echo", args4),
     ];
     client.batch(&bpolicy_w, &mut batch).await.unwrap();
     let results: Vec<&BatchRecord> = batch.iter().map(BatchOperation::batch_record).collect();

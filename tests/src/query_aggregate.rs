@@ -117,7 +117,7 @@ async fn query_aggregate_sum() {
             stmt,
             "test_agg_sum",
             "sum_single_bin",
-            Some(&[as_val!("bin1")]),
+            &[as_val!("bin1")],
         )
         .await
         .unwrap();
@@ -147,7 +147,7 @@ async fn query_aggregate_average() {
             stmt,
             "test_agg_avg",
             "average",
-            Some(&[as_val!("bin1")]),
+            &[as_val!("bin1")],
         )
         .await
         .unwrap();
@@ -176,7 +176,7 @@ async fn query_aggregate_empty_set_yields_no_values() {
             stmt,
             "test_agg_empty",
             "sum_single_bin",
-            Some(&[as_val!("bin1")]),
+            &[as_val!("bin1")],
         )
         .await
         .unwrap();
@@ -221,7 +221,7 @@ async fn query_aggregate_loads_package_from_lua_path() {
             stmt,
             "test_agg_file",
             "sum_single_bin",
-            Some(&[as_val!("bin1")]),
+            &[as_val!("bin1")],
         )
         .await
         .unwrap();
@@ -260,7 +260,7 @@ async fn query_aggregate_missing_client_package_errors() {
             stmt,
             "test_agg_missing",
             "sum_single_bin",
-            Some(&[as_val!("bin1")]),
+            &[as_val!("bin1")],
         )
         .await
         .unwrap();

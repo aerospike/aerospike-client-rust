@@ -197,7 +197,7 @@ end
         BatchOperation::read_ops(&bpr, key3.clone(), rops),
         BatchOperation::read(&bpr, key4.clone(), none),
         BatchOperation::delete(&bpd, key4.clone()),
-        BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", Some(args1)),
+        BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", args1),
     ];
 
     bench.iter(|| {

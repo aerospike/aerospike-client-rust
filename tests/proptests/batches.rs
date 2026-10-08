@@ -165,7 +165,7 @@ proptest_async::proptest! {
                     BatchOperation::write(
                         &bwp,
                         key.clone(),
-                        sub.iter().map(|o| o.to_op()).collect(),
+                        sub.iter().map(|o| o.to_op()).collect::<Vec<_>>(),
                     )
                 }
                 _ => op.to_op(key.clone()),

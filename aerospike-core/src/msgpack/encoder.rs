@@ -110,13 +110,6 @@ fn pack_entries_canonical<'a>(
     Ok(size)
 }
 
-pub fn pack_empty_args_array(buf: &mut Option<&mut Buffer>) -> usize {
-    let mut size = 0;
-    size += pack_array_begin(buf, 0);
-
-    size
-}
-
 pub fn pack_ctx_for_index(buf: &mut Option<&mut Buffer>, ctx: &[CdtContext]) -> Result<usize> {
     let mut size: usize = 0;
     size += pack_array_begin(buf, ctx.len() * 2);

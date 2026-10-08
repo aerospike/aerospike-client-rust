@@ -155,7 +155,12 @@
     `Statement::new`), so `int_bin("a")` and `Bin::new("a", v)` work; an argument spelled
     `"a".into()` no longer infers. `exp_*_loop_var` are `*_loop_var`. `Key::new` takes its two
     strings independently and `Key::key_with_digest` is the infallible `Key::with_digest`.
-    `Client::get` takes `bins: impl Into<Bins>` without the `Send + Sync + 'static` bounds. The
+    `Client::get` takes `bins: impl Into<Bins>` without the `Send + Sync + 'static` bounds. Lists
+    have one shape: stored lists (`BatchOperation::write/read_ops/udf`, `Statement::set_operations`,
+    `Operation::context`, `Filter::context`) take `impl Into<Vec<_>>`, borrowed lists (`operate`,
+    the UDF `args`, every builder `ctx`) take `&[_]`, and no list is wrapped in `Option`;
+    `batch_foreach` takes `&mut [BatchOperation]` like `batch`; the UDF module parameter is
+    `package_name` on `execute_udf` and `BatchOperation::udf`. The
     `Policy` trait is no longer
     exported. Acronyms in
     identifiers are `UpperCamelCase`: `BatchUdfPolicy`, `UdfLang`, `ReadModeAp`/`ReadModeSc`,

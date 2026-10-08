@@ -322,7 +322,7 @@ impl Client {
     pub fn batch_foreach<F, Fut>(
         &self,
         policy: &BatchPolicy,
-        ops: Vec<BatchOperation>,
+        ops: &mut [BatchOperation],
         on_row: F,
     ) -> Result<()>
     where
@@ -584,20 +584,17 @@ impl Client {
 
     /// Execute a user-defined function on the server and return the results. The function operates
     /// on a single record. The UDF package name is required to locate the UDF.
-    ///
-    /// # Panics
-    /// Panics if the return is invalid
     pub fn execute_udf(
         &self,
         policy: &WritePolicy,
         key: &Key,
-        server_path: &str,
+        package_name: &str,
         function_name: &str,
-        args: Option<&[Value]>,
+        args: &[Value],
     ) -> Result<Option<Value>> {
         block_on(
             self.async_client
-                .execute_udf(policy, key, server_path, function_name, args),
+                .execute_udf(policy, key, package_name, function_name, args),
         )
     }
 
@@ -651,7 +648,7 @@ impl Client {
         statement: Statement,
         package_name: &str,
         function_name: &str,
-        function_args: Option<&[Value]>,
+        function_args: &[Value],
     ) -> Result<Arc<aerospike_core::query::ResultSet>> {
         block_on(self.async_client.query_aggregate(
             policy,
@@ -686,7 +683,7 @@ impl Client {
         statement: Statement,
         package_name: &str,
         function_name: &str,
-        args: Option<&[Value]>,
+        args: &[Value],
     ) -> Result<ExecuteTask> {
         block_on(self.async_client.query_execute_udf(
             write_policy,

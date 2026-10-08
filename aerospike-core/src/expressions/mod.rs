@@ -2208,7 +2208,7 @@ pub fn exp_select_by_path(
     return_type: ExpType,
     flag: crate::operations::path::SelectFlag,
     bin_exp: Expression,
-    ctx: impl AsRef<[CdtContext]>,
+    ctx: &[CdtContext],
 ) -> Expression {
     Expression {
         cmd: Some(ExpOp::Call),
@@ -2219,7 +2219,7 @@ pub fn exp_select_by_path(
         exps: None,
         arguments: Some(vec![ExpressionArgument::CdtSelectPathArg(
             flag,
-            ctx.as_ref().to_vec(),
+            ctx.to_vec(),
         )]),
         bytes: None,
     }
@@ -2254,7 +2254,7 @@ pub fn exp_modify_by_path(
     flag: crate::operations::path::ModifyFlag,
     bin_exp: Expression,
     modify_exp: Expression,
-    ctx: impl AsRef<[CdtContext]>,
+    ctx: &[CdtContext],
 ) -> Expression {
     Expression {
         cmd: Some(ExpOp::Call),
@@ -2267,7 +2267,7 @@ pub fn exp_modify_by_path(
             flag,
             bin_exp,
             modify_exp,
-            ctx.as_ref().to_vec(),
+            ctx.to_vec(),
         )]),
         bytes: None,
     }
@@ -2288,7 +2288,7 @@ pub fn exp_modify_by_path(
 pub fn exp_select_values(
     return_type: ExpType,
     bin_exp: Expression,
-    ctx: impl AsRef<[CdtContext]>,
+    ctx: &[CdtContext],
 ) -> Expression {
     exp_select_by_path(
         return_type,
@@ -2304,7 +2304,7 @@ pub fn exp_select_values(
 pub fn exp_select_map_keys(
     return_type: ExpType,
     bin_exp: Expression,
-    ctx: impl AsRef<[CdtContext]>,
+    ctx: &[CdtContext],
 ) -> Expression {
     exp_select_by_path(
         return_type,
@@ -2321,7 +2321,7 @@ pub fn exp_select_map_keys(
 pub fn exp_select_map_entries(
     return_type: ExpType,
     bin_exp: Expression,
-    ctx: impl AsRef<[CdtContext]>,
+    ctx: &[CdtContext],
 ) -> Expression {
     exp_select_by_path(
         return_type,
@@ -2338,7 +2338,7 @@ pub fn exp_select_map_entries(
 pub fn exp_select_matching_tree(
     return_type: ExpType,
     bin_exp: Expression,
-    ctx: impl AsRef<[CdtContext]>,
+    ctx: &[CdtContext],
 ) -> Expression {
     exp_select_by_path(
         return_type,
@@ -2356,7 +2356,7 @@ pub fn exp_modify(
     return_type: ExpType,
     bin_exp: Expression,
     modify_exp: Expression,
-    ctx: impl AsRef<[CdtContext]>,
+    ctx: &[CdtContext],
 ) -> Expression {
     exp_modify_by_path(
         return_type,
@@ -2375,7 +2375,7 @@ pub fn exp_modify_no_fail(
     return_type: ExpType,
     bin_exp: Expression,
     modify_exp: Expression,
-    ctx: impl AsRef<[CdtContext]>,
+    ctx: &[CdtContext],
 ) -> Expression {
     exp_modify_by_path(
         return_type,
@@ -2395,7 +2395,7 @@ pub fn exp_modify_no_fail(
 pub fn exp_remove(
     return_type: ExpType,
     bin_exp: Expression,
-    ctx: impl AsRef<[CdtContext]>,
+    ctx: &[CdtContext],
 ) -> Expression {
     exp_modify_by_path(
         return_type,

@@ -604,6 +604,15 @@ impl AsRef<[CdtContext]> for Path {
     }
 }
 
+/// A path is its context entries, so `&path` goes wherever a builder wants
+/// a `&[CdtContext]`.
+impl std::ops::Deref for Path {
+    type Target = [CdtContext];
+    fn deref(&self) -> &[CdtContext] {
+        &self.entries
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

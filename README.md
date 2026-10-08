@@ -867,7 +867,7 @@ let rs = client
         stmt,
         "my_package",
         "sum_single_bin",
-        Some(&[as_val!("score")]),
+        &[as_val!("score")],
     )
     .await?;
 

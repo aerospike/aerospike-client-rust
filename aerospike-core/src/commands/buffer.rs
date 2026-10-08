@@ -1108,7 +1108,7 @@ impl Buffer {
                     }
                     BatchOp::Udf {
                         policy: bupolicy,
-                        udf_name,
+                        package_name,
                         function_name,
                         args,
                     } => {
@@ -1122,9 +1122,9 @@ impl Buffer {
                             txn,
                             ver,
                         )?;
-                        self.write_field_string(udf_name, FieldType::UdfPackageName);
+                        self.write_field_string(package_name, FieldType::UdfPackageName);
                         self.write_field_string(function_name, FieldType::UdfFunction);
-                        self.write_args(args.as_deref(), FieldType::UdfArgList)?;
+                        self.write_args(args, FieldType::UdfArgList)?;
                     }
                     // Dispatched to dedicated encoders above; never reached here.
                     BatchOp::TxnVerify { .. } | BatchOp::TxnRoll { .. } => {
@@ -1394,7 +1394,7 @@ impl Buffer {
         key: &Key,
         package_name: &str,
         function_name: &str,
-        args: Option<&[Value]>,
+        args: &[Value],
     ) -> Result<()> {
         self.begin();
 
@@ -1510,11 +1510,7 @@ impl Buffer {
             self.data_offset += aggregation.package_name.len() + FIELD_HEADER_SIZE as usize;
             self.data_offset += aggregation.function_name.len() + FIELD_HEADER_SIZE as usize;
 
-            if let Some(ref args) = aggregation.function_args {
-                self.estimate_args_size(Some(args))?;
-            } else {
-                self.estimate_args_size(None)?;
-            }
+            self.estimate_args_size(&aggregation.function_args)?;
             field_count += 4;
         }
 
@@ -1683,11 +1679,7 @@ impl Buffer {
 
             self.write_field_string(&aggregation.package_name, FieldType::UdfPackageName);
             self.write_field_string(&aggregation.function_name, FieldType::UdfFunction);
-            if let Some(ref args) = aggregation.function_args {
-                self.write_args(Some(args), FieldType::UdfArgList)?;
-            } else {
-                self.write_args(None, FieldType::UdfArgList)?;
-            }
+            self.write_args(&aggregation.function_args, FieldType::UdfArgList)?;
         }
 
         if let Some(where_bytes) = execute_where {
@@ -1845,13 +1837,8 @@ impl Buffer {
         Ok(field_count)
     }
 
-    fn estimate_args_size(&mut self, args: Option<&[Value]>) -> Result<()> {
-        if let Some(args) = args {
-            self.data_offset += encoder::pack_array(&mut None, args)? + FIELD_HEADER_SIZE as usize;
-        } else {
-            self.data_offset +=
-                encoder::pack_empty_args_array(&mut None) + FIELD_HEADER_SIZE as usize;
-        }
+    fn estimate_args_size(&mut self, args: &[Value]) -> Result<()> {
+        self.data_offset += encoder::pack_array(&mut None, args)? + FIELD_HEADER_SIZE as usize;
         Ok(())
     }
 
@@ -1859,7 +1846,7 @@ impl Buffer {
         &mut self,
         package_name: &str,
         function_name: &str,
-        args: Option<&[Value]>,
+        args: &[Value],
     ) -> Result<usize> {
         self.data_offset += package_name.len() + FIELD_HEADER_SIZE as usize;
         self.data_offset += function_name.len() + FIELD_HEADER_SIZE as usize;
@@ -2203,14 +2190,9 @@ impl Buffer {
         Ok(())
     }
 
-    fn write_args(&mut self, args: Option<&[Value]>, ftype: FieldType) -> Result<()> {
-        if let Some(args) = args {
-            self.write_field_header(encoder::pack_array(&mut None, args)?, ftype);
-            encoder::pack_array(&mut Some(self), args)?;
-        } else {
-            self.write_field_header(encoder::pack_empty_args_array(&mut None), ftype);
-            encoder::pack_empty_args_array(&mut Some(self));
-        }
+    fn write_args(&mut self, args: &[Value], ftype: FieldType) -> Result<()> {
+        self.write_field_header(encoder::pack_array(&mut None, args)?, ftype);
+        encoder::pack_array(&mut Some(self), args)?;
         Ok(())
     }
 

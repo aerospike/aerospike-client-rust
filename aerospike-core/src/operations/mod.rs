@@ -216,8 +216,8 @@ impl Operation {
 
     /// Set the context of the operation. Required for nested structures
     #[must_use]
-    pub fn context(mut self, ctx: Vec<CdtContext>) -> Self {
-        self.ctx = ctx;
+    pub fn context(mut self, ctx: impl Into<Vec<CdtContext>>) -> Self {
+        self.ctx = ctx.into();
         self
     }
 }

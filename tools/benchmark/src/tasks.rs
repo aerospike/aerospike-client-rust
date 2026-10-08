@@ -300,7 +300,7 @@ impl ReadUpdateTask {
                     key,
                     &udf.package,
                     &udf.function,
-                    Some(&udf.values),
+                    &udf.values,
                 ))
                 .await;
             results.push((status, duration, OpType::Read));
