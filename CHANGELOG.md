@@ -173,7 +173,9 @@
     `Client::new` instead of panicking on the first connection. `Recordset::partition_filter` and
     `QueryHandle::partition_filter` are plain methods. The blocking client returns
     `aerospike_sync::Task<T>` with blocking waits, takes a plain `bool` closure in `batch_foreach`,
-    and gains `query_foreach` with a blocking `aerospike_sync::QueryHandle`. The
+    and gains `query_foreach` with a blocking `aerospike_sync::QueryHandle`. Both clients
+    implement `Clone` (a clone shares the cluster) and no longer carry hand-written `unsafe impl
+    Send/Sync`: a compile-time assertion checks the property from the fields instead. The
     `Policy` trait is no longer
     exported. Acronyms in
     identifiers are `UpperCamelCase`: `BatchUdfPolicy`, `UdfLang`, `ReadModeAp`/`ReadModeSc`,

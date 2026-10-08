@@ -104,8 +104,11 @@ pub(crate) fn block_on<F: Future>(f: F) -> F::Output {
 /// Instantiate a Client instance to access an Aerospike database cluster and perform database
 /// operations.
 ///
-/// The client is thread-safe. Only one client instance should be used per cluster. Multiple
-/// threads should share this cluster instance.
+/// The client is thread-safe, and cloning it is cheap: every clone shares
+/// the same cluster, connection pools and background tasks, so hand a clone
+/// to each task or thread rather than opening a second client to the same
+/// cluster. [`close`](Self::close) shuts that shared cluster down for every
+/// clone.
 ///
 /// Your application uses this class' API to perform database operations such as writing and
 /// reading records, and selecting sets of records. Write operations include specialized
@@ -114,12 +117,16 @@ pub(crate) fn block_on<F: Future>(f: F) -> F::Output {
 /// Each record may have multiple bins, unless the Aerospike server nodes are configured as
 /// "single-bin". In "multi-bin" mode, partial records may be written or read by specifying the
 /// relevant subset of bins.
+#[derive(Clone)]
 pub struct Client {
     async_client: aerospike_core::Client,
 }
 
-unsafe impl Send for Client {}
-unsafe impl Sync for Client {}
+// Thread safety comes from the wrapped client, checked rather than asserted.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Client>();
+};
 
 impl Client {
     /// Initializes Aerospike client with suitable hosts to seed the cluster map. The client policy
@@ -180,7 +187,8 @@ impl Client {
         })
     }
 
-    /// Closes the connection to the Aerospike cluster.
+    /// Closes the connection to the Aerospike cluster, for this client and
+    /// every clone of it.
     pub fn close(&self) -> Result<()> {
         block_on(self.async_client.close())?;
         Ok(())

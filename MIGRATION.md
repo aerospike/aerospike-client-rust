@@ -324,6 +324,11 @@ type by value. Selectors are numbers, not bits, so there is no `|` on them.
 
 No migration is needed for these; see the changelog for details.
 
+- `Client` (and the blocking `aerospike_sync::Client`) implements `Clone`.
+  A clone shares the cluster, its connection pools and its background tasks,
+  so pass clones to tasks instead of wrapping the client in an `Arc`;
+  `close()` shuts the shared cluster down for every clone.
+
 - Multi-record transactions (`Txn`, `Client::commit`, `Client::abort`) and
   strong-consistency read modes.
 - Metrics (`Client::enable_metrics`, `MetricsPolicy`), dynamic configuration,
