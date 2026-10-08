@@ -266,14 +266,10 @@ impl Client {
     ///         => println!("Error fetching record: {}", err),
     /// }
     /// ```
-    ///
-    /// # Panics
-    /// Panics if the return is invalid
-    pub fn get<T>(&self, policy: &ReadPolicy, key: &Key, bins: T) -> Result<Record>
-    where
-        T: Into<Bins> + Send + Sync + 'static,
-    {
-        block_on(self.async_client.get(policy, key, bins))
+    pub fn get(&self, policy: &ReadPolicy, key: &Key, bins: impl Into<Bins>) -> Result<Record> {
+        // The async future holds its arguments until first polled, so convert
+        // here: `block_on` needs a `Send` future and `Bins` is `Send`.
+        block_on(self.async_client.get(policy, key, bins.into()))
     }
 
     /// Read multiple record for specified batch keys in one batch call. This method allows

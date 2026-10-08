@@ -182,6 +182,7 @@ a supported way to build a policy.
 | `exp_int_loop_var(part)`, `exp_map_loop_var(part)`, … | `int_loop_var(part)`, `map_loop_var(part)`, … |
 | `Key::new<S>(ns: S, set: S, key)`, one string type for both | `Key::new(ns: impl Into<String>, set: impl Into<String>, key)`; still returns `Result` because unsupported user-key types are rejected |
 | `Key::key_with_digest::<S>(ns: String, set: Option<String>, key: Option<Value>, digest) -> Result<Key>` | `Key::with_digest(ns, set, key, digest) -> Key`; an empty set name means no set |
+| `Client::get<T: Into<Bins> + Send + Sync + 'static>` | `bins: impl Into<Bins>`; a borrowed slice of names no longer needs `Bins::from(..)` first |
 | `Filter::geo_within_region_cit(bin, region, cit)` and the other five `geo_*_cit` constructors | `Filter::geo_within_region(bin, region).collection_type(cit)`; `collection_type` chains on any filter |
 
 ### Acronyms in identifiers

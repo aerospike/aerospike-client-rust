@@ -566,10 +566,12 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub async fn get<T>(&self, policy: &ReadPolicy, key: &Key, bins: T) -> Result<Record>
-    where
-        T: Into<Bins> + Send + Sync + 'static,
-    {
+    pub async fn get(
+        &self,
+        policy: &ReadPolicy,
+        key: &Key,
+        bins: impl Into<Bins>,
+    ) -> Result<Record> {
         let policy = self.cluster.resolve_read(policy);
         let policy = policy.as_ref();
         if let Some(txn) = &policy.base_policy.txn {
