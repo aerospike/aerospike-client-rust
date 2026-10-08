@@ -103,7 +103,7 @@ pub enum BitwiseOverflowActions {
     Wrap = 4,
 }
 /// `BitPolicy` determines the Bit operation policy.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BitPolicy {
     /// The write flags.
     pub flags: BitwiseWriteFlags,

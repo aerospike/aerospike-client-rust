@@ -175,7 +175,11 @@
     `aerospike_sync::Task<T>` with blocking waits, takes a plain `bool` closure in `batch_foreach`,
     and gains `query_foreach` with a blocking `aerospike_sync::QueryHandle`. Both clients
     implement `Clone` (a clone shares the cluster) and no longer carry hand-written `unsafe impl
-    Send/Sync`: a compile-time assertion checks the property from the fields instead. The
+    Send/Sync`: a compile-time assertion checks the property from the fields instead. Derives filled
+    in: `Key: Hash`, `PartitionFilter: Clone`, `Copy` on the small policy enums, `PartialEq` on every
+    policy, `Record`, `Statement` and `Filter`, `UdfLang: Copy + Eq + Hash`, `Bins` from
+    `Vec<String>`; `TlsPolicy.config` is an `Arc<rustls::ClientConfig>`, shared with the
+    connector instead of cloned per connection. The
     `Policy` trait is no longer
     exported. Acronyms in
     identifiers are `UpperCamelCase`: `BatchUdfPolicy`, `UdfLang`, `ReadModeAp`/`ReadModeSc`,

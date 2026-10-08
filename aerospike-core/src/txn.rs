@@ -198,6 +198,15 @@ impl std::fmt::Debug for Txn {
     }
 }
 
+/// Two transactions are the same transaction when they carry the same id.
+impl PartialEq for Txn {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for Txn {}
+
 impl Txn {
     /// Create a new transaction with a random transaction ID.
     pub fn new() -> Self {

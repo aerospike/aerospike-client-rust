@@ -20,7 +20,7 @@ use crate::policy::{BasePolicy, Policy, PolicyLike, QueryDuration, StreamPolicy}
 use aerospike_rt::time::{Duration, Instant};
 
 /// `QueryPolicy` encapsulates parameters for query operations.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct QueryPolicy {
     /// Base policy instance

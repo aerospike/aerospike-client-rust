@@ -22,7 +22,7 @@ use crate::{CommitLevel, Expiration, GenerationPolicy, RecordExistsAction};
 /// `WritePolicy` encapsulates parameters for all write operations.
 // A policy is a bag of independent switches; an enum per pair would not read better.
 #[allow(clippy::struct_excessive_bools)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct WritePolicy {
     /// Base policy instance

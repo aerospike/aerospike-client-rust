@@ -17,7 +17,7 @@
 /// `QueryDuration` defines the expected query duration. The server treats the query in different ways depending on the expected duration.
 ///
 /// This enum is ignored for aggregation queries, background queries and server versions < 6.0.
-#[derive(Debug, PartialEq, Eq, Clone, Default)]
+#[derive(Debug, PartialEq, Eq, Clone, Default, Copy)]
 #[non_exhaustive]
 pub enum QueryDuration {
     /// Long specifies that the query is expected to return more than 100 records per node. The server optimizes for a large record set in

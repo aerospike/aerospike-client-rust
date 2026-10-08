@@ -35,7 +35,7 @@ use serde::Serialize;
 ///
 /// The digest is derived from the set name and the user key when the key is
 /// built, so the parts are read through accessors and cannot drift apart.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 pub struct Key {
     pub(crate) namespace: String,

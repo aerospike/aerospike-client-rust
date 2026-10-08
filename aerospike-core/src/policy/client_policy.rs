@@ -20,6 +20,8 @@ use crate::errors::{Error, Result};
 
 #[cfg(feature = "tls")]
 use tokio_rustls::rustls::ClientConfig;
+#[cfg(feature = "tls")]
+use std::sync::Arc;
 
 #[derive(Clone, PartialEq, Eq)]
 /// Determines authentication mode.
@@ -137,7 +139,7 @@ impl std::fmt::Debug for AuthMode {
 pub struct TlsPolicy {
     /// The TLS handshake configuration: protocol versions, cipher suites,
     /// root certificates, client certificate and revocation.
-    pub config: ClientConfig,
+    pub config: Arc<ClientConfig>,
 
     /// Encrypt only the authentication exchange, then run the data plane in
     /// cleartext.
@@ -168,9 +170,9 @@ pub struct TlsPolicy {
 impl TlsPolicy {
     /// A policy that encrypts every connection with `config`.
     #[must_use]
-    pub const fn new(config: ClientConfig) -> Self {
+    pub fn new(config: impl Into<Arc<ClientConfig>>) -> Self {
         TlsPolicy {
-            config,
+            config: config.into(),
             for_login_only: false,
         }
     }
@@ -191,11 +193,28 @@ impl From<ClientConfig> for TlsPolicy {
     }
 }
 
+#[cfg(feature = "tls")]
+impl From<Arc<ClientConfig>> for TlsPolicy {
+    fn from(config: Arc<ClientConfig>) -> Self {
+        TlsPolicy::new(config)
+    }
+}
+
+/// Two policies are equal when they share the same `rustls` configuration
+/// object; `rustls::ClientConfig` itself cannot be compared.
+#[cfg(feature = "tls")]
+impl PartialEq for TlsPolicy {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.config, &other.config) && self.for_login_only == other.for_login_only
+    }
+}
+
 /// Minimum allowed value for [`ClientPolicy::tend_interval`], in milliseconds.
 pub const TEND_INTERVAL_MIN_MS: u32 = 250;
 
 /// `ClientPolicy` encapsulates parameters for client policy command.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::derive_partial_eq_without_eq)] // `Eq` would hinge on the `tls` feature
 #[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 #[allow(clippy::struct_excessive_bools)] // a policy is a bag of flags
 pub struct ClientPolicy {

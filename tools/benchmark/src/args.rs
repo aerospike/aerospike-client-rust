@@ -89,7 +89,7 @@ impl Args {
         batch_policy.base_policy.read_mode_sc = opts.read_mode_sc;
 
         // ---- write options ----
-        write_policy.commit_level = opts.commit_level.clone();
+        write_policy.commit_level = opts.commit_level;
         write_policy.send_key = opts.send_key;
         write_policy.expiration = match opts.expiration {
             e if e < 0 => Expiration::Never,

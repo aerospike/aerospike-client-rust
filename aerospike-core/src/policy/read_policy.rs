@@ -21,7 +21,7 @@ use crate::policy::BasePolicyConfig;
 
 /// `ReadPolicy` encapsulates parameters for transaction policy attributes
 /// used in all database operation calls.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 #[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct ReadPolicy {
     /// Base policy instance

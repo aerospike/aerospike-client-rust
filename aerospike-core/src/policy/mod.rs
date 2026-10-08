@@ -273,7 +273,7 @@ impl<'de> serde::Deserialize<'de> for Replica {
 }
 
 /// Common parameters shared by all policy types.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct BasePolicy {
     /// Read policy for AP (availability) namespaces.

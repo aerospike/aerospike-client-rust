@@ -169,9 +169,9 @@ impl BatchWritePolicy {
     ) -> crate::policy::WritePolicy {
         let mut wp = crate::policy::WritePolicy::default();
         wp.base_policy = parent.base_policy.clone();
-        wp.record_exists_action = self.record_exists_action.clone();
-        wp.generation_policy = self.generation_policy.clone();
-        wp.commit_level = self.commit_level.clone();
+        wp.record_exists_action = self.record_exists_action;
+        wp.generation_policy = self.generation_policy;
+        wp.commit_level = self.commit_level;
         wp.generation = self.generation;
         wp.expiration = self.expiration;
         wp.send_key = self.send_key;
@@ -245,8 +245,8 @@ impl BatchDeletePolicy {
     ) -> crate::policy::WritePolicy {
         let mut wp = crate::policy::WritePolicy::default();
         wp.base_policy = parent.base_policy.clone();
-        wp.generation_policy = self.generation_policy.clone();
-        wp.commit_level = self.commit_level.clone();
+        wp.generation_policy = self.generation_policy;
+        wp.commit_level = self.commit_level;
         wp.generation = self.generation;
         wp.send_key = self.send_key;
         wp.durable_delete = self.durable_delete;
@@ -313,7 +313,7 @@ impl BatchUdfPolicy {
     ) -> crate::policy::WritePolicy {
         let mut wp = crate::policy::WritePolicy::default();
         wp.base_policy = parent.base_policy.clone();
-        wp.commit_level = self.commit_level.clone();
+        wp.commit_level = self.commit_level;
         wp.expiration = self.expiration;
         wp.send_key = self.send_key;
         wp.durable_delete = self.durable_delete;

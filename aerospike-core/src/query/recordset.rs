@@ -476,12 +476,11 @@ mod tests {
         };
 
         // A new round begins for this partition before the entry is consumed.
-        {
-            let pf = shared.partition_filter();
-            pf.partitions.as_ref().unwrap()[key.partition_id()]
-                .lock()
-                .begin_delivery_round();
-        }
+        // (On the tracker's own state: a cursor from `partition_filter()` is
+        // an independent copy.)
+        shared.partitions()[key.partition_id()]
+            .lock()
+            .begin_delivery_round();
 
         rs.deliver(stale).unwrap();
         assert_eq!(

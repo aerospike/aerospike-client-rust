@@ -141,14 +141,23 @@ impl Default for PartitionFilter {
     }
 }
 
+/// A clone is an independent cursor: the per-partition progress is copied,
+/// so two queries resumed from a filter and its clone do not share state.
 impl Clone for PartitionFilter {
     fn clone(&self) -> Self {
+        let partitions = self.partitions.as_ref().map(|parts| {
+            Arc::new(
+                parts
+                    .iter()
+                    .map(|part| Mutex::new(part.lock().clone()))
+                    .collect(),
+            )
+        });
         Self {
             begin: self.begin,
             count: self.count,
             digest: self.digest,
-
-            partitions: self.partitions.clone(),
+            partitions,
             done: AtomicBool::new(self.done.load(Ordering::Relaxed)),
             retry: AtomicBool::new(self.retry.load(Ordering::Relaxed)),
         }

@@ -24,7 +24,7 @@ use crate::policy::BatchPolicyConfig;
 /// Wraps a [`BatchPolicy`]: verification is sent to the server as one batch command per
 /// node, so the batch knobs (`concurrency`, `allow_inline`, `respond_all_keys`,
 /// `replica`, read modes) all apply.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct TxnVerifyPolicy {
     /// Batch policy instance.
@@ -57,7 +57,7 @@ impl PolicyLike for TxnVerifyPolicy {
 /// forward on commit or back on abort.
 ///
 /// Wraps a [`BatchPolicy`]: rolling is sent as one batch command per node.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct TxnRollPolicy {
     /// Batch policy instance.

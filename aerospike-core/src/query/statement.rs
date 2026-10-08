@@ -19,7 +19,7 @@ use crate::query::Filter;
 use crate::Bins;
 use crate::Value;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Aggregation {
     pub package_name: String,
     pub function_name: String,
@@ -27,7 +27,7 @@ pub struct Aggregation {
 }
 
 /// Query statement parameters.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Statement {
     /// Namespace
     pub namespace: String,

@@ -221,7 +221,6 @@ impl TrackerShared {
     /// *delivered* — could claim completion while a closing consumer dropped
     /// a buffered tail.
     pub(crate) fn partition_filter(&self) -> PartitionFilter {
-        let pf = (*self.partition_filter).clone();
         let mut lagging = false;
         for ps in self.partitions.iter() {
             let mut ps = ps.lock();
@@ -230,10 +229,20 @@ impl TrackerShared {
                 lagging = true;
             }
         }
+        // Snapshot after the retry marks: the clone is an independent copy of
+        // the partition state, so anything written later would not reach it.
+        let pf = (*self.partition_filter).clone();
         if lagging {
             pf.done.store(false, Ordering::Relaxed);
         }
         pf
+    }
+
+    /// Test hook: the live per-partition state, which a cursor from
+    /// [`partition_filter`](Self::partition_filter) no longer shares.
+    #[cfg(test)]
+    pub(crate) fn partitions(&self) -> &[PartMutex<PartitionStatus>] {
+        &self.partitions
     }
 
     /// The timeout written into a stream request's header.

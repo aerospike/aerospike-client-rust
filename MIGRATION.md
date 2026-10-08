@@ -145,7 +145,7 @@ needs a `_` arm.
 
 | 2.x | 3.0 |
 |---|---|
-| `tls_config: Option<rustls::ClientConfig>` | `tls_policy: Option<TlsPolicy>`; `TlsPolicy::new(config)` or `config.into()` |
+| `tls_config: Option<rustls::ClientConfig>` | `tls_policy: Option<TlsPolicy>`; `TlsPolicy::new(config)` or `config.into()`, where `config` is a `rustls::ClientConfig` or an `Arc` of one; `TlsPolicy.config` is the `Arc` |
 | `rack_ids: Option<HashSet<usize>>` | `rack_ids: Option<Vec<usize>>`, in order of preference |
 | `timeout` default 30 000 ms | default 1 000 ms; also the fallback for the new `connect_timeout` (default 0) |
 | `idle_timeout` default 30 000 ms | default 0, which disables the idle check |
@@ -324,6 +324,12 @@ type by value. Selectors are numbers, not bits, so there is no `|` on them.
 
 No migration is needed for these; see the changelog for details.
 
+- Derives: `Key: Hash`; `PartitionFilter: Clone` (an independent cursor);
+  `Copy` on `GenerationPolicy`, `CommitLevel`, `RecordExistsAction`,
+  `QueryDuration`; `PartialEq` on every policy (`TlsPolicy` compares its
+  config by identity) and on `Record`, `Statement`, `Filter`; `UdfLang` is
+  `Copy + Eq + Hash`; `Bins` converts from `Vec<String>`, `Vec<&str>` and
+  `&[String]`.
 - `Client` (and the blocking `aerospike_sync::Client`) implements `Clone`.
   A clone shares the cluster, its connection pools and its background tasks,
   so pass clones to tasks instead of wrapping the client in an `Arc`;

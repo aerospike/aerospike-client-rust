@@ -41,7 +41,7 @@ pub fn citrusleaf_epoch() -> SystemTime {
 pub const CITRUSLEAF_EPOCH_UNIX_SECS: u64 = 1_262_304_000;
 
 /// Container object for a database record.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 pub struct Record {
     /// Record key. When reading a record from the database, the key is not set in the returned

@@ -15,10 +15,9 @@
 
 #[cfg(feature = "tls")]
 use std::convert::TryFrom;
-#[cfg(feature = "tls")]
-use std::sync::Arc;
-
 use std::io::Read;
+#[cfg(all(test, feature = "tls", feature = "rt-tokio"))]
+use std::sync::Arc;
 #[cfg(feature = "rt-tokio")]
 use std::pin::Pin;
 
@@ -341,7 +340,7 @@ impl Connection {
             return Ok(Netsocket::Tcp(stream));
         }
         if let Some(tls_config) = policy.tls_policy.as_ref().map(|tls| tls.config.clone()) {
-            let connector = TlsConnector::from(Arc::new(tls_config));
+            let connector = TlsConnector::from(tls_config);
             let server_name = host
                 .tls_name
                 .clone()

@@ -24,7 +24,7 @@ use crate::policy::{BasePolicy, Concurrency, PolicyLike};
 /// [`default()`](Self::default) is the read default (`max_retries` 2).
 /// A batch that contains writes, deletes or UDF calls should use
 /// [`write_default()`](Self::write_default), whose `max_retries` is 0.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct BatchPolicy {
     /// Base policy instance

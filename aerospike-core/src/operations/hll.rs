@@ -44,7 +44,7 @@ crate::flags::bit_flags! {
 }
 
 /// `HllPolicy` operation policy.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HllPolicy {
     /// The write flags.
     pub flags: HllWriteFlags,

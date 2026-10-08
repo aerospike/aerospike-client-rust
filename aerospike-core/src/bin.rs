@@ -88,6 +88,24 @@ impl From<&[&str]> for Bins {
     }
 }
 
+impl From<Vec<String>> for Bins {
+    fn from(bins: Vec<String>) -> Self {
+        Bins::Some(bins)
+    }
+}
+
+impl From<Vec<&str>> for Bins {
+    fn from(bins: Vec<&str>) -> Self {
+        Bins::Some(bins.into_iter().map(String::from).collect())
+    }
+}
+
+impl From<&[String]> for Bins {
+    fn from(bins: &[String]) -> Self {
+        Bins::Some(bins.to_vec())
+    }
+}
+
 impl<const COUNT: usize> From<[&str; COUNT]> for Bins {
     fn from(bins: [&str; COUNT]) -> Self {
         let bins = bins.iter().copied().map(String::from).collect();

@@ -15,7 +15,7 @@
 //
 
 /// `RecordExistsAction` determines how to handle record writes based on record generation.
-#[derive(Debug, PartialEq, Eq, Clone, Default)]
+#[derive(Debug, PartialEq, Eq, Clone, Default, Copy)]
 pub enum RecordExistsAction {
     /// Update means: Create or update record.
     /// Merge write command bins with existing bins.

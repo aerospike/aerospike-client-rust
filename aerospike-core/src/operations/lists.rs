@@ -87,7 +87,7 @@ pub(crate) enum CdtListOpType {
 }
 
 /// List storage order.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListOrderType {
     /// List is not ordered. This is the default.
     Unordered = 0,
@@ -162,7 +162,7 @@ crate::flags::bit_flags! {
 }
 
 /// [`ListPolicy`] directives when creating a list and writing list items.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ListPolicy {
     /// [`ListOrderType`]
     pub attributes: ListOrderType,

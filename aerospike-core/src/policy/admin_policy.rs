@@ -13,7 +13,7 @@
 // limitations under the License.
 
 /// Policy attributes used for user administration commands.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AdminPolicy {
     /// User administration command socket timeout in milliseconds.
     pub timeout: u32,

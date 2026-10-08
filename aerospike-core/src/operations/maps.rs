@@ -120,7 +120,7 @@ pub(crate) enum CdtMapOpType {
     GetByValueRelRankRange = 110,
 }
 /// Map storage order.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapOrder {
     /// Map is not ordered. This is the default.
     ///
@@ -225,7 +225,7 @@ crate::flags::bit_flags! {
 }
 
 /// [`MapPolicy`] directives when creating a map and writing map items.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MapPolicy {
     /// The Order of the Map
     pub order: MapOrder,

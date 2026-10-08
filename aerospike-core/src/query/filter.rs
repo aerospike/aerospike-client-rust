@@ -194,7 +194,7 @@ fn geo_circle_json(lng: f64, lat: f64, radius: f64) -> Value {
 ///     .expression(exp)
 ///     .context(vec![ctx_list_index(0)]);
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Filter {
     pub(crate) bin_name: String,
     pub(crate) collection_index_type: CollectionIndexType,
