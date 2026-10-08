@@ -1495,6 +1495,77 @@ async fn batch_delete_row_shape_is_the_same_alone_and_grouped() {
     assert!(read.key.is_none() && read.bins.is_empty() && read.results.is_none());
 }
 
+// A write row's bins must not depend on how many keys shared its node either:
+// on both paths a write op's nil answer stays in the bin view, so
+// `[add, get_bin]` reads back `[Nil, value]` and a write-only row reports its
+// bin as nil.
+#[aerospike_macro::test]
+async fn batch_write_row_bins_are_the_same_alone_and_grouped() {
+    let client = common::client().await;
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    let bpolicy = BatchPolicy::default();
+    let bwp = BatchWritePolicy::default();
+    let key = as_key!(ns, set, "same-key");
+    let other = (0..)
+        .map(|i| as_key!(ns, set, format!("other-{i}")))
+        .find(|k| k.partition_id() == key.partition_id())
+        .unwrap();
+    for k in [&key, &other] {
+        client
+            .put(&wpolicy, k, &[as_bin!("visits", 1)])
+            .await
+            .unwrap();
+    }
+
+    let add_then_read = vec![
+        operations::add(&as_bin!("visits", 1)),
+        operations::get_bin("visits"),
+    ];
+    let write_only = vec![operations::put(&as_bin!("visits", 5))];
+
+    // Alone on its node (group size 1): the single-key fast path. Paired with a
+    // key in the same partition (group size 2 on one node): the multi-record
+    // wire path.
+    for keys in [vec![key.clone()], vec![key.clone(), other.clone()]] {
+        let label = if keys.len() == 1 { "alone" } else { "grouped" };
+
+        let mut batch: Vec<BatchOperation> = keys
+            .iter()
+            .map(|k| BatchOperation::write(&bwp, k.clone(), add_then_read.clone()))
+            .collect();
+        client.batch(&bpolicy, &mut batch).await.unwrap();
+        for op in &batch {
+            let record = op.batch_record().record.as_ref().expect("row record");
+            match record.bins.get("visits") {
+                Some(Value::MultiResult(values)) => {
+                    assert_eq!(values.len(), 2, "{label}: one answer per op");
+                    assert!(values[0].is_nil(), "{label}: the add answers nil");
+                    assert!(matches!(values[1], Value::Int(_)), "{label}: then the read");
+                }
+                got => panic!("{label}: expected [Nil, Int], got {got:?}"),
+            }
+        }
+
+        let mut batch: Vec<BatchOperation> = keys
+            .iter()
+            .map(|k| BatchOperation::write(&bwp, k.clone(), write_only.clone()))
+            .collect();
+        client.batch(&bpolicy, &mut batch).await.unwrap();
+        for op in &batch {
+            let record = op.batch_record().record.as_ref().expect("row record");
+            assert_eq!(
+                record.bins.get("visits"),
+                Some(&Value::Nil),
+                "{label}: a write-only row reports its bin"
+            );
+        }
+    }
+
+    client.close().await.unwrap();
+}
+
 #[aerospike_macro::test]
 async fn batch_single_row_error_carries_server_subcode_and_message() {
     // A one-key node group is executed as a single-key command rather than a

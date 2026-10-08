@@ -37,6 +37,7 @@ use crate::expressions::Expression;
 use crate::net::ToHosts;
 use crate::operations::cdt_context::{to_base64, CdtContext};
 use crate::operations::{Operation, OperationType};
+use crate::policy::Policy;
 use crate::policy::{
     AdminPolicy, BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, TxnRollPolicy,
     TxnVerifyPolicy, WritePolicy,
@@ -48,12 +49,11 @@ use crate::query::{CallbackCtx, PartitionFilter, PartitionTracker, QueryHandle, 
 use crate::task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, UdfRemoveTask};
 use crate::txn::{AbortStatus, CommitStatus, Txn, TxnState};
 use crate::txn_roll::TxnRoll;
+use crate::Version;
 use crate::{
     BatchRecord, Bin, Bins, CollectionIndexType, IndexType, Key, Privilege, Record, Recordset,
     ResultCode, Role, Statement, UdfLang, User, Value,
 };
-use crate::policy::Policy;
-use crate::Version;
 use aerospike_rt::fs::File;
 #[cfg(feature = "rt-tokio")]
 use aerospike_rt::io::AsyncReadExt;
@@ -1210,7 +1210,8 @@ impl Client {
     ///     operations::get_bin("a"),
     /// ];
     /// match client.operate(&WritePolicy::default(), &key, &ops).await {
-    ///     Ok(record) => println!("The new value is {:?}", record.bins.get("a")),
+    ///     // One answer per op, in op order; the add answers nil.
+    ///     Ok(record) => println!("The new value is {:?}", record.results.unwrap()[1]),
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// # }
@@ -2030,7 +2031,7 @@ impl Client {
         }
 
         let task_id: u64 = rand::random();
-        let scan = statement.filter.is_none();
+        let scan = statement.filter().is_none();
 
         let mut last_err: Option<Error> = None;
         for node in &nodes {
@@ -2104,7 +2105,7 @@ impl Client {
         }
 
         let task_id: u64 = rand::random();
-        let scan = statement.filter.is_none();
+        let scan = statement.filter().is_none();
 
         let mut last_err: Option<Error> = None;
         for node in &nodes {

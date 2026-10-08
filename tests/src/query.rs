@@ -2072,9 +2072,7 @@ async fn query_operate_rejects_read_op() {
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
     statement.set_operations([operations::get_bin("bin")]);
     let wpolicy = WritePolicy::default();
-    let result = client
-        .query_operate(&wpolicy, statement)
-        .await;
+    let result = client.query_operate(&wpolicy, statement).await;
 
     match result {
         Err(err) => assert_chain_contains(&err, "write-only"),
@@ -2093,9 +2091,7 @@ async fn query_operate_rejects_get_op() {
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
     statement.set_operations([operations::get()]);
     let wpolicy = WritePolicy::default();
-    let result = client
-        .query_operate(&wpolicy, statement)
-        .await;
+    let result = client.query_operate(&wpolicy, statement).await;
 
     match result {
         Err(err) => assert_chain_contains(&err, "write-only"),
@@ -2112,11 +2108,12 @@ async fn query_operate_rejects_mixed_ops() {
     let set_name = create_test_set(&client, 1).await;
 
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.set_operations([operations::get_bin("bin"), operations::put(&as_bin!("tag", "mixed"))]);
+    statement.set_operations([
+        operations::get_bin("bin"),
+        operations::put(&as_bin!("tag", "mixed")),
+    ]);
     let wpolicy = WritePolicy::default();
-    let result = client
-        .query_operate(&wpolicy, statement)
-        .await;
+    let result = client.query_operate(&wpolicy, statement).await;
 
     match result {
         Err(err) => assert_chain_contains(&err, "write-only"),

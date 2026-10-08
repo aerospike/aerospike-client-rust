@@ -49,6 +49,10 @@ pub struct Record {
     pub key: Option<Key>,
 
     /// Map of named record bins, in the order the server returned them.
+    ///
+    /// For an operate, every op the server answers lands here, a write's
+    /// `Value::Nil` included; a bin answered more than once holds a
+    /// `Value::MultiResult` of its answers in op order.
     pub bins: IndexMap<String, Value>,
 
     /// Positional op results in request order; `None` on non-operate paths.

@@ -637,10 +637,12 @@ impl Error {
                 "Bad Server Response: {}",
                 i.message.as_deref().unwrap_or_default()
             ),
-            ErrorKind::UdfBadResponse => format!(
-                "UDF Bad Response: {}",
-                i.message.as_deref().unwrap_or_default()
-            ),
+            // The FAILURE text is the server's message, shown bare like a
+            // server error's; the result code already says it came from a UDF.
+            ErrorKind::UdfBadResponse => i
+                .message
+                .clone()
+                .unwrap_or_else(|| ResultCode::UdfBadResponse.to_string()),
             ErrorKind::StreamTerminated => "Record stream was terminated".into(),
             ErrorKind::Commit { error_type, .. } => {
                 format!("Commit failed: {error_type}")
@@ -1174,6 +1176,14 @@ mod tests {
             err.to_string(),
             "Error 5, node=BB9051616AC4202: Key already exists"
         );
+    }
+
+    #[test]
+    fn udf_base_message_is_the_failure_text() {
+        let failure = "/opt/aerospike/usr/udf/lua/example.lua:3: bad argument";
+        let err = Error::udf_bad_response(failure);
+        assert_eq!(err.base_message(), failure);
+        assert_eq!(err.to_string(), format!("Error 100: {failure}"));
     }
 
     #[test]

@@ -304,6 +304,13 @@ type by value. Selectors are numbers, not bits, so there is no `|` on them.
   not a `HashMap`. `Record` has a new `results: Option<Vec<Value>>` field:
   the per-operation results of an `operate` call in request order, `None`
   on every other path.
+- An `operate` keeps a write's `Value::Nil` answer in `Record::bins`, on the
+  single-key path as on the batch path. A bin written and then read in one
+  call holds `Value::MultiResult([Nil, …, value])` in op order, not the bare
+  value: `[put, add, get_bin]` on `count` gives `[Nil, Nil, 42]` where 2.x
+  gave `42`. A write-only operate reports each written bin as `Nil` where 2.x
+  returned no bins. Read the op's answer at its index in `Record::results`,
+  or take the last element of the bin's `MultiResult`.
 
 ### Sync client
 

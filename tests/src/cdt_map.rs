@@ -103,8 +103,8 @@ async fn map_operations() {
 
     let op = maps::clear(bin_name);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
-    // map_clear returns no result
-    assert!(rec.bins.get(bin_name).is_none());
+    // map_clear answers nil
+    assert_eq!(rec.bins.get(bin_name), Some(&Value::Nil));
 
     // ---------------------------------------------------------------------------------
 

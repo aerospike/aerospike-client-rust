@@ -21,7 +21,7 @@
     partition range and each partition's resume point (id, retry, bval, digest — the same fields the Go
     client persists) round-trip, so a paginated query can hand its cursor to another process and
     continue there. Deserialization rejects a cursor whose range or entries are inconsistent.
-  * `BatchRecord` is built around one `Error`. A row is failed when `error()` is set, succeeded when
+  * [CLIENT-5626] `BatchRecord` is built around one `Error`. A row is failed when `error()` is set, succeeded when
     `record` is (every answered row has one, bin-less for an operation that returns nothing), pending
     when neither is; everything about a failure — result code, in-doubt, node, server detail, cause
     chain — is read off that error: `result_code()`, `in_doubt()`, `node()`, `error_detail()`,
@@ -34,23 +34,23 @@
     with the failure on `error()`; a client timeout reads as `Timeout`, as before. An unanswered
     row's in-doubt now follows the failure's own flag, so a timeout before anything reached the
     wire no longer marks rows in doubt.
-  * `Error` serializes (under `serialization`) as a structured record — `kind` (the variant name,
+  * [CLIENT-5626] `Error` serializes (under `serialization`) as a structured record — `kind` (the variant name,
     also `ErrorKind::name()`), `result_code`, `message`, `node`, `iteration`, `in_doubt`,
     `server_error_detail`, `sub_errors` and `source`, the last two recursively — so a serialized
     `BatchRecord` (`key`, `record`, `error`, `has_write`) carries the whole failure, not a projection.
-  * `BatchRecord::node()` (and `BatchOperation::node()`): the node that answered, or whose failure
+  * [CLIENT-5626] `BatchRecord::node()` (and `BatchOperation::node()`): the node that answered, or whose failure
     stamped, a batch row, in the same `"<name>: <host:port>"` form as `Error::node()`.
-  * `Error::matches(&[ResultCode])` and `Error::matches_client(&[ClientResultCode])` search the whole
+  * [CLIENT-5626] `Error::matches(&[ResultCode])` and `Error::matches_client(&[ClientResultCode])` search the whole
     cause chain for any of the given codes (Go `Matches` parity); `server_result_code()` still reports
     only the first server code it meets.
-  * `server_error::sub_code::name(rc, sub_code)` gives a subcode's constant name, scoped by its parent
+  * [CLIENT-5626] `server_error::sub_code::name(rc, sub_code)` gives a subcode's constant name, scoped by its parent
     result code; `Error`'s `Display` shows it beside the number (`SubCode: 1 (OPNOT_CDT_INDEX_OUT_OF_BOUNDS)`).
     `sub_code::UNAVAIL_NODE_SHUTTING_DOWN` (3, server 8.2.1+) joins the table: the node is leaving the
     cluster, so fail over rather than retry it.
   * `ResultCode::InvalidEncoding` (29, "Invalid UTF-8 encoding", server 8.2.0+) and the
     `OpNotApplicable` subcode `OPNOT_STRING_REGEX_LIMIT_EXCEEDED` (12) are decoded instead of
     falling into `Unknown`.
-  * `Client::create_set_index(policy, namespace, set, name)` and `CollectionIndexType::Set`: a set
+  * [CLIENT-4586] `Client::create_set_index(policy, namespace, set, name)` and `CollectionIndexType::Set`: a set
     index (record presence per set) created through the sindex framework with no bin, type, context
     or expression, so the `sindex-admin` role suffices. Server 8.1.2+, reported by
     `Version::supports_set_index`. Parity with Go `CreateSetIndex` (CLIENT-4315) and Java's
@@ -58,157 +58,7 @@
   * [CLIENT-4390] `IndexType::Integer` (`INTEGER`) for secondary indexes on server 8.2.0+, reported by
     `Version::supports_integer_index`; `IndexType::Numeric` remains for older servers.
 
-* **Bug Fixes**
-  * A single-key command on a namespace missing from the partition map (or before the map is
-    populated) now fails at once with `InvalidNamespace` (20), matching the batch path and the Java
-    client. It used to retry the routing failure until the budget ran out and report
-    `MaxRetriesExceeded` (-11), with the real cause buried in `source` and `sub_errors`.
-  * Background queries (`query_operate`, `query_execute_udf`) treat `KEY_NOT_FOUND`
-    (result code 2) as "set absent on this node" and succeed, matching the Java
-    client. A 3-node cluster returns that code from nodes that do not hold a
-    fresh, empty set.
-  * A batch whose `total_timeout` elapsed outside the retry loop's own deadline checks returned a
-    bare timeout and **dropped every row of that node group**: the caller's `BatchOperation`s came
-    back as placeholders. The whole-command deadline is now a terminal failure like any other — the
-    error is a client timeout and in doubt, and every unanswered write row is stamped TIMEOUT and
-    in doubt with its key intact.
-  * Single-key retry exhaustion now reports `MaxRetriesExceeded` (-11) like the batch path and the Go
-    client; it used to report the timeout code 9 (which Java keeps behind its `Timeout` exception type,
-    mirrored here by `ErrorKind::Timeout`).
-  * Batch rows the server answered `KeyNotFound` or `FilteredOut` lost the server's extended error
-    detail (the server's "filtered out by ..." message): the multi-key parser read it and discarded it.
-  * The `batch_operations`, `query` and `timeout_configuration` examples defaulted to port 3100 when
-    `AEROSPIKE_HOSTS` is unset; every other example and the test harness use 3000.
-  * **Breaking**: `ErrorKind::BatchFailed` and `Error::batch_failed` are removed. They carried a copy
-    of the batch rows inside the error, which was needed when `Client::batch` returned results by
-    value; since results land in the caller's own operations, a failed batch returns the failure that
-    ended it and nothing had produced the variant. `ClientResultCode::BatchFailed` (-16) stays as a
-    reserved, never-produced value.
-  * Nine client-built server errors passed message text (or nothing) as the *node*, so `Display`
-    printed `node=<message>` and `base_message()` lost the text.
-  * `ResultCode` descriptions corrected from the server/Java strings: `AlwaysForbidden` ("Operation not
-    allowed"), `PartitionUnavailable` ("Partition unavailable"), `FilteredOut` ("Command filtered
-    out"), `LostConflict`, and the allowlist codes no longer say "whitelist".
-  * Serializing `Value::Infinity`, `Value::Wildcard` or a `Value::MultiResult` is a serde error
-    instead of a panic. **Breaking**: `From<Value> for i64` is now `TryFrom<Value>` (and
-    `TryFrom<&Value>`) with a `String` error, like every other `Value` conversion —
-    `let n: i64 = value.into()` becomes `let n = i64::try_from(&value)?`.
-  * `Error::base_message` for a server failure is the result code's descriptive string (`Key already exists`),
-    not the variant name. Info-command failures (`FAIL:<code>:<message>`) keep the server's text as the base
-    message under the server's code (`Error::info_command_failure`) instead of filing the text as the node and
-    wrapping the code in a client error; an out-of-range code no longer panics. `BinNameTooLong` reads
-    "greater than 15 characters", the server's actual limit, and `FailForbidden` reads "Operation not
-    allowed at this time" (a stray rename had produced "OperationType").
-  * A query or scan that fails at start-up (a filter expression the server cannot build, say), a
-    background query or UDF job that fails, and a failed transaction verify, roll, close,
-    mark-roll-forward or add-keys reply all reported a bare result code. The server's extended error
-    detail (subcode, message, expression trace) rides in those replies too and is now surfaced on the
-    error, as it already was for single-record and batch commands.
-  * **Breaking**: `sub_code::FILTERED_META` and `sub_code::FILTERED_BINS` are removed. The server
-    defines no subcodes under `FilteredOut` and never sent them; a filtered-out row explains itself in
-    its message only.
-  * Malformed or truncated server replies are reported as `BadResponse` errors instead of
-    panicking the calling task: every length the server declares (field, operation, particle,
-    msgpack element and ext sizes, batch row index, compressed and decompressed sizes, the
-    partition bitmap) is checked before it is trusted, a hostile element count no longer drives a
-    multi-gigabyte allocation, a map key of a type the server never sends is rejected before it
-    reaches `Hash`, and a non-numeric version string no longer panics the tend task. The tend loop
-    also survives a panic in one cycle and logs it rather than silently freezing the cluster view.
-  * A query whose producer task failed could leave `Recordset` consumers waiting forever; the sink
-    is now closed from a drop guard however the task ends.
-  * `Client::close` cancels the dynamic-config watcher and waits for the tend task, so cleanup is
-    complete when it returns. A node's partition map is merged on a scratch copy, so a parse error
-    part-way through no longer leaves the shared map half updated.
-  * Host names are resolved through the async runtime instead of blocking a worker thread on the
-    system resolver during tend and seeding; the YAML config provider reads its file the same way.
-  * The retry backoff ignores non-finite multipliers and caps the sleep at 60 s; an empty `exp_let`
-    or `def` is an `InvalidArgument` instead of an underflow; expression return types for
-    `ListReturnType::None` / `MapReturnType::None` are typed as NIL instead of panicking; more than
-    65535 operations or bins in one request is an `InvalidArgument` instead of a corrupt request.
-  * Per-attempt "Parse result error" and node-error log lines are `debug!` (they were `warn!` at
-    full request rate during an outage); the YAML provider warns once per distinct problem instead
-    of once per poll.
-  * Lua `bytes` values grow to at most 128 MiB; every mutator reports failure past that instead
-    of exhausting memory.
-  * **Breaking**, API lockdown before 3.0.0 (see `MIGRATION.md`):
-    `Client::cluster` is private; use `Client::nodes`, `node_names`, `get_node`, the new
-    `random_node` and `cluster_name`. The `Node`, `NodeMetrics` and `Txn` mutators that drove the
-    tend loop and the transaction state machine are crate-private (Rust code sets the timeout
-    at construction with `Txn::with_timeout(self, d)`), as are `PartitionFilter`'s bookkeeping fields and
-    `PartitionStatus`. `BatchPolicy::filter_expression` the field is gone: the batch-wide filter
-    is `base_policy.filter_expression`, which is what the encoder always read. The server-defined
-    enums `ResultCode`, `ClientResultCode`, `ErrorKind`, `PrivilegeCode` and `Value` are
-    `#[non_exhaustive]`, so matches on them need a `_` arm; the client-side sets (`AuthMode`,
-    `Replica`, `QueryDuration`, `ReadTouchTtl`, the index, UDF-language, command-type, transaction
-    and task status enums) stay exhaustive, so adding a variant to one is a breaking change. `EqFilterValue`,
-    `RangeFilterValue`, `MapLike`, `ToListWriteFlagsBitmask` and `Task` are sealed. The wire-level
-    query-plan types, `ParticleType` and the AEL packing helpers are hidden from the documentation;
-    `CITRUSLEAF_EPOCH` is `citrusleaf_epoch()` and `CITRUSLEAF_EPOCH_UNIX_SECS`. `BatchOperation`
-    is an opaque struct: its variants (`Read`, `Write`, `Delete`, `UDF` and the hidden transaction
-    rows) can no longer be matched or built by hand; use the constructors and the result accessors.
-    `ErrorKind` drops the `Base64`, `PwHash`, `Async` and `BatchRow` variants, and the error
-    constructors other than `client_error`, `invalid_argument` and `chain_error`, plus the retry
-    bookkeeping (`set_in_doubt`, `with_retry_context`, `wrap`, `chain_cause`, `keep_connection`,
-    `is_pool_empty`), are crate-private. `Statement.filters`/`add_filter` are `filter`/`set_filter`
-    and `Statement.aggregation` is private. The six `Filter::geo_*_cit` constructors are replaced by
-    `Filter::collection_type(cit)`, which chains on any filter. The policies' `filter_expression()`
-    getters return `Option<&Expression>`. Every builder that stores a name or string value takes
-    `impl Into<String>` (the expression bin builders, `Bin::new`, the operation builders, `Filter`,
-    `Statement::new`), so `int_bin("a")` and `Bin::new("a", v)` work; an argument spelled
-    `"a".into()` no longer infers. `Key::new` takes its two
-    strings independently and `Key::key_with_digest` is the infallible `Key::with_digest`.
-    `Client::get` takes `bins: impl Into<Bins>` without the `Send + Sync + 'static` bounds. Lists
-    have one shape: stored lists (`BatchOperation::write/read_ops/udf`, `Statement::set_operations`,
-    `Operation::context`, `Filter::context`) take `impl Into<Vec<_>>`, borrowed lists (`operate`,
-    the UDF `args`, every builder `ctx`) take `&[_]`, and no list is wrapped in `Option`;
-    `batch_foreach` takes `&mut [BatchOperation]` like `batch`; the UDF module parameter is
-    `package_name` on `execute_udf` and `BatchOperation::udf`. `query_operate` applies the
-    statement's own operations (`Statement::set_operations`) instead of a second list;
-    `Statement::set_aggregate_function` is crate-private, the client's aggregate methods take the
-    UDF; `MapWriteMode` is removed in favour of `MapWriteFlags` (`MapPolicy::new(order, flags)`,
-    `with_persisted_index`), and the expression `put`/`put_items` now send the policy's flags. The
-    deprecated filter macros (`as_eq!` and friends) and the server-deprecated `device_size()` /
-    `memory_size()` expressions are removed. `Key`, `Sampler`, `CdtContext` and `LoopVarPart` keep
-    their invariants behind private fields and accessors (`key.digest()` and friends).
-    `ClientPolicy::set_auth_mode` no longer returns a `Result`, `RecordMapper::id` returns one,
-    the `TryFrom<Value>` impls fail with the crate `Error`, and a password bcrypt refuses fails
-    `Client::new` instead of panicking on the first connection. `Recordset::partition_filter` and
-    `QueryHandle::partition_filter` are plain methods. The blocking client returns
-    `aerospike_sync::Task<T>` with blocking waits, takes a plain `bool` closure in `batch_foreach`,
-    and gains `query_foreach` with a blocking `aerospike_sync::QueryHandle`. Both clients
-    implement `Clone` (a clone shares the cluster) and no longer carry hand-written `unsafe impl
-    Send/Sync`: a compile-time assertion checks the property from the fields instead. Derives filled
-    in: `Key: Hash`, `PartitionFilter: Clone`, `Copy` on the small policy enums, `PartialEq` on every
-    policy, `Record`, `Statement` and `Filter`, `UdfLang: Copy + Eq + Hash`, `Bins` from
-    `Vec<String>`; `TlsPolicy.config` is an `Arc<rustls::ClientConfig>`, shared with the
-    connector instead of cloned per connection. `Hash for Value` is total (a map with an invalid
-    key type errors when encoded instead of panicking when hashed), `Replica` is exported at the
-    root, `Record::expiration()` is new, the dynamic-config section types are public and
-    documented, and `Value::particle_type` is crate-private. The
-    `Policy` trait is no longer
-    exported. Acronyms in
-    identifiers are `UpperCamelCase`: `BatchUdfPolicy`, `UdfLang`, `ReadModeAp`/`ReadModeSc`,
-    `ReadTouchTtl`, `HllPolicy`/`HllWriteFlags`, `Value::GeoJson`/`Value::Hll`, `AuthMode::Pki`,
-    `PrivilegeCode::{UdfAdmin, SindexAdmin, ReadWriteUdf}`, `ResultCode::XdrKeyBusy`,
-    `QueryDuration::LongRelaxAp`; enum variants are too: `ExpType::{Nil, Bool, Int, String, List,
-    Map, Blob, Float, Geo, Hll}`. Every flag set is one shape, a newtype with SCREAMING constants
-    combined with `|` (`ListWriteFlags::ADD_UNIQUE | ListWriteFlags::NO_FAIL`), `bits()` and an
-    unchecked `from_bits()` for flags the server knows before the client does: `ListWriteFlags`,
-    `ListSortFlags`, `MapWriteFlags`, `BitwiseWriteFlags`, `BitwiseResizeFlags`, `HllWriteFlags`,
-    `ExpWriteFlags`, `ExpReadFlags`, `RegexFlags` (was `RegexFlag`, and `regex_compare` takes it),
-    plus the existing string and path flags with a private field. Policy `flags` fields are typed,
-    the `To*FlagsBitmask` traits and the flag-combining `new_with_flags` constructors are gone,
-    and `bitwise::resize` takes `BitwiseResizeFlags` instead of an `Option`. `ListReturnType` and
-    `MapReturnType` are newtypes with selector constants and `.inverted()`; the `Inverted`
-    variant, the `Inverted*Return` wrappers and the `To*ReturnTypeBitmask` traits are gone. Policies
-    stay plain structs with public fields, built from
-    `Default` by mutation or struct-update syntax (see the `policy` module docs).
-  * **Breaking**: `replica` moved from `ReadPolicy`, `QueryPolicy` and `BatchPolicy` to
-    `BasePolicy`, so write policies carry it too. A write with `Sequence` or `PreferRack` now
-    moves to the next replica when retried, as in the Java and Go clients, instead of always
-    targeting the master. `BatchPolicy::write_default()` (`max_retries` 0) is the parent policy
-    for batches with writes. A write command's client-side failure after the request was sent is
-    always in doubt, not only on timeout and connection errors.
+* **Improvements**
   * `AuthMode` no longer prints the password in `{:?}`; `task::Status` compares with `==`; every
     expression and operation builder is `#[must_use]`, so a built-and-dropped expression warns.
   * The workspace builds clean under `clippy::pedantic` + `clippy::nursery` (core) and default clippy
@@ -253,6 +103,169 @@
     (8.2.0.0) everywhere; every action pinned to a commit; the legacy Travis/AppVeyor-era
     `build.yml` and `.appveyor.yml` removed. The tag-push release workflow runs the same gate
     before it packages anything.
+
+* **Bug Fixes**
+  * A single-key command on a namespace missing from the partition map (or before the map is
+    populated) now fails at once with `InvalidNamespace` (20), matching the batch path and the Java
+    client. It used to retry the routing failure until the budget ran out and report
+    `MaxRetriesExceeded` (-11), with the real cause buried in `source` and `sub_errors`.
+  * Background queries (`query_operate`, `query_execute_udf`) treat `KEY_NOT_FOUND`
+    (result code 2) as "set absent on this node" and succeed, matching the Java
+    client. A 3-node cluster returns that code from nodes that do not hold a
+    fresh, empty set.
+  * A batch whose `total_timeout` elapsed outside the retry loop's own deadline checks returned a
+    bare timeout and **dropped every row of that node group**: the caller's `BatchOperation`s came
+    back as placeholders. The whole-command deadline is now a terminal failure like any other — the
+    error is a client timeout and in doubt, and every unanswered write row is stamped TIMEOUT and
+    in doubt with its key intact.
+  * Single-key retry exhaustion now reports `MaxRetriesExceeded` (-11) like the batch path and the Go
+    client; it used to report the timeout code 9 (which Java keeps behind its `Timeout` exception type,
+    mirrored here by `ErrorKind::Timeout`).
+  * [CLIENT-5626] Batch rows the server answered `KeyNotFound` or `FilteredOut` lost the server's extended error
+    detail (the server's "filtered out by ..." message): the multi-key parser read it and discarded it.
+  * The `batch_operations`, `query` and `timeout_configuration` examples defaulted to port 3100 when
+    `AEROSPIKE_HOSTS` is unset; every other example and the test harness use 3000.
+  * **Breaking**: `ErrorKind::BatchFailed` and `Error::batch_failed` are removed. They carried a copy
+    of the batch rows inside the error, which was needed when `Client::batch` returned results by
+    value; since results land in the caller's own operations, a failed batch returns the failure that
+    ended it and nothing had produced the variant. `ClientResultCode::BatchFailed` (-16) stays as a
+    reserved, never-produced value.
+  * Nine client-built server errors passed message text (or nothing) as the *node*, so `Display`
+    printed `node=<message>` and `base_message()` lost the text.
+  * `ResultCode` descriptions corrected from the server/Java strings: `AlwaysForbidden` ("Operation not
+    allowed"), `PartitionUnavailable` ("Partition unavailable"), `FilteredOut` ("Command filtered
+    out"), `LostConflict`, and the allowlist codes no longer say "whitelist".
+  * Serializing `Value::Infinity`, `Value::Wildcard` or a `Value::MultiResult` is a serde error
+    instead of a panic. **Breaking**: `From<Value> for i64` is now `TryFrom<Value>` (and
+    `TryFrom<&Value>`) with the crate `Error`, like every other `Value` conversion —
+    `let n: i64 = value.into()` becomes `let n = i64::try_from(&value)?`.
+  * [CLIENT-5492] `Error::base_message` for a server failure is the result code's descriptive string (`Key already exists`),
+    not the variant name. Info-command failures (`FAIL:<code>:<message>`) keep the server's text as the base
+    message under the server's code (`Error::info_command_failure`) instead of filing the text as the node and
+    wrapping the code in a client error; an out-of-range code no longer panics. `BinNameTooLong` reads
+    "greater than 15 characters", the server's actual limit, and `FailForbidden` reads "Operation not
+    allowed at this time" (a stray rename had produced "OperationType").
+  * `Error::base_message` for a UDF failure (`ErrorKind::UdfBadResponse`) is the UDF's `FAILURE` text, bare,
+    as for a server failure; it no longer carries a `UDF Bad Response: ` prefix. `Display` and the serialized
+    `message` follow.
+  * A query or scan that fails at start-up (a filter expression the server cannot build, say), a
+    background query or UDF job that fails, and a failed transaction verify, roll, close,
+    mark-roll-forward or add-keys reply all reported a bare result code. The server's extended error
+    detail (subcode, message, expression trace) rides in those replies too and is now surfaced on the
+    error, as it already was for single-record and batch commands.
+  * **Breaking**: `sub_code::FILTERED_META` and `sub_code::FILTERED_BINS` are removed. The server
+    defines no subcodes under `FilteredOut` and never sent them; a filtered-out row explains itself in
+    its message only.
+  * Malformed or truncated server replies are reported as `BadResponse` errors instead of
+    panicking the calling task: every length the server declares (field, operation, particle,
+    msgpack element and ext sizes, batch row index, compressed and decompressed sizes, the
+    partition bitmap) is checked before it is trusted, a hostile element count no longer drives a
+    multi-gigabyte allocation, a map key of a type the server never sends is rejected before it
+    reaches `Hash`, and a non-numeric version string no longer panics the tend task. The tend loop
+    also survives a panic in one cycle and logs it rather than silently freezing the cluster view.
+  * A query whose producer task failed could leave `Recordset` consumers waiting forever; the sink
+    is now closed from a drop guard however the task ends.
+  * `Client::close` cancels the dynamic-config watcher and waits for the tend task, so cleanup is
+    complete when it returns. A node's partition map is merged on a scratch copy, so a parse error
+    part-way through no longer leaves the shared map half updated.
+  * Host names are resolved through the async runtime instead of blocking a worker thread on the
+    system resolver during tend and seeding; the YAML config provider reads its file the same way.
+  * The retry backoff ignores non-finite multipliers and caps the sleep at 60 s; an empty `exp_let`
+    or `def` is an `InvalidArgument` instead of an underflow; more than 65535 operations or bins in
+    one request is an `InvalidArgument` instead of a corrupt request.
+  * Per-attempt "Parse result error" and node-error log lines are `debug!` (they were `warn!` at
+    full request rate during an outage); the YAML provider warns once per distinct problem instead
+    of once per poll.
+  * Lua `bytes` values grow to at most 128 MiB; every mutator reports failure past that instead
+    of exhausting memory.
+  * [CLIENT-5581] A batch row whose key is alone on its node now carries the same bins as a row
+    grouped with other keys on one node.
+
+* **Breaking Change**
+  * **Breaking**, API lockdown before 3.0.0 (see `MIGRATION.md`):
+    `Client::cluster` is private; use `Client::nodes`, `node_names`, `get_node`, the new
+    `random_node` and `cluster_name`. The `Node`, `NodeMetrics` and `Txn` mutators that drove the
+    tend loop and the transaction state machine are crate-private (Rust code sets the timeout
+    at construction with `Txn::with_timeout(self, d)`); `PartitionFilter`'s `done` and `retry` fields
+    are private, and `partitions` and `PartitionStatus` are hidden from the documentation (see
+    *Improvements*). `BatchPolicy::filter_expression` the field is gone: the batch-wide filter
+    is `base_policy.filter_expression`, which is what the encoder always read. The server-defined
+    enums `ResultCode`, `ClientResultCode`, `ErrorKind`, `PrivilegeCode` and `Value` are
+    `#[non_exhaustive]`, so matches on them need a `_` arm; the client-side sets (`AuthMode`,
+    `Replica`, `QueryDuration`, `ReadTouchTtl`, the index, UDF-language, command-type, transaction
+    and task status enums) stay exhaustive, so adding a variant to one is a breaking change. `EqFilterValue`,
+    `RangeFilterValue`, `MapLike` and `Task` are sealed. The wire-level
+    query-plan types, `ParticleType` and the AEL packing helpers are hidden from the documentation;
+    `CITRUSLEAF_EPOCH` is `citrusleaf_epoch()` and `CITRUSLEAF_EPOCH_UNIX_SECS`. `BatchOperation`
+    is an opaque struct: its variants (`Read`, `Write`, `Delete`, `UDF` and the hidden transaction
+    rows) can no longer be matched or built by hand; use the constructors and the result accessors.
+    `ErrorKind` drops the `Base64`, `PwHash`, `Async` and `BatchRow` variants, and the error
+    constructors other than `client_error`, `invalid_argument` and `chain_error`, plus the retry
+    bookkeeping (`set_in_doubt`, `with_retry_context`, `wrap`, `chain_cause`, `keep_connection`,
+    `is_pool_empty`), are crate-private. `Statement.filters`/`add_filter` are `filter`/`set_filter`
+    and `Statement.aggregation` is private. The six `Filter::geo_*_cit` constructors are replaced by
+    `Filter::collection_type(cit)`, which chains on any filter. The policies' `filter_expression()`
+    getters return `Option<&Expression>`. Every builder that stores a name or string value takes
+    `impl Into<String>` (the expression bin builders, `Bin::new`, the operation builders, `Filter`,
+    `Statement::new`), so `int_bin("a")` and `Bin::new("a", v)` work; an argument spelled
+    `"a".into()` no longer infers. `Key::new` takes its two strings independently and
+    `Key::key_with_digest` is the infallible `Key::with_digest`.
+    `Client::get` takes `bins: impl Into<Bins>` without the `Send + Sync + 'static` bounds. Lists
+    have one shape: stored lists (`BatchOperation::write/read_ops/udf`, `Statement::set_operations`,
+    `Operation::context`, `Filter::context`) take `impl Into<Vec<_>>`, borrowed lists (`operate`,
+    the UDF `args`, every builder `ctx`) take `&[_]`, and no list is wrapped in `Option`;
+    `batch_foreach` takes `&mut [BatchOperation]` like `batch`; the UDF module parameter is
+    `package_name` on `execute_udf` and `BatchOperation::udf`. `query_operate` applies the
+    statement's own operations (`Statement::set_operations`) instead of a second list;
+    `Statement::set_aggregate_function` is hidden from the documentation (see *Improvements*), the
+    client's aggregate methods take the UDF; `MapWriteMode` is removed in favour of `MapWriteFlags`
+    (`MapPolicy::new(order, flags)`,
+    `with_persisted_index`), and the expression `put`/`put_items` now send the policy's flags. The
+    deprecated filter macros (`as_eq!` and friends) and the server-deprecated `device_size()` /
+    `memory_size()` expressions are removed. `Key`, `Sampler`, `CdtContext` and `LoopVarPart` keep
+    their invariants behind private fields and accessors (`key.digest()` and friends).
+    `ClientPolicy::set_auth_mode` no longer returns a `Result`, `RecordMapper::id` returns one,
+    the `TryFrom<Value>` impls fail with the crate `Error`, and a password bcrypt refuses fails
+    `Client::new` instead of panicking on the first connection. `Recordset::partition_filter` and
+    `QueryHandle::partition_filter` are plain methods. The blocking client returns
+    `aerospike_sync::Task<T>` with blocking waits, takes a plain `bool` closure in `batch_foreach`,
+    and gains `query_foreach` with a blocking `aerospike_sync::QueryHandle`. Both clients
+    implement `Clone` (a clone shares the cluster) and no longer carry hand-written `unsafe impl
+    Send/Sync`: a compile-time assertion checks the property from the fields instead. Derives filled
+    in: `Key: Hash`, `PartitionFilter: Clone`, `Copy` on the small policy enums, `PartialEq` on every
+    policy, `Record`, `Statement` and `Filter`, `UdfLang: Copy + Eq + Hash`, `Bins` from
+    `Vec<String>`; `TlsPolicy.config` is an `Arc<rustls::ClientConfig>`, shared with the
+    connector instead of cloned per connection. `Hash for Value` is total (a map with an invalid
+    key type errors when encoded instead of panicking when hashed), `Replica` is exported at the
+    root, `Record::expiration()` is new, the dynamic-config section types are public and
+    documented, and `Value::particle_type` is crate-private. The `Policy` trait is no longer
+    exported. Acronyms in identifiers are `UpperCamelCase`: `BatchUdfPolicy`, `UdfLang`, `ReadModeAp`/`ReadModeSc`,
+    `ReadTouchTtl`, `HllPolicy`/`HllWriteFlags`, `Value::GeoJson`/`Value::Hll`, `AuthMode::Pki`,
+    `PrivilegeCode::{UdfAdmin, SindexAdmin, ReadWriteUdf}`, `ResultCode::XdrKeyBusy`,
+    `QueryDuration::LongRelaxAp`; enum variants are too: `ExpType::{Nil, Bool, Int, String, List,
+    Map, Blob, Float, Geo, Hll}`. Every flag set is one shape, a newtype with SCREAMING constants
+    combined with `|` (`ListWriteFlags::ADD_UNIQUE | ListWriteFlags::NO_FAIL`), `bits()` and an
+    unchecked `from_bits()` for flags the server knows before the client does: `ListWriteFlags`,
+    `ListSortFlags`, `MapWriteFlags`, `BitwiseWriteFlags`, `BitwiseResizeFlags`, `HllWriteFlags`,
+    `ExpWriteFlags`, `ExpReadFlags`, `RegexFlags` (was `RegexFlag`, and `regex_compare` takes it),
+    plus the existing string and path flags with a private field. Policy `flags` fields are typed,
+    the `To*FlagsBitmask` traits and the flag-combining `new_with_flags` constructors are gone,
+    and `bitwise::resize` takes `BitwiseResizeFlags` instead of an `Option`. `ListReturnType` and
+    `MapReturnType` are newtypes with selector constants and `.inverted()`; the `Inverted`
+    variant, the `Inverted*Return` wrappers and the `To*ReturnTypeBitmask` traits are gone. Policies
+    stay plain structs with public fields, built from `Default` by mutation or struct-update
+    syntax (see the `policy` module docs).
+  * **Breaking**: `replica` moved from `ReadPolicy`, `QueryPolicy` and `BatchPolicy` to
+    `BasePolicy`, so write policies carry it too. A write with `Sequence` or `PreferRack` now
+    moves to the next replica when retried, as in the Java and Go clients, instead of always
+    targeting the master. `BatchPolicy::write_default()` (`max_retries` 0) is the parent policy
+    for batches with writes. A write command's client-side failure after the request was sent is
+    always in doubt, not only on timeout and connection errors.
+  * [CLIENT-5582] A single-key `operate` keeps every op's answer in `Record::bins`, a write's
+    `Value::Nil` included, as the batch path already does. A bin written and then read in one call
+    holds `Value::MultiResult([Nil, …, value])` in op order instead of the bare value, and a
+    write-only operate reports each written bin as `Nil` instead of returning no bins. Read an op's
+    answer at its index in `Record::results`, or take the last element of the bin's `MultiResult`.
 
 ## [3.0.0-alpha.2]
 

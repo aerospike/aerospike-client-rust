@@ -34,13 +34,16 @@ async fn cdt_bitwise() {
 
     let _ = common::delete_durably(&client, &wpolicy, &key).await;
 
+    // A bitwise write answers nil, so a write followed by a get reports both.
+    let after_write = |bytes: Vec<u8>| Value::MultiResult(vec![Value::Nil, Value::Blob(bytes)]);
+
     // Verify the insert and Get Command
     let ops = &[
         bitwise::insert("bin", 0, val, &bpolicy),
         bitwise::get("bin", 9, 5),
     ];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
-    assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b10000000]));
+    assert_eq!(*rec.bins.get("bin").unwrap(), after_write(vec![0b10000000]));
 
     // Verify the Count command
     let ops = &[bitwise::count("bin", 20, 4)];
@@ -56,7 +59,7 @@ async fn cdt_bitwise() {
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(
         *rec.bins.get("bin").unwrap(),
-        Value::Blob(vec![
+        after_write(vec![
             0b00000001, 0b01000111, 0b00000011, 0b00000100, 0b00000101
         ])
     );
@@ -67,7 +70,7 @@ async fn cdt_bitwise() {
         bitwise::get("bin", 0, 8),
     ];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
-    assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b01000111]));
+    assert_eq!(*rec.bins.get("bin").unwrap(), after_write(vec![0b01000111]));
 
     // Verify OR command
     let val = Value::Blob(vec![0b10101010]);
@@ -76,7 +79,7 @@ async fn cdt_bitwise() {
         bitwise::get("bin", 0, 8),
     ];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
-    assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b11101111]));
+    assert_eq!(*rec.bins.get("bin").unwrap(), after_write(vec![0b11101111]));
 
     // Verify XOR command
     let val = Value::Blob(vec![0b10101100]);
@@ -85,7 +88,7 @@ async fn cdt_bitwise() {
         bitwise::get("bin", 0, 8),
     ];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
-    assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b01000011]));
+    assert_eq!(*rec.bins.get("bin").unwrap(), after_write(vec![0b01000011]));
 
     // Verify AND command
     let val = Value::Blob(vec![0b01011010]);
@@ -94,7 +97,7 @@ async fn cdt_bitwise() {
         bitwise::get("bin", 0, 8),
     ];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
-    assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b01000010]));
+    assert_eq!(*rec.bins.get("bin").unwrap(), after_write(vec![0b01000010]));
 
     // Verify NOT command
     let ops = &[
@@ -102,7 +105,7 @@ async fn cdt_bitwise() {
         bitwise::get("bin", 0, 8),
     ];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
-    assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b10111101]));
+    assert_eq!(*rec.bins.get("bin").unwrap(), after_write(vec![0b10111101]));
 
     // Verify LSHIFT command
     let ops = &[
@@ -110,7 +113,7 @@ async fn cdt_bitwise() {
         bitwise::get("bin", 24, 8),
     ];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
-    assert_eq!(*rec.bins.get("bin").unwrap(), Value::Blob(vec![0b00101000]));
+    assert_eq!(*rec.bins.get("bin").unwrap(), after_write(vec![0b00101000]));
 
     // Verify RSHIFT command
     let ops = &[
@@ -120,7 +123,7 @@ async fn cdt_bitwise() {
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(
         *rec.bins.get("bin").unwrap(),
-        Value::Blob(vec![0b01011110, 0b10000011])
+        after_write(vec![0b01011110, 0b10000011])
     );
 
     // Verify Add command
@@ -139,7 +142,7 @@ async fn cdt_bitwise() {
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(
         *rec.bins.get("bin").unwrap(),
-        Value::Blob(vec![0b11011110, 0b10000011, 0b00000100, 0b00101000])
+        after_write(vec![0b11011110, 0b10000011, 0b00000100, 0b00101000])
     );
 
     // Verify Subtract command
@@ -158,7 +161,7 @@ async fn cdt_bitwise() {
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(
         *rec.bins.get("bin").unwrap(),
-        Value::Blob(vec![0b01011110, 0b10000011, 0b00000100, 0b00101000])
+        after_write(vec![0b01011110, 0b10000011, 0b00000100, 0b00101000])
     );
 
     // Verify the set int command
@@ -169,7 +172,7 @@ async fn cdt_bitwise() {
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(
         *rec.bins.get("bin").unwrap(),
-        Value::Blob(vec![0b01011110, 0b11111111, 0b00000100, 0b00101000])
+        after_write(vec![0b01011110, 0b11111111, 0b00000100, 0b00101000])
     );
 
     // Verify the get int command

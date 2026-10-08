@@ -937,12 +937,8 @@ impl Buffer {
         // a per-record layout that differs from read/write, so they get their
         // own encoders. The send/parse machinery is shared with this path.
         match batch_ops.first().map(|(op, _)| &op.kind) {
-            Some(BatchOp::TxnVerify { .. }) => {
-                return self.set_batch_txn_verify(policy, batch_ops)
-            }
-            Some(BatchOp::TxnRoll { .. }) => {
-                return self.set_batch_txn_roll(policy, batch_ops)
-            }
+            Some(BatchOp::TxnVerify { .. }) => return self.set_batch_txn_verify(policy, batch_ops),
+            Some(BatchOp::TxnRoll { .. }) => return self.set_batch_txn_roll(policy, batch_ops),
             _ => {}
         }
 
@@ -1438,7 +1434,7 @@ impl Buffer {
         node_partitions: Option<&NodePartitions>,
         execute_where: Option<&[u8]>,
     ) -> Result<()> {
-        let filter = statement.filter.as_ref();
+        let filter = statement.filter();
         let is_background = direction.is_background();
         let supports_ops_ext = node.version().supports_query_ops_projection_ext();
         let records_per_second = direction.records_per_second();
