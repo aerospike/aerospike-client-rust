@@ -40,6 +40,10 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod client;
+mod query_handle;
+mod blocking_task;
 
 pub use crate::client::Client;
+pub use crate::query_handle::QueryHandle;
+pub use crate::blocking_task::Task;
 pub use aerospike_core::*;

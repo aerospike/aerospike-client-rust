@@ -171,7 +171,9 @@
     `ClientPolicy::set_auth_mode` no longer returns a `Result`, `RecordMapper::id` returns one,
     the `TryFrom<Value>` impls fail with the crate `Error`, and a password bcrypt refuses fails
     `Client::new` instead of panicking on the first connection. `Recordset::partition_filter` and
-    `QueryHandle::partition_filter` are plain methods. The
+    `QueryHandle::partition_filter` are plain methods. The blocking client returns
+    `aerospike_sync::Task<T>` with blocking waits, takes a plain `bool` closure in `batch_foreach`,
+    and gains `query_foreach` with a blocking `aerospike_sync::QueryHandle`. The
     `Policy` trait is no longer
     exported. Acronyms in
     identifiers are `UpperCamelCase`: `BatchUdfPolicy`, `UdfLang`, `ReadModeAp`/`ReadModeSc`,

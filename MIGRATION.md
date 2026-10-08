@@ -290,6 +290,17 @@ type by value. Selectors are numbers, not bits, so there is no `|` on them.
 - `tls` needs `rt-tokio` with the blocking client too; the async-std flavour
   has no TLS.
 
+- The task-returning methods (`create_index*`, `drop_index`, `register_udf*`,
+  `remove_udf`, `query_operate`, `query_execute_udf`) return
+  `aerospike_sync::Task<T>`, whose `wait_till_complete(timeout)` and
+  `query_status()` block; `into_inner()` gives the asynchronous task back.
+- `batch_foreach` takes a plain `Fn(usize, &BatchRecord) -> bool` instead of a
+  future-returning closure.
+- `query_foreach` exists and returns `aerospike_sync::QueryHandle`, whose
+  `wait()` blocks; `cancel`, `is_active` and `partition_filter` are as on the
+  asynchronous handle.
+
+
 ### Behaviour changes without an API change
 
 - `Client::new` returns once the cluster has converged and the partition map
