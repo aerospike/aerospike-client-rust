@@ -1,6 +1,8 @@
 # Changelog
 
-## [3.0.0-alpha.3]
+## [3.0.0]
+
+Upgrading from 2.x: see the [migration guide](https://github.com/aerospike/aerospike-client-rust/blob/v3/MIGRATION.md).
 
 * **New Features**
   * [CLIENT-5387] `TlsPolicy` (Java parity): `ClientPolicy::tls_config: Option<rustls::ClientConfig>`
@@ -57,6 +59,41 @@
     four-argument `createIndex` (CLIENT-4316). Also on the sync client.
   * [CLIENT-4390] `IndexType::Integer` (`INTEGER`) for secondary indexes on server 8.2.0+, reported by
     `Version::supports_integer_index`; `IndexType::Numeric` remains for older servers.
+  * [CLIENT-5462] Query delivery reworked and an exactly-once callback API added. Records cross the
+    channel in batches of up to 64 and the resume cursor now commits when a record reaches the
+    consumer, not when it is parsed: a stream closed early no longer loses the records still in
+    the channel buffer, and a resume from `partition_filter()` no longer skips them (measured
+    before: 7.9% of a 200k scan lost on a consume-half-then-cancel loop). Scan throughput +35%
+    with bin data, +56% without; paged queries -10% wall / -26% CPU. The new
+    `Client::query_foreach(policy, partition_filter, statement, callback)` has the C client's
+    `aerospike_query_foreach` shape: the callback runs inline on the node streams (serially per
+    node, concurrently across nodes), returning `false` aborts, and the cursor commits as each
+    invocation returns, so abort, cancel and resume neither lose nor repeat a record. The returned
+    `QueryHandle` can `wait()`, `cancel()` and hand back a `partition_filter()` usable with
+    `query()`.
+  * [CLIENT-5461] The `query_foreach` callback is async: `Fn(Result<Record>) -> Fut` with
+    `Fut: Future<Output = bool>`, the shape of the `batch_foreach` row hook. A pending callback
+    stalls only its own node's stream; it may await freely but must not block the thread.
+  * [CLIENT-5527] Metrics aligned with the metrics specification. Two tiers: `MetricsPolicy.operational`
+    (default off, `with_operational`) gates every per-command instrument and the operational
+    counters (connection failures by phase, close reasons, pool empty/overflow, circuit-breaker
+    hits, transaction retry/error); the base tier keeps opened/closed, tend, node add/remove and the
+    pool gauges. One sampler draw per call, so retries never re-roll. Histogram buckets are
+    `(2^(i-1), 2^i]` spaced by `latency_shift` (default 1); `HistogramType`, `Linear` and
+    `latency_base` are gone and the default policy is `millis()` (ms × 7). Connection opens tag a
+    failure with its TCP/TLS/auth phase, closes carry a `CloseReason`, and the pool gauges
+    (`open_connections`, `connections_in_use`, `connections_in_pool`, `connections_recovering`)
+    are readable even while collection is disabled. Per-namespace `latency` spans connection
+    acquire to response parsed; `bytes_sent` / `bytes_received` count exactly what crossed the
+    wire on every attempt, whatever the outcome. **Breaking** for consumers of the snapshot JSON:
+    every field is `snake_case` (`cluster_aggregated_metrics`, `detailed_metrics`,
+    `connections_error_tls`, …) and the node label `app-id` is `app_id`.
+  * [CLIENT-5498] `Client::server_cluster_name()` and `Node::cluster_name()` report the name the
+    server announces, captured on every tend. The metrics `cluster` label falls back to it when
+    `ClientPolicy.cluster_name` is unset, which stays a validation-only setting.
+  * [CLIENT-4963] A commit that fails in doubt leaves the transaction in `TxnState::CommitFailed`,
+    and `abort` is refused from there (`TxnFailed`): the server may still be rolling the
+    transaction forward, so an abort could discard writes it is committing. Retry the commit.
 
 * **Improvements**
   * `AuthMode` no longer prints the password in `{:?}`; `task::Status` compares with `==`; every
@@ -95,6 +132,20 @@
     cloning the key, for callers that hand rows on by value.
   * `PrivilegeCode::Unknown(u8)`: a privilege code the server reports that this client has no
     name for is kept with its raw value instead of failing the role query as a bad response.
+  * [CLIENT-5351] Batch sub-requests check their connection out of the pool queue chosen by the
+    group's first digest byte, as single-key commands do, instead of always queue 0, so batch load
+    spreads across `conn_pools_per_node` (ported from 2.2.0).
+  * [CLIENT-5409] Record streams park until the producer wakes them instead of busy-polling an
+    empty channel; the per-node partition state is locked once per stream body rather than once
+    per record, the shared tracker is released before a record is pushed (a full queue no longer
+    stalls every other node's stream), and the buffered read cache grows from 4 KB to 64 KB.
+  * [CLIENT-5414] `TCP_NODELAY` is set on every connection.
+  * [CLIENT-4581] README: an "AI coding agent entry point" section (where the API lives, how to
+    select features, how to verify generated code), referenced from `AGENTS.md`.
+  * [CLIENT-5291] API documentation pass over the client, expressions, path operations, record
+    sets and result sets, plus docs.rs metadata for the crates.
+  * [CLIENT-5292] CI: a line-coverage gate for `aerospike-core` merged across the community,
+    enterprise AP and enterprise security test legs, and a reusable nightly workflow.
   * CI: pull requests now gate on clippy with warnings denied across every documented feature
     set, rustdoc with warnings denied, a docs.rs-style nightly build, a packaging dry run, each
     feature compiled on its own (`cargo hack`), and a build on current stable beside the MSRV;
@@ -123,6 +174,16 @@
     mirrored here by `ErrorKind::Timeout`).
   * [CLIENT-5626] Batch rows the server answered `KeyNotFound` or `FilteredOut` lost the server's extended error
     detail (the server's "filtered out by ..." message): the multi-key parser read it and discarded it.
+  * [CLIENT-5624] A batch row served by the single-key path (its key alone on its node) keeps the
+    server's error detail (subcode, message) on the row, as the multi-record path does.
+  * [CLIENT-5474] A batch row served by the single-key path is stamped on a client-side failure the
+    way the multi-key path stamps unanswered rows: `TIMEOUT` for a client timeout, otherwise the
+    server code when there is one, and in doubt when the failure is. The same failure used to be
+    reported three ways in one batch depending on how the keys hashed across nodes.
+  * [CLIENT-5533] A batch delete whose key is alone on its node returns a bin-less `Record` with the
+    generation and expiration, as the grouped path and the Java client do; `None` means not found
+    or failed on both paths. Rows that carry no key fields no longer echo an all-zero placeholder
+    key, and rows without operations report `results: None`.
   * The `batch_operations`, `query` and `timeout_configuration` examples defaulted to port 3100 when
     `AEROSPIKE_HOSTS` is unset; every other example and the test harness use 3000.
   * **Breaking**: `ErrorKind::BatchFailed` and `Error::batch_failed` are removed. They carried a copy
@@ -178,6 +239,19 @@
     of once per poll.
   * Lua `bytes` values grow to at most 128 MiB; every mutator reports failure past that instead
     of exhausting memory.
+  * [CLIENT-5386] The retry context's `iteration` counts the attempts actually made: `max_retries = 0`
+    reports one try, not two. The counter was bumped before the budget check, so the pass that only
+    discovered the budget was spent counted as an attempt, one more than Java reports.
+  * [CLIENT-5425] The per-namespace `bytes_received` metric always recorded 0: it read a counter the
+    timeout-recovery code resets at every read-phase transition. Received bytes are now accumulated
+    separately across a command's read phases.
+  * [CLIENT-5457] `Client::commit` reports an abandoned roll-forward as an `ErrorKind::Commit` error
+    with `CommitErrorType::RollForwardAbandoned`, so the cause is not dropped; it used to return
+    `Ok(CommitStatus::RollForwardAbandoned)`. The `CommitStatus` variant stays so existing matches
+    compile.
+  * [CLIENT-5529] `Record::time_to_live` floors "now" to whole seconds before subtracting, as the
+    Java, Go and C clients do. It reported one second less than them at every instant but the top
+    of the second, and two seconds less when a second ticked between write and read.
   * [CLIENT-5581] A batch row whose key is alone on its node now carries the same bins as a row
     grouped with other keys on one node.
 
