@@ -137,6 +137,9 @@
     a panic; `Value::Unknown` reaches Lua as bytes through the same arm as a blob.
   * [CLIENT-5581] A batch row whose key is alone on its node now carries the same bins as a row
     grouped with other keys on one node.
+  * [CLIENT-5562] A batch UDF row whose UDF returns nil carries `SUCCESS: Nil` when its key is alone
+    on its node, as a grouped row does, instead of no bins. `Client::execute_udf` still returns
+    `Ok(None)` for a nil return.
 
 * **Breaking Change**
   * [CLIENT-5582] A single-key `operate` keeps every op's answer in `Record::bins`, a write's
