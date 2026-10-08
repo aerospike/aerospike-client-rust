@@ -1566,6 +1566,77 @@ async fn batch_write_row_bins_are_the_same_alone_and_grouped() {
     client.close().await.unwrap();
 }
 
+// The same holds for a UDF row: a nil return comes back as `SUCCESS: Nil`
+// whether the key is alone on its node or grouped.
+#[aerospike_macro::test]
+async fn batch_udf_nil_return_is_the_same_alone_and_grouped() {
+    let client = common::client().await;
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let wpolicy = WritePolicy::default();
+    let bpolicy = BatchPolicy::default();
+    let upolicy = BatchUDFPolicy::default();
+
+    let udf_body = "function returns_nil(rec)\nend\n";
+    let task = client
+        .register_udf(
+            &AdminPolicy::default(),
+            udf_body.as_bytes(),
+            "batch_returns_nil.lua",
+            UDFLang::Lua,
+        )
+        .await
+        .unwrap();
+    task.wait_till_complete(None).await.unwrap();
+
+    let key = as_key!(ns, set, "same-key");
+    let other = (0..)
+        .map(|i| as_key!(ns, set, format!("other-{i}")))
+        .find(|k| k.partition_id() == key.partition_id())
+        .unwrap();
+    for k in [&key, &other] {
+        client.put(&wpolicy, k, &[as_bin!("bin", 1)]).await.unwrap();
+    }
+
+    // Alone on its node (group size 1): the single-key fast path. Paired with a
+    // key in the same partition (group size 2 on one node): the multi-record
+    // wire path.
+    for keys in [vec![key.clone()], vec![key.clone(), other.clone()]] {
+        let label = if keys.len() == 1 { "alone" } else { "grouped" };
+        let mut batch: Vec<BatchOperation> = keys
+            .iter()
+            .map(|k| {
+                BatchOperation::udf(
+                    &upolicy,
+                    k.clone(),
+                    "batch_returns_nil",
+                    "returns_nil",
+                    None,
+                )
+            })
+            .collect();
+        client.batch(&bpolicy, &mut batch).await.unwrap();
+        for op in &batch {
+            assert_eq!(op.result_code(), Some(ResultCode::Ok), "{label}");
+            let record = op.batch_record().record.as_ref().expect("row record");
+            assert_eq!(
+                record.bins.get("SUCCESS"),
+                Some(&Value::Nil),
+                "{label}: a nil return keeps its SUCCESS bin"
+            );
+        }
+    }
+
+    // A plain UDF call still reports a nil return as no value.
+    let value = client
+        .execute_udf(&wpolicy, &key, "batch_returns_nil", "returns_nil", None)
+        .await
+        .unwrap();
+    assert_eq!(value, None);
+
+    client.close().await.unwrap();
+}
+
 #[aerospike_macro::test]
 async fn batch_single_row_error_carries_server_subcode_and_message() {
     // A one-key node group is executed as a single-key command rather than a

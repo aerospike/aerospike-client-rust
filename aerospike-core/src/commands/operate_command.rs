@@ -45,6 +45,7 @@ impl<'a> OperateCommand<'a> {
         );
         read_command.is_write = true;
         read_command.wants_results = true;
+        read_command.keep_nil_bins = true;
         OperateCommand {
             read_command,
             policy,
