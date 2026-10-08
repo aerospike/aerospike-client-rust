@@ -181,14 +181,11 @@ struct ConvergenceState {
 }
 
 impl Cluster {
-    pub async fn new(mut policy: ClientPolicy, hosts: &[Host]) -> Result<Arc<Self>> {
-        // updated the hashed password
-        let _ = policy.set_auth_mode(policy.auth_mode.clone());
-
+    pub async fn new(policy: ClientPolicy, hosts: &[Host]) -> Result<Arc<Self>> {
         let (tx, rx) = mpsc::channel(100);
         let buffer_pool = crate::net::buffer_pool::TieredBufferPool::from_policy(&policy);
         let cluster = Arc::new(Cluster {
-            hashed_pass: AtomicArc::from(policy.hashed_pass()),
+            hashed_pass: AtomicArc::from(policy.hashed_pass()?),
             client_policy: AtomicArc::from(policy),
             buffer_pool,
 

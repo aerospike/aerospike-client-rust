@@ -933,150 +933,153 @@ impl<'a> From<&'a bool> for Value {
 }
 
 impl TryFrom<Value> for i64 {
-    type Error = String;
+    type Error = Error;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         i64::try_from(&val)
     }
 }
 
 impl TryFrom<&Value> for i64 {
-    type Error = String;
+    type Error = Error;
     fn try_from(val: &Value) -> std::result::Result<Self, Self::Error> {
         match *val {
             Value::Int(v) => Ok(v),
-            _ => Err(format!(
+            _ => Err(Error::invalid_argument(format!(
                 "Invalid type conversion from Value::{} to i64",
                 val.type_label()
-            )),
+            ))),
         }
     }
 }
 
 impl TryFrom<Value> for String {
-    type Error = String;
+    type Error = Error;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::String(v) | Value::GeoJson(v) => Ok(v),
-            _ => Err(format!(
+            _ => Err(Error::invalid_argument(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.type_label(),
                 std::any::type_name::<Self>()
-            )),
+            ))),
         }
     }
 }
 
 impl TryFrom<Value> for Vec<u8> {
-    type Error = String;
+    type Error = Error;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::Blob(v) | Value::Hll(v) => Ok(v),
-            _ => Err(format!(
+            _ => Err(Error::invalid_argument(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.type_label(),
                 std::any::type_name::<Self>()
-            )),
+            ))),
         }
     }
 }
 
 impl TryFrom<Value> for Vec<Value> {
-    type Error = String;
+    type Error = Error;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::List(v) | Value::MultiResult(v) => Ok(v),
-            _ => Err(format!(
+            _ => Err(Error::invalid_argument(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.type_label(),
                 std::any::type_name::<Self>()
-            )),
+            ))),
         }
     }
 }
 
 #[allow(clippy::implicit_hasher)]
 impl TryFrom<Value> for HashMap<Value, Value> {
-    type Error = String;
+    type Error = Error;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::HashMap(v) => Ok(v),
             Value::OrderedMap(v) => Ok(v.into_iter().collect()),
             Value::SortedMap(v) => Ok(v.into_iter().collect()),
-            _ => Err(format!(
+            _ => Err(Error::invalid_argument(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.type_label(),
                 std::any::type_name::<Self>()
-            )),
+            ))),
         }
     }
 }
 
 impl TryFrom<Value> for BTreeMap<Value, Value> {
-    type Error = String;
+    type Error = Error;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::SortedMap(v) => Ok(v),
             Value::HashMap(v) => Ok(v.into_iter().collect()),
             Value::OrderedMap(v) => Ok(v.into_iter().collect()),
-            _ => Err(format!(
+            _ => Err(Error::invalid_argument(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.type_label(),
                 std::any::type_name::<Self>()
-            )),
+            ))),
         }
     }
 }
 
 impl TryFrom<Value> for IndexMap<Value, Value> {
-    type Error = String;
+    type Error = Error;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::OrderedMap(v) => Ok(v),
             Value::HashMap(v) => Ok(v.into_iter().collect()),
             Value::SortedMap(v) => Ok(v.into_iter().collect()),
-            _ => Err(format!(
+            _ => Err(Error::invalid_argument(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.type_label(),
                 std::any::type_name::<Self>()
-            )),
+            ))),
         }
     }
 }
 
 impl TryFrom<Value> for Vec<(Value, Value)> {
-    type Error = String;
+    type Error = Error;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::KeyValueList(v) => Ok(v),
-            _ => Err(format!(
+            _ => Err(Error::invalid_argument(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.type_label(),
                 std::any::type_name::<Self>()
-            )),
+            ))),
         }
     }
 }
 
 impl TryFrom<Value> for f64 {
-    type Error = String;
+    type Error = Error;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::Float(v) => Ok(v.as_f64()),
-            _ => Err(format!(
+            _ => Err(Error::invalid_argument(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.type_label(),
                 std::any::type_name::<Self>()
-            )),
+            ))),
         }
     }
 }
 
 impl TryFrom<Value> for bool {
-    type Error = String;
+    type Error = Error;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::Bool(v) => Ok(v),
-            _ => Err("Invalid type bool".into()),
+            _ => Err(Error::invalid_argument(format!(
+                "Invalid type conversion from Value::{} to bool",
+                val.type_label()
+            ))),
         }
     }
 }
@@ -1469,7 +1472,7 @@ mod tests {
         assert_eq!(f64::from(&f64_val), 2.25);
 
         // ...and agree with the fallible Value conversion and the wire helper.
-        assert_eq!(f64::try_from(crate::Value::Float(f32_val.clone())), Ok(1.5));
+        assert_eq!(f64::try_from(crate::Value::Float(f32_val.clone())).unwrap(), 1.5);
         assert_eq!(f64::from(&f32_val), f32_val.as_f64());
 
         // Widening is exact: the f32's value round-trips bit-for-bit through f64.
@@ -1573,7 +1576,7 @@ mod tests {
         assert_eq!(Value::from(1).type_label(), "int");
 
         let err = String::try_from(Value::Infinity).expect_err("INF is not a string");
-        assert!(err.contains("INF"), "message should name the type: {err}");
+        assert!(err.to_string().contains("INF"), "message should name the type: {err}");
     }
 
     #[test]
@@ -1739,10 +1742,11 @@ mod tests {
     fn i64_conversion_is_fallible_instead_of_panicking() {
         use crate::Value;
 
-        assert_eq!(i64::try_from(as_val!(42)), Ok(42));
-        assert_eq!(i64::try_from(&as_val!(7)), Ok(7));
+        assert_eq!(i64::try_from(as_val!(42)).unwrap(), 42);
+        assert_eq!(i64::try_from(&as_val!(7)).unwrap(), 7);
         let err = i64::try_from(as_val!("x")).unwrap_err();
-        assert!(err.contains("string") && err.contains("i64"), "{err}");
+        let msg = err.to_string();
+        assert!(msg.contains("string") && msg.contains("i64"), "{err}");
         assert!(i64::try_from(Value::Nil).is_err());
     }
 

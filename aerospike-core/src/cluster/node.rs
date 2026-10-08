@@ -838,7 +838,7 @@ impl Node {
             let conn = Connection::open(
                 &self.host,
                 &self.client_policy,
-                self.client_policy.hashed_pass().as_ref(),
+                self.client_policy.hashed_pass().ok().flatten().as_ref(),
                 session.as_ref(),
             )
             .await

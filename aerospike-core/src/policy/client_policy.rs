@@ -555,6 +555,9 @@ impl Default for ClientPolicy {
 
 impl ClientPolicy {
     pub(crate) fn validate(&self) -> Result<()> {
+        // Reported here so that the pools and nodes, which hash the same
+        // password later, never meet a password bcrypt refuses.
+        self.hashed_pass()?;
         if self.max_conns_per_node > 0 && self.min_conns_per_node > self.max_conns_per_node {
             return Err(Error::client_error("minimum number of connections specified in the ClientPolicy is bigger than total connection pool size"));
         }
@@ -711,22 +714,22 @@ impl ClientPolicy {
     }
 
     /// Set username and password to use when authenticating to the cluster.
-    pub fn set_auth_mode(&mut self, auth_mode: AuthMode) -> Result<()> {
+    pub fn set_auth_mode(&mut self, auth_mode: AuthMode) {
         self.auth_mode = auth_mode;
-        Ok(())
     }
 
-    /// Return the hashed password for the auth mode.
-    pub(crate) fn hashed_pass(&self) -> Option<String> {
+    /// The bcrypt hash of the password the auth mode carries, `None` for the
+    /// modes without one. [`validate`](Self::validate) checks that the hash
+    /// can be computed, so a password bcrypt refuses is reported when the
+    /// client is built rather than at the first connection.
+    pub(crate) fn hashed_pass(&self) -> Result<Option<String>> {
         match self.auth_mode {
             AuthMode::External(_, ref password)
             | AuthMode::ExternalInsecure(_, ref password)
             | AuthMode::Internal(_, ref password) => {
-                let password = AdminCommand::hash_password(password)
-                    .expect("Unexpected error hashing the password");
-                Some(password)
+                Ok(Some(AdminCommand::hash_password(password)?))
             }
-            _ => None,
+            _ => Ok(None),
         }
     }
 
@@ -841,8 +844,7 @@ mod tests {
         assert!(err.to_string().contains("requires authentication"), "{err}");
 
         // With authentication it is a valid policy, and active.
-        p.set_auth_mode(AuthMode::Internal("u".into(), "p".into()))
-            .unwrap();
+        p.set_auth_mode(AuthMode::Internal("u".into(), "p".into()));
         p.validate()
             .expect("tls + auth is a valid login-only policy");
         assert!(p.login_only_active());
@@ -911,8 +913,7 @@ mod tests {
     fn auth_enabled_tracks_the_auth_mode() {
         let mut p = ClientPolicy::default();
         assert!(!p.auth_enabled(), "AuthMode::None is no authentication");
-        p.set_auth_mode(AuthMode::Internal("u".into(), "p".into()))
-            .unwrap();
+        p.set_auth_mode(AuthMode::Internal("u".into(), "p".into()));
         assert!(p.auth_enabled());
     }
 
@@ -1104,9 +1105,9 @@ mod tests {
             auth_mode: AuthMode::ExternalInsecure("user".into(), "pass".into()),
             ..ClientPolicy::default()
         };
-        let hashed = insecure.hashed_pass();
+        let hashed = insecure.hashed_pass().unwrap();
         assert!(hashed.is_some());
-        assert_eq!(external.hashed_pass(), hashed);
+        assert_eq!(external.hashed_pass().unwrap(), hashed);
         // The user name is reported as the application id for both modes.
         assert_eq!(insecure.application_id(), "user");
     }

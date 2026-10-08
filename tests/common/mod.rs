@@ -72,9 +72,7 @@ lazy_static! {
         let mut policy = ClientPolicy::default();
         if let Ok(user) = env::var("AEROSPIKE_USER") {
             let password = env::var("AEROSPIKE_PASSWORD").unwrap_or_default();
-            policy
-                .set_auth_mode(AuthMode::Internal(user, password))
-                .unwrap();
+            policy.set_auth_mode(AuthMode::Internal(user, password));
         }
         policy.cluster_name = AEROSPIKE_CLUSTER.clone();
         policy.use_services_alternate = AEROSPIKE_USE_SERVICES_ALTERNATE.clone();
@@ -88,9 +86,7 @@ lazy_static! {
         let mut policy = ClientPolicy::default();
         if let Ok(user) = env::var("AEROSPIKE_USER") {
             let password = env::var("AEROSPIKE_PASSWORD").unwrap_or_default();
-            policy
-                .set_auth_mode(AuthMode::Internal(user, password))
-                .unwrap();
+            policy.set_auth_mode(AuthMode::Internal(user, password));
             policy.cluster_name = AEROSPIKE_CLUSTER.clone();
         }
         policy.use_services_alternate = *AEROSPIKE_USE_SERVICES_ALTERNATE;

@@ -597,9 +597,8 @@ pub fn derive_record_mapper(input: TokenStream) -> TokenStream {
                         #derive_mod::serde_support::from_bins(&map)
                     }
 
-                    fn id(&self) -> #derive_mod::Value {
+                    fn id(&self) -> #derive_mod::Result<#derive_mod::Value> {
                         #derive_mod::ToValue::to_value(&self.#key_ident)
-                            .expect("the record(key) field must convert to a Value")
                     }
                 }
             });
@@ -690,9 +689,8 @@ pub fn derive_record_mapper(input: TokenStream) -> TokenStream {
                     })
                 }
 
-                fn id(&self) -> #derive_mod::Value {
+                fn id(&self) -> #derive_mod::Result<#derive_mod::Value> {
                     #derive_mod::ToValue::to_value(&self.#key_ident)
-                        .expect("the record(key) field must convert to a Value")
                 }
             }
         }

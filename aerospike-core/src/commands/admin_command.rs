@@ -422,19 +422,24 @@ impl AdminCommand {
         auth_mode: &AuthMode,
         hashed_pass: Option<&String>,
     ) -> Result<Option<SessionInfo>> {
+        fn credential(hashed_pass: Option<&String>) -> Result<&String> {
+            hashed_pass.ok_or_else(|| {
+                Error::client_error("the auth mode needs a password hash and none was computed")
+            })
+        }
         conn.buffer.resize_buffer(1024)?;
         conn.buffer.reset_offset();
         match auth_mode {
             AuthMode::Internal(ref user, _) => {
                 AdminCommand::write_header(conn, LOGIN, 2);
                 AdminCommand::write_field_str(conn, USER, user);
-                AdminCommand::write_field_bytes(conn, CREDENTIAL, hashed_pass.unwrap().as_bytes());
+                AdminCommand::write_field_bytes(conn, CREDENTIAL, credential(hashed_pass)?.as_bytes());
             }
             AuthMode::External(ref user, ref password)
             | AuthMode::ExternalInsecure(ref user, ref password) => {
                 AdminCommand::write_header(conn, LOGIN, 3);
                 AdminCommand::write_field_str(conn, USER, user);
-                AdminCommand::write_field_bytes(conn, CREDENTIAL, hashed_pass.unwrap().as_bytes());
+                AdminCommand::write_field_bytes(conn, CREDENTIAL, credential(hashed_pass)?.as_bytes());
                 AdminCommand::write_field_str(conn, CLEAR_PASSWORD, password);
             }
             AuthMode::Pki => AdminCommand::write_header(conn, LOGIN, 0),

@@ -167,7 +167,10 @@
     `with_persisted_index`), and the expression `put`/`put_items` now send the policy's flags. The
     deprecated filter macros (`as_eq!` and friends) and the server-deprecated `device_size()` /
     `memory_size()` expressions are removed. `Key`, `Sampler`, `CdtContext` and `LoopVarPart` keep
-    their invariants behind private fields and accessors (`key.digest()` and friends). The
+    their invariants behind private fields and accessors (`key.digest()` and friends).
+    `ClientPolicy::set_auth_mode` no longer returns a `Result`, `RecordMapper::id` returns one,
+    the `TryFrom<Value>` impls fail with the crate `Error`, and a password bcrypt refuses fails
+    `Client::new` instead of panicking on the first connection. The
     `Policy` trait is no longer
     exported. Acronyms in
     identifiers are `UpperCamelCase`: `BatchUdfPolicy`, `UdfLang`, `ReadModeAp`/`ReadModeSc`,

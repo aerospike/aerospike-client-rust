@@ -63,8 +63,8 @@
 //!         })
 //!     }
 //!
-//!     fn id(&self) -> Value {
-//!         Value::from(self.id)
+//!     fn id(&self) -> aerospike::Result<Value> {
+//!         Ok(Value::from(self.id))
 //!     }
 //! }
 //! ```
@@ -111,7 +111,11 @@ pub trait RecordMapper: Sized {
     fn from_record(bins: &IndexMap<String, Value>, key: &Key, generation: u32) -> Result<Self>;
 
     /// The user key identifying this value within its dataset.
-    fn id(&self) -> Value;
+    ///
+    /// # Errors
+    /// Implementations report a key field that cannot be represented as a
+    /// [`Value`].
+    fn id(&self) -> Result<Value>;
 }
 
 // ===== Field-level conversions ==============================================
