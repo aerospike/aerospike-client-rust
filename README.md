@@ -96,8 +96,8 @@ it was last published.
 - **Infinity and wildcard:** supports `Infinity`, `Wildcard`, and 
   corresponding expression builders `expressions::infinity()` and 
   `expressions::wildcard()`.
-- **Size expressions:** adds `expressions::record_size()` and `expressions::memory_size()` 
-  for granular control.
+- **Size expressions:** adds `expressions::record_size()`; the server-deprecated
+  `device_size()` and `memory_size()` are not carried into 3.0.
 
 Take a look at the [changelog](https://github.com/aerospike/aerospike-client-rust/blob/v3/CHANGELOG.md) for more details.
 Upgrading from 2.x: see [MIGRATION.md](MIGRATION.md).
@@ -518,7 +518,7 @@ use aerospike::query::PartitionFilter;
 
 let policy = QueryPolicy::default();
 let mut stmt = Statement::new(namespace, set_name, Bins::All);
-stmt.set_filter(as_eq!("bin_name", 5));
+stmt.set_filter(Filter::equal("bin_name", 5));
 
 let rs = client.query(&policy, PartitionFilter::all(), stmt).await.unwrap();
 let mut rs = rs.into_stream();
@@ -535,7 +535,7 @@ Query records where a bin value falls within a range:
 ```rust
 let policy = QueryPolicy::default();
 let mut stmt = Statement::new(namespace, set_name, Bins::All);
-stmt.set_filter(as_range!("bin_name", 0, 100));
+stmt.set_filter(Filter::range("bin_name", 0, 100));
 
 let rs = client.query(&policy, PartitionFilter::all(), stmt).await.unwrap();
 let mut rs = rs.into_stream();
@@ -552,7 +552,7 @@ Query records but only retrieve metadata (no bin data):
 ```rust
 let policy = QueryPolicy::default();
 let mut stmt = Statement::new(namespace, set_name, Bins::None);
-stmt.set_filter(as_range!("bin_name", 0, 100));
+stmt.set_filter(Filter::range("bin_name", 0, 100));
 
 let rs = client.query(&policy, PartitionFilter::all(), stmt).await.unwrap();
 let mut rs = rs.into_stream();
@@ -595,7 +595,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 let policy = QueryPolicy::default();
 let mut stmt = Statement::new(namespace, set_name, Bins::All);
-stmt.set_filter(as_range!("bin_name", 0, 100));
+stmt.set_filter(Filter::range("bin_name", 0, 100));
 
 let rs = client.query(&policy, PartitionFilter::all(), stmt).await.unwrap();
 let count = Arc::new(AtomicUsize::new(0));
@@ -650,7 +650,7 @@ let mut policy = QueryPolicy::default();
 policy.records_per_second = 100;  // Limit to 100 records/second
 
 let mut stmt = Statement::new(namespace, set_name, Bins::All);
-stmt.set_filter(as_range!("bin_name", 0, 1000));
+stmt.set_filter(Filter::range("bin_name", 0, 1000));
 
 let rs = client.query(&policy, PartitionFilter::all(), stmt).await.unwrap();
 let mut rs = rs.into_stream();

@@ -110,7 +110,8 @@ pub(crate) enum ExpOp {
     Min = 50,
     Max = 51,
     DigestModulo = 64,
-    DeviceSize = 65,
+    // 65 DEVICE_SIZE and 73 MEMORY_SIZE are the pre-7.0 size expressions;
+    // the client builds RECORD_SIZE instead.
     LastUpdate = 66,
     SinceUpdate = 67,
     VoidTime = 68,
@@ -118,7 +119,6 @@ pub(crate) enum ExpOp {
     SetName = 70,
     KeyExists = 71,
     IsTombstone = 72,
-    MemorySize = 73,
     RecordSize = 74,
     Key = 80,
     Bin = 81,
@@ -783,8 +783,8 @@ pub fn set_name() -> Expression {
 /// Creates expression that returns the record size. This expression usually evaluates
 /// quickly because record meta data is cached in memory.
 ///
-/// Requires server version 7.0+. This expression replaces [`device_size()`](device_size) and
-/// [`memory_size()`](memory_size) since those older expressions are equivalent on server version 7.0+.
+/// Requires server version 7.0+, where it replaces the older `device_size` and
+/// `memory_size` expressions (equivalent there, deprecated by the server since 8.1).
 ///
 /// ```
 /// use aerospike::expressions::{ge, record_size, int_val};
@@ -794,45 +794,6 @@ pub fn set_name() -> Expression {
 #[must_use]
 pub fn record_size() -> Expression {
     Expression::new(Some(ExpOp::RecordSize), None, None, None, None, None)
-}
-
-/// Creates an expression that returns record size on disk.
-/// If server storage-engine is memory, then zero is returned.
-///
-/// Deprecated: `memory_size` has been deprecated since server version 8.1. Use [`record_size()`].
-/// ```
-/// #  #![deny(warnings)]
-/// # #![allow(deprecated)]
-/// use aerospike::expressions::{ge, device_size, int_val};
-/// // Record device size >= 100 KB
-/// let _ = ge(device_size(), int_val(100*1024));
-/// ```
-#[deprecated]
-#[must_use]
-pub fn device_size() -> Expression {
-    Expression::new(Some(ExpOp::DeviceSize), None, None, None, None, None)
-}
-
-/// Creates expression that returns record size in memory.
-///
-/// If server storage-engine is not memory nor data-in-memory, then zero is returned.
-/// This expression usually evaluates quickly because record meta data is cached in memory.
-///
-/// Requires server version between 5.3 inclusive and 7.0 exclusive.
-/// Use [`record_size()`](record_size) for server version 7.0+.
-///
-/// Deprecated: `memory_size` has been deprecated since server version 8.1. Use [`record_size()`].
-/// ```
-/// # #![deny(warnings)]
-/// # #![allow(deprecated)]
-/// use aerospike::expressions::{ge, memory_size, int_val};
-/// // Record device size >= 100 KB
-/// let _ = ge(memory_size(), int_val(100*1024));
-/// ```
-#[deprecated]
-#[must_use]
-pub fn memory_size() -> Expression {
-    Expression::new(Some(ExpOp::MemorySize), None, None, None, None, None)
 }
 
 /// Creates an expression that returns record last update time expressed as 64 bit integer

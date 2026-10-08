@@ -165,6 +165,8 @@
     `Statement::set_aggregate_function` is crate-private, the client's aggregate methods take the
     UDF; `MapWriteMode` is removed in favour of `MapWriteFlags` (`MapPolicy::new(order, flags)`,
     `with_persisted_index`), and the expression `put`/`put_items` now send the policy's flags. The
+    deprecated filter macros (`as_eq!` and friends) and the server-deprecated `device_size()` /
+    `memory_size()` expressions are removed. The
     `Policy` trait is no longer
     exported. Acronyms in
     identifiers are `UpperCamelCase`: `BatchUdfPolicy`, `UdfLang`, `ReadModeAp`/`ReadModeSc`,
