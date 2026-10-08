@@ -34,6 +34,9 @@ pub struct ReadCommand<'a> {
     pub(crate) is_write: bool,
     /// Skip the per-record `results` Vec alloc on non-operate paths.
     pub(crate) wants_results: bool,
+    /// Keep nil answers in `bins`, as the batch parser does. Off for a plain
+    /// get or UDF call, whose nil bins carry nothing.
+    pub(crate) keep_nil_bins: bool,
 }
 
 impl<'a> ReadCommand<'a> {
@@ -51,6 +54,7 @@ impl<'a> ReadCommand<'a> {
             record: None,
             is_write: false,
             wants_results: false,
+            keep_nil_bins: false,
         }
     }
 
@@ -68,6 +72,7 @@ impl<'a> ReadCommand<'a> {
             record: None,
             is_write: false,
             wants_results: false,
+            keep_nil_bins: false,
         }
     }
 
@@ -122,9 +127,10 @@ impl<'a> ReadCommand<'a> {
             }
 
             // An operate keeps a nil result in the bin view, as the batch parser
-            // does, so a bin's MultiResult lines up with its ops and a lone-key
-            // batch row (which runs as an operate) matches its grouped siblings.
-            if self.wants_results || !value.is_nil() {
+            // does, so a bin's MultiResult lines up with its ops; a lone-key
+            // batch row (an operate or UDF here) then matches its grouped
+            // siblings.
+            if self.keep_nil_bins || !value.is_nil() {
                 // list/map operations may return multiple values for the same bin.
                 match bins.entry(name) {
                     Vacant(entry) => {

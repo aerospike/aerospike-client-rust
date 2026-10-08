@@ -340,6 +340,9 @@ impl BatchExecutor {
                     function_name,
                     args,
                 );
+                // A nil return still comes back as `SUCCESS: Nil`, as on a
+                // grouped row.
+                cmd.read_command.keep_nil_bins = true;
                 cmd.execute().await.map(|()| cmd.read_command.record.take())
             }
             // Txn verify/roll never flow through the public batch executor; the
