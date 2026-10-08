@@ -672,10 +672,10 @@ async fn txn_version_mismatch_on_commit() {
                     "verify_records should have one entry per tracked read",
                 );
                 // The externally-modified key must have a non-Ok result_code.
-                let key0_digest = as_key!(ns, set, 0i64).digest;
+                let key0_digest = as_key!(ns, set, 0i64).digest();
                 let failed = verify_records
                     .iter()
-                    .find(|r| r.key.digest == key0_digest)
+                    .find(|r| r.key.digest() == key0_digest)
                     .expect("verify_records missing the conflicting key");
                 assert_ne!(
                     failed.result_code(),

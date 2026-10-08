@@ -174,7 +174,7 @@ async fn scan_cancel_midway_resumes_without_loss() {
         while got < 100 {
             match stream.next().await {
                 Some(Ok(rec)) => {
-                    seen.insert(rec.key.as_ref().unwrap().digest);
+                    seen.insert(rec.key.as_ref().unwrap().digest());
                     got += 1;
                 }
                 Some(Err(err)) => panic!("{err:?}"),
@@ -231,7 +231,7 @@ async fn scan_multi_consumer_cancel_resumes_without_loss() {
                         Some(Ok(rec)) => {
                             seen.lock()
                                 .unwrap()
-                                .insert(rec.key.as_ref().unwrap().digest);
+                                .insert(rec.key.as_ref().unwrap().digest());
                             got += 1;
                         }
                         Some(Err(err)) => panic!("{err:?}"),

@@ -32,20 +32,42 @@ use serde::Serialize;
 /// Records can be identified using a specified namespace, an optional set name and a user defined
 /// key which must be unique within a set. Records can also be identified by namespace/digest,
 /// which is the combination used on the server.
+///
+/// The digest is derived from the set name and the user key when the key is
+/// built, so the parts are read through accessors and cannot drift apart.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 pub struct Key {
-    /// Namespace.
-    pub namespace: String,
+    pub(crate) namespace: String,
+    pub(crate) set_name: String,
+    pub(crate) user_key: Option<Value>,
+    pub(crate) digest: [u8; 20],
+}
 
-    /// Set name.
-    pub set_name: String,
+impl Key {
+    /// The namespace.
+    #[must_use]
+    pub fn namespace(&self) -> &str {
+        &self.namespace
+    }
 
-    /// Original user key.
-    pub user_key: Option<Value>,
+    /// The set name; empty when the key has no set.
+    #[must_use]
+    pub fn set_name(&self) -> &str {
+        &self.set_name
+    }
 
-    /// Unique server hash value generated from set name and user key.
-    pub digest: [u8; 20],
+    /// The user key, when the key was built from one.
+    #[must_use]
+    pub const fn user_key(&self) -> Option<&Value> {
+        self.user_key.as_ref()
+    }
+
+    /// The 20-byte digest the server addresses the record by.
+    #[must_use]
+    pub const fn digest(&self) -> [u8; 20] {
+        self.digest
+    }
 }
 
 impl Key {

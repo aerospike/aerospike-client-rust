@@ -166,7 +166,8 @@
     UDF; `MapWriteMode` is removed in favour of `MapWriteFlags` (`MapPolicy::new(order, flags)`,
     `with_persisted_index`), and the expression `put`/`put_items` now send the policy's flags. The
     deprecated filter macros (`as_eq!` and friends) and the server-deprecated `device_size()` /
-    `memory_size()` expressions are removed. The
+    `memory_size()` expressions are removed. `Key`, `Sampler`, `CdtContext` and `LoopVarPart` keep
+    their invariants behind private fields and accessors (`key.digest()` and friends). The
     `Policy` trait is no longer
     exported. Acronyms in
     identifiers are `UpperCamelCase`: `BatchUdfPolicy`, `UdfLang`, `ReadModeAp`/`ReadModeSc`,

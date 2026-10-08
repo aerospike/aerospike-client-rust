@@ -104,7 +104,7 @@ fn random_batch(r: &mut Rng, keys: &[Key]) -> (BatchPolicy, Vec<BatchOperation>)
     let ops = (0..n)
         .map(|i| {
             let key = if i > 0 && r.below(6) == 0 {
-                as_key!(bogus.as_str(), &keys[i].set_name, i as i64)
+                as_key!(bogus.as_str(), keys[i].set_name(), i as i64)
             } else {
                 keys[i].clone()
             };

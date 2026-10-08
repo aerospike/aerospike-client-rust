@@ -54,8 +54,8 @@
 //!             ))),
 //!         };
 //!         Ok(Customer {
-//!             id: match key.user_key {
-//!                 Some(Value::Int(id)) => id,
+//!             id: match key.user_key() {
+//!                 Some(Value::Int(id)) => *id,
 //!                 _ => 0,
 //!             },
 //!             name: get_str("name")?,

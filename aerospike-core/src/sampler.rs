@@ -32,17 +32,31 @@ use crate::xor_shift::XorShift;
 /// A probability sampler.
 ///
 /// Samples when `rng.next_u64() % range < threshold`. Construct with
-/// [`Sampler::new`], [`Sampler::all`], or [`Sampler::probability`].
+/// [`Sampler::new`], [`Sampler::all`], [`Sampler::never`] or
+/// [`Sampler::probability`]; the constructors keep `range >= 1` and
+/// `threshold <= range`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sampler {
     /// Denominator of the sampling fraction. Always `>= 1`.
-    pub range: u64,
+    pub(crate) range: u64,
     /// Numerator of the sampling fraction. A drawn value reduced modulo `range`
     /// that is `< threshold` is sampled. Always `<= range`.
-    pub threshold: u64,
+    pub(crate) threshold: u64,
 }
 
 impl Sampler {
+    /// Denominator of the sampling fraction, at least 1.
+    #[must_use]
+    pub const fn range(self) -> u64 {
+        self.range
+    }
+
+    /// Numerator of the sampling fraction, at most [`range`](Self::range).
+    #[must_use]
+    pub const fn threshold(self) -> u64 {
+        self.threshold
+    }
+
     /// Creates a sampler that keeps `threshold` out of every `range` events.
     ///
     /// `range` is forced to at least 1 and `threshold` is clamped to `range`
@@ -71,7 +85,7 @@ impl Sampler {
     #[must_use]
     pub const fn never() -> Self {
         Sampler {
-            range: 0,
+            range: 1,
             threshold: 0,
         }
     }
@@ -90,8 +104,9 @@ impl Sampler {
     #[must_use]
     #[cfg(test)]
     pub(crate) const fn should_sample(&self, rand: &mut XorShift) -> bool {
-        // `range` is always >= 1 via the constructors; guard anyway so a
-        // hand-built `Sampler { range: 0, .. }` can't divide by zero.
+        // `range` is always >= 1 via the constructors, which are the only
+        // way to build one outside this module; the guard keeps a test-built
+        // `Sampler { range: 0, .. }` from dividing by zero.
         if self.range == 0 {
             return false;
         }

@@ -204,7 +204,7 @@ impl Args {
         match &self.partition_ids {
             None => false,
             Some(ids) => {
-                let pid = u16::from_le_bytes([key.digest[0], key.digest[1]]) & 0x0FFF;
+                let pid = u16::from_le_bytes([key.digest()[0], key.digest()[1]]) & 0x0FFF;
                 !ids.contains(&pid)
             }
         }
@@ -223,7 +223,7 @@ impl Args {
             out.extend(fixed.iter().take(num_bins).cloned());
             return;
         }
-        let seed = match key.user_key.as_ref() {
+        let seed = match key.user_key() {
             Some(Value::Int(k)) => Some(*k),
             _ => None,
         };

@@ -161,7 +161,7 @@ pub(crate) enum ExpressionArgument {
 /// Identifies which element of a loop variable to use in path expressions.
 /// Requires Aerospike Server version >= 8.1.1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LoopVarPart(pub i64);
+pub struct LoopVarPart(i64);
 
 impl LoopVarPart {
     /// Map key part of the loop variable.
@@ -170,6 +170,19 @@ impl LoopVarPart {
     pub const VALUE: LoopVarPart = LoopVarPart(1);
     /// Index part of the loop variable (list index).
     pub const INDEX: LoopVarPart = LoopVarPart(2);
+
+    /// A part from its raw server value, for a part the server supports
+    /// before this client names it.
+    #[must_use]
+    pub const fn from_bits(bits: i64) -> Self {
+        LoopVarPart(bits)
+    }
+
+    /// The raw value sent to the server.
+    #[must_use]
+    pub const fn bits(self) -> i64 {
+        self.0
+    }
 }
 
 /// Filter expression, which can be applied to most commands to control which records are affected.

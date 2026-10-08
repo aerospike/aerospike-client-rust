@@ -55,15 +55,15 @@ pub struct CdtContext {
     /// Context Type — full encoded tag including any high-bit flags
     /// such as the AND filter bit. Wider than 8 bits to fit the
     /// `0x204` tag value used by [`ctx_and_filter`].
-    pub id: u16,
+    pub(crate) id: u16,
 
     /// Per-entry create-flag overlay (e.g. list/map order, pad). Stays
     /// `u8`-wide because every flag in this layer fits in 8 bits; widened
     /// only if the wire format ever needs more.
-    pub flags: u8,
+    pub(crate) flags: u8,
 
     /// Context Value
-    pub value: Value,
+    pub(crate) value: Value,
 
     /// Pre-packed expression bytes for expression-based contexts
     pub(crate) expression: Option<Expression>,

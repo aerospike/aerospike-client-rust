@@ -323,7 +323,7 @@ async fn probe_put(client: &Client, ns: &str, set: &str, bin: &str, n: i64) -> (
 /// Matches `Partition::new_by_key` in aerospike-core (digest → partition id, 0..4096).
 fn partition_id_for_key(key: &Key) -> usize {
     const PARTITIONS: usize = 4096;
-    (u16::from_le_bytes([key.digest[0], key.digest[1]]) as usize) & (PARTITIONS - 1)
+    (u16::from_le_bytes([key.digest()[0], key.digest()[1]]) as usize) & (PARTITIONS - 1)
 }
 
 async fn probe_remove(client: &Client, ns: &str, set: &str, _bin: &str, n: i64) -> (i64, i64) {

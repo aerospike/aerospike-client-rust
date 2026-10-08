@@ -190,6 +190,9 @@ a supported way to build a policy.
 | path and expression builders took `ctx: impl AsRef<[CdtContext]>` | `ctx: &[CdtContext]`, like every other builder; `&path` still works because `Path` derefs to the slice |
 | `query_operate(policy, statement, ops: &[Operation])` | `query_operate(policy, statement)` after `statement.set_operations(ops)`; a statement without operations is `ParameterError` |
 | `Statement::set_aggregate_function(..)` | crate-private; pass the package, function and arguments to `query_aggregate` / `query_execute_udf` |
+| `key.namespace`, `key.set_name`, `key.user_key`, `key.digest` (public fields) | `key.namespace()`, `key.set_name()`, `key.user_key()` (`Option<&Value>`), `key.digest()` (`[u8; 20]`); keys are built only through `Key::new` and `Key::with_digest` |
+| `Sampler { range, threshold }` public fields | `range()` / `threshold()`; build with `Sampler::new`, `all`, `never`, `probability` |
+| `CdtContext { id, flags, value }` public fields, `LoopVarPart(pub i64)` | private; use the `ctx_*` builders, and `LoopVarPart::{MAP_KEY, VALUE, INDEX}` or `from_bits` |
 | `as_eq!`, `as_range!`, `as_contains!`, `as_contains_range!`, `as_within_region!`, `as_within_radius!`, `as_regions_containing_point!` | removed (they could not compile outside the crate); `Filter::equal`, `range`, `contains`, `contains_range`, `geo_within_region`, `geo_within_radius`, `geo_contains` |
 | `expressions::device_size()`, `expressions::memory_size()` | removed; `expressions::record_size()` (server 7.0+) |
 | `MapPolicy::new(order, MapWriteMode::Update)`, `MapPolicy::new_with_flags(order, flags)`, `MapWriteMode::{UpdateOnly, CreateOnly}` | `MapPolicy::new(order, MapWriteFlags::DEFAULT)`, `MapPolicy::new(order, flags)`, `MapWriteFlags::{UPDATE_ONLY, CREATE_ONLY}`; `new_with_flags_and_persisted_index` is `with_persisted_index`. `MapWriteMode` is removed |

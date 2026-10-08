@@ -283,7 +283,7 @@ async fn query_foreach_delivers_all_exactly_once() {
                 let (s, c) = (s.clone(), c.clone());
                 async move {
                     let rec = res.unwrap();
-                    s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
+                    s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest());
                     c.fetch_add(1, Ordering::Relaxed);
                     true
                 }
@@ -324,7 +324,7 @@ async fn query_foreach_abort_and_resume_exactly_once() {
                 let (s, c) = (s.clone(), c.clone());
                 async move {
                     let rec = res.unwrap();
-                    s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
+                    s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest());
                     // Yield once so the callback really does suspend the
                     // node stream mid-record before the commit.
                     aerospike_rt::task::yield_now().await;
@@ -377,7 +377,7 @@ async fn query_foreach_cancel_and_resume_exactly_once() {
                 let (s, c) = (s.clone(), c.clone());
                 async move {
                     let rec = res.unwrap();
-                    s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
+                    s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest());
                     c.fetch_add(1, Ordering::Relaxed);
                     true
                 }
@@ -405,7 +405,7 @@ async fn query_foreach_cancel_and_resume_exactly_once() {
                 let (s, c) = (s.clone(), c.clone());
                 async move {
                     let rec = res.unwrap();
-                    s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
+                    s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest());
                     c.fetch_add(1, Ordering::Relaxed);
                     true
                 }
@@ -455,7 +455,7 @@ async fn query_si_cancel_midway_resumes_without_loss() {
         while got < 100 {
             match stream.next().await {
                 Some(Ok(rec)) => {
-                    seen.insert(rec.key.as_ref().unwrap().digest);
+                    seen.insert(rec.key.as_ref().unwrap().digest());
                     got += 1;
                 }
                 Some(Err(err)) => panic!("{err:?}"),
@@ -2181,7 +2181,7 @@ async fn query_returns_user_key_when_send_key_set() {
         // original put (send_key=true).
         let key = rec.key.as_ref().expect("record key present");
         assert!(
-            key.user_key.is_some(),
+            key.user_key().is_some(),
             "expected user_key on returned record, got: {:?}",
             key
         );
