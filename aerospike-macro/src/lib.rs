@@ -1,3 +1,18 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
@@ -27,8 +42,11 @@ pub fn test(_attr: TokenStream, input: TokenStream) -> TokenStream {
                 .is_test(true)
                 .try_init();
 
-                // Use a shared runtime for the tests and the client:
-                crate::common::RUNTIME.block_on( async {#body} )
+                // Use a shared runtime for the tests and the client. The body
+                // is boxed: a long async test is one large future, and on the
+                // 2 MiB libtest thread it overflowed the stack when polled
+                // in place.
+                crate::common::RUNTIME.block_on(Box::pin(async {#body}))
             }
         }
     } else if cfg!(feature = "rt-async-std") {
@@ -42,8 +60,10 @@ pub fn test(_attr: TokenStream, input: TokenStream) -> TokenStream {
                 .is_test(true)
                 .try_init();
 
-                // Runtime is already shared for async_std
-                ::aerospike_rt::async_std::task::block_on( async {#body} )
+                // Runtime is already shared for async_std. The body is boxed
+                // for the same reason as on tokio: polled in place, a long
+                // test's future overflowed the 2 MiB libtest thread stack.
+                ::aerospike_rt::async_std::task::block_on(Box::pin(async {#body}))
             }
         }
     } else {
@@ -189,6 +209,15 @@ pub fn derive_config(input: TokenStream) -> TokenStream {
             serde_attrs.push(quote!(#[serde(rename = #rename)]));
         }
 
+        // The config field points at the policy field it overrides; the
+        // policy's own doc is not copied, its links would not resolve here.
+        let doc_attrs: Vec<proc_macro2::TokenStream> = {
+            let field_name = name.as_ref().map_or_else(String::new, ToString::to_string);
+            let text =
+                format!("Overrides [`{struct_name}::{field_name}`] when present.");
+            vec![quote!(#[doc = #text])]
+        };
+
         if cfg.flatten {
             let config_ty = match ty {
                 Type::Path(type_path) => {
@@ -203,6 +232,7 @@ pub fn derive_config(input: TokenStream) -> TokenStream {
             };
 
             config_fields.push(quote! {
+                #(#doc_attrs)*
                 #[serde(flatten)]
                 #(#serde_attrs)*
                 pub #name: ::core::option::Option<#config_ty>
@@ -217,6 +247,7 @@ pub fn derive_config(input: TokenStream) -> TokenStream {
             });
         } else {
             config_fields.push(quote! {
+                #(#doc_attrs)*
                 #(#serde_attrs)*
                 pub #name: ::core::option::Option<#ty>
             });
@@ -246,9 +277,13 @@ pub fn derive_config(input: TokenStream) -> TokenStream {
         .filter(|a| a.path().is_ident("serde"))
         .collect();
 
+    let config_doc = format!(
+        "Dynamic-configuration section for [`{struct_name}`]: every field is optional and, \
+         when present, overrides the policy field of the same name on reload."
+    );
     let expanded = quote! {
         #(#serde_struct_attrs)*
-        #[doc(hidden)]
+        #[doc = #config_doc]
         #[derive(
             ::core::default::Default,
             ::core::clone::Clone,
@@ -272,8 +307,8 @@ pub fn derive_config(input: TokenStream) -> TokenStream {
             }
 
             /// Deserializes this config from a YAML string.
-            pub fn from_yaml_str(s: &str) -> ::core::result::Result<Self, ::serde_yml::Error> {
-                ::serde_yml::from_str(s)
+            pub fn from_yaml_str(s: &str) -> ::core::result::Result<Self, ::serde_norway::Error> {
+                ::serde_norway::from_str(s)
             }
         }
     };
@@ -597,9 +632,8 @@ pub fn derive_record_mapper(input: TokenStream) -> TokenStream {
                         #derive_mod::serde_support::from_bins(&map)
                     }
 
-                    fn id(&self) -> #derive_mod::Value {
+                    fn id(&self) -> #derive_mod::Result<#derive_mod::Value> {
                         #derive_mod::ToValue::to_value(&self.#key_ident)
-                            .expect("the record(key) field must convert to a Value")
                     }
                 }
             });
@@ -690,9 +724,8 @@ pub fn derive_record_mapper(input: TokenStream) -> TokenStream {
                     })
                 }
 
-                fn id(&self) -> #derive_mod::Value {
+                fn id(&self) -> #derive_mod::Result<#derive_mod::Value> {
                     #derive_mod::ToValue::to_value(&self.#key_ident)
-                        .expect("the record(key) field must convert to a Value")
                 }
             }
         }

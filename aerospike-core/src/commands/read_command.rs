@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ impl<'a> ReadCommand<'a> {
         let partition = Partition::for_read(
             &cluster,
             key,
-            policy.replica,
+            policy.base_policy.replica,
             policy.base_policy.read_mode_sc,
         );
         ReadCommand {
@@ -113,6 +113,12 @@ impl<'a> ReadCommand<'a> {
 
             if let Some(r) = results.as_mut() {
                 r.push(value.clone());
+            }
+
+            // A reply op with no bin name answers a header op (`touch`,
+            // `get_header`): it is an op result, never a bin.
+            if name.is_empty() {
+                continue;
             }
 
             // An operate keeps a nil result in the bin view, as the batch parser

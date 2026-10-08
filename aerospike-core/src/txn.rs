@@ -1,4 +1,4 @@
-// Copyright 2015-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not
 // use this file except in compliance with the License. You may obtain a copy of
@@ -194,6 +194,15 @@ impl std::fmt::Debug for Txn {
     }
 }
 
+/// Two transactions are the same transaction when they carry the same id.
+impl PartialEq for Txn {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for Txn {}
+
 impl Txn {
     /// Create a new transaction with a random transaction ID.
     pub fn new() -> Self {
@@ -239,6 +248,11 @@ impl Txn {
     }
 
     /// Set the transaction state.
+    ///
+    /// Hidden: a test hook for language bindings that need to force a
+    /// non-open state without a cluster. `commit` and `abort` drive the
+    /// transitions in real use.
+    #[doc(hidden)]
     pub fn set_state(&self, state: TxnState) {
         *write(&self.state) = state;
     }
@@ -247,7 +261,7 @@ impl Txn {
     /// state becomes [`TxnState::CommitFailed`] unless the transaction has
     /// already reached a terminal state ([`Committed`](TxnState::Committed) or
     /// [`Aborted`](TxnState::Aborted)), which are left untouched.
-    pub fn mark_commit_failed(&self) {
+    pub(crate) fn mark_commit_failed(&self) {
         let mut state = write(&self.state);
         if !matches!(*state, TxnState::Committed | TxnState::Aborted) {
             *state = TxnState::CommitFailed;
@@ -255,7 +269,7 @@ impl Txn {
     }
 
     /// Process the results of a record read. For internal use only.
-    pub fn on_read(&self, key: &Key, version: Option<u64>) {
+    pub(crate) fn on_read(&self, key: &Key, version: Option<u64>) {
         if let Some(ver) = version {
             let mut reads = write(&self.reads);
             reads.insert(key.digest, (key.clone(), Some(ver)));
@@ -281,7 +295,7 @@ impl Txn {
     }
 
     /// Process the results of a record write. For internal use only.
-    pub fn on_write(&self, key: &Key, version: Option<u64>, result_code: ResultCode) {
+    pub(crate) fn on_write(&self, key: &Key, version: Option<u64>, result_code: ResultCode) {
         if version.is_some() {
             let mut reads = write(&self.reads);
             reads.insert(key.digest, (key.clone(), version));
@@ -294,7 +308,7 @@ impl Txn {
     }
 
     /// Add key to write hash when write command is in doubt (usually caused by timeout).
-    pub fn on_write_in_doubt(&self, key: &Key) {
+    pub(crate) fn on_write_in_doubt(&self, key: &Key) {
         self.write_in_doubt.store(true, Ordering::Relaxed);
         write(&self.writes).insert(key.digest, key.clone());
         write(&self.reads).remove(&key.digest);
@@ -335,7 +349,7 @@ impl Txn {
 
     /// Set transaction namespace only if doesn't already exist.
     /// If namespace already exists, verify new namespace is the same.
-    pub fn set_namespace(&self, ns: &str) -> Result<()> {
+    pub(crate) fn set_namespace(&self, ns: &str) -> Result<()> {
         let mut guard = write(&self.namespace);
         match &*guard {
             None => {
@@ -354,7 +368,24 @@ impl Txn {
         Duration::from_secs(u64::from(self.timeout))
     }
 
-    /// Set transaction timeout in seconds.
+    /// Returns the transaction with its timeout set. A `Txn` is shared as
+    /// `Arc<Txn>` once commands run under it, so the timeout is chosen here,
+    /// at construction: `Arc::new(Txn::new().with_timeout(t))`. Zero (the
+    /// default) means the server's `transaction-duration` applies.
+    #[must_use]
+    pub const fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout.as_secs() as u32;
+        self
+    }
+
+    /// Sets the transaction timeout in place.
+    ///
+    /// Hidden: for language bindings that expose the timeout as a settable
+    /// attribute on an already-constructed transaction. Needs unique access,
+    /// so it cannot change a transaction that commands already share (reach
+    /// it through `Arc::get_mut`). Rust code sets the timeout at construction
+    /// with [`with_timeout`](Self::with_timeout).
+    #[doc(hidden)]
     pub const fn set_timeout(&mut self, timeout: Duration) {
         self.timeout = timeout.as_secs() as u32;
     }
@@ -370,6 +401,7 @@ impl Txn {
     }
 
     /// Set transaction in-doubt status.
+    #[doc(hidden)] // test support, not a stable API
     pub fn set_in_doubt(&self, in_doubt: bool) {
         self.in_doubt.store(in_doubt, Ordering::Relaxed);
     }
@@ -381,7 +413,7 @@ impl Txn {
     }
 
     /// Return if the MRT monitor record should be closed/deleted.
-    pub fn close_monitor(&self) -> bool {
+    pub(crate) fn close_monitor(&self) -> bool {
         self.deadline.load(Ordering::Relaxed) != 0 && !self.write_in_doubt.load(Ordering::Relaxed)
     }
 
@@ -401,7 +433,7 @@ impl Txn {
     }
 
     /// Clear transaction. Remove all tracked keys and reset transient flags.
-    pub fn clear(&self) {
+    pub(crate) fn clear(&self) {
         *write(&self.namespace) = None;
         self.deadline.store(0, Ordering::Relaxed);
         self.write_in_doubt.store(false, Ordering::Relaxed);
@@ -465,6 +497,23 @@ mod tests {
             .expect_err("a CommitFailed transaction must not accept commands");
         assert!(err.to_string().contains("ended by a commit or abort"));
         assert!(txn.prepare_read("test").is_err());
+    }
+
+    #[test]
+    fn set_timeout_matches_with_timeout() {
+        let mut txn = Txn::new();
+        assert_eq!(txn.timeout(), Duration::ZERO);
+        txn.set_timeout(Duration::from_secs(30));
+        assert_eq!(txn.timeout(), Duration::from_secs(30));
+        assert_eq!(txn.timeout_secs(), 30);
+        assert_eq!(
+            Txn::new().with_timeout(Duration::from_secs(30)).timeout_secs(),
+            txn.timeout_secs()
+        );
+
+        // Sub-second durations truncate to whole seconds on both paths.
+        txn.set_timeout(Duration::from_millis(1500));
+        assert_eq!(txn.timeout_secs(), 1);
     }
 
     #[test]

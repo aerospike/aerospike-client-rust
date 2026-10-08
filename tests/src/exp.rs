@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -219,7 +219,7 @@ async fn expression_data_types() {
         &client,
         ne(
             bin_type("bin".to_string()),
-            int_val(ParticleType::NULL as i64),
+            int_val(ParticleType::Null as i64),
         ),
         &set_name,
     )
@@ -585,7 +585,7 @@ fn expression_rec_ops() {
     let count = count_results(rs).await;
     assert!(count > 0 && count < 100, "DIGEST MODULO Test Failed");
 
-    let rs = test_filter(&client, eq(key(ExpType::INT), int_val(50)), &set_name).await;
+    let rs = test_filter(&client, eq(key(ExpType::Int), int_val(50)), &set_name).await;
     let count = count_results(rs).await;
     // 0 because key is not saved
     assert_eq!(count, 0, "KEY Test Failed");
@@ -603,7 +603,7 @@ fn expression_rec_ops() {
         &client,
         regex_compare(
             "[1-5]".to_string(),
-            RegexFlag::ICASE as i64,
+            RegexFlags::ICASE,
             string_bin("bin2".to_string()),
         ),
         &set_name,
@@ -635,7 +635,7 @@ async fn test_geo_val_bug() {
 
     // geo_compare with a literal GeoJSON circle via geo_val()
     let circle = r#"{"type":"AeroCircle","coordinates":[[-122.0,37.5],1000]}"#;
-    let expr = geo_compare(geo_bin("point".into()), geo_val(circle.into()));
+    let expr = geo_compare(geo_bin("point"), geo_val(circle));
 
     let mut qp = QueryPolicy::default();
     qp.base_policy.filter_expression = Some(expr);
@@ -822,7 +822,7 @@ async fn expression_commands() {
 // ============================================================
 
 async fn server_supports_server_compiled_ael(client: &Client) -> bool {
-    let supported = match client.cluster.get_random_node() {
+    let supported = match client.random_node() {
         Ok(node) => node.version().supports_server_compiled_ael(),
         Err(_) => false,
     };

@@ -23,10 +23,13 @@ pub mod hll;
 pub mod lists;
 pub mod maps;
 pub mod regex_flag;
+pub use regex_flag::RegexFlags;
 pub mod string;
 
 pub use ael::from_ael;
+#[doc(hidden)]
 pub use ael::pack_ael_server_filter;
+#[doc(hidden)]
 pub use ael::SERVER_COMPILED_AEL_EXPRESSION_OP;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
@@ -43,26 +46,26 @@ use std::fmt::Debug;
 /// Expression data types for use in filter expressions on Map and List operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpType {
-    /// NIL Expression Type
-    NIL = 0,
-    /// BOOLEAN Expression Type
-    BOOL = 1,
-    /// INTEGER Expression Type
-    INT = 2,
-    /// STRING Expression Type
-    STRING = 3,
-    /// LIST Expression Type
-    LIST = 4,
-    /// MAP Expression Type
-    MAP = 5,
-    /// BLOB Expression Type
-    BLOB = 6,
-    /// FLOAT Expression Type
-    FLOAT = 7,
-    /// GEO String Expression Type
-    GEO = 8,
-    /// HLL Expression Type
-    HLL = 9,
+    /// Nil.
+    Nil = 0,
+    /// Boolean.
+    Bool = 1,
+    /// Integer.
+    Int = 2,
+    /// String.
+    String = 3,
+    /// List.
+    List = 4,
+    /// Map.
+    Map = 5,
+    /// Blob (bytes).
+    Blob = 6,
+    /// Float.
+    Float = 7,
+    /// Geospatial value (a `GeoJSON` string).
+    Geo = 8,
+    /// `HyperLogLog` sketch.
+    Hll = 9,
 }
 
 #[allow(clippy::upper_case_acronyms)]
@@ -107,7 +110,8 @@ pub(crate) enum ExpOp {
     Min = 50,
     Max = 51,
     DigestModulo = 64,
-    DeviceSize = 65,
+    // 65 DEVICE_SIZE and 73 MEMORY_SIZE are the pre-7.0 size expressions;
+    // the client builds RECORD_SIZE instead.
     LastUpdate = 66,
     SinceUpdate = 67,
     VoidTime = 68,
@@ -115,7 +119,6 @@ pub(crate) enum ExpOp {
     SetName = 70,
     KeyExists = 71,
     IsTombstone = 72,
-    MemorySize = 73,
     RecordSize = 74,
     Key = 80,
     Bin = 81,
@@ -158,7 +161,7 @@ pub(crate) enum ExpressionArgument {
 /// Identifies which element of a loop variable to use in path expressions.
 /// Requires Aerospike Server version >= 8.1.1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LoopVarPart(pub i64);
+pub struct LoopVarPart(i64);
 
 impl LoopVarPart {
     /// Map key part of the loop variable.
@@ -167,6 +170,19 @@ impl LoopVarPart {
     pub const VALUE: LoopVarPart = LoopVarPart(1);
     /// Index part of the loop variable (list index).
     pub const INDEX: LoopVarPart = LoopVarPart(2);
+
+    /// A part from its raw server value, for a part the server supports
+    /// before this client names it.
+    #[must_use]
+    pub const fn from_bits(bits: i64) -> Self {
+        LoopVarPart(bits)
+    }
+
+    /// The raw value sent to the server.
+    #[must_use]
+    pub const fn bits(self) -> i64 {
+        self.0
+    }
 }
 
 /// Filter expression, which can be applied to most commands to control which records are affected.
@@ -320,7 +336,7 @@ impl Expression {
                                 // Write [0xfe, flat_ctx, flag] as 3 direct args
                                 size += pack_integer(buf, 0xfe);
                                 size += pack_flat_ctx(buf, ctx)?;
-                                size += pack_integer(buf, flag.0);
+                                size += pack_integer(buf, flag.bits());
                             }
                             ExpressionArgument::CdtModifyPathArg(
                                 flag,
@@ -331,7 +347,7 @@ impl Expression {
                                 // Write [0xfe, flat_ctx, flag|0x04, modify_exp] as 4 direct args
                                 size += pack_integer(buf, 0xfe);
                                 size += pack_flat_ctx(buf, ctx)?;
-                                size += pack_integer(buf, flag.0 | 0x04);
+                                size += pack_integer(buf, flag.bits() | 0x04);
                                 size += modify_exp.pack(buf)?;
                                 bin_from_arg = Some(bin_exp);
                             }
@@ -480,8 +496,9 @@ impl Expression {
 /// ```
 /// use aerospike::expressions::{ExpType, ge, int_val, key};
 /// // Integer record key >= 100000
-/// ge(key(ExpType::INT), int_val(10000));
+/// let _ = ge(key(ExpType::Int), int_val(10000));
 /// ```
+#[must_use]
 pub fn key(exp_type: ExpType) -> Expression {
     Expression::new(
         Some(ExpOp::Key),
@@ -508,6 +525,7 @@ pub fn from_base64(b64: &str) -> Result<Expression> {
 /// re-parse the expression structure, we just keep the raw bytes so a
 /// later pack emits them verbatim. Mirrors what `from_base64` does, minus
 /// the base64 decode.
+#[must_use]
 pub const fn from_packed_bytes(bytes: Vec<u8>) -> Expression {
     Expression {
         cmd: None,
@@ -527,8 +545,9 @@ pub const fn from_packed_bytes(bytes: Vec<u8>) -> Expression {
 /// ```
 /// // Key exists in record meta data
 /// use aerospike::expressions::key_exists;
-/// key_exists();
+/// let _ = key_exists();
 /// ```
+#[must_use]
 pub fn key_exists() -> Expression {
     Expression::new(Some(ExpOp::KeyExists), None, None, None, None, None)
 }
@@ -537,16 +556,17 @@ pub fn key_exists() -> Expression {
 /// ```
 /// // Integer bin "a" == 500
 /// use aerospike::expressions::{int_bin, int_val, eq};
-/// eq(int_bin("a".to_string()), int_val(500));
+/// let _ = eq(int_bin("a".to_string()), int_val(500));
 /// ```
 /// Creates a bin expression with an explicitly supplied value type.
 /// Prefer the typed accessors (`int_bin`, `string_bin`, …) when the bin
 /// type is known at compile time; this generic form is for callers whose
 /// bin types are only known at run time.
-pub fn bin(name: String, exp_type: ExpType) -> Expression {
+#[must_use]
+pub fn bin(name: impl Into<String>, exp_type: ExpType) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
         Some(exp_type),
@@ -558,15 +578,16 @@ pub fn bin(name: String, exp_type: ExpType) -> Expression {
 /// ```
 /// // Integer bin "a" == 500
 /// use aerospike::expressions::{eq, int_bin, int_val};
-/// eq(int_bin("a".to_string()), int_val(500));
+/// let _ = eq(int_bin("a".to_string()), int_val(500));
 /// ```
-pub fn int_bin(name: String) -> Expression {
+#[must_use]
+pub fn int_bin(name: impl Into<String>) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
-        Some(ExpType::INT),
+        Some(ExpType::Int),
         None,
     )
 }
@@ -575,15 +596,16 @@ pub fn int_bin(name: String) -> Expression {
 /// ```
 /// // Boolean bin "a" == true
 /// use aerospike::expressions::{bool_bin, bool_val, eq};
-/// eq(bool_bin("a".to_string()), bool_val(true));
+/// let _ = eq(bool_bin("a".to_string()), bool_val(true));
 /// ```
-pub fn bool_bin(name: String) -> Expression {
+#[must_use]
+pub fn bool_bin(name: impl Into<String>) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
-        Some(ExpType::BOOL),
+        Some(ExpType::Bool),
         None,
     )
 }
@@ -592,15 +614,16 @@ pub fn bool_bin(name: String) -> Expression {
 /// ```
 /// // String bin "a" == "views"
 /// use aerospike::expressions::{eq, string_bin, string_val};
-/// eq(string_bin("a".to_string()), string_val("views".to_string()));
+/// let _ = eq(string_bin("a".to_string()), string_val("views".to_string()));
 /// ```
-pub fn string_bin(name: String) -> Expression {
+#[must_use]
+pub fn string_bin(name: impl Into<String>) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
-        Some(ExpType::STRING),
+        Some(ExpType::String),
         None,
     )
 }
@@ -610,15 +633,16 @@ pub fn string_bin(name: String) -> Expression {
 /// // String bin "a" == [1,2,3]
 /// use aerospike::expressions::{eq, blob_bin, blob_val};
 /// let blob: Vec<u8> = vec![1,2,3];
-/// eq(blob_bin("a".to_string()), blob_val(blob));
+/// let _ = eq(blob_bin("a".to_string()), blob_val(blob));
 /// ```
-pub fn blob_bin(name: String) -> Expression {
+#[must_use]
+pub fn blob_bin(name: impl Into<String>) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
-        Some(ExpType::BLOB),
+        Some(ExpType::Blob),
         None,
     )
 }
@@ -627,15 +651,16 @@ pub fn blob_bin(name: String) -> Expression {
 /// ```
 /// use aerospike::expressions::{float_val, float_bin, eq};
 /// // Integer bin "a" == 500.5
-/// eq(float_bin("a".to_string()), float_val(500.5));
+/// let _ = eq(float_bin("a".to_string()), float_val(500.5));
 /// ```
-pub fn float_bin(name: String) -> Expression {
+#[must_use]
+pub fn float_bin(name: impl Into<String>) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
-        Some(ExpType::FLOAT),
+        Some(ExpType::Float),
         None,
     )
 }
@@ -645,15 +670,16 @@ pub fn float_bin(name: String) -> Expression {
 /// // String bin "a" == region
 /// use aerospike::expressions::{eq, geo_bin, string_val};
 /// let region = "{ \"type\": \"AeroCircle\", \"coordinates\": [[-122.0, 37.5], 50000.0] }";
-/// eq(geo_bin("a".to_string()), string_val(region.to_string()));
+/// let _ = eq(geo_bin("a".to_string()), string_val(region.to_string()));
 /// ```
-pub fn geo_bin(name: String) -> Expression {
+#[must_use]
+pub fn geo_bin(name: impl Into<String>) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
-        Some(ExpType::GEO),
+        Some(ExpType::Geo),
         None,
     )
 }
@@ -664,15 +690,16 @@ pub fn geo_bin(name: String) -> Expression {
 /// use aerospike::operations::lists::ListReturnType;
 /// use aerospike::expressions::lists::get_by_index;
 /// // String bin a[2] == 3
-/// eq(get_by_index(ListReturnType::Values, ExpType::INT, int_val(2), list_bin("a".to_string()), &[]), int_val(3));
+/// let _ = eq(get_by_index(ListReturnType::VALUES, ExpType::Int, int_val(2), list_bin("a".to_string()), &[]), int_val(3));
 /// ```
-pub fn list_bin(name: String) -> Expression {
+#[must_use]
+pub fn list_bin(name: impl Into<String>) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
-        Some(ExpType::LIST),
+        Some(ExpType::List),
         None,
     )
 }
@@ -685,17 +712,18 @@ pub fn list_bin(name: String) -> Expression {
 /// use aerospike::MapReturnType;
 /// use aerospike::expressions::maps::get_by_key;
 ///
-/// eq(
-///     get_by_key(MapReturnType::Value, ExpType::STRING, string_val("key".to_string()), map_bin("a".to_string()), &[]),
+/// let _ = eq(
+///     get_by_key(MapReturnType::VALUE, ExpType::String, string_val("key".to_string()), map_bin("a".to_string()), &[]),
 ///     string_val("value".to_string()));
 /// ```
-pub fn map_bin(name: String) -> Expression {
+#[must_use]
+pub fn map_bin(name: impl Into<String>) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
-        Some(ExpType::MAP),
+        Some(ExpType::Map),
         None,
     )
 }
@@ -704,21 +732,22 @@ pub fn map_bin(name: String) -> Expression {
 ///
 /// ```
 /// use aerospike::expressions::{gt, list_val, hll_bin, int_val};
-/// use aerospike::operations::hll::HLLPolicy;
+/// use aerospike::operations::hll::HllPolicy;
 /// use aerospike::Value;
 /// use aerospike::expressions::hll::add;
 ///
 /// // Add values to HLL bin "a" and check count > 7
 /// let list = vec![Value::from(1)];
-/// gt(add(HLLPolicy::default(), list_val(list), hll_bin("a".to_string())), int_val(7));
+/// let _ = gt(add(HllPolicy::default(), list_val(list), hll_bin("a".to_string())), int_val(7));
 /// ```
-pub fn hll_bin(name: String) -> Expression {
+#[must_use]
+pub fn hll_bin(name: impl Into<String>) -> Expression {
     Expression::new(
         Some(ExpOp::Bin),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
-        Some(ExpType::HLL),
+        Some(ExpType::Hll),
         None,
     )
 }
@@ -727,10 +756,11 @@ pub fn hll_bin(name: String) -> Expression {
 /// ```
 /// // Bin "a" exists in record
 /// use aerospike::expressions::bin_exists;
-/// bin_exists("a".to_string());
+/// let _ = bin_exists("a".to_string());
 /// ```
-pub fn bin_exists(name: String) -> Expression {
-    ne(bin_type(name), int_val(ParticleType::NULL as i64))
+#[must_use]
+pub fn bin_exists(name: impl Into<String>) -> Expression {
+    ne(bin_type(name), int_val(ParticleType::Null as i64))
 }
 
 /// Creates an expression that returns bin's integer particle type.
@@ -738,12 +768,13 @@ pub fn bin_exists(name: String) -> Expression {
 /// use aerospike::ParticleType;
 /// use aerospike::expressions::{eq, bin_type, int_val};
 /// // Bin "a" particle type is a list
-/// eq(bin_type("a".to_string()), int_val(ParticleType::LIST as i64));
+/// let _ = eq(bin_type("a".to_string()), int_val(ParticleType::List as i64));
 /// ```
-pub fn bin_type(name: String) -> Expression {
+#[must_use]
+pub fn bin_type(name: impl Into<String>) -> Expression {
     Expression::new(
         Some(ExpOp::BinType),
-        Some(Value::from(name)),
+        Some(Value::String(name.into())),
         None,
         None,
         None,
@@ -755,8 +786,9 @@ pub fn bin_type(name: String) -> Expression {
 /// ```
 /// use aerospike::expressions::{eq, set_name, string_val};
 /// // Record set name == "myset
-/// eq(set_name(), string_val("myset".to_string()));
+/// let _ = eq(set_name(), string_val("myset".to_string()));
 /// ```
+#[must_use]
 pub fn set_name() -> Expression {
     Expression::new(Some(ExpOp::SetName), None, None, None, None, None)
 }
@@ -764,53 +796,17 @@ pub fn set_name() -> Expression {
 /// Creates expression that returns the record size. This expression usually evaluates
 /// quickly because record meta data is cached in memory.
 ///
-/// Requires server version 7.0+. This expression replaces [`device_size()`](device_size) and
-/// [`memory_size()`](memory_size) since those older expressions are equivalent on server version 7.0+.
+/// Requires server version 7.0+, where it replaces the older `device_size` and
+/// `memory_size` expressions (equivalent there, deprecated by the server since 8.1).
 ///
 /// ```
 /// use aerospike::expressions::{ge, record_size, int_val};
 /// // Record device size >= 100 KB
-/// ge(record_size(), int_val(100*1024));
+/// let _ = ge(record_size(), int_val(100*1024));
 /// ```
+#[must_use]
 pub fn record_size() -> Expression {
     Expression::new(Some(ExpOp::RecordSize), None, None, None, None, None)
-}
-
-/// Creates an expression that returns record size on disk.
-/// If server storage-engine is memory, then zero is returned.
-///
-/// Deprecated: `memory_size` has been deprecated since server version 8.1. Use [`record_size()`].
-/// ```
-/// #  #![deny(warnings)]
-/// # #![allow(deprecated)]
-/// use aerospike::expressions::{ge, device_size, int_val};
-/// // Record device size >= 100 KB
-/// ge(device_size(), int_val(100*1024));
-/// ```
-#[deprecated]
-pub fn device_size() -> Expression {
-    Expression::new(Some(ExpOp::DeviceSize), None, None, None, None, None)
-}
-
-/// Creates expression that returns record size in memory.
-///
-/// If server storage-engine is not memory nor data-in-memory, then zero is returned.
-/// This expression usually evaluates quickly because record meta data is cached in memory.
-///
-/// Requires server version between 5.3 inclusive and 7.0 exclusive.
-/// Use [`record_size()`](record_size) for server version 7.0+.
-///
-/// Deprecated: `memory_size` has been deprecated since server version 8.1. Use [`record_size()`].
-/// ```
-/// # #![deny(warnings)]
-/// # #![allow(deprecated)]
-/// use aerospike::expressions::{ge, memory_size, int_val};
-/// // Record device size >= 100 KB
-/// ge(memory_size(), int_val(100*1024));
-/// ```
-#[deprecated]
-pub fn memory_size() -> Expression {
-    Expression::new(Some(ExpOp::MemorySize), None, None, None, None, None)
 }
 
 /// Creates an expression that returns record last update time expressed as 64 bit integer
@@ -818,8 +814,9 @@ pub fn memory_size() -> Expression {
 /// ```
 /// // Record last update time >=2020-08-01
 /// use aerospike::expressions::{ge, last_update, float_val};
-/// ge(last_update(), float_val(1.5962E+18));
+/// let _ = ge(last_update(), float_val(1.5962E+18));
 /// ```
+#[must_use]
 pub fn last_update() -> Expression {
     Expression::new(Some(ExpOp::LastUpdate), None, None, None, None, None)
 }
@@ -830,8 +827,9 @@ pub fn last_update() -> Expression {
 /// ```
 /// // Record last updated more than 2 hours ago
 /// use aerospike::expressions::{gt, int_val, since_update};
-/// gt(since_update(), int_val(2 * 60 * 60 * 1000));
+/// let _ = gt(since_update(), int_val(2 * 60 * 60 * 1000));
 /// ```
+#[must_use]
 pub fn since_update() -> Expression {
     Expression::new(Some(ExpOp::SinceUpdate), None, None, None, None, None)
 }
@@ -841,8 +839,9 @@ pub fn since_update() -> Expression {
 /// ```
 /// // Expires on 2020-08-01
 /// use aerospike::expressions::{and, ge, last_update, float_val, lt};
-/// and(vec![ge(last_update(), float_val(1.5962E+18)), lt(last_update(), float_val(1.5963E+18))]);
+/// let _ = and(vec![ge(last_update(), float_val(1.5962E+18)), lt(last_update(), float_val(1.5963E+18))]);
 /// ```
+#[must_use]
 pub fn void_time() -> Expression {
     Expression::new(Some(ExpOp::VoidTime), None, None, None, None, None)
 }
@@ -851,8 +850,9 @@ pub fn void_time() -> Expression {
 /// ```
 /// // Record expires in less than 1 hour
 /// use aerospike::expressions::{lt, ttl, int_val};
-/// lt(ttl(), int_val(60*60));
+/// let _ = lt(ttl(), int_val(60*60));
 /// ```
+#[must_use]
 pub fn ttl() -> Expression {
     Expression::new(Some(ExpOp::TTL), None, None, None, None, None)
 }
@@ -863,8 +863,9 @@ pub fn ttl() -> Expression {
 /// ```
 /// // Deleted records that are in tombstone state.
 /// use aerospike::expressions::{is_tombstone};
-/// is_tombstone();
+/// let _ = is_tombstone();
 /// ```
+#[must_use]
 pub fn is_tombstone() -> Expression {
     Expression::new(Some(ExpOp::IsTombstone), None, None, None, None, None)
 }
@@ -872,8 +873,9 @@ pub fn is_tombstone() -> Expression {
 /// ```
 /// // Records that have digest(key) % 3 == 1
 /// use aerospike::expressions::{int_val, eq, digest_modulo};
-/// eq(digest_modulo(3), int_val(1));
+/// let _ = eq(digest_modulo(3), int_val(1));
 /// ```
+#[must_use]
 pub fn digest_modulo(modulo: i64) -> Expression {
     Expression::new(
         Some(ExpOp::DigestModulo),
@@ -887,18 +889,23 @@ pub fn digest_modulo(modulo: i64) -> Expression {
 
 /// Creates a regular expression string comparison expression.
 /// ```
-/// use aerospike::RegexFlag;
+/// use aerospike::RegexFlags;
 /// use aerospike::expressions::{regex_compare, string_bin};
 /// // Select string bin "a" that starts with "prefix" and ends with "suffix".
 /// // Ignore case and do not match newline.
-/// regex_compare("prefix.*suffix".to_string(), RegexFlag::ICASE as i64 | RegexFlag::NEWLINE as i64, string_bin("a".to_string()));
+/// let _ = regex_compare(
+///     "prefix.*suffix".to_string(),
+///     RegexFlags::ICASE | RegexFlags::NEWLINE,
+///     string_bin("a".to_string()),
+/// );
 /// ```
-pub fn regex_compare(regex: String, flags: i64, bin: Expression) -> Expression {
+#[must_use]
+pub fn regex_compare(regex: impl Into<String>, flags: RegexFlags, bin: Expression) -> Expression {
     Expression::new(
         Some(ExpOp::Regex),
-        Some(Value::from(regex)),
+        Some(Value::String(regex.into())),
         Some(bin),
-        Some(flags),
+        Some(flags.bits()),
         None,
         None,
     )
@@ -909,8 +916,9 @@ pub fn regex_compare(regex: String, flags: i64, bin: Expression) -> Expression {
 /// use aerospike::expressions::{geo_compare, geo_bin, geo_val};
 /// // Query region within coordinates.
 /// let region = "{\"type\": \"Polygon\", \"coordinates\": [ [[-122.500000, 37.000000],[-121.000000, 37.000000], [-121.000000, 38.080000],[-122.500000, 38.080000], [-122.500000, 37.000000]] ] }";
-/// geo_compare(geo_bin("a".to_string()), geo_val(region.to_string()));
+/// let _ = geo_compare(geo_bin("a".to_string()), geo_val(region.to_string()));
 /// ```
+#[must_use]
 pub fn geo_compare(left: Expression, right: Expression) -> Expression {
     Expression::new(
         Some(ExpOp::Geo),
@@ -923,31 +931,37 @@ pub fn geo_compare(left: Expression, right: Expression) -> Expression {
 }
 
 /// Creates a 64-bit integer value.
+#[must_use]
 pub fn int_val(val: i64) -> Expression {
     Expression::new(None, Some(Value::from(val)), None, None, None, None)
 }
 
 /// Creates a boolean value.
+#[must_use]
 pub fn bool_val(val: bool) -> Expression {
     Expression::new(None, Some(Value::from(val)), None, None, None, None)
 }
 
 /// Creates a string bin value.
-pub fn string_val(val: String) -> Expression {
-    Expression::new(None, Some(Value::from(val)), None, None, None, None)
+#[must_use]
+pub fn string_val(val: impl Into<String>) -> Expression {
+    Expression::new(None, Some(Value::String(val.into())), None, None, None, None)
 }
 
 /// Creates a 64-bit float bin value.
+#[must_use]
 pub fn float_val(val: f64) -> Expression {
     Expression::new(None, Some(Value::from(val)), None, None, None, None)
 }
 
 /// Creates a blob bin value.
+#[must_use]
 pub fn blob_val(val: Vec<u8>) -> Expression {
     Expression::new(None, Some(Value::from(val)), None, None, None, None)
 }
 
 /// Creates a list bin value.
+#[must_use]
 pub fn list_val(val: Vec<Value>) -> Expression {
     Expression::new(
         Some(ExpOp::Quoted),
@@ -983,21 +997,25 @@ pub fn map_val<M: MapLike<Value, Value>>(val: M) -> Expression {
 }
 
 /// Creates a geospatial JSON string value.
-pub fn geo_val(val: String) -> Expression {
-    Expression::new(None, Some(Value::GeoJSON(val)), None, None, None, None)
+#[must_use]
+pub fn geo_val(val: impl Into<String>) -> Expression {
+    Expression::new(None, Some(Value::GeoJson(val.into())), None, None, None, None)
 }
 
 /// Creates a nil value.
+#[must_use]
 pub fn nil() -> Expression {
     Expression::new(None, Some(Value::Nil), None, None, None, None)
 }
 
 /// Creates an infinity value.
+#[must_use]
 pub fn infinity() -> Expression {
     Expression::new(None, Some(Value::Infinity), None, None, None, None)
 }
 
 /// Creates a wildcard value.
+#[must_use]
 pub fn wildcard() -> Expression {
     Expression::new(None, Some(Value::Wildcard), None, None, None, None)
 }
@@ -1006,8 +1024,9 @@ pub fn wildcard() -> Expression {
 /// ```
 /// // ! (a == 0 || a == 10)
 /// use aerospike::expressions::{not, or, eq, int_bin, int_val};
-/// not(or(vec![eq(int_bin("a".to_string()), int_val(0)), eq(int_bin("a".to_string()), int_val(10))]));
+/// let _ = not(or(vec![eq(int_bin("a".to_string()), int_val(0)), eq(int_bin("a".to_string()), int_val(10))]));
 /// ```
+#[must_use]
 pub fn not(exp: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::Not),
@@ -1025,8 +1044,9 @@ pub fn not(exp: Expression) -> Expression {
 /// ```
 /// // (a > 5 || a == 0) && b < 3
 /// use aerospike::expressions::{and, or, gt, int_bin, int_val, eq, lt};
-/// and(vec![or(vec![gt(int_bin("a".to_string()), int_val(5)), eq(int_bin("a".to_string()), int_val(0))]), lt(int_bin("b".to_string()), int_val(3))]);
+/// let _ = and(vec![or(vec![gt(int_bin("a".to_string()), int_val(5)), eq(int_bin("a".to_string()), int_val(0))]), lt(int_bin("b".to_string()), int_val(3))]);
 /// ```
+#[must_use]
 pub const fn and(exps: Vec<Expression>) -> Expression {
     Expression {
         cmd: Some(ExpOp::And),
@@ -1044,8 +1064,9 @@ pub const fn and(exps: Vec<Expression>) -> Expression {
 /// ```
 /// // a == 0 || b == 0
 /// use aerospike::expressions::{or, eq, int_bin, int_val};
-/// or(vec![eq(int_bin("a".to_string()), int_val(0)), eq(int_bin("b".to_string()), int_val(0))]);
+/// let _ = or(vec![eq(int_bin("a".to_string()), int_val(0)), eq(int_bin("b".to_string()), int_val(0))]);
 /// ```
+#[must_use]
 pub const fn or(exps: Vec<Expression>) -> Expression {
     Expression {
         cmd: Some(ExpOp::Or),
@@ -1063,8 +1084,9 @@ pub const fn or(exps: Vec<Expression>) -> Expression {
 /// ```
 /// // a == 0 ^ b == 0
 /// use aerospike::expressions::{xor, eq, int_bin, int_val};
-/// xor(vec![eq(int_bin("a".to_string()), int_val(0)), eq(int_bin("b".to_string()), int_val(0))]);
+/// let _ = xor(vec![eq(int_bin("a".to_string()), int_val(0)), eq(int_bin("b".to_string()), int_val(0))]);
 /// ```
+#[must_use]
 pub const fn xor(exps: Vec<Expression>) -> Expression {
     Expression {
         cmd: Some(ExpOp::Xor),
@@ -1084,8 +1106,9 @@ pub const fn xor(exps: Vec<Expression>) -> Expression {
 /// ```
 /// // exactly one of a == 0, b == 0
 /// use aerospike::expressions::{exclusive, eq, int_bin, int_val};
-/// exclusive(vec![eq(int_bin("a".to_string()), int_val(0)), eq(int_bin("b".to_string()), int_val(0))]);
+/// let _ = exclusive(vec![eq(int_bin("a".to_string()), int_val(0)), eq(int_bin("b".to_string()), int_val(0))]);
 /// ```
+#[must_use]
 pub const fn exclusive(exps: Vec<Expression>) -> Expression {
     Expression {
         cmd: Some(ExpOp::Xor),
@@ -1103,8 +1126,9 @@ pub const fn exclusive(exps: Vec<Expression>) -> Expression {
 /// ```
 /// // a == 11
 /// use aerospike::expressions::{eq, int_bin, int_val};
-/// eq(int_bin("a".to_string()), int_val(11));
+/// let _ = eq(int_bin("a".to_string()), int_val(11));
 /// ```
+#[must_use]
 pub fn eq(left: Expression, right: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::EQ),
@@ -1122,8 +1146,9 @@ pub fn eq(left: Expression, right: Expression) -> Expression {
 /// ```
 /// // a != 13
 /// use aerospike::expressions::{ne, int_bin, int_val};
-/// ne(int_bin("a".to_string()), int_val(13));
+/// let _ = ne(int_bin("a".to_string()), int_val(13));
 /// ```
+#[must_use]
 pub fn ne(left: Expression, right: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::NE),
@@ -1141,8 +1166,9 @@ pub fn ne(left: Expression, right: Expression) -> Expression {
 /// ```
 /// // a > 8
 /// use aerospike::expressions::{gt, int_bin, int_val};
-/// gt(int_bin("a".to_string()), int_val(8));
+/// let _ = gt(int_bin("a".to_string()), int_val(8));
 /// ```
+#[must_use]
 pub fn gt(left: Expression, right: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::GT),
@@ -1160,8 +1186,9 @@ pub fn gt(left: Expression, right: Expression) -> Expression {
 /// ```
 /// use aerospike::expressions::{ge, int_bin, int_val};
 /// // a >= 88
-/// ge(int_bin("a".to_string()), int_val(88));
+/// let _ = ge(int_bin("a".to_string()), int_val(88));
 /// ```
+#[must_use]
 pub fn ge(left: Expression, right: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::GE),
@@ -1179,8 +1206,9 @@ pub fn ge(left: Expression, right: Expression) -> Expression {
 /// ```
 /// // a < 1000
 /// use aerospike::expressions::{lt, int_bin, int_val};
-/// lt(int_bin("a".to_string()), int_val(1000));
+/// let _ = lt(int_bin("a".to_string()), int_val(1000));
 /// ```
+#[must_use]
 pub fn lt(left: Expression, right: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::LT),
@@ -1198,8 +1226,9 @@ pub fn lt(left: Expression, right: Expression) -> Expression {
 /// ```
 /// use aerospike::expressions::{le, int_bin, int_val};
 /// // a <= 1
-/// le(int_bin("a".to_string()), int_val(1));
+/// let _ = le(int_bin("a".to_string()), int_val(1));
 /// ```
+#[must_use]
 pub fn le(left: Expression, right: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::LE),
@@ -1220,8 +1249,9 @@ pub fn le(left: Expression, right: Expression) -> Expression {
 /// ```
 /// use aerospike::expressions::{eq, num_add, int_bin, int_val};
 /// // a + b + c == 10
-/// eq(num_add(vec![int_bin("a".to_string()), int_bin("b".to_string()), int_bin("c".to_string())]), int_val(10));
+/// let _ = eq(num_add(vec![int_bin("a".to_string()), int_bin("b".to_string()), int_bin("c".to_string())]), int_val(10));
 /// ```
+#[must_use]
 pub const fn num_add(exps: Vec<Expression>) -> Expression {
     Expression {
         cmd: Some(ExpOp::Add),
@@ -1244,8 +1274,9 @@ pub const fn num_add(exps: Vec<Expression>) -> Expression {
 /// ```
 /// use aerospike::expressions::{gt, num_sub, int_bin, int_val};
 /// // a - b - c > 10
-/// gt(num_sub(vec![int_bin("a".to_string()), int_bin("b".to_string()), int_bin("c".to_string())]), int_val(10));
+/// let _ = gt(num_sub(vec![int_bin("a".to_string()), int_bin("b".to_string()), int_bin("c".to_string())]), int_val(10));
 /// ```
+#[must_use]
 pub const fn num_sub(exps: Vec<Expression>) -> Expression {
     Expression {
         cmd: Some(ExpOp::Sub),
@@ -1267,8 +1298,9 @@ pub const fn num_sub(exps: Vec<Expression>) -> Expression {
 /// ```
 /// use aerospike::expressions::{lt, num_mul, int_val, int_bin};
 /// // a * b * c < 100
-/// lt(num_mul(vec![int_bin("a".to_string()), int_bin("b".to_string()), int_bin("c".to_string())]), int_val(100));
+/// let _ = lt(num_mul(vec![int_bin("a".to_string()), int_bin("b".to_string()), int_bin("c".to_string())]), int_val(100));
 /// ```
+#[must_use]
 pub const fn num_mul(exps: Vec<Expression>) -> Expression {
     Expression {
         cmd: Some(ExpOp::Mul),
@@ -1291,8 +1323,9 @@ pub const fn num_mul(exps: Vec<Expression>) -> Expression {
 /// ```
 /// use aerospike::expressions::{lt, int_val, int_bin, num_div};
 /// // a / b / c > 1
-/// lt(num_div(vec![int_bin("a".to_string()), int_bin("b".to_string()), int_bin("c".to_string())]), int_val(1));
+/// let _ = lt(num_div(vec![int_bin("a".to_string()), int_bin("b".to_string()), int_bin("c".to_string())]), int_val(1));
 /// ```
+#[must_use]
 pub const fn num_div(exps: Vec<Expression>) -> Expression {
     Expression {
         cmd: Some(ExpOp::Div),
@@ -1312,8 +1345,9 @@ pub const fn num_div(exps: Vec<Expression>) -> Expression {
 /// ```
 /// // pow(a, 2.0) == 4.0
 /// use aerospike::expressions::{eq, num_pow, float_bin, float_val};
-/// eq(num_pow(float_bin("a".to_string()), float_val(2.0)), float_val(4.0));
+/// let _ = eq(num_pow(float_bin("a".to_string()), float_val(2.0)), float_val(4.0));
 /// ```
+#[must_use]
 pub fn num_pow(base: Expression, exponent: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::Pow),
@@ -1333,8 +1367,9 @@ pub fn num_pow(base: Expression, exponent: Expression) -> Expression {
 /// ```
 /// // log(a, 2.0) == 4.0
 /// use aerospike::expressions::{eq, float_bin, float_val, num_log};
-/// eq(num_log(float_bin("a".to_string()), float_val(2.0)), float_val(4.0));
+/// let _ = eq(num_log(float_bin("a".to_string()), float_val(2.0)), float_val(4.0));
 /// ```
+#[must_use]
 pub fn num_log(num: Expression, base: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::Log),
@@ -1354,8 +1389,9 @@ pub fn num_log(num: Expression, base: Expression) -> Expression {
 /// ```
 /// // a % 10 == 0
 /// use aerospike::expressions::{eq, num_mod, int_val, int_bin};
-/// eq(num_mod(int_bin("a".to_string()), int_val(10)), int_val(0));
+/// let _ = eq(num_mod(int_bin("a".to_string()), int_val(10)), int_val(0));
 /// ```
+#[must_use]
 pub fn num_mod(numerator: Expression, denominator: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::Mod),
@@ -1375,8 +1411,9 @@ pub fn num_mod(numerator: Expression, denominator: Expression) -> Expression {
 /// ```
 /// // abs(a) == 1
 /// use aerospike::expressions::{eq, int_val, int_bin, num_abs};
-/// eq(num_abs(int_bin("a".to_string())), int_val(1));
+/// let _ = eq(num_abs(int_bin("a".to_string())), int_val(1));
 /// ```
+#[must_use]
 pub fn num_abs(value: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::Abs),
@@ -1396,8 +1433,9 @@ pub fn num_abs(value: Expression) -> Expression {
 /// ```
 /// // floor(2.95) == 2.0
 /// use aerospike::expressions::{eq, num_floor, float_val};
-/// eq(num_floor(float_val(2.95)), float_val(2.0));
+/// let _ = eq(num_floor(float_val(2.95)), float_val(2.0));
 /// ```
+#[must_use]
 pub fn num_floor(num: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::Floor),
@@ -1417,8 +1455,9 @@ pub fn num_floor(num: Expression) -> Expression {
 /// ```
 /// // ceil(2.15) == 3.0
 /// use aerospike::expressions::{float_val, num_ceil, ge};
-/// ge(num_ceil(float_val(2.15)), float_val(3.0));
+/// let _ = ge(num_ceil(float_val(2.15)), float_val(3.0));
 /// ```
+#[must_use]
 pub fn num_ceil(num: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::Ceil),
@@ -1437,8 +1476,9 @@ pub fn num_ceil(num: Expression) -> Expression {
 /// ```
 /// // int(2.5) == 2
 /// use aerospike::expressions::{float_val, eq, to_int, int_val};
-/// eq(to_int(float_val(2.5)), int_val(2));
+/// let _ = eq(to_int(float_val(2.5)), int_val(2));
 /// ```
+#[must_use]
 pub fn to_int(num: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::ToInt),
@@ -1457,8 +1497,9 @@ pub fn to_int(num: Expression) -> Expression {
 /// ```
 /// // float(2) == 2.0
 /// use aerospike::expressions::{float_val, eq, to_float, int_val};
-/// eq(to_float(int_val(2)), float_val(2.0));
+/// let _ = eq(to_float(int_val(2)), float_val(2.0));
 /// ```
+#[must_use]
 pub fn to_float(num: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::ToFloat),
@@ -1478,8 +1519,9 @@ pub fn to_float(num: Expression) -> Expression {
 /// ```
 /// // a & 0xff == 0x11
 /// use aerospike::expressions::{eq, int_val, int_and, int_bin};
-/// eq(int_and(vec![int_bin("a".to_string()), int_val(0xff)]), int_val(0x11));
+/// let _ = eq(int_and(vec![int_bin("a".to_string()), int_val(0xff)]), int_val(0x11));
 /// ```
+#[must_use]
 pub const fn int_and(exps: Vec<Expression>) -> Expression {
     Expression {
         cmd: Some(ExpOp::IntAnd),
@@ -1499,8 +1541,9 @@ pub const fn int_and(exps: Vec<Expression>) -> Expression {
 /// ```
 /// // a | 0xff == 0xff
 /// use aerospike::expressions::{eq, int_val, int_or, int_bin};
-/// eq(int_or(vec![int_bin("a".to_string()), int_val(0xFF)]), int_val(0xFF));
+/// let _ = eq(int_or(vec![int_bin("a".to_string()), int_val(0xFF)]), int_val(0xFF));
 /// ```
+#[must_use]
 pub const fn int_or(exps: Vec<Expression>) -> Expression {
     Expression {
         cmd: Some(ExpOp::IntOr),
@@ -1520,8 +1563,9 @@ pub const fn int_or(exps: Vec<Expression>) -> Expression {
 /// ```
 /// // a ^ b == 16
 /// use aerospike::expressions::{eq, int_val, int_xor, int_bin};
-/// eq(int_xor(vec![int_bin("a".to_string()), int_bin("b".to_string())]), int_val(16));
+/// let _ = eq(int_xor(vec![int_bin("a".to_string()), int_bin("b".to_string())]), int_val(16));
 /// ```
+#[must_use]
 pub const fn int_xor(exps: Vec<Expression>) -> Expression {
     Expression {
         cmd: Some(ExpOp::IntXor),
@@ -1540,8 +1584,9 @@ pub const fn int_xor(exps: Vec<Expression>) -> Expression {
 /// ```
 /// // ~a == 7
 /// use aerospike::expressions::{eq, int_val, int_not, int_bin};
-/// eq(int_not(int_bin("a".to_string())), int_val(7));
+/// let _ = eq(int_not(int_bin("a".to_string())), int_val(7));
 /// ```
+#[must_use]
 pub fn int_not(exp: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::IntNot),
@@ -1560,8 +1605,9 @@ pub fn int_not(exp: Expression) -> Expression {
 /// ```
 /// // a << 8 > 0xff
 /// use aerospike::expressions::{int_val, int_bin, gt, int_lshift};
-/// gt(int_lshift(int_bin("a".to_string()), int_val(8)), int_val(0xff));
+/// let _ = gt(int_lshift(int_bin("a".to_string()), int_val(8)), int_val(0xff));
 /// ```
+#[must_use]
 pub fn int_lshift(value: Expression, shift: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::IntLshift),
@@ -1580,8 +1626,9 @@ pub fn int_lshift(value: Expression, shift: Expression) -> Expression {
 /// ```
 /// // a >> 8 > 0xff
 /// use aerospike::expressions::{int_val, int_bin, gt, int_rshift};
-/// gt(int_rshift(int_bin("a".to_string()), int_val(8)), int_val(0xff));
+/// let _ = gt(int_rshift(int_bin("a".to_string()), int_val(8)), int_val(0xff));
 /// ```
+#[must_use]
 pub fn int_rshift(value: Expression, shift: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::IntRshift),
@@ -1601,8 +1648,9 @@ pub fn int_rshift(value: Expression, shift: Expression) -> Expression {
 /// ```
 /// // a >>> 8 > 0xff
 /// use aerospike::expressions::{int_val, int_bin, gt, int_arshift};
-/// gt(int_arshift(int_bin("a".to_string()), int_val(8)), int_val(0xff));
+/// let _ = gt(int_arshift(int_bin("a".to_string()), int_val(8)), int_val(0xff));
 /// ```
+#[must_use]
 pub fn int_arshift(value: Expression, shift: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::IntARshift),
@@ -1621,8 +1669,9 @@ pub fn int_arshift(value: Expression, shift: Expression) -> Expression {
 /// ```
 /// // count(a) == 4
 /// use aerospike::expressions::{int_val, int_bin, int_count, eq};
-/// eq(int_count(int_bin("a".to_string())), int_val(4));
+/// let _ = eq(int_count(int_bin("a".to_string())), int_val(4));
 /// ```
+#[must_use]
 pub fn int_count(exp: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::IntCount),
@@ -1645,8 +1694,9 @@ pub fn int_count(exp: Expression) -> Expression {
 /// ```
 /// // lscan(a, true) == 4
 /// use aerospike::expressions::{int_val, int_bin, eq, int_lscan, bool_val};
-/// eq(int_lscan(int_bin("a".to_string()), bool_val(true)), int_val(4));
+/// let _ = eq(int_lscan(int_bin("a".to_string()), bool_val(true)), int_val(4));
 /// ```
+#[must_use]
 pub fn int_lscan(value: Expression, search: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::IntLscan),
@@ -1669,8 +1719,9 @@ pub fn int_lscan(value: Expression, search: Expression) -> Expression {
 /// ```
 /// // rscan(a, true) == 4
 /// use aerospike::expressions::{int_val, int_bin, eq, int_rscan, bool_val};
-/// eq(int_rscan(int_bin("a".to_string()), bool_val(true)), int_val(4));
+/// let _ = eq(int_rscan(int_bin("a".to_string()), bool_val(true)), int_val(4));
 /// ```
+#[must_use]
 pub fn int_rscan(value: Expression, search: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::IntRscan),
@@ -1690,8 +1741,9 @@ pub fn int_rscan(value: Expression, search: Expression) -> Expression {
 /// ```
 /// // min(a, b, c) > 0
 /// use aerospike::expressions::{int_val, int_bin, gt, min};
-/// gt(min(vec![int_bin("a".to_string()),int_bin("b".to_string()),int_bin("c".to_string())]), int_val(0));
+/// let _ = gt(min(vec![int_bin("a".to_string()),int_bin("b".to_string()),int_bin("c".to_string())]), int_val(0));
 /// ```
+#[must_use]
 pub const fn min(exps: Vec<Expression>) -> Expression {
     Expression {
         cmd: Some(ExpOp::Min),
@@ -1711,8 +1763,9 @@ pub const fn min(exps: Vec<Expression>) -> Expression {
 /// ```
 /// // max(a, b, c) > 100
 /// use aerospike::expressions::{int_val, int_bin, gt, max};
-/// gt(max(vec![int_bin("a".to_string()),int_bin("b".to_string()),int_bin("c".to_string())]), int_val(100));
+/// let _ = gt(max(vec![int_bin("a".to_string()),int_bin("b".to_string()),int_bin("c".to_string())]), int_val(100));
 /// ```
+#[must_use]
 pub const fn max(exps: Vec<Expression>) -> Expression {
     Expression {
         cmd: Some(ExpOp::Max),
@@ -1738,7 +1791,7 @@ pub const fn max(exps: Vec<Expression>) -> Expression {
 /// // Apply operator based on type.
 ///
 /// use aerospike::expressions::{cond, int_bin, eq, int_val, num_add, num_sub, num_mul};
-/// cond(
+/// let _ = cond(
 ///   vec![
 ///     eq(int_bin("type".to_string()), int_val(0)), num_add(vec![int_bin("val1".to_string()), int_bin("val2".to_string())]),
 ///     eq(int_bin("type".to_string()), int_val(1)), num_sub(vec![int_bin("val1".to_string()), int_bin("val2".to_string())]),
@@ -1747,6 +1800,7 @@ pub const fn max(exps: Vec<Expression>) -> Expression {
 ///   ]
 /// );
 /// ```
+#[must_use]
 pub const fn cond(exps: Vec<Expression>) -> Expression {
     Expression {
         cmd: Some(ExpOp::Cond),
@@ -1765,7 +1819,7 @@ pub const fn cond(exps: Vec<Expression>) -> Expression {
 /// ```
 /// // 5 < a < 10
 /// use aerospike::expressions::{exp_let, def, int_bin, and, lt, int_val, var};
-/// exp_let(
+/// let _ = exp_let(
 ///   vec![
 ///     def("x".to_string(), int_bin("a".to_string())),
 ///     and(vec![
@@ -1775,6 +1829,7 @@ pub const fn cond(exps: Vec<Expression>) -> Expression {
 ///   ]
 /// );
 /// ```
+#[must_use]
 pub const fn exp_let(exps: Vec<Expression>) -> Expression {
     Expression {
         cmd: Some(ExpOp::Let),
@@ -1793,7 +1848,7 @@ pub const fn exp_let(exps: Vec<Expression>) -> Expression {
 /// ```
 /// // 5 < a < 10
 /// use aerospike::expressions::{exp_let, def, int_bin, and, lt, int_val, var};
-/// exp_let(
+/// let _ = exp_let(
 ///   vec![
 ///     def("x".to_string(), int_bin("a".to_string())),
 ///     and(vec![
@@ -1803,10 +1858,11 @@ pub const fn exp_let(exps: Vec<Expression>) -> Expression {
 ///   ]
 /// );
 /// ```
-pub fn def(name: String, value: Expression) -> Expression {
+#[must_use]
+pub fn def(name: impl Into<String>, value: Expression) -> Expression {
     Expression {
         cmd: None,
-        val: Some(Value::from(name)),
+        val: Some(Value::String(name.into())),
         bin: None,
         flags: None,
         module: None,
@@ -1818,10 +1874,11 @@ pub fn def(name: String, value: Expression) -> Expression {
 
 /// Retrieve expression value from a variable.
 /// Requires server version 5.6.0+.
-pub fn var(name: String) -> Expression {
+#[must_use]
+pub fn var(name: impl Into<String>) -> Expression {
     Expression {
         cmd: Some(ExpOp::Var),
-        val: Some(Value::from(name)),
+        val: Some(Value::String(name.into())),
         bin: None,
         flags: None,
         module: None,
@@ -1833,15 +1890,15 @@ pub fn var(name: String) -> Expression {
 
 /// Creates unknown value. Used to intentionally fail an expression.
 ///
-/// The failure can be ignored with [`ExpWriteFlags::EvalNoFail`](crate::operations::exp::ExpWriteFlags::EvalNoFail)
-/// or [`ExpReadFlags::EvalNoFail`](crate::operations::exp::ExpReadFlags::EvalNoFail).
+/// The failure can be ignored with [`ExpWriteFlags::EVAL_NO_FAIL`](crate::operations::exp::ExpWriteFlags::EVAL_NO_FAIL)
+/// or [`ExpReadFlags::EVAL_NO_FAIL`](crate::operations::exp::ExpReadFlags::EVAL_NO_FAIL).
 /// Requires server version 5.6.0+.
 ///
 /// ```
 /// // double v = balance - 100.0;
 /// // return (v > 0.0)? v : unknown;
 /// use aerospike::expressions::{exp_let, def, num_sub, float_bin, float_val, cond, ge, var, unknown};
-/// exp_let(
+/// let _ = exp_let(
 ///     vec![
 ///         def("v".to_string(), num_sub(vec![float_bin("balance".to_string()), float_val(100.0)])),
 ///         cond(vec![ge(var("v".to_string()), float_val(0.0)), var("v".to_string())]),
@@ -1849,6 +1906,7 @@ pub fn var(name: String) -> Expression {
 ///     ]
 /// );
 /// ```
+#[must_use]
 pub const fn unknown() -> Expression {
     Expression {
         cmd: Some(ExpOp::Unknown),
@@ -1916,12 +1974,13 @@ pub(crate) fn pack_path_modify_exp(
 
 /// Retrieve the boolean part of a loop variable.
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn exp_bool_loop_var(part: LoopVarPart) -> Expression {
     Expression::new(
         Some(ExpOp::VarBuiltIn),
         Some(Value::Int(part.0)),
         None,
-        Some(ExpType::BOOL as i64),
+        Some(ExpType::Bool as i64),
         None,
         None,
     )
@@ -1929,12 +1988,13 @@ pub fn exp_bool_loop_var(part: LoopVarPart) -> Expression {
 
 /// Retrieve the integer part of a loop variable.
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn exp_int_loop_var(part: LoopVarPart) -> Expression {
     Expression::new(
         Some(ExpOp::VarBuiltIn),
         Some(Value::Int(part.0)),
         None,
-        Some(ExpType::INT as i64),
+        Some(ExpType::Int as i64),
         None,
         None,
     )
@@ -1942,12 +2002,13 @@ pub fn exp_int_loop_var(part: LoopVarPart) -> Expression {
 
 /// Retrieve the float part of a loop variable.
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn exp_float_loop_var(part: LoopVarPart) -> Expression {
     Expression::new(
         Some(ExpOp::VarBuiltIn),
         Some(Value::Int(part.0)),
         None,
-        Some(ExpType::FLOAT as i64),
+        Some(ExpType::Float as i64),
         None,
         None,
     )
@@ -1955,12 +2016,13 @@ pub fn exp_float_loop_var(part: LoopVarPart) -> Expression {
 
 /// Retrieve the string part of a loop variable.
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn exp_string_loop_var(part: LoopVarPart) -> Expression {
     Expression::new(
         Some(ExpOp::VarBuiltIn),
         Some(Value::Int(part.0)),
         None,
-        Some(ExpType::STRING as i64),
+        Some(ExpType::String as i64),
         None,
         None,
     )
@@ -1968,12 +2030,13 @@ pub fn exp_string_loop_var(part: LoopVarPart) -> Expression {
 
 /// Retrieve the list part of a loop variable.
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn exp_list_loop_var(part: LoopVarPart) -> Expression {
     Expression::new(
         Some(ExpOp::VarBuiltIn),
         Some(Value::Int(part.0)),
         None,
-        Some(ExpType::LIST as i64),
+        Some(ExpType::List as i64),
         None,
         None,
     )
@@ -1981,12 +2044,13 @@ pub fn exp_list_loop_var(part: LoopVarPart) -> Expression {
 
 /// Retrieve the map part of a loop variable.
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn exp_map_loop_var(part: LoopVarPart) -> Expression {
     Expression::new(
         Some(ExpOp::VarBuiltIn),
         Some(Value::Int(part.0)),
         None,
-        Some(ExpType::MAP as i64),
+        Some(ExpType::Map as i64),
         None,
         None,
     )
@@ -1994,12 +2058,13 @@ pub fn exp_map_loop_var(part: LoopVarPart) -> Expression {
 
 /// Retrieve the blob part of a loop variable.
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn exp_blob_loop_var(part: LoopVarPart) -> Expression {
     Expression::new(
         Some(ExpOp::VarBuiltIn),
         Some(Value::Int(part.0)),
         None,
-        Some(ExpType::BLOB as i64),
+        Some(ExpType::Blob as i64),
         None,
         None,
     )
@@ -2007,12 +2072,13 @@ pub fn exp_blob_loop_var(part: LoopVarPart) -> Expression {
 
 /// Retrieve the hll part of a loop variable.
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn exp_hll_loop_var(part: LoopVarPart) -> Expression {
     Expression::new(
         Some(ExpOp::VarBuiltIn),
         Some(Value::Int(part.0)),
         None,
-        Some(ExpType::HLL as i64),
+        Some(ExpType::Hll as i64),
         None,
         None,
     )
@@ -2020,12 +2086,13 @@ pub fn exp_hll_loop_var(part: LoopVarPart) -> Expression {
 
 /// Retrieve the nil part of a loop variable.
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn exp_nil_loop_var(part: LoopVarPart) -> Expression {
     Expression::new(
         Some(ExpOp::VarBuiltIn),
         Some(Value::Int(part.0)),
         None,
-        Some(ExpType::NIL as i64),
+        Some(ExpType::Nil as i64),
         None,
         None,
     )
@@ -2033,12 +2100,13 @@ pub fn exp_nil_loop_var(part: LoopVarPart) -> Expression {
 
 /// Retrieve the `GeoJSON` part of a loop variable.
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn exp_geo_json_loop_var(part: LoopVarPart) -> Expression {
     Expression::new(
         Some(ExpOp::VarBuiltIn),
         Some(Value::Int(part.0)),
         None,
-        Some(ExpType::GEO as i64),
+        Some(ExpType::Geo as i64),
         None,
         None,
     )
@@ -2046,6 +2114,7 @@ pub fn exp_geo_json_loop_var(part: LoopVarPart) -> Expression {
 
 /// Remove the expression result from the return value.
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn exp_remove_result() -> Expression {
     Expression::new(Some(ExpOp::ResultRemove), None, None, None, None, None)
 }
@@ -2056,6 +2125,7 @@ pub fn exp_remove_result() -> Expression {
 /// Both arguments are themselves expressions, so this composes with
 /// path expressions and loop variables — e.g. `in_list(loop_var, val(known_set))`.
 /// Requires Aerospike Server version >= 8.1.2.
+#[must_use]
 pub fn in_list(value: Expression, list: Expression) -> Expression {
     Expression::new(
         Some(ExpOp::InList),
@@ -2073,6 +2143,7 @@ pub fn in_list(value: Expression, list: Expression) -> Expression {
 /// which is a CTX entry that *filters* a map down to a named subset of
 /// keys. This expression *converts* a map into its key list.
 /// Requires Aerospike Server version >= 8.1.2.
+#[must_use]
 pub fn map_keys(map: Expression) -> Expression {
     Expression::new(
         Some(ExpOp::MapKeys),
@@ -2086,6 +2157,7 @@ pub fn map_keys(map: Expression) -> Expression {
 
 /// Extract the values of a map expression as a list.
 /// Requires Aerospike Server version >= 8.1.2.
+#[must_use]
 pub fn map_values(map: Expression) -> Expression {
     Expression::new(
         Some(ExpOp::MapValues),
@@ -2105,11 +2177,12 @@ pub fn map_values(map: Expression) -> Expression {
 /// Accepts any value convertible to `&[CdtContext]` — pass a slice, a
 /// `Vec<CdtContext>`, or a [`Path`](crate::operations::cdt_context::Path)
 /// directly.
+#[must_use]
 pub fn exp_select_by_path(
     return_type: ExpType,
     flag: crate::operations::path::SelectFlag,
     bin_exp: Expression,
-    ctx: impl AsRef<[CdtContext]>,
+    ctx: &[CdtContext],
 ) -> Expression {
     Expression {
         cmd: Some(ExpOp::Call),
@@ -2120,7 +2193,7 @@ pub fn exp_select_by_path(
         exps: None,
         arguments: Some(vec![ExpressionArgument::CdtSelectPathArg(
             flag,
-            ctx.as_ref().to_vec(),
+            ctx.to_vec(),
         )]),
         bytes: None,
     }
@@ -2142,19 +2215,20 @@ pub fn exp_select_by_path(
 /// use aerospike::operations::path::ModifyFlag;
 ///
 /// let path = Path::new().map_key("book").all_children().map_key("price");
-/// let bin_exp = aerospike::expressions::map_bin("myBin".into());
+/// let bin_exp = aerospike::expressions::map_bin("myBin");
 ///
 /// // Remove every matching "price" entry...
-/// let exp = exp_modify_by_path(ExpType::MAP, ModifyFlag::DEFAULT, bin_exp.clone(), exp_remove_result(), &path);
+/// let exp = exp_modify_by_path(ExpType::Map, ModifyFlag::DEFAULT, bin_exp.clone(), exp_remove_result(), &path);
 /// // ...equivalently, via the ready-made wrapper:
-/// let exp = exp_remove(ExpType::MAP, bin_exp, &path);
+/// let exp = exp_remove(ExpType::Map, bin_exp, &path);
 /// ```
+#[must_use]
 pub fn exp_modify_by_path(
     return_type: ExpType,
     flag: crate::operations::path::ModifyFlag,
     bin_exp: Expression,
     modify_exp: Expression,
-    ctx: impl AsRef<[CdtContext]>,
+    ctx: &[CdtContext],
 ) -> Expression {
     Expression {
         cmd: Some(ExpOp::Call),
@@ -2167,7 +2241,7 @@ pub fn exp_modify_by_path(
             flag,
             bin_exp,
             modify_exp,
-            ctx.as_ref().to_vec(),
+            ctx.to_vec(),
         )]),
         bytes: None,
     }
@@ -2184,10 +2258,11 @@ pub fn exp_modify_by_path(
 /// Convenience wrapper: select the *values* at every path-resolved
 /// location (`SelectFlag::VALUE`).
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn exp_select_values(
     return_type: ExpType,
     bin_exp: Expression,
-    ctx: impl AsRef<[CdtContext]>,
+    ctx: &[CdtContext],
 ) -> Expression {
     exp_select_by_path(
         return_type,
@@ -2199,10 +2274,11 @@ pub fn exp_select_values(
 
 /// Convenience wrapper: select the matching *map keys* (`SelectFlag::MAP_KEY`).
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn exp_select_map_keys(
     return_type: ExpType,
     bin_exp: Expression,
-    ctx: impl AsRef<[CdtContext]>,
+    ctx: &[CdtContext],
 ) -> Expression {
     exp_select_by_path(
         return_type,
@@ -2215,10 +2291,11 @@ pub fn exp_select_map_keys(
 /// Convenience wrapper: select map *key/value pairs*
 /// (`SelectFlag::MAP_KEY_VALUE`).
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn exp_select_map_entries(
     return_type: ExpType,
     bin_exp: Expression,
-    ctx: impl AsRef<[CdtContext]>,
+    ctx: &[CdtContext],
 ) -> Expression {
     exp_select_by_path(
         return_type,
@@ -2231,10 +2308,11 @@ pub fn exp_select_map_entries(
 /// Convenience wrapper: select the *original tree shape* preserving only
 /// matching nodes (`SelectFlag::MATCHING_TREE`).
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn exp_select_matching_tree(
     return_type: ExpType,
     bin_exp: Expression,
-    ctx: impl AsRef<[CdtContext]>,
+    ctx: &[CdtContext],
 ) -> Expression {
     exp_select_by_path(
         return_type,
@@ -2247,11 +2325,12 @@ pub fn exp_select_matching_tree(
 /// Convenience wrapper: modify with default flags, failing on type
 /// mismatches (`ModifyFlag::DEFAULT`).
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn exp_modify(
     return_type: ExpType,
     bin_exp: Expression,
     modify_exp: Expression,
-    ctx: impl AsRef<[CdtContext]>,
+    ctx: &[CdtContext],
 ) -> Expression {
     exp_modify_by_path(
         return_type,
@@ -2265,11 +2344,12 @@ pub fn exp_modify(
 /// Convenience wrapper: modify with `NO_FAIL` so type-mismatched leaves
 /// are silently skipped instead of aborting the whole expression.
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn exp_modify_no_fail(
     return_type: ExpType,
     bin_exp: Expression,
     modify_exp: Expression,
-    ctx: impl AsRef<[CdtContext]>,
+    ctx: &[CdtContext],
 ) -> Expression {
     exp_modify_by_path(
         return_type,
@@ -2285,10 +2365,11 @@ pub fn exp_modify_no_fail(
 /// Equivalent
 /// to `exp_modify_by_path(return_type, ModifyFlag::DEFAULT, bin_exp, exp_remove_result(), ctx)`.
 /// Requires Aerospike Server version >= 8.1.1.
+#[must_use]
 pub fn exp_remove(
     return_type: ExpType,
     bin_exp: Expression,
-    ctx: impl AsRef<[CdtContext]>,
+    ctx: &[CdtContext],
 ) -> Expression {
     exp_modify_by_path(
         return_type,
@@ -2308,15 +2389,15 @@ mod tests {
     #[test]
     fn generic_bin_matches_typed_accessors() {
         assert_eq!(
-            bin("a".to_string(), ExpType::INT).base64().unwrap(),
+            bin("a".to_string(), ExpType::Int).base64().unwrap(),
             int_bin("a".to_string()).base64().unwrap()
         );
         assert_eq!(
-            bin("a".to_string(), ExpType::STRING).base64().unwrap(),
+            bin("a".to_string(), ExpType::String).base64().unwrap(),
             string_bin("a".to_string()).base64().unwrap()
         );
         assert_ne!(
-            bin("a".to_string(), ExpType::FLOAT).base64().unwrap(),
+            bin("a".to_string(), ExpType::Float).base64().unwrap(),
             int_bin("a".to_string()).base64().unwrap()
         );
     }
@@ -2402,17 +2483,17 @@ mod tests {
         // AsRef<[CdtContext]>.
         let path = sample_path();
         let direct = exp_select_by_path(
-            ExpType::LIST,
+            ExpType::List,
             SelectFlag::VALUE,
-            list_bin("b".into()),
+            list_bin("b"),
             &path,
         )
         .base64()
         .unwrap();
         let via_slice = exp_select_by_path(
-            ExpType::LIST,
+            ExpType::List,
             SelectFlag::VALUE,
-            list_bin("b".into()),
+            list_bin("b"),
             path.as_slice(),
         )
         .base64()
@@ -2423,13 +2504,13 @@ mod tests {
     #[test]
     fn exp_select_values_matches_raw_value_flag() {
         let ctx = vec![ctx_map_key(Value::from("book"))];
-        let wrapper = exp_select_values(ExpType::LIST, list_bin("b".into()), &ctx)
+        let wrapper = exp_select_values(ExpType::List, list_bin("b"), &ctx)
             .base64()
             .unwrap();
         let raw = exp_select_by_path(
-            ExpType::LIST,
+            ExpType::List,
             SelectFlag::VALUE,
-            list_bin("b".into()),
+            list_bin("b"),
             ctx.as_slice(),
         )
         .base64()
@@ -2440,13 +2521,13 @@ mod tests {
     #[test]
     fn exp_select_map_keys_matches_raw_map_key_flag() {
         let ctx = vec![ctx_map_key(Value::from("book"))];
-        let wrapper = exp_select_map_keys(ExpType::LIST, map_bin("m".into()), &ctx)
+        let wrapper = exp_select_map_keys(ExpType::List, map_bin("m"), &ctx)
             .base64()
             .unwrap();
         let raw = exp_select_by_path(
-            ExpType::LIST,
+            ExpType::List,
             SelectFlag::MAP_KEY,
-            map_bin("m".into()),
+            map_bin("m"),
             ctx.as_slice(),
         )
         .base64()
@@ -2457,13 +2538,13 @@ mod tests {
     #[test]
     fn exp_select_map_entries_matches_raw_map_key_value_flag() {
         let ctx = vec![ctx_map_key(Value::from("book"))];
-        let wrapper = exp_select_map_entries(ExpType::LIST, map_bin("m".into()), &ctx)
+        let wrapper = exp_select_map_entries(ExpType::List, map_bin("m"), &ctx)
             .base64()
             .unwrap();
         let raw = exp_select_by_path(
-            ExpType::LIST,
+            ExpType::List,
             SelectFlag::MAP_KEY_VALUE,
-            map_bin("m".into()),
+            map_bin("m"),
             ctx.as_slice(),
         )
         .base64()
@@ -2474,13 +2555,13 @@ mod tests {
     #[test]
     fn exp_select_matching_tree_matches_raw_matching_tree_flag() {
         let ctx = vec![ctx_map_key(Value::from("book"))];
-        let wrapper = exp_select_matching_tree(ExpType::MAP, map_bin("m".into()), &ctx)
+        let wrapper = exp_select_matching_tree(ExpType::Map, map_bin("m"), &ctx)
             .base64()
             .unwrap();
         let raw = exp_select_by_path(
-            ExpType::MAP,
+            ExpType::Map,
             SelectFlag::MATCHING_TREE,
-            map_bin("m".into()),
+            map_bin("m"),
             ctx.as_slice(),
         )
         .base64()
@@ -2492,13 +2573,13 @@ mod tests {
     fn exp_modify_matches_raw_default_flag() {
         let ctx = vec![ctx_map_key(Value::from("book"))];
         let modify_exp = int_val(7);
-        let wrapper = exp_modify(ExpType::MAP, map_bin("m".into()), modify_exp.clone(), &ctx)
+        let wrapper = exp_modify(ExpType::Map, map_bin("m"), modify_exp.clone(), &ctx)
             .base64()
             .unwrap();
         let raw = exp_modify_by_path(
-            ExpType::MAP,
+            ExpType::Map,
             ModifyFlag::DEFAULT,
-            map_bin("m".into()),
+            map_bin("m"),
             modify_exp,
             ctx.as_slice(),
         )
@@ -2512,13 +2593,13 @@ mod tests {
         let ctx = vec![ctx_map_key(Value::from("book"))];
         let modify_exp = int_val(7);
         let wrapper =
-            exp_modify_no_fail(ExpType::MAP, map_bin("m".into()), modify_exp.clone(), &ctx)
+            exp_modify_no_fail(ExpType::Map, map_bin("m"), modify_exp.clone(), &ctx)
                 .base64()
                 .unwrap();
         let raw = exp_modify_by_path(
-            ExpType::MAP,
+            ExpType::Map,
             ModifyFlag::NO_FAIL,
-            map_bin("m".into()),
+            map_bin("m"),
             modify_exp,
             ctx.as_slice(),
         )
@@ -2530,13 +2611,13 @@ mod tests {
     #[test]
     fn exp_remove_matches_raw_remove_result_modify() {
         let ctx = vec![ctx_map_key(Value::from("book"))];
-        let wrapper = exp_remove(ExpType::MAP, map_bin("m".into()), &ctx)
+        let wrapper = exp_remove(ExpType::Map, map_bin("m"), &ctx)
             .base64()
             .unwrap();
         let raw = exp_modify_by_path(
-            ExpType::MAP,
+            ExpType::Map,
             ModifyFlag::DEFAULT,
-            map_bin("m".into()),
+            map_bin("m"),
             exp_remove_result(),
             ctx.as_slice(),
         )
@@ -2569,7 +2650,7 @@ mod tests {
 
     #[test]
     fn map_keys_base64_roundtrips() {
-        let expr = map_keys(map_bin("m".into()));
+        let expr = map_keys(map_bin("m"));
         let b64 = expr.base64().unwrap();
         let decoded = from_base64(&b64).unwrap();
         assert_eq!(b64, decoded.base64().unwrap());
@@ -2577,7 +2658,7 @@ mod tests {
 
     #[test]
     fn map_values_base64_roundtrips() {
-        let expr = map_values(map_bin("m".into()));
+        let expr = map_values(map_bin("m"));
         let b64 = expr.base64().unwrap();
         let decoded = from_base64(&b64).unwrap();
         assert_eq!(b64, decoded.base64().unwrap());
@@ -2586,7 +2667,7 @@ mod tests {
     #[test]
     fn in_list_composes_with_map_keys() {
         // membership test against the keyset of a map bin
-        let expr = in_list(string_val("book".into()), map_keys(map_bin("m".into())));
+        let expr = in_list(string_val("book"), map_keys(map_bin("m")));
         let b64 = expr.base64().unwrap();
         let decoded = from_base64(&b64).unwrap();
         assert_eq!(b64, decoded.base64().unwrap());

@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -22,7 +22,7 @@ use crate::{CommitLevel, Expiration, GenerationPolicy, RecordExistsAction};
 /// `WritePolicy` encapsulates parameters for all write operations.
 // A policy is a bag of independent switches; an enum per pair would not read better.
 #[allow(clippy::struct_excessive_bools)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct WritePolicy {
     /// Base policy instance
@@ -106,9 +106,9 @@ impl WritePolicy {
         }
     }
 
-    /// Get the current Filter expression
-    pub const fn filter_expression(&self) -> &Option<Expression> {
-        &self.base_policy.filter_expression
+    /// The filter expression, if one is set (`base_policy.filter_expression`).
+    pub const fn filter_expression(&self) -> Option<&Expression> {
+        self.base_policy.filter_expression.as_ref()
     }
 }
 

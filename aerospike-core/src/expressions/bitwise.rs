@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -56,12 +56,13 @@ pub(crate) enum BitExpOp {
 /// use aerospike::operations::bitwise::{BitPolicy, BitwiseResizeFlags};
 /// use aerospike::expressions::{eq, int_val, blob_bin};
 /// use aerospike::expressions::bitwise::{count, resize};
-/// eq(
+/// let _ = eq(
 ///   count(int_val(0), int_val(3),
-///     resize(&BitPolicy::default(), int_val(4), BitwiseResizeFlags::Default, blob_bin("a".to_string()))),
+///     resize(&BitPolicy::default(), int_val(4), BitwiseResizeFlags::DEFAULT, blob_bin("a".to_string()))),
 ///   int_val(2));
 /// ```
 #[allow(clippy::trivially_copy_pass_by_ref)]
+#[must_use]
 pub fn resize(
     policy: &BitPolicy,
     byte_size: Expression,
@@ -71,8 +72,8 @@ pub fn resize(
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::Resize as i64)),
         ExpressionArgument::FilterExpression(byte_size),
-        ExpressionArgument::Value(Value::from(policy.flags)),
-        ExpressionArgument::Value(Value::from(resize_flags as u8)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
+        ExpressionArgument::Value(Value::from(resize_flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -90,12 +91,13 @@ pub fn resize(
 /// use aerospike::expressions::{eq, int_val, blob_val, blob_bin};
 /// use aerospike::expressions::bitwise::{count, insert};
 /// let bytes: Vec<u8> = vec![];
-/// eq(
+/// let _ = eq(
 ///   count(int_val(0), int_val(3),
 ///     insert(&BitPolicy::default(), int_val(1), blob_val(bytes), blob_bin("a".to_string()))),
 ///   int_val(2));
 /// ```
 #[allow(clippy::trivially_copy_pass_by_ref)]
+#[must_use]
 pub fn insert(
     policy: &BitPolicy,
     byte_offset: Expression,
@@ -106,7 +108,7 @@ pub fn insert(
         ExpressionArgument::Value(Value::from(BitExpOp::Insert as i64)),
         ExpressionArgument::FilterExpression(byte_offset),
         ExpressionArgument::FilterExpression(value),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -122,12 +124,13 @@ pub fn insert(
 /// use aerospike::expressions::{eq, int_val, blob_bin};
 /// use aerospike::operations::bitwise::BitPolicy;
 /// use aerospike::expressions::bitwise::{count, remove};
-/// eq(
+/// let _ = eq(
 ///   count(int_val(0), int_val(3),
 ///     remove(&BitPolicy::default(), int_val(2), int_val(3), blob_bin("a".to_string()))),
 ///   int_val(2));
 /// ```
 #[allow(clippy::trivially_copy_pass_by_ref)]
+#[must_use]
 pub fn remove(
     policy: &BitPolicy,
     byte_offset: Expression,
@@ -138,7 +141,7 @@ pub fn remove(
         ExpressionArgument::Value(Value::from(BitExpOp::Remove as i64)),
         ExpressionArgument::FilterExpression(byte_offset),
         ExpressionArgument::FilterExpression(byte_size),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -156,12 +159,13 @@ pub fn remove(
 /// use aerospike::expressions::{eq, int_val, blob_val, blob_bin};
 /// use aerospike::expressions::bitwise::{count, set};
 /// let bytes: Vec<u8> = vec![];
-/// eq(
+/// let _ = eq(
 ///   count(int_val(0), int_val(3),
 ///     set(&BitPolicy::default(), int_val(13), int_val(3), blob_val(bytes), blob_bin("a".to_string()))),
 ///   int_val(2));
 /// ```
 #[allow(clippy::trivially_copy_pass_by_ref)]
+#[must_use]
 pub fn set(
     policy: &BitPolicy,
     bit_offset: Expression,
@@ -174,7 +178,7 @@ pub fn set(
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(value),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -190,6 +194,7 @@ pub fn set(
 /// bin result = [0b00000001, 0b01000010, 0b01010111, 0b00000100, 0b00000101]
 /// ```
 #[allow(clippy::trivially_copy_pass_by_ref)]
+#[must_use]
 pub fn or(
     policy: &BitPolicy,
     bit_offset: Expression,
@@ -202,7 +207,7 @@ pub fn or(
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(value),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -218,6 +223,7 @@ pub fn or(
 /// bin result = [0b00000001, 0b01000010, 0b01010101, 0b00000100, 0b00000101]
 /// ```
 #[allow(clippy::trivially_copy_pass_by_ref)]
+#[must_use]
 pub fn xor(
     policy: &BitPolicy,
     bit_offset: Expression,
@@ -230,7 +236,7 @@ pub fn xor(
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(value),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -246,6 +252,7 @@ pub fn xor(
 /// bin result = [0b00000001, 0b01000010, 0b00000010, 0b00000000, 0b00000101]
 /// ```
 #[allow(clippy::trivially_copy_pass_by_ref)]
+#[must_use]
 pub fn and(
     policy: &BitPolicy,
     bit_offset: Expression,
@@ -258,7 +265,7 @@ pub fn and(
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(value),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -272,6 +279,7 @@ pub fn and(
 /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b01111010, 0b00000101]
 /// ```
 #[allow(clippy::trivially_copy_pass_by_ref)]
+#[must_use]
 pub fn not(
     policy: &BitPolicy,
     bit_offset: Expression,
@@ -282,7 +290,7 @@ pub fn not(
         ExpressionArgument::Value(Value::from(BitExpOp::Not as i64)),
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -297,6 +305,7 @@ pub fn not(
 /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b00101000]
 /// ```
 #[allow(clippy::trivially_copy_pass_by_ref)]
+#[must_use]
 pub fn lshift(
     policy: &BitPolicy,
     bit_offset: Expression,
@@ -309,7 +318,7 @@ pub fn lshift(
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(shift),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -324,6 +333,7 @@ pub fn lshift(
 /// bin result = [0b00000000, 0b11000010, 0b00000011, 0b00000100, 0b00000101]
 /// ```
 #[allow(clippy::trivially_copy_pass_by_ref)]
+#[must_use]
 pub fn rshift(
     policy: &BitPolicy,
     bit_offset: Expression,
@@ -336,7 +346,7 @@ pub fn rshift(
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(shift),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -355,6 +365,7 @@ pub fn rshift(
 /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b00000100, 0b10000101]
 /// ```
 #[allow(clippy::trivially_copy_pass_by_ref)]
+#[must_use]
 pub fn add(
     policy: &BitPolicy,
     bit_offset: Expression,
@@ -373,7 +384,7 @@ pub fn add(
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(value),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
         ExpressionArgument::Value(Value::from(flags)),
     ];
     add_write(bin, args)
@@ -393,6 +404,7 @@ pub fn add(
 /// bin result = [0b00000001, 0b01000010, 0b00000011, 0b0000011, 0b10000101]
 /// ```
 #[allow(clippy::trivially_copy_pass_by_ref)]
+#[must_use]
 pub fn subtract(
     policy: &BitPolicy,
     bit_offset: Expression,
@@ -411,7 +423,7 @@ pub fn subtract(
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(value),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
         ExpressionArgument::Value(Value::from(flags)),
     ];
     add_write(bin, args)
@@ -428,6 +440,7 @@ pub fn subtract(
 /// bin result = [0b00111111, 0b11000010, 0b00000011, 0b0000100, 0b00000101]
 /// ```
 #[allow(clippy::trivially_copy_pass_by_ref)]
+#[must_use]
 pub fn set_int(
     policy: &BitPolicy,
     bit_offset: Expression,
@@ -440,7 +453,7 @@ pub fn set_int(
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(value),
-        ExpressionArgument::Value(Value::from(policy.flags)),
+        ExpressionArgument::Value(Value::from(policy.flags.bits())),
     ];
     add_write(bin, args)
 }
@@ -456,17 +469,18 @@ pub fn set_int(
 ///
 /// use aerospike::expressions::{eq, int_val, blob_bin, blob_val};
 /// use aerospike::expressions::bitwise::get;
-/// eq(
+/// let _ = eq(
 ///   get(int_val(9), int_val(5), blob_bin("a".to_string())),
 ///   blob_val(vec![0b10000000]));
 /// ```
+#[must_use]
 pub fn get(bit_offset: Expression, bit_size: Expression, bin: Expression) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::Get as i64)),
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
     ];
-    add_read(bin, ExpType::BLOB, args)
+    add_read(bin, ExpType::Blob, args)
 }
 
 /// Creates expression that returns integer count of set bits from byte[] bin starting at
@@ -481,15 +495,16 @@ pub fn get(bit_offset: Expression, bit_size: Expression, bin: Expression) -> Exp
 ///
 /// use aerospike::expressions::{le, int_val, blob_bin};
 /// use aerospike::expressions::bitwise::count;
-/// le(count(int_val(0), int_val(5), blob_bin("a".to_string())), int_val(2));
+/// let _ = le(count(int_val(0), int_val(5), blob_bin("a".to_string())), int_val(2));
 /// ```
+#[must_use]
 pub fn count(bit_offset: Expression, bit_size: Expression, bin: Expression) -> Expression {
     let args = vec![
         ExpressionArgument::Value(Value::from(BitExpOp::Count as i64)),
         ExpressionArgument::FilterExpression(bit_offset),
         ExpressionArgument::FilterExpression(bit_size),
     ];
-    add_read(bin, ExpType::INT, args)
+    add_read(bin, ExpType::Int, args)
 }
 
 /// Creates expression that returns integer bit offset of the first specified value bit in byte[] bin
@@ -504,9 +519,10 @@ pub fn count(bit_offset: Expression, bit_size: Expression, bin: Expression) -> E
 /// // returns 5
 /// use aerospike::expressions::{eq, int_val, blob_bin};
 /// use aerospike::expressions::bitwise::lscan;
-/// eq(lscan(int_val(24), int_val(8), int_val(1), blob_bin("a".to_string())), int_val(5));
+/// let _ = eq(lscan(int_val(24), int_val(8), int_val(1), blob_bin("a".to_string())), int_val(5));
 /// ```
 ///
+#[must_use]
 pub fn lscan(
     bit_offset: Expression,
     bit_size: Expression,
@@ -519,7 +535,7 @@ pub fn lscan(
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(value),
     ];
-    add_read(bin, ExpType::INT, args)
+    add_read(bin, ExpType::Int, args)
 }
 
 /// Creates expression that returns integer bit offset of the last specified value bit in byte[] bin
@@ -536,9 +552,10 @@ pub fn lscan(
 ///
 /// use aerospike::expressions::{eq, int_val, blob_bin};
 /// use aerospike::expressions::bitwise::rscan;
-/// eq(rscan(int_val(32), int_val(8), int_val(1), blob_bin("a".to_string())), int_val(7));
+/// let _ = eq(rscan(int_val(32), int_val(8), int_val(1), blob_bin("a".to_string())), int_val(7));
 /// ```
 ///
+#[must_use]
 pub fn rscan(
     bit_offset: Expression,
     bit_size: Expression,
@@ -551,7 +568,7 @@ pub fn rscan(
         ExpressionArgument::FilterExpression(bit_size),
         ExpressionArgument::FilterExpression(value),
     ];
-    add_read(bin, ExpType::INT, args)
+    add_read(bin, ExpType::Int, args)
 }
 
 /// Creates expression that returns integer from byte[] bin starting at bitOffset for bitSize.
@@ -566,8 +583,9 @@ pub fn rscan(
 /// // returns 16899
 /// use aerospike::expressions::{eq, int_val, blob_bin};
 /// use aerospike::expressions::bitwise::get_int;
-/// eq(get_int(int_val(8), int_val(16), false, blob_bin("a".to_string())), int_val(16899));
+/// let _ = eq(get_int(int_val(8), int_val(16), false, blob_bin("a".to_string())), int_val(16899));
 /// ```
+#[must_use]
 pub fn get_int(
     bit_offset: Expression,
     bit_size: Expression,
@@ -582,7 +600,7 @@ pub fn get_int(
     if signed {
         args.push(ExpressionArgument::Value(Value::from(INT_FLAGS_SIGNED)));
     }
-    add_read(bin, ExpType::INT, args)
+    add_read(bin, ExpType::Int, args)
 }
 
 /// Creates an expression that returns the base64 text of the whole blob `bin`.
@@ -591,16 +609,17 @@ pub fn get_int(
 /// // The blob bin "a" is [0b00000001, 0b01000010]
 /// use aerospike::expressions::{blob_bin, eq, string_val};
 /// use aerospike::expressions::bitwise::b64_encode;
-/// eq(b64_encode(blob_bin("a".to_string())), string_val("AUI=".to_string()));
+/// let _ = eq(b64_encode(blob_bin("a".to_string())), string_val("AUI=".to_string()));
 /// ```
 ///
 /// Requires Aerospike Server version 8.2.0 or later.
+#[must_use]
 pub fn b64_encode(bin: Expression) -> Expression {
     let args = vec![ExpressionArgument::Value(Value::from(
         BitExpOp::B64Encode as i64,
     ))];
 
-    add_read(bin, ExpType::STRING, args)
+    add_read(bin, ExpType::String, args)
 }
 
 /// Creates an expression that returns the base64 text of a byte range of `bin`.
@@ -613,12 +632,13 @@ pub fn b64_encode(bin: Expression) -> Expression {
 /// // The first byte of blob bin "a" is 0b00000001
 /// use aerospike::expressions::{blob_bin, eq, int_val, string_val};
 /// use aerospike::expressions::bitwise::b64_encode_range;
-/// eq(
+/// let _ = eq(
 ///   b64_encode_range(int_val(0), int_val(1), false, blob_bin("a".to_string())),
 ///   string_val("AQ==".to_string()));
 /// ```
 ///
 /// Requires Aerospike Server version 8.2.0 or later.
+#[must_use]
 pub fn b64_encode_range(
     byte_offset: Expression,
     byte_size: Expression,
@@ -636,7 +656,7 @@ pub fn b64_encode_range(
         )));
     }
 
-    add_read(bin, ExpType::STRING, args)
+    add_read(bin, ExpType::String, args)
 }
 
 pub(crate) fn add_write(bin: Expression, arguments: Vec<ExpressionArgument>) -> Expression {
@@ -645,7 +665,7 @@ pub(crate) fn add_write(bin: Expression, arguments: Vec<ExpressionArgument>) -> 
         val: None,
         bin: Some(Box::new(bin)),
         flags: Some(MODULE | MODIFY),
-        module: Some(ExpType::BLOB),
+        module: Some(ExpType::Blob),
         exps: None,
         arguments: Some(arguments),
         bytes: None,

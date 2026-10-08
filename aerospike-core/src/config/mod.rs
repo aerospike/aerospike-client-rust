@@ -1,4 +1,4 @@
-// Copyright 2014-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -42,10 +42,13 @@ pub use yaml::YamlFileProvider;
 
 use serde::Deserialize;
 
-use crate::batch::{BatchDeletePolicyConfig, BatchUDFPolicyConfig};
-use crate::metrics::MetricsPolicyConfig;
-use crate::policy::{
-    BatchPolicyConfig, ClientPolicyConfig, QueryPolicyConfig, ReadPolicyConfig,
+// The sections of a document, generated from the policy types by
+// `#[derive(Config)]`: a custom [`ConfigProvider`] builds a [`ConfigDocument`]
+// from them.
+pub use crate::batch::{BatchDeletePolicyConfig, BatchUdfPolicyConfig};
+pub use crate::metrics::MetricsPolicyConfig;
+pub use crate::policy::{
+    BasePolicyConfig, BatchPolicyConfig, ClientPolicyConfig, QueryPolicyConfig, ReadPolicyConfig,
     TxnRollPolicyConfig, TxnVerifyPolicyConfig, WritePolicyConfig,
 };
 
@@ -104,7 +107,7 @@ pub struct DynamicConfig {
     pub batch_delete: Option<BatchDeletePolicyConfig>,
     /// Overrides for per-record batch *UDF* sub-policies (`send_key`,
     /// `durable_delete`).
-    pub batch_udf: Option<BatchUDFPolicyConfig>,
+    pub batch_udf: Option<BatchUdfPolicyConfig>,
     /// Overrides for the multi-record-transaction *verify* policy (applied by
     /// `commit`). Carries the `BasePolicy` knobs (timeouts, retries, read
     /// modes).
@@ -198,18 +201,18 @@ pub struct OperationalMetricsConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::batch::{BatchDeletePolicy, BatchUDFPolicy};
+    use crate::batch::{BatchDeletePolicy, BatchUdfPolicy};
     use crate::metrics::MetricsPolicy;
     use crate::policy::{
-        BatchPolicy, ClientPolicy, QueryDuration, QueryPolicy, ReadModeAP, ReadModeSC, ReadPolicy,
+        BatchPolicy, ClientPolicy, QueryDuration, QueryPolicy, ReadModeAp, ReadModeSc, ReadPolicy,
         Replica, TxnRollPolicy, TxnVerifyPolicy, WritePolicy,
     };
 
     /// Parses a single YAML scalar into a config type `T`.
     fn parse<T: for<'de> serde::Deserialize<'de> + 'static>(
         yaml: &str,
-    ) -> Result<T, serde_yml::Error> {
-        serde_yml::from_str(yaml)
+    ) -> Result<T, serde_norway::Error> {
+        serde_norway::from_str(yaml)
     }
 
     const SAMPLE: &str = r#"
@@ -246,7 +249,7 @@ dynamic:
 "#;
 
     fn document() -> ConfigDocument {
-        serde_yml::from_str(SAMPLE).expect("sample config should parse")
+        serde_norway::from_str(SAMPLE).expect("sample config should parse")
     }
 
     #[test]
@@ -263,15 +266,15 @@ dynamic:
 
     #[test]
     fn read_section_merges_base_and_replica() {
-        // Flattened base-policy keys + the read-specific replica key both apply.
+        // Every flattened base-policy key applies, `replica` included.
         let read = document().dynamic.unwrap().read.unwrap();
         let mut policy = ReadPolicy::default();
         read.merge_into(&mut policy);
-        assert_eq!(policy.base_policy.read_mode_ap, ReadModeAP::All);
+        assert_eq!(policy.base_policy.read_mode_ap, ReadModeAp::All);
         assert_eq!(policy.base_policy.socket_timeout, 1234);
         assert_eq!(policy.base_policy.total_timeout, 5678);
         assert_eq!(policy.base_policy.max_retries, 9);
-        assert_eq!(policy.replica, Replica::PreferRack);
+        assert_eq!(policy.base_policy.replica, Replica::PreferRack);
     }
 
     #[test]
@@ -347,7 +350,7 @@ dynamic:
         assert_eq!(mp.latency_unit, LatencyUnit::Milliseconds);
 
         // `us` is the other spelling.
-        let doc: ConfigDocument = serde_yml::from_str(
+        let doc: ConfigDocument = serde_norway::from_str(
             "dynamic:\n  metrics:\n    extended:\n      operational:\n        latency_unit: us\n",
         )
         .unwrap();
@@ -359,7 +362,7 @@ dynamic:
         assert_eq!(mp.latency_columns, MetricsPolicy::millis().latency_columns);
 
         // Absent key leaves the policy's unit alone.
-        let doc: ConfigDocument = serde_yml::from_str(
+        let doc: ConfigDocument = serde_norway::from_str(
             "dynamic:\n  metrics:\n    extended:\n      operational:\n        latency_columns: 9\n",
         )
         .unwrap();
@@ -369,7 +372,7 @@ dynamic:
         assert_eq!(mp.latency_columns, 9);
 
         // A bad value is a config error, not a silent fallback.
-        assert!(serde_yml::from_str::<ConfigDocument>(
+        assert!(serde_norway::from_str::<ConfigDocument>(
             "dynamic:\n  metrics:\n    extended:\n      operational:\n        latency_unit: nanos\n"
         )
         .is_err());
@@ -434,7 +437,7 @@ labels:
 
     #[test]
     fn txn_verify_and_roll_sections_merge() {
-        let doc: ConfigDocument = serde_yml::from_str(
+        let doc: ConfigDocument = serde_norway::from_str(
             "version: \"1.0.0\"\n\
              dynamic:\n\
              \x20 txn_verify:\n    socket_timeout: 1500\n    max_retries: 9\n    read_mode_sc: LINEARIZE\n    replica: PREFER_RACK\n\
@@ -449,10 +452,10 @@ labels:
         assert_eq!(vp.batch_policy.base_policy.max_retries, 9);
         assert_eq!(
             vp.batch_policy.base_policy.read_mode_sc,
-            ReadModeSC::Linearize
+            ReadModeSc::Linearize
         );
         // Batch knob (replica) flows through — the whole point of wrapping BatchPolicy.
-        assert_eq!(vp.batch_policy.replica, Replica::PreferRack);
+        assert_eq!(vp.batch_policy.base_policy.replica, Replica::PreferRack);
         // total_timeout is absent → the TxnVerifyPolicy default (10s) is preserved.
         assert_eq!(vp.batch_policy.base_policy.total_timeout, 10_000);
 
@@ -470,7 +473,7 @@ labels:
         // The provider enforces `version` presence; the document model itself
         // tolerates its absence so parsing never hard-fails on it.
         let doc: ConfigDocument =
-            serde_yml::from_str("dynamic:\n  read:\n    max_retries: 1\n").unwrap();
+            serde_norway::from_str("dynamic:\n  read:\n    max_retries: 1\n").unwrap();
         assert!(doc.version.is_none());
         // The flattened base config still captured the key.
         let read = doc.dynamic.unwrap().read.unwrap();
@@ -484,33 +487,33 @@ labels:
 
     #[test]
     fn read_mode_ap_enum_deserialization() {
-        assert_eq!(parse::<ReadModeAP>("ONE").unwrap(), ReadModeAP::One);
-        assert_eq!(parse::<ReadModeAP>("ALL").unwrap(), ReadModeAP::All);
-        assert_eq!(parse::<ReadModeAP>("one").unwrap(), ReadModeAP::One); // case-insensitive
-        assert!(parse::<ReadModeAP>("\"foo\"").is_err());
-        assert!(parse::<ReadModeAP>("\"\"").is_err());
-        assert!(parse::<ReadModeAP>("\"123\"").is_err());
+        assert_eq!(parse::<ReadModeAp>("ONE").unwrap(), ReadModeAp::One);
+        assert_eq!(parse::<ReadModeAp>("ALL").unwrap(), ReadModeAp::All);
+        assert_eq!(parse::<ReadModeAp>("one").unwrap(), ReadModeAp::One); // case-insensitive
+        assert!(parse::<ReadModeAp>("\"foo\"").is_err());
+        assert!(parse::<ReadModeAp>("\"\"").is_err());
+        assert!(parse::<ReadModeAp>("\"123\"").is_err());
     }
 
     #[test]
     fn read_mode_sc_enum_deserialization() {
-        assert_eq!(parse::<ReadModeSC>("SESSION").unwrap(), ReadModeSC::Session);
+        assert_eq!(parse::<ReadModeSc>("SESSION").unwrap(), ReadModeSc::Session);
         assert_eq!(
-            parse::<ReadModeSC>("LINEARIZE").unwrap(),
-            ReadModeSC::Linearize
+            parse::<ReadModeSc>("LINEARIZE").unwrap(),
+            ReadModeSc::Linearize
         );
         assert_eq!(
-            parse::<ReadModeSC>("ALLOW_REPLICA").unwrap(),
-            ReadModeSC::AllowReplica
+            parse::<ReadModeSc>("ALLOW_REPLICA").unwrap(),
+            ReadModeSc::AllowReplica
         );
         assert_eq!(
-            parse::<ReadModeSC>("ALLOW_UNAVAILABLE").unwrap(),
-            ReadModeSC::AllowUnavailable
+            parse::<ReadModeSc>("ALLOW_UNAVAILABLE").unwrap(),
+            ReadModeSc::AllowUnavailable
         );
-        assert_eq!(parse::<ReadModeSC>("session").unwrap(), ReadModeSC::Session);
-        assert!(parse::<ReadModeSC>("\"foo\"").is_err());
-        assert!(parse::<ReadModeSC>("\"\"").is_err());
-        assert!(parse::<ReadModeSC>("\"123\"").is_err());
+        assert_eq!(parse::<ReadModeSc>("session").unwrap(), ReadModeSc::Session);
+        assert!(parse::<ReadModeSc>("\"foo\"").is_err());
+        assert!(parse::<ReadModeSc>("\"\"").is_err());
+        assert!(parse::<ReadModeSc>("\"123\"").is_err());
     }
 
     #[test]
@@ -540,7 +543,7 @@ labels:
         );
         assert_eq!(
             parse::<QueryDuration>("LONG_RELAX_AP").unwrap(),
-            QueryDuration::LongRelaxAP
+            QueryDuration::LongRelaxAp
         );
         assert_eq!(parse::<QueryDuration>("long").unwrap(), QueryDuration::Long);
         assert!(parse::<QueryDuration>("\"foo\"").is_err());
@@ -560,15 +563,15 @@ labels:
         .unwrap();
         let mut p = ReadPolicy::default();
         cfg.merge_into(&mut p);
-        assert_eq!(p.base_policy.read_mode_ap, ReadModeAP::All);
-        assert_eq!(p.base_policy.read_mode_sc, ReadModeSC::Linearize);
+        assert_eq!(p.base_policy.read_mode_ap, ReadModeAp::All);
+        assert_eq!(p.base_policy.read_mode_sc, ReadModeSc::Linearize);
         assert_eq!(p.base_policy.socket_timeout, 3);
         assert_eq!(p.base_policy.total_timeout, 5);
         assert_eq!(p.base_policy.max_retries, 3);
         assert_eq!(p.base_policy.sleep_between_retries, 2);
         assert_eq!(p.base_policy.timeout_delay, 7);
         assert_eq!(p.base_policy.error_detail_verbosity, 2);
-        assert_eq!(p.replica, Replica::PreferRack);
+        assert_eq!(p.base_policy.replica, Replica::PreferRack);
     }
 
     #[test]
@@ -578,7 +581,7 @@ labels:
         let mut p = ReadPolicy::default();
         cfg.merge_into(&mut p);
         assert_eq!(p.base_policy.socket_timeout, 3); // overridden
-        assert_eq!(p.replica, Replica::PreferRack); // overridden
+        assert_eq!(p.base_policy.replica, Replica::PreferRack); // overridden
         assert_eq!(
             p.base_policy.total_timeout,
             default.base_policy.total_timeout
@@ -619,7 +622,7 @@ labels:
         assert_eq!(p.base_policy.total_timeout, 3000);
         assert_eq!(p.base_policy.max_retries, 3);
         assert_eq!(p.base_policy.sleep_between_retries, 2);
-        assert_eq!(p.replica, Replica::PreferRack);
+        assert_eq!(p.base_policy.replica, Replica::PreferRack);
         assert!(!p.include_bin_data);
         assert_eq!(p.record_queue_size, 50);
         assert_eq!(p.expected_duration, QueryDuration::Short);
@@ -632,7 +635,7 @@ labels:
         let mut p = QueryPolicy::default();
         cfg.merge_into(&mut p);
         assert_eq!(p.base_policy.socket_timeout, 3);
-        assert_eq!(p.replica, Replica::PreferRack);
+        assert_eq!(p.base_policy.replica, Replica::PreferRack);
         assert_eq!(p.base_policy.max_retries, default.base_policy.max_retries); // kept (5)
         assert_eq!(p.expected_duration, default.expected_duration); // kept (Long)
         assert_eq!(p.include_bin_data, default.include_bin_data); // kept (true)
@@ -650,7 +653,7 @@ labels:
         assert_eq!(p.base_policy.socket_timeout, 3);
         assert_eq!(p.base_policy.total_timeout, 15);
         assert_eq!(p.base_policy.max_retries, 5);
-        assert_eq!(p.replica, Replica::Master);
+        assert_eq!(p.base_policy.replica, Replica::Master);
         assert!(!p.allow_inline);
         assert!(p.allow_inline_ssd);
         assert!(!p.respond_all_keys);
@@ -665,7 +668,7 @@ labels:
         assert!(!p.allow_inline); // overridden
         assert_eq!(p.allow_inline_ssd, default.allow_inline_ssd); // kept
         assert_eq!(p.respond_all_keys, default.respond_all_keys); // kept
-        assert_eq!(p.replica, default.replica); // kept
+        assert_eq!(p.base_policy.replica, default.base_policy.replica); // kept
     }
 
     #[test]
@@ -719,7 +722,7 @@ labels:
 
     #[test]
     fn all_batch_sub_sections_parse() {
-        let doc: ConfigDocument = serde_yml::from_str(
+        let doc: ConfigDocument = serde_norway::from_str(
             "version: \"1.0.0\"\n\
              dynamic:\n\
              \x20 batch_read:\n    read_mode_ap: ALL\n    socket_timeout: 3\n    replica: MASTER\n\
@@ -746,10 +749,10 @@ labels:
         .unwrap();
         let mut p = ReadPolicy::default();
         cfg.read.merge_into(&mut p);
-        assert_eq!(p.base_policy.read_mode_ap, ReadModeAP::All);
+        assert_eq!(p.base_policy.read_mode_ap, ReadModeAp::All);
         assert_eq!(p.base_policy.socket_timeout, 3);
         assert_eq!(p.base_policy.total_timeout, 15);
-        assert_eq!(p.replica, Replica::Master);
+        assert_eq!(p.base_policy.replica, Replica::Master);
         // Batch wire flags parse into the section (applied to the parent policy).
         assert_eq!(cfg.allow_inline, Some(false));
         assert_eq!(cfg.respond_all_keys, Some(false));
@@ -802,8 +805,8 @@ labels:
 
     #[test]
     fn batch_udf_section_merges_send_key_and_durable_delete() {
-        let cfg: BatchUDFPolicyConfig = parse("durable_delete: true\nsend_key: true\n").unwrap();
-        let mut p = BatchUDFPolicy::default();
+        let cfg: BatchUdfPolicyConfig = parse("durable_delete: true\nsend_key: true\n").unwrap();
+        let mut p = BatchUdfPolicy::default();
         cfg.merge_into(&mut p);
         assert!(p.durable_delete);
         assert!(p.send_key);

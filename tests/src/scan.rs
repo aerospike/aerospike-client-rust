@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -135,7 +135,7 @@ async fn scan_single_consumer_with_cancel() {
         rs.close();
 
         assert!(!rs.is_active());
-        pf = rs.partition_filter().await.unwrap();
+        pf = rs.partition_filter().unwrap();
         if count == 1000 {
             assert!(pf.done());
         }
@@ -174,7 +174,7 @@ async fn scan_cancel_midway_resumes_without_loss() {
         while got < 100 {
             match stream.next().await {
                 Some(Ok(rec)) => {
-                    seen.insert(rec.key.as_ref().unwrap().digest);
+                    seen.insert(rec.key.as_ref().unwrap().digest());
                     got += 1;
                 }
                 Some(Err(err)) => panic!("{err:?}"),
@@ -184,7 +184,7 @@ async fn scan_cancel_midway_resumes_without_loss() {
         consumed += got;
         drop(stream);
         rs.close();
-        pf = rs.partition_filter().await.unwrap();
+        pf = rs.partition_filter().unwrap();
     }
 
     // The contract is at-least-once: every record seen, duplicates
@@ -231,7 +231,7 @@ async fn scan_multi_consumer_cancel_resumes_without_loss() {
                         Some(Ok(rec)) => {
                             seen.lock()
                                 .unwrap()
-                                .insert(rec.key.as_ref().unwrap().digest);
+                                .insert(rec.key.as_ref().unwrap().digest());
                             got += 1;
                         }
                         Some(Err(err)) => panic!("{err:?}"),
@@ -244,7 +244,7 @@ async fn scan_multi_consumer_cancel_resumes_without_loss() {
         let (a, b) = futures::join!(consume(50), consume(50));
         consumed += a + b;
         rs.close();
-        pf = rs.partition_filter().await.unwrap();
+        pf = rs.partition_filter().unwrap();
     }
 
     let distinct = seen.lock().unwrap().len();
@@ -324,7 +324,7 @@ async fn scan_single_consumer_with_cursor() {
             .count()
             .await;
         assert!(!rs.is_active());
-        pf = rs.partition_filter().await.unwrap();
+        pf = rs.partition_filter().unwrap();
         if count == 1000 {
             assert!(pf.done());
         }
@@ -341,7 +341,7 @@ async fn scan_single_consumer_rps() {
         return;
     }
 
-    let node_count = client.cluster.nodes().len();
+    let node_count = client.nodes().len();
     let namespace = common::namespace();
     let set_name = create_test_set(client, EXPECTED).await;
 

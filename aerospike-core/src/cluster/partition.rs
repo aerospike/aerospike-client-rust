@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use crate::cluster::node;
 use crate::cluster::{Cluster, Node};
 use crate::errors::{Error, Result};
-use crate::policy::{ReadModeSC, Replica};
+use crate::policy::{ReadModeSc, Replica};
 use crate::Key;
 
 /// Partition encapsulates partition information used for node selection.
@@ -70,21 +70,22 @@ impl<'a> Partition<'a> {
         }
     }
 
-    /// Create a partition for write operations.
-    pub fn for_write(key: &'a Key) -> Self {
+    /// Create a partition for write operations. `Sequence` and `PreferRack`
+    /// walk the replicas on retry; the other modes always target the master.
+    pub fn for_write(key: &'a Key, replica: Replica) -> Self {
         let mut p = Self::new_by_key(key);
-        p.replica = Replica::Master;
+        p.replica = replica;
         p.is_write = true;
         p
     }
 
     /// Create a partition for read operations, applying SC mode overrides
-    /// based on the namespace's SC mode and the policy's `ReadModeSC` setting.
+    /// based on the namespace's SC mode and the policy's `ReadModeSc` setting.
     pub fn for_read(
         cluster: &Cluster,
         key: &'a Key,
         replica: Replica,
-        read_mode_sc: ReadModeSC,
+        read_mode_sc: ReadModeSc,
     ) -> Self {
         let mut p = Self::new_by_key(key);
         p.replica = replica;
@@ -94,11 +95,11 @@ impl<'a> Partition<'a> {
         if let Some(partitions) = pmap.get(&key.namespace) {
             if partitions.sc_mode {
                 match read_mode_sc {
-                    ReadModeSC::Session => {
+                    ReadModeSc::Session => {
                         p.replica = Replica::Master;
                         p.linearize = false;
                     }
-                    ReadModeSC::Linearize => {
+                    ReadModeSc::Linearize => {
                         p.replica = if replica == Replica::PreferRack {
                             Replica::Sequence
                         } else {
@@ -115,21 +116,6 @@ impl<'a> Partition<'a> {
         }
 
         p
-    }
-
-    /// Get the replica policy for SC (strong consistency) mode.
-    pub fn get_replica_policy_sc(replica: Replica, read_mode_sc: ReadModeSC) -> Replica {
-        match read_mode_sc {
-            ReadModeSC::Session => Replica::Master,
-            ReadModeSC::Linearize => {
-                if replica == Replica::PreferRack {
-                    Replica::Sequence
-                } else {
-                    replica
-                }
-            }
-            _ => replica,
-        }
     }
 
     /// Get the appropriate node for this partition, dispatching to

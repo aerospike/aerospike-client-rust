@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -23,16 +23,22 @@ use crate::{CollectionIndexType, Value};
 ///
 /// Supported types: integers (`i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `isize`,
 /// `usize`), strings (`String`, `&str`), and blobs (`Vec<u8>`, `&[u8]`).
-pub trait EqFilterValue {
+pub trait EqFilterValue: sealed::Sealed {
     /// Converts this value into a `Value` for use in a filter.
     fn into_filter_value(self) -> Value;
+}
+
+/// The filter value traits are sealed: the server accepts exactly the types
+/// implemented here, so there is nothing a downstream impl could add.
+mod sealed {
+    pub trait Sealed {}
 }
 
 /// Marker trait for types valid in range filters.
 ///
 /// Only integer types are supported: `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`,
 /// `isize`, `usize`.
-pub trait RangeFilterValue {
+pub trait RangeFilterValue: sealed::Sealed {
     /// Converts this value into a `Value` for use in a range filter.
     fn into_filter_value(self) -> Value;
 }
@@ -43,6 +49,8 @@ pub trait RangeFilterValue {
 macro_rules! impl_eq_filter_int {
     ($($t:ty),*) => {
         $(
+            impl sealed::Sealed for $t {}
+            impl sealed::Sealed for &$t {}
             impl EqFilterValue for $t {
                 fn into_filter_value(self) -> Value { Value::from(self) }
             }
@@ -60,6 +68,14 @@ macro_rules! impl_eq_filter_int {
 }
 
 impl_eq_filter_int!(i8, u8, i16, u16, i32, u32, i64, u64, isize, usize);
+
+impl sealed::Sealed for String {}
+impl sealed::Sealed for &String {}
+impl sealed::Sealed for &str {}
+impl sealed::Sealed for Vec<u8> {}
+impl sealed::Sealed for &Vec<u8> {}
+impl sealed::Sealed for &[u8] {}
+impl sealed::Sealed for Value {}
 
 // String types
 impl EqFilterValue for String {
@@ -178,7 +194,7 @@ fn geo_circle_json(lng: f64, lat: f64, radius: f64) -> Value {
 ///     .expression(exp)
 ///     .context(vec![ctx_list_index(0)]);
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Filter {
     pub(crate) bin_name: String,
     pub(crate) collection_index_type: CollectionIndexType,
@@ -214,20 +230,20 @@ pub struct Filter {
 fn bound_particle_type(value: &Value) -> u8 {
     value
         .particle_type()
-        .unwrap_or(crate::commands::particle_type::ParticleType::NULL as u8)
+        .unwrap_or(crate::commands::particle_type::ParticleType::Null as u8)
 }
 
 impl Filter {
     /// Creates a new filter instance. For internal use only.
     pub(crate) fn new(
-        bin_name: &str,
+        bin_name: impl Into<String>,
         collection_index_type: CollectionIndexType,
         value_particle_type: u8,
         begin: Value,
         end: Value,
     ) -> Self {
         Filter {
-            bin_name: bin_name.to_owned(),
+            bin_name: bin_name.into(),
             collection_index_type,
             value_particle_type,
             begin,
@@ -242,18 +258,18 @@ impl Filter {
     /// Replay opaque `INDEX_RANGE` field body on execute (field `22`).
     ///
     /// Bytes must already be in execute shape (`bin_name_len = 0` when paired with field `21`).
-    pub fn from_wire_range(
-        index_name: &str,
+    pub(crate) fn from_wire_range(
+        index_name: impl Into<String>,
         range_bytes: Vec<u8>,
         collection_index_type: CollectionIndexType,
     ) -> Self {
         Filter {
             bin_name: String::new(),
             collection_index_type,
-            value_particle_type: ParticleType::INTEGER as u8,
+            value_particle_type: ParticleType::Integer as u8,
             begin: Value::from(0_i64),
             end: Value::from(0_i64),
-            index_name: Some(index_name.to_owned()),
+            index_name: Some(index_name.into()),
             context: None,
             expression: None,
             wire_range_bytes: Some(range_bytes),
@@ -266,7 +282,7 @@ impl Filter {
 
     /// Creates a new filter instance that targets a specific secondary index by name.
     pub(crate) fn new_by_index(
-        index_name: &str,
+        index_name: impl Into<String>,
         collection_index_type: CollectionIndexType,
         value_particle_type: u8,
         begin: Value,
@@ -278,7 +294,7 @@ impl Filter {
             value_particle_type,
             begin,
             end,
-            index_name: Some(index_name.to_owned()),
+            index_name: Some(index_name.into()),
             context: None,
             expression: None,
             wire_range_bytes: None,
@@ -300,7 +316,7 @@ impl Filter {
     /// let f = Filter::equal("bin_name", "hello");
     /// let f = Filter::equal("bin_name", vec![1u8, 2, 3]);
     /// ```
-    pub fn equal(bin_name: &str, value: impl EqFilterValue) -> Self {
+    pub fn equal(bin_name: impl Into<String>, value: impl EqFilterValue) -> Self {
         let val = value.into_filter_value();
         Filter::new(
             bin_name,
@@ -312,7 +328,7 @@ impl Filter {
     }
 
     /// Creates an equality filter for query targeting a specific secondary index by name.
-    pub fn equal_by_index(index_name: &str, value: impl EqFilterValue) -> Self {
+    pub fn equal_by_index(index_name: impl Into<String>, value: impl EqFilterValue) -> Self {
         let val = value.into_filter_value();
         Filter::new_by_index(
             index_name,
@@ -335,7 +351,7 @@ impl Filter {
     /// # use aerospike_core::query::Filter;
     /// let f = Filter::range("bin_name", 0_i64, 100_i64);
     /// ```
-    pub fn range(bin_name: &str, begin: impl RangeFilterValue, end: impl RangeFilterValue) -> Self {
+    pub fn range(bin_name: impl Into<String>, begin: impl RangeFilterValue, end: impl RangeFilterValue) -> Self {
         let begin = begin.into_filter_value();
         let end = end.into_filter_value();
         Filter::new(
@@ -349,7 +365,7 @@ impl Filter {
 
     /// Creates a range filter for query targeting a specific secondary index by name.
     pub fn range_by_index(
-        index_name: &str,
+        index_name: impl Into<String>,
         begin: impl RangeFilterValue,
         end: impl RangeFilterValue,
     ) -> Self {
@@ -378,7 +394,7 @@ impl Filter {
     /// # use aerospike_core::CollectionIndexType;
     /// let f = Filter::contains("bin_name", 42_i64, CollectionIndexType::List);
     /// ```
-    pub fn contains(bin_name: &str, value: impl EqFilterValue, cit: CollectionIndexType) -> Self {
+    pub fn contains(bin_name: impl Into<String>, value: impl EqFilterValue, cit: CollectionIndexType) -> Self {
         let val = value.into_filter_value();
         Filter::new(bin_name, cit, bound_particle_type(&val), val.clone(), val)
     }
@@ -386,7 +402,7 @@ impl Filter {
     /// Creates a contains filter for query on a collection index targeting a specific secondary
     /// index by name.
     pub fn contains_by_index(
-        index_name: &str,
+        index_name: impl Into<String>,
         value: impl EqFilterValue,
         cit: CollectionIndexType,
     ) -> Self {
@@ -408,7 +424,7 @@ impl Filter {
     /// let f = Filter::contains_range("bin_name", 0_i64, 100_i64, CollectionIndexType::List);
     /// ```
     pub fn contains_range(
-        bin_name: &str,
+        bin_name: impl Into<String>,
         begin: impl RangeFilterValue,
         end: impl RangeFilterValue,
         cit: CollectionIndexType,
@@ -421,7 +437,7 @@ impl Filter {
     /// Creates a contains range filter for query on a collection index targeting a specific
     /// secondary index by name.
     pub fn contains_range_by_index(
-        index_name: &str,
+        index_name: impl Into<String>,
         begin: impl RangeFilterValue,
         end: impl RangeFilterValue,
         cit: CollectionIndexType,
@@ -437,25 +453,13 @@ impl Filter {
 
     /// Creates a geo-spatial "points within region" filter for queries.
     ///
-    /// For queries on a collection index, use [`Filter::geo_within_region_cit`].
-    pub fn geo_within_region(bin_name: &str, region: &str) -> Self {
+    /// For a collection index, chain [`collection_type`](Self::collection_type).
+    pub fn geo_within_region(bin_name: impl Into<String>, region: &str) -> Self {
         let region = Value::String(region.to_owned());
         Filter::new(
             bin_name,
             CollectionIndexType::Default,
-            ParticleType::GEOJSON as u8,
-            region.clone(),
-            region,
-        )
-    }
-
-    /// Creates a geo-spatial "points within region" filter for queries on a collection index.
-    pub fn geo_within_region_cit(bin_name: &str, region: &str, cit: CollectionIndexType) -> Self {
-        let region = Value::String(region.to_owned());
-        Filter::new(
-            bin_name,
-            cit,
-            ParticleType::GEOJSON as u8,
+            ParticleType::GeoJson as u8,
             region.clone(),
             region,
         )
@@ -463,29 +467,12 @@ impl Filter {
 
     /// Creates a geo-spatial "points within region" filter targeting a specific secondary index
     /// by name.
-    pub fn geo_within_region_by_index(index_name: &str, region: &str) -> Self {
+    pub fn geo_within_region_by_index(index_name: impl Into<String>, region: &str) -> Self {
         let region = Value::String(region.to_owned());
         Filter::new_by_index(
             index_name,
             CollectionIndexType::Default,
-            ParticleType::GEOJSON as u8,
-            region.clone(),
-            region,
-        )
-    }
-
-    /// Creates a geo-spatial "points within region" filter targeting a specific secondary index
-    /// by name on a collection index.
-    pub fn geo_within_region_by_index_cit(
-        index_name: &str,
-        region: &str,
-        cit: CollectionIndexType,
-    ) -> Self {
-        let region = Value::String(region.to_owned());
-        Filter::new_by_index(
-            index_name,
-            cit,
-            ParticleType::GEOJSON as u8,
+            ParticleType::GeoJson as u8,
             region.clone(),
             region,
         )
@@ -497,31 +484,13 @@ impl Filter {
 
     /// Creates a geo-spatial "points within radius" filter for queries.
     ///
-    /// For queries on a collection index, use [`Filter::geo_within_radius_cit`].
-    pub fn geo_within_radius(bin_name: &str, lng: f64, lat: f64, radius: f64) -> Self {
+    /// For a collection index, chain [`collection_type`](Self::collection_type).
+    pub fn geo_within_radius(bin_name: impl Into<String>, lng: f64, lat: f64, radius: f64) -> Self {
         let geo_json = geo_circle_json(lng, lat, radius);
         Filter::new(
             bin_name,
             CollectionIndexType::Default,
-            ParticleType::GEOJSON as u8,
-            geo_json.clone(),
-            geo_json,
-        )
-    }
-
-    /// Creates a geo-spatial "points within radius" filter for queries on a collection index.
-    pub fn geo_within_radius_cit(
-        bin_name: &str,
-        lng: f64,
-        lat: f64,
-        radius: f64,
-        cit: CollectionIndexType,
-    ) -> Self {
-        let geo_json = geo_circle_json(lng, lat, radius);
-        Filter::new(
-            bin_name,
-            cit,
-            ParticleType::GEOJSON as u8,
+            ParticleType::GeoJson as u8,
             geo_json.clone(),
             geo_json,
         )
@@ -529,31 +498,12 @@ impl Filter {
 
     /// Creates a geo-spatial "points within radius" filter targeting a specific secondary index
     /// by name.
-    pub fn geo_within_radius_by_index(index_name: &str, lng: f64, lat: f64, radius: f64) -> Self {
+    pub fn geo_within_radius_by_index(index_name: impl Into<String>, lng: f64, lat: f64, radius: f64) -> Self {
         let geo_json = geo_circle_json(lng, lat, radius);
         Filter::new_by_index(
             index_name,
             CollectionIndexType::Default,
-            ParticleType::GEOJSON as u8,
-            geo_json.clone(),
-            geo_json,
-        )
-    }
-
-    /// Creates a geo-spatial "points within radius" filter targeting a specific secondary index
-    /// by name on a collection index.
-    pub fn geo_within_radius_by_index_cit(
-        index_name: &str,
-        lng: f64,
-        lat: f64,
-        radius: f64,
-        cit: CollectionIndexType,
-    ) -> Self {
-        let geo_json = geo_circle_json(lng, lat, radius);
-        Filter::new_by_index(
-            index_name,
-            cit,
-            ParticleType::GEOJSON as u8,
+            ParticleType::GeoJson as u8,
             geo_json.clone(),
             geo_json,
         )
@@ -565,25 +515,13 @@ impl Filter {
 
     /// Creates a geo-spatial "regions containing point" filter for queries.
     ///
-    /// For queries on a collection index, use [`Filter::geo_contains_cit`].
-    pub fn geo_contains(bin_name: &str, point: &str) -> Self {
+    /// For a collection index, chain [`collection_type`](Self::collection_type).
+    pub fn geo_contains(bin_name: impl Into<String>, point: &str) -> Self {
         let point = Value::String(point.to_owned());
         Filter::new(
             bin_name,
             CollectionIndexType::Default,
-            ParticleType::GEOJSON as u8,
-            point.clone(),
-            point,
-        )
-    }
-
-    /// Creates a geo-spatial "regions containing point" filter for queries on a collection index.
-    pub fn geo_contains_cit(bin_name: &str, point: &str, cit: CollectionIndexType) -> Self {
-        let point = Value::String(point.to_owned());
-        Filter::new(
-            bin_name,
-            cit,
-            ParticleType::GEOJSON as u8,
+            ParticleType::GeoJson as u8,
             point.clone(),
             point,
         )
@@ -591,29 +529,12 @@ impl Filter {
 
     /// Creates a geo-spatial "regions containing point" filter targeting a specific secondary
     /// index by name.
-    pub fn geo_contains_by_index(index_name: &str, point: &str) -> Self {
+    pub fn geo_contains_by_index(index_name: impl Into<String>, point: &str) -> Self {
         let point = Value::String(point.to_owned());
         Filter::new_by_index(
             index_name,
             CollectionIndexType::Default,
-            ParticleType::GEOJSON as u8,
-            point.clone(),
-            point,
-        )
-    }
-
-    /// Creates a geo-spatial "regions containing point" filter targeting a specific secondary
-    /// index by name on a collection index.
-    pub fn geo_contains_by_index_cit(
-        index_name: &str,
-        point: &str,
-        cit: CollectionIndexType,
-    ) -> Self {
-        let point = Value::String(point.to_owned());
-        Filter::new_by_index(
-            index_name,
-            cit,
-            ParticleType::GEOJSON as u8,
+            ParticleType::GeoJson as u8,
             point.clone(),
             point,
         )
@@ -622,6 +543,23 @@ impl Filter {
     // ========================================================================
     // Builder methods
     // ========================================================================
+
+    /// Queries a collection index: the bin holds a list or map and the
+    /// secondary index was created with the given [`CollectionIndexType`].
+    /// Without it a filter targets an index on the bin's own value.
+    ///
+    /// # Examples
+    /// ```
+    /// # use aerospike_core::query::Filter;
+    /// # use aerospike_core::CollectionIndexType;
+    /// let f = Filter::geo_within_radius("geo_list", -122.0, 37.5, 50_000.0)
+    ///     .collection_type(CollectionIndexType::List);
+    /// ```
+    #[must_use]
+    pub const fn collection_type(mut self, cit: CollectionIndexType) -> Self {
+        self.collection_index_type = cit;
+        self
+    }
 
     /// Specifies which **expression-based secondary index** to use for this query filter.
     ///
@@ -663,7 +601,8 @@ impl Filter {
     ///     .context(vec![ctx_list_index(0)]);
     /// ```
     #[must_use]
-    pub fn context(mut self, ctx: Vec<CdtContext>) -> Self {
+    pub fn context(mut self, ctx: impl Into<Vec<CdtContext>>) -> Self {
+        let ctx = ctx.into();
         if !ctx.is_empty() {
             self.context = Some(ctx);
         }
@@ -712,182 +651,7 @@ impl Filter {
     }
 }
 
-// ============================================================================
-// Deprecated macros — prefer Filter methods instead
-// ============================================================================
-
-/// Creates equality filter for queries.
-///
-/// **Deprecated**: Use [`Filter::equal`] instead.
-#[deprecated(note = "Use Filter::equal() instead")]
-#[macro_export]
-macro_rules! as_eq {
-    ($bin_name:expr, $val:expr) => {{
-        use $crate::query::filter::EqFilterValue;
-        let val = EqFilterValue::into_filter_value($val);
-        $crate::query::Filter::new(
-            $bin_name,
-            $crate::CollectionIndexType::Default,
-            bound_particle_type(&val),
-            val.clone(),
-            val.clone(),
-        )
-    }};
-}
-
-/// Creates range filter for queries.
-///
-/// **Deprecated**: Use [`Filter::range`] instead.
-#[deprecated(note = "Use Filter::range() instead")]
-#[macro_export]
-macro_rules! as_range {
-    ($bin_name:expr, $begin:expr, $end:expr) => {{
-        use $crate::query::filter::RangeFilterValue;
-        let begin = RangeFilterValue::into_filter_value($begin);
-        let end = RangeFilterValue::into_filter_value($end);
-        $crate::query::Filter::new(
-            $bin_name,
-            $crate::CollectionIndexType::Default,
-            bound_particle_type(&begin),
-            begin,
-            end,
-        )
-    }};
-}
-
-/// Creates contains filter for queries on a collection index.
-///
-/// **Deprecated**: Use [`Filter::contains`] instead.
-#[deprecated(note = "Use Filter::contains() instead")]
-#[macro_export]
-macro_rules! as_contains {
-    ($bin_name:expr, $val:expr, $cit:expr) => {{
-        use $crate::query::filter::EqFilterValue;
-        let val = EqFilterValue::into_filter_value($val);
-        $crate::query::Filter::new(
-            $bin_name,
-            $cit,
-            bound_particle_type(&val),
-            val.clone(),
-            val.clone(),
-        )
-    }};
-}
-
-/// Creates contains range filter for queries on a collection index.
-///
-/// **Deprecated**: Use [`Filter::contains_range`] instead.
-#[deprecated(note = "Use Filter::contains_range() instead")]
-#[macro_export]
-macro_rules! as_contains_range {
-    ($bin_name:expr, $begin:expr, $end:expr, $cit:expr) => {{
-        use $crate::query::filter::RangeFilterValue;
-        let begin = RangeFilterValue::into_filter_value($begin);
-        let end = RangeFilterValue::into_filter_value($end);
-        $crate::query::Filter::new($bin_name, $cit, bound_particle_type(&begin), begin, end)
-    }};
-}
-
-/// Creates geo-spatial "points within region" filter for queries.
-///
-/// **Deprecated**: Use [`Filter::geo_within_region`] or [`Filter::geo_within_region_cit`]
-/// instead.
-#[deprecated(note = "Use Filter::geo_within_region() instead")]
-#[macro_export]
-macro_rules! as_within_region {
-    ($bin_name:expr, $region:expr) => {{
-        let region = $crate::Value::String(String::from($region));
-        $crate::query::Filter::new(
-            $bin_name,
-            $crate::CollectionIndexType::Default,
-            $crate::ParticleType::GEOJSON as u8,
-            region.clone(),
-            region.clone(),
-        )
-    }};
-    ($bin_name:expr, $region:expr, $cit:expr) => {{
-        let region = $crate::Value::String(String::from($region));
-        $crate::query::Filter::new(
-            $bin_name,
-            $cit,
-            $crate::ParticleType::GEOJSON as u8,
-            region.clone(),
-            region.clone(),
-        )
-    }};
-}
-
-/// Creates geo-spatial "points within radius" filter for queries.
-///
-/// **Deprecated**: Use [`Filter::geo_within_radius`] or [`Filter::geo_within_radius_cit`]
-/// instead.
-#[deprecated(note = "Use Filter::geo_within_radius() instead")]
-#[macro_export]
-macro_rules! as_within_radius {
-    ($bin_name:expr, $lat:expr, $lng:expr, $radius:expr) => {{
-        #[allow(clippy::cast_lossless)] // the macro accepts any numeric literal
-        let (lat, lng, radius) = ($lat as f64, $lng as f64, $radius as f64);
-        let geo_json = format!(
-            "{{ \"type\": \"AeroCircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}",
-            lng, lat, radius
-        );
-        let geo_json = $crate::Value::String(geo_json);
-        $crate::query::Filter::new(
-            $bin_name,
-            $crate::CollectionIndexType::Default,
-            $crate::ParticleType::GEOJSON as u8,
-            geo_json.clone(),
-            geo_json.clone(),
-        )
-    }};
-    ($bin_name:expr, $lat:expr, $lng:expr, $radius:expr, $cit:expr) => {{
-        #[allow(clippy::cast_lossless)] // the macro accepts any numeric literal
-        let (lat, lng, radius) = ($lat as f64, $lng as f64, $radius as f64);
-        let geo_json = format!(
-            "{{ \"type\": \"AeroCircle\", \"coordinates\": [[{:.8}, {:.8}], {}] }}",
-            lng, lat, radius
-        );
-        let geo_json = $crate::Value::String(geo_json);
-        $crate::query::Filter::new(
-            $bin_name,
-            $cit,
-            $crate::ParticleType::GEOJSON as u8,
-            geo_json.clone(),
-            geo_json.clone(),
-        )
-    }};
-}
-
-/// Creates geo-spatial "regions containing point" filter for queries.
-///
-/// **Deprecated**: Use [`Filter::geo_contains`] or [`Filter::geo_contains_cit`] instead.
-#[deprecated(note = "Use Filter::geo_contains() instead")]
-#[macro_export]
-macro_rules! as_regions_containing_point {
-    ($bin_name:expr, $point:expr) => {{
-        let point = $crate::Value::String(String::from($point));
-        $crate::query::Filter::new(
-            $bin_name,
-            $crate::CollectionIndexType::Default,
-            $crate::ParticleType::GEOJSON as u8,
-            point.clone(),
-            point.clone(),
-        )
-    }};
-    ($bin_name:expr, $point:expr, $cit:expr) => {{
-        let point = $crate::Value::String(String::from($point));
-        $crate::query::Filter::new(
-            $bin_name,
-            $cit,
-            $crate::ParticleType::GEOJSON as u8,
-            point.clone(),
-            point.clone(),
-        )
-    }};
-}
-
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
 
@@ -1015,8 +779,9 @@ mod tests {
         let f = Filter::geo_within_region("bin1", "{}");
         assert_eq!(f.bin_name, "bin1");
 
-        let f = Filter::geo_within_region_cit("bin1", "{}", CollectionIndexType::MapValues);
+        let f = Filter::geo_within_region("bin1", "{}").collection_type(CollectionIndexType::MapValues);
         assert_eq!(f.bin_name, "bin1");
+        assert!(matches!(f.collection_index_type, CollectionIndexType::MapValues));
     }
 
     #[test]
@@ -1027,7 +792,8 @@ mod tests {
         let f = Filter::geo_within_region("bin1", "{}").expression(exp.clone());
         assert!(f.expression.is_some());
 
-        let f = Filter::geo_within_region_cit("bin1", "{}", CollectionIndexType::MapValues)
+        let f = Filter::geo_within_region("bin1", "{}")
+            .collection_type(CollectionIndexType::MapValues)
             .expression(exp);
         assert!(f.expression.is_some());
     }
@@ -1037,11 +803,8 @@ mod tests {
         let f = Filter::geo_within_region_by_index("my_index", "{}");
         assert_eq!(f.index_name, Some("my_index".to_owned()));
 
-        let f = Filter::geo_within_region_by_index_cit(
-            "my_index",
-            "{}",
-            CollectionIndexType::MapValues,
-        );
+        let f = Filter::geo_within_region_by_index("my_index", "{}")
+            .collection_type(CollectionIndexType::MapValues);
         assert_eq!(f.index_name, Some("my_index".to_owned()));
     }
 
@@ -1050,8 +813,10 @@ mod tests {
         let f = Filter::geo_within_radius("bin1", 3.0, 1.0, 7.0);
         assert_eq!(f.bin_name, "bin1");
 
-        let f = Filter::geo_within_radius_cit("bin1", 3.0, 1.0, 7.0, CollectionIndexType::List);
+        let f = Filter::geo_within_radius("bin1", 3.0, 1.0, 7.0)
+            .collection_type(CollectionIndexType::List);
         assert_eq!(f.bin_name, "bin1");
+        assert!(matches!(f.collection_index_type, CollectionIndexType::List));
     }
 
     #[test]
@@ -1062,7 +827,8 @@ mod tests {
         let f = Filter::geo_within_radius("bin1", 3.0, 1.0, 7.0).expression(exp.clone());
         assert!(f.expression.is_some());
 
-        let f = Filter::geo_within_radius_cit("bin1", 3.0, 1.0, 7.0, CollectionIndexType::List)
+        let f = Filter::geo_within_radius("bin1", 3.0, 1.0, 7.0)
+            .collection_type(CollectionIndexType::List)
             .expression(exp);
         assert!(f.expression.is_some());
     }
@@ -1072,13 +838,8 @@ mod tests {
         let f = Filter::geo_within_radius_by_index("my_index", 3.0, 1.0, 7.0);
         assert_eq!(f.index_name, Some("my_index".to_owned()));
 
-        let f = Filter::geo_within_radius_by_index_cit(
-            "my_index",
-            3.0,
-            1.0,
-            7.0,
-            CollectionIndexType::List,
-        );
+        let f = Filter::geo_within_radius_by_index("my_index", 3.0, 1.0, 7.0)
+            .collection_type(CollectionIndexType::List);
         assert_eq!(f.index_name, Some("my_index".to_owned()));
     }
 
@@ -1087,8 +848,9 @@ mod tests {
         let f = Filter::geo_contains("bin1", "{}");
         assert_eq!(f.bin_name, "bin1");
 
-        let f = Filter::geo_contains_cit("bin1", "{}", CollectionIndexType::MapValues);
+        let f = Filter::geo_contains("bin1", "{}").collection_type(CollectionIndexType::MapValues);
         assert_eq!(f.bin_name, "bin1");
+        assert!(matches!(f.collection_index_type, CollectionIndexType::MapValues));
     }
 
     #[test]
@@ -1099,8 +861,9 @@ mod tests {
         let f = Filter::geo_contains("bin1", "{}").expression(exp.clone());
         assert!(f.expression.is_some());
 
-        let f =
-            Filter::geo_contains_cit("bin1", "{}", CollectionIndexType::MapValues).expression(exp);
+        let f = Filter::geo_contains("bin1", "{}")
+            .collection_type(CollectionIndexType::MapValues)
+            .expression(exp);
         assert!(f.expression.is_some());
     }
 
@@ -1109,7 +872,8 @@ mod tests {
         let f = Filter::geo_contains_by_index("my_index", "{}");
         assert_eq!(f.index_name, Some("my_index".to_owned()));
 
-        let f = Filter::geo_contains_by_index_cit("my_index", "{}", CollectionIndexType::MapValues);
+        let f = Filter::geo_contains_by_index("my_index", "{}")
+            .collection_type(CollectionIndexType::MapValues);
         assert_eq!(f.index_name, Some("my_index".to_owned()));
     }
 
@@ -1155,42 +919,5 @@ mod tests {
         let wire = vec![1, 0, 1, 9, 10, 11];
         let filter = Filter::from_wire_range("idx", wire.clone(), CollectionIndexType::Default);
         assert_eq!(filter.index_range_field_body_size().unwrap(), wire.len());
-    }
-
-    // ====================================================================
-    // Deprecated macro tests (ensure they still work)
-    // ====================================================================
-
-    #[test]
-    fn deprecated_macros_still_work() {
-        let f = as_eq!("bin1", 42_i64);
-        assert_eq!(f.bin_name, "bin1");
-
-        let f = as_range!("bin1", 0_i64, 100_i64);
-        assert_eq!(f.bin_name, "bin1");
-
-        let f = as_contains!("bin1", 42_i64, CollectionIndexType::List);
-        assert_eq!(f.bin_name, "bin1");
-
-        let f = as_contains_range!("bin1", 0_i64, 100_i64, CollectionIndexType::List);
-        assert_eq!(f.bin_name, "bin1");
-
-        let f = as_within_region!("bin1", "{}");
-        assert_eq!(f.bin_name, "bin1");
-
-        let f = as_within_region!("bin1", "{}", CollectionIndexType::MapValues);
-        assert_eq!(f.bin_name, "bin1");
-
-        let f = as_within_radius!("bin1", 1, 3, 7);
-        assert_eq!(f.bin_name, "bin1");
-
-        let f = as_within_radius!("bin1", 1, 3, 7, CollectionIndexType::List);
-        assert_eq!(f.bin_name, "bin1");
-
-        let f = as_regions_containing_point!("bin1", "{}");
-        assert_eq!(f.bin_name, "bin1");
-
-        let f = as_regions_containing_point!("bin1", "{}", CollectionIndexType::MapValues);
-        assert_eq!(f.bin_name, "bin1");
     }
 }

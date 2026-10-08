@@ -370,11 +370,11 @@ mod tests {
     #[test]
     fn helpers_emit_native_particles() {
         let value = to_value(&sample()).unwrap();
-        assert!(matches!(field(&value, "location"), Value::GeoJSON(_)));
-        assert!(matches!(field(&value, "geo_wrapped"), Value::GeoJSON(_)));
+        assert!(matches!(field(&value, "location"), Value::GeoJson(_)));
+        assert!(matches!(field(&value, "geo_wrapped"), Value::GeoJson(_)));
         assert_eq!(field(&value, "thumbnail"), &Value::Blob(vec![1, 2, 3]));
-        assert_eq!(field(&value, "sketch"), &Value::HLL(vec![9, 9]));
-        assert_eq!(field(&value, "hll_wrapped"), &Value::HLL(vec![7, 7, 7]));
+        assert_eq!(field(&value, "sketch"), &Value::Hll(vec![9, 9]));
+        assert_eq!(field(&value, "hll_wrapped"), &Value::Hll(vec![7, 7, 7]));
         assert_eq!(field(&value, "created"), &Value::Int(1_700_000_000_123));
         assert_eq!(field(&value, "ttl"), &Value::Int(1_500_000));
     }

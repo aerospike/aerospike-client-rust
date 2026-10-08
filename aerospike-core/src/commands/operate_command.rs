@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,6 +14,7 @@
 
 use std::sync::Arc;
 
+use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
 use crate::commands::{Command, ReadCommand, SingleCommand};
 use crate::errors::Result;
@@ -35,15 +36,20 @@ impl<'a> OperateCommand<'a> {
         key: &'a Key,
         operations: &'a [Operation],
     ) -> Self {
-        let partition = crate::cluster::partition::Partition::for_write(key);
-        let mut read_command = ReadCommand::new_with_partition(
-            &policy.base_policy,
-            cluster,
-            key,
-            Bins::All,
-            partition,
-        );
-        read_command.is_write = true;
+        // An operate with no write operation is a read: the policy's replica
+        // and SC read mode pick the node, and a transaction records it as a
+        // read of the key. Only an operate that can mutate the record takes
+        // the write routing.
+        let has_write = operations.iter().any(Operation::is_write);
+        let base = &policy.base_policy;
+        let partition = if has_write {
+            Partition::for_write(key, base.replica)
+        } else {
+            Partition::for_read(&cluster, key, base.replica, base.read_mode_sc)
+        };
+        let mut read_command =
+            ReadCommand::new_with_partition(base, cluster, key, Bins::All, partition);
+        read_command.is_write = has_write;
         read_command.wants_results = true;
         OperateCommand {
             read_command,
@@ -89,11 +95,10 @@ impl Command for OperateCommand<'_> {
     }
 
     fn is_write(&self) -> bool {
-        // Operate may be all-read or include writes. Inspect the requested
-        // operations and report write only when at least one is a write op,
-        // so `in_doubt` is set on retry-exhaustion only when retries could
-        // have produced a server-side mutation.
-        self.operations.iter().any(Operation::is_write)
+        // Decided once at construction, so routing, transaction bookkeeping
+        // and `in_doubt` all agree on whether this operate can mutate the
+        // record.
+        self.read_command.is_write
     }
 
     fn get_node(&mut self) -> Result<Arc<Node>> {
@@ -120,5 +125,76 @@ impl Command for OperateCommand<'_> {
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         self.read_command.parse_result(conn).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::cluster::Partitions;
+    use crate::operations;
+    use crate::policy::{ClientPolicy, ReadModeSc, Replica};
+
+    fn prefer_rack() -> WritePolicy {
+        let mut policy = WritePolicy::default();
+        policy.base_policy.replica = Replica::PreferRack;
+        policy
+    }
+
+    #[test]
+    fn read_only_operate_routes_by_the_policy_replica() {
+        let cluster = Cluster::new_unconnected(ClientPolicy::default());
+        let key = as_key!("test", "set", "k");
+        let ops = [operations::get_bin("a"), operations::get_header()];
+        let policy = prefer_rack();
+
+        let cmd = OperateCommand::new(&policy, cluster, &key, &ops);
+
+        let partition = &cmd.read_command.single_command.partition;
+        assert_eq!(partition.replica, Replica::PreferRack);
+        assert!(!partition.is_write);
+        assert!(!cmd.is_write());
+    }
+
+    #[test]
+    fn read_only_operate_applies_the_sc_read_mode() {
+        let cluster = Cluster::new_unconnected(ClientPolicy::default());
+        let sc = Partitions {
+            sc_mode: true,
+            ..Partitions::default()
+        };
+        cluster
+            .partition_map
+            .store(Arc::new(HashMap::from([("test".to_string(), sc)])));
+        let key = as_key!("test", "set", "k");
+        let ops = [operations::get_bin("a")];
+        let mut policy = prefer_rack();
+        policy.base_policy.read_mode_sc = ReadModeSc::Linearize;
+
+        let cmd = OperateCommand::new(&policy, cluster, &key, &ops);
+
+        let partition = &cmd.read_command.single_command.partition;
+        assert_eq!(partition.replica, Replica::Sequence);
+        assert!(partition.linearize);
+    }
+
+    #[test]
+    fn operate_with_any_write_takes_the_write_routing() {
+        let cluster = Cluster::new_unconnected(ClientPolicy::default());
+        let key = as_key!("test", "set", "k");
+        let ops = [
+            operations::get_bin("a"),
+            operations::put(&as_bin!("b", 1i64)),
+        ];
+        let policy = prefer_rack();
+
+        let cmd = OperateCommand::new(&policy, cluster, &key, &ops);
+
+        let partition = &cmd.read_command.single_command.partition;
+        assert!(partition.is_write);
+        assert!(!partition.linearize);
+        assert!(cmd.is_write());
     }
 }

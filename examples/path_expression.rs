@@ -1,3 +1,18 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 //! CDT path expressions: JSONPath-style selection over nested documents.
 //!
 //! Port of the Java client's `PathExpression` example. Requires Aerospike
@@ -34,8 +49,7 @@ pub async fn run() {
         .expect("Failed to connect to cluster");
 
     let supported = client
-        .cluster
-        .get_random_node()
+        .random_node()
         .map(|n| n.version().supports_cdt_path_expressions())
         .unwrap_or(false);
     if !supported {
@@ -71,8 +85,8 @@ pub async fn run() {
     let ctx_book = ctx_map_key(Value::from("book"));
     let ctx_cheap = ctx_all_children_with_filter(le(
         get_by_key(
-            MapReturnType::Value,
-            ExpType::FLOAT,
+            MapReturnType::VALUE,
+            ExpType::Float,
             string_val("price".to_string()),
             exp_map_loop_var(LoopVarPart::VALUE),
             &[],

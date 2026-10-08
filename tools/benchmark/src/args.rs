@@ -20,7 +20,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use aerospike::{
-    BatchPolicy, BatchReadPolicy, BatchWritePolicy, Bin, Expiration, Key, ReadPolicy, ReadTouchTTL,
+    BatchPolicy, BatchReadPolicy, BatchWritePolicy, Bin, Expiration, Key, ReadPolicy, ReadTouchTtl,
     RecordExistsAction, Value, WritePolicy,
 };
 use rand::rngs::StdRng;
@@ -81,15 +81,15 @@ impl Args {
         let mut batch_write_policy = BatchWritePolicy::default();
 
         // ---- replica & read modes ----
-        read_policy.replica = opts.replica;
-        batch_policy.replica = opts.replica;
+        read_policy.base_policy.replica = opts.replica;
+        batch_policy.base_policy.replica = opts.replica;
         read_policy.base_policy.read_mode_ap = opts.read_mode_ap;
         read_policy.base_policy.read_mode_sc = opts.read_mode_sc;
         batch_policy.base_policy.read_mode_ap = opts.read_mode_ap;
         batch_policy.base_policy.read_mode_sc = opts.read_mode_sc;
 
         // ---- write options ----
-        write_policy.commit_level = opts.commit_level.clone();
+        write_policy.commit_level = opts.commit_level;
         write_policy.send_key = opts.send_key;
         write_policy.expiration = match opts.expiration {
             e if e < 0 => Expiration::Never,
@@ -103,8 +103,8 @@ impl Args {
 
         // ---- read-touch TTL ----
         if let Some(pct) = opts.read_touch_ttl_percent {
-            read_policy.base_policy.read_touch_ttl = ReadTouchTTL::Percent(pct);
-            batch_policy.base_policy.read_touch_ttl = ReadTouchTTL::Percent(pct);
+            read_policy.base_policy.read_touch_ttl = ReadTouchTtl::Percent(pct);
+            batch_policy.base_policy.read_touch_ttl = ReadTouchTtl::Percent(pct);
         }
 
         // ---- timeouts & retries ----
@@ -204,7 +204,7 @@ impl Args {
         match &self.partition_ids {
             None => false,
             Some(ids) => {
-                let pid = u16::from_le_bytes([key.digest[0], key.digest[1]]) & 0x0FFF;
+                let pid = u16::from_le_bytes([key.digest()[0], key.digest()[1]]) & 0x0FFF;
                 !ids.contains(&pid)
             }
         }
@@ -223,7 +223,7 @@ impl Args {
             out.extend(fixed.iter().take(num_bins).cloned());
             return;
         }
-        let seed = match key.user_key.as_ref() {
+        let seed = match key.user_key() {
             Some(Value::Int(k)) => Some(*k),
             _ => None,
         };

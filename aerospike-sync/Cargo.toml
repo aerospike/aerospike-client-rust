@@ -4,13 +4,13 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description.workspace = true
+description = "Aerospike Client for Rust: the blocking client. Depend on the `aerospike` crate with the `sync` feature, which re-exports it."
 keywords.workspace = true
 categories.workspace = true
 homepage.workspace = true
 repository.workspace = true
 documentation.workspace = true
-readme.workspace = true
+readme = "README.md"
 rust-version.workspace = true
 publish = true
 
@@ -19,7 +19,7 @@ publish = true
 [dependencies]
 # The core `sync` feature enables the blocking iterators (`Iterator for
 # &Recordset` / `&ResultSet`) this facade's API is built around.
-aerospike-core = {path = "../aerospike-core", version = "3.0.0-alpha.2", features = ["sync"]}
+aerospike-core = { workspace = true, features = ["sync"] }
 futures = { version = "0.3.34" }
 # The blocking wrappers drive client futures on the runtime selected by
 # the rt-* feature: a dedicated tokio runtime (`SYNC_RT`) or async-std's

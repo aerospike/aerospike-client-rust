@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -29,7 +29,7 @@ use crate::cluster::{Cluster, Node};
 use crate::commands::admin_command::AdminCommand;
 use crate::commands::buffer::Buffer;
 use crate::commands::{
-    DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand, ReadCommand,
+    DeleteCommand, ExecuteUdfCommand, ExistsCommand, OperateCommand, QueryCommand, ReadCommand,
     ServerCommand, TouchCommand, WriteCommand,
 };
 use crate::errors::{Error, ErrorKind, Result};
@@ -37,6 +37,7 @@ use crate::expressions::Expression;
 use crate::net::ToHosts;
 use crate::operations::cdt_context::{to_base64, CdtContext};
 use crate::operations::{Operation, OperationType};
+use crate::policy::Policy;
 use crate::policy::{
     AdminPolicy, BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, TxnRollPolicy,
     TxnVerifyPolicy, WritePolicy,
@@ -48,11 +49,11 @@ use crate::query::{CallbackCtx, PartitionFilter, PartitionTracker, QueryHandle, 
 use crate::task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, UdfRemoveTask};
 use crate::txn::{AbortStatus, CommitStatus, Txn, TxnState};
 use crate::txn_roll::TxnRoll;
+use crate::Version;
 use crate::{
     BatchRecord, Bin, Bins, CollectionIndexType, IndexType, Key, Privilege, Record, Recordset,
-    ResultCode, Role, Statement, UDFLang, User, Value,
+    ResultCode, Role, Statement, UdfLang, User, Value,
 };
-use crate::{Policy, Version};
 use aerospike_rt::fs::File;
 #[cfg(feature = "rt-tokio")]
 use aerospike_rt::io::AsyncReadExt;
@@ -66,8 +67,11 @@ const MAX_PERMITS: usize = 256;
 /// Instantiate a Client instance to access an Aerospike database cluster and perform database
 /// operations.
 ///
-/// The client is thread-safe. Only one client instance should be used per cluster. Multiple
-/// threads should share this cluster instance.
+/// The client is thread-safe, and cloning it is cheap: every clone shares
+/// the same cluster, connection pools and background tasks, so hand a clone
+/// to each task or thread rather than opening a second client to the same
+/// cluster. [`close`](Self::close) shuts that shared cluster down for every
+/// clone.
 ///
 /// Your application uses this class' API to perform database operations such as writing and
 /// reading records, and selecting sets of records. Write operations include specialized
@@ -81,17 +85,20 @@ const MAX_PERMITS: usize = 256;
 ///
 /// * [`Client::new`] to create a client, [`Client::close`] to shut it down
 /// * [`ClientPolicy`] for connection configuration
+#[derive(Clone)]
 pub struct Client {
     /// Cluster management object holding the cluster map and node connections.
-    ///
-    /// # See also
-    ///
-    /// * [`nodes`](Self::nodes), [`node_names`](Self::node_names), [`get_node`](Self::get_node)
-    pub cluster: Arc<Cluster>,
+    /// Reached through [`nodes`](Self::nodes), [`node_names`](Self::node_names),
+    /// [`get_node`](Self::get_node) and [`random_node`](Self::random_node).
+    pub(crate) cluster: Arc<Cluster>,
 }
 
-unsafe impl Send for Client {}
-unsafe impl Sync for Client {}
+// The client crosses threads by virtue of its fields, never by assertion: a
+// field that stops being thread-safe fails this line instead of compiling.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Client>();
+};
 
 /// Closes a query sink when dropped, so consumers are released whether the
 /// producer task finished, failed or panicked. An explicit `close()` at the
@@ -263,7 +270,8 @@ impl Client {
         Ok(Client { cluster })
     }
 
-    /// Closes the connection to the Aerospike cluster.
+    /// Closes the connection to the Aerospike cluster, for this client and
+    /// every clone of it.
     ///
     /// # Examples
     ///
@@ -396,6 +404,57 @@ impl Client {
     /// ```
     pub fn nodes(&self) -> Vec<Arc<Node>> {
         self.cluster.nodes()
+    }
+
+    /// The cluster name this client validates nodes against
+    /// ([`ClientPolicy::cluster_name`]), or `None` when validation is off.
+    pub fn cluster_name(&self) -> Option<String> {
+        self.cluster.cluster_name()
+    }
+
+    /// A random active node, for commands that any node can answer.
+    pub fn random_node(&self) -> Result<Arc<Node>> {
+        self.cluster.get_random_node()
+    }
+
+    #[doc(hidden)] // test support, not a stable API
+    pub fn partition_map_ready(&self) -> bool {
+        self.cluster.partition_map_ready()
+    }
+
+    /// Whether `namespace` runs in strong-consistency mode on this cluster.
+    ///
+    /// Read from the cached partition map, so this is a synchronous lookup
+    /// with no network I/O; it is cheap enough to call on every command, and
+    /// language bindings do exactly that to pick an AP or SC policy per
+    /// namespace. The answer follows the map, which the tend loop refreshes.
+    ///
+    /// Returns `Some(true)` for a strong-consistency namespace, `Some(false)`
+    /// for an available-partition one, and `None` when the namespace is not in
+    /// the partition map: an unknown namespace, or a map not yet populated.
+    ///
+    /// # Example
+    ///
+    /// ```rust,edition2021
+    /// # use aerospike::{Client, ClientPolicy};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
+    /// match client.is_strong_consistency("test") {
+    ///     Some(true) => println!("test is a strong-consistency namespace"),
+    ///     Some(false) => println!("test is an AP namespace"),
+    ///     None => println!("no namespace named test"),
+    /// }
+    /// # }
+    /// ```
+    pub fn is_strong_consistency(&self, namespace: &str) -> Option<bool> {
+        self.cluster.is_strong_consistency(namespace)
+    }
+
+    #[doc(hidden)] // test support, not a stable API
+    pub fn partition_map_complete(&self) -> bool {
+        self.cluster.partition_map_complete()
     }
 
     /// The cluster name the connected servers report (`cluster-name` info),
@@ -541,10 +600,12 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub async fn get<T>(&self, policy: &ReadPolicy, key: &Key, bins: T) -> Result<Record>
-    where
-        T: Into<Bins> + Send + Sync + 'static,
-    {
+    pub async fn get(
+        &self,
+        policy: &ReadPolicy,
+        key: &Key,
+        bins: impl Into<Bins>,
+    ) -> Result<Record> {
         let policy = self.cluster.resolve_read(policy);
         let policy = policy.as_ref();
         if let Some(txn) = &policy.base_policy.txn {
@@ -598,6 +659,10 @@ impl Client {
     /// # See also
     ///
     /// * [`BatchOperation`], [`BatchRecord`], [`get`](Self::get)
+    ///
+    /// `policy` is the batch-wide parent policy. A batch of reads takes
+    /// [`BatchPolicy::default`]; a batch with writes, deletes or UDF calls
+    /// should take [`BatchPolicy::write_default`], which does not retry.
     ///
     /// # Examples
     ///
@@ -673,7 +738,7 @@ impl Client {
     pub async fn batch_foreach<F, Fut>(
         &self,
         policy: &BatchPolicy,
-        ops: Vec<BatchOperation>,
+        ops: &mut [BatchOperation],
         on_row: F,
     ) -> Result<()>
     where
@@ -696,7 +761,7 @@ impl Client {
                 self.cluster.clone(),
                 &policy.base_policy,
                 txn,
-                &ops,
+                ops,
             )
             .await?;
         }
@@ -1186,7 +1251,7 @@ impl Client {
     /// * `policy` — Admin policy (timeout).
     /// * `udf_body` — Raw UDF source bytes (e.g. Lua code).
     /// * `server_path` — Path name on the server (e.g. `"example.lua"`).
-    /// * `language` — [`UDFLang`] (e.g. [`UDFLang::Lua`]).
+    /// * `language` — [`UdfLang`] (e.g. [`UdfLang::Lua`]).
     ///
     /// # Returns
     ///
@@ -1235,7 +1300,7 @@ impl Client {
     /// "#;
     ///
     /// match client.register_udf(&AdminPolicy::default(), code.as_bytes(),
-    ///                           "example.lua", UDFLang::Lua).await {
+    ///                           "example.lua", UdfLang::Lua).await {
     ///     Ok(_task) => { /* wait for task or use it */ }
     ///     Err(err) => println!("Failed to register UDF: {}", err),
     /// }
@@ -1246,7 +1311,7 @@ impl Client {
         policy: &AdminPolicy,
         udf_body: &[u8],
         server_path: &str,
-        language: UDFLang,
+        language: UdfLang,
     ) -> Result<RegisterTask> {
         let udf_body = BASE64.encode(udf_body);
 
@@ -1279,7 +1344,7 @@ impl Client {
     /// * `policy` — Admin policy (timeout).
     /// * `client_path` — Local file path to the UDF source file.
     /// * `server_path` — Path name on the server (e.g. `"example.lua"`).
-    /// * `language` — [`UDFLang`] (e.g. [`UDFLang::Lua`]).
+    /// * `language` — [`UdfLang`] (e.g. [`UdfLang::Lua`]).
     ///
     /// # Returns
     ///
@@ -1296,7 +1361,7 @@ impl Client {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// # use aerospike::{Client, ClientPolicy, AdminPolicy, UDFLang};
+    /// # use aerospike::{Client, ClientPolicy, AdminPolicy, UdfLang};
     /// # #[tokio::main]
     /// # async fn main() {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
@@ -1305,7 +1370,7 @@ impl Client {
     ///     &AdminPolicy::default(),
     ///     "/path/to/my_udf.lua",
     ///     "my_udf.lua",
-    ///     UDFLang::Lua,
+    ///     UdfLang::Lua,
     /// ).await {
     ///     Ok(task) => { /* wait for task.wait_till_complete(None).await */ }
     ///     Err(err) => eprintln!("Failed to register UDF from file: {}", err),
@@ -1317,7 +1382,7 @@ impl Client {
         policy: &AdminPolicy,
         client_path: &str,
         server_path: &str,
-        language: UDFLang,
+        language: UdfLang,
     ) -> Result<RegisterTask> {
         let path = Path::new(client_path);
         let mut file = File::open(&path).await?;
@@ -1418,7 +1483,7 @@ impl Client {
     ///     &key,
     ///     "my_module",
     ///     "my_function",
-    ///     Some(&[as_val!(42)]),
+    ///     &[as_val!(42)],
     /// ).await {
     ///     Ok(Some(val)) => println!("UDF returned: {:?}", val),
     ///     Ok(None) => println!("UDF returned nothing"),
@@ -1430,15 +1495,15 @@ impl Client {
         &self,
         policy: &WritePolicy,
         key: &Key,
-        server_path: &str,
+        package_name: &str,
         function_name: &str,
-        args: Option<&[Value]>,
+        args: &[Value],
     ) -> Result<Option<Value>> {
-        let mut command = ExecuteUDFCommand::new(
+        let mut command = ExecuteUdfCommand::new(
             policy,
             self.cluster.clone(),
             key,
-            server_path,
+            package_name,
             function_name,
             args,
         );
@@ -1537,6 +1602,9 @@ impl Client {
     /// }
     /// # }
     /// ```
+    // Spawns the per-partition workers on the caller's runtime and may grow a
+    // server round trip; the call shape must not change when it does.
+    #[allow(clippy::unused_async)]
     pub async fn query(
         &self,
         policy: &QueryPolicy,
@@ -1591,6 +1659,9 @@ impl Client {
     /// The returned [`QueryHandle`] can [`wait`](QueryHandle::wait) for
     /// completion or [`cancel`](QueryHandle::cancel); dropping it detaches,
     /// leaving the query running.
+    // Spawns the per-partition workers on the caller's runtime and may grow a
+    // server round trip; the call shape must not change when it does.
+    #[allow(clippy::unused_async)]
     pub async fn query_foreach<F, Fut>(
         &self,
         policy: &QueryPolicy,
@@ -1686,6 +1757,9 @@ impl Client {
     /// [`Version::supports_query_selection`](crate::Version::supports_query_selection);
     /// do not call with a filtered-out plan (orchestration belongs in the binding layer).
     #[doc(hidden)]
+    // Spawns the per-partition workers on the caller's runtime and may grow a
+    // server round trip; the call shape must not change when it does.
+    #[allow(clippy::unused_async)]
     pub async fn query_with_plan(
         &self,
         policy: &QueryPolicy,
@@ -1697,7 +1771,7 @@ impl Client {
             return Err(Error::server_error_bare(ResultCode::FilteredOut));
         }
 
-        statement.filters = plan.filter_for_execute()?.map(|filter| vec![filter]);
+        statement.filter = plan.filter_for_execute()?;
 
         let execute_where = Some(Arc::from(plan.into_execute_where_bytes()));
         statement.validate()?;
@@ -1777,7 +1851,7 @@ impl Client {
     ///         stmt,
     ///         "sum_example",
     ///         "sum_single_bin",
-    ///         Some(&[as_val!("score")]),
+    ///         &[as_val!("score")],
     ///     )
     ///     .await?;
     /// let mut stream = rs.into_stream();
@@ -1794,7 +1868,7 @@ impl Client {
         mut statement: Statement,
         package_name: &str,
         function_name: &str,
-        function_args: Option<&[Value]>,
+        function_args: &[Value],
     ) -> Result<Arc<ResultSet>> {
         use futures::StreamExt;
 
@@ -1825,7 +1899,7 @@ impl Client {
         // is tied up per aggregation.
         let package = package_name.to_owned();
         let function = function_name.to_owned();
-        let args: Vec<Value> = function_args.map(<[Value]>::to_vec).unwrap_or_default();
+        let args: Vec<Value> = function_args.to_vec();
         aerospike_rt::spawn(async move {
             use futures::FutureExt;
             // `output_tx` moves into the pipeline and is dropped when it
@@ -1914,14 +1988,16 @@ impl Client {
         )))
     }
 
-    /// Execute a query and apply operations to matching records on the server.
-    /// This method sends the command to all nodes and returns an `ExecuteTask`
-    /// that can be used to monitor the progress of the background job.
+    /// Apply the statement's operations to every matching record on the
+    /// server. This method sends the command to all nodes and returns an
+    /// `ExecuteTask` that can be used to monitor the progress of the
+    /// background job.
     ///
-    /// The statement's filters determine which records are affected. If no filter
-    /// is specified, all records in the namespace/set are processed (scan mode).
-    ///
-    /// Only write operations are allowed. Read operations will result in an error.
+    /// The statement's filter determines which records are affected. If no
+    /// filter is specified, all records in the namespace/set are processed
+    /// (scan mode). The operations come from
+    /// [`Statement::set_operations`]; only write operations are allowed, and a
+    /// statement without operations is rejected with `ParameterError`.
     ///
     /// # Examples
     ///
@@ -1929,9 +2005,9 @@ impl Client {
     /// # use aerospike::*;
     /// # async fn example(client: &Client) -> Result<()> {
     /// let wpolicy = WritePolicy::default();
-    /// let statement = Statement::new("ns", "set", Bins::All);
-    /// let ops = vec![operations::put(&Bin::new("bin".into(), Value::Int(42)))];
-    /// let task = client.query_operate(&wpolicy, statement, &ops).await?;
+    /// let mut statement = Statement::new("ns", "set", Bins::All);
+    /// statement.set_operations([operations::put(&Bin::new("bin", Value::Int(42)))]);
+    /// let task = client.query_operate(&wpolicy, statement).await?;
     /// task.wait_till_complete(None).await?;
     /// # Ok(())
     /// # }
@@ -1939,20 +2015,14 @@ impl Client {
     pub async fn query_operate(
         &self,
         write_policy: &WritePolicy,
-        mut statement: Statement,
-        operations: &[Operation],
+        statement: Statement,
     ) -> Result<ExecuteTask> {
-        if operations.is_empty() {
+        if statement.operations.as_ref().is_none_or(Vec::is_empty) {
             return Err(Error::server_error_with_message(
                 ResultCode::ParameterError,
                 "no operations defined",
             ));
         }
-        // Inject the ops into `statement.operations` so the unified
-        // `set_query` background path consumes them via the Statement.
-        // The legacy `&[Operation]` parameter is preserved on the
-        // public API for backwards compatibility.
-        statement.operations = Some(operations.to_vec());
         statement.validate()?;
 
         let nodes = self.cluster.nodes();
@@ -2012,7 +2082,7 @@ impl Client {
     ///     statement,
     ///     "my_udf_package",
     ///     "my_function",
-    ///     Some(&[as_val!(42)]),
+    ///     &[as_val!(42)],
     /// ).await?;
     /// task.wait_till_complete(None).await?;
     /// # Ok(())
@@ -2024,7 +2094,7 @@ impl Client {
         mut statement: Statement,
         package_name: &str,
         function_name: &str,
-        args: Option<&[Value]>,
+        args: &[Value],
     ) -> Result<ExecuteTask> {
         statement.set_aggregate_function(package_name, function_name, args);
         statement.validate()?;
@@ -2952,7 +3022,7 @@ impl Client {
             {
                 AdminCommand::change_password(policy, &cluster, user, password).await
             }
-            crate::AuthMode::PKI => Err(Error::client_error("Can't change PKI user's password")),
+            crate::AuthMode::Pki => Err(Error::client_error("Can't change PKI user's password")),
             _ => AdminCommand::set_password(policy, &cluster, user, password).await,
         }
     }

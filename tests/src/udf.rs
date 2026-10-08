@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -56,7 +56,7 @@ end
             &apolicy,
             udf_body1.as_bytes(),
             "test_udf1.lua",
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
         .unwrap();
@@ -67,7 +67,7 @@ end
             &apolicy,
             udf_body2.as_bytes(),
             "test_udf2.lua",
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
         .unwrap();
@@ -79,13 +79,13 @@ end
             &key,
             "test_udf2",
             "echo",
-            Some(&[as_val!("ha ha...")]),
+            &[as_val!("ha ha...")],
         )
         .await;
     assert_eq!(Some(as_val!("ha ha...")), res.unwrap());
 
     let res = client
-        .execute_udf(&wpolicy, &key, "test_udf1", "func_div", Some(&[as_val!(2)]))
+        .execute_udf(&wpolicy, &key, "test_udf1", "func_div", &[as_val!(2)])
         .await;
     if let Ok(Some(Value::OrderedMap(values))) = res {
         assert_eq!(values.get(&as_val!("status")), Some(&as_val!("OK")));
@@ -95,7 +95,7 @@ end
     }
 
     let res = client
-        .execute_udf(&wpolicy, &key, "test_udf1", "no_such_function", None)
+        .execute_udf(&wpolicy, &key, "test_udf1", "no_such_function", &[])
         .await;
     match res {
         Err(e) if matches!(e.kind(), aerospike::ErrorKind::UdfBadResponse) => {
@@ -155,7 +155,7 @@ end
             &apolicy,
             udf_body.as_bytes(),
             "test_bg_udf.lua",
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
         .unwrap();
@@ -163,9 +163,9 @@ end
 
     // Apply UDF to records in range [0, 9] using a filter
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.add_filter(Filter::range("bin", 0, 9));
+    statement.set_filter(Filter::range("bin", 0, 9));
     let task = client
-        .query_execute_udf(&wpolicy, statement, "test_bg_udf", "double_bin", None)
+        .query_execute_udf(&wpolicy, statement, "test_bg_udf", "double_bin", &[])
         .await
         .expect("query_execute_udf failed");
     task.wait_till_complete(Some(Duration::from_secs(30)))
@@ -220,7 +220,7 @@ end
             &apolicy,
             udf_body.as_bytes(),
             "test_bg_udf2.lua",
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
         .unwrap();
@@ -229,7 +229,7 @@ end
     // Apply UDF without filter (scan mode) to all records
     let statement = Statement::new(namespace, &set_name, Bins::All);
     let task = client
-        .query_execute_udf(&wpolicy, statement, "test_bg_udf2", "add_marker", None)
+        .query_execute_udf(&wpolicy, statement, "test_bg_udf2", "add_marker", &[])
         .await
         .expect("query_execute_udf scan failed");
     task.wait_till_complete(Some(Duration::from_secs(30)))
@@ -279,7 +279,7 @@ end
             &apolicy,
             udf_body.as_bytes(),
             "test_bg_udf3.lua",
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
         .unwrap();
@@ -293,7 +293,7 @@ end
             statement,
             "test_bg_udf3",
             "add_val",
-            Some(&[as_val!(100)]),
+            &[as_val!(100)],
         )
         .await
         .expect("query_execute_udf with args failed");

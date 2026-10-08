@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -18,18 +18,21 @@ use crate::expressions::Expression;
 use crate::policy::BasePolicyConfig;
 use crate::policy::{BasePolicy, Concurrency, PolicyLike};
 
-use super::Replica;
 
 /// `BatchPolicy` encapsulates parameters for all batch operations.
-#[derive(Debug, Clone)]
+///
+/// [`default()`](Self::default) is the read default (`max_retries` 2).
+/// A batch that contains writes, deletes or UDF calls should use
+/// [`write_default()`](Self::write_default), whose `max_retries` is 0.
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct BatchPolicy {
     /// Base policy instance
     #[cfg_attr(feature = "dynamic-config", config(flatten))]
     pub base_policy: BasePolicy,
 
-    /// Concurrency mode for batch requests: Sequential or Parallel (with optional max. no of
-    /// parallel threads).
+    /// Concurrency mode for batch requests: one node after another, or all
+    /// nodes at once. Default: `Parallel`.
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub concurrency: Concurrency,
 
@@ -76,13 +79,6 @@ pub struct BatchPolicy {
     ///
     /// Default: true
     pub respond_all_keys: bool, //= true;
-
-    /// Optional Filter Expression
-    #[cfg_attr(feature = "dynamic-config", config(skip))]
-    pub filter_expression: Option<Expression>,
-
-    /// Defines algorithm used to determine the target node for a command. The replica algorithm only affects single record and batch commands.
-    pub replica: Replica,
 }
 
 impl BatchPolicy {
@@ -91,9 +87,23 @@ impl BatchPolicy {
         BatchPolicy::default()
     }
 
-    /// Get the current Filter Expression
-    pub const fn filter_expression(&self) -> &Option<Expression> {
-        &self.filter_expression
+    /// The default policy for a batch that contains writes: `max_retries` is
+    /// 0, as in the Java and Go clients, because a retried write can be
+    /// applied twice when the first attempt did reach the server. Every other
+    /// field matches [`default()`](Self::default). Pass it to
+    /// [`Client::batch`](crate::Client::batch) when any row is a write, delete
+    /// or UDF call.
+    #[must_use]
+    pub fn write_default() -> Self {
+        let mut policy = Self::default();
+        policy.base_policy.max_retries = 0;
+        policy
+    }
+
+    /// The filter expression every row of the batch is evaluated against
+    /// (`base_policy.filter_expression`).
+    pub const fn filter_expression(&self) -> Option<&Expression> {
+        self.base_policy.filter_expression.as_ref()
     }
 }
 
@@ -105,8 +115,6 @@ impl Default for BatchPolicy {
             allow_inline: true,
             allow_inline_ssd: false,
             respond_all_keys: true,
-            filter_expression: None,
-            replica: Replica::default(),
         }
     }
 }

@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,7 +19,8 @@ use crate::commands::{Command, SingleCommand};
 use crate::errors::{Error, Result};
 use crate::net::Connection;
 use crate::policy::ReadPolicy;
-use crate::{Key, Policy, ResultCode};
+use crate::policy::Policy;
+use crate::{Key, ResultCode};
 
 pub struct ExistsCommand<'a> {
     single_command: SingleCommand<'a>,
@@ -32,7 +33,7 @@ impl<'a> ExistsCommand<'a> {
         let partition = crate::cluster::partition::Partition::for_read(
             &cluster,
             key,
-            policy.replica,
+            policy.base_policy.replica,
             policy.base_policy.read_mode_sc,
         );
         ExistsCommand {

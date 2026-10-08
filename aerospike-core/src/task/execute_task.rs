@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -59,7 +59,7 @@ pub struct ExecuteTask {
 
 impl ExecuteTask {
     /// Creates a new `ExecuteTask`.
-    pub const fn new(cluster: Arc<Cluster>, task_id: u64, scan: bool) -> Self {
+    pub(crate) const fn new(cluster: Arc<Cluster>, task_id: u64, scan: bool) -> Self {
         ExecuteTask {
             cluster,
             task_id,
@@ -236,6 +236,8 @@ impl ExecuteTask {
         Ok(Status::InProgress)
     }
 }
+
+impl super::task::sealed::Sealed for ExecuteTask {}
 
 #[async_trait::async_trait]
 impl Task for ExecuteTask {

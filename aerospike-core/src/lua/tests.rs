@@ -252,8 +252,8 @@ fn value_conversion_round_trip() {
     // without losing their variant.
     for case in [
         Value::Blob(vec![1, 2, 255]),
-        Value::HLL(vec![3, 4, 5]),
-        Value::GeoJSON(r#"{"type":"Point","coordinates":[1.0,2.0]}"#.to_owned()),
+        Value::Hll(vec![3, 4, 5]),
+        Value::GeoJson(r#"{"type":"Point","coordinates":[1.0,2.0]}"#.to_owned()),
     ] {
         let lua_value = value_to_lua(&lua, case.clone()).unwrap();
         assert_eq!(lua_to_value(&lua_value).unwrap(), case, "{case:?}");
@@ -357,7 +357,7 @@ fn bytes_flow_through_the_pipeline() {
 fn geojson_stringifies_in_lua() {
     let lua = new_instance().unwrap();
     let geo = r#"{"type":"Point","coordinates":[1.0,2.0]}"#;
-    let lua_value = value_to_lua(&lua, Value::GeoJSON(geo.to_owned())).unwrap();
+    let lua_value = value_to_lua(&lua, Value::GeoJson(geo.to_owned())).unwrap();
     lua.globals().set("g", lua_value).unwrap();
     let text: String = lua.load("return tostring(g)").eval().unwrap();
     assert_eq!(text, geo);

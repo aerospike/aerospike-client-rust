@@ -1,9 +1,24 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 use aerospike::{as_bin, as_key, as_val};
 
 use aerospike::operations;
-use aerospike::{BatchPolicy, BatchRecord, Bins, Client, ClientPolicy, UDFLang};
+use aerospike::{BatchPolicy, BatchRecord, Bins, Client, ClientPolicy, UdfLang};
 use aerospike_core::{
-    AdminPolicy, BatchDeletePolicy, BatchOperation, BatchReadPolicy, BatchUDFPolicy,
+    AdminPolicy, BatchDeletePolicy, BatchOperation, BatchReadPolicy, BatchUdfPolicy,
     BatchWritePolicy, Task,
 };
 use rand::distr::Alphanumeric;
@@ -45,13 +60,16 @@ end
     println!("Registering UDF...");
     let apolicy = AdminPolicy::default();
     let task = client
-        .register_udf(&apolicy, udf_body.as_bytes(), "test_udf.lua", UDFLang::Lua)
+        .register_udf(&apolicy, udf_body.as_bytes(), "test_udf.lua", UdfLang::Lua)
         .await
         .unwrap();
     task.wait_till_complete(None).await.unwrap();
     println!("UDF registered successfully!");
 
+    // Reads take the default parent policy; batches that write take the
+    // write default, which does not retry.
     let bpolicy = BatchPolicy::default();
+    let bpolicy_w = BatchPolicy::write_default();
 
     let bin1 = as_bin!("a", "a value");
     let bin2 = as_bin!("b", "another value");
@@ -81,7 +99,7 @@ end
     let bpr = BatchReadPolicy::default();
     let bpw = BatchWritePolicy::default();
     let bpd = BatchDeletePolicy::default();
-    let bpu = BatchUDFPolicy::default();
+    let bpu = BatchUdfPolicy::default();
 
     // WRITE Operations
     println!("\n--- Batch WRITE operations ---");
@@ -90,7 +108,7 @@ end
         BatchOperation::write(&bpw, key2.clone(), wops.clone()),
         BatchOperation::write(&bpw, key3.clone(), wops.clone()),
     ];
-    client.batch(&bpolicy, &mut batch).await.unwrap();
+    client.batch(&bpolicy_w, &mut batch).await.unwrap();
     let results: Vec<&BatchRecord> = batch.iter().map(BatchOperation::batch_record).collect();
     println!("Write results:");
     dbg!(&results);
@@ -116,12 +134,12 @@ end
     let args3 = vec![as_val!(3)];
     let args4 = vec![as_val!(4)];
     let mut batch = vec![
-        BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", Some(args1)),
-        BatchOperation::udf(&bpu, key2.clone(), "test_udf", "echo", Some(args2)),
-        BatchOperation::udf(&bpu, key3.clone(), "test_udf", "echo", Some(args3)),
-        BatchOperation::udf(&bpu, key4.clone(), "test_udf", "echo", Some(args4)),
+        BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", args1),
+        BatchOperation::udf(&bpu, key2.clone(), "test_udf", "echo", args2),
+        BatchOperation::udf(&bpu, key3.clone(), "test_udf", "echo", args3),
+        BatchOperation::udf(&bpu, key4.clone(), "test_udf", "echo", args4),
     ];
-    client.batch(&bpolicy, &mut batch).await.unwrap();
+    client.batch(&bpolicy_w, &mut batch).await.unwrap();
     let results: Vec<&BatchRecord> = batch.iter().map(BatchOperation::batch_record).collect();
     println!("UDF results:");
     dbg!(&results);
@@ -134,7 +152,7 @@ end
         BatchOperation::delete(&bpd, key3.clone()),
         BatchOperation::delete(&bpd, key4.clone()),
     ];
-    client.batch(&bpolicy, &mut batch).await.unwrap();
+    client.batch(&bpolicy_w, &mut batch).await.unwrap();
     let results: Vec<&BatchRecord> = batch.iter().map(BatchOperation::batch_record).collect();
     println!("Delete results:");
     dbg!(&results);

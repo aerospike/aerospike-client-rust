@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -220,7 +220,7 @@ impl QueryHandle {
     /// Because callback delivery commits the cursor as each invocation
     /// returns, a resume after [`cancel`](Self::cancel) is exactly-once: no
     /// record is lost, none is re-delivered.
-    pub async fn partition_filter(&self) -> Option<PartitionFilter> {
+    pub fn partition_filter(&self) -> Option<PartitionFilter> {
         if !self.is_active() {
             return Some(self.ctx.tracker.partition_filter());
         }

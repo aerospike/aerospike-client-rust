@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -213,7 +213,7 @@ impl Recordset {
     /// that was buffered but never consumed, so cancelling early never loses
     /// records — at-least-once, with duplicates possible only for records a
     /// concurrent consumer delivered ahead of a sibling's unclosed gap.
-    pub async fn partition_filter(&self) -> Option<PartitionFilter> {
+    pub fn partition_filter(&self) -> Option<PartitionFilter> {
         if !self.is_active() {
             return Some(self.tracker.partition_filter());
         }
@@ -299,8 +299,8 @@ impl AsRef<Recordset> for RecordStream {
 /// If the record stream is inactive, it will return the `PartitionFilter` cursor to use in a future scan/query.
 impl RecordStream {
     /// Returns the partition filter from the recordset.
-    pub async fn partition_filter(&self) -> Option<PartitionFilter> {
-        self.0.partition_filter().await
+    pub fn partition_filter(&self) -> Option<PartitionFilter> {
+        self.0.partition_filter()
     }
 }
 
@@ -476,12 +476,11 @@ mod tests {
         };
 
         // A new round begins for this partition before the entry is consumed.
-        {
-            let pf = shared.partition_filter();
-            pf.partitions.as_ref().unwrap()[key.partition_id()]
-                .lock()
-                .begin_delivery_round();
-        }
+        // (On the tracker's own state: a cursor from `partition_filter()` is
+        // an independent copy.)
+        shared.partitions()[key.partition_id()]
+            .lock()
+            .begin_delivery_round();
 
         rs.deliver(stale).unwrap();
         assert_eq!(

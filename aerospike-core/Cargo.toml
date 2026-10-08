@@ -4,16 +4,14 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description.workspace = true
+description = "Aerospike Client for Rust: the async client. Depend on the `aerospike` crate, which re-exports it."
 keywords.workspace = true
 categories.workspace = true
 homepage.workspace = true
 repository.workspace = true
 documentation.workspace = true
-readme.workspace = true
+readme = "README.md"
 rust-version.workspace = true
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 # Partition status locks: one byte each and no allocation on first lock. The
@@ -25,20 +23,28 @@ byteorder = "1.5"
 ripemd = "0.2"
 base64 = "0.23"
 rand = "0.10"
-lazy_static = "1.5"
-pwhash = "1.0"
+# Password hashing for `LOGIN` / user management: bcrypt with the fixed salt
+# every Aerospike client uses. Small, maintained, on the same base64/blowfish
+# versions as the rest of the tree.
+bcrypt = { version = "0.19", default-features = false, features = ["std"] }
 serde = { version = "1.0", features = ["derive"], optional = true }
-serde_yml = { version = "0.0.13", optional = true }
-aerospike-macro = { path = "../aerospike-macro", version = "3.0.0-alpha.2", optional = true }
-aerospike-rt = { path = "../aerospike-rt", version = "3.0.0-alpha.2" }
-# `tokio::select!` macro needs a direct dep; runtime features come via aerospike-rt.
-tokio = { version = "1", default-features = false, features = ["macros"] }
+# serde_yaml's maintained continuation (same API); its predecessor serde_yml
+# was a 0.0.x fork.
+serde_norway = { version = "0.9", optional = true }
+aerospike-macro = { workspace = true, optional = true }
+# Everything runtime-specific, tokio included, comes through aerospike-rt.
+aerospike-rt = { workspace = true }
 futures = { version = "0.3.34" }
 async-trait = "0.1.92"
 flate2 = "1"
 regex = "1"
-tokio-rustls = { version = "0.26.5", optional = true }
-rustls = { version = "0.23.45", optional = true }
+# rustls with the `ring` crypto provider: pure Rust + assembly, no cmake or C
+# toolchain on the build host, and exactly one provider compiled in so
+# `ClientConfig::builder()` picks it without a process-level install. A crate
+# that also enables rustls's `aws-lc-rs` feature must install a default
+# `CryptoProvider` itself, as rustls requires whenever two are compiled in.
+tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring", "logging", "tls12"], optional = true }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "logging", "std", "tls12"], optional = true }
 async-channel = "2.5.0"
 # Borrowed, non-owning socket handle for the connection pool liveness probe:
 # one implementation covering tokio, async-std and the TLS inner stream, with no
@@ -55,15 +61,17 @@ mlua = { version = "0.11", features = ["lua54", "vendored", "async", "send"], op
 serialization = ["serde", "indexmap/serde"]
 # Dynamic configuration: read policy overrides from a pluggable source (YAML
 # file out of the box) and apply them at runtime. Pulls serde for deserialization,
-# serde_yml for the file provider, and the Config derive macro.
-dynamic-config = ["serde", "serde_yml", "aerospike-macro"]
+# serde_norway for the file provider, and the Config derive macro.
+dynamic-config = ["serde", "serde_norway", "aerospike-macro"]
 # Client-side Lua for `Client::query_aggregate` (stream UDF aggregation).
 # Bundles a vendored Lua 5.4 interpreter via mlua; off by default so the
 # interpreter is only compiled in when explicitly requested.
 lua = ["mlua"]
 rt-tokio = ["aerospike-rt/rt-tokio", "aerospike-macro?/rt-tokio"]
 rt-async-std = ["aerospike-rt/rt-async-std", "aerospike-macro?/rt-async-std"]
-tls = ["rustls", "tokio-rustls"]
+# Forwarded to aerospike-rt so its guard turns `tls` + `rt-async-std` into one
+# clear compile error instead of trait-bound failures in the connection layer.
+tls = ["rustls", "tokio-rustls", "aerospike-rt/tls"]
 sync = []
 
 [package.metadata.docs.rs]
@@ -75,7 +83,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dev-dependencies]
 env_logger = "0.11"
 hex = "0.4"
-bencher = "0.1"
 serde_json = "1.0"
 serde_bytes = "0.11"
 # Used only by doc-tests inside `aerospike-core` (`use aerospike::…` in
@@ -87,7 +94,6 @@ serde_bytes = "0.11"
 # satisfied; the runtime flag flows through whatever is set on
 # `aerospike-core` itself.
 aerospike = { path = "../", default-features = false, features = ["async"] }
-aerospike-macro = {path = "../aerospike-macro"}
-lazy_static = "1.5"
+aerospike-macro = { workspace = true }
 tokio = { version = "1.53.1", features = ["full"] }
 webpki-roots = "1"

@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -24,8 +24,8 @@ use rand::RngExt;
 use aerospike::operations;
 use aerospike::{as_bin, as_key, as_val};
 use aerospike::{
-    AdminPolicy, BatchDeletePolicy, BatchOperation, BatchPolicy, BatchReadPolicy, BatchUDFPolicy,
-    BatchWritePolicy, Bins, ReadPolicy, Task, UDFLang, WritePolicy,
+    AdminPolicy, BatchDeletePolicy, BatchOperation, BatchPolicy, BatchReadPolicy, BatchUdfPolicy,
+    BatchWritePolicy, Bins, ReadPolicy, Task, UdfLang, WritePolicy,
 };
 
 use bencher::Bencher;
@@ -44,7 +44,7 @@ fn rand_key_from_range(low: i64, high: i64) -> i64 {
 fn single_key_read(bench: &mut Bencher) {
     let client = common::RUNTIME.block_on(common::singleton_client());
     let namespace = common::namespace();
-    let key = as_key!(namespace, &TEST_SET, rand_key_from_range(1, 1000));
+    let key = as_key!(namespace, TEST_SET.as_str(), rand_key_from_range(1, 1000));
     let wbin = as_bin!("i", 1);
     let bins = vec![wbin];
     let rpolicy = ReadPolicy::default();
@@ -63,7 +63,7 @@ fn single_key_read(bench: &mut Bencher) {
 fn single_key_read_header(bench: &mut Bencher) {
     let client = common::RUNTIME.block_on(common::singleton_client());
     let namespace = common::namespace();
-    let key = as_key!(namespace, &TEST_SET, rand_key_from_range(1, 1000));
+    let key = as_key!(namespace, TEST_SET.as_str(), rand_key_from_range(1, 1000));
     let wbin = as_bin!("i", 1);
     let bins = vec![wbin];
     let rpolicy = ReadPolicy::default();
@@ -82,7 +82,7 @@ fn single_key_read_header(bench: &mut Bencher) {
 fn single_key_write(bench: &mut Bencher) {
     let client = common::RUNTIME.block_on(common::singleton_client());
     let namespace = common::namespace();
-    let key = as_key!(namespace, &TEST_SET, rand_key_from_range(1, 1000));
+    let key = as_key!(namespace, TEST_SET.as_str(), rand_key_from_range(1, 1000));
     let wpolicy = WritePolicy::default();
 
     let bin1 = as_bin!("str1", common::rand_str(256));
@@ -101,7 +101,7 @@ fn single_key_write(bench: &mut Bencher) {
 fn single_key_operate_write_get_delete(bench: &mut Bencher) {
     let client = common::RUNTIME.block_on(common::singleton_client());
     let namespace = common::namespace();
-    let key = as_key!(namespace, &TEST_SET, rand_key_from_range(1, 1000));
+    let key = as_key!(namespace, TEST_SET.as_str(), rand_key_from_range(1, 1000));
     let wpolicy = WritePolicy::default();
 
     let bin1 = as_bin!("bin1", common::rand_str(256));
@@ -148,7 +148,7 @@ function echo(rec, val)
 end
 "#;
     let task = common::RUNTIME
-        .block_on(client.register_udf(&apolicy, udf_body.as_bytes(), "test_udf.lua", UDFLang::Lua))
+        .block_on(client.register_udf(&apolicy, udf_body.as_bytes(), "test_udf.lua", UdfLang::Lua))
         .unwrap();
 
     common::RUNTIME
@@ -158,11 +158,11 @@ end
     let bin1 = as_bin!("a", "a value");
     let bin2 = as_bin!("b", "another value");
     let bin3 = as_bin!("c", 42);
-    let key1 = as_key!(namespace, &TEST_SET, rand_key_from_range(1, 1000));
-    let key2 = as_key!(namespace, &TEST_SET, rand_key_from_range(1, 1000));
-    let key3 = as_key!(namespace, &TEST_SET, rand_key_from_range(1, 1000));
+    let key1 = as_key!(namespace, TEST_SET.as_str(), rand_key_from_range(1, 1000));
+    let key2 = as_key!(namespace, TEST_SET.as_str(), rand_key_from_range(1, 1000));
+    let key3 = as_key!(namespace, TEST_SET.as_str(), rand_key_from_range(1, 1000));
 
-    let key4 = as_key!(namespace, &TEST_SET, rand_key_from_range(1, 1000));
+    let key4 = as_key!(namespace, TEST_SET.as_str(), rand_key_from_range(1, 1000));
     // key does not exist
 
     let selected = Bins::from(["a"]);
@@ -172,7 +172,7 @@ end
     let bpr = BatchReadPolicy::default();
     let bpw = BatchWritePolicy::default();
     let bpd = BatchDeletePolicy::default();
-    let bpu = BatchUDFPolicy::default();
+    let bpu = BatchUdfPolicy::default();
 
     let wops = vec![
         operations::put(&bin1),
@@ -197,7 +197,7 @@ end
         BatchOperation::read_ops(&bpr, key3.clone(), rops),
         BatchOperation::read(&bpr, key4.clone(), none),
         BatchOperation::delete(&bpd, key4.clone()),
-        BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", Some(args1)),
+        BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", args1),
     ];
 
     bench.iter(|| {

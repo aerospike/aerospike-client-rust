@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -22,6 +22,7 @@ use serde::Serialize;
 /// Database operation error codes. The error codes are defined in the server-side file proto.h.
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ResultCode {
     /// `OperationType` was successful.
     Ok,
@@ -116,7 +117,7 @@ pub enum ResultCode {
     InvalidEncoding,
 
     /// Write can't complete until XDR finishes shipping.
-    XDRKeyBusy,
+    XdrKeyBusy,
 
     /// Transaction record blocked by another transaction.
     MrtBlocked,
@@ -193,7 +194,7 @@ pub enum ResultCode {
     /// Privilege is invalid.
     InvalidPrivilege,
 
-    /// Invalid IP address allowlist.
+    /// Invalid IP address allowlist (`INVALID_WHITELIST` in the server and the Java/Go clients).
     InvalidAllowlist,
 
     /// Quotas not enabled on server.
@@ -208,7 +209,8 @@ pub enum ResultCode {
     /// User does not posses the required role to perform the database operation.
     RoleViolation,
 
-    /// Command not allowed because sender IP address not allowlisted.
+    /// Command not allowed because the sender IP address is not allowlisted
+    /// (`NOT_WHITELISTED` in the server and the Java/Go clients).
     NotAllowlisted,
 
     /// Quota exceeded.
@@ -229,7 +231,8 @@ pub enum ResultCode {
     /// Invalid `GeoJSON` on insert/update
     InvalidGeojson,
 
-    /// Secondary index already exists.
+    /// Secondary index already exists (`INDEX_FOUND` in the server and Go,
+    /// `INDEX_ALREADY_EXISTS` in Java).
     IndexFound,
 
     /// Requested secondary index does not exist.
@@ -305,7 +308,7 @@ impl ResultCode {
             27 => ResultCode::FilteredOut,
             28 => ResultCode::LostConflict,
             29 => ResultCode::InvalidEncoding,
-            32 => ResultCode::XDRKeyBusy,
+            32 => ResultCode::XdrKeyBusy,
             120 => ResultCode::MrtBlocked,
             121 => ResultCode::MrtVersionMismatch,
             122 => ResultCode::MrtExpired,
@@ -395,7 +398,7 @@ impl ResultCode {
             ResultCode::FilteredOut => String::from("Command filtered out"),
             ResultCode::LostConflict => String::from("Command failed due to conflict with XDR"),
             ResultCode::InvalidEncoding => String::from("Invalid UTF-8 encoding"),
-            ResultCode::XDRKeyBusy => {
+            ResultCode::XdrKeyBusy => {
                 String::from("Write can't complete until XDR finishes shipping")
             }
             ResultCode::MrtBlocked => {
@@ -499,7 +502,7 @@ impl From<ResultCode> for u8 {
             ResultCode::FilteredOut => 27,
             ResultCode::LostConflict => 28,
             ResultCode::InvalidEncoding => 29,
-            ResultCode::XDRKeyBusy => 32,
+            ResultCode::XdrKeyBusy => 32,
             ResultCode::MrtBlocked => 120,
             ResultCode::MrtVersionMismatch => 121,
             ResultCode::MrtExpired => 122,
@@ -588,6 +591,7 @@ impl fmt::Display for ResultCode {
 /// therefore do not appear here.
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ClientResultCode {
     /// Transaction has already been aborted.
     TxnAlreadyAborted,

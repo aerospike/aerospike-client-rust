@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -16,26 +16,26 @@
 use std::fmt;
 
 /// User-defined function (UDF) language
-#[derive(Debug)]
-pub enum UDFLang {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UdfLang {
     /// Lua embedded programming language.
     Lua,
 }
 
-impl fmt::Display for UDFLang {
+impl fmt::Display for UdfLang {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         let s = match *self {
-            UDFLang::Lua => "LUA",
+            UdfLang::Lua => "LUA",
         };
 
         write!(f, "{s}")
     }
 }
 
-impl<'a> From<UDFLang> for &'a str {
-    fn from(val: UDFLang) -> &'a str {
+impl<'a> From<UdfLang> for &'a str {
+    fn from(val: UdfLang) -> &'a str {
         match val {
-            UDFLang::Lua => "LUA",
+            UdfLang::Lua => "LUA",
         }
     }
 }

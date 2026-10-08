@@ -1,4 +1,4 @@
-// Copyright 2015-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -296,7 +296,7 @@ impl TxnRoll {
     fn group_by_node(&self, keys: &[Key]) -> Result<HashMap<Arc<Node>, Vec<usize>>> {
         let mut groups: HashMap<Arc<Node>, Vec<usize>> = HashMap::new();
         for (i, key) in keys.iter().enumerate() {
-            let mut partition = Partition::for_write(key);
+            let mut partition = Partition::for_write(key, crate::policy::Replica::Master);
             let node = partition.get_node(&self.cluster)?;
             groups.entry(node).or_default().push(i);
         }
@@ -327,13 +327,7 @@ impl TxnRoll {
         let ops: Vec<(BatchOperation, usize)> = group
             .iter()
             .map(|(i, key, ver)| {
-                (
-                    BatchOperation::TxnVerify {
-                        br: BatchRecord::new(key.clone(), false),
-                        version: Some(*ver),
-                    },
-                    *i,
-                )
+                (BatchOperation::txn_verify(key.clone(), Some(*ver)), *i)
             })
             .collect();
         let cmd = BatchOperateCommand::new(policy, node, ops);
@@ -461,11 +455,7 @@ impl TxnRoll {
             .iter()
             .map(|(i, key)| {
                 (
-                    BatchOperation::TxnRoll {
-                        br: BatchRecord::new(key.clone(), true),
-                        txn: txn.clone(),
-                        roll_attr,
-                    },
+                    BatchOperation::txn_roll(key.clone(), txn.clone(), roll_attr),
                     *i,
                 )
             })

@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -13,11 +13,11 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::batch::{BatchHook, BatchOperation};
+use crate::batch::{BatchHook, BatchOp, BatchOperation};
 use crate::cluster::partition::Partition;
 use crate::cluster::{Cluster, Node};
 use crate::commands::{
-    BatchOperateCommand, DeleteCommand, ExecuteUDFCommand, OperateCommand, ReadCommand,
+    BatchOperateCommand, DeleteCommand, ExecuteUdfCommand, OperateCommand, ReadCommand,
 };
 use crate::errors::Result;
 use crate::policy::{BatchPolicy, Concurrency};
@@ -38,7 +38,7 @@ impl BatchExecutor {
         key: &Key,
         has_write: bool,
         replica: crate::policy::Replica,
-        read_mode_sc: crate::policy::ReadModeSC,
+        read_mode_sc: crate::policy::ReadModeSc,
     ) -> Result<Arc<Node>> {
         // Java BatchNodeList parity: write records route via the
         // write-side replica logic (master, or the sequence walk for
@@ -46,9 +46,7 @@ impl BatchExecutor {
         // replica), read records via the read-side logic including
         // PreferRack and the SC read-mode overrides.
         let mut partition = if has_write {
-            let mut partition = Partition::for_write(key);
-            partition.replica = replica;
-            partition
+            Partition::for_write(key, replica)
         } else {
             Partition::for_read(&self.cluster, key, replica, read_mode_sc)
         };
@@ -92,11 +90,17 @@ impl BatchExecutor {
     pub async fn execute_foreach(
         &self,
         policy: &BatchPolicy,
-        ops: Vec<BatchOperation>,
+        ops: &mut [BatchOperation],
         hook: Arc<BatchHook>,
     ) -> Result<()> {
-        let rows: Vec<(BatchOperation, usize)> =
-            ops.into_iter().enumerate().map(|(i, op)| (op, i)).collect();
+        let rows: Vec<(BatchOperation, usize)> = ops
+            .iter_mut()
+            .enumerate()
+            .map(|(i, op)| {
+                op.clear_result();
+                (std::mem::replace(op, BatchOperation::placeholder()), i)
+            })
+            .collect();
         let (rows, first_err) = self.run_rows(policy, rows, Some(hook.clone())).await?;
         // Whatever never fired — unanswered, unroutable, or abandoned by an
         // abort — fires now with the outcome it carries, so the hook is the
@@ -106,6 +110,9 @@ impl BatchExecutor {
                 break;
             }
             hook.fire(*idx, op.batch_record()).await;
+        }
+        for (op, idx) in rows {
+            ops[idx] = op;
         }
         match first_err {
             None => Ok(()),
@@ -129,7 +136,7 @@ impl BatchExecutor {
         let BatchSplit {
             groups: batch_nodes,
             unroutable,
-        } = self.get_batch_operate_nodes(rows, policy.replica, policy.base_policy.read_mode_sc)?;
+        } = self.get_batch_operate_nodes(rows, policy.base_policy.replica, policy.base_policy.read_mode_sc)?;
 
         // Unroutable keys are decided already: report them now rather than
         // making the hook wait on the nodes that can answer.
@@ -263,10 +270,8 @@ impl BatchExecutor {
 
         // Build the right command for the variant, run it, and
         // capture the resulting record (or per-key error).
-        let result: std::result::Result<Option<crate::Record>, Error> = match batch_op {
-            BatchOperation::Read {
-                policy, bins, ops, ..
-            } => {
+        let result: std::result::Result<Option<crate::Record>, Error> = match &mut batch_op.kind {
+            BatchOp::Read { policy, bins, ops } => {
                 if let Some(op_list) = ops.as_ref() {
                     // Read-with-ops takes the operate path on a write
                     // policy because that's how single-record `operate`
@@ -287,13 +292,13 @@ impl BatchExecutor {
                     cmd.execute().await.map(|()| cmd.record.take())
                 }
             }
-            BatchOperation::Write { policy, ops, .. } => {
+            BatchOp::Write { policy, ops } => {
                 let mut wp = policy.to_write_policy(parent);
                 cluster.apply_batch_write(&mut wp);
                 let mut cmd = OperateCommand::new(&wp, cluster.clone(), &key, ops.as_slice());
                 cmd.execute().await.map(|()| cmd.read_command.record.take())
             }
-            BatchOperation::Delete { policy, .. } => {
+            BatchOp::Delete { policy } => {
                 let mut wp = policy.to_write_policy(parent);
                 cluster.apply_batch_delete(&mut wp);
                 let mut cmd = DeleteCommand::new(&wp, cluster.clone(), &key);
@@ -319,28 +324,27 @@ impl BatchExecutor {
                     Err(e) => Err(e),
                 }
             }
-            BatchOperation::UDF {
+            BatchOp::Udf {
                 policy,
-                udf_name,
+                package_name,
                 function_name,
                 args,
-                ..
             } => {
                 let mut wp = policy.to_write_policy(parent);
                 cluster.apply_batch_udf(&mut wp);
-                let mut cmd = ExecuteUDFCommand::new(
+                let mut cmd = ExecuteUdfCommand::new(
                     &wp,
                     cluster.clone(),
                     &key,
-                    udf_name,
+                    package_name,
                     function_name,
-                    args.as_deref(),
+                    args,
                 );
                 cmd.execute().await.map(|()| cmd.read_command.record.take())
             }
             // Txn verify/roll never flow through the public batch executor; the
             // transaction roll path groups and dispatches them itself.
-            BatchOperation::TxnVerify { .. } | BatchOperation::TxnRoll { .. } => {
+            BatchOp::TxnVerify { .. } | BatchOp::TxnRoll { .. } => {
                 unreachable!("txn verify/roll are dispatched by the transaction roll path")
             }
         };
@@ -433,7 +437,7 @@ impl BatchExecutor {
         &self,
         rows: Vec<(BatchOperation, usize)>,
         replica: crate::policy::Replica,
-        read_mode_sc: crate::policy::ReadModeSC,
+        read_mode_sc: crate::policy::ReadModeSc,
     ) -> Result<BatchSplit> {
         #![allow(clippy::type_complexity)]
         // Grouped by node in first-seen order. A `HashMap<Arc<Node>, _>` did

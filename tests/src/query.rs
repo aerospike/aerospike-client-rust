@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -139,7 +139,7 @@ async fn query_single_consumer() {
 
     // Filter Query
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.add_filter(Filter::equal("bin", 1));
+    statement.set_filter(Filter::equal("bin", 1));
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, statement).await.unwrap();
     let mut count = 0;
@@ -157,7 +157,7 @@ async fn query_single_consumer() {
 
     // Range Query
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.add_filter(Filter::range("bin", 0, 9));
+    statement.set_filter(Filter::range("bin", 0, 9));
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, statement).await.unwrap();
     let mut count = 0;
@@ -179,32 +179,6 @@ async fn query_single_consumer() {
 }
 
 #[aerospike_macro::test]
-async fn query_empty_filter_list_scans() {
-    let client = common::client().await;
-    let namespace = common::namespace();
-    let set_name = create_test_set(&client, 20).await;
-    let qpolicy = QueryPolicy::default();
-
-    let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.filters = Some(vec![]);
-    let rs = client
-        .query(&qpolicy, PartitionFilter::all(), statement)
-        .await
-        .unwrap();
-    let mut count = 0;
-    let mut rs = rs.into_stream();
-    while let Some(res) = rs.next().await {
-        match res {
-            Ok(_) => count += 1,
-            Err(err) => panic!("{:?}", err),
-        }
-    }
-    assert_eq!(count, 20);
-
-    client.close().await.unwrap();
-}
-
-#[aerospike_macro::test]
 async fn query_single_consumer_with_cursor() {
     let client = common::client().await;
     let namespace = common::namespace();
@@ -217,7 +191,7 @@ async fn query_single_consumer_with_cursor() {
     while !pf.done() {
         // Filter Query
         let mut statement = Statement::new(namespace, &set_name, Bins::All);
-        statement.add_filter(Filter::equal("bin", 1));
+        statement.set_filter(Filter::equal("bin", 1));
         let rs = client.query(&qpolicy, pf, statement).await.unwrap();
         let mut rs = rs.into_stream();
         while let Some(res) = rs.next().await {
@@ -229,7 +203,7 @@ async fn query_single_consumer_with_cursor() {
                 Err(err) => panic!("{:?}", err),
             }
         }
-        pf = rs.partition_filter().await.unwrap();
+        pf = rs.partition_filter().unwrap();
     }
     assert_eq!(count, 1);
 
@@ -241,7 +215,7 @@ async fn query_single_consumer_with_cursor() {
         iter += 1;
         // Range Query
         let mut statement = Statement::new(namespace, &set_name, Bins::Some(vec!["bin".into()]));
-        statement.add_filter(Filter::range("bin", 0, 9));
+        statement.set_filter(Filter::range("bin", 0, 9));
         let rs = client.query(&qpolicy, pf, statement).await.unwrap();
         let mut rs = rs.into_stream();
         while let Some(res) = rs.next().await {
@@ -255,7 +229,7 @@ async fn query_single_consumer_with_cursor() {
                 Err(err) => panic!("{:?}", err),
             }
         }
-        pf = rs.partition_filter().await.unwrap();
+        pf = rs.partition_filter().unwrap();
     }
     assert_eq!(count, 10);
     assert_eq!(iter, 11);
@@ -279,7 +253,7 @@ async fn query_single_consumer_with_cursor() {
                 Err(err) => panic!("{:?}", err),
             }
         }
-        pf = rs.partition_filter().await.unwrap();
+        pf = rs.partition_filter().unwrap();
     }
     assert_eq!(count, EXPECTED);
     assert_eq!(iter, 4);
@@ -309,7 +283,7 @@ async fn query_foreach_delivers_all_exactly_once() {
                 let (s, c) = (s.clone(), c.clone());
                 async move {
                     let rec = res.unwrap();
-                    s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
+                    s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest());
                     c.fetch_add(1, Ordering::Relaxed);
                     true
                 }
@@ -350,7 +324,7 @@ async fn query_foreach_abort_and_resume_exactly_once() {
                 let (s, c) = (s.clone(), c.clone());
                 async move {
                     let rec = res.unwrap();
-                    s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
+                    s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest());
                     // Yield once so the callback really does suspend the
                     // node stream mid-record before the commit.
                     aerospike_rt::task::yield_now().await;
@@ -362,7 +336,7 @@ async fn query_foreach_abort_and_resume_exactly_once() {
             .unwrap();
         handle.wait().await.unwrap();
 
-        pf = handle.partition_filter().await.unwrap();
+        pf = handle.partition_filter().unwrap();
         if pf.done() {
             break;
         }
@@ -403,7 +377,7 @@ async fn query_foreach_cancel_and_resume_exactly_once() {
                 let (s, c) = (s.clone(), c.clone());
                 async move {
                     let rec = res.unwrap();
-                    s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
+                    s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest());
                     c.fetch_add(1, Ordering::Relaxed);
                     true
                 }
@@ -417,7 +391,7 @@ async fn query_foreach_cancel_and_resume_exactly_once() {
     handle.cancel();
     assert!(!handle.is_active());
     handle.wait().await.unwrap();
-    let mut pf = handle.partition_filter().await.unwrap();
+    let mut pf = handle.partition_filter().unwrap();
 
     // Resume to completion.
     let mut rounds = 0usize;
@@ -431,7 +405,7 @@ async fn query_foreach_cancel_and_resume_exactly_once() {
                 let (s, c) = (s.clone(), c.clone());
                 async move {
                     let rec = res.unwrap();
-                    s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest);
+                    s.lock().unwrap().insert(rec.key.as_ref().unwrap().digest());
                     c.fetch_add(1, Ordering::Relaxed);
                     true
                 }
@@ -439,7 +413,7 @@ async fn query_foreach_cancel_and_resume_exactly_once() {
             .await
             .unwrap();
         handle.wait().await.unwrap();
-        pf = handle.partition_filter().await.unwrap();
+        pf = handle.partition_filter().unwrap();
     }
 
     assert_eq!(
@@ -474,14 +448,14 @@ async fn query_si_cancel_midway_resumes_without_loss() {
         assert!(rounds <= 100, "resume loop did not converge");
 
         let mut stmt = Statement::new(namespace, &set_name, Bins::Some(vec!["bin".into()]));
-        stmt.add_filter(Filter::range("bin", 0, EXPECTED as i64));
+        stmt.set_filter(Filter::range("bin", 0, EXPECTED as i64));
         let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
         let mut stream = rs.clone().into_stream();
         let mut got = 0usize;
         while got < 100 {
             match stream.next().await {
                 Some(Ok(rec)) => {
-                    seen.insert(rec.key.as_ref().unwrap().digest);
+                    seen.insert(rec.key.as_ref().unwrap().digest());
                     got += 1;
                 }
                 Some(Err(err)) => panic!("{err:?}"),
@@ -490,7 +464,7 @@ async fn query_si_cancel_midway_resumes_without_loss() {
         }
         drop(stream);
         rs.close();
-        pf = rs.partition_filter().await.unwrap();
+        pf = rs.partition_filter().unwrap();
     }
 
     assert_eq!(seen.len(), EXPECTED, "records lost across si cancel/resume");
@@ -512,7 +486,7 @@ async fn query_single_consumer_rps() {
 
     // Range Query
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.add_filter(Filter::range("bin", 0, (EXPECTED / 3) as i64));
+    statement.set_filter(Filter::range("bin", 0, (EXPECTED / 3) as i64));
 
     qpolicy.records_per_second = 3;
     let start_time = Instant::now();
@@ -548,7 +522,7 @@ async fn query_nobins() {
     let qpolicy = QueryPolicy::default();
 
     let mut statement = Statement::new(namespace, &set_name, Bins::None);
-    statement.add_filter(Filter::range("bin", 0, 9));
+    statement.set_filter(Filter::range("bin", 0, 9));
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, statement).await.unwrap();
     let mut count = 0;
@@ -576,7 +550,7 @@ async fn query_some_bins() {
     let qpolicy = QueryPolicy::default();
 
     let mut statement = Statement::new(namespace, &set_name, Bins::Some(vec!["bin".into()]));
-    statement.add_filter(Filter::range("bin", 0, 9));
+    statement.set_filter(Filter::range("bin", 0, 9));
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, statement).await.unwrap();
     let mut count = 0;
@@ -606,7 +580,7 @@ async fn query_multi_consumer() {
     // Range Query
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
     let f = Filter::range("bin", 0, 9);
-    statement.add_filter(f);
+    statement.set_filter(f);
 
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, statement).await.unwrap();
@@ -653,13 +627,13 @@ async fn query_large_i64() {
     let apolicy = AdminPolicy::default();
 
     let res = client
-        .put(&wpolicy, &key, &[aerospike::Bin::new(BIN.into(), value)])
+        .put(&wpolicy, &key, &[aerospike::Bin::new(BIN, value)])
         .await;
 
     assert!(res.is_ok());
 
     let mut qpolicy = aerospike::QueryPolicy::new();
-    let bin_name = aerospike::expressions::int_bin(BIN.into());
+    let bin_name = aerospike::expressions::int_bin(BIN);
     let bin_val = aerospike::expressions::int_val(i64::MAX);
     qpolicy
         .base_policy
@@ -760,7 +734,7 @@ async fn test_query_geo_within_geojson_region() {
 
     let qpolicy = QueryPolicy::default();
     let mut stmt = aerospike::Statement::new(namespace, set_name, aerospike::Bins::All);
-    stmt.add_filter(predicate);
+    stmt.set_filter(predicate);
     let pf = PartitionFilter::all();
     let mut rs = client
         .query(&qpolicy, pf, stmt)
@@ -796,7 +770,7 @@ async fn query_filter_with_specific_bins() {
         &set_name,
         Bins::Some(vec!["bin".into(), "bin2".into()]),
     );
-    statement.add_filter(Filter::range("bin", 0, 9));
+    statement.set_filter(Filter::range("bin", 0, 9));
 
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, statement).await.unwrap();
@@ -864,7 +838,7 @@ async fn query_duplicate_bin_projection_returns_scalar() {
         set_name,
         Bins::Some(vec!["a_fr".into(), "a_fr".into()]),
     );
-    statement.add_filter(Filter::range("a_fr", 0, 4));
+    statement.set_filter(Filter::range("a_fr", 0, 4));
 
     let qpolicy = QueryPolicy::default();
     let rs = client
@@ -903,7 +877,7 @@ async fn query_filter_with_index_name() {
     );
     // Use Filter::range_by_index to target the index by name
     let filter = Filter::range_by_index(&index_name, 0, 9);
-    statement.add_filter(filter);
+    statement.set_filter(filter);
 
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, statement).await.unwrap();
@@ -939,7 +913,7 @@ async fn query_include_bin_data_false() {
     qpolicy.include_bin_data = false;
 
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.add_filter(Filter::range("bin", 0, 9));
+    statement.set_filter(Filter::range("bin", 0, 9));
 
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, statement).await.unwrap();
@@ -1001,11 +975,11 @@ async fn query_scan_with_specific_bins() {
     client.close().await.unwrap();
 }
 
-/// Query using `QueryDuration::LongRelaxAP`.
+/// Query using `QueryDuration::LongRelaxAp`.
 /// This exercises the fix where `INFO2_RELAX_AP_LONG_QUERY` is correctly
 /// written into the info2 byte instead of info1.
 ///
-/// `LongRelaxAP` relaxes AP-only read consistency during long queries; the
+/// `LongRelaxAp` relaxes AP-only read consistency during long queries; the
 /// server rejects it on strong-consistency namespaces with `ParameterError`,
 /// so skip there.
 #[aerospike_macro::test]
@@ -1018,10 +992,10 @@ async fn query_long_relax_ap_duration() {
     }
     let set_name = create_test_set(&client, EXPECTED).await;
     let mut qpolicy = QueryPolicy::default();
-    qpolicy.expected_duration = QueryDuration::LongRelaxAP;
+    qpolicy.expected_duration = QueryDuration::LongRelaxAp;
 
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.add_filter(Filter::range("bin", 0, 9));
+    statement.set_filter(Filter::range("bin", 0, 9));
 
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, statement).await.unwrap();
@@ -1052,10 +1026,10 @@ async fn query_operate_write() {
 
     // Use query_operate to add 100 to every record's "bin" value in range [0, 99]
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.add_filter(Filter::range("bin", 0, 99));
-    let ops = vec![operations::add(&as_bin!("bin", 100))];
+    statement.set_filter(Filter::range("bin", 0, 99));
+    statement.set_operations([operations::add(&as_bin!("bin", 100))]);
     let task = client
-        .query_operate(&wpolicy, statement, &ops)
+        .query_operate(&wpolicy, statement)
         .await
         .expect("query_operate failed");
     task.wait_till_complete(Some(Duration::from_secs(30)))
@@ -1083,10 +1057,10 @@ async fn query_operate_scan_all() {
     let wpolicy = WritePolicy::default();
 
     // Use query_operate without filter (scan mode) to set a new bin on all records
-    let statement = Statement::new(namespace, &set_name, Bins::All);
-    let ops = vec![operations::put(&as_bin!("new_bin", 999))];
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_operations([operations::put(&as_bin!("new_bin", 999))]);
     let task = client
-        .query_operate(&wpolicy, statement, &ops)
+        .query_operate(&wpolicy, statement)
         .await
         .expect("query_operate scan failed");
     task.wait_till_complete(Some(Duration::from_secs(30)))
@@ -1123,12 +1097,12 @@ async fn query_operate_empty_set() {
 
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
-    let statement = Statement::new(namespace, &set_name, Bins::All);
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
     let wpolicy = WritePolicy::default();
-    let ops = vec![operations::put(&as_bin!("bin", 1))];
+    statement.set_operations([operations::put(&as_bin!("bin", 1))]);
 
     let task = client
-        .query_operate(&wpolicy, statement, &ops)
+        .query_operate(&wpolicy, statement)
         .await
         .expect("background operate on an empty set should succeed");
     task.wait_till_complete(Some(Duration::from_secs(30)))
@@ -1152,7 +1126,7 @@ async fn query_operate_empty_ops_returns_parameter_error() {
     // contains "no operations" so the assertion would not be satisfied by an
     // accidental server-returned ParameterError (server fills the node addr
     // in that field instead).
-    let result = client.query_operate(&wpolicy, statement, &[]).await;
+    let result = client.query_operate(&wpolicy, statement).await;
 
     match result {
         Err(ref e)
@@ -1183,7 +1157,7 @@ async fn query_filter_equal_by_index() {
     let index_name = format!("{}_{}_{}", namespace, set_name, "bin");
 
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.add_filter(Filter::equal_by_index(&index_name, 5_i64));
+    statement.set_filter(Filter::equal_by_index(&index_name, 5_i64));
 
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, statement).await.unwrap();
@@ -1258,7 +1232,7 @@ async fn query_filter_contains_list() {
 
     // Value 1 is in record 0's list [0,1,2] and record 1's list [1,2,3]
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.add_filter(Filter::contains(
+    statement.set_filter(Filter::contains(
         "list_bin",
         1_i64,
         CollectionIndexType::List,
@@ -1295,7 +1269,7 @@ async fn query_filter_contains_range_list() {
     // record 1: [1,2,3] has 1 => match
     // record 2: [2,3,4] has neither 0 nor 1 => no match
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.add_filter(Filter::contains_range(
+    statement.set_filter(Filter::contains_range(
         "list_bin",
         0_i64,
         1_i64,
@@ -1398,7 +1372,7 @@ async fn query_filter_geo_within_radius() {
 
     // 50km radius around [-122.0, 37.5] should include close1 and close2 but not far
     let mut stmt = Statement::new(namespace, &set_name, Bins::All);
-    stmt.add_filter(Filter::geo_within_radius("geo_bin", -122.0, 37.5, 50000.0));
+    stmt.set_filter(Filter::geo_within_radius("geo_bin", -122.0, 37.5, 50000.0));
 
     let pf = PartitionFilter::all();
     let mut rs = client
@@ -1493,7 +1467,7 @@ async fn query_filter_geo_contains() {
     // Query: which regions contain the point [-122.0, 37.5]?
     let point = r#"{"type": "Point", "coordinates": [-122.0, 37.5]}"#;
     let mut stmt = Statement::new(namespace, set_name, Bins::All);
-    stmt.add_filter(Filter::geo_contains(bin_name, point));
+    stmt.set_filter(Filter::geo_contains(bin_name, point));
 
     let pf = PartitionFilter::all();
     let mut rs = client
@@ -1550,7 +1524,7 @@ async fn query_filter_with_expression_builder() {
 
     // Query using Filter::range().expression() builder
     let mut stmt = Statement::new(namespace, &set_name, Bins::All);
-    stmt.add_filter(Filter::range("a", 0_i64, 9_i64).expression(exp));
+    stmt.set_filter(Filter::range("a", 0_i64, 9_i64).expression(exp));
 
     let qpolicy = QueryPolicy::default();
     let pf = PartitionFilter::all();
@@ -1616,7 +1590,7 @@ async fn query_filter_with_context_builder() {
 
     // Query using Filter::range().context() builder
     let mut stmt = Statement::new(namespace, &set_name, Bins::All);
-    stmt.add_filter(Filter::range(bin_name, 0_i64, 4_i64).context(vec![ctx_list_index(0)]));
+    stmt.set_filter(Filter::range(bin_name, 0_i64, 4_i64).context(vec![ctx_list_index(0)]));
 
     let qpolicy = QueryPolicy::default();
     let pf = PartitionFilter::all();
@@ -1689,7 +1663,7 @@ async fn query_filter_expression_with_policy_filter() {
         ));
 
     let mut stmt = Statement::new(namespace, &set_name, Bins::All);
-    stmt.add_filter(Filter::range("a", 0_i64, 9_i64).expression(idx_exp));
+    stmt.set_filter(Filter::range("a", 0_i64, 9_i64).expression(idx_exp));
 
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
@@ -1835,7 +1809,7 @@ async fn test_short_query_not_tracked() {
 // reads require server >= 8.1.2.
 
 async fn server_supports_query_ops_projection_ext(client: &aerospike::Client) -> bool {
-    match client.cluster.get_random_node() {
+    match client.random_node() {
         Ok(node) => node.version().supports_query_ops_projection_ext(),
         Err(_) => false,
     }
@@ -1853,7 +1827,7 @@ async fn query_ops_projection_basic_read() {
     let set_name = create_test_set(&client, 50).await;
 
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.add_filter(Filter::range("bin", 0, 49));
+    statement.set_filter(Filter::range("bin", 0, 49));
     statement.set_operations(vec![operations::get_bin("bin2")]);
 
     let qpolicy = QueryPolicy::default();
@@ -2095,11 +2069,10 @@ async fn query_operate_rejects_read_op() {
     let namespace = common::namespace();
     let set_name = create_test_set(&client, 1).await;
 
-    let statement = Statement::new(namespace, &set_name, Bins::All);
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_operations([operations::get_bin("bin")]);
     let wpolicy = WritePolicy::default();
-    let result = client
-        .query_operate(&wpolicy, statement, &[operations::get_bin("bin")])
-        .await;
+    let result = client.query_operate(&wpolicy, statement).await;
 
     match result {
         Err(err) => assert_chain_contains(&err, "write-only"),
@@ -2115,11 +2088,10 @@ async fn query_operate_rejects_get_op() {
     let namespace = common::namespace();
     let set_name = create_test_set(&client, 1).await;
 
-    let statement = Statement::new(namespace, &set_name, Bins::All);
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_operations([operations::get()]);
     let wpolicy = WritePolicy::default();
-    let result = client
-        .query_operate(&wpolicy, statement, &[operations::get()])
-        .await;
+    let result = client.query_operate(&wpolicy, statement).await;
 
     match result {
         Err(err) => assert_chain_contains(&err, "write-only"),
@@ -2135,18 +2107,13 @@ async fn query_operate_rejects_mixed_ops() {
     let namespace = common::namespace();
     let set_name = create_test_set(&client, 1).await;
 
-    let statement = Statement::new(namespace, &set_name, Bins::All);
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_operations([
+        operations::get_bin("bin"),
+        operations::put(&as_bin!("tag", "mixed")),
+    ]);
     let wpolicy = WritePolicy::default();
-    let result = client
-        .query_operate(
-            &wpolicy,
-            statement,
-            &[
-                operations::get_bin("bin"),
-                operations::put(&as_bin!("tag", "mixed")),
-            ],
-        )
-        .await;
+    let result = client.query_operate(&wpolicy, statement).await;
 
     match result {
         Err(err) => assert_chain_contains(&err, "write-only"),
@@ -2195,7 +2162,7 @@ async fn query_returns_user_key_when_send_key_set() {
     task.wait_till_complete(None).await.unwrap();
 
     let mut statement = Statement::new(namespace, &set_name, Bins::from([bin_name]));
-    statement.add_filter(Filter::range(bin_name, 2, 5));
+    statement.set_filter(Filter::range(bin_name, 2, 5));
 
     let qpolicy = QueryPolicy::default();
     let rs = client
@@ -2211,7 +2178,7 @@ async fn query_returns_user_key_when_send_key_set() {
         // original put (send_key=true).
         let key = rec.key.as_ref().expect("record key present");
         assert!(
-            key.user_key.is_some(),
+            key.user_key().is_some(),
             "expected user_key on returned record, got: {:?}",
             key
         );
@@ -2232,7 +2199,7 @@ async fn query_ops_projection_multiple_bins() {
     let set_name = create_test_set(&client, 20).await;
 
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.add_filter(Filter::range("bin", 0, 19));
+    statement.set_filter(Filter::range("bin", 0, 19));
     statement.set_operations(vec![
         operations::get_bin("bin"),
         operations::get_bin("bin2"),
@@ -2300,7 +2267,7 @@ async fn query_resumes_from_a_serialized_cursor() {
             let v = i64::try_from(&rec.bins["bin"]).unwrap();
             assert!(seen.insert(v), "record {v} delivered twice");
         }
-        let pf = rs.partition_filter().await.unwrap();
+        let pf = rs.partition_filter().unwrap();
         stored = serde_json::to_string(&pf).unwrap();
     }
     assert_eq!(seen.len(), RECORDS as usize, "every record exactly once");

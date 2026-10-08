@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -310,7 +310,7 @@ impl<'a> SingleCommand<'a> {
             }
 
             let aq_start = Instant::now();
-            let mut conn = match node.get_connection(cmd.hint()).await {
+            let mut conn = match node.get_connection(cmd.hint()) {
                 Ok(conn) => conn,
                 Err(err)
                     if err.is_pool_empty() && pool_empty_waits < commands::POOL_EMPTY_MAX_WAITS =>

@@ -1,3 +1,18 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 use std::time::Duration;
 
 use crate::proptests::filter_expression::*;
@@ -10,24 +25,24 @@ use aerospike::Concurrency;
 use aerospike::GenerationPolicy;
 use aerospike::QueryDuration;
 use aerospike::QueryPolicy;
-use aerospike::ReadTouchTTL;
+use aerospike::ReadTouchTtl;
 use aerospike::RecordExistsAction;
 
 use aerospike::{
-    BatchDeletePolicy, BatchPolicy, BatchReadPolicy, BatchUDFPolicy, BatchWritePolicy, Expiration,
+    BatchDeletePolicy, BatchPolicy, BatchReadPolicy, BatchUdfPolicy, BatchWritePolicy, Expiration,
     ReadPolicy, WritePolicy,
 };
 
 use proptest::bool;
 use proptest::prelude::*;
 
-use aerospike::{ReadModeAP, ReadModeSC};
+use aerospike::{ReadModeAp, ReadModeSc};
 
-pub fn read_touch_ttl() -> impl Strategy<Value = ReadTouchTTL> {
+pub fn read_touch_ttl() -> impl Strategy<Value = ReadTouchTtl> {
     prop_oneof![
-        Just(ReadTouchTTL::ServerDefault),
-        Just(ReadTouchTTL::DontReset),
-        any::<u32>().prop_map(|pct| ReadTouchTTL::Percent((pct % 100) as u8)),
+        Just(ReadTouchTtl::ServerDefault),
+        Just(ReadTouchTtl::DontReset),
+        any::<u32>().prop_map(|pct| ReadTouchTtl::Percent((pct % 100) as u8)),
     ]
 }
 
@@ -35,16 +50,16 @@ pub fn concurrency() -> impl Strategy<Value = Concurrency> {
     prop_oneof![Just(Concurrency::Sequential), Just(Concurrency::Parallel),]
 }
 
-pub fn read_mode_ap() -> impl Strategy<Value = ReadModeAP> {
-    prop_oneof![Just(ReadModeAP::One), Just(ReadModeAP::All),]
+pub fn read_mode_ap() -> impl Strategy<Value = ReadModeAp> {
+    prop_oneof![Just(ReadModeAp::One), Just(ReadModeAp::All),]
 }
 
-pub fn read_mode_sc() -> impl Strategy<Value = ReadModeSC> {
+pub fn read_mode_sc() -> impl Strategy<Value = ReadModeSc> {
     prop_oneof![
-        Just(ReadModeSC::Session),
-        // Just(ReadModeSC::Linearize),
-        // Just(ReadModeSC::AllowReplica),
-        // Just(ReadModeSC::AllowUnavailable),
+        Just(ReadModeSc::Session),
+        // Just(ReadModeSc::Linearize),
+        // Just(ReadModeSc::AllowReplica),
+        // Just(ReadModeSc::AllowUnavailable),
     ]
 }
 
@@ -90,7 +105,7 @@ pub fn query_duration() -> impl Strategy<Value = QueryDuration> {
     prop_oneof![
         Just(QueryDuration::Long),
         Just(QueryDuration::Short),
-        Just(QueryDuration::LongRelaxAP),
+        Just(QueryDuration::LongRelaxAp),
     ]
 }
 
@@ -150,6 +165,7 @@ pub fn base_policy(
         read_mode_sc(),
         read_touch_ttl(),
         Just(None), //true_or_false_filter_expression(),
+        replica(),
     )
         .prop_map(
             |(
@@ -162,6 +178,7 @@ pub fn base_policy(
                 read_mode_sc,
                 read_touch_ttl,
                 filter_expression,
+                replica,
             )| BasePolicy {
                 socket_timeout,
                 total_timeout,
@@ -172,6 +189,7 @@ pub fn base_policy(
                 read_mode_ap,
                 read_mode_sc,
                 read_touch_ttl,
+                replica,
                 use_compression: false,
                 compression_threshold: 128,
                 filter_expression,
@@ -283,7 +301,6 @@ pub fn query_policy(
         1..u32::MAX,
         1..10_000_usize,
         query_duration(),
-        replica(),
     )
         .prop_map(
             |(
@@ -293,7 +310,6 @@ pub fn query_policy(
                 records_per_second,
                 record_queue_size,
                 expected_duration,
-                replica,
             )| QueryPolicy {
                 base_policy,
                 max_concurrent_nodes,
@@ -302,7 +318,6 @@ pub fn query_policy(
                 record_queue_size,
                 expected_duration,
                 include_bin_data: true,
-                replica,
             },
         )
 }
@@ -318,7 +333,6 @@ pub fn query_policy_scan(
         1..u32::MAX,
         1..10_000_usize,
         Just(QueryDuration::Long),
-        replica(),
     )
         .prop_map(
             |(
@@ -328,7 +342,6 @@ pub fn query_policy_scan(
                 records_per_second,
                 record_queue_size,
                 expected_duration,
-                replica,
             )| QueryPolicy {
                 base_policy,
                 max_concurrent_nodes,
@@ -337,7 +350,6 @@ pub fn query_policy_scan(
                 record_queue_size,
                 expected_duration,
                 include_bin_data: true,
-                replica,
             },
         )
 }
@@ -346,12 +358,7 @@ pub fn read_policy(
     socket_timeout_ms: u32,
     total_timeout_ms: u32,
 ) -> impl Strategy<Value = ReadPolicy> {
-    (base_policy(socket_timeout_ms, total_timeout_ms), replica()).prop_map(
-        |(base_policy, replica)| ReadPolicy {
-            base_policy,
-            replica,
-        },
-    )
+    base_policy(socket_timeout_ms, total_timeout_ms).prop_map(|base_policy| ReadPolicy { base_policy })
 }
 
 pub fn batch_policy(
@@ -365,26 +372,23 @@ pub fn batch_policy(
         any::<bool>(),
         any::<bool>(),
         true_or_false_filter_expression(),
-        replica(),
     )
         .prop_map(
             |(
-                base_policy,
+                mut base_policy,
                 concurrency,
                 allow_inline,
                 allow_inline_ssd,
                 respond_all_keys,
                 filter_expression,
-                replica,
             )| {
+                base_policy.filter_expression = filter_expression;
                 BatchPolicy {
                     base_policy,
                     concurrency,
                     allow_inline,
                     allow_inline_ssd,
                     respond_all_keys,
-                    filter_expression,
-                    replica,
                 }
             },
         )
@@ -448,8 +452,8 @@ prop_compose! {
         send_key in any::<bool>(),
         filter_expression in true_or_false_filter_expression(),
     )
-    -> BatchUDFPolicy {
-        BatchUDFPolicy {
+    -> BatchUdfPolicy {
+        BatchUdfPolicy {
             commit_level,
             expiration,
             durable_delete,

@@ -27,8 +27,8 @@
 use crate::common;
 
 use aerospike::{
-    as_bin, as_key, AdminPolicy, BatchOperation, BatchPolicy, BatchReadPolicy, BatchUDFPolicy,
-    Bins, Client, ClientResultCode, Key, ResultCode, Task, UDFLang, Value, WritePolicy,
+    as_bin, as_key, AdminPolicy, BatchOperation, BatchPolicy, BatchReadPolicy, BatchUdfPolicy,
+    Bins, Client, ClientResultCode, Key, ResultCode, Task, UdfLang, Value, WritePolicy,
 };
 
 // A UDF that occupies the server for at least `secs` before writing. `os.clock()`
@@ -73,7 +73,7 @@ async fn register_wait_udf(client: &Client) {
             &AdminPolicy::default(),
             WAIT_UDF.as_bytes(),
             "wait_udf.lua",
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
         .expect("register wait_udf");
@@ -107,7 +107,7 @@ async fn single_key_udf_client_timeout_marks_in_doubt() {
             &key,
             "wait_udf",
             "wait_and_update",
-            Some(&[Value::from(WAIT_ITERS)]),
+            &[Value::from(WAIT_ITERS)],
         )
         .await
         .expect_err("the UDF outruns the socket timeout");
@@ -149,7 +149,7 @@ async fn batch_udf_client_timeout_marks_in_doubt() {
     // Four rows: enough to prove every unanswered row is stamped, few enough
     // that the spinning UDFs leave service threads free for the rest of the
     // suite (see the note on `WAIT_UDF`).
-    let upolicy = BatchUDFPolicy::default();
+    let upolicy = BatchUdfPolicy::default();
     let ops: Vec<BatchOperation> = keys(namespace, &set_name, 4)
         .into_iter()
         .map(|key| {
@@ -158,7 +158,7 @@ async fn batch_udf_client_timeout_marks_in_doubt() {
                 key,
                 "wait_udf",
                 "wait_and_update",
-                Some(vec![Value::from(WAIT_ITERS)]),
+                vec![Value::from(WAIT_ITERS)],
             )
         })
         .collect();
@@ -258,14 +258,14 @@ async fn singleton_group_client_timeout_stamps_row_like_grouped() {
     bpolicy.base_policy.socket_timeout = SOCKET_TIMEOUT_MS;
     bpolicy.base_policy.total_timeout = 0;
     bpolicy.base_policy.max_retries = 0;
-    let upolicy = BatchUDFPolicy::default();
+    let upolicy = BatchUdfPolicy::default();
     let udf = |key| {
         BatchOperation::udf(
             &upolicy,
             key,
             "wait_udf",
             "wait_and_update",
-            Some(vec![Value::from(WAIT_ITERS)]),
+            vec![Value::from(WAIT_ITERS)],
         )
     };
 
@@ -339,7 +339,7 @@ async fn timeout_reports_the_attempts_actually_made() {
                 &key,
                 "wait_udf",
                 "wait_and_update",
-                Some(&[Value::from(WAIT_ITERS)]),
+                &[Value::from(WAIT_ITERS)],
             )
             .await
             .expect_err("the UDF outruns the socket timeout");

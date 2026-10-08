@@ -18,6 +18,8 @@ env:
   AEROSPIKE_HOSTS: 127.0.0.1:3000
   AEROSPIKE_NAMESPACE: test
   PROPTEST_CASES: 25
+  # The same server version the pull-request workflow pins.
+  SERVER_VERSION: "8.2.0.0"
 
 jobs:
   # ────────────────────────────────────────────────────────────────────────
@@ -29,7 +31,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runtime: [rt-tokio, rt-async-std]
+        include:
+          - runtime: rt-tokio
+            features: serialization,async,rt-tokio,tls,dynamic-config,lua
+          - runtime: rt-async-std
+            features: serialization,async,rt-async-std,dynamic-config
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
@@ -40,17 +46,17 @@ jobs:
         with:
           ref: ${{ inputs.branch }}
       - name: Install Rust 1.87 (MSRV)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, 2026-10
         with:
           toolchain: 1.87
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: nightly-ee-sc-${{ inputs.branch }}-${{ matrix.runtime }}
       - name: Set up Aerospike Database (EE + SC)
         uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
         with:
-          server-tag: "8.1.2.0"
+          server-tag: ${{ env.SERVER_VERSION }}
           enable-strong-consistency: "true"
           features-content: ${{ secrets.AEROSPIKE_SERVER_FEATURES_CONF }}
           oidc-provider: ${{ vars.OIDC_PROVIDER_NAME }}
@@ -59,7 +65,7 @@ jobs:
         run: |
           cargo test --verbose -p aerospike \
             --no-default-features \
-            --features serialization,async,${{ matrix.runtime }} \
+            --features ${{ matrix.features }} \
             -- --test-threads=1
 
   # ────────────────────────────────────────────────────────────────────────
@@ -80,18 +86,18 @@ jobs:
         with:
           ref: ${{ inputs.branch }}
       - name: Install Rust 1.87 (MSRV)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, 2026-10
         with:
           toolchain: 1.87
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: nightly-ee-tls-security-${{ inputs.branch }}
       - name: Set up Aerospike Database (EE + TLS + security)
         id: setup-server
         uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
         with:
-          server-tag: "8.1.2.0"
+          server-tag: ${{ env.SERVER_VERSION }}
           enable-tls: "true"
           enable-security: "true"
           enable-strong-consistency: "true"
@@ -113,7 +119,7 @@ jobs:
           # it to the whole suite is a separate decision.
           cargo test --verbose -p aerospike \
             --no-default-features \
-            --features serialization,async,rt-tokio,tls \
+            --features serialization,async,rt-tokio,tls,dynamic-config \
             -- --test-threads=1 tls_client
 
   # ────────────────────────────────────────────────────────────────────────
@@ -126,7 +132,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runtime: [rt-tokio, rt-async-std]
+        include:
+          - runtime: rt-tokio
+            features: serialization,async,rt-tokio,tls,dynamic-config,lua
+          - runtime: rt-async-std
+            features: serialization,async,rt-async-std,dynamic-config
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
@@ -137,17 +147,17 @@ jobs:
         with:
           ref: ${{ inputs.branch }}
       - name: Install Rust 1.87 (MSRV)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, 2026-10
         with:
           toolchain: 1.87
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: nightly-ee-ap-${{ inputs.branch }}-${{ matrix.runtime }}
       - name: Set up Aerospike Database (EE + AP)
         uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
         with:
-          server-tag: "8.1.2.0"
+          server-tag: ${{ env.SERVER_VERSION }}
           # No enable-strong-consistency — AP is the Aerospike default
           features-content: ${{ secrets.AEROSPIKE_SERVER_FEATURES_CONF }}
           oidc-provider: ${{ vars.OIDC_PROVIDER_NAME }}
@@ -156,7 +166,7 @@ jobs:
         run: |
           cargo test --verbose -p aerospike \
             --no-default-features \
-            --features serialization,async,${{ matrix.runtime }} \
+            --features ${{ matrix.features }} \
             -- --test-threads=1
 
   # ────────────────────────────────────────────────────────────────────────
@@ -169,7 +179,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runtime: [rt-tokio, rt-async-std]
+        include:
+          - runtime: rt-tokio
+            features: serialization,async,rt-tokio,tls,dynamic-config,lua
+          - runtime: rt-async-std
+            features: serialization,async,rt-async-std,dynamic-config
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
@@ -180,17 +194,17 @@ jobs:
         with:
           ref: ${{ inputs.branch }}
       - name: Install Rust 1.87 (MSRV)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, 2026-10
         with:
           toolchain: 1.87
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: nightly-ce-${{ inputs.branch }}-${{ matrix.runtime }}
       - name: Set up Aerospike Database (Community Edition)
         uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
         with:
-          server-tag: "8.1.2.0"
+          server-tag: ${{ env.SERVER_VERSION }}
           server-container-repo: database-docker-virtual/aerospike-server
           server-edition: community
           oidc-provider: ${{ vars.OIDC_PROVIDER_NAME }}
@@ -199,34 +213,5 @@ jobs:
         run: |
           cargo test --verbose -p aerospike \
             --no-default-features \
-            --features serialization,async,${{ matrix.runtime }} \
+            --features ${{ matrix.features }} \
             -- --test-threads=1
-
-  # ────────────────────────────────────────────────────────────────────────
-  # Leg 5 — lua feature compile check (no live server needed)
-  # ────────────────────────────────────────────────────────────────────────
-  lua-feature-build:
-    name: lua-feature-build (${{ inputs.branch }})
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
-        with:
-          egress-policy: audit
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          ref: ${{ inputs.branch }}
-      - name: Install Rust 1.87 (MSRV)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.87
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: nightly-lua-build-${{ inputs.branch }}
-      - name: Build with lua feature
-        run: |
-          cargo build -p aerospike \
-            --no-default-features \
-            --features async,rt-tokio,lua

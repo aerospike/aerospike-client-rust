@@ -1,3 +1,18 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 //! List and Map (CDT) operations, including nested structures.
 //!
 //! Ports of the Java client's `OperateList`, `OperateMap` and `ListMap`
@@ -52,13 +67,13 @@ pub async fn run() {
     println!("list: append + size => {:?}", rec.bins.get("scores"));
 
     // Pop the last element and fetch the element ranked highest.
-    let ops = [lists::get_by_rank("scores", -1, ListReturnType::Values)];
+    let ops = [lists::get_by_rank("scores", -1, ListReturnType::VALUES)];
     let rec = client.operate(&wpolicy, &key, &ops).await.unwrap();
     println!("list: highest ranked value = {:?}", rec.bins.get("scores"));
 
     // Remove elements by index range [0, 2).
     let ops = [
-        lists::remove_by_index_range_count("scores", 0, 2, ListReturnType::Values),
+        lists::remove_by_index_range_count("scores", 0, 2, ListReturnType::VALUES),
         scalar::get_bin("scores"),
     ];
     let rec = client.operate(&wpolicy, &key, &ops).await.unwrap();
@@ -80,13 +95,13 @@ pub async fn run() {
     // Increment one entry and read it back by key.
     let ops = [
         maps::increment_value(&mpolicy, "counters", as_val!("beta"), as_val!(40)),
-        maps::get_by_key("counters", as_val!("beta"), MapReturnType::Value),
+        maps::get_by_key("counters", as_val!("beta"), MapReturnType::VALUE),
     ];
     let rec = client.operate(&wpolicy, &key, &ops).await.unwrap();
     println!("map: beta incremented => {:?}", rec.bins.get("counters"));
 
     // Rank query: entry with the highest value.
-    let ops = [maps::get_by_rank("counters", -1, MapReturnType::KeyValue)];
+    let ops = [maps::get_by_rank("counters", -1, MapReturnType::KEY_VALUE)];
     let rec = client.operate(&wpolicy, &key, &ops).await.unwrap();
     println!("map: highest entry = {:?}", rec.bins.get("counters"));
 
@@ -115,7 +130,7 @@ pub async fn run() {
     assert_eq!(rec.bins.get("doc"), Some(&Value::Int(4)));
 
     // Read doc["meta"]["owner"].
-    let op = maps::get_by_key("doc", as_val!("owner"), MapReturnType::Value)
+    let op = maps::get_by_key("doc", as_val!("owner"), MapReturnType::VALUE)
         .context(vec![ctx_map_key(as_val!("meta"))]);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     println!(
@@ -133,7 +148,7 @@ pub async fn run() {
         .await
         .unwrap();
     let op =
-        lists::get_by_index("matrix", 0, ListReturnType::Values).context(vec![ctx_list_index(1)]);
+        lists::get_by_index("matrix", 0, ListReturnType::VALUES).context(vec![ctx_list_index(1)]);
     let rec = client.operate(&wpolicy, &key, &[op]).await.unwrap();
     println!("nested: matrix[1][0] = {:?}", rec.bins.get("matrix"));
 

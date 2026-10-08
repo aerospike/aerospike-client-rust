@@ -249,13 +249,13 @@ impl ser::Serializer for ValueSerializer {
     ) -> std::result::Result<Value, SerdeError> {
         match name {
             GEO_JSON_TOKEN => match value.serialize(ValueSerializer)? {
-                Value::String(s) => Ok(Value::GeoJSON(s)),
+                Value::String(s) => Ok(Value::GeoJson(s)),
                 other => Err(SerdeError(format!(
                     "the GeoJSON helper expects a string, got {other:?}"
                 ))),
             },
             HLL_TOKEN => match value.serialize(ValueSerializer)? {
-                Value::Blob(bytes) => Ok(Value::HLL(bytes)),
+                Value::Blob(bytes) => Ok(Value::Hll(bytes)),
                 other => Err(SerdeError(format!(
                     "the HLL helper expects bytes, got {other:?}"
                 ))),
@@ -525,8 +525,8 @@ impl<'de> de::Deserializer<'de> for ValueDeserializer<'de> {
             Value::Int(n) => visitor.visit_i64(*n),
             Value::Float(FloatValue::F32(bits)) => visitor.visit_f32(f32::from_bits(*bits)),
             Value::Float(FloatValue::F64(bits)) => visitor.visit_f64(f64::from_bits(*bits)),
-            Value::String(s) | Value::GeoJSON(s) => visitor.visit_borrowed_str(s),
-            Value::Blob(bytes) | Value::HLL(bytes) => visitor.visit_borrowed_bytes(bytes),
+            Value::String(s) | Value::GeoJson(s) => visitor.visit_borrowed_str(s),
+            Value::Blob(bytes) | Value::Hll(bytes) => visitor.visit_borrowed_bytes(bytes),
             Value::List(items) => visitor.visit_seq(SeqDeserializer { iter: items.iter() }),
             map @ (Value::HashMap(_) | Value::OrderedMap(_) | Value::SortedMap(_)) => visitor
                 .visit_map(MapDeserializer {

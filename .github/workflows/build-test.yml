@@ -6,6 +6,8 @@ on:
       - main
       - v3
   workflow_dispatch:
+  # The release workflow runs this whole gate before it packages anything.
+  workflow_call:
 
 permissions:
   contents: read
@@ -17,8 +19,205 @@ env:
   AEROSPIKE_HOSTS: 127.0.0.1:3000
   AEROSPIKE_NAMESPACE: test
   PROPTEST_CASES: 25
+  # One server version for every leg, community and enterprise alike; the
+  # nightly workflow pins the same value.
+  SERVER_VERSION: "8.2.0.0"
+
+# Every `uses:` is pinned to a commit; the comment names the tag it was taken
+# from. The server legs build and test the feature set a user of that runtime
+# gets: Tokio with the defaults (tls, dynamic-config) plus lua so the
+# aggregation tests run, async-std without TLS.
 
 jobs:
+  # ────────────────────────────────────────────────────────────────────────
+  # Gates that need no server: clippy with warnings denied on every documented
+  # feature set, rustdoc with warnings denied, and each feature on its own.
+  # ────────────────────────────────────────────────────────────────────────
+  lint:
+    name: lint (MSRV 1.87)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Install Rust 1.87 (MSRV)
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, 2026-10
+        with:
+          toolchain: 1.87
+          components: clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: lint
+
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        with:
+          tool: cargo-hack
+
+      - name: Clippy (warnings denied) on every documented feature set
+        run: |
+          set -euo pipefail
+          # The same list CONTRIBUTING.md asks a change to keep clean.
+          cargo clippy --workspace --all-targets --exclude aerospike-client-rust-benchmark \
+            --no-default-features --features async,serialization,rt-tokio,tls,dynamic-config -- -D warnings
+          cargo clippy -p aerospike-core --all-targets \
+            --no-default-features --features serialization,rt-tokio,tls,dynamic-config,lua -- -D warnings
+          cargo clippy -p aerospike-core \
+            --no-default-features --features serialization,rt-tokio -- -D warnings
+          cargo clippy -p aerospike-core \
+            --no-default-features --features serialization,rt-async-std,dynamic-config -- -D warnings
+          cargo clippy -p aerospike-sync --all-targets --features rt-tokio -- -D warnings
+          cargo clippy -p aerospike-sync --all-targets \
+            --no-default-features --features rt-async-std -- -D warnings
+          cargo clippy --no-default-features --features sync,rt-tokio,serialization \
+            --example crud_sync -- -D warnings
+          cargo clippy -p aerospike-client-rust-benchmark --all-targets -- -D warnings
+
+      - name: Each feature on its own
+        run: |
+          set -euo pipefail
+          # A runtime is mandatory, so rt-tokio is the base and the other
+          # runtime is excluded; every remaining feature is checked alone.
+          cargo hack check -p aerospike-core --each-feature --no-dev-deps \
+            --features rt-tokio --exclude-features rt-async-std --exclude-no-default-features
+          cargo hack check -p aerospike-sync --each-feature --no-dev-deps \
+            --features rt-tokio --exclude-features default,rt-async-std --exclude-no-default-features
+          cargo hack check -p aerospike --each-feature --no-dev-deps \
+            --features async,rt-tokio --exclude-features default,sync,rt-async-std --exclude-no-default-features
+
+      - name: Rustdoc (warnings denied)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          cargo doc --workspace --no-deps --exclude aerospike-client-rust-benchmark
+
+  # ────────────────────────────────────────────────────────────────────────
+  # The current stable compiler beside the MSRV: build and unit-test the
+  # default feature set and the async-std set.
+  # ────────────────────────────────────────────────────────────────────────
+  build-stable:
+    name: build (stable)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, 2026-10
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: build-stable
+
+      - name: Build and unit-test on stable
+        run: |
+          set -euo pipefail
+          cargo build --workspace --exclude aerospike-client-rust-benchmark
+          # aerospike-core has no default features: a runtime must be named
+          # or aerospike-rt refuses to build.
+          cargo test -p aerospike-core --lib \
+            --no-default-features --features serialization,rt-tokio,tls,dynamic-config
+          cargo build --workspace --exclude aerospike-client-rust-benchmark \
+            --no-default-features --features async,serialization,rt-async-std,dynamic-config
+
+  # ────────────────────────────────────────────────────────────────────────
+  # What docs.rs will do: nightly rustdoc with `--cfg docsrs`, per crate
+  # metadata, warnings denied.
+  # ────────────────────────────────────────────────────────────────────────
+  docs-rs:
+    name: docs.rs build (nightly)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, 2026-10
+        with:
+          toolchain: nightly
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: docs-rs
+
+      - name: Build the documentation the way docs.rs does
+        env:
+          RUSTDOCFLAGS: --cfg docsrs -D warnings
+        run: |
+          set -euo pipefail
+          # The facade's docs.rs table adds `lua` to the defaults; aerospike-rt
+          # and aerospike-macro build on their own metadata.
+          cargo doc --workspace --no-deps --exclude aerospike-client-rust-benchmark --features lua
+          cargo doc -p aerospike-rt --no-deps
+          cargo doc -p aerospike-macro --no-deps
+
+  # ────────────────────────────────────────────────────────────────────────
+  # Packaging rehearsal: the two leaf crates are packaged and verified, the
+  # three that depend on them are packaged without verification (their verify
+  # build resolves the in-tree crates from crates.io, so it only passes once
+  # the leaves of the same version are published).
+  # ────────────────────────────────────────────────────────────────────────
+  package:
+    name: package (dry run)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Install Rust 1.87 (MSRV)
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, 2026-10
+        with:
+          toolchain: 1.87
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: package
+
+      - name: Package every crate
+        run: |
+          set -euo pipefail
+          cargo package -p aerospike-rt
+          cargo package -p aerospike-macro
+          for pkg in aerospike-core aerospike-sync aerospike; do
+            cargo package -p "${pkg}" --no-verify
+          done
+          # The facade tarball must carry the test harness the bench includes
+          # and nothing from outside the include list.
+          cargo package -p aerospike --no-verify --list > package-list.txt
+          grep -q '^tests/common/mod.rs$' package-list.txt
+          ! grep -qE '^(\.github/|.*_TODO\.md$)' package-list.txt
+
   unit-test-coverage:
     name: unit-test-coverage
     runs-on: ubuntu-22.04
@@ -33,12 +232,12 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Install Rust 1.87 (MSRV)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, 2026-10
         with:
           toolchain: 1.87
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: unit-test-coverage
 
@@ -53,12 +252,12 @@ jobs:
           # lua excluded: vendored Lua 5.4 compile cost not worth 12 tests here.
           cargo llvm-cov -p aerospike-core \
             --no-default-features \
-            --features serialization,dynamic-config,rt-tokio \
+            --features serialization,dynamic-config,rt-tokio,tls \
             --lcov --output-path coverage-unit.lcov
 
       - name: Upload coverage artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage-${{ github.sha }}-unit
           path: coverage-unit.lcov
@@ -72,7 +271,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runtime: [rt-tokio, rt-async-std]
+        include:
+          - runtime: rt-tokio
+            features: serialization,async,rt-tokio,tls,dynamic-config,lua
+            sync-features: serialization,sync,rt-tokio,tls,dynamic-config
+          - runtime: rt-async-std
+            features: serialization,async,rt-async-std,dynamic-config
+            sync-features: serialization,sync,rt-async-std,dynamic-config
 
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -84,19 +289,19 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Install Rust 1.87 (MSRV)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, 2026-10
         with:
           toolchain: 1.87
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: ${{ matrix.runtime }}
 
       - name: Set up Aerospike Database
         uses: reugn/github-action-aerospike@2065a9209cfd5ef88a3e07f3e7929e321d1e0067 # v1.1.0
         with:
-          server-version: "8.2.0.0"
+          server-version: ${{ env.SERVER_VERSION }}
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
@@ -107,40 +312,41 @@ jobs:
         run: |
           cargo build --verbose --workspace --exclude aerospike-client-rust-benchmark \
             --no-default-features \
-            --features serialization,async,${{ matrix.runtime }}
+            --features ${{ matrix.features }}
 
       - name: Build blocking client
         run: |
           cargo build --verbose -p aerospike \
             --no-default-features \
-            --features serialization,sync,${{ matrix.runtime }}
+            --features ${{ matrix.sync-features }}
 
       - name: Run integration tests (with coverage)
         run: |
           cargo llvm-cov clean --workspace
           cargo llvm-cov -p aerospike \
             --no-default-features \
-            --features serialization,async,${{ matrix.runtime }} \
+            --features ${{ matrix.features }} \
             --no-report \
             -- --test-threads=1
           cargo llvm-cov report -p aerospike-core \
             --lcov --output-path coverage-${{ matrix.runtime }}.lcov
 
-      - name: Run aerospike-sync doctests
+      - name: Run aerospike-sync tests and doctests
         run: |
-          cargo test --doc -p aerospike-sync --no-default-features \
-            --features serialization,${{ matrix.runtime }}
+          cargo test -p aerospike-sync --no-default-features \
+            --features serialization,dynamic-config,${{ matrix.runtime }}
 
       - name: Run aerospike-core doctests
         if: matrix.runtime == 'rt-tokio'
         run: |
-          # aerospike-core doc examples use `use aerospike::…`; enable rt-tokio on the path dev-dep.
-          sed -i 's/features = \["async"\]/features = ["async", "rt-tokio"]/' aerospike-core/Cargo.toml
-          cargo test --doc -p aerospike-core --features rt-tokio,serialization
+          # The doc examples write `use aerospike::…`; the facade dev-dependency
+          # follows the runtime enabled on aerospike-core itself.
+          cargo test --doc -p aerospike-core --no-default-features \
+            --features serialization,rt-tokio,dynamic-config
 
       - name: Upload coverage artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage-${{ github.sha }}-${{ matrix.runtime }}
           path: coverage-${{ matrix.runtime }}.lcov
@@ -154,7 +360,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runtime: [rt-tokio, rt-async-std]
+        include:
+          - runtime: rt-tokio
+            features: serialization,async,rt-tokio,tls,dynamic-config,lua
+            sync-features: serialization,sync,rt-tokio,tls,dynamic-config
+          - runtime: rt-async-std
+            features: serialization,async,rt-async-std,dynamic-config
+            sync-features: serialization,sync,rt-async-std,dynamic-config
 
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -166,12 +378,12 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Install Rust 1.87 (MSRV)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, 2026-10
         with:
           toolchain: 1.87
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: security-${{ matrix.runtime }}
 
@@ -179,7 +391,7 @@ jobs:
         id: setup-aerospike-server
         uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
         with:
-          server-tag: "8.2.0.0"
+          server-tag: ${{ env.SERVER_VERSION }}
           enable-strong-consistency: "true"
           enable-security: "true"
           features-content: ${{ secrets.AEROSPIKE_SERVER_FEATURES_CONF }}
@@ -206,13 +418,13 @@ jobs:
         run: |
           cargo build --verbose --workspace --exclude aerospike-client-rust-benchmark \
             --no-default-features \
-            --features serialization,async,${{ matrix.runtime }}
+            --features ${{ matrix.features }}
 
       - name: Build blocking client
         run: |
           cargo build --verbose -p aerospike \
             --no-default-features \
-            --features serialization,sync,${{ matrix.runtime }}
+            --features ${{ matrix.sync-features }}
 
       - name: Run integration tests (with coverage)
         env:
@@ -223,7 +435,7 @@ jobs:
           # examples::* are skipped: demo programs not written to handle auth.
           cargo llvm-cov -p aerospike \
             --no-default-features \
-            --features serialization,async,${{ matrix.runtime }} \
+            --features ${{ matrix.features }} \
             --no-report \
             -- --test-threads=1 --skip src::examples::
           cargo llvm-cov report -p aerospike-core \
@@ -231,7 +443,7 @@ jobs:
 
       - name: Upload coverage artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage-${{ github.sha }}-security-${{ matrix.runtime }}
           path: coverage-security-${{ matrix.runtime }}.lcov
@@ -245,7 +457,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runtime: [rt-tokio, rt-async-std]
+        include:
+          - runtime: rt-tokio
+            features: serialization,async,rt-tokio,tls,dynamic-config,lua
+            sync-features: serialization,sync,rt-tokio,tls,dynamic-config
+          - runtime: rt-async-std
+            features: serialization,async,rt-async-std,dynamic-config
+            sync-features: serialization,sync,rt-async-std,dynamic-config
 
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -257,19 +475,19 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Install Rust 1.87 (MSRV)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, 2026-10
         with:
           toolchain: 1.87
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: ap-${{ matrix.runtime }}
 
       - name: Set up Aerospike Database (EE + AP)
         uses: aerospike/shared-workflows/.github/actions/setup-aerospike-server@0d843cff870d70ac527048ab0d006c7c301fbb2f # v4.1.0
         with:
-          server-tag: "8.2.0.0"
+          server-tag: ${{ env.SERVER_VERSION }}
           # No enable-strong-consistency — AP is the Aerospike default
           features-content: ${{ secrets.AEROSPIKE_SERVER_FEATURES_CONF }}
           oidc-provider: ${{ vars.OIDC_PROVIDER_NAME }}
@@ -284,20 +502,20 @@ jobs:
         run: |
           cargo build --verbose --workspace --exclude aerospike-client-rust-benchmark \
             --no-default-features \
-            --features serialization,async,${{ matrix.runtime }}
+            --features ${{ matrix.features }}
 
       - name: Build blocking client
         run: |
           cargo build --verbose -p aerospike \
             --no-default-features \
-            --features serialization,sync,${{ matrix.runtime }}
+            --features ${{ matrix.sync-features }}
 
       - name: Run integration tests (with coverage)
         run: |
           cargo llvm-cov clean --workspace
           cargo llvm-cov -p aerospike \
             --no-default-features \
-            --features serialization,async,${{ matrix.runtime }} \
+            --features ${{ matrix.features }} \
             --no-report \
             -- --test-threads=1
           cargo llvm-cov report -p aerospike-core \
@@ -305,7 +523,7 @@ jobs:
 
       - name: Upload coverage artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage-${{ github.sha }}-ap-${{ matrix.runtime }}
           path: coverage-ap-${{ matrix.runtime }}.lcov
@@ -332,7 +550,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y lcov
 
       - name: Download all coverage artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: coverage-${{ github.sha }}-*
           merge-multiple: true
@@ -390,7 +608,7 @@ jobs:
               echo "## ❌ Coverage: ${PCT_FMT}% (threshold ${COVERAGE_THRESHOLD}%)"
               echo ""
               echo "> [!WARNING]"
-              echo "> aerospike-core line coverage is **${PCT_FMT}%**, which is below the **${COVERAGE_THRESHOLD}%** threshold."
+              echo "> aerospike-core line coverage is **${PCT_FMT}%**, which is below the **${COVERAGE_THRESHOLD}% threshold."
               echo "> Coverage has likely regressed — investigate before merging."
             } >> "$GITHUB_STEP_SUMMARY"
           fi

@@ -1,4 +1,4 @@
-// Copyright 2014-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -117,7 +117,7 @@ impl ConfigProvider for YamlFileProvider {
             }
         };
 
-        let doc: ConfigDocument = match serde_yml::from_str(&data) {
+        let doc: ConfigDocument = match serde_norway::from_str(&data) {
             Ok(doc) => doc,
             Err(err) => {
                 self.warn_once(format!(

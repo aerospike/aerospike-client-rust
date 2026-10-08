@@ -1,4 +1,4 @@
-// Copyright 2014-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -388,15 +388,15 @@ mod tests {
     #[test]
     fn unit_deserializes_from_us_and_ms() {
         assert_eq!(
-            serde_yml::from_str::<LatencyUnit>("us").unwrap(),
+            serde_norway::from_str::<LatencyUnit>("us").unwrap(),
             LatencyUnit::Microseconds
         );
         assert_eq!(
-            serde_yml::from_str::<LatencyUnit>("ms").unwrap(),
+            serde_norway::from_str::<LatencyUnit>("ms").unwrap(),
             LatencyUnit::Milliseconds
         );
         // Anything else is a config error, not a silent default.
-        assert!(serde_yml::from_str::<LatencyUnit>("seconds").is_err());
+        assert!(serde_norway::from_str::<LatencyUnit>("seconds").is_err());
     }
 
     #[test]

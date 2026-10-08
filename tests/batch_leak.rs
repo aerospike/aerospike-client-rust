@@ -1,3 +1,18 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 // Memory-leak checks for the batch path, in a binary of their own so the
 // counting allocator below does not sit under every other test.
 //
@@ -104,7 +119,7 @@ fn random_batch(r: &mut Rng, keys: &[Key]) -> (BatchPolicy, Vec<BatchOperation>)
     let ops = (0..n)
         .map(|i| {
             let key = if i > 0 && r.below(6) == 0 {
-                as_key!(bogus.as_str(), &keys[i].set_name, i as i64)
+                as_key!(bogus.as_str(), keys[i].set_name(), i as i64)
             } else {
                 keys[i].clone()
             };
@@ -112,7 +127,7 @@ fn random_batch(r: &mut Rng, keys: &[Key]) -> (BatchPolicy, Vec<BatchOperation>)
         })
         .collect();
     let mut policy = BatchPolicy::default();
-    policy.replica = if r.below(2) == 0 {
+    policy.base_policy.replica = if r.below(2) == 0 {
         Replica::Master
     } else {
         Replica::Sequence
@@ -214,18 +229,18 @@ async fn retry_resplit_path_does_not_leak() {
         .await
         .expect("connect");
     let namespace = common::namespace();
-    if client.cluster.nodes().len() < 2 {
+    if client.nodes().len() < 2 {
         println!("SKIP: retry re-split needs >= 2 nodes");
         client.close().await.unwrap();
         return;
     }
     let keys = seed_keys(&client, namespace, 300).await;
-    let tripped = client.cluster.nodes()[0].clone();
+    let tripped = client.nodes()[0].clone();
     for _ in 0..16 {
         tripped.incr_error_rate();
     }
     let mut bpolicy = BatchPolicy::default();
-    bpolicy.replica = Replica::Sequence;
+    bpolicy.base_policy.replica = Replica::Sequence;
     bpolicy.base_policy.max_retries = 3;
     bpolicy.base_policy.sleep_between_retries = 0;
     bpolicy.base_policy.total_timeout = 10_000;

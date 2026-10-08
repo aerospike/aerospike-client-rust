@@ -1,3 +1,18 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 use crate::common;
 
 use crate::src::count_results;
@@ -94,7 +109,7 @@ async fn expression_list() {
         &client,
         eq(
             get_by_value(
-                ListReturnType::Count,
+                ListReturnType::COUNT,
                 int_val(234),
                 insert(
                     ListPolicy::default(),
@@ -117,7 +132,7 @@ async fn expression_list() {
         &client,
         eq(
             get_by_value_list(
-                ListReturnType::Count,
+                ListReturnType::COUNT,
                 list_val(vec![Value::from(51), Value::from(52)]),
                 list_bin("bin".to_string()),
                 &[],
@@ -155,8 +170,8 @@ async fn expression_list() {
         &client,
         eq(
             get_by_index(
-                ListReturnType::Values,
-                ExpType::INT,
+                ListReturnType::VALUES,
+                ExpType::Int,
                 int_val(3),
                 increment(
                     ListPolicy::default(),
@@ -179,8 +194,8 @@ async fn expression_list() {
         &client,
         eq(
             get_by_index(
-                ListReturnType::Values,
-                ExpType::INT,
+                ListReturnType::VALUES,
+                ExpType::Int,
                 int_val(3),
                 set(
                     ListPolicy::default(),
@@ -203,7 +218,7 @@ async fn expression_list() {
         &client,
         eq(
             get_by_index_range_count(
-                ListReturnType::Values,
+                ListReturnType::VALUES,
                 int_val(2),
                 int_val(2),
                 list_bin("bin".to_string()),
@@ -221,7 +236,7 @@ async fn expression_list() {
         &client,
         eq(
             get_by_index_range(
-                ListReturnType::Values,
+                ListReturnType::VALUES,
                 int_val(2),
                 list_bin("bin".to_string()),
                 &[],
@@ -238,8 +253,8 @@ async fn expression_list() {
         &client,
         eq(
             get_by_rank(
-                ListReturnType::Values,
-                ExpType::INT,
+                ListReturnType::VALUES,
+                ExpType::Int,
                 int_val(3),
                 list_bin("bin".to_string()),
                 &[],
@@ -256,7 +271,7 @@ async fn expression_list() {
         &client,
         eq(
             get_by_rank_range(
-                ListReturnType::Values,
+                ListReturnType::VALUES,
                 int_val(2),
                 list_bin("bin".to_string()),
                 &[],
@@ -273,7 +288,7 @@ async fn expression_list() {
         &client,
         eq(
             get_by_rank_range_count(
-                ListReturnType::Values,
+                ListReturnType::VALUES,
                 int_val(2),
                 int_val(2),
                 list_bin("bin".to_string()),
@@ -291,7 +306,7 @@ async fn expression_list() {
         &client,
         eq(
             get_by_value_range(
-                ListReturnType::Values,
+                ListReturnType::VALUES,
                 Some(int_val(1)),
                 Some(int_val(3)),
                 list_bin("bin".to_string()),
@@ -309,7 +324,7 @@ async fn expression_list() {
         &client,
         eq(
             get_by_value_relative_rank_range(
-                ListReturnType::Count,
+                ListReturnType::COUNT,
                 int_val(2),
                 int_val(0),
                 list_bin("bin".to_string()),
@@ -327,7 +342,7 @@ async fn expression_list() {
         &client,
         eq(
             get_by_value_relative_rank_range_count(
-                ListReturnType::Values,
+                ListReturnType::VALUES,
                 int_val(2),
                 int_val(1),
                 int_val(1),
@@ -347,7 +362,7 @@ async fn expression_list() {
         eq(
             size(
                 remove_by_value(
-                    ListReturnType::None,
+                    ListReturnType::NONE,
                     int_val(3),
                     list_bin("bin".to_string()),
                     &[],
@@ -367,7 +382,7 @@ async fn expression_list() {
         eq(
             size(
                 remove_by_value_list(
-                    ListReturnType::None,
+                    ListReturnType::NONE,
                     list_val(vec![Value::from(1), Value::from(2)]),
                     list_bin("bin".to_string()),
                     &[],
@@ -387,7 +402,7 @@ async fn expression_list() {
         eq(
             size(
                 remove_by_value_range(
-                    ListReturnType::None,
+                    ListReturnType::NONE,
                     Some(int_val(1)),
                     Some(int_val(3)),
                     list_bin("bin".to_string()),
@@ -408,7 +423,7 @@ async fn expression_list() {
         eq(
             size(
                 remove_by_value_relative_rank_range(
-                    ListReturnType::None,
+                    ListReturnType::NONE,
                     int_val(3),
                     int_val(1),
                     list_bin("bin".to_string()),
@@ -429,7 +444,7 @@ async fn expression_list() {
         eq(
             size(
                 remove_by_value_relative_rank_range_count(
-                    ListReturnType::None,
+                    ListReturnType::NONE,
                     int_val(2),
                     int_val(1),
                     int_val(1),
@@ -454,7 +469,7 @@ async fn expression_list() {
         eq(
             size(
                 remove_by_index(
-                    ListReturnType::None,
+                    ListReturnType::NONE,
                     int_val(0),
                     list_bin("bin".to_string()),
                     &[],
@@ -474,7 +489,7 @@ async fn expression_list() {
         eq(
             size(
                 remove_by_index_range(
-                    ListReturnType::None,
+                    ListReturnType::NONE,
                     int_val(2),
                     list_bin("bin".to_string()),
                     &[],
@@ -494,7 +509,7 @@ async fn expression_list() {
         eq(
             size(
                 remove_by_index_range_count(
-                    ListReturnType::None,
+                    ListReturnType::NONE,
                     int_val(2),
                     int_val(1),
                     list_bin("bin".to_string()),
@@ -515,7 +530,7 @@ async fn expression_list() {
         eq(
             size(
                 remove_by_index_range_count(
-                    ListReturnType::None,
+                    ListReturnType::NONE,
                     int_val(2),
                     int_val(1),
                     list_bin("bin".to_string()),
@@ -536,7 +551,7 @@ async fn expression_list() {
         eq(
             size(
                 remove_by_rank(
-                    ListReturnType::None,
+                    ListReturnType::NONE,
                     int_val(2),
                     list_bin("bin".to_string()),
                     &[],
@@ -556,7 +571,7 @@ async fn expression_list() {
         eq(
             size(
                 remove_by_rank_range(
-                    ListReturnType::None,
+                    ListReturnType::NONE,
                     int_val(2),
                     list_bin("bin".to_string()),
                     &[],
@@ -576,7 +591,7 @@ async fn expression_list() {
         eq(
             size(
                 remove_by_rank_range_count(
-                    ListReturnType::None,
+                    ListReturnType::NONE,
                     int_val(2),
                     int_val(1),
                     list_bin("bin".to_string()),
@@ -612,7 +627,7 @@ async fn test_filter(client: &Client, filter: Expression, set_name: &str) -> Arc
 
 /// Same gate as the operation form: it arrived with the string operations.
 async fn server_supports_list_join(client: &Client) -> bool {
-    let supported = match client.cluster.get_random_node() {
+    let supported = match client.random_node() {
         Ok(node) => node.version().supports_string_operations(),
         Err(_) => false,
     };
@@ -626,7 +641,7 @@ async fn server_supports_list_join(client: &Client) -> bool {
 
 /// Evaluate an expression against one record and hand back what it produced.
 async fn eval(client: &Client, key: &Key, exp: Expression) -> Value {
-    let ops = vec![read_exp("v", exp, ExpReadFlags::Default)];
+    let ops = vec![read_exp("v", exp, ExpReadFlags::DEFAULT)];
     let rec = client
         .operate(&WritePolicy::default(), key, &ops)
         .await

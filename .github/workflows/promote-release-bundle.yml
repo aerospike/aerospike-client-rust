@@ -42,7 +42,7 @@ jobs:
 
       - name: Promoting release bundle to DEV
         if: inputs.targets == 'DEV' || inputs.targets == 'DEV_THEN_TEST_AND_STAGE'
-        uses: aerospike/shared-workflows/.github/actions/promote-release-bundle@v3.5.0
+        uses: aerospike/shared-workflows/.github/actions/promote-release-bundle@8ec712eafbec26c8db8d1183688a5fd806560a95 # v3.5.0
         with:
           bundle-name: aerospike-client-rust
           version: ${{ inputs.version }}
@@ -51,7 +51,7 @@ jobs:
 
       - name: Promoting release bundle to TEST
         if: inputs.targets == 'TEST_AND_STAGE' || inputs.targets == 'DEV_THEN_TEST_AND_STAGE'
-        uses: aerospike/shared-workflows/.github/actions/promote-release-bundle@v3.5.0
+        uses: aerospike/shared-workflows/.github/actions/promote-release-bundle@8ec712eafbec26c8db8d1183688a5fd806560a95 # v3.5.0
         with:
           bundle-name: aerospike-client-rust
           version: ${{ inputs.version }}
@@ -60,7 +60,7 @@ jobs:
 
       - name: Promoting release bundle to STAGE
         if: inputs.targets == 'TEST_AND_STAGE' || inputs.targets == 'DEV_THEN_TEST_AND_STAGE'
-        uses: aerospike/shared-workflows/.github/actions/promote-release-bundle@v3.5.0
+        uses: aerospike/shared-workflows/.github/actions/promote-release-bundle@8ec712eafbec26c8db8d1183688a5fd806560a95 # v3.5.0
         with:
           bundle-name: aerospike-client-rust
           version: ${{ inputs.version }}

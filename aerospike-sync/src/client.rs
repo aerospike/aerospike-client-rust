@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -25,13 +25,15 @@ use aerospike_core::errors::Result;
 use aerospike_core::operations::{CdtContext, Operation};
 use aerospike_core::query::PartitionFilter;
 use aerospike_core::txn::{AbortStatus, CommitStatus, Txn};
+use crate::query_handle::QueryHandle;
+use crate::blocking_task::Task;
 use aerospike_core::DropIndexTask;
 use aerospike_core::UdfRemoveTask;
 use aerospike_core::{
     AdminPolicy, BatchOperation, BatchPolicy, BatchRecord, Bin, Bins, ClientPolicy,
     CollectionIndexType, ExecuteTask, IndexTask, IndexType, Key, Node, Privilege, QueryPolicy,
     ReadPolicy, Record, Recordset, RegisterTask, Role, Statement, ToHosts, TxnRollPolicy,
-    TxnVerifyPolicy, UDFLang, User, Value, WritePolicy,
+    TxnVerifyPolicy, UdfLang, User, Value, WritePolicy,
 };
 
 #[cfg(feature = "rt-tokio")]
@@ -61,7 +63,7 @@ static SYNC_RT: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
 /// die when the caller's runtime shuts down, poisoning the shared client
 /// for everyone else.
 #[cfg(feature = "rt-tokio")]
-fn block_on<F>(f: F) -> F::Output
+pub(crate) fn block_on<F>(f: F) -> F::Output
 where
     F: Future + Send,
     F::Output: Send,
@@ -95,15 +97,18 @@ where
 /// cannot drive async-std's IO and timers, so waiting on them would
 /// deadlock or busy-spin.
 #[cfg(feature = "rt-async-std")]
-fn block_on<F: Future>(f: F) -> F::Output {
+pub(crate) fn block_on<F: Future>(f: F) -> F::Output {
     async_std::task::block_on(f)
 }
 
 /// Instantiate a Client instance to access an Aerospike database cluster and perform database
 /// operations.
 ///
-/// The client is thread-safe. Only one client instance should be used per cluster. Multiple
-/// threads should share this cluster instance.
+/// The client is thread-safe, and cloning it is cheap: every clone shares
+/// the same cluster, connection pools and background tasks, so hand a clone
+/// to each task or thread rather than opening a second client to the same
+/// cluster. [`close`](Self::close) shuts that shared cluster down for every
+/// clone.
 ///
 /// Your application uses this class' API to perform database operations such as writing and
 /// reading records, and selecting sets of records. Write operations include specialized
@@ -112,12 +117,16 @@ fn block_on<F: Future>(f: F) -> F::Output {
 /// Each record may have multiple bins, unless the Aerospike server nodes are configured as
 /// "single-bin". In "multi-bin" mode, partial records may be written or read by specifying the
 /// relevant subset of bins.
+#[derive(Clone)]
 pub struct Client {
     async_client: aerospike_core::Client,
 }
 
-unsafe impl Send for Client {}
-unsafe impl Sync for Client {}
+// Thread safety comes from the wrapped client, checked rather than asserted.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Client>();
+};
 
 impl Client {
     /// Initializes Aerospike client with suitable hosts to seed the cluster map. The client policy
@@ -178,7 +187,8 @@ impl Client {
         })
     }
 
-    /// Closes the connection to the Aerospike cluster.
+    /// Closes the connection to the Aerospike cluster, for this client and
+    /// every clone of it.
     pub fn close(&self) -> Result<()> {
         block_on(self.async_client.close())?;
         Ok(())
@@ -266,14 +276,10 @@ impl Client {
     ///         => println!("Error fetching record: {}", err),
     /// }
     /// ```
-    ///
-    /// # Panics
-    /// Panics if the return is invalid
-    pub fn get<T>(&self, policy: &ReadPolicy, key: &Key, bins: T) -> Result<Record>
-    where
-        T: Into<Bins> + Send + Sync + 'static,
-    {
-        block_on(self.async_client.get(policy, key, bins))
+    pub fn get(&self, policy: &ReadPolicy, key: &Key, bins: impl Into<Bins>) -> Result<Record> {
+        // The async future holds its arguments until first polled, so convert
+        // here: `block_on` needs a `Send` future and `Bins` is `Send`.
+        block_on(self.async_client.get(policy, key, bins.into()))
     }
 
     /// Read multiple record for specified batch keys in one batch call. This method allows
@@ -323,17 +329,20 @@ impl Client {
     /// same exactly-once-per-row contract, same abort-on-`false`. The hook
     /// is async on the wire side; a plain closure returns
     /// `std::future::ready(true)`.
-    pub fn batch_foreach<F, Fut>(
+    pub fn batch_foreach<F>(
         &self,
         policy: &BatchPolicy,
-        ops: Vec<BatchOperation>,
+        ops: &mut [BatchOperation],
         on_row: F,
     ) -> Result<()>
     where
-        F: Fn(usize, &BatchRecord) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = bool> + Send + 'static,
+        F: Fn(usize, &BatchRecord) -> bool + Send + Sync + 'static,
     {
-        block_on(self.async_client.batch_foreach(policy, ops, on_row))
+        block_on(self.async_client.batch_foreach(
+            policy,
+            ops,
+            move |idx: usize, row: &BatchRecord| std::future::ready(on_row(idx, row)),
+        ))
     }
 
     /// Write record bin(s). The policy specifies the transaction timeout, record expiration and
@@ -546,19 +555,19 @@ impl Client {
     /// "#;
     ///
     /// client.register_udf(&AdminPolicy::default(), code.as_bytes(),
-    ///                     "example.lua", UDFLang::Lua).unwrap();
+    ///                     "example.lua", UdfLang::Lua).unwrap();
     /// ```
     pub fn register_udf(
         &self,
         policy: &AdminPolicy,
         udf_body: &[u8],
         server_path: &str,
-        language: UDFLang,
-    ) -> Result<RegisterTask> {
+        language: UdfLang,
+    ) -> Result<Task<RegisterTask>> {
         block_on(
             self.async_client
                 .register_udf(policy, udf_body, server_path, language),
-        )
+        ).map(Task::new)
     }
 
     /// Register a package containing user-defined functions (UDF) with the cluster. This
@@ -572,37 +581,34 @@ impl Client {
         policy: &AdminPolicy,
         client_path: &str,
         server_path: &str,
-        language: UDFLang,
-    ) -> Result<RegisterTask> {
+        language: UdfLang,
+    ) -> Result<Task<RegisterTask>> {
         block_on(self.async_client.register_udf_from_file(
             policy,
             client_path,
             server_path,
             language,
-        ))
+        )).map(Task::new)
     }
 
     /// Remove a user-defined function (UDF) module from the server.
-    pub fn remove_udf(&self, policy: &AdminPolicy, server_path: &str) -> Result<UdfRemoveTask> {
-        block_on(self.async_client.remove_udf(policy, server_path))
+    pub fn remove_udf(&self, policy: &AdminPolicy, server_path: &str) -> Result<Task<UdfRemoveTask>> {
+        block_on(self.async_client.remove_udf(policy, server_path)).map(Task::new)
     }
 
     /// Execute a user-defined function on the server and return the results. The function operates
     /// on a single record. The UDF package name is required to locate the UDF.
-    ///
-    /// # Panics
-    /// Panics if the return is invalid
     pub fn execute_udf(
         &self,
         policy: &WritePolicy,
         key: &Key,
-        server_path: &str,
+        package_name: &str,
         function_name: &str,
-        args: Option<&[Value]>,
+        args: &[Value],
     ) -> Result<Option<Value>> {
         block_on(
             self.async_client
-                .execute_udf(policy, key, server_path, function_name, args),
+                .execute_udf(policy, key, package_name, function_name, args),
         )
     }
 
@@ -640,6 +646,30 @@ impl Client {
         block_on(self.async_client.query(policy, partition_filter, statement))
     }
 
+    /// Runs a query and hands every record to `callback` as it arrives,
+    /// without buffering a [`Recordset`]. The callback returns `false` to stop
+    /// the query. Returns a [`QueryHandle`] to [`wait`](QueryHandle::wait) for
+    /// completion or [`cancel`](QueryHandle::cancel); dropping it detaches,
+    /// leaving the query running.
+    pub fn query_foreach<F>(
+        &self,
+        policy: &QueryPolicy,
+        partition_filter: PartitionFilter,
+        statement: Statement,
+        callback: F,
+    ) -> Result<QueryHandle>
+    where
+        F: Fn(Result<Record>) -> bool + Send + Sync + 'static,
+    {
+        block_on(self.async_client.query_foreach(
+            policy,
+            partition_filter,
+            statement,
+            move |record: Result<Record>| std::future::ready(callback(record)),
+        ))
+        .map(QueryHandle::new)
+    }
+
     /// Execute a stream UDF aggregation query and return a
     /// [`aerospike_core::query::ResultSet`] with the aggregated values
     /// (requires the `lua` feature).
@@ -656,7 +686,7 @@ impl Client {
         statement: Statement,
         package_name: &str,
         function_name: &str,
-        function_args: Option<&[Value]>,
+        function_args: &[Value],
     ) -> Result<Arc<aerospike_core::query::ResultSet>> {
         block_on(self.async_client.query_aggregate(
             policy,
@@ -667,19 +697,15 @@ impl Client {
         ))
     }
 
-    /// Execute a query and apply operations to matching records on the server.
-    /// Returns an `ExecuteTask` that can be used to monitor the progress of the
-    /// background job.
+    /// Apply the statement's operations ([`Statement::set_operations`]) to
+    /// every matching record on the server. Returns an `ExecuteTask` that can
+    /// be used to monitor the progress of the background job.
     pub fn query_operate(
         &self,
         write_policy: &WritePolicy,
         statement: Statement,
-        operations: &[Operation],
-    ) -> Result<ExecuteTask> {
-        block_on(
-            self.async_client
-                .query_operate(write_policy, statement, operations),
-        )
+    ) -> Result<Task<ExecuteTask>> {
+        block_on(self.async_client.query_operate(write_policy, statement)).map(Task::new)
     }
 
     /// Apply a user-defined function to records matching the statement filter.
@@ -691,15 +717,15 @@ impl Client {
         statement: Statement,
         package_name: &str,
         function_name: &str,
-        args: Option<&[Value]>,
-    ) -> Result<ExecuteTask> {
+        args: &[Value],
+    ) -> Result<Task<ExecuteTask>> {
         block_on(self.async_client.query_execute_udf(
             write_policy,
             statement,
             package_name,
             function_name,
             args,
-        ))
+        )).map(Task::new)
     }
 
     /// Sets XDR filter for given datacenter name and namespace. The expression filter indicates
@@ -768,11 +794,11 @@ impl Client {
         namespace: &str,
         set_name: &str,
         index_name: &str,
-    ) -> Result<IndexTask> {
+    ) -> Result<Task<IndexTask>> {
         block_on(
             self.async_client
                 .create_set_index(policy, namespace, set_name, index_name),
-        )
+        ).map(Task::new)
     }
 
     /// Creates a secondary index on a bin, optionally inside a CDT context.
@@ -787,7 +813,7 @@ impl Client {
         index_type: IndexType,
         collection_index_type: CollectionIndexType,
         ctx: Option<&[CdtContext]>,
-    ) -> Result<IndexTask> {
+    ) -> Result<Task<IndexTask>> {
         block_on(self.async_client.create_index_on_bin(
             policy,
             namespace,
@@ -797,7 +823,7 @@ impl Client {
             index_type,
             collection_index_type,
             ctx,
-        ))
+        )).map(Task::new)
     }
 
     /// Create a secondary index using an expression. This asynchronous server call
@@ -827,7 +853,7 @@ impl Client {
         index_type: IndexType,
         collection_index_type: CollectionIndexType,
         expression: &Expression,
-    ) -> Result<IndexTask> {
+    ) -> Result<Task<IndexTask>> {
         block_on(self.async_client.create_index_using_expression(
             policy,
             namespace,
@@ -836,7 +862,7 @@ impl Client {
             index_type,
             collection_index_type,
             expression,
-        ))
+        )).map(Task::new)
     }
 
     /// Delete secondary index.
@@ -846,11 +872,11 @@ impl Client {
         namespace: &str,
         set_name: &str,
         index_name: &str,
-    ) -> Result<DropIndexTask> {
+    ) -> Result<Task<DropIndexTask>> {
         block_on(
             self.async_client
                 .drop_index(policy, namespace, set_name, index_name),
-        )
+        ).map(Task::new)
     }
 
     /// Creates a new user with password and roles. Clear-text password will be hashed using bcrypt

@@ -55,8 +55,7 @@ pub(crate) struct QuerySelectionFixture {
 
 pub(crate) async fn supports_query_selection(client: &Client) -> bool {
     let ok = client
-        .cluster
-        .get_random_node()
+        .random_node()
         .map(|node| node.version().supports_query_selection())
         .unwrap_or(false);
     if !ok {

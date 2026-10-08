@@ -1,4 +1,4 @@
-// Copyright 2015-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -22,9 +22,9 @@ use aerospike::metrics::CommandMetric;
 use aerospike::query::{Filter, PartitionFilter};
 use aerospike::{
     as_bin, as_key, as_val, operations, AdminPolicy, BatchDeletePolicy, BatchOperation,
-    BatchPolicy, BatchReadPolicy, BatchUDFPolicy, BatchWritePolicy, Bins, Client,
+    BatchPolicy, BatchReadPolicy, BatchUdfPolicy, BatchWritePolicy, Bins, Client,
     CollectionIndexType, CommandType, IndexType, LatencyUnit, MetricsPolicy, QueryPolicy,
-    ReadPolicy, Statement, Task, UDFLang, WritePolicy,
+    ReadPolicy, Statement, Task, UdfLang, WritePolicy,
 };
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
@@ -847,7 +847,7 @@ end
             &AdminPolicy::default(),
             body.as_bytes(),
             &format!("{NAME}.lua"),
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
         .expect("register udf");
@@ -878,7 +878,7 @@ async fn metrics_bytes_received_single_key_commands() {
     }
     let udf = register_echo_udf(&client).await;
     let echoed = client
-        .execute_udf(&wpolicy, &key, udf, "echo", Some(&[as_val!(blob.as_str())]))
+        .execute_udf(&wpolicy, &key, udf, "echo", &[as_val!(blob.as_str())])
         .await
         .unwrap();
     assert_eq!(echoed, Some(as_val!(blob.as_str())));
@@ -927,7 +927,7 @@ async fn metrics_bytes_received_batch_commands() {
     bpolicy.base_policy.total_timeout = 5000;
     let bpw = BatchWritePolicy::default();
     let bpr = BatchReadPolicy::default();
-    let bpu = BatchUDFPolicy::default();
+    let bpu = BatchUdfPolicy::default();
     let bpd = BatchDeletePolicy::default();
 
     let mut writes: Vec<_> = keys
@@ -954,7 +954,7 @@ async fn metrics_bytes_received_batch_commands() {
                 k.clone(),
                 udf,
                 "echo",
-                Some(vec![as_val!(blob.as_str())]),
+                vec![as_val!(blob.as_str())],
             )
         })
         .collect();
@@ -1038,7 +1038,7 @@ async fn metrics_bytes_received_query_commands() {
 
     // Secondary-index filter: a query.
     let mut stmt = Statement::new(namespace, &set_name, Bins::All);
-    stmt.add_filter(Filter::range("bin", 0, RECORDS as i64));
+    stmt.set_filter(Filter::range("bin", 0, RECORDS as i64));
     let rs = client
         .query(&QueryPolicy::default(), PartitionFilter::all(), stmt)
         .await

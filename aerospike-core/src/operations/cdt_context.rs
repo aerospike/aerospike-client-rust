@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -55,15 +55,15 @@ pub struct CdtContext {
     /// Context Type — full encoded tag including any high-bit flags
     /// such as the AND filter bit. Wider than 8 bits to fit the
     /// `0x204` tag value used by [`ctx_and_filter`].
-    pub id: u16,
+    pub(crate) id: u16,
 
     /// Per-entry create-flag overlay (e.g. list/map order, pad). Stays
     /// `u8`-wide because every flag in this layer fits in 8 bits; widened
     /// only if the wire format ever needs more.
-    pub flags: u8,
+    pub(crate) flags: u8,
 
     /// Context Value
-    pub value: Value,
+    pub(crate) value: Value,
 
     /// Pre-packed expression bytes for expression-based contexts
     pub(crate) expression: Option<Expression>,
@@ -604,6 +604,15 @@ impl AsRef<[CdtContext]> for Path {
     }
 }
 
+/// A path is its context entries, so `&path` goes wherever a builder wants
+/// a `&[CdtContext]`.
+impl std::ops::Deref for Path {
+    type Target = [CdtContext];
+    fn deref(&self) -> &[CdtContext] {
+        &self.entries
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -672,7 +681,7 @@ mod tests {
             ctx_map_key(Value::String("book".into())),
             ctx_list_index(2),
             ctx_all_children_with_filter(expressions::gt(
-                expressions::int_bin("score".into()),
+                expressions::int_bin("score"),
                 expressions::int_val(10),
             )),
         ];

@@ -27,7 +27,7 @@ use std::str::FromStr;
 use clap::Parser;
 
 use aerospike::policy::Replica;
-use aerospike::{CommitLevel, ReadModeAP, ReadModeSC};
+use aerospike::{CommitLevel, ReadModeAp, ReadModeSc};
 
 use crate::{
     db_object_spec::{parse_object_spec_list, DBObjectSpec},
@@ -380,8 +380,8 @@ pub struct Options {
     pub key_file: Option<PathBuf>,
     pub string_keys: bool,
     pub replica: Replica,
-    pub read_mode_ap: ReadModeAP,
-    pub read_mode_sc: ReadModeSC,
+    pub read_mode_ap: ReadModeAp,
+    pub read_mode_sc: ReadModeSc,
     pub commit_level: CommitLevel,
     pub timeout: Option<u32>,
     pub socket_timeout: Option<u32>,
@@ -507,14 +507,14 @@ fn from_cli(cli: Cli) -> Result<Options, String> {
             _ => Replica::Sequence,
         },
         read_mode_ap: match cli.read_mode_ap.as_str() {
-            "all" => ReadModeAP::All,
-            _ => ReadModeAP::One,
+            "all" => ReadModeAp::All,
+            _ => ReadModeAp::One,
         },
         read_mode_sc: match cli.read_mode_sc.as_str() {
-            "linearize" => ReadModeSC::Linearize,
-            "allow-replica" => ReadModeSC::AllowReplica,
-            "allow-unavailable" => ReadModeSC::AllowUnavailable,
-            _ => ReadModeSC::Session,
+            "linearize" => ReadModeSc::Linearize,
+            "allow-replica" => ReadModeSc::AllowReplica,
+            "allow-unavailable" => ReadModeSc::AllowUnavailable,
+            _ => ReadModeSc::Session,
         },
         commit_level: match cli.commit_level.as_str() {
             "master" => CommitLevel::CommitMaster,
@@ -753,7 +753,7 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(o.replica, Replica::PreferRack);
-        assert_eq!(o.read_mode_sc, ReadModeSC::Linearize);
+        assert_eq!(o.read_mode_sc, ReadModeSc::Linearize);
         assert_eq!(o.commit_level, CommitLevel::CommitMaster);
     }
 }

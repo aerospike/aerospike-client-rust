@@ -1,4 +1,4 @@
-// Copyright 2015-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@ use aerospike::{
 
 /// Check if the server supports MRT (version >= 8.0).
 async fn server_supports_mrt(client: &aerospike::Client) -> bool {
-    match client.cluster.get_random_node() {
+    match client.random_node() {
         Ok(node) => node.version().supports_mrt(),
         Err(_) => false,
     }
@@ -672,10 +672,10 @@ async fn txn_version_mismatch_on_commit() {
                     "verify_records should have one entry per tracked read",
                 );
                 // The externally-modified key must have a non-Ok result_code.
-                let key0_digest = as_key!(ns, set, 0i64).digest;
+                let key0_digest = as_key!(ns, set, 0i64).digest();
                 let failed = verify_records
                     .iter()
-                    .find(|r| r.key.digest == key0_digest)
+                    .find(|r| r.key.digest() == key0_digest)
                     .expect("verify_records missing the conflicting key");
                 assert_ne!(
                     failed.result_code(),
@@ -1015,4 +1015,44 @@ async fn txn_abort_allowed_after_verify_failure() {
         .await
         .expect("abort after a verify failure is allowed");
     assert_eq!(status, AbortStatus::AlreadyAborted);
+}
+
+// =============================================================================
+// Read-only operate inside a transaction
+// =============================================================================
+
+/// An operate whose operations are all reads is a read of the key: the
+/// transaction records its version and does not list it as a write.
+#[aerospike_macro::test]
+async fn txn_read_only_operate_is_recorded_as_a_read() {
+    let client = common::client().await;
+    skip_if_no_mrt!(&client);
+
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let key = as_key!(ns, set, &common::rand_str(50));
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("bin", 1i64)])
+        .await
+        .unwrap();
+
+    let txn = Arc::new(Txn::new());
+    let mut policy = WritePolicy::default();
+    policy.base_policy.txn = Some(txn.clone());
+    client
+        .operate(&policy, &key, &[operations::get_bin("bin")])
+        .await
+        .unwrap();
+
+    let digest = key.digest();
+    assert!(txn.get_reads().iter().any(|(k, _)| k.digest() == digest));
+    assert!(!txn.get_writes().iter().any(|k| k.digest() == digest));
+
+    client
+        .operate(&policy, &key, &[operations::add(&as_bin!("bin", 1i64))])
+        .await
+        .unwrap();
+    assert!(txn.get_writes().iter().any(|k| k.digest() == digest));
+
+    client.abort(&txn).await.unwrap();
 }

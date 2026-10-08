@@ -1,3 +1,18 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 // Randomized end-to-end checks of the batch executor against a live cluster.
 //
 // The executor splits a batch per node, sends one command per node, then puts
@@ -107,7 +122,7 @@ async fn rack_client(rack: usize) -> Client {
 /// Node count and the namespace's replication factor, printed so a run's
 /// output says what topology it actually exercised.
 async fn cluster_facts(client: &Client, namespace: &str) -> (usize, Option<usize>) {
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let key = format!("namespace/{namespace}");
     let rf = match nodes.first() {
         Some(node) => node
@@ -379,7 +394,7 @@ async fn same_random_read_batch_agrees_across_replica_policies() {
         seed: u64,
     ) -> Vec<Row> {
         let mut policy = BatchPolicy::default();
-        policy.replica = replica;
+        policy.base_policy.replica = replica;
         run(client, &policy, ops.to_vec())
             .await
             .unwrap_or_else(|e| panic!("seed {seed} {replica:?}: {e}"))
@@ -455,7 +470,7 @@ async fn sequence_retry_resplits_onto_the_next_replica_and_succeeds() {
 
     let brp = BatchReadPolicy::default();
     let mut policy = BatchPolicy::default();
-    policy.replica = Replica::Sequence;
+    policy.base_policy.replica = Replica::Sequence;
     policy.base_policy.sleep_between_retries = 0;
     policy.base_policy.total_timeout = 10_000;
 
@@ -465,7 +480,7 @@ async fn sequence_retry_resplits_onto_the_next_replica_and_succeeds() {
         .collect();
     write_values(&client, &keys, |i| i as i64).await;
 
-    let tripped = client.cluster.nodes()[0].clone();
+    let tripped = client.nodes()[0].clone();
     for _ in 0..16 {
         tripped.incr_error_rate();
     }
@@ -553,7 +568,7 @@ async fn arc_node_refcounts_return_to_baseline_after_many_random_batches() {
     // hold a node briefly, so both readings are the minimum over a settle window.
     async fn settled(client: &Client) -> Vec<usize> {
         let snap = |c: &Client| -> Vec<usize> {
-            c.cluster.nodes().iter().map(Arc::strong_count).collect()
+            c.nodes().iter().map(Arc::strong_count).collect()
         };
         let mut best = snap(client);
         for _ in 0..6 {
@@ -581,7 +596,7 @@ async fn arc_node_refcounts_return_to_baseline_after_many_random_batches() {
             })
             .collect();
         let mut policy = BatchPolicy::default();
-        policy.replica = if r.chance(2) {
+        policy.base_policy.replica = if r.chance(2) {
             Replica::Master
         } else {
             Replica::Sequence

@@ -34,7 +34,7 @@ use crate::common;
 
 use aerospike::expressions::{eq, float_val, int_bin, int_val, Expression};
 use aerospike::operations::exp::ExpWriteFlags;
-use aerospike::operations::hll::HLLPolicy;
+use aerospike::operations::hll::HllPolicy;
 use aerospike::operations::lists::ListReturnType;
 use aerospike::operations::{bitwise, exp, hll, lists, scalar};
 use aerospike::query::PartitionFilter;
@@ -48,7 +48,7 @@ use futures::StreamExt;
 const BIN: &str = "edv-bin";
 
 async fn supports_error_detail(client: &Client) -> bool {
-    let ok = match client.cluster.get_random_node() {
+    let ok = match client.random_node() {
         Ok(node) => node.version().supports_extended_error_detail(),
         Err(_) => false,
     };
@@ -286,7 +286,7 @@ async fn hll_add_on_integer_bin_is_bin_type_error() {
     put(&client, &key, as_bin!(BIN, 1)).await;
 
     let op = hll::add_with_index_and_min_hash(
-        &HLLPolicy::default(),
+        &HllPolicy::default(),
         BIN,
         vec![Value::from("element1")],
         8,
@@ -378,7 +378,7 @@ async fn list_get_by_rank_out_of_bounds_is_op_not_applicable_with_subcode() {
         .operate(
             &wpolicy_verbosity(2),
             &key,
-            &[lists::get_by_rank(BIN, 99, ListReturnType::Values)],
+            &[lists::get_by_rank(BIN, 99, ListReturnType::VALUES)],
         )
         .await
         .expect_err("list get by rank out of bounds should fail");
@@ -396,7 +396,7 @@ async fn hll_fold_target_too_large_is_op_not_applicable_with_subcode() {
         .operate(
             &WritePolicy::default(),
             &key,
-            &[hll::init_with_min_hash(&HLLPolicy::default(), BIN, 8, 0)],
+            &[hll::init_with_min_hash(&HllPolicy::default(), BIN, 8, 0)],
         )
         .await
         .unwrap();
@@ -640,12 +640,10 @@ async fn background_query_filter_build_failure_keeps_the_server_detail() {
 
     let mut wp = wpolicy_verbosity(3);
     wp.base_policy.filter_expression = Some(bad_exp());
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_operations([scalar::put(&as_bin!(BIN, 2))]);
     let err = client
-        .query_operate(
-            &wp,
-            Statement::new(namespace, &set_name, Bins::All),
-            &[scalar::put(&as_bin!(BIN, 2))],
-        )
+        .query_operate(&wp, statement)
         .await
         .expect_err("type-mismatched filter should fail the background job");
     assert_result(&err, ResultCode::ParameterError, &["expression"]);
@@ -664,7 +662,7 @@ async fn exp_write_build_failure_is_parameter_error_at_verbosity_3() {
         .operate(
             &wpolicy_verbosity(3),
             &key,
-            &[exp::write_exp(BIN, bad_exp(), ExpWriteFlags::Default)],
+            &[exp::write_exp(BIN, bad_exp(), ExpWriteFlags::DEFAULT)],
         )
         .await
         .expect_err("type-mismatched exp_write should fail to build");
@@ -746,8 +744,7 @@ async fn batch_filtered_out_rows_keep_detail_and_node() {
 
     let mut bpolicy = aerospike::BatchPolicy::default();
     bpolicy.base_policy.error_detail_verbosity = 2;
-    // The batch-level filter lives on `BatchPolicy` itself, not on its base policy.
-    bpolicy.filter_expression = Some(eq(int_bin(BIN.to_string()), int_val(99)));
+    bpolicy.base_policy.filter_expression = Some(eq(int_bin(BIN.to_string()), int_val(99)));
     let brp = aerospike::BatchReadPolicy::default();
     let mut ops: Vec<aerospike::BatchOperation> = keys
         .iter()

@@ -1,3 +1,18 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 use crate::common;
 use crate::proptest::prelude::*;
 use crate::proptest_async;
@@ -22,11 +37,11 @@ proptest_async::proptest! {
     {
         let client = common::singleton_client().await;
 
-        // `LongRelaxAP` is rejected with `ParameterError` on strong-consistency namespaces; keep
+        // `LongRelaxAp` is rejected with `ParameterError` on strong-consistency namespaces; keep
         // randomized policies for AP unchanged by only adjusting when `namespace_sc!` is true.
         let mut query_policy = query_policy;
         if namespace_sc!(&client)
-            && query_policy.expected_duration == QueryDuration::LongRelaxAP
+            && query_policy.expected_duration == QueryDuration::LongRelaxAp
         {
             query_policy.expected_duration = QueryDuration::Long;
         }
@@ -55,7 +70,7 @@ proptest_async::proptest! {
                 }
             }
 
-            pf = rs.partition_filter().await.unwrap();
+            pf = rs.partition_filter().unwrap();
         }
 
         // println!("Query returned {} records in {:?}", count, now.elapsed());
@@ -101,7 +116,7 @@ prop_compose! {
     pub fn statement(ns: String, set_name: String)(bins in latin_bins(50), filter in filter("bin_i".into()), with_filter in any::<bool>()) -> Statement {
        let mut stmt = Statement::new(&ns, &set_name, bins);
        if with_filter {
-            stmt.add_filter(filter);
+            stmt.set_filter(filter);
        }
        stmt
    }

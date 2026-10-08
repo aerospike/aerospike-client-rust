@@ -11,8 +11,8 @@ version: `[workspace.package] version` in the root `Cargo.toml`. Requires Rust
 
 **Two things to get right before writing any code:**
 
-1. **The API lives in `aerospike-core/`.** Root [`src/lib.rs`](src/lib.rs) is an
-   11-line re-export facade — open it for the feature-selection guard, then go to
+1. **The API lives in `aerospike-core/`.** Root [`src/lib.rs`](https://github.com/aerospike/aerospike-client-rust/blob/v3/src/lib.rs) is a
+   thin re-export facade — open it for the feature-selection guard, then go to
    `aerospike-core/src/` for the actual client implementation.
 2. **Cargo features decide what compiles.** See *Selecting features* below — the
    wrong feature set is a compile error, not a runtime error.
@@ -22,9 +22,9 @@ version: `[workspace.package] version` in the root `Cargo.toml`. Requires Rust
 | Goal | Cargo features |
 |---|---|
 | Async client, Tokio (default) | `default`, or explicitly `["rt-tokio"]` |
-| Async client, async-std | `default-features = false`, `["async", "serialization", "rt-async-std"]` |
+| Async client, async-std | `default-features = false`, `["async", "serialization", "rt-async-std"]` — maintenance only: async-std is discontinued upstream, so this runtime stays for existing users and may go in a later major release |
 | Blocking client | `default-features = false`, `["sync", "serialization", "rt-tokio"]` or `["sync", "serialization", "rt-async-std"]` — the sync crate follows whichever runtime feature the root enables |
-| TLS | add `"tls"` (on by default; **requires `rt-tokio`** — not available under async-std) |
+| TLS | add `"tls"` (on by default; **requires `rt-tokio`** — not available under async-std). rustls with the `ring` provider: no C toolchain needed |
 | Runtime config file | add `"dynamic-config"` (on by default) |
 | `query_aggregate` / stream UDFs | add `"lua"` (off by default — compiles a vendored Lua interpreter) |
 
@@ -35,33 +35,25 @@ one without disabling defaults first) is a compile error. Full detail in
 ### Where things live
 
 - **`aerospike-core/src/`** — the client implementation. This is "the Rust client."
-- **`aerospike-sync/`** — thin blocking wrapper; [mirrors the async API](aerospike-sync/README.md) 1:1, so read `aerospike-core` first regardless of which you're generating for.
-- **`examples/`** — one runnable file per feature area; [examples/README.md](examples/README.md) is the routing table (server-version gates included) — read it before writing new example code.
-- **`tests/src/`** — the primary integration suite, one file per feature area, run against a live server. `tests/proptests/` and [`tests/proptest_async/`](tests/proptest_async/README.md) are property-based tests, a different tier. `tests/common/` is shared test harness, not a place to add feature tests.
+- **`aerospike-sync/`** — thin blocking wrapper; [mirrors the async API](https://github.com/aerospike/aerospike-client-rust/blob/v3/aerospike-sync/README.md) 1:1, so read `aerospike-core` first regardless of which you're generating for.
+- **`examples/`** — one runnable file per feature area; [examples/README.md](https://github.com/aerospike/aerospike-client-rust/blob/v3/examples/README.md) is the routing table (server-version gates included) — read it before writing new example code.
+- **`tests/src/`** — the primary integration suite, one file per feature area, run against a live server. `tests/proptests/` and [`tests/proptest_async/`](https://github.com/aerospike/aerospike-client-rust/blob/v3/tests/proptest_async/README.md) are property-based tests, a different tier. `tests/common/` is shared test harness, not a place to add feature tests.
 - **`benches/`** and **`tools/benchmark/`** — load generators for tuning connection properties, not API usage references.
 
 ### Verifying generated code
 
 - `cargo build` / `cargo test` with the right feature set (above) is the first check — a wrong feature set fails here, not at runtime.
-- `cargo test-docs` (alias for `cargo test --workspace --doc`, see `.cargo/config.toml`) runs every public doc-comment example as a compiled, runnable test — e.g. [`select_by_path`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/operations/path/fn.select_by_path.html) in `aerospike-core/src/operations/path.rs`. Doc comments are load-bearing, not illustrative-only.
+- `cargo test-docs` (alias for `cargo test --workspace --doc`, see `.cargo/config.toml`) runs every public doc-comment example as a compiled, runnable test — e.g. [`select_by_path`](https://docs.rs/aerospike/latest/aerospike/operations/path/fn.select_by_path.html) in `aerospike-core/src/operations/path.rs`. Doc comments are load-bearing, not illustrative-only.
 - `cargo doc --open` builds the reference locally from source — see *Which API reference wins* below for why this matters.
 - `tests/src/examples.rs` runs every example in `examples/` against a live server on every test run.
 
 ### Which API reference wins
 
-By default, docs.rs shows the manual for the latest **stable** release
-(`2.2.0`) — one version behind this branch (`v3`), which changed some APIs
-(batch operations, queries). Don't trust the default docs.rs page while
-reading `v3` code.
-
-Two ways to get the reference that actually matches this branch:
-
-- Go straight to [docs.rs/aerospike/3.0.0-alpha.2](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/) — the version-pinned page.
-- Or run `cargo doc --open` to build the reference from the exact code in front of you.
-
-If the two ever disagree, trust `cargo doc --open` — it's built fresh from
-what's actually in the tree; the docs.rs page is just a snapshot from whenever
-it was last published.
+[docs.rs/aerospike](https://docs.rs/aerospike/) documents the latest published
+release, and every older release stays reachable from its version picker. A
+checkout can be ahead of the latest release, so when the page and the code in
+front of you disagree, run `cargo doc --open`: it builds the reference from the
+exact tree you are reading, and it wins.
 
 ## Feature highlights
 
@@ -92,24 +84,15 @@ it was last published.
 - **New data constructs:** returns types such as `Exists`, 
   `OrderedMap`, `UnorderedMap` now supported for 
   [CDT](https://aerospike.com/docs/develop/data-types/collections/) reads.
-- **Value conversions:** implements `TryFromaerospike::Value` for seamless type interoperability.
+- **Value conversions:** implements `TryFrom<Value>` for the common Rust types, for seamless type interoperability.
 - **Infinity and wildcard:** supports `Infinity`, `Wildcard`, and 
   corresponding expression builders `expressions::infinity()` and 
   `expressions::wildcard()`.
-- **Size expressions:** adds `expressions::record_size()` and `expressions::memory_size()` 
-  for granular control.
+- **Size expressions:** adds `expressions::record_size()`; the server-deprecated
+  `device_size()` and `memory_size()` are not carried into 3.0.
 
 Take a look at the [changelog](https://github.com/aerospike/aerospike-client-rust/blob/v3/CHANGELOG.md) for more details.
-Upgrading from 2.x: see [MIGRATION.md](MIGRATION.md).
-
-## What’s coming next?
-
-We are working toward full functional parity with our 
-other officially supported clients. Features on the roadmap include:
-
-- Partition queries
-- Distributed ACID transactions
-- Strong consistency
+Upgrading from 2.x: see [MIGRATION.md](https://github.com/aerospike/aerospike-client-rust/blob/v3/MIGRATION.md).
 
 ## Getting started
 
@@ -153,9 +136,6 @@ To use the client in your own project, add one of the following to your `Cargo.t
    # runtime one)
    aerospike = { version = "<version>", default-features = false, features = ["async", "serialization", "rt-async-std"]}
 
-   # The library still supports the old sync interface, but it will be deprecated in the future.
-   # This is only for compatibility reasons and will be removed in a later stage.
-
    # Sync API; pick the runtime it blocks on with `rt-tokio` or `rt-async-std`
    aerospike = { version = "<version>", default-features = false, features = ["sync", "serialization", "rt-tokio"]}
    ```
@@ -194,30 +174,26 @@ let client = Client::new(&policy, &hosts)
 
 #### Sync client
 
-The `sync` feature exposes blocking APIs — no `async`/`.await` at call sites. However, the client still uses Tokio 
-internally for cluster management, so **a Tokio runtime must be running** for the duration of your program.
+The `sync` feature exposes blocking APIs — no `async`/`.await` at call sites and
+no runtime to set up. The blocking client drives the async client itself: on
+`rt-tokio` it owns a dedicated Tokio runtime, on `rt-async-std` it blocks on
+async-std's global executor.
 
 **Cargo.toml**
 ```toml
 [dependencies]
-aerospike = { version = "<version>", default-features = false, features = ["rt-tokio", "sync"] }
-tokio = { version = "1", features = ["full"] }  # required even for sync usage
+aerospike = { version = "<version>", default-features = false, features = ["sync", "serialization", "rt-tokio"] }
 ```
 
 > Swap `rt-tokio` for `rt-async-std` if your project uses async-std instead.
+> `tls` needs `rt-tokio` with either client.
 
 **Example:**
 ```rust
-#[macro_use]
-extern crate aerospike;
-
 use std::env;
-use aerospike::{Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
+use aerospike::{as_bin, as_key, Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
 
-// #[tokio::main] is required — the sync client uses Tokio internally
-// for cluster tending, even though your code has no .await calls.
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let policy = ClientPolicy::default();
     let hosts = env::var("AEROSPIKE_HOSTS")
         .unwrap_or_else(|_| "127.0.0.1:3000".to_string());
@@ -236,10 +212,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-> **Why does sync need a Tokio runtime?** The `sync` feature wraps the async client and provides blocking call 
-> sites — it does not replace the underlying async runtime. Cluster tending (node discovery, connection pooling) runs 
-> as a background Tokio task regardless of which API surface you use. Calling `Client::new` outside of a runtime context
-> will panic with `there is no reactor running`.
+> **Calling it from async code.** On Tokio the blocking client may be called from
+> inside a caller's Tokio runtime: it blocks on its own runtime, not the caller's.
+> On async-std its methods must not be called from inside an async-std task,
+> because `async_std::task::block_on` cannot nest. Task-returning methods
+> (`create_index`, `register_udf`, …) return `aerospike::Task`, whose
+> `wait_till_complete` blocks, and `query_foreach` returns `aerospike::QueryHandle`.
 
 #### TLS connection without client authentication
 
@@ -417,7 +395,7 @@ async fn main() {
 	"#;
 
     let task = client
-        .register_udf(&apolicy, udf_body.as_bytes(), "test_udf.lua", UDFLang::Lua)
+        .register_udf(&apolicy, udf_body.as_bytes(), "test_udf.lua", UdfLang::Lua)
         .await
         .unwrap();
     task.wait_till_complete(None).await.unwrap();
@@ -452,7 +430,7 @@ async fn main() {
     let bpr = BatchReadPolicy::default();
     let bpw = BatchWritePolicy::default();
     let bpd = BatchDeletePolicy::default();
-    let bpu = BatchUDFPolicy::default();
+    let bpu = BatchUdfPolicy::default();
 
     let batch = vec![
         BatchOperation::write(&bpw, key1.clone(), wops.clone()),
@@ -502,7 +480,7 @@ async fn main() {
     dbg!(&results);
 ```
 
-A complete working example can be found in [examples/batch_operations.rs](./examples/batch_operations.rs).
+A complete working example can be found in [examples/batch_operations.rs](https://github.com/aerospike/aerospike-client-rust/blob/v3/examples/batch_operations.rs).
 
 ### Query operations
 
@@ -518,7 +496,7 @@ use aerospike::query::PartitionFilter;
 
 let policy = QueryPolicy::default();
 let mut stmt = Statement::new(namespace, set_name, Bins::All);
-stmt.add_filter(as_eq!("bin_name", 5));
+stmt.set_filter(Filter::equal("bin_name", 5));
 
 let rs = client.query(&policy, PartitionFilter::all(), stmt).await.unwrap();
 let mut rs = rs.into_stream();
@@ -535,7 +513,7 @@ Query records where a bin value falls within a range:
 ```rust
 let policy = QueryPolicy::default();
 let mut stmt = Statement::new(namespace, set_name, Bins::All);
-stmt.add_filter(as_range!("bin_name", 0, 100));
+stmt.set_filter(Filter::range("bin_name", 0, 100));
 
 let rs = client.query(&policy, PartitionFilter::all(), stmt).await.unwrap();
 let mut rs = rs.into_stream();
@@ -552,7 +530,7 @@ Query records but only retrieve metadata (no bin data):
 ```rust
 let policy = QueryPolicy::default();
 let mut stmt = Statement::new(namespace, set_name, Bins::None);
-stmt.add_filter(as_range!("bin_name", 0, 100));
+stmt.set_filter(Filter::range("bin_name", 0, 100));
 
 let rs = client.query(&policy, PartitionFilter::all(), stmt).await.unwrap();
 let mut rs = rs.into_stream();
@@ -581,7 +559,7 @@ while !pf.done() {
     }
     
     // Get the next partition filter to continue pagination
-    pf = rs.partition_filter().await.unwrap();
+    pf = rs.partition_filter().unwrap();
 }
 ```
 
@@ -595,7 +573,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 let policy = QueryPolicy::default();
 let mut stmt = Statement::new(namespace, set_name, Bins::All);
-stmt.add_filter(as_range!("bin_name", 0, 100));
+stmt.set_filter(Filter::range("bin_name", 0, 100));
 
 let rs = client.query(&policy, PartitionFilter::all(), stmt).await.unwrap();
 let count = Arc::new(AtomicUsize::new(0));
@@ -625,7 +603,7 @@ println!("Total processed: {}", count.load(Ordering::Relaxed));
 Use filter expressions for more complex filtering logic:
 
 ```rust
-use aerospike_core::expressions::{eq, int_bin, int_val};
+use aerospike::expressions::{eq, int_bin, int_val};
 
 let mut policy = QueryPolicy::default();
 policy.base_policy.filter_expression.replace(
@@ -650,7 +628,7 @@ let mut policy = QueryPolicy::default();
 policy.records_per_second = 100;  // Limit to 100 records/second
 
 let mut stmt = Statement::new(namespace, set_name, Bins::All);
-stmt.add_filter(as_range!("bin_name", 0, 1000));
+stmt.set_filter(Filter::range("bin_name", 0, 1000));
 
 let rs = client.query(&policy, PartitionFilter::all(), stmt).await.unwrap();
 let mut rs = rs.into_stream();
@@ -668,7 +646,7 @@ while let Some(r) = rs.next().await {
 Before running queries, you need to create a secondary index on the bin you want to query:
 
 ```rust
-use aerospike_core::{AdminPolicy, IndexType, CollectionIndexType};
+use aerospike::{AdminPolicy, IndexType, CollectionIndexType};
 
 let policy = AdminPolicy::default();
 let task = client
@@ -689,7 +667,7 @@ let task = client
 task.wait_till_complete(None).await.unwrap();
 ```
 
-For a complete working example with all query patterns, see [`examples/query.rs`](./examples/query.rs).
+For a complete working example with all query patterns, see [`examples/query.rs`](https://github.com/aerospike/aerospike-client-rust/blob/v3/examples/query.rs).
 
 ### Timeout configuration
 
@@ -755,7 +733,7 @@ Many cloud providers experience performance issues when clients close sockets wh
 
 **Recommended value:** If enabling `timeout_delay`, 3000ms (3 seconds) is a reasonable starting point.
 
-For a complete working example demonstrating timeout scenarios, see [`examples/timeout_configuration.rs`](./examples/timeout_configuration.rs).
+For a complete working example demonstrating timeout scenarios, see [`examples/timeout_configuration.rs`](https://github.com/aerospike/aerospike-client-rust/blob/v3/examples/timeout_configuration.rs).
 
 ### Dynamic configuration
 
@@ -867,7 +845,7 @@ let rs = client
         stmt,
         "my_package",
         "sum_single_bin",
-        Some(&[as_val!("score")]),
+        &[as_val!("score")],
     )
     .await?;
 
@@ -877,7 +855,7 @@ while let Some(value) = stream.next().await {
 }
 ```
 
-See [`examples/query_aggregate.rs`](./examples/query_aggregate.rs) for a
+See [`examples/query_aggregate.rs`](https://github.com/aerospike/aerospike-client-rust/blob/v3/examples/query_aggregate.rs) for a
 complete working example, including the Lua UDF source.
 
 ## Good to Know

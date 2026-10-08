@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -195,17 +195,17 @@ fn unpack_blob(buf: &mut Buffer, count: usize) -> Result<Value> {
     let vtype = buf.read_u8(None);
 
     match ParticleType::try_from_u8(vtype) {
-        Some(ParticleType::STRING) => {
+        Some(ParticleType::String) => {
             let val = buf.read_str(count)?;
             Ok(Value::String(val))
         }
 
-        Some(ParticleType::BLOB) => Ok(Value::Blob(buf.read_blob(count)?)),
-        Some(ParticleType::HLL) => Ok(Value::HLL(buf.read_blob(count)?)),
+        Some(ParticleType::Blob) => Ok(Value::Blob(buf.read_blob(count)?)),
+        Some(ParticleType::Hll) => Ok(Value::Hll(buf.read_blob(count)?)),
 
-        Some(ParticleType::GEOJSON) => {
+        Some(ParticleType::GeoJson) => {
             let val = buf.read_str(count)?;
-            Ok(Value::GeoJSON(val))
+            Ok(Value::GeoJson(val))
         }
 
         _ => Ok(Value::Unknown(vtype, buf.read_blob(count)?)),

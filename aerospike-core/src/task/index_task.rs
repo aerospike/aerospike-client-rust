@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -29,7 +29,7 @@ pub struct IndexTask {
 
 impl IndexTask {
     /// Initializes `IndexTask` from a client, creation should only be exposed to Client
-    pub const fn new(cluster: Arc<Cluster>, namespace: String, index_name: String) -> Self {
+    pub(crate) const fn new(cluster: Arc<Cluster>, namespace: String, index_name: String) -> Self {
         IndexTask {
             cluster,
             namespace,
@@ -89,6 +89,8 @@ impl IndexTask {
         }
     }
 }
+
+impl super::task::sealed::Sealed for IndexTask {}
 
 #[async_trait::async_trait]
 impl Task for IndexTask {

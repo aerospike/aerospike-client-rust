@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -18,7 +18,7 @@ use aerospike::operations::lists;
 use aerospike::*;
 
 use crate::common;
-use aerospike::{Expiration, ReadTouchTTL};
+use aerospike::{Expiration, ReadTouchTtl};
 use aerospike_rt::sleep;
 use aerospike_rt::time::{Duration, Instant};
 
@@ -189,7 +189,7 @@ end
             &apolicy,
             udf_body.as_bytes(),
             "batch_read_echo.lua",
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
         .unwrap();
@@ -227,7 +227,7 @@ end
     if namespace_sc!(&client) {
         bpd.durable_delete = true;
     }
-    let bpu = BatchUDFPolicy::default();
+    let bpu = BatchUdfPolicy::default();
 
     let mut batch = vec![
         BatchOperation::write(&bpw, key1.clone(), wops.clone()),
@@ -349,15 +349,15 @@ end
     let args3 = vec![as_val!(3)];
     let args4 = vec![as_val!(4)];
     let mut batch = vec![
-        BatchOperation::udf(&bpu, key1.clone(), "batch_read_echo", "echo", Some(args1)),
-        BatchOperation::udf(&bpu, key2.clone(), "batch_read_echo", "echo", Some(args2)),
-        BatchOperation::udf(&bpu, key3.clone(), "batch_read_echo", "echo", Some(args3)),
+        BatchOperation::udf(&bpu, key1.clone(), "batch_read_echo", "echo", args1),
+        BatchOperation::udf(&bpu, key2.clone(), "batch_read_echo", "echo", args2),
+        BatchOperation::udf(&bpu, key3.clone(), "batch_read_echo", "echo", args3),
         BatchOperation::udf(
             &bpu,
             key4.clone(),
             "batch_read_echo",
             "echo_not_exists",
-            Some(args4),
+            args4,
         ),
     ];
     client.batch(&bpolicy, &mut batch).await.unwrap();
@@ -451,7 +451,7 @@ async fn batch_operate_read_multi_op_single_bin() {
         key.clone(),
         vec![
             lists::size("lbin"),
-            lists::get_by_index("lbin", -1, lists::ListReturnType::Values),
+            lists::get_by_index("lbin", -1, lists::ListReturnType::VALUES),
         ],
     );
     let mut list = vec![br];
@@ -500,10 +500,10 @@ async fn batch_operate_read_touch_ttl() {
     // Read records before they expire and reset read ttl on one record.
     sleep(Duration::from_secs(8)).await;
     let mut brp1 = BatchReadPolicy::default();
-    brp1.read_touch_ttl = ReadTouchTTL::Percent(80);
+    brp1.read_touch_ttl = ReadTouchTtl::Percent(80);
 
     let mut brp2 = BatchReadPolicy::default();
-    brp2.read_touch_ttl = ReadTouchTTL::DontReset;
+    brp2.read_touch_ttl = ReadTouchTtl::DontReset;
 
     let br1 = BatchOperation::read(&brp1, key1.clone(), Bins::Some(vec!["a".into()]));
     let br2 = BatchOperation::read(&brp2, key2.clone(), Bins::Some(vec!["a".into()]));
@@ -516,8 +516,8 @@ async fn batch_operate_read_touch_ttl() {
 
     // Read records again, but don't reset read ttl.
     sleep(Duration::from_secs(3)).await;
-    brp1.read_touch_ttl = ReadTouchTTL::DontReset;
-    brp2.read_touch_ttl = ReadTouchTTL::DontReset;
+    brp1.read_touch_ttl = ReadTouchTtl::DontReset;
+    brp2.read_touch_ttl = ReadTouchTtl::DontReset;
 
     let br1 = BatchOperation::read(&brp1, key1.clone(), Bins::Some(vec!["a".into()]));
     let br2 = BatchOperation::read(&brp2, key2.clone(), Bins::Some(vec!["a".into()]));
@@ -1052,7 +1052,7 @@ async fn batch_row_error_carries_server_subcode_and_message() {
     let namespace: &str = common::namespace();
     let set_name = &common::rand_str(10);
 
-    let supported = match client.cluster.nodes().first() {
+    let supported = match client.nodes().first() {
         Some(node) => node.version().supports_extended_error_detail(),
         None => false,
     };
@@ -1179,14 +1179,14 @@ async fn batch_foreach_reports_every_row_exactly_once() {
             .unwrap();
     }
     let brp = BatchReadPolicy::default();
-    let ops: Vec<BatchOperation> = (0..10i64)
+    let mut ops: Vec<BatchOperation> = (0..10i64)
         .map(|i| BatchOperation::read(&brp, as_key!(namespace, set_name, i), Bins::All))
         .collect();
 
     let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let s = seen.clone();
     client
-        .batch_foreach(&BatchPolicy::default(), ops, move |idx, row| {
+        .batch_foreach(&BatchPolicy::default(), &mut ops, move |idx, row| {
             s.lock()
                 .unwrap()
                 .push((idx, row.result_code(), row.record.is_some()));
@@ -1228,7 +1228,7 @@ async fn batch_foreach_abort_stops_early_and_sweeps_the_rest() {
             .unwrap();
     }
     let brp = BatchReadPolicy::default();
-    let ops: Vec<BatchOperation> = (0..20i64)
+    let mut ops: Vec<BatchOperation> = (0..20i64)
         .map(|i| BatchOperation::read(&brp, as_key!(namespace, set_name, i), Bins::All))
         .collect();
 
@@ -1237,7 +1237,7 @@ async fn batch_foreach_abort_stops_early_and_sweeps_the_rest() {
     let (f, a) = (fired.clone(), answered.clone());
     // An abort is the caller's decision: the call succeeds.
     client
-        .batch_foreach(&BatchPolicy::default(), ops, move |_idx, row| {
+        .batch_foreach(&BatchPolicy::default(), &mut ops, move |_idx, row| {
             f.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let keep_going = if row.result_code().is_some() {
                 a.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1 < 5
@@ -1279,7 +1279,7 @@ async fn batch_foreach_reports_unroutable_key_with_its_error() {
         .unwrap();
 
     let brp = BatchReadPolicy::default();
-    let ops = vec![
+    let mut ops = vec![
         BatchOperation::read(&brp, good1, Bins::All),
         BatchOperation::read(&brp, bad, Bins::All),
         BatchOperation::read(&brp, good2, Bins::All),
@@ -1287,7 +1287,7 @@ async fn batch_foreach_reports_unroutable_key_with_its_error() {
     let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let s = seen.clone();
     client
-        .batch_foreach(&BatchPolicy::default(), ops, move |idx, row| {
+        .batch_foreach(&BatchPolicy::default(), &mut ops, move |idx, row| {
             s.lock()
                 .unwrap()
                 .push((idx, row.result_code(), row.record.is_some()));
@@ -1326,14 +1326,14 @@ async fn batch_foreach_hook_may_await() {
             .unwrap();
     }
     let brp = BatchReadPolicy::default();
-    let ops: Vec<BatchOperation> = (0..4i64)
+    let mut ops: Vec<BatchOperation> = (0..4i64)
         .map(|i| BatchOperation::read(&brp, as_key!(namespace, set_name, i), Bins::All))
         .collect();
 
     let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let c = count.clone();
     client
-        .batch_foreach(&BatchPolicy::default(), ops, move |_idx, row| {
+        .batch_foreach(&BatchPolicy::default(), &mut ops, move |_idx, row| {
             assert_eq!(row.result_code(), Some(ResultCode::Ok));
             let c = c.clone();
             async move {
@@ -1365,7 +1365,7 @@ async fn dropping_batch_foreach_stops_the_hook() {
             .unwrap();
     }
     let brp = BatchReadPolicy::default();
-    let ops: Vec<BatchOperation> = (0..8i64)
+    let mut ops: Vec<BatchOperation> = (0..8i64)
         .map(|i| BatchOperation::read(&brp, as_key!(namespace, set_name, i), Bins::All))
         .collect();
 
@@ -1374,7 +1374,7 @@ async fn dropping_batch_foreach_stops_the_hook() {
     let f = fired.clone();
     let outcome = aerospike_rt::timeout(
         Duration::from_millis(300),
-        client.batch_foreach(&BatchPolicy::default(), ops, move |_idx, _row| {
+        client.batch_foreach(&BatchPolicy::default(), &mut ops, move |_idx, _row| {
             f.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             futures::future::pending::<bool>()
         }),
@@ -1578,7 +1578,7 @@ async fn batch_single_row_error_carries_server_subcode_and_message() {
     let namespace: &str = common::namespace();
     let set_name = &common::rand_str(10);
 
-    let supported = match client.cluster.nodes().first() {
+    let supported = match client.nodes().first() {
         Some(node) => node.version().supports_extended_error_detail(),
         None => false,
     };

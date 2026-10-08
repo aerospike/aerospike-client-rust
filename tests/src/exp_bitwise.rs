@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -70,7 +70,7 @@ async fn expression_bitwise() {
                 resize(
                     &BitPolicy::default(),
                     int_val(4),
-                    BitwiseResizeFlags::Default,
+                    BitwiseResizeFlags::DEFAULT,
                     blob_bin("bin".to_string()),
                 ),
             ),
@@ -414,7 +414,7 @@ async fn expression_bitwise() {
 
 /// Same gate as the string operations: op 55 arrived with them.
 async fn server_supports_b64_encode(client: &Client) -> bool {
-    let supported = match client.cluster.get_random_node() {
+    let supported = match client.random_node() {
         Ok(node) => node.version().supports_string_operations(),
         Err(_) => false,
     };

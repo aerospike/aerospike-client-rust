@@ -1,7 +1,22 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 use crate::common;
 
 use aerospike::operations::hll;
-use aerospike::operations::hll::HLLPolicy;
+use aerospike::operations::hll::HllPolicy;
 use aerospike::{as_key, as_list, as_val, Bins, FloatValue, ReadPolicy, Value, WritePolicy};
 
 #[aerospike_macro::test]
@@ -12,7 +27,7 @@ async fn hll() {
 
     let key = as_key!(namespace, set_name, common::prop_setname());
 
-    let hpolicy = HLLPolicy::default();
+    let hpolicy = HllPolicy::default();
     let wpolicy = WritePolicy::default();
     let rpolicy = ReadPolicy::default();
 
@@ -83,7 +98,7 @@ async fn hll() {
 
     let ops = &[hll::get_union("bin", bin2val.clone())];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
-    let val = Value::HLL(vec![
+    let val = Value::Hll(vec![
         0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ]);
     assert_eq!(*rec.bins.get("bin").unwrap(), val, "Union does not match");

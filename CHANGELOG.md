@@ -1,6 +1,8 @@
 # Changelog
 
-## [3.0.0-alpha.3]
+## [3.0.0]
+
+Upgrading from 2.x: see the [migration guide](https://github.com/aerospike/aerospike-client-rust/blob/v3/MIGRATION.md).
 
 * **New Features**
   * [CLIENT-5387] `TlsPolicy` (Java parity): `ClientPolicy::tls_config: Option<rustls::ClientConfig>`
@@ -21,7 +23,7 @@
     partition range and each partition's resume point (id, retry, bval, digest — the same fields the Go
     client persists) round-trip, so a paginated query can hand its cursor to another process and
     continue there. Deserialization rejects a cursor whose range or entries are inconsistent.
-  * `BatchRecord` is built around one `Error`. A row is failed when `error()` is set, succeeded when
+  * [CLIENT-5626] `BatchRecord` is built around one `Error`. A row is failed when `error()` is set, succeeded when
     `record` is (every answered row has one, bin-less for an operation that returns nothing), pending
     when neither is; everything about a failure — result code, in-doubt, node, server detail, cause
     chain — is read off that error: `result_code()`, `in_doubt()`, `node()`, `error_detail()`,
@@ -34,31 +36,131 @@
     with the failure on `error()`; a client timeout reads as `Timeout`, as before. An unanswered
     row's in-doubt now follows the failure's own flag, so a timeout before anything reached the
     wire no longer marks rows in doubt.
-  * `Error` serializes (under `serialization`) as a structured record — `kind` (the variant name,
+  * [CLIENT-5626] `Error` serializes (under `serialization`) as a structured record — `kind` (the variant name,
     also `ErrorKind::name()`), `result_code`, `message`, `node`, `iteration`, `in_doubt`,
     `server_error_detail`, `sub_errors` and `source`, the last two recursively — so a serialized
     `BatchRecord` (`key`, `record`, `error`, `has_write`) carries the whole failure, not a projection.
-  * `BatchRecord::node()` (and `BatchOperation::node()`): the node that answered, or whose failure
+  * [CLIENT-5626] `BatchRecord::node()` (and `BatchOperation::node()`): the node that answered, or whose failure
     stamped, a batch row, in the same `"<name>: <host:port>"` form as `Error::node()`.
-  * `Error::matches(&[ResultCode])` and `Error::matches_client(&[ClientResultCode])` search the whole
+  * [CLIENT-5626] `Error::matches(&[ResultCode])` and `Error::matches_client(&[ClientResultCode])` search the whole
     cause chain for any of the given codes (Go `Matches` parity); `server_result_code()` still reports
     only the first server code it meets.
-  * `server_error::sub_code::name(rc, sub_code)` gives a subcode's constant name, scoped by its parent
+  * [CLIENT-5626] `server_error::sub_code::name(rc, sub_code)` gives a subcode's constant name, scoped by its parent
     result code; `Error`'s `Display` shows it beside the number (`SubCode: 1 (OPNOT_CDT_INDEX_OUT_OF_BOUNDS)`).
     `sub_code::UNAVAIL_NODE_SHUTTING_DOWN` (3, server 8.2.1+) joins the table: the node is leaving the
     cluster, so fail over rather than retry it.
   * `ResultCode::InvalidEncoding` (29, "Invalid UTF-8 encoding", server 8.2.0+) and the
     `OpNotApplicable` subcode `OPNOT_STRING_REGEX_LIMIT_EXCEEDED` (12) are decoded instead of
     falling into `Unknown`.
-  * `Client::create_set_index(policy, namespace, set, name)` and `CollectionIndexType::Set`: a set
+  * [CLIENT-4586] `Client::create_set_index(policy, namespace, set, name)` and `CollectionIndexType::Set`: a set
     index (record presence per set) created through the sindex framework with no bin, type, context
     or expression, so the `sindex-admin` role suffices. Server 8.1.2+, reported by
     `Version::supports_set_index`. Parity with Go `CreateSetIndex` (CLIENT-4315) and Java's
     four-argument `createIndex` (CLIENT-4316). Also on the sync client.
   * [CLIENT-4390] `IndexType::Integer` (`INTEGER`) for secondary indexes on server 8.2.0+, reported by
     `Version::supports_integer_index`; `IndexType::Numeric` remains for older servers.
+  * [CLIENT-5462] Query delivery reworked and an exactly-once callback API added. Records cross the
+    channel in batches of up to 64 and the resume cursor now commits when a record reaches the
+    consumer, not when it is parsed: a stream closed early no longer loses the records still in
+    the channel buffer, and a resume from `partition_filter()` no longer skips them (measured
+    before: 7.9% of a 200k scan lost on a consume-half-then-cancel loop). Scan throughput +35%
+    with bin data, +56% without; paged queries -10% wall / -26% CPU. The new
+    `Client::query_foreach(policy, partition_filter, statement, callback)` has the C client's
+    `aerospike_query_foreach` shape: the callback runs inline on the node streams (serially per
+    node, concurrently across nodes), returning `false` aborts, and the cursor commits as each
+    invocation returns, so abort, cancel and resume neither lose nor repeat a record. The returned
+    `QueryHandle` can `wait()`, `cancel()` and hand back a `partition_filter()` usable with
+    `query()`.
+  * [CLIENT-5461] The `query_foreach` callback is async: `Fn(Result<Record>) -> Fut` with
+    `Fut: Future<Output = bool>`, the shape of the `batch_foreach` row hook. A pending callback
+    stalls only its own node's stream; it may await freely but must not block the thread.
+  * [CLIENT-5527] Metrics aligned with the metrics specification. Two tiers: `MetricsPolicy.operational`
+    (default off, `with_operational`) gates every per-command instrument and the operational
+    counters (connection failures by phase, close reasons, pool empty/overflow, circuit-breaker
+    hits, transaction retry/error); the base tier keeps opened/closed, tend, node add/remove and the
+    pool gauges. One sampler draw per call, so retries never re-roll. Histogram buckets are
+    `(2^(i-1), 2^i]` spaced by `latency_shift` (default 1); `HistogramType`, `Linear` and
+    `latency_base` are gone and the default policy is `millis()` (ms × 7). Connection opens tag a
+    failure with its TCP/TLS/auth phase, closes carry a `CloseReason`, and the pool gauges
+    (`open_connections`, `connections_in_use`, `connections_in_pool`, `connections_recovering`)
+    are readable even while collection is disabled. Per-namespace `latency` spans connection
+    acquire to response parsed; `bytes_sent` / `bytes_received` count exactly what crossed the
+    wire on every attempt, whatever the outcome. **Breaking** for consumers of the snapshot JSON:
+    every field is `snake_case` (`cluster_aggregated_metrics`, `detailed_metrics`,
+    `connections_error_tls`, …) and the node label `app-id` is `app_id`.
+  * [CLIENT-5498] `Client::server_cluster_name()` and `Node::cluster_name()` report the name the
+    server announces, captured on every tend. The metrics `cluster` label falls back to it when
+    `ClientPolicy.cluster_name` is unset, which stays a validation-only setting.
+  * [CLIENT-4963] A commit that fails in doubt leaves the transaction in `TxnState::CommitFailed`,
+    and `abort` is refused from there (`TxnFailed`): the server may still be rolling the
+    transaction forward, so an abort could discard writes it is committing. Retry the commit.
+
+* **Improvements**
+  * `AuthMode` no longer prints the password in `{:?}`; `task::Status` compares with `==`; every
+    expression and operation builder is `#[must_use]`, so a built-and-dropped expression warns.
+  * The workspace builds clean under `clippy::pedantic` + `clippy::nursery` (core) and default clippy
+    (every other crate, the examples, the benchmark tool and the integration tests) for every feature
+    set, including `rt-async-std`. Visible side effects: `ToValue`/`FromValue` for `HashMap` accept
+    any hasher; a secondary-index query plan missing its index name or range is an error instead of
+    a panic; `Value::Unknown` reaches Lua as bytes through the same arm as a blob.
+  * Packaging: `rt-async-std` together with `tls` fails with the one-line "TLS support is only
+    available for the tokio runtime" guard instead of trait-bound errors in the connection layer.
+    `aerospike-rt` defaults to `rt-tokio` so it builds, documents and publishes on its own; the
+    client crates depend on it without default features and still choose the runtime through
+    their `rt-*` feature. The published `aerospike` tarball carries only the sources, examples,
+    benches, tests and the four documents (no CI, registers or agent notes); every crate ships the
+    full Apache 2.0 licence text; the in-tree crate versions are spelled once in
+    `[workspace.dependencies]`; unused dependencies (`lazy_static`, `bencher`, `ripemd`) and
+    core's direct `tokio` dependency are gone.
+  * Dependencies: `tls` builds rustls with the `ring` crypto provider instead of `aws-lc-rs`, so
+    building the client needs no cmake or C toolchain and exactly one provider is compiled in (a
+    crate that also enables rustls's `aws-lc-rs` must install a process-level `CryptoProvider`,
+    as rustls requires). Password hashing uses the `bcrypt` crate instead of `pwhash`; the hashes
+    are byte-for-byte the same (`$2a$`, cost 10, the fixed Aerospike salt). The YAML provider
+    reads with `serde_norway` (serde_yaml's maintained continuation) instead of `serde_yml`.
+    `rt-async-std` is maintenance only: async-std is discontinued upstream, so the runtime stays
+    for existing users and may be removed in a later major release.
+  * Repository: `CONTRIBUTING.md` and `SECURITY.md`; the README's sync section describes the
+    self-driving blocking client (no Tokio runtime to set up).
+  * Four internals stay reachable for language bindings, hidden from the documentation:
+    `query::PartitionStatus` with `PartitionFilter::partitions` (rebuilding a cursor),
+    `Statement::set_aggregate_function`, the `Txn::set_state` test hook and `Txn::set_timeout`
+    (a settable timeout attribute on a transaction the binding already built).
+  * `Client::is_strong_consistency(namespace)` is a documented API: a synchronous lookup in the
+    cached partition map that bindings call per command to pick the AP or SC policy.
+  * `BatchOperation::into_batch_record(self)` moves a finished row's `BatchRecord` out without
+    cloning the key, for callers that hand rows on by value.
+  * `PrivilegeCode::Unknown(u8)`: a privilege code the server reports that this client has no
+    name for is kept with its raw value instead of failing the role query as a bad response.
+  * [CLIENT-5351] Batch sub-requests check their connection out of the pool queue chosen by the
+    group's first digest byte, as single-key commands do, instead of always queue 0, so batch load
+    spreads across `conn_pools_per_node` (ported from 2.2.0).
+  * [CLIENT-5409] Record streams park until the producer wakes them instead of busy-polling an
+    empty channel; the per-node partition state is locked once per stream body rather than once
+    per record, the shared tracker is released before a record is pushed (a full queue no longer
+    stalls every other node's stream), and the buffered read cache grows from 4 KB to 64 KB.
+  * [CLIENT-5414] `TCP_NODELAY` is set on every connection.
+  * [CLIENT-4581] README: an "AI coding agent entry point" section (where the API lives, how to
+    select features, how to verify generated code), referenced from `AGENTS.md`.
+  * [CLIENT-5291] API documentation pass over the client, expressions, path operations, record
+    sets and result sets, plus docs.rs metadata for the crates.
+  * [CLIENT-5292] CI: a line-coverage gate for `aerospike-core` merged across the community,
+    enterprise AP and enterprise security test legs, and a reusable nightly workflow.
+  * CI: pull requests now gate on clippy with warnings denied across every documented feature
+    set, rustdoc with warnings denied, a docs.rs-style nightly build, a packaging dry run, each
+    feature compiled on its own (`cargo hack`), and a build on current stable beside the MSRV;
+    the server legs test the default feature set (`tls`, `dynamic-config`) and `lua` on Tokio,
+    `dynamic-config` on async-std, and the blocking client's own suite; one server version
+    (8.2.0.0) everywhere; every action pinned to a commit; the legacy Travis/AppVeyor-era
+    `build.yml` and `.appveyor.yml` removed. The tag-push release workflow runs the same gate
+    before it packages anything.
 
 * **Bug Fixes**
+  * An `operate` whose operations are all reads routes like a read: the policy's `replica` and
+    `read_mode_sc` pick the node, as they do for `get`. It used to take the write routing, so
+    `PreferRack`, `MasterProles` and `Random` were ignored and the SC read-mode rules never applied.
+    A lone read-with-ops row in a batch, which runs as a single-key `operate`, now routes the same
+    way it would inside a larger batch. An operate containing any write is unchanged.
   * A single-key command on a namespace missing from the partition map (or before the map is
     populated) now fails at once with `InvalidNamespace` (20), matching the batch path and the Java
     client. It used to retry the routing failure until the budget ran out and report
@@ -75,8 +177,18 @@
   * Single-key retry exhaustion now reports `MaxRetriesExceeded` (-11) like the batch path and the Go
     client; it used to report the timeout code 9 (which Java keeps behind its `Timeout` exception type,
     mirrored here by `ErrorKind::Timeout`).
-  * Batch rows the server answered `KeyNotFound` or `FilteredOut` lost the server's extended error
+  * [CLIENT-5626] Batch rows the server answered `KeyNotFound` or `FilteredOut` lost the server's extended error
     detail (the server's "filtered out by ..." message): the multi-key parser read it and discarded it.
+  * [CLIENT-5624] A batch row served by the single-key path (its key alone on its node) keeps the
+    server's error detail (subcode, message) on the row, as the multi-record path does.
+  * [CLIENT-5474] A batch row served by the single-key path is stamped on a client-side failure the
+    way the multi-key path stamps unanswered rows: `TIMEOUT` for a client timeout, otherwise the
+    server code when there is one, and in doubt when the failure is. The same failure used to be
+    reported three ways in one batch depending on how the keys hashed across nodes.
+  * [CLIENT-5533] A batch delete whose key is alone on its node returns a bin-less `Record` with the
+    generation and expiration, as the grouped path and the Java client do; `None` means not found
+    or failed on both paths. Rows that carry no key fields no longer echo an all-zero placeholder
+    key, and rows without operations report `results: None`.
   * The `batch_operations`, `query` and `timeout_configuration` examples defaulted to port 3100 when
     `AEROSPIKE_HOSTS` is unset; every other example and the test harness use 3000.
   * **Breaking**: `ErrorKind::BatchFailed` and `Error::batch_failed` are removed. They carried a copy
@@ -91,9 +203,9 @@
     out"), `LostConflict`, and the allowlist codes no longer say "whitelist".
   * Serializing `Value::Infinity`, `Value::Wildcard` or a `Value::MultiResult` is a serde error
     instead of a panic. **Breaking**: `From<Value> for i64` is now `TryFrom<Value>` (and
-    `TryFrom<&Value>`) with a `String` error, like every other `Value` conversion —
+    `TryFrom<&Value>`) with the crate `Error`, like every other `Value` conversion —
     `let n: i64 = value.into()` becomes `let n = i64::try_from(&value)?`.
-  * `Error::base_message` for a server failure is the result code's descriptive string (`Key already exists`),
+  * [CLIENT-5492] `Error::base_message` for a server failure is the result code's descriptive string (`Key already exists`),
     not the variant name. Info-command failures (`FAIL:<code>:<message>`) keep the server's text as the base
     message under the server's code (`Error::info_command_failure`) instead of filing the text as the node and
     wrapping the code in a client error; an out-of-range code no longer panics. `BinNameTooLong` reads
@@ -125,28 +237,116 @@
   * Host names are resolved through the async runtime instead of blocking a worker thread on the
     system resolver during tend and seeding; the YAML config provider reads its file the same way.
   * The retry backoff ignores non-finite multipliers and caps the sleep at 60 s; an empty `exp_let`
-    or `def` is an `InvalidArgument` instead of an underflow; expression return types for
-    `ListReturnType::None` / `MapReturnType::None` are typed as NIL instead of panicking; more than
-    65535 operations or bins in one request is an `InvalidArgument` instead of a corrupt request.
+    or `def` is an `InvalidArgument` instead of an underflow; more than 65535 operations or bins in
+    one request is an `InvalidArgument` instead of a corrupt request.
   * Per-attempt "Parse result error" and node-error log lines are `debug!` (they were `warn!` at
     full request rate during an outage); the YAML provider warns once per distinct problem instead
     of once per poll.
   * Lua `bytes` values grow to at most 128 MiB; every mutator reports failure past that instead
     of exhausting memory.
-  * The workspace builds clean under `clippy::pedantic` + `clippy::nursery` (core) and default clippy
-    (every other crate, the examples, the benchmark tool and the integration tests) for every feature
-    set, including `rt-async-std`. Visible side effects: `ToValue`/`FromValue` for `HashMap` accept
-    any hasher; a secondary-index query plan missing its index name or range is an error instead of
-    a panic; `Value::Unknown` reaches Lua as bytes through the same arm as a blob.
+  * [CLIENT-5386] The retry context's `iteration` counts the attempts actually made: `max_retries = 0`
+    reports one try, not two. The counter was bumped before the budget check, so the pass that only
+    discovered the budget was spent counted as an attempt, one more than Java reports.
+  * [CLIENT-5425] The per-namespace `bytes_received` metric always recorded 0: it read a counter the
+    timeout-recovery code resets at every read-phase transition. Received bytes are now accumulated
+    separately across a command's read phases.
+  * [CLIENT-5457] `Client::commit` reports an abandoned roll-forward as an `ErrorKind::Commit` error
+    with `CommitErrorType::RollForwardAbandoned`, so the cause is not dropped; it used to return
+    `Ok(CommitStatus::RollForwardAbandoned)`. The `CommitStatus` variant stays so existing matches
+    compile.
+  * [CLIENT-5529] `Record::time_to_live` floors "now" to whole seconds before subtracting, as the
+    Java, Go and C clients do. It reported one second less than them at every instant but the top
+    of the second, and two seconds less when a second ticked between write and read.
   * [CLIENT-5581] A batch row whose key is alone on its node now carries the same bins as a row
     grouped with other keys on one node.
 
 * **Breaking Change**
+  * **Breaking**, API lockdown before 3.0.0 (see `MIGRATION.md`):
+    `Client::cluster` is private; use `Client::nodes`, `node_names`, `get_node`, the new
+    `random_node` and `cluster_name`. The `Node`, `NodeMetrics` and `Txn` mutators that drove the
+    tend loop and the transaction state machine are crate-private (Rust code sets the timeout
+    at construction with `Txn::with_timeout(self, d)`); `PartitionFilter`'s `done` and `retry` fields
+    are private, and `partitions` and `PartitionStatus` are hidden from the documentation (see
+    *Improvements*). `BatchPolicy::filter_expression` the field is gone: the batch-wide filter
+    is `base_policy.filter_expression`, which is what the encoder always read. The server-defined
+    enums `ResultCode`, `ClientResultCode`, `ErrorKind`, `PrivilegeCode` and `Value` are
+    `#[non_exhaustive]`, so matches on them need a `_` arm; the client-side sets (`AuthMode`,
+    `Replica`, `QueryDuration`, `ReadTouchTtl`, the index, UDF-language, command-type, transaction
+    and task status enums) stay exhaustive, so adding a variant to one is a breaking change. `EqFilterValue`,
+    `RangeFilterValue`, `MapLike` and `Task` are sealed. The wire-level
+    query-plan types, `ParticleType` and the AEL packing helpers are hidden from the documentation;
+    `CITRUSLEAF_EPOCH` is `citrusleaf_epoch()` and `CITRUSLEAF_EPOCH_UNIX_SECS`. `BatchOperation`
+    is an opaque struct: its variants (`Read`, `Write`, `Delete`, `UDF` and the hidden transaction
+    rows) can no longer be matched or built by hand; use the constructors and the result accessors.
+    `ErrorKind` drops the `Base64`, `PwHash`, `Async` and `BatchRow` variants, and the error
+    constructors other than `client_error`, `invalid_argument` and `chain_error`, plus the retry
+    bookkeeping (`set_in_doubt`, `with_retry_context`, `wrap`, `chain_cause`, `keep_connection`,
+    `is_pool_empty`), are crate-private. `Statement.filters`/`add_filter` are `filter`/`set_filter`
+    and `Statement.aggregation` is private. The six `Filter::geo_*_cit` constructors are replaced by
+    `Filter::collection_type(cit)`, which chains on any filter. The policies' `filter_expression()`
+    getters return `Option<&Expression>`. Every builder that stores a name or string value takes
+    `impl Into<String>` (the expression bin builders, `Bin::new`, the operation builders, `Filter`,
+    `Statement::new`), so `int_bin("a")` and `Bin::new("a", v)` work; an argument spelled
+    `"a".into()` no longer infers. `Key::new` takes its two strings independently and
+    `Key::key_with_digest` is the infallible `Key::with_digest`.
+    `Client::get` takes `bins: impl Into<Bins>` without the `Send + Sync + 'static` bounds. Lists
+    have one shape: stored lists (`BatchOperation::write/read_ops/udf`, `Statement::set_operations`,
+    `Operation::context`, `Filter::context`) take `impl Into<Vec<_>>`, borrowed lists (`operate`,
+    the UDF `args`, every builder `ctx`) take `&[_]`, and no list is wrapped in `Option`;
+    `batch_foreach` takes `&mut [BatchOperation]` like `batch`; the UDF module parameter is
+    `package_name` on `execute_udf` and `BatchOperation::udf`. `query_operate` applies the
+    statement's own operations (`Statement::set_operations`) instead of a second list;
+    `Statement::set_aggregate_function` is hidden from the documentation (see *Improvements*), the
+    client's aggregate methods take the UDF; `MapWriteMode` is removed in favour of `MapWriteFlags`
+    (`MapPolicy::new(order, flags)`,
+    `with_persisted_index`), and the expression `put`/`put_items` now send the policy's flags. The
+    deprecated filter macros (`as_eq!` and friends) and the server-deprecated `device_size()` /
+    `memory_size()` expressions are removed. `Key`, `Sampler`, `CdtContext` and `LoopVarPart` keep
+    their invariants behind private fields and accessors (`key.digest()` and friends).
+    `ClientPolicy::set_auth_mode` no longer returns a `Result`, `RecordMapper::id` returns one,
+    the `TryFrom<Value>` impls fail with the crate `Error`, and a password bcrypt refuses fails
+    `Client::new` instead of panicking on the first connection. `Recordset::partition_filter` and
+    `QueryHandle::partition_filter` are plain methods. The blocking client returns
+    `aerospike_sync::Task<T>` with blocking waits, takes a plain `bool` closure in `batch_foreach`,
+    and gains `query_foreach` with a blocking `aerospike_sync::QueryHandle`. Both clients
+    implement `Clone` (a clone shares the cluster) and no longer carry hand-written `unsafe impl
+    Send/Sync`: a compile-time assertion checks the property from the fields instead. Derives filled
+    in: `Key: Hash`, `PartitionFilter: Clone`, `Copy` on the small policy enums, `PartialEq` on every
+    policy, `Record`, `Statement` and `Filter`, `UdfLang: Copy + Eq + Hash`, `Bins` from
+    `Vec<String>`; `TlsPolicy.config` is an `Arc<rustls::ClientConfig>`, shared with the
+    connector instead of cloned per connection. `Hash for Value` is total (a map with an invalid
+    key type errors when encoded instead of panicking when hashed), `Replica` is exported at the
+    root, `Record::expiration()` is new, the dynamic-config section types are public and
+    documented, and `Value::particle_type` is crate-private. The `Policy` trait is no longer
+    exported. Acronyms in identifiers are `UpperCamelCase`: `BatchUdfPolicy`, `UdfLang`, `ReadModeAp`/`ReadModeSc`,
+    `ReadTouchTtl`, `HllPolicy`/`HllWriteFlags`, `Value::GeoJson`/`Value::Hll`, `AuthMode::Pki`,
+    `PrivilegeCode::{UdfAdmin, SindexAdmin, ReadWriteUdf}`, `ResultCode::XdrKeyBusy`,
+    `QueryDuration::LongRelaxAp`; enum variants are too: `ExpType::{Nil, Bool, Int, String, List,
+    Map, Blob, Float, Geo, Hll}`. Every flag set is one shape, a newtype with SCREAMING constants
+    combined with `|` (`ListWriteFlags::ADD_UNIQUE | ListWriteFlags::NO_FAIL`), `bits()` and an
+    unchecked `from_bits()` for flags the server knows before the client does: `ListWriteFlags`,
+    `ListSortFlags`, `MapWriteFlags`, `BitwiseWriteFlags`, `BitwiseResizeFlags`, `HllWriteFlags`,
+    `ExpWriteFlags`, `ExpReadFlags`, `RegexFlags` (was `RegexFlag`, and `regex_compare` takes it),
+    plus the existing string and path flags with a private field. Policy `flags` fields are typed,
+    the `To*FlagsBitmask` traits and the flag-combining `new_with_flags` constructors are gone,
+    and `bitwise::resize` takes `BitwiseResizeFlags` instead of an `Option`. `ListReturnType` and
+    `MapReturnType` are newtypes with selector constants and `.inverted()`; the `Inverted`
+    variant, the `Inverted*Return` wrappers and the `To*ReturnTypeBitmask` traits are gone. Policies
+    stay plain structs with public fields, built from `Default` by mutation or struct-update
+    syntax (see the `policy` module docs).
+  * **Breaking**: `replica` moved from `ReadPolicy`, `QueryPolicy` and `BatchPolicy` to
+    `BasePolicy`, so write policies carry it too. A write with `Sequence` or `PreferRack` now
+    moves to the next replica when retried, as in the Java and Go clients, instead of always
+    targeting the master. `BatchPolicy::write_default()` (`max_retries` 0) is the parent policy
+    for batches with writes. A write command's client-side failure after the request was sent is
+    always in doubt, not only on timeout and connection errors.
   * [CLIENT-5582] A single-key `operate` keeps every op's answer in `Record::bins`, a write's
     `Value::Nil` included, as the batch path already does. A bin written and then read in one call
     holds `Value::MultiResult([Nil, …, value])` in op order instead of the bare value, and a
     write-only operate reports each written bin as `Nil` instead of returning no bins. Read an op's
     answer at its index in `Record::results`, or take the last element of the bin's `MultiResult`.
+    An op that names no bin (`touch`, `get_header`) answers in `results` only; it never creates a
+    `""` bin, on either path.
 
 ## [3.0.0-alpha.2]
 
@@ -196,7 +396,10 @@
   * [CLIENT-4624][CLIENT-2185][CLIENT-2089] Ordered and sorted map variants.
   * [CLIENT-5118] Admin commands pace on an empty connection pool instead of failing.
   * `Client::new` returns on cluster convergence; `close()` stops tend at once.
-  * [CLIENT-5081] `ClientPolicy` and `MetricsPolicy` defaults aligned with the Java client.
+  * [CLIENT-5081] `ClientPolicy` and `MetricsPolicy` defaults aligned with the Java client, with
+    four deliberate exceptions: `max_conns_per_node` is 256 (Java 100); `idle_timeout` 0 disables
+    idle reaping (Java trims to `min_conns_per_node` after 55 s); `AdminPolicy.timeout` 0 falls back
+    to 3 s (Java: no timeout); `QueryPolicy.record_queue_size` is 1024 (Java 5000, Go 50).
   * [CLIENT-5265] `Concurrency::Sequential` no longer claims to be the default, which it is not.
   * Fewer per-query allocations in scan and query partition tracking.
   * TLS is required for External and PKI auth modes.

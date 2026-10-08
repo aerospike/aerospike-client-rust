@@ -42,7 +42,7 @@ async fn tend_info_two_calls_succeed() {
     // Sanity: the long-lived tend socket is reusable. Two consecutive
     // `tend_info` calls must both succeed against the same node.
     let client = fresh_client().await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes
         .first()
         .expect("cluster should have at least one node");
@@ -68,7 +68,7 @@ async fn close_tend_connection_reopens_on_next_call() {
     // Tearing the tend socket down forces the next call to reopen and
     // re-authenticate. The second call must still succeed.
     let client = fresh_client().await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes.first().unwrap();
     let policy = AdminPolicy::default();
 
@@ -86,7 +86,7 @@ async fn close_tend_connection_reopens_on_next_call() {
 #[aerospike_macro::test]
 async fn hostname_cache_first_writer_wins() {
     let client = fresh_client().await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes.first().unwrap();
 
     // Fresh node: cache empty.
@@ -109,7 +109,7 @@ async fn hostname_cache_first_writer_wins() {
 #[aerospike_macro::test]
 async fn partition_changed_flag_round_trip() {
     let client = fresh_client().await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes.first().unwrap();
 
     // Tend may or may not have flipped `partition_changed` already; force
@@ -129,7 +129,7 @@ async fn partition_changed_flag_round_trip() {
 #[aerospike_macro::test]
 async fn rebalance_changed_flag_round_trip() {
     let client = fresh_client().await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes.first().unwrap();
 
     node.set_rebalance_changed(false);
@@ -147,7 +147,7 @@ async fn rebalance_changed_flag_round_trip() {
 #[aerospike_macro::test]
 async fn reference_count_increment_and_reset() {
     let client = fresh_client().await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes.first().unwrap();
 
     node.reset_reference_count();
@@ -172,7 +172,7 @@ async fn commit_peers_generation_updates_state() {
     // commit point: writing through `commit_peers_generation` must be
     // observable via the `peers_generation()` getter.
     let client = fresh_client().await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes.first().unwrap();
 
     node.commit_peers_generation(42);
@@ -190,7 +190,7 @@ async fn set_partition_generation_updates_state() {
     // commits via this setter once the bitmap parses successfully —
     // without this commit the next tend would re-fetch the map needlessly.
     let client = fresh_client().await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes.first().unwrap();
 
     node.set_partition_generation(123);
@@ -209,7 +209,7 @@ async fn set_partition_generation_updates_state() {
 #[aerospike_macro::test]
 async fn rack_parse_valid_format() {
     let client = fresh_client().await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes.first().unwrap();
 
     node.parse_rack("ns_a:1;ns_b:2").unwrap();
@@ -230,7 +230,7 @@ async fn rack_parse_trailing_semicolon_is_ignored() {
     // the empty fragment after the final `;` must be filtered out, not
     // rejected as a parse error.
     let client = fresh_client().await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes.first().unwrap();
 
     node.parse_rack("ns_a:1;").unwrap();
@@ -244,7 +244,7 @@ async fn rack_parse_trailing_semicolon_is_ignored() {
 async fn rack_parse_empty_namespace_rejected() {
     // Java's RackParser rejects namespace length `<= 0`. Ours mirrors that.
     let client = fresh_client().await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes.first().unwrap();
 
     let err = node.parse_rack(":3").unwrap_err();
@@ -260,7 +260,7 @@ async fn rack_parse_empty_namespace_rejected() {
 async fn rack_parse_namespace_length_boundary() {
     // Java's boundary: `>= 32` chars rejected, `< 32` accepted.
     let client = fresh_client().await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes.first().unwrap();
 
     // 31 chars → accepted.
@@ -284,7 +284,7 @@ async fn rack_parse_namespace_length_boundary() {
 async fn rack_parse_invalid_entry_rejected() {
     // No `:` at all → Invalid rack entry.
     let client = fresh_client().await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes.first().unwrap();
 
     let err = node.parse_rack("ns_no_colon").unwrap_err();
@@ -298,7 +298,7 @@ async fn rack_parse_replace_table() {
     // Re-parsing replaces the rack table wholesale — old entries don't
     // bleed through.
     let client = fresh_client().await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes.first().unwrap();
 
     node.parse_rack("ns_a:1;ns_b:2").unwrap();
@@ -322,7 +322,7 @@ async fn cluster_has_at_least_one_node_after_seed() {
     // multi-host fallback) must still reach steady state with at least
     // one live node.
     let client = fresh_client().await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     assert!(
         !nodes.is_empty(),
         "expected at least one node after seed; got {}",
@@ -386,7 +386,7 @@ async fn seed_only_cluster_pins_to_seed_addresses() {
         .await
         .expect("connect with seed_only_cluster");
 
-    let initial = client.cluster.nodes().len();
+    let initial = client.nodes().len();
     assert_eq!(
         initial, 1,
         "seed_only_cluster init should add exactly the seed, got {}",
@@ -397,7 +397,7 @@ async fn seed_only_cluster_pins_to_seed_addresses() {
     // peers discovery would have enrolled additional nodes by now.
     aerospike_rt::sleep(std::time::Duration::from_millis(2_500)).await;
 
-    let after_tend = client.cluster.nodes();
+    let after_tend = client.nodes();
     assert_eq!(
         after_tend.len(),
         1,
@@ -434,7 +434,7 @@ async fn info_returns_entries_in_request_order() {
     assert_eq!(keys, reversed);
 
     // Node-targeted requests go through Node::info directly.
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes.first().expect("at least one node");
     let info = node.info(&policy, &["node"]).await.unwrap();
     assert_eq!(info.get("node").map(String::as_str), Some(node.name()));
@@ -456,19 +456,18 @@ async fn partition_map_ready_when_new_returns() {
     let client = fresh_client().await;
 
     assert!(
-        client.cluster.partition_map_ready(),
+        client.partition_map_ready(),
         "Client::new returned a cluster that cannot route commands"
     );
     // The map must already cover the test namespace...
     assert!(
         client
-            .cluster
             .is_strong_consistency(common::namespace())
             .is_some(),
         "partition map must be populated before Client::new returns"
     );
     // ...and every node must have parsed a partition map at least once.
-    for node in client.cluster.nodes() {
+    for node in client.nodes() {
         assert_ne!(
             node.partition_generation(),
             -1,
@@ -501,7 +500,7 @@ async fn partition_map_complete_when_new_returns() {
     let client = fresh_client().await;
 
     assert!(
-        client.cluster.partition_map_complete(),
+        client.partition_map_complete(),
         "Client::new returned with an incomplete partition table: some \
          partitions have no master, so some keys cannot be routed"
     );
@@ -540,7 +539,7 @@ async fn stabilization_is_not_bounded_by_policy_timeout() {
     }
 
     assert!(
-        client.cluster.partition_map_ready(),
+        client.partition_map_ready(),
         "Client::new returned an unroutable cluster with policy.timeout=10ms — \
          stabilization must be driven by cluster convergence, not by the \
          per-info-call timeout"
@@ -576,7 +575,7 @@ async fn prefer_rack_read_routing() {
         .unwrap();
 
     let mut rpolicy = ReadPolicy::default();
-    rpolicy.replica = Replica::PreferRack;
+    rpolicy.base_policy.replica = Replica::PreferRack;
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
     assert_eq!(rec.bins.get("a"), Some(&as_val!(1)));
 
@@ -586,7 +585,7 @@ async fn prefer_rack_read_routing() {
     // node split.
     use aerospike::{BatchOperation, BatchPolicy, BatchReadPolicy, BatchWritePolicy, Bins as B};
     let mut bpolicy = BatchPolicy::default();
-    bpolicy.replica = Replica::PreferRack;
+    bpolicy.base_policy.replica = Replica::PreferRack;
     let wkey = as_key!(namespace, &set_name, "rack_batch_write");
     let mut batch = vec![
         BatchOperation::write(
@@ -673,7 +672,7 @@ async fn prefer_rack_reads_work_with_a_non_empty_rack_list() {
             .unwrap_or_else(|e| panic!("rack_ids={rack_ids:?} should build a client: {e}"));
 
         let mut rpolicy = ReadPolicy::default();
-        rpolicy.replica = Replica::PreferRack;
+        rpolicy.base_policy.replica = Replica::PreferRack;
 
         // A rack that matches reads from the preferred node; one that does not
         // reaches an active node through fallback. Both are reads, not
@@ -697,7 +696,7 @@ async fn prefer_rack_reads_work_with_a_non_empty_rack_list() {
 async fn server_cluster_name_is_discovered_without_validation() {
     let client = fresh_client().await;
     assert!(
-        client.cluster.cluster_name().is_none(),
+        client.cluster_name().is_none(),
         "this test relies on no configured cluster name"
     );
 
@@ -711,12 +710,12 @@ async fn server_cluster_name_is_discovered_without_validation() {
     let expected = (!raw.is_empty() && !raw.eq_ignore_ascii_case("null")).then_some(raw);
 
     assert_eq!(client.server_cluster_name(), expected);
-    assert_eq!(client.cluster.server_cluster_name(), expected);
+    assert_eq!(client.server_cluster_name(), expected);
     for node in client.nodes() {
         assert_eq!(node.cluster_name(), expected, "node {node} disagrees");
     }
     // The configured name is untouched: discovery does not turn validation on.
-    assert!(client.cluster.cluster_name().is_none());
+    assert!(client.cluster_name().is_none());
 
     client.close().await.unwrap();
 }

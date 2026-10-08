@@ -1,4 +1,4 @@
-// Copyright 2015-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ impl<'a> TxnAddKeysCommand<'a> {
         operations: Vec<Operation>,
         txn: Arc<Txn>,
     ) -> Self {
-        let partition = crate::cluster::partition::Partition::for_write(key);
+        let partition = crate::cluster::partition::Partition::for_write(key, policy.base_policy.replica);
         TxnAddKeysCommand {
             single_command: SingleCommand::new(cluster, key, partition),
             policy,

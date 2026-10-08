@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -93,8 +93,7 @@ async fn create_index_using_expression() {
     let client = common::client().await;
 
     if client
-        .cluster
-        .get_random_node()
+        .random_node()
         .is_ok_and(|node| node.version() < &Version::new(8, 1, 0, 0))
     {
         info!("create_index_using_expression test is only supported in server versions 8.1.0.0+. Skipping.");
@@ -154,7 +153,7 @@ async fn blob_index_serves_a_blob_equality_filter() {
     let ns = common::namespace();
     let apolicy = AdminPolicy::default();
 
-    let supported = match client.cluster.nodes().first() {
+    let supported = match client.nodes().first() {
         Some(node) => node.version().supports_blob_index(),
         None => false,
     };
@@ -193,7 +192,7 @@ async fn blob_index_serves_a_blob_equality_filter() {
     // Causation check: the same filter without an index has nothing to run on,
     // so success below is the index doing the work rather than a silent scan.
     let mut unindexed = Statement::new(ns, &set, Bins::All);
-    unindexed.add_filter(aerospike::query::Filter::equal(bin, needle.clone()));
+    unindexed.set_filter(aerospike::query::Filter::equal(bin, needle.clone()));
     let unindexed_result = client
         .query(&QueryPolicy::default(), PartitionFilter::all(), unindexed)
         .await;
@@ -235,7 +234,7 @@ async fn blob_index_serves_a_blob_equality_filter() {
     task.wait_till_complete(None).await.unwrap();
 
     let mut statement = Statement::new(ns, &set, Bins::All);
-    statement.add_filter(aerospike::query::Filter::equal(bin, needle.clone()));
+    statement.set_filter(aerospike::query::Filter::equal(bin, needle.clone()));
     let qpolicy = QueryPolicy::default();
     let rs = client
         .query(&qpolicy, PartitionFilter::all(), statement)
@@ -270,7 +269,7 @@ async fn integer_index_serves_range_and_equality_filters() {
     let ns = common::namespace();
     let apolicy = AdminPolicy::default();
 
-    let supported = match client.cluster.nodes().first() {
+    let supported = match client.nodes().first() {
         Some(node) => node.version().supports_integer_index(),
         None => false,
     };
@@ -305,7 +304,7 @@ async fn integer_index_serves_range_and_equality_filters() {
 
     // Range filter: 10..=19 -> exactly ten records, all inside the range.
     let mut statement = Statement::new(ns, &set, Bins::All);
-    statement.add_filter(aerospike::query::Filter::range(bin, 10_i64, 19_i64));
+    statement.set_filter(aerospike::query::Filter::range(bin, 10_i64, 19_i64));
     let rs = client
         .query(&qpolicy, PartitionFilter::all(), statement)
         .await
@@ -325,7 +324,7 @@ async fn integer_index_serves_range_and_equality_filters() {
 
     // Equality filter: exactly one record.
     let mut statement = Statement::new(ns, &set, Bins::All);
-    statement.add_filter(aerospike::query::Filter::equal(bin, 42_i64));
+    statement.set_filter(aerospike::query::Filter::equal(bin, 42_i64));
     let rs = client
         .query(&qpolicy, PartitionFilter::all(), statement)
         .await
@@ -356,8 +355,7 @@ async fn integer_index_serves_range_and_equality_filters() {
 async fn set_index_create_drop_recreate() {
     let client = common::client().await;
     let supported = client
-        .cluster
-        .get_random_node()
+        .random_node()
         .is_ok_and(|node| node.version().supports_set_index());
     if !supported {
         eprintln!("skipped: set indexes need server 8.1.2+");

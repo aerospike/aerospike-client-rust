@@ -1,3 +1,18 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 // Wire-level tests for the batch encoder's header-repeat compression.
 //
 // `set_batch_operate` decides once per row whether that row repeats the
@@ -5,8 +20,6 @@
 // message share that decision. These tests pin the decision through the bytes
 // it produces, so a row that silently stops repeating — or starts repeating
 // when it must not — changes the encoded length and fails here.
-
-#![cfg(test)]
 
 use crate::batch::BatchOperation;
 use crate::commands::buffer::Buffer;

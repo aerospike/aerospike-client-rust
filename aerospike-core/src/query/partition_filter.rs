@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -54,13 +54,16 @@ pub struct PartitionFilter {
     /// field assignments with no `.await` inside, so an async mutex bought
     /// nothing, and unlike `std::sync::Mutex` this one neither allocates on
     /// first lock nor costs more than a byte per partition.
+    ///
+    /// Hidden: reachable for language bindings that rebuild cursors; not API.
+    #[doc(hidden)]
     pub partitions: Option<Arc<Vec<Mutex<PartitionStatus>>>>,
 
     /// Is partition completely scanned/queried.
-    pub done: AtomicBool,
+    pub(crate) done: AtomicBool,
 
     /// Should the partition be retried.
-    pub retry: AtomicBool,
+    pub(crate) retry: AtomicBool,
 }
 
 impl PartitionFilter {
@@ -141,14 +144,23 @@ impl Default for PartitionFilter {
     }
 }
 
+/// A clone is an independent cursor: the per-partition progress is copied,
+/// so two queries resumed from a filter and its clone do not share state.
 impl Clone for PartitionFilter {
     fn clone(&self) -> Self {
+        let partitions = self.partitions.as_ref().map(|parts| {
+            Arc::new(
+                parts
+                    .iter()
+                    .map(|part| Mutex::new(part.lock().clone()))
+                    .collect(),
+            )
+        });
         Self {
             begin: self.begin,
             count: self.count,
             digest: self.digest,
-
-            partitions: self.partitions.clone(),
+            partitions,
             done: AtomicBool::new(self.done.load(Ordering::Relaxed)),
             retry: AtomicBool::new(self.retry.load(Ordering::Relaxed)),
         }

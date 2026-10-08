@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,8 +20,10 @@ use crate::errors::{Error, Result};
 
 #[cfg(feature = "tls")]
 use tokio_rustls::rustls::ClientConfig;
+#[cfg(feature = "tls")]
+use std::sync::Arc;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 /// Determines authentication mode.
 pub enum AuthMode {
     /// No Authentication will be performed
@@ -45,7 +47,28 @@ pub enum AuthMode {
     /// Allows authentication and authorization based on a certificate. No user name or
     /// password needs to be configured. Requires TLS and a client certificate.
     /// Requires server version 5.7.0+
-    PKI,
+    Pki,
+}
+
+/// Hand-written so a `{:?}` of a policy never prints a password.
+impl std::fmt::Debug for AuthMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthMode::None => f.write_str("None"),
+            AuthMode::Pki => f.write_str("PKI"),
+            AuthMode::Internal(user, _) => {
+                f.debug_tuple("Internal").field(user).field(&"<redacted>").finish()
+            }
+            AuthMode::External(user, _) => {
+                f.debug_tuple("External").field(user).field(&"<redacted>").finish()
+            }
+            AuthMode::ExternalInsecure(user, _) => f
+                .debug_tuple("ExternalInsecure")
+                .field(user)
+                .field(&"<redacted>")
+                .finish(),
+        }
+    }
 }
 
 /// TLS connection policy for TLS-enabled servers.
@@ -115,7 +138,7 @@ pub enum AuthMode {
 pub struct TlsPolicy {
     /// The TLS handshake configuration: protocol versions, cipher suites,
     /// root certificates, client certificate and revocation.
-    pub config: ClientConfig,
+    pub config: Arc<ClientConfig>,
 
     /// Encrypt only the authentication exchange, then run the data plane in
     /// cleartext.
@@ -146,9 +169,9 @@ pub struct TlsPolicy {
 impl TlsPolicy {
     /// A policy that encrypts every connection with `config`.
     #[must_use]
-    pub const fn new(config: ClientConfig) -> Self {
+    pub fn new(config: impl Into<Arc<ClientConfig>>) -> Self {
         TlsPolicy {
-            config,
+            config: config.into(),
             for_login_only: false,
         }
     }
@@ -169,11 +192,28 @@ impl From<ClientConfig> for TlsPolicy {
     }
 }
 
+#[cfg(feature = "tls")]
+impl From<Arc<ClientConfig>> for TlsPolicy {
+    fn from(config: Arc<ClientConfig>) -> Self {
+        TlsPolicy::new(config)
+    }
+}
+
+/// Two policies are equal when they share the same `rustls` configuration
+/// object; `rustls::ClientConfig` itself cannot be compared.
+#[cfg(feature = "tls")]
+impl PartialEq for TlsPolicy {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.config, &other.config) && self.for_login_only == other.for_login_only
+    }
+}
+
 /// Minimum allowed value for [`ClientPolicy::tend_interval`], in milliseconds.
 pub const TEND_INTERVAL_MIN_MS: u32 = 250;
 
 /// `ClientPolicy` encapsulates parameters for client policy command.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::derive_partial_eq_without_eq)] // `Eq` would hinge on the `tls` feature
 #[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 #[allow(clippy::struct_excessive_bools)] // a policy is a bag of flags
 pub struct ClientPolicy {
@@ -533,6 +573,9 @@ impl Default for ClientPolicy {
 
 impl ClientPolicy {
     pub(crate) fn validate(&self) -> Result<()> {
+        // Reported here so that the pools and nodes, which hash the same
+        // password later, never meet a password bcrypt refuses.
+        self.hashed_pass()?;
         if self.max_conns_per_node > 0 && self.min_conns_per_node > self.max_conns_per_node {
             return Err(Error::client_error("minimum number of connections specified in the ClientPolicy is bigger than total connection pool size"));
         }
@@ -589,7 +632,7 @@ impl ClientPolicy {
 
         // PKI authentication identifies the user by the client TLS
         // certificate, so it cannot work at all without a TLS config.
-        if matches!(self.auth_mode, AuthMode::PKI) {
+        if matches!(self.auth_mode, AuthMode::Pki) {
             #[cfg(feature = "tls")]
             let tls_enabled = self.tls_policy.is_some();
             #[cfg(not(feature = "tls"))]
@@ -597,7 +640,7 @@ impl ClientPolicy {
 
             if !tls_enabled {
                 return Err(Error::client_error(
-                    "TLS is required for AuthMode::PKI: the server identifies the user \
+                    "TLS is required for AuthMode::Pki: the server identifies the user \
                      by the client TLS certificate",
                 ));
             }
@@ -689,22 +732,22 @@ impl ClientPolicy {
     }
 
     /// Set username and password to use when authenticating to the cluster.
-    pub fn set_auth_mode(&mut self, auth_mode: AuthMode) -> Result<()> {
+    pub fn set_auth_mode(&mut self, auth_mode: AuthMode) {
         self.auth_mode = auth_mode;
-        Ok(())
     }
 
-    /// Return the hashed password for the auth mode.
-    pub(crate) fn hashed_pass(&self) -> Option<String> {
+    /// The bcrypt hash of the password the auth mode carries, `None` for the
+    /// modes without one. [`validate`](Self::validate) checks that the hash
+    /// can be computed, so a password bcrypt refuses is reported when the
+    /// client is built rather than at the first connection.
+    pub(crate) fn hashed_pass(&self) -> Result<Option<String>> {
         match self.auth_mode {
             AuthMode::External(_, ref password)
             | AuthMode::ExternalInsecure(_, ref password)
             | AuthMode::Internal(_, ref password) => {
-                let password = AdminCommand::hash_password(password)
-                    .expect("Unexpected error hashing the password");
-                Some(password)
+                Ok(Some(AdminCommand::hash_password(password)?))
             }
-            _ => None,
+            _ => Ok(None),
         }
     }
 
@@ -819,8 +862,7 @@ mod tests {
         assert!(err.to_string().contains("requires authentication"), "{err}");
 
         // With authentication it is a valid policy, and active.
-        p.set_auth_mode(AuthMode::Internal("u".into(), "p".into()))
-            .unwrap();
+        p.set_auth_mode(AuthMode::Internal("u".into(), "p".into()));
         p.validate()
             .expect("tls + auth is a valid login-only policy");
         assert!(p.login_only_active());
@@ -889,8 +931,7 @@ mod tests {
     fn auth_enabled_tracks_the_auth_mode() {
         let mut p = ClientPolicy::default();
         assert!(!p.auth_enabled(), "AuthMode::None is no authentication");
-        p.set_auth_mode(AuthMode::Internal("u".into(), "p".into()))
-            .unwrap();
+        p.set_auth_mode(AuthMode::Internal("u".into(), "p".into()));
         assert!(p.auth_enabled());
     }
 
@@ -1043,7 +1084,7 @@ mod tests {
         // this branch rejects PKI unconditionally (same shape as the
         // External guard above).
         let policy = ClientPolicy {
-            auth_mode: AuthMode::PKI,
+            auth_mode: AuthMode::Pki,
             ..ClientPolicy::default()
         };
         let err = policy.validate().unwrap_err();
@@ -1061,7 +1102,7 @@ mod tests {
                 .with_root_certificates(RootCertStore::empty())
                 .with_no_client_auth();
             let policy = ClientPolicy {
-                auth_mode: AuthMode::PKI,
+                auth_mode: AuthMode::Pki,
                 tls_policy: Some(TlsPolicy::new(tls_config)),
                 ..ClientPolicy::default()
             };
@@ -1082,9 +1123,9 @@ mod tests {
             auth_mode: AuthMode::ExternalInsecure("user".into(), "pass".into()),
             ..ClientPolicy::default()
         };
-        let hashed = insecure.hashed_pass();
+        let hashed = insecure.hashed_pass().unwrap();
         assert!(hashed.is_some());
-        assert_eq!(external.hashed_pass(), hashed);
+        assert_eq!(external.hashed_pass().unwrap(), hashed);
         // The user name is reported as the application id for both modes.
         assert_eq!(insecure.application_id(), "user");
     }

@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -24,18 +24,18 @@ pub enum ParticleType {
     // (legacy language-specific serializations, retired server types)
     // decodes as `Value::Unknown(code, bytes)` — see `name_of` for the
     // textual names of those codes.
-    NULL = 0,
-    INTEGER = 1,
-    FLOAT = 2,
-    STRING = 3,
-    BLOB = 4,
-    DIGEST = 6,
-    BOOL = 17,
-    HLL = 18,
-    MAP = 19,
-    LIST = 20,
-    LDT = 21,
-    GEOJSON = 23,
+    Null = 0,
+    Integer = 1,
+    Float = 2,
+    String = 3,
+    Blob = 4,
+    Digest = 6,
+    Bool = 17,
+    Hll = 18,
+    Map = 19,
+    List = 20,
+    Ldt = 21,
+    GeoJson = 23,
 }
 
 impl ParticleType {
@@ -44,18 +44,18 @@ impl ParticleType {
     /// (foreign data must never panic the decoder).
     pub(crate) const fn try_from_u8(val: u8) -> Option<ParticleType> {
         match val {
-            0 => Some(ParticleType::NULL),
-            1 => Some(ParticleType::INTEGER),
-            2 => Some(ParticleType::FLOAT),
-            3 => Some(ParticleType::STRING),
-            4 => Some(ParticleType::BLOB),
-            6 => Some(ParticleType::DIGEST),
-            17 => Some(ParticleType::BOOL),
-            18 => Some(ParticleType::HLL),
-            19 => Some(ParticleType::MAP),
-            20 => Some(ParticleType::LIST),
-            21 => Some(ParticleType::LDT),
-            23 => Some(ParticleType::GEOJSON),
+            0 => Some(ParticleType::Null),
+            1 => Some(ParticleType::Integer),
+            2 => Some(ParticleType::Float),
+            3 => Some(ParticleType::String),
+            4 => Some(ParticleType::Blob),
+            6 => Some(ParticleType::Digest),
+            17 => Some(ParticleType::Bool),
+            18 => Some(ParticleType::Hll),
+            19 => Some(ParticleType::Map),
+            20 => Some(ParticleType::List),
+            21 => Some(ParticleType::Ldt),
+            23 => Some(ParticleType::GeoJson),
             _ => None,
         }
     }

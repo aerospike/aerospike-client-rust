@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -97,7 +97,8 @@ impl Queue {
         metrics: Option<Arc<NodeMetrics>>,
         buffer_pool: Option<Arc<crate::net::buffer_pool::TieredBufferPool>>,
     ) -> Self {
-        let hashed_pass = policy.hashed_pass();
+        // `ClientPolicy::validate` already proved the password hashable.
+        let hashed_pass = policy.hashed_pass().ok().flatten();
         let session = Mutex::new(login_only.as_ref().and_then(|l| l.session.clone()));
         let shared = SharedQueue {
             connections: Mutex::new(VecDeque::with_capacity(capacity)),

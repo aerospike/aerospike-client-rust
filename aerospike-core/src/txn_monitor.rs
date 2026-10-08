@@ -1,4 +1,4 @@
-// Copyright 2015-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,9 +32,12 @@ const BIN_NAME_DIGESTS: &str = "keyds";
 const fn txn_ordered_list_policy() -> ListPolicy {
     ListPolicy {
         attributes: ListOrderType::Ordered,
-        flags: ListWriteFlags::AddUnique as u8
-            | ListWriteFlags::NoFail as u8
-            | ListWriteFlags::Partial as u8,
+        // `|` is not const; the three flags OR'd by hand.
+        flags: ListWriteFlags::from_bits(
+            ListWriteFlags::ADD_UNIQUE.bits()
+                | ListWriteFlags::NO_FAIL.bits()
+                | ListWriteFlags::PARTIAL.bits(),
+        ),
     }
 }
 

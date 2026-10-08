@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -31,15 +31,17 @@ use crate::Value;
 /// beyond 2106 representable. [`Record::time_to_live`] converts against it, and
 /// it is public so callers doing their own void-time arithmetic agree with the
 /// server on the origin.
-pub static CITRUSLEAF_EPOCH: std::sync::LazyLock<SystemTime> =
-    std::sync::LazyLock::new(|| UNIX_EPOCH + Duration::from_secs(CITRUSLEAF_EPOCH_UNIX_SECS));
+#[must_use]
+pub fn citrusleaf_epoch() -> SystemTime {
+    UNIX_EPOCH + Duration::from_secs(CITRUSLEAF_EPOCH_UNIX_SECS)
+}
 
-/// [`CITRUSLEAF_EPOCH`] as whole seconds since the Unix epoch
+/// [`citrusleaf_epoch`] as whole seconds since the Unix epoch
 /// (2010-01-01T00:00:00Z).
-const CITRUSLEAF_EPOCH_UNIX_SECS: u64 = 1_262_304_000;
+pub const CITRUSLEAF_EPOCH_UNIX_SECS: u64 = 1_262_304_000;
 
 /// Container object for a database record.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 pub struct Record {
     /// Record key. When reading a record from the database, the key is not set in the returned
@@ -50,7 +52,9 @@ pub struct Record {
     ///
     /// For an operate, every op the server answers lands here, a write's
     /// `Value::Nil` included; a bin answered more than once holds a
-    /// `Value::MultiResult` of its answers in op order.
+    /// `Value::MultiResult` of its answers in op order. An op that names no
+    /// bin (`touch`, `get_header`) answers in [`results`](Self::results)
+    /// only and never creates a nameless bin.
     pub bins: IndexMap<String, Value>,
 
     /// Positional op results in request order; `None` on non-operate paths.
@@ -72,7 +76,7 @@ impl Record {
     /// `expiration` is public, so this is the only way to set that one.
     ///
     /// `expiration` is the server's own encoding: **seconds since the Citrusleaf
-    /// epoch** (2010-01-01 UTC, [`CITRUSLEAF_EPOCH`]) at which the record expires,
+    /// epoch** (2010-01-01 UTC, [`citrusleaf_epoch`]) at which the record expires,
     /// with `0` meaning it never does. It is not a TTL, and it is not a Unix
     /// timestamp; [`Record::time_to_live`] converts it to the remaining duration.
     ///
@@ -100,6 +104,16 @@ impl Record {
         }
     }
 
+    /// The server's expiration stamp as stored: seconds since the Citrusleaf
+    /// epoch ([`citrusleaf_epoch`]) at which the record expires, `0` when it
+    /// never does. [`time_to_live`](Self::time_to_live) is the remaining
+    /// duration.
+    #[must_use]
+    pub const fn expiration(&self) -> u32 {
+        self.expiration
+    }
+
+    /// The `i`th positional operation result, when `results` were populated.
     /// `None` is returned both for not-populated and out-of-range — callers
     /// can't distinguish.
     #[must_use]
@@ -163,7 +177,7 @@ impl fmt::Display for Record {
 
 #[cfg(test)]
 mod tests {
-    use super::{Record, CITRUSLEAF_EPOCH};
+    use super::{citrusleaf_epoch, Record};
     use crate::IndexMap;
     use std::time::{Duration, SystemTime};
 
@@ -171,7 +185,7 @@ mod tests {
     fn ttl_expiration_future() {
         let expiration = SystemTime::now() + Duration::new(1000, 0);
         let secs_since_epoch = expiration
-            .duration_since(*CITRUSLEAF_EPOCH)
+            .duration_since(citrusleaf_epoch())
             .unwrap()
             .as_secs();
         let record = Record::new(None, IndexMap::new(), None, 0, secs_since_epoch as u32);

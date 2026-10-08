@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -18,7 +18,7 @@ use crate::Node;
 use std::sync::Arc;
 
 /// Representation of the status of a scan/query  for a specific partition.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PartitionStatus {
     /// Record's bval.
     pub bval: Option<u64>,

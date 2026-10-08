@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -15,7 +15,7 @@
 //
 
 /// `CommitLevel` determines how to handle record writes based on record generation.
-#[derive(Debug, PartialEq, Eq, Clone, Default)]
+#[derive(Debug, PartialEq, Eq, Clone, Default, Copy)]
 pub enum CommitLevel {
     /// `CommitAll` indicates the server should wait until successfully committing master and all
     /// replicas.

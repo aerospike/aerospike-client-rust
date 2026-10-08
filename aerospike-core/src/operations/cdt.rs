@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -70,7 +70,7 @@ impl PartialEq for CdtOperation {
 
 impl CdtOperation {
     pub const fn particle_type(&self) -> ParticleType {
-        ParticleType::BLOB
+        ParticleType::Blob
     }
 
     pub fn estimate_size(&self, ctx: &[CdtContext]) -> Result<usize> {

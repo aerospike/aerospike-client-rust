@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,27 +20,28 @@ use crate::commands::{Command, ReadCommand, SingleCommand};
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::WritePolicy;
-use crate::{Bins, Key, Policy, Value};
+use crate::policy::Policy;
+use crate::{Bins, Key, Value};
 
-pub struct ExecuteUDFCommand<'a> {
+pub struct ExecuteUdfCommand<'a> {
     pub read_command: ReadCommand<'a>,
     policy: &'a WritePolicy,
     package_name: &'a str,
     function_name: &'a str,
-    args: Option<&'a [Value]>,
+    args: &'a [Value],
 }
 
-impl<'a> ExecuteUDFCommand<'a> {
+impl<'a> ExecuteUdfCommand<'a> {
     pub fn new(
         policy: &'a WritePolicy,
         cluster: Arc<Cluster>,
         key: &'a Key,
         package_name: &'a str,
         function_name: &'a str,
-        args: Option<&'a [Value]>,
+        args: &'a [Value],
     ) -> Self {
-        let partition = crate::cluster::partition::Partition::for_write(key);
-        ExecuteUDFCommand {
+        let partition = crate::cluster::partition::Partition::for_write(key, policy.base_policy.replica);
+        ExecuteUdfCommand {
             read_command: ReadCommand::new_with_partition(
                 &policy.base_policy,
                 cluster,
@@ -61,7 +62,7 @@ impl<'a> ExecuteUDFCommand<'a> {
 }
 
 #[async_trait::async_trait]
-impl Command for ExecuteUDFCommand<'_> {
+impl Command for ExecuteUdfCommand<'_> {
     fn cluster(&self) -> Option<&Cluster> {
         Some(self.read_command.single_command.cluster())
     }

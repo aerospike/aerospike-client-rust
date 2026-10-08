@@ -39,7 +39,7 @@ async fn breaker_client(max_error_rate: usize) -> Client {
 #[aerospike_macro::test]
 async fn breaker_disabled_passes_through() {
     let client = breaker_client(0).await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes
         .first()
         .expect("cluster should have at least one node");
@@ -60,7 +60,7 @@ async fn breaker_disabled_passes_through() {
 #[aerospike_macro::test]
 async fn breaker_within_limit_at_threshold() {
     let client = breaker_client(5).await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes.first().unwrap();
 
     // Up to and *including* the cluster threshold is still valid.
@@ -78,7 +78,7 @@ async fn breaker_within_limit_at_threshold() {
 #[aerospike_macro::test]
 async fn breaker_trips_when_exceeded() {
     let client = breaker_client(3).await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes.first().unwrap();
 
     // 4 > 3 → breaker open.
@@ -99,7 +99,7 @@ async fn breaker_trips_when_exceeded() {
 #[aerospike_macro::test]
 async fn reset_clean_window_doubles_ceiling() {
     let client = breaker_client(8).await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes.first().unwrap();
 
     // Fresh node: per-node ceiling matches the cluster setting.
@@ -126,7 +126,7 @@ async fn reset_clean_window_doubles_ceiling() {
 #[aerospike_macro::test]
 async fn reset_breached_window_halves_ceiling() {
     let client = breaker_client(8).await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes.first().unwrap();
 
     assert_eq!(node.node_max_error_rate(), 8);
@@ -165,7 +165,7 @@ async fn reset_breached_window_halves_ceiling() {
 #[aerospike_macro::test]
 async fn reset_clears_count() {
     let client = breaker_client(5).await;
-    let nodes = client.cluster.nodes();
+    let nodes = client.nodes();
     let node = nodes.first().unwrap();
 
     for _ in 0..3 {
@@ -185,7 +185,7 @@ async fn pipeline_returns_max_error_rate_when_breaker_open() {
     // command and confirm the error chain surfaces `ErrorKind::MaxErrorRate`.
     let client = breaker_client(1).await;
 
-    for node in client.cluster.nodes() {
+    for node in client.nodes() {
         // Push well above the cluster cap so even if the partition
         // tracker rotates between nodes (multi-node setup) every
         // candidate is tripped.
@@ -229,7 +229,7 @@ async fn batch_sequence_retry_resplits_when_breaker_open() {
     let client = breaker_client(1).await;
     let namespace = common::namespace();
 
-    for node in client.cluster.nodes() {
+    for node in client.nodes() {
         for _ in 0..16 {
             node.incr_error_rate();
         }

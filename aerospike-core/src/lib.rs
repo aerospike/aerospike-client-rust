@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -51,10 +51,6 @@
     clippy::field_reassign_with_default,
     clippy::ref_option,
     clippy::struct_field_names,
-    // `async fn` is part of the API contract even where the body does not
-    // await yet (query entry points, pool checkout): callers must not have
-    // to change when an implementation starts to.
-    clippy::unused_async,
     // Integer -> f64 for averages, ratios and percentages is intended.
     clippy::cast_precision_loss,
     // Future sizes depend on the runtime's types (the async-std build trips
@@ -85,7 +81,7 @@
 //!
 //! ```text
 //! [dependencies]
-//! aerospike = "1.0.0"
+//! aerospike = "3"
 //! ```
 //!
 //! # Examples
@@ -93,97 +89,88 @@
 //! The following is a very simple example of CRUD operations in an Aerospike database.
 //!
 //! ```rust
-//! #[macro_use]
-//! extern crate aerospike;
-//!
 //! use std::env;
 //! use std::sync::Arc;
 //! use std::time::Instant;
 //!
-//! use aerospike::{Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
+//! use aerospike::{as_bin, as_key, Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
 //! use aerospike::operations;
 //!
-//! fn main() {
-//!     let rt = tokio::runtime::Runtime::new().unwrap();
-//!     rt.block_on(async {
-//!         let cpolicy = ClientPolicy::default();
-//!         let hosts = env::var("AEROSPIKE_HOSTS")
-//!             .unwrap_or_else(|_| String::from("127.0.0.1:3000"));
-//!         let client = Client::new(&cpolicy, &hosts)
-//!             .await
-//!             .expect("Failed to connect to cluster");
-//!         let client = Arc::new(client);
+//! let rt = tokio::runtime::Runtime::new().unwrap();
+//! rt.block_on(async {
+//!     let cpolicy = ClientPolicy::default();
+//!     let hosts = env::var("AEROSPIKE_HOSTS")
+//!         .unwrap_or_else(|_| String::from("127.0.0.1:3000"));
+//!     let client = Client::new(&cpolicy, &hosts)
+//!         .await
+//!         .expect("Failed to connect to cluster");
+//!     let client = Arc::new(client);
 //!
-//!         let now = Instant::now();
-//!         for i in 0..2 {
-//!             let client = Arc::clone(&client);
-//!             let rpolicy = ReadPolicy::default();
-//!             let wpolicy = WritePolicy::default();
-//!             let key = as_key!("test", "test", i);
-//!             let bins = [
-//!                 as_bin!("int", 123),
-//!                 as_bin!("str", "Hello, World!"),
-//!             ];
+//!     let now = Instant::now();
+//!     for i in 0..2 {
+//!         let client = Arc::clone(&client);
+//!         let rpolicy = ReadPolicy::default();
+//!         let wpolicy = WritePolicy::default();
+//!         let key = as_key!("test", "test", i);
+//!         let bins = [
+//!             as_bin!("int", 123),
+//!             as_bin!("str", "Hello, World!"),
+//!         ];
 //!
-//!             client.put(&wpolicy, &key, &bins).await.unwrap();
-//!             let rec = client.get(&rpolicy, &key, Bins::All).await;
-//!             println!("Record: {}", rec.unwrap());
+//!         client.put(&wpolicy, &key, &bins).await.unwrap();
+//!         let rec = client.get(&rpolicy, &key, Bins::All).await;
+//!         println!("Record: {}", rec.unwrap());
 //!
-//!             client.touch(&wpolicy, &key).await.unwrap();
-//!             let rec = client.get(&rpolicy, &key, Bins::All).await;
-//!             println!("Record: {}", rec.unwrap());
+//!         client.touch(&wpolicy, &key).await.unwrap();
+//!         let rec = client.get(&rpolicy, &key, Bins::All).await;
+//!         println!("Record: {}", rec.unwrap());
 //!
-//!             let rec = client.get(&rpolicy, &key, Bins::None).await;
-//!             println!("Record Header: {}", rec.unwrap());
+//!         let rec = client.get(&rpolicy, &key, Bins::None).await;
+//!         println!("Record Header: {}", rec.unwrap());
 //!
-//!             let exists = client.exists(&rpolicy, &key).await.unwrap();
-//!             println!("exists: {}", exists);
+//!         let exists = client.exists(&rpolicy, &key).await.unwrap();
+//!         println!("exists: {}", exists);
 //!
-//!             let bin = as_bin!("int", 999);
-//!             let ops = &vec![operations::put(&bin), operations::get()];
-//!             let op_rec = client.operate(&wpolicy, &key, ops).await;
-//!             println!("operate: {}", op_rec.unwrap());
+//!         let bin = as_bin!("int", 999);
+//!         let ops = &vec![operations::put(&bin), operations::get()];
+//!         let op_rec = client.operate(&wpolicy, &key, ops).await;
+//!         println!("operate: {}", op_rec.unwrap());
 //!
-//!             let existed = client.delete(&wpolicy, &key).await.unwrap();
-//!             println!("existed (should be true): {}", existed);
+//!         let existed = client.delete(&wpolicy, &key).await.unwrap();
+//!         println!("existed (should be true): {}", existed);
 //!
-//!             let existed = client.delete(&wpolicy, &key).await.unwrap();
-//!             println!("existed (should be false): {}", existed);
-//!         }
+//!         let existed = client.delete(&wpolicy, &key).await.unwrap();
+//!         println!("existed (should be false): {}", existed);
+//!     }
 //!
-//!         println!("total time: {:?}", now.elapsed());
-//!     });
-//! }
+//!     println!("total time: {:?}", now.elapsed());
+//! });
 //! ```
 
 // `error_chain` can recurse deeply
 #![recursion_limit = "1024"]
 #![allow(clippy::too_many_arguments)]
 
-extern crate base64;
-extern crate byteorder;
 #[macro_use]
 extern crate log;
-extern crate pwhash;
-extern crate rand;
-
-#[cfg(feature = "tls")]
-extern crate tokio_rustls;
 
 pub use batch::BatchDeletePolicy;
 pub use batch::BatchOperation;
 pub use batch::BatchReadPolicy;
 pub use batch::BatchRecord;
-pub use batch::BatchUDFPolicy;
+pub use batch::BatchUdfPolicy;
 pub use batch::BatchWritePolicy;
 pub use bin::{Bin, Bins};
 pub use client::Client;
 pub use cluster::version_parser::Version;
 pub use cluster::Node;
+#[doc(hidden)] // wire-level particle codes; reachable, not documented API
 pub use commands::particle_type::ParticleType;
 pub use errors::{Error, ErrorKind, Result};
-pub use expressions::ael::{from_ael, pack_ael_server_filter, SERVER_COMPILED_AEL_EXPRESSION_OP};
-pub use expressions::regex_flag::RegexFlag;
+pub use expressions::ael::from_ael;
+#[doc(hidden)] // AEL wire packing, for tooling
+pub use expressions::ael::{pack_ael_server_filter, SERVER_COMPILED_AEL_EXPRESSION_OP};
+pub use expressions::regex_flag::RegexFlags;
 pub use key::Key;
 pub use mapping::RecordMapper;
 pub use metrics::{
@@ -193,27 +180,34 @@ pub use metrics::{
 pub use net::Host;
 pub use net::ToHosts;
 pub use operations::{ListOrderType, ListPolicy, ListReturnType, ListSortFlags, ListWriteFlags};
-pub use operations::{MapPolicy, MapReturnType, MapWriteFlags, MapWriteMode};
+pub use operations::{MapPolicy, MapReturnType, MapWriteFlags};
 #[cfg(feature = "tls")]
 pub use policy::TlsPolicy;
 pub use policy::{
     AdminPolicy, AuthMode, BasePolicy, BatchPolicy, ClientPolicy, CommitLevel, Concurrency,
-    Expiration, GenerationPolicy, Policy, QueryDuration, QueryPolicy, ReadModeAP, ReadModeSC,
-    ReadPolicy, ReadTouchTTL, RecordExistsAction, TxnRollPolicy, TxnVerifyPolicy, WritePolicy,
+    Expiration, GenerationPolicy, QueryDuration, QueryPolicy, ReadModeAp, ReadModeSc,
+    ReadPolicy, ReadTouchTtl, RecordExistsAction, Replica, TxnRollPolicy, TxnVerifyPolicy,
+    WritePolicy,
 };
 pub use privilege::{Privilege, PrivilegeCode};
 pub use query::{
-    CollectionIndexType, EqFilterValue, IndexType, PartitionFilter, QueryHandle, QueryPlan,
-    QuerySelection, QueryWhereWire, RangeFilterValue, Recordset, Statement, UDFLang,
-    FLAG_ENC_VARINT, FLAG_EXPLAIN, FLAG_HARD_HINT, FLAG_KNOWN, FLAG_REQUIRE_INDEX,
+    CollectionIndexType, EqFilterValue, IndexType, PartitionFilter, QueryHandle, RangeFilterValue,
+    Recordset, Statement, UdfLang,
+};
+// Query-plan wire types: reachable for tooling and the integration tests,
+// not part of the documented API.
+#[doc(hidden)]
+pub use query::{
+    QueryPlan, QuerySelection, QueryWhereWire, FLAG_ENC_VARINT, FLAG_EXPLAIN, FLAG_HARD_HINT,
+    FLAG_KNOWN, FLAG_REQUIRE_INDEX,
 };
 #[cfg(feature = "lua")]
 pub use query::{ResultSet, ResultStream};
-// `CITRUSLEAF_EPOCH` comes along because it is the unit `Record::new`'s
+// The Citrusleaf epoch comes along because it is the origin `Record::new`'s
 // `expiration` argument is counted from, and a caller building a record cannot
 // state one without it.
 pub use indexmap::IndexMap;
-pub use record::{Record, CITRUSLEAF_EPOCH};
+pub use record::{citrusleaf_epoch, Record, CITRUSLEAF_EPOCH_UNIX_SECS};
 pub use result_code::{ClientResultCode, ResultCode};
 pub use role::Role;
 pub use sampler::Sampler;
@@ -224,7 +218,6 @@ pub use txn::{
 };
 pub use user::User;
 pub use value::{FloatValue, MapCollection, MapLike, Value};
-pub use xor_shift::XorShift;
 
 #[macro_use]
 pub mod errors;
@@ -242,6 +235,7 @@ mod common;
 #[cfg(feature = "dynamic-config")]
 pub mod config;
 pub mod expressions;
+mod flags;
 mod locks;
 #[cfg(feature = "lua")]
 pub mod lua;
@@ -263,7 +257,8 @@ pub mod txn;
 pub(crate) mod txn_monitor;
 pub(crate) mod txn_roll;
 mod user;
-pub mod xor_shift;
+#[cfg(test)]
+pub(crate) mod xor_shift;
 
 #[cfg(test)]
 extern crate hex;

@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ use flate2::Compression;
 
 use std::sync::Arc;
 
-use crate::batch::BatchOperation;
+use crate::batch::{BatchOp, BatchOperation};
 use crate::cluster::Node;
 use crate::commands::field_type::FieldType;
 use crate::commands::BatchAttr;
@@ -31,7 +31,7 @@ use crate::msgpack::encoder;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::policy::{
     BasePolicy, BatchPolicy, CommitLevel, GenerationPolicy, Policy, QueryDuration, QueryPolicy,
-    ReadModeAP, ReadModeSC, ReadPolicy, RecordExistsAction, WritePolicy,
+    ReadModeAp, ReadModeSc, ReadPolicy, RecordExistsAction, WritePolicy,
 };
 use crate::query::NodePartitions;
 use crate::txn::Txn;
@@ -63,7 +63,7 @@ impl QueryDirection<'_> {
         }
     }
 
-    const fn filter_expression(&self) -> &Option<Expression> {
+    const fn filter_expression(&self) -> Option<&Expression> {
         match self {
             QueryDirection::Foreground(p) => p.filter_expression(),
             QueryDirection::Background(p) => p.filter_expression(),
@@ -936,13 +936,9 @@ impl Buffer {
         // Multi-record-transaction verify/roll batches are homogeneous and use
         // a per-record layout that differs from read/write, so they get their
         // own encoders. The send/parse machinery is shared with this path.
-        match batch_ops.first().map(|(op, _)| op) {
-            Some(BatchOperation::TxnVerify { .. }) => {
-                return self.set_batch_txn_verify(policy, batch_ops)
-            }
-            Some(BatchOperation::TxnRoll { .. }) => {
-                return self.set_batch_txn_roll(policy, batch_ops)
-            }
+        match batch_ops.first().map(|(op, _)| &op.kind) {
+            Some(BatchOp::TxnVerify { .. }) => return self.set_batch_txn_verify(policy, batch_ops),
+            Some(BatchOp::TxnRoll { .. }) => return self.set_batch_txn_roll(policy, batch_ops),
             _ => {}
         }
 
@@ -992,7 +988,7 @@ impl Buffer {
                 self.data_offset += 12; // header(4) + ttl(4) + field_count(2) + op_count(2) = 12
                 self.data_offset += key.namespace.len() + FIELD_HEADER_SIZE as usize;
                 self.data_offset += key.set_name.len() + FIELD_HEADER_SIZE as usize;
-                self.data_offset += batch_op.size(&policy.filter_expression)?; // + HEADER
+                self.data_offset += batch_op.size(policy.filter_expression())?; // + HEADER
 
                 // Add txn field sizes
                 self.size_txn_batch(txn, ver, batch_op.has_write());
@@ -1030,9 +1026,8 @@ impl Buffer {
             if repeats[idx] {
                 self.write_u8(BATCH_MSG_REPEAT);
             } else {
-                match batch_op {
-                    BatchOperation::Read {
-                        br: _,
+                match &batch_op.kind {
+                    BatchOp::Read {
                         policy: brpolicy,
                         bins,
                         ops,
@@ -1080,8 +1075,7 @@ impl Buffer {
                             }
                         }
                     }
-                    BatchOperation::Write {
-                        br: _,
+                    BatchOp::Write {
                         policy: bwpolicy,
                         ops,
                     } => {
@@ -1096,10 +1090,7 @@ impl Buffer {
                             ver,
                         )?;
                     }
-                    BatchOperation::Delete {
-                        br: _,
-                        policy: bdpolicy,
-                    } => {
+                    BatchOp::Delete { policy: bdpolicy } => {
                         attr.set_batch_delete(bdpolicy, policy);
                         self.write_batch_write(
                             key,
@@ -1111,10 +1102,9 @@ impl Buffer {
                             ver,
                         )?;
                     }
-                    BatchOperation::UDF {
-                        br: _,
+                    BatchOp::Udf {
                         policy: bupolicy,
-                        udf_name,
+                        package_name,
                         function_name,
                         args,
                     } => {
@@ -1128,12 +1118,12 @@ impl Buffer {
                             txn,
                             ver,
                         )?;
-                        self.write_field_string(udf_name, FieldType::UdfPackageName);
+                        self.write_field_string(package_name, FieldType::UdfPackageName);
                         self.write_field_string(function_name, FieldType::UdfFunction);
-                        self.write_args(args.as_deref(), FieldType::UdfArgList)?;
+                        self.write_args(args, FieldType::UdfArgList)?;
                     }
                     // Dispatched to dedicated encoders above; never reached here.
-                    BatchOperation::TxnVerify { .. } | BatchOperation::TxnRoll { .. } => {
+                    BatchOp::TxnVerify { .. } | BatchOp::TxnRoll { .. } => {
                         unreachable!("txn verify/roll use their own batch encoders")
                     }
                 }
@@ -1155,7 +1145,7 @@ impl Buffer {
     /// `setBatchTxnVerifyForOffsets` (`BATCH_MSG_INFO | BATCH_MSG_INFO4`, read +
     /// no-bindata, `INFO3_SC_READ_TYPE`, `INFO4_MRT_VERIFY_READ`, then the
     /// namespace/set fields and the record-version field). All `batch_ops` must
-    /// be [`BatchOperation::TxnVerify`].
+    /// be transaction verify rows ([`BatchOperation::txn_verify`]).
     pub(crate) fn set_batch_txn_verify(
         &mut self,
         policy: &BatchPolicy,
@@ -1166,7 +1156,8 @@ impl Buffer {
         self.data_offset += FIELD_HEADER_SIZE as usize + 5;
 
         for (op, _) in batch_ops {
-            if let BatchOperation::TxnVerify { br, version } = op {
+            if let BatchOp::TxnVerify { version } = &op.kind {
+                let br = &op.br;
                 self.data_offset += br.key.digest.len() + 4; // offset(4) + digest
                 self.data_offset += 5; // flags + read + write + info3 + info4
                 self.data_offset += 4; // field_count(2) + op_count(2)
@@ -1187,8 +1178,8 @@ impl Buffer {
         self.write_u8(Buffer::get_batch_flags(policy));
 
         for (idx, (op, _)) in batch_ops.iter().enumerate() {
-            if let BatchOperation::TxnVerify { br, version } = op {
-                let key = &br.key;
+            if let BatchOp::TxnVerify { version } = &op.kind {
+                let key = &op.br.key;
                 self.write_u32(idx as u32);
                 self.write_bytes(&key.digest);
                 self.write_u8(BATCH_MSG_INFO | BATCH_MSG_INFO4);
@@ -1218,7 +1209,7 @@ impl Buffer {
     /// whose txn path already emits the `BATCH_MSG_INFO|INFO4|GEN|TTL` header,
     /// durable-delete write attrs, `txn_attr`, and the MRT id/version/deadline
     /// fields — matching the Go client's `setBatchTxnRollForOffsets`. All
-    /// `batch_ops` must be [`BatchOperation::TxnRoll`].
+    /// `batch_ops` must be transaction roll rows ([`BatchOperation::txn_roll`]).
     pub(crate) fn set_batch_txn_roll(
         &mut self,
         policy: &BatchPolicy,
@@ -1228,8 +1219,8 @@ impl Buffer {
         self.data_offset += FIELD_HEADER_SIZE as usize + 5;
 
         for (op, _) in batch_ops {
-            if let BatchOperation::TxnRoll { br, txn, .. } = op {
-                let key = &br.key;
+            if let BatchOp::TxnRoll { txn, .. } = &op.kind {
+                let key = &op.br.key;
                 let ver = txn.get_read_version(key);
                 self.data_offset += key.digest.len() + 4;
                 self.data_offset += 12; // flags+read+write+info + expiration(4) + fc(2)+oc(2)
@@ -1250,8 +1241,8 @@ impl Buffer {
 
         let no_filter: Option<Expression> = None;
         for (idx, (op, _)) in batch_ops.iter().enumerate() {
-            if let BatchOperation::TxnRoll { br, txn, roll_attr } = op {
-                let key = &br.key;
+            if let BatchOp::TxnRoll { txn, roll_attr } = &op.kind {
+                let key = &op.br.key;
                 let ver = txn.get_read_version(key);
                 self.write_u32(idx as u32);
                 self.write_bytes(&key.digest);
@@ -1399,7 +1390,7 @@ impl Buffer {
         key: &Key,
         package_name: &str,
         function_name: &str,
-        args: Option<&[Value]>,
+        args: &[Value],
     ) -> Result<()> {
         self.begin();
 
@@ -1515,11 +1506,7 @@ impl Buffer {
             self.data_offset += aggregation.package_name.len() + FIELD_HEADER_SIZE as usize;
             self.data_offset += aggregation.function_name.len() + FIELD_HEADER_SIZE as usize;
 
-            if let Some(ref args) = aggregation.function_args {
-                self.estimate_args_size(Some(args))?;
-            } else {
-                self.estimate_args_size(None)?;
-            }
+            self.estimate_args_size(&aggregation.function_args)?;
             field_count += 4;
         }
 
@@ -1619,7 +1606,7 @@ impl Buffer {
                 }
                 match qpolicy.expected_duration {
                     QueryDuration::Short => info1 |= INFO1_SHORT_QUERY,
-                    QueryDuration::LongRelaxAP => info2 |= INFO2_RELAX_AP_LONG_QUERY,
+                    QueryDuration::LongRelaxAp => info2 |= INFO2_RELAX_AP_LONG_QUERY,
                     QueryDuration::Long => (),
                 }
                 self.write_header_read(
@@ -1688,11 +1675,7 @@ impl Buffer {
 
             self.write_field_string(&aggregation.package_name, FieldType::UdfPackageName);
             self.write_field_string(&aggregation.function_name, FieldType::UdfFunction);
-            if let Some(ref args) = aggregation.function_args {
-                self.write_args(Some(args), FieldType::UdfArgList)?;
-            } else {
-                self.write_args(None, FieldType::UdfArgList)?;
-            }
+            self.write_args(&aggregation.function_args, FieldType::UdfArgList)?;
         }
 
         if let Some(where_bytes) = execute_where {
@@ -1814,8 +1797,8 @@ impl Buffer {
     }
 
     #[allow(clippy::ref_option)]
-    fn estimate_filter_size(&mut self, filter: &Option<Expression>) -> Result<usize> {
-        filter.as_ref().map_or(Ok(0), |filter| {
+    fn estimate_filter_size(&mut self, filter: Option<&Expression>) -> Result<usize> {
+        filter.map_or(Ok(0), |filter| {
             let filter_size = filter.pack(&mut None)?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             // filter_size + FIELD_HEADER_SIZE as usize
@@ -1850,13 +1833,8 @@ impl Buffer {
         Ok(field_count)
     }
 
-    fn estimate_args_size(&mut self, args: Option<&[Value]>) -> Result<()> {
-        if let Some(args) = args {
-            self.data_offset += encoder::pack_array(&mut None, args)? + FIELD_HEADER_SIZE as usize;
-        } else {
-            self.data_offset +=
-                encoder::pack_empty_args_array(&mut None) + FIELD_HEADER_SIZE as usize;
-        }
+    fn estimate_args_size(&mut self, args: &[Value]) -> Result<()> {
+        self.data_offset += encoder::pack_array(&mut None, args)? + FIELD_HEADER_SIZE as usize;
         Ok(())
     }
 
@@ -1864,7 +1842,7 @@ impl Buffer {
         &mut self,
         package_name: &str,
         function_name: &str,
-        args: Option<&[Value]>,
+        args: &[Value],
     ) -> Result<usize> {
         self.data_offset += package_name.len() + FIELD_HEADER_SIZE as usize;
         self.data_offset += function_name.len() + FIELD_HEADER_SIZE as usize;
@@ -1903,15 +1881,15 @@ impl Buffer {
         let mut info_attr: u8 = 0;
 
         match policy.read_mode_sc {
-            ReadModeSC::Session => {}
-            ReadModeSC::Linearize => info_attr |= INFO3_SC_READ_TYPE,
-            ReadModeSC::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
-            ReadModeSC::AllowUnavailable => {
+            ReadModeSc::Session => {}
+            ReadModeSc::Linearize => info_attr |= INFO3_SC_READ_TYPE,
+            ReadModeSc::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
+            ReadModeSc::AllowUnavailable => {
                 info_attr |= INFO3_SC_READ_TYPE | INFO3_SC_READ_RELAX;
             }
         }
 
-        if policy.read_mode_ap == ReadModeAP::All {
+        if policy.read_mode_ap == ReadModeAp::All {
             read_attr |= INFO1_READ_MODE_AP_ALL;
         }
 
@@ -1966,15 +1944,15 @@ impl Buffer {
         let mut info_attr = info_attr;
 
         match policy.read_mode_sc {
-            ReadModeSC::Session => {}
-            ReadModeSC::Linearize => info_attr |= INFO3_SC_READ_TYPE,
-            ReadModeSC::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
-            ReadModeSC::AllowUnavailable => {
+            ReadModeSc::Session => {}
+            ReadModeSc::Linearize => info_attr |= INFO3_SC_READ_TYPE,
+            ReadModeSc::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
+            ReadModeSc::AllowUnavailable => {
                 info_attr |= INFO3_SC_READ_TYPE | INFO3_SC_READ_RELAX;
             }
         }
 
-        if policy.read_mode_ap == ReadModeAP::All {
+        if policy.read_mode_ap == ReadModeAp::All {
             read_attr |= INFO1_READ_MODE_AP_ALL;
         }
 
@@ -2112,15 +2090,15 @@ impl Buffer {
             }
 
             match policy.base_policy.read_mode_sc {
-                ReadModeSC::Session => {}
-                ReadModeSC::Linearize => info_attr |= INFO3_SC_READ_TYPE,
-                ReadModeSC::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
-                ReadModeSC::AllowUnavailable => {
+                ReadModeSc::Session => {}
+                ReadModeSc::Linearize => info_attr |= INFO3_SC_READ_TYPE,
+                ReadModeSc::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
+                ReadModeSc::AllowUnavailable => {
                     info_attr |= INFO3_SC_READ_TYPE | INFO3_SC_READ_RELAX;
                 }
             }
 
-            if policy.base_policy.read_mode_ap == ReadModeAP::All {
+            if policy.base_policy.read_mode_ap == ReadModeAp::All {
                 read_attr |= INFO1_READ_MODE_AP_ALL;
             }
         }
@@ -2208,14 +2186,9 @@ impl Buffer {
         Ok(())
     }
 
-    fn write_args(&mut self, args: Option<&[Value]>, ftype: FieldType) -> Result<()> {
-        if let Some(args) = args {
-            self.write_field_header(encoder::pack_array(&mut None, args)?, ftype);
-            encoder::pack_array(&mut Some(self), args)?;
-        } else {
-            self.write_field_header(encoder::pack_empty_args_array(&mut None), ftype);
-            encoder::pack_empty_args_array(&mut Some(self));
-        }
+    fn write_args(&mut self, args: &[Value], ftype: FieldType) -> Result<()> {
+        self.write_field_header(encoder::pack_array(&mut None, args)?, ftype);
+        encoder::pack_array(&mut Some(self), args)?;
         Ok(())
     }
 
@@ -2996,8 +2969,8 @@ mod tests {
 
     fn read_heavy_write_policy() -> WritePolicy {
         let mut policy = WritePolicy::default();
-        policy.base_policy.read_mode_sc = ReadModeSC::Linearize;
-        policy.base_policy.read_mode_ap = ReadModeAP::All;
+        policy.base_policy.read_mode_sc = ReadModeSc::Linearize;
+        policy.base_policy.read_mode_ap = ReadModeAp::All;
         policy.base_policy.use_compression = true;
         policy
     }
@@ -3792,10 +3765,8 @@ mod tests {
             } else {
                 "without one"
             };
-            let policy = BatchPolicy {
-                filter_expression: filter,
-                ..Default::default()
-            };
+            let mut policy = BatchPolicy::default();
+            policy.base_policy.filter_expression = filter;
 
             let mut buf = Buffer::with_pool(64 * 1024, test_pool());
             buf.set_batch_operate(&policy, &ops).expect("encodes");

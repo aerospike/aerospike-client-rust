@@ -1,3 +1,18 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 #[allow(unused_imports)]
 use aerospike::{as_bin, as_key, as_list, as_val};
 
@@ -60,7 +75,7 @@ async fn simple_equality_query(client: &Client, namespace: &str, set_name: &str)
 
     let policy = QueryPolicy::default();
     let mut stmt = Statement::new(namespace, set_name, Bins::All);
-    stmt.add_filter(Filter::equal(BIN_NAME, 5));
+    stmt.set_filter(Filter::equal(BIN_NAME, 5));
 
     let rs = client
         .query(&policy, PartitionFilter::all(), stmt)
@@ -78,7 +93,7 @@ async fn range_query(client: &Client, namespace: &str, set_name: &str) {
 
     let policy = QueryPolicy::default();
     let mut stmt = Statement::new(namespace, set_name, Bins::All);
-    stmt.add_filter(Filter::range(BIN_NAME, 0, 9));
+    stmt.set_filter(Filter::range(BIN_NAME, 0, 9));
 
     let rs = client
         .query(&policy, PartitionFilter::all(), stmt)
@@ -96,7 +111,7 @@ async fn metadata_only_query(client: &Client, namespace: &str, set_name: &str) {
 
     let policy = QueryPolicy::default();
     let mut stmt = Statement::new(namespace, set_name, Bins::None);
-    stmt.add_filter(Filter::range(BIN_NAME, 0, 4));
+    stmt.set_filter(Filter::range(BIN_NAME, 0, 4));
 
     let rs = client
         .query(&policy, PartitionFilter::all(), stmt)
@@ -128,7 +143,7 @@ async fn cursor_pagination(client: &Client, namespace: &str, set_name: &str) {
         while let Some(r) = rs.next().await {
             println!("Cursor record: {:?}", r.unwrap());
         }
-        pf = rs.partition_filter().await.unwrap();
+        pf = rs.partition_filter().unwrap();
     }
 }
 
@@ -138,7 +153,7 @@ async fn parallel_query(client: &Client, namespace: &str, set_name: &str) {
     const NUM_WORKERS: usize = 4;
     let policy = QueryPolicy::default();
     let mut stmt = Statement::new(namespace, set_name, Bins::All);
-    stmt.add_filter(Filter::range(BIN_NAME, 0, 9));
+    stmt.set_filter(Filter::range(BIN_NAME, 0, 9));
 
     let rs = client
         .query(&policy, PartitionFilter::all(), stmt)
@@ -204,7 +219,7 @@ async fn rate_limited_query(client: &Client, namespace: &str, _set_name: &str) {
 
     // Query only a subset of records, matching the test pattern
     let mut stmt = Statement::new(namespace, &test_set_name, Bins::All);
-    stmt.add_filter(Filter::range(BIN_NAME, 0, range_end));
+    stmt.set_filter(Filter::range(BIN_NAME, 0, range_end));
 
     let expected_count = range_end + 1;
     println!("Rate limit set to {} records/second", RATE_LIMIT);
@@ -300,7 +315,7 @@ async fn collection_index_query(client: &Client, namespace: &str) {
     // Filter::contains matches records whose indexed collection contains
     // the value; the CollectionIndexType must match the index.
     let mut stmt = Statement::new(namespace, &set_name, Bins::All);
-    stmt.add_filter(Filter::contains(bin, 7_i64, CollectionIndexType::List));
+    stmt.set_filter(Filter::contains(bin, 7_i64, CollectionIndexType::List));
 
     let rs = client
         .query(&QueryPolicy::default(), PartitionFilter::all(), stmt)

@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -30,8 +30,11 @@ pub struct Bin {
 
 impl Bin {
     /// Construct a new bin given a name and a value.
-    pub const fn new(name: String, val: Value) -> Self {
-        Bin { name, value: val }
+    pub fn new(name: impl Into<String>, val: Value) -> Self {
+        Bin {
+            name: name.into(),
+            value: val,
+        }
     }
 }
 
@@ -45,10 +48,10 @@ impl AsRef<Bin> for Bin {
 #[macro_export]
 macro_rules! as_bin {
     ($bin_name:expr, None) => {{
-        $crate::Bin::new($bin_name.into(), $crate::Value::Nil)
+        $crate::Bin::new($bin_name, $crate::Value::Nil)
     }};
     ($bin_name:expr, $val:expr) => {{
-        $crate::Bin::new($bin_name.into(), $crate::Value::from($val))
+        $crate::Bin::new($bin_name, $crate::Value::from($val))
     }};
 }
 
@@ -82,6 +85,24 @@ impl From<&[&str]> for Bins {
     fn from(bins: &[&str]) -> Self {
         let bins = bins.iter().copied().map(String::from).collect();
         Bins::Some(bins)
+    }
+}
+
+impl From<Vec<String>> for Bins {
+    fn from(bins: Vec<String>) -> Self {
+        Bins::Some(bins)
+    }
+}
+
+impl From<Vec<&str>> for Bins {
+    fn from(bins: Vec<&str>) -> Self {
+        Bins::Some(bins.into_iter().map(String::from).collect())
+    }
+}
+
+impl From<&[String]> for Bins {
+    fn from(bins: &[String]) -> Self {
+        Bins::Some(bins.to_vec())
     }
 }
 

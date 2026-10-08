@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -407,7 +407,7 @@ async fn query_with_compression() {
 
     // Range query: int in [10, 50)
     let mut stmt = Statement::new(namespace, &set_name, Bins::All);
-    stmt.add_filter(Filter::equal("int", 25));
+    stmt.set_filter(Filter::equal("int", 25));
 
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
@@ -452,10 +452,10 @@ async fn query_operate_with_compression() {
         let mut wpolicy = WritePolicy::default();
         wpolicy.base_policy.use_compression = use_compression;
 
-        let statement = Statement::new(namespace, &set_name, Bins::All);
-        let ops = vec![operations::add(&as_bin!("int", 100))];
+        let mut statement = Statement::new(namespace, &set_name, Bins::All);
+        statement.set_operations([operations::add(&as_bin!("int", 100))]);
         let task = client
-            .query_operate(&wpolicy, statement, &ops)
+            .query_operate(&wpolicy, statement)
             .await
             .unwrap_or_else(|e| panic!("query_operate ({}) failed: {:?}", label, e));
         task.wait_till_complete(Some(Duration::from_secs(30)))

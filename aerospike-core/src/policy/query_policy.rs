@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -16,11 +16,11 @@
 use crate::expressions::Expression;
 #[cfg(feature = "dynamic-config")]
 use crate::policy::BasePolicyConfig;
-use crate::policy::{BasePolicy, Policy, PolicyLike, QueryDuration, Replica, StreamPolicy};
+use crate::policy::{BasePolicy, Policy, PolicyLike, QueryDuration, StreamPolicy};
 use aerospike_rt::time::{Duration, Instant};
 
 /// `QueryPolicy` encapsulates parameters for query operations.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct QueryPolicy {
     /// Base policy instance
@@ -70,9 +70,6 @@ pub struct QueryPolicy {
     ///
     /// Default: `true`
     pub include_bin_data: bool,
-
-    /// Defines algorithm used to determine the target node for a command. The replica algorithm only affects single record and batch commands.
-    pub replica: Replica,
 }
 
 impl QueryPolicy {
@@ -81,9 +78,9 @@ impl QueryPolicy {
         QueryPolicy::default()
     }
 
-    /// Get the current Filter Expression
-    pub const fn filter_expression(&self) -> &Option<Expression> {
-        &self.base_policy.filter_expression
+    /// The filter expression, if one is set (`base_policy.filter_expression`).
+    pub const fn filter_expression(&self) -> Option<&Expression> {
+        self.base_policy.filter_expression.as_ref()
     }
 }
 
@@ -97,7 +94,6 @@ impl Default for QueryPolicy {
             record_queue_size: 1024,
             expected_duration: QueryDuration::Long,
             include_bin_data: true,
-            replica: Replica::default(),
         };
 
         res.base_policy.total_timeout = 0;
@@ -133,7 +129,7 @@ impl StreamPolicy for &QueryPolicy {
         self.base_policy.total_timeout
     }
     fn replica(&self) -> crate::policy::Replica {
-        self.replica
+        self.base_policy.replica
     }
     fn max_retries(&self) -> usize {
         self.base_policy.max_retries

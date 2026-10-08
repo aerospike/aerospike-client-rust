@@ -87,7 +87,7 @@ impl IndexRangeWire {
         offset += 1;
 
         match ktype {
-            x if x == ParticleType::INTEGER as u8 => {
+            x if x == ParticleType::Integer as u8 => {
                 let begin = read_integer_bound(probe_range_bytes, offset)?;
                 let end = read_integer_bound(probe_range_bytes, begin.next_offset)?;
                 Some(format!(
@@ -95,7 +95,7 @@ impl IndexRangeWire {
                     begin.value, end.value
                 ))
             }
-            x if x == ParticleType::STRING as u8 => {
+            x if x == ParticleType::String as u8 => {
                 let value = read_bytes_bound(probe_range_bytes, offset)?;
                 let text = std::str::from_utf8(&value.bytes).unwrap_or("<invalid utf-8>");
                 Some(format!(
@@ -103,7 +103,7 @@ impl IndexRangeWire {
                     value.bytes.len()
                 ))
             }
-            x if x == ParticleType::BLOB as u8 => {
+            x if x == ParticleType::Blob as u8 => {
                 let value = read_bytes_bound(probe_range_bytes, offset)?;
                 Some(format!(
                     "bin={bin_name} value=x'{}' len={}",
@@ -174,7 +174,7 @@ mod tests {
         probe.push(1);
         probe.push(bin_name.len() as u8);
         probe.extend_from_slice(bin_name.as_bytes());
-        probe.push(ParticleType::INTEGER as u8);
+        probe.push(ParticleType::Integer as u8);
         probe.extend_from_slice(&8u32.to_be_bytes());
         probe.extend_from_slice(&begin.to_be_bytes());
         probe.extend_from_slice(&8u32.to_be_bytes());
@@ -188,7 +188,7 @@ mod tests {
         probe.push(1);
         probe.push(bin_name.len() as u8);
         probe.extend_from_slice(bin_name.as_bytes());
-        probe.push(ParticleType::STRING as u8);
+        probe.push(ParticleType::String as u8);
         probe.extend_from_slice(&(value_bytes.len() as u32).to_be_bytes());
         probe.extend_from_slice(value_bytes);
         probe

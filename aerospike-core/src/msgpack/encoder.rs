@@ -35,7 +35,7 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
             FloatValue::F32(_) => pack_f32(buf, f32::from(val)),
         },
         Value::Blob(ref val) => pack_blob(buf, val),
-        Value::HLL(ref val) => pack_hll(buf, val),
+        Value::Hll(ref val) => pack_hll(buf, val),
         Value::List(ref val) => pack_array(buf, val)?,
         Value::HashMap(ref val) => pack_map(buf, val)?,
         Value::OrderedMap(ref val) => pack_index_map(buf, val)?,
@@ -57,7 +57,7 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
                  inside lists, maps, CDT arguments or expressions."
             )))
         }
-        Value::GeoJSON(ref val) => pack_geo_json(buf, val),
+        Value::GeoJson(ref val) => pack_geo_json(buf, val),
         Value::Infinity => pack_infinity(buf),
         Value::Wildcard => pack_wildcard(buf),
     };
@@ -108,13 +108,6 @@ fn pack_entries_canonical<'a>(
         size += pack_value_canonical(buf, value)?;
     }
     Ok(size)
-}
-
-pub fn pack_empty_args_array(buf: &mut Option<&mut Buffer>) -> usize {
-    let mut size = 0;
-    size += pack_array_begin(buf, 0);
-
-    size
 }
 
 pub fn pack_ctx_for_index(buf: &mut Option<&mut Buffer>, ctx: &[CdtContext]) -> Result<usize> {
@@ -331,12 +324,25 @@ pub fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> Result<usi
     Ok(size)
 }
 
+/// A map key must be an integer, a string or a blob; anything else is a
+/// caller mistake the server would reject, reported here before the request
+/// is sent.
+fn pack_map_key(buf: &mut Option<&mut Buffer>, key: &Value) -> Result<usize> {
+    if !key.is_valid_map_key() {
+        return Err(Error::invalid_argument(format!(
+            "{} cannot be a map key; only integers, strings and blobs can",
+            key.type_label()
+        )));
+    }
+    pack_value(buf, key)
+}
+
 pub fn pack_map(buf: &mut Option<&mut Buffer>, map: &HashMap<Value, Value>) -> Result<usize> {
     let mut size = 0;
 
     size += pack_map_begin(buf, map.len(), MapOrder::Unordered);
     for (key, val) in map {
-        size += pack_value(buf, key)?;
+        size += pack_map_key(buf, key)?;
         size += pack_value(buf, val)?;
     }
 
@@ -355,7 +361,7 @@ pub fn pack_index_map(
 
     size += pack_map_begin(buf, map.len(), MapOrder::Unordered);
     for (key, val) in map {
-        size += pack_value(buf, key)?;
+        size += pack_map_key(buf, key)?;
         size += pack_value(buf, val)?;
     }
 
@@ -370,7 +376,7 @@ pub fn pack_ordered_map(
 
     size += pack_map_begin(buf, map.len(), MapOrder::KeyOrdered);
     for (key, val) in map {
-        size += pack_value(buf, key)?;
+        size += pack_map_key(buf, key)?;
         size += pack_value(buf, val)?;
     }
 
@@ -493,7 +499,7 @@ pub fn pack_blob(buf: &mut Option<&mut Buffer>, value: &[u8]) -> usize {
 
     size += pack_string_begin(buf, size);
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(ParticleType::BLOB as u8);
+        buf.write_u8(ParticleType::Blob as u8);
         buf.write_bytes(value);
     }
 
@@ -505,7 +511,7 @@ pub fn pack_hll(buf: &mut Option<&mut Buffer>, value: &[u8]) -> usize {
 
     size += pack_string_begin(buf, size);
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(ParticleType::HLL as u8);
+        buf.write_u8(ParticleType::Hll as u8);
         buf.write_bytes(value);
     }
 
@@ -517,7 +523,7 @@ pub fn pack_string(buf: &mut Option<&mut Buffer>, value: &str) -> usize {
 
     size += pack_string_begin(buf, size);
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(ParticleType::STRING as u8);
+        buf.write_u8(ParticleType::String as u8);
         buf.write_str(value);
     }
 
@@ -540,7 +546,7 @@ pub fn pack_geo_json(buf: &mut Option<&mut Buffer>, value: &str) -> usize {
 
     size += pack_string_begin(buf, size);
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(ParticleType::GEOJSON as u8);
+        buf.write_u8(ParticleType::GeoJson as u8);
         buf.write_str(value);
     }
 
@@ -783,5 +789,19 @@ mod tests {
                 0x82, 0xa2, 0x03, 0x61, 0x01, 0xa2, 0x03, 0x62, 0x02, // canonical inner
             ]
         );
+    }
+
+    #[test]
+    fn maps_with_invalid_keys_are_rejected_before_sending() {
+        let mut map = HashMap::new();
+        map.insert(Value::from(1.5), Value::from(1));
+        let err = pack_value(&mut None, &Value::HashMap(map)).unwrap_err();
+        assert!(err.to_string().contains("map key"), "{err}");
+
+        let mut ok = HashMap::new();
+        ok.insert(Value::from("k"), Value::from(1));
+        ok.insert(Value::from(2), Value::from(2));
+        ok.insert(Value::from(vec![1u8, 2]), Value::from(3));
+        assert!(pack_value(&mut None, &Value::HashMap(ok)).is_ok());
     }
 }

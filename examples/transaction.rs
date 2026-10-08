@@ -1,3 +1,18 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 //! Multi-record transactions (MRT): commit and abort.
 //!
 //! Port of the Java client's `Transaction` / `AsyncTransaction` examples.
@@ -17,7 +32,7 @@ async fn main() {
 
 /// True when `ns` is configured with strong consistency (required for MRT).
 async fn namespace_is_sc(client: &Client, ns: &str) -> bool {
-    let Ok(node) = client.cluster.get_random_node() else {
+    let Ok(node) = client.random_node() else {
         return false;
     };
     let info_key = format!("namespace/{ns}");
@@ -42,8 +57,7 @@ pub async fn run() {
         .expect("Failed to connect to cluster");
 
     let supported = client
-        .cluster
-        .get_random_node()
+        .random_node()
         .map(|n| n.version().supports_mrt())
         .unwrap_or(false);
     if !supported {

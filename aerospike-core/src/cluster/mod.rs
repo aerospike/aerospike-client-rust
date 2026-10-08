@@ -1,4 +1,4 @@
-// Copyright 2015-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -181,44 +181,9 @@ struct ConvergenceState {
 }
 
 impl Cluster {
-    pub async fn new(mut policy: ClientPolicy, hosts: &[Host]) -> Result<Arc<Self>> {
-        // updated the hashed password
-        let _ = policy.set_auth_mode(policy.auth_mode.clone());
-
+    pub async fn new(policy: ClientPolicy, hosts: &[Host]) -> Result<Arc<Self>> {
         let (tx, rx) = mpsc::channel(100);
-        let buffer_pool = crate::net::buffer_pool::TieredBufferPool::from_policy(&policy);
-        let cluster = Arc::new(Cluster {
-            hashed_pass: AtomicArc::from(policy.hashed_pass()),
-            client_policy: AtomicArc::from(policy),
-            buffer_pool,
-
-            seeds: AtomicArc::from(hosts.to_vec()),
-            aliases: AtomicArc::from(HashMap::new()),
-            nodes: AtomicArc::from(vec![]),
-
-            partition_map: AtomicArc::from(HashMap::default()),
-            node_index: AtomicIsize::new(0),
-            replica_index: AtomicIsize::new(0),
-            tend_count: std::sync::atomic::AtomicUsize::new(0),
-
-            tend_channel: Mutex::new(tx),
-            tend_task: std::sync::Mutex::new(None),
-            #[cfg(feature = "dynamic-config")]
-            config_watch_task: std::sync::Mutex::new(None),
-            closed: AtomicBool::new(false),
-            last_seed_errors: std::sync::Mutex::new(Vec::new()),
-
-            metrics_enabled: AtomicBool::new(false),
-            metrics_policy: AtomicArc::from(MetricsPolicy::default()),
-            metrics: std::sync::Mutex::new(HashMap::new()),
-            max_retries_exceeded_count: AtomicU64::new(0),
-            total_timeout_exceeded_count: AtomicU64::new(0),
-            nodes_invalid_count: AtomicU64::new(0),
-            opening_connections: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-
-            #[cfg(feature = "dynamic-config")]
-            dyn_config: std::sync::OnceLock::new(),
-        });
+        let cluster = Self::assemble(policy, hosts, tx)?;
         // Seed the cluster and tend until the partition table is fully
         // formed and stable, so the returned client can route its very
         // first command.
@@ -272,6 +237,51 @@ impl Cluster {
         *lock(&cluster.tend_task) = Some(handle);
         debug!("New cluster initialized and ready to be used...");
         Ok(cluster)
+    }
+
+    fn assemble(policy: ClientPolicy, hosts: &[Host], tx: Sender<()>) -> Result<Arc<Self>> {
+        let buffer_pool = crate::net::buffer_pool::TieredBufferPool::from_policy(&policy);
+        Ok(Arc::new(Cluster {
+            hashed_pass: AtomicArc::from(policy.hashed_pass()?),
+            client_policy: AtomicArc::from(policy),
+            buffer_pool,
+
+            seeds: AtomicArc::from(hosts.to_vec()),
+            aliases: AtomicArc::from(HashMap::new()),
+            nodes: AtomicArc::from(vec![]),
+
+            partition_map: AtomicArc::from(HashMap::default()),
+            node_index: AtomicIsize::new(0),
+            replica_index: AtomicIsize::new(0),
+            tend_count: std::sync::atomic::AtomicUsize::new(0),
+
+            tend_channel: Mutex::new(tx),
+            tend_task: std::sync::Mutex::new(None),
+            #[cfg(feature = "dynamic-config")]
+            config_watch_task: std::sync::Mutex::new(None),
+            closed: AtomicBool::new(false),
+            last_seed_errors: std::sync::Mutex::new(Vec::new()),
+
+            metrics_enabled: AtomicBool::new(false),
+            metrics_policy: AtomicArc::from(MetricsPolicy::default()),
+            metrics: std::sync::Mutex::new(HashMap::new()),
+            max_retries_exceeded_count: AtomicU64::new(0),
+            total_timeout_exceeded_count: AtomicU64::new(0),
+            nodes_invalid_count: AtomicU64::new(0),
+            opening_connections: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+
+            #[cfg(feature = "dynamic-config")]
+            dyn_config: std::sync::OnceLock::new(),
+        }))
+    }
+
+    /// A cluster that has never tended: no nodes and an empty partition map.
+    /// Routing code that only consults the partition map can be exercised
+    /// against it without a server.
+    #[cfg(test)]
+    pub(crate) fn new_unconnected(policy: ClientPolicy) -> Arc<Self> {
+        let (tx, _rx) = mpsc::channel(1);
+        Self::assemble(policy, &[], tx).expect("default test policy assembles")
     }
 
     async fn tend_thread(cluster: Arc<Cluster>, mut rx: Receiver<()>) {
@@ -962,12 +972,6 @@ impl Cluster {
         (*self.client_policy.load().clone()).clone()
     }
 
-    pub fn add_seeds(&self, new_seeds: &[Host]) {
-        let mut seeds = self.seeds.load().to_vec();
-        seeds.extend_from_slice(new_seeds);
-        self.seeds.store(Arc::new(seeds));
-    }
-
     /// Append only those hosts that aren't already in the seed list.
     /// Used after cluster stabilization to promote discovered nodes to
     /// fallback seeds without creating duplicates on repeated calls.
@@ -983,41 +987,6 @@ impl Cluster {
         if changed {
             self.seeds.store(Arc::new(seeds));
         }
-    }
-
-    pub fn alias_exists(&self, host: &Host) -> bool {
-        let aliases = self.aliases.load();
-        aliases.contains_key(host)
-    }
-
-    pub fn node_partitions(&self, node: &Node, namespace: &str) -> Vec<u16> {
-        let mut res: Vec<u16> = vec![];
-        let partitions = self.partition_map.load();
-
-        if let Some(node_array) = partitions.get(namespace) {
-            for (i, (_, tnode)) in node_array.nodes.iter().enumerate().take(node::PARTITIONS) {
-                if tnode.as_ref().is_some_and(|tnode| tnode.as_ref() == node) {
-                    res.push(i as u16);
-                }
-            }
-        }
-
-        res
-    }
-
-    pub async fn update_partitions(
-        &self,
-        partition_map: &mut PartitionTable,
-        node: &Arc<Node>,
-    ) -> Result<()> {
-        // Issue `replicas` + `partition-generation` over the node's
-        // long-lived tend connection (Java's `tendConnection` reuse).
-        let admin_policy = AdminPolicy {
-            timeout: self.client_policy.load().timeout,
-        };
-        let tokens = PartitionTokenizer::from_node(node, &admin_policy).await?;
-        tokens.update_partition(partition_map, node)?;
-        Ok(())
     }
 
     pub async fn update_rack_ids(&self, node: &Arc<Node>) -> Result<()> {
@@ -1545,7 +1514,7 @@ impl Cluster {
     ) {
         #[cfg(feature = "dynamic-config")]
         {
-            use crate::batch::BatchOperation;
+            use crate::batch::BatchOp;
             let Some(dc) = self.dyn_config.get() else {
                 return;
             };
@@ -1574,8 +1543,8 @@ impl Cluster {
             }
 
             for (op, _) in ops.iter_mut() {
-                match op {
-                    BatchOperation::Write { policy, .. } => {
+                match &mut op.kind {
+                    BatchOp::Write { policy, .. } => {
                         if let Some(cfg) = &dynamic.batch_write {
                             if let Some(send_key) = cfg.send_key {
                                 policy.send_key = send_key;
@@ -1585,21 +1554,19 @@ impl Cluster {
                             }
                         }
                     }
-                    BatchOperation::Delete { policy, .. } => {
+                    BatchOp::Delete { policy } => {
                         if let Some(cfg) = dynamic.batch_delete.clone() {
                             cfg.merge_into(policy);
                         }
                     }
-                    BatchOperation::UDF { policy, .. } => {
+                    BatchOp::Udf { policy, .. } => {
                         if let Some(cfg) = dynamic.batch_udf.clone() {
                             cfg.merge_into(policy);
                         }
                     }
                     // Reads carry no wire-patchable sub-policy here; txn
                     // verify/roll never flow through the public batch wire path.
-                    BatchOperation::Read { .. }
-                    | BatchOperation::TxnVerify { .. }
-                    | BatchOperation::TxnRoll { .. } => {}
+                    BatchOp::Read { .. } | BatchOp::TxnVerify { .. } | BatchOp::TxnRoll { .. } => {}
                 }
             }
         }
@@ -2144,11 +2111,6 @@ impl Cluster {
         partition.get_node(self)
     }
 
-    pub fn get_master_node(&self, namespace: &str, partition_id: usize) -> Result<Arc<Node>> {
-        let partition = Partition::new(namespace, partition_id);
-        partition.get_master_node(self)
-    }
-
     pub fn get_random_node(&self) -> Result<Arc<Node>> {
         let node_array = self.nodes();
         let length = node_array.len() as isize;
@@ -2227,7 +2189,12 @@ impl Cluster {
         }
         let tend = lock(&self.tend_task).take();
         if let Some(handle) = tend {
+            // Tokio hands back a `Result` (a panicked tend task was already
+            // logged by the task itself); async-std hands back `()`.
+            #[cfg(feature = "rt-tokio")]
             let _ = handle.await;
+            #[cfg(feature = "rt-async-std")]
+            handle.await;
         }
         Ok(())
     }

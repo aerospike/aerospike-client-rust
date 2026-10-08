@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -15,10 +15,9 @@
 
 #[cfg(feature = "tls")]
 use std::convert::TryFrom;
-#[cfg(feature = "tls")]
-use std::sync::Arc;
-
 use std::io::Read;
+#[cfg(all(test, feature = "tls", feature = "rt-tokio"))]
+use std::sync::Arc;
 #[cfg(feature = "rt-tokio")]
 use std::pin::Pin;
 
@@ -330,6 +329,7 @@ impl Connection {
     /// the decision is made once, here, and never revisited for the life of
     /// the connection.
     #[cfg(all(feature = "tls", not(test)))]
+    #[allow(clippy::unused_async)] // the TLS build awaits the handshake here
     async fn get_netsocket(
         stream: TcpStream,
         host: &Host,
@@ -340,7 +340,7 @@ impl Connection {
             return Ok(Netsocket::Tcp(stream));
         }
         if let Some(tls_config) = policy.tls_policy.as_ref().map(|tls| tls.config.clone()) {
-            let connector = TlsConnector::from(Arc::new(tls_config));
+            let connector = TlsConnector::from(tls_config);
             let server_name = host
                 .tls_name
                 .clone()
@@ -355,6 +355,7 @@ impl Connection {
     }
 
     #[cfg(all(not(feature = "tls"), not(test)))]
+    #[allow(clippy::unused_async)] // the TLS build awaits the handshake here
     async fn get_netsocket(
         stream: TcpStream,
         _host: &Host,
@@ -565,6 +566,7 @@ impl Connection {
     }
 
     #[cfg(test)]
+    #[allow(clippy::unused_async)] // mirrors the real constructor's signature
     pub async fn new(
         host: &Host,
         policy: &ClientPolicy,
@@ -988,11 +990,6 @@ impl Connection {
         Ok(())
     }
 
-    pub fn is_idle(&self) -> bool {
-        self.idle_deadline
-            .is_some_and(|idle_dl| Instant::now() >= idle_dl)
-    }
-
     /// Where this connection stands relative to its idle deadline. A deadline
     /// within `expiry_horizon` counts as expiring.
     pub(crate) fn idle_status(&self, now: Instant, expiry_horizon: Duration) -> IdleStatus {
@@ -1128,16 +1125,17 @@ impl Connection {
         self.bytes_read = 0;
     }
 
-    pub const fn bytes_read(&self) -> usize {
-        self.bytes_read
-    }
-
     /// Bytes read from the socket by the current command so far — the
     /// per-command total the bytes-received metrics report. Unlike
     /// [`bytes_read`](Self::bytes_read) it survives the header/body/segment
     /// state transitions inside a response, and the parser's closing
     /// `reset_state`; it is cleared only when the next command begins
     /// writing (`flush` / `write_all`).
+    #[cfg(all(test, feature = "rt-tokio"))]
+    pub(crate) const fn bytes_read(&self) -> usize {
+        self.bytes_read
+    }
+
     pub const fn bytes_received(&self) -> usize {
         self.bytes_received
     }

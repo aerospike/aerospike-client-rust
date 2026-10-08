@@ -212,9 +212,9 @@ fn batch_foreach_reports_all_rows() {
     let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let s = seen.clone();
     client
-        .batch_foreach(&BatchPolicy::default(), ops, move |idx, row| {
+        .batch_foreach(&BatchPolicy::default(), &mut ops, move |idx, row| {
             s.lock().unwrap().push((idx, row.record.is_some()));
-            std::future::ready(true)
+            true
         })
         .unwrap();
     let mut seen = seen.lock().unwrap().clone();
@@ -429,4 +429,68 @@ fn works_from_inside_an_async_std_task_too() {
         })
         .await;
     });
+}
+
+#[test]
+fn background_task_waits_blocking() {
+    use aerospike_sync::task::Status;
+    use aerospike_sync::{operations, Bins, Statement};
+    use std::time::Duration;
+
+    let client = client();
+    let ns = namespace();
+    let set = unique_set("sync_task");
+    let wpolicy = WritePolicy::default();
+    for i in 0..5i64 {
+        client
+            .put(&wpolicy, &as_key!(&ns, &set, i), &[as_bin!("i", i)])
+            .unwrap();
+    }
+
+    let mut stmt = Statement::new(&ns, &set, Bins::All);
+    stmt.set_operations([operations::put(&as_bin!("tag", 1))]);
+    let task = client.query_operate(&wpolicy, stmt).unwrap();
+    let status = task
+        .wait_till_complete(Some(Duration::from_secs(30)))
+        .unwrap();
+    assert_eq!(status, Status::Complete);
+    assert_eq!(task.query_status().unwrap(), Status::Complete);
+
+    let record = client
+        .get(&aerospike_sync::ReadPolicy::default(), &as_key!(&ns, &set, 0i64), Bins::All)
+        .unwrap();
+    assert_eq!(record.bins.get("tag"), Some(&aerospike_sync::Value::Int(1)));
+}
+
+#[test]
+fn query_foreach_handle_waits_blocking() {
+    use aerospike_sync::{Bins, PartitionFilter, QueryPolicy, Statement};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let client = client();
+    let ns = namespace();
+    let set = unique_set("sync_qforeach");
+    let wpolicy = WritePolicy::default();
+    const COUNT: usize = 200;
+    for i in 0..COUNT as i64 {
+        client
+            .put(&wpolicy, &as_key!(&ns, &set, i), &[as_bin!("i", i)])
+            .unwrap();
+    }
+
+    let seen = Arc::new(AtomicUsize::new(0));
+    let counter = seen.clone();
+    let stmt = Statement::new(&ns, &set, Bins::All);
+    let mut handle = client
+        .query_foreach(&QueryPolicy::default(), PartitionFilter::all(), stmt, move |record| {
+            record.unwrap();
+            counter.fetch_add(1, Ordering::SeqCst);
+            true
+        })
+        .unwrap();
+    handle.wait().unwrap();
+    assert!(!handle.is_active());
+    assert_eq!(seen.load(Ordering::SeqCst), COUNT);
+    assert!(handle.partition_filter().is_some());
 }
