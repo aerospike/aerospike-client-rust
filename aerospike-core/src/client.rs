@@ -1145,7 +1145,8 @@ impl Client {
     ///     operations::get_bin("a"),
     /// ];
     /// match client.operate(&WritePolicy::default(), &key, &ops).await {
-    ///     Ok(record) => println!("The new value is {:?}", record.bins.get("a")),
+    ///     // One answer per op, in op order; the add answers nil.
+    ///     Ok(record) => println!("The new value is {:?}", record.results.unwrap()[1]),
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// # }

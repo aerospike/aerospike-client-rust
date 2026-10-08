@@ -103,7 +103,7 @@ async fn hll() {
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(
         *rec.bins.get("bin").unwrap(),
-        Value::from(2),
+        Value::MultiResult(vec![Value::Nil, Value::from(2)]),
         "Written Union count does not match"
     );
 

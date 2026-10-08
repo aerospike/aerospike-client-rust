@@ -156,8 +156,11 @@ pub async fn run() {
         scalar::get_bin("count"),
     ];
     let rec = client.operate(&wpolicy, &key, &ops).await.unwrap();
-    println!("operate: put+add+get => {:?}", rec.bins.get("count"));
-    assert_eq!(rec.bins.get("count"), Some(&Value::Int(42)));
+    // One answer per op, in op order; the put and the add answer nil, so the
+    // get's answer is at its own index (`bins["count"]` holds all three).
+    let results = rec.results.expect("an operate returns positional results");
+    println!("operate: put+add+get => {:?}", results[2]);
+    assert_eq!(results, vec![Value::Nil, Value::Nil, Value::Int(42)]);
 
     client.delete(&wpolicy, &key).await.unwrap();
     client.close().await.unwrap();

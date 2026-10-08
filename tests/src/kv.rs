@@ -254,11 +254,12 @@ async fn operate_mixed_read_write_keeps_results_aligned() {
     );
     assert_eq!(results[2], Value::from(15i64), "read after the add");
 
-    // The bin view still merges the two reads and skips the write's nil.
+    // The bin view keeps the write's nil too, so it lines up with the ops.
     assert_eq!(
         rec.bins.get("count"),
         Some(&Value::MultiResult(vec![
             Value::from(10i64),
+            Value::Nil,
             Value::from(15i64)
         ]))
     );
@@ -299,6 +300,28 @@ async fn operate_simple_write_between_cdt_ops_keeps_results_aligned() {
     assert_eq!(results[0], Value::from(3i64), "list size after append");
     assert!(results[1].is_nil(), "the add occupies its own slot");
     assert_eq!(results[2], Value::from(3i64), "list size read");
+
+    client.close().await.unwrap();
+}
+
+/// A write-only operate reports each written bin, with the write's nil.
+#[aerospike_macro::test]
+async fn operate_write_only_reports_nil_bins() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let key = as_key!(namespace, set_name, 1);
+    let wpolicy = WritePolicy::default();
+
+    let ops = &[
+        operations::put(&as_bin!("name", "J. Smith")),
+        operations::put(&as_bin!("visits", 1i64)),
+    ];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+
+    assert_eq!(rec.bins.get("name"), Some(&Value::Nil));
+    assert_eq!(rec.bins.get("visits"), Some(&Value::Nil));
+    assert_eq!(rec.bins.len(), 2);
 
     client.close().await.unwrap();
 }

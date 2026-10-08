@@ -141,7 +141,11 @@ fn operate_combines_write_and_read() {
         .put(&wpolicy, &key, &[as_bin!("counter", 10)])
         .unwrap();
     let record = client.operate(&wpolicy, &key, &ops).unwrap();
-    assert_eq!(record.bins.get("counter"), Some(&as_val!(15)));
+    assert_eq!(record.results, Some(vec![Value::Nil, as_val!(15)]));
+    assert_eq!(
+        record.bins.get("counter"),
+        Some(&Value::MultiResult(vec![Value::Nil, as_val!(15)]))
+    );
 }
 
 #[test]
