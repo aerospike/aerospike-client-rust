@@ -858,6 +858,12 @@ impl BatchOperateCommand {
 
                 results.push(value.clone());
 
+                // A reply op with no bin name answers a header op (`touch`,
+                // `get_header`): it is an op result, never a bin.
+                if name.is_empty() {
+                    continue;
+                }
+
                 // list/map operations may return multiple values for the same bin.
                 match bins.entry(name) {
                     Vacant(entry) => {

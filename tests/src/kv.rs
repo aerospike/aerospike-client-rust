@@ -19,6 +19,7 @@ use aerospike::{
     operations, ErrorKind, Expiration, GenerationPolicy, Key, ReadTouchTtl, RecordExistsAction,
     ResultCode,
 };
+use aerospike::{BatchOperation, BatchPolicy, BatchWritePolicy};
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
 
@@ -185,6 +186,65 @@ async fn connect() {
         .unwrap();
     assert!(!existed);
 
+    client.close().await.unwrap();
+}
+
+/// A reply op with no bin name (the server's answer to `touch` / `get_header`
+/// in one operate) is an op result, not a bin: it reaches `results` and never
+/// creates a `""` entry in `bins`, on the single-key and the batch path alike.
+#[aerospike_macro::test]
+async fn operate_header_ops_do_not_create_a_nameless_bin() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let key = as_key!(namespace, set_name, "touch");
+    let wpolicy = WritePolicy::default();
+    client
+        .put(&wpolicy, &key, &[as_bin!("touchbin", "v")])
+        .await
+        .unwrap();
+
+    let ops = [operations::touch(), operations::get_header()];
+    let rec = client.operate(&wpolicy, &key, &ops).await.unwrap();
+    assert!(
+        rec.bins.is_empty(),
+        "nameless op answer landed in bins: {:?}",
+        rec.bins
+    );
+    assert_eq!(rec.results, Some(vec![Value::Nil]));
+
+    let bin = as_bin!("touchbin", "w");
+    let ops = [operations::put(&bin), operations::touch(), operations::get()];
+    let rec = client.operate(&wpolicy, &key, &ops).await.unwrap();
+    assert_eq!(rec.bins.get("touchbin"), Some(&as_val!("w")));
+    assert!(!rec.bins.contains_key(""));
+
+    // The batch path parses the same reply shape.
+    let mut batch = vec![BatchOperation::write(
+        &BatchWritePolicy::default(),
+        key.clone(),
+        vec![operations::touch(), operations::get_header()],
+    )];
+    client
+        .batch(&BatchPolicy::write_default(), &mut batch)
+        .await
+        .unwrap();
+    let record = batch[0].record().expect("the row succeeded");
+    assert!(
+        record.bins.is_empty(),
+        "nameless op answer landed in batch bins: {:?}",
+        record.bins
+    );
+    assert!(record
+        .results
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .all(|v| matches!(v, Value::Nil)));
+
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     client.close().await.unwrap();
 }
 

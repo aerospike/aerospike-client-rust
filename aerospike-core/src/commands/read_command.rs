@@ -115,6 +115,12 @@ impl<'a> ReadCommand<'a> {
                 r.push(value.clone());
             }
 
+            // A reply op with no bin name answers a header op (`touch`,
+            // `get_header`): it is an op result, never a bin.
+            if name.is_empty() {
+                continue;
+            }
+
             // An operate keeps a nil result in the bin view, as the batch parser
             // does, so a bin's MultiResult lines up with its ops and a lone-key
             // batch row (which runs as an operate) matches its grouped siblings.

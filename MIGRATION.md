@@ -310,7 +310,9 @@ type by value. Selectors are numbers, not bits, so there is no `|` on them.
   value: `[put, add, get_bin]` on `count` gives `[Nil, Nil, 42]` where 2.x
   gave `42`. A write-only operate reports each written bin as `Nil` where 2.x
   returned no bins. Read the op's answer at its index in `Record::results`,
-  or take the last element of the bin's `MultiResult`.
+  or take the last element of the bin's `MultiResult`. An op that names no
+  bin (`touch`, `get_header`) answers in `results` only and never creates a
+  nameless bin.
 
 ### Sync client
 

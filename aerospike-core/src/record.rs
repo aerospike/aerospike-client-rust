@@ -52,7 +52,9 @@ pub struct Record {
     ///
     /// For an operate, every op the server answers lands here, a write's
     /// `Value::Nil` included; a bin answered more than once holds a
-    /// `Value::MultiResult` of its answers in op order.
+    /// `Value::MultiResult` of its answers in op order. An op that names no
+    /// bin (`touch`, `get_header`) answers in [`results`](Self::results)
+    /// only and never creates a nameless bin.
     pub bins: IndexMap<String, Value>,
 
     /// Positional op results in request order; `None` on non-operate paths.

@@ -345,6 +345,8 @@ Upgrading from 2.x: see the [migration guide](https://github.com/aerospike/aeros
     holds `Value::MultiResult([Nil, …, value])` in op order instead of the bare value, and a
     write-only operate reports each written bin as `Nil` instead of returning no bins. Read an op's
     answer at its index in `Record::results`, or take the last element of the bin's `MultiResult`.
+    An op that names no bin (`touch`, `get_header`) answers in `results` only; it never creates a
+    `""` bin, on either path.
 
 ## [3.0.0-alpha.2]
 
