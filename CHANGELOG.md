@@ -99,6 +99,9 @@
     wrapping the code in a client error; an out-of-range code no longer panics. `BinNameTooLong` reads
     "greater than 15 characters", the server's actual limit, and `FailForbidden` reads "Operation not
     allowed at this time" (a stray rename had produced "OperationType").
+  * `Error::base_message` for a UDF failure (`ErrorKind::UdfBadResponse`) is the UDF's `FAILURE` text, bare,
+    as for a server failure; it no longer carries a `UDF Bad Response: ` prefix. `Display` and the serialized
+    `message` follow.
   * A query or scan that fails at start-up (a filter expression the server cannot build, say), a
     background query or UDF job that fails, and a failed transaction verify, roll, close,
     mark-roll-forward or add-keys reply all reported a bare result code. The server's extended error
