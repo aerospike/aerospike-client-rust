@@ -4,16 +4,14 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description.workspace = true
+description = "Aerospike Client for Rust: the async client. Depend on the `aerospike` crate, which re-exports it."
 keywords.workspace = true
 categories.workspace = true
 homepage.workspace = true
 repository.workspace = true
 documentation.workspace = true
-readme.workspace = true
+readme = "README.md"
 rust-version.workspace = true
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 # Partition status locks: one byte each and no allocation on first lock. The
@@ -25,14 +23,12 @@ byteorder = "1.5"
 ripemd = "0.2"
 base64 = "0.23"
 rand = "0.10"
-lazy_static = "1.5"
 pwhash = "1.0"
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_yml = { version = "0.0.13", optional = true }
-aerospike-macro = { path = "../aerospike-macro", version = "3.0.0-alpha.2", optional = true }
-aerospike-rt = { path = "../aerospike-rt", version = "3.0.0-alpha.2" }
-# `tokio::select!` macro needs a direct dep; runtime features come via aerospike-rt.
-tokio = { version = "1", default-features = false, features = ["macros"] }
+aerospike-macro = { workspace = true, optional = true }
+# Everything runtime-specific, tokio included, comes through aerospike-rt.
+aerospike-rt = { workspace = true }
 futures = { version = "0.3.34" }
 async-trait = "0.1.92"
 flate2 = "1"
@@ -63,7 +59,9 @@ dynamic-config = ["serde", "serde_yml", "aerospike-macro"]
 lua = ["mlua"]
 rt-tokio = ["aerospike-rt/rt-tokio", "aerospike-macro?/rt-tokio"]
 rt-async-std = ["aerospike-rt/rt-async-std", "aerospike-macro?/rt-async-std"]
-tls = ["rustls", "tokio-rustls"]
+# Forwarded to aerospike-rt so its guard turns `tls` + `rt-async-std` into one
+# clear compile error instead of trait-bound failures in the connection layer.
+tls = ["rustls", "tokio-rustls", "aerospike-rt/tls"]
 sync = []
 
 [package.metadata.docs.rs]
@@ -75,7 +73,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dev-dependencies]
 env_logger = "0.11"
 hex = "0.4"
-bencher = "0.1"
 serde_json = "1.0"
 serde_bytes = "0.11"
 # Used only by doc-tests inside `aerospike-core` (`use aerospike::…` in
@@ -87,7 +84,6 @@ serde_bytes = "0.11"
 # satisfied; the runtime flag flows through whatever is set on
 # `aerospike-core` itself.
 aerospike = { path = "../", default-features = false, features = ["async"] }
-aerospike-macro = {path = "../aerospike-macro"}
-lazy_static = "1.5"
+aerospike-macro = { workspace = true }
 tokio = { version = "1.53.1", features = ["full"] }
 webpki-roots = "1"

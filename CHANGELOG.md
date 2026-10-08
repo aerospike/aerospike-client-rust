@@ -214,6 +214,15 @@
     set, including `rt-async-std`. Visible side effects: `ToValue`/`FromValue` for `HashMap` accept
     any hasher; a secondary-index query plan missing its index name or range is an error instead of
     a panic; `Value::Unknown` reaches Lua as bytes through the same arm as a blob.
+  * Packaging: `rt-async-std` together with `tls` fails with the one-line "TLS support is only
+    available for the tokio runtime" guard instead of trait-bound errors in the connection layer.
+    `aerospike-rt` defaults to `rt-tokio` so it builds, documents and publishes on its own; the
+    client crates depend on it without default features and still choose the runtime through
+    their `rt-*` feature. The published `aerospike` tarball carries only the sources, examples,
+    benches, tests and the four documents (no CI, registers or agent notes); every crate ships the
+    full Apache 2.0 licence text; the in-tree crate versions are spelled once in
+    `[workspace.dependencies]`; unused dependencies (`lazy_static`, `bencher`, `ripemd`) and
+    core's direct `tokio` dependency are gone.
 
 ## [3.0.0-alpha.2]
 

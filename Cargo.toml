@@ -13,10 +13,20 @@ documentation.workspace = true
 readme.workspace = true
 rust-version.workspace = true
 
-exclude = [
-    ".travis.yml",
-    ".travis/*",
-    ".appveyor.yml",
+# What the published crate carries. Everything else in the repository (CI,
+# cargo aliases, the work registers, agent notes) stays out of the tarball.
+# `tests/` ships because `benches/client_server.rs` includes `tests/common`
+# and the `[[test]]` targets below name files that must exist.
+include = [
+    "/src/**",
+    "/examples/**",
+    "/benches/**",
+    "/tests/**",
+    "/Cargo.toml",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/MIGRATION.md",
+    "/LICENSE.md",
 ]
 
 [workspace.package]
@@ -33,10 +43,6 @@ repository = "https://github.com/aerospike/aerospike-client-rust/"
 documentation = "https://docs.rs/aerospike/"
 readme = "README.md"
 
-[badges]
-travis-ci = { repository = "aerospike/aerospike-client-rust" }
-appveyor = { repository = "aerospike/aerospike-client-rust" }
-
 [package.metadata.docs.rs]
 # defaults already cover async, rt-tokio, tls, dynamic-config, serialization.
 # Never all-features: async+sync and the two runtimes are mutually exclusive.
@@ -44,11 +50,11 @@ features = ["lua"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-aerospike-core = {path = "aerospike-core", optional = true, version = "3.0.0-alpha.2"}
-# No default features: the runtime (and tls/serialization) follow the root
-# features below, so `sync` works with either runtime.
-aerospike-sync = {path = "aerospike-sync", optional = true, version = "3.0.0-alpha.2", default-features = false}
-aerospike-macro = {path = "aerospike-macro", optional = true, version = "3.0.0-alpha.2"}
+# Path + version for every in-tree crate live in `[workspace.dependencies]`
+# below, so a version bump touches one line.
+aerospike-core = { workspace = true, optional = true }
+aerospike-sync = { workspace = true, optional = true }
+aerospike-macro = { workspace = true, optional = true }
 
 [features]
 default = ["async", "serialization", "rt-tokio", "tls", "dynamic-config"]
@@ -62,8 +68,9 @@ async = ["aerospike-core"]
 sync = ["aerospike-sync"]
 rt-tokio = ["aerospike-core?/rt-tokio", "aerospike-macro/rt-tokio", "aerospike-sync?/rt-tokio"]
 rt-async-std = ["aerospike-core?/rt-async-std", "aerospike-macro/rt-async-std", "aerospike-sync?/rt-async-std"]
-# TLS is Tokio-only on either client: core's `tls` pulls in tokio-rustls.
-tls = ["aerospike-core?/tls", "aerospike-rt/tls", "aerospike-sync?/tls"]
+# TLS is Tokio-only on either client: core's `tls` pulls in tokio-rustls and
+# forwards the flag to `aerospike-rt`, whose guard rejects `tls` + `rt-async-std`.
+tls = ["aerospike-core?/tls", "aerospike-sync?/tls"]
 
 [[bench]]
 name = "client_server"
@@ -86,6 +93,20 @@ required-features = ["async"]
 [workspace]
 members = ["tools/benchmark", "aerospike-core", "aerospike-rt", "aerospike-sync", "aerospike-macro"]
 
+# The in-tree crates depend on each other by path for development and by exact
+# version once published; both are spelled here once. The version must match
+# `[workspace.package] version`.
+[workspace.dependencies]
+aerospike-core = { path = "aerospike-core", version = "3.0.0-alpha.2" }
+# No default features: the runtime (and tls/serialization) follow the facade's
+# features, so `sync` works with either runtime.
+aerospike-sync = { path = "aerospike-sync", version = "3.0.0-alpha.2", default-features = false }
+aerospike-macro = { path = "aerospike-macro", version = "3.0.0-alpha.2" }
+# No default features: `aerospike-rt` defaults to `rt-tokio` so it builds (and
+# documents) on its own, but inside the workspace the runtime is always chosen
+# by the client crate's `rt-*` feature.
+aerospike-rt = { path = "aerospike-rt", version = "3.0.0-alpha.2", default-features = false }
+
 [dev-dependencies]
 log = "0.4.34"
 env_logger = "0.11.11"
@@ -94,9 +115,8 @@ bencher = "0.1"
 serde_json = "1.0"
 rand = "0.10"
 lazy_static = "1.5"
-ripemd = "0.2"
-aerospike-macro = {path = "./aerospike-macro"}
-aerospike-rt = {path = "./aerospike-rt"}
+aerospike-macro = { workspace = true }
+aerospike-rt = { workspace = true }
 futures = { version = "0.3.34" }
 tokio = { version = "1.53.1", features = ["full"] }
 proptest = "1.11.0"

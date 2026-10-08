@@ -23,9 +23,10 @@ change are listed in [CHANGELOG.md](CHANGELOG.md).
 | `lua` | not present | client-side Lua for `query_aggregate` and stream UDFs; off by default, compiles a vendored Lua 5.4 |
 | `sync` | Tokio or async-std | unchanged: the blocking client follows the `rt-tokio` / `rt-async-std` feature enabled at the root |
 
-`rt-tokio` and `rt-async-std` remain mutually exclusive. A crate that already
-uses `default-features = false` keeps building without changes; add
-`dynamic-config` or `lua` only if you use them.
+`rt-tokio` and `rt-async-std` remain mutually exclusive, and `tls` still needs
+`rt-tokio`; that combination now fails with one clear compile error rather than
+trait-bound errors. A crate that already uses `default-features = false` keeps
+building without changes; add `dynamic-config` or `lua` only if you use them.
 
 ### Errors
 
