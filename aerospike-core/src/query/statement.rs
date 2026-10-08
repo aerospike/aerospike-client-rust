@@ -119,7 +119,7 @@ impl Statement {
 
     /// The secondary-index filter this statement queries by, or `None` for a
     /// scan. An empty `filters` list is a scan, the same as `None`.
-    pub(crate) fn filter(&self) -> Option<&Filter> {
+    pub(crate) const fn filter(&self) -> Option<&Filter> {
         self.filter.as_ref()
     }
 

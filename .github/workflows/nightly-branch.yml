@@ -20,10 +20,6 @@ env:
   PROPTEST_CASES: 25
   # The same server version the pull-request workflow pins.
   SERVER_VERSION: "8.2.0.0"
-  # The `cdt_list` integration test's future overflows libtest's 2 MiB thread
-  # stack under async-std (it is polled on the test thread there); a larger
-  # stack keeps the async-std legs green until the test is split.
-  RUST_MIN_STACK: "16777216"
 
 jobs:
   # ────────────────────────────────────────────────────────────────────────

@@ -22,10 +22,6 @@ env:
   # One server version for every leg, community and enterprise alike; the
   # nightly workflow pins the same value.
   SERVER_VERSION: "8.2.0.0"
-  # The `cdt_list` integration test's future overflows libtest's 2 MiB thread
-  # stack under async-std (it is polled on the test thread there); a larger
-  # stack keeps the async-std legs green until the test is split.
-  RUST_MIN_STACK: "16777216"
 
 # Every `uses:` is pinned to a commit; the comment names the tag it was taken
 # from. The server legs build and test the feature set a user of that runtime

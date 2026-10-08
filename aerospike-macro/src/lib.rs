@@ -42,8 +42,11 @@ pub fn test(_attr: TokenStream, input: TokenStream) -> TokenStream {
                 .is_test(true)
                 .try_init();
 
-                // Use a shared runtime for the tests and the client:
-                crate::common::RUNTIME.block_on( async {#body} )
+                // Use a shared runtime for the tests and the client. The body
+                // is boxed: a long async test is one large future, and on the
+                // 2 MiB libtest thread it overflowed the stack when polled
+                // in place.
+                crate::common::RUNTIME.block_on(Box::pin(async {#body}))
             }
         }
     } else if cfg!(feature = "rt-async-std") {
@@ -57,8 +60,10 @@ pub fn test(_attr: TokenStream, input: TokenStream) -> TokenStream {
                 .is_test(true)
                 .try_init();
 
-                // Runtime is already shared for async_std
-                ::aerospike_rt::async_std::task::block_on( async {#body} )
+                // Runtime is already shared for async_std. The body is boxed
+                // for the same reason as on tokio: polled in place, a long
+                // test's future overflowed the 2 MiB libtest thread stack.
+                ::aerospike_rt::async_std::task::block_on(Box::pin(async {#body}))
             }
         }
     } else {

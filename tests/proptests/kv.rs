@@ -35,15 +35,13 @@ proptest_async::proptest! {
 
         match err {
             Err(e) if e.server_result_code() == Some(ResultCode::FilteredOut) => (), // it's fine
+            // UpdateOnly / ReplaceOnly on a missing record: the expected outcome.
             Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError)
-                && (write_policy.record_exists_action != RecordExistsAction::UpdateOnly) &&
-                 (write_policy.record_exists_action != RecordExistsAction::ReplaceOnly) => {
-                    panic!("{}",e);
-                 },
+                && (write_policy.record_exists_action == RecordExistsAction::UpdateOnly
+                    || write_policy.record_exists_action == RecordExistsAction::ReplaceOnly) => (),
+            // CreateOnly on an existing record: the expected outcome.
             Err(e) if e.server_result_code() == Some(ResultCode::KeyExistsError)
-                && write_policy.record_exists_action != RecordExistsAction::CreateOnly => {
-                    panic!("{}",e);
-                 },
+                && write_policy.record_exists_action == RecordExistsAction::CreateOnly => (),
             Err(e) if e.server_result_code() == Some(ResultCode::GenerationError) => {
                 if write_policy.generation_policy != GenerationPolicy::None {
                     return; // it's fine
@@ -89,15 +87,13 @@ proptest_async::proptest! {
 
         match err {
             Err(e) if e.server_result_code() == Some(ResultCode::FilteredOut) => (), // it's fine
+            // UpdateOnly / ReplaceOnly on a missing record: the expected outcome.
             Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError)
-                && (write_policy.record_exists_action != RecordExistsAction::UpdateOnly) &&
-                 (write_policy.record_exists_action != RecordExistsAction::ReplaceOnly) => {
-                    panic!("{}",e);
-                 },
+                && (write_policy.record_exists_action == RecordExistsAction::UpdateOnly
+                    || write_policy.record_exists_action == RecordExistsAction::ReplaceOnly) => (),
+            // CreateOnly on an existing record: the expected outcome.
             Err(e) if e.server_result_code() == Some(ResultCode::KeyExistsError)
-                && write_policy.record_exists_action != RecordExistsAction::CreateOnly => {
-                    panic!("{}",e);
-                 },
+                && write_policy.record_exists_action == RecordExistsAction::CreateOnly => (),
             Err(e) if e.server_result_code() == Some(ResultCode::GenerationError) => {
                 if write_policy.generation_policy != GenerationPolicy::None {
                     return; // it's fine
@@ -124,15 +120,13 @@ proptest_async::proptest! {
 
         match err {
             Err(e) if e.server_result_code() == Some(ResultCode::FilteredOut) => (), // it's fine
+            // UpdateOnly / ReplaceOnly on a missing record: the expected outcome.
             Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError)
-                && (write_policy.record_exists_action != RecordExistsAction::UpdateOnly) &&
-                 (write_policy.record_exists_action != RecordExistsAction::ReplaceOnly) => {
-                    panic!("{}",e);
-                 },
+                && (write_policy.record_exists_action == RecordExistsAction::UpdateOnly
+                    || write_policy.record_exists_action == RecordExistsAction::ReplaceOnly) => (),
+            // CreateOnly on an existing record: the expected outcome.
             Err(e) if e.server_result_code() == Some(ResultCode::KeyExistsError)
-                && write_policy.record_exists_action != RecordExistsAction::CreateOnly => {
-                    panic!("{}",e);
-                 },
+                && write_policy.record_exists_action == RecordExistsAction::CreateOnly => (),
             Err(e) if e.server_result_code() == Some(ResultCode::GenerationError) => {
                 if write_policy.generation_policy != GenerationPolicy::None {
                     return; // it's fine
@@ -159,15 +153,13 @@ proptest_async::proptest! {
 
         match err {
             Err(e) if e.server_result_code() == Some(ResultCode::FilteredOut) => (), // it's fine
+            // UpdateOnly / ReplaceOnly on a missing record: the expected outcome.
             Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError)
-                && (write_policy.record_exists_action != RecordExistsAction::UpdateOnly) &&
-                 (write_policy.record_exists_action != RecordExistsAction::ReplaceOnly) => {
-                    panic!("{}",e);
-                 },
+                && (write_policy.record_exists_action == RecordExistsAction::UpdateOnly
+                    || write_policy.record_exists_action == RecordExistsAction::ReplaceOnly) => (),
+            // CreateOnly on an existing record: the expected outcome.
             Err(e) if e.server_result_code() == Some(ResultCode::KeyExistsError)
-                && write_policy.record_exists_action != RecordExistsAction::CreateOnly => {
-                    panic!("{}",e);
-                 },
+                && write_policy.record_exists_action == RecordExistsAction::CreateOnly => (),
             Err(e) if e.server_result_code() == Some(ResultCode::GenerationError) => {
                 if write_policy.generation_policy != GenerationPolicy::None {
                     return; // it's fine
@@ -191,10 +183,9 @@ proptest_async::proptest! {
         match err {
             Err(e) if e.server_result_code() == Some(ResultCode::FilteredOut) => (), // it's fine
             Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError) => (),
+            // CreateOnly on an existing record: the expected outcome.
             Err(e) if e.server_result_code() == Some(ResultCode::KeyExistsError)
-                && write_policy.record_exists_action != RecordExistsAction::CreateOnly => {
-                    panic!("{}",e);
-                 },
+                && write_policy.record_exists_action == RecordExistsAction::CreateOnly => (),
             Err(e) if e.server_result_code() == Some(ResultCode::GenerationError) => {
                 if write_policy.generation_policy != GenerationPolicy::None {
                     return; // it's fine
@@ -218,10 +209,9 @@ proptest_async::proptest! {
         match err {
             Err(e) if e.server_result_code() == Some(ResultCode::FilteredOut) => (), // it's fine
             Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError) => (),
+            // CreateOnly on an existing record: the expected outcome.
             Err(e) if e.server_result_code() == Some(ResultCode::KeyExistsError)
-                && write_policy.record_exists_action != RecordExistsAction::CreateOnly => {
-                    panic!("{}",e);
-                 },
+                && write_policy.record_exists_action == RecordExistsAction::CreateOnly => (),
             Err(e) if e.server_result_code() == Some(ResultCode::GenerationError) => {
                 if write_policy.generation_policy != GenerationPolicy::None {
                     return; // it's fine

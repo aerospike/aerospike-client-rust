@@ -49,10 +49,9 @@ proptest_async::proptest! {
             }
             Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError) => {
             },
+            // CreateOnly on an existing record: the expected outcome.
             Err(e) if e.server_result_code() == Some(ResultCode::KeyExistsError)
-                && write_policy.record_exists_action != RecordExistsAction::CreateOnly => {
-                    panic!("{}",e);
-                 },
+                && write_policy.record_exists_action == RecordExistsAction::CreateOnly => (),
             Err(e) if e.server_result_code() == Some(ResultCode::GenerationError) => {
                 if write_policy.generation_policy != GenerationPolicy::None {
                     return; // it's fine
