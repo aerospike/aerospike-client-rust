@@ -255,6 +255,9 @@ mod tests {
     use super::*;
 
     #[test]
+    // One scripted walk through every address shape in a single peers reply;
+    // clippy 1.87 counts its assertions past the complexity threshold.
+    #[allow(clippy::cognitive_complexity)]
     fn parse_peers() {
         // Server format: gen,port,[[peer1],[peer2],...]
         let result = PeersParser::new("1234567,3000,[[n1,t1,[192.168.4.10,192.168.3.10]],[n2,t2,[[2018::0002],[2018::0001]:4000]],[n3,t3,[foo1.aerocluster.com,foo2.aerocluster.new:3100]],[n4,t4,[foo2.aerocluster.com:5000]]]")

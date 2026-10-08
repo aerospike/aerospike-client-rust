@@ -21,8 +21,6 @@
 // it produces, so a row that silently stops repeating — or starts repeating
 // when it must not — changes the encoded length and fails here.
 
-#![cfg(test)]
-
 use crate::batch::BatchOperation;
 use crate::commands::buffer::Buffer;
 use crate::operations;

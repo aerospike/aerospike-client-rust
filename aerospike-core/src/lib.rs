@@ -96,57 +96,55 @@
 //! use aerospike::{as_bin, as_key, Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
 //! use aerospike::operations;
 //!
-//! fn main() {
-//!     let rt = tokio::runtime::Runtime::new().unwrap();
-//!     rt.block_on(async {
-//!         let cpolicy = ClientPolicy::default();
-//!         let hosts = env::var("AEROSPIKE_HOSTS")
-//!             .unwrap_or_else(|_| String::from("127.0.0.1:3000"));
-//!         let client = Client::new(&cpolicy, &hosts)
-//!             .await
-//!             .expect("Failed to connect to cluster");
-//!         let client = Arc::new(client);
+//! let rt = tokio::runtime::Runtime::new().unwrap();
+//! rt.block_on(async {
+//!     let cpolicy = ClientPolicy::default();
+//!     let hosts = env::var("AEROSPIKE_HOSTS")
+//!         .unwrap_or_else(|_| String::from("127.0.0.1:3000"));
+//!     let client = Client::new(&cpolicy, &hosts)
+//!         .await
+//!         .expect("Failed to connect to cluster");
+//!     let client = Arc::new(client);
 //!
-//!         let now = Instant::now();
-//!         for i in 0..2 {
-//!             let client = Arc::clone(&client);
-//!             let rpolicy = ReadPolicy::default();
-//!             let wpolicy = WritePolicy::default();
-//!             let key = as_key!("test", "test", i);
-//!             let bins = [
-//!                 as_bin!("int", 123),
-//!                 as_bin!("str", "Hello, World!"),
-//!             ];
+//!     let now = Instant::now();
+//!     for i in 0..2 {
+//!         let client = Arc::clone(&client);
+//!         let rpolicy = ReadPolicy::default();
+//!         let wpolicy = WritePolicy::default();
+//!         let key = as_key!("test", "test", i);
+//!         let bins = [
+//!             as_bin!("int", 123),
+//!             as_bin!("str", "Hello, World!"),
+//!         ];
 //!
-//!             client.put(&wpolicy, &key, &bins).await.unwrap();
-//!             let rec = client.get(&rpolicy, &key, Bins::All).await;
-//!             println!("Record: {}", rec.unwrap());
+//!         client.put(&wpolicy, &key, &bins).await.unwrap();
+//!         let rec = client.get(&rpolicy, &key, Bins::All).await;
+//!         println!("Record: {}", rec.unwrap());
 //!
-//!             client.touch(&wpolicy, &key).await.unwrap();
-//!             let rec = client.get(&rpolicy, &key, Bins::All).await;
-//!             println!("Record: {}", rec.unwrap());
+//!         client.touch(&wpolicy, &key).await.unwrap();
+//!         let rec = client.get(&rpolicy, &key, Bins::All).await;
+//!         println!("Record: {}", rec.unwrap());
 //!
-//!             let rec = client.get(&rpolicy, &key, Bins::None).await;
-//!             println!("Record Header: {}", rec.unwrap());
+//!         let rec = client.get(&rpolicy, &key, Bins::None).await;
+//!         println!("Record Header: {}", rec.unwrap());
 //!
-//!             let exists = client.exists(&rpolicy, &key).await.unwrap();
-//!             println!("exists: {}", exists);
+//!         let exists = client.exists(&rpolicy, &key).await.unwrap();
+//!         println!("exists: {}", exists);
 //!
-//!             let bin = as_bin!("int", 999);
-//!             let ops = &vec![operations::put(&bin), operations::get()];
-//!             let op_rec = client.operate(&wpolicy, &key, ops).await;
-//!             println!("operate: {}", op_rec.unwrap());
+//!         let bin = as_bin!("int", 999);
+//!         let ops = &vec![operations::put(&bin), operations::get()];
+//!         let op_rec = client.operate(&wpolicy, &key, ops).await;
+//!         println!("operate: {}", op_rec.unwrap());
 //!
-//!             let existed = client.delete(&wpolicy, &key).await.unwrap();
-//!             println!("existed (should be true): {}", existed);
+//!         let existed = client.delete(&wpolicy, &key).await.unwrap();
+//!         println!("existed (should be true): {}", existed);
 //!
-//!             let existed = client.delete(&wpolicy, &key).await.unwrap();
-//!             println!("existed (should be false): {}", existed);
-//!         }
+//!         let existed = client.delete(&wpolicy, &key).await.unwrap();
+//!         println!("existed (should be false): {}", existed);
+//!     }
 //!
-//!         println!("total time: {:?}", now.elapsed());
-//!     });
-//! }
+//!     println!("total time: {:?}", now.elapsed());
+//! });
 //! ```
 
 // `error_chain` can recurse deeply

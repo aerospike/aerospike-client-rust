@@ -329,7 +329,7 @@ impl ReadUpdateTask {
         rng: &mut StdRng,
         results: &mut Vec<(Status, Duration, OpType)>,
         batch_ops: &mut Vec<BatchOperation>,
-        _bins_buffer: &mut Vec<Bin>,
+        _bins_buffer: &mut [Bin],
     ) {
         if keys.is_empty() {
             return;

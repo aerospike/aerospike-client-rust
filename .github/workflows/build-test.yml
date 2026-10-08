@@ -130,7 +130,10 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --workspace --exclude aerospike-client-rust-benchmark
-          cargo test -p aerospike-core --lib
+          # aerospike-core has no default features: a runtime must be named
+          # or aerospike-rt refuses to build.
+          cargo test -p aerospike-core --lib \
+            --no-default-features --features serialization,rt-tokio,tls,dynamic-config
           cargo build --workspace --exclude aerospike-client-rust-benchmark \
             --no-default-features --features async,serialization,rt-async-std,dynamic-config
 

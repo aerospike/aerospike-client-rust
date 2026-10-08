@@ -42,7 +42,7 @@ proptest_async::proptest! {
 
         match res {
             Err(e) if e.server_result_code() == Some(ResultCode::ParameterError)
-                && write_policy.respond_per_each_op && ops.into_iter().find(|op| *op == PropOperation::Get).is_some() => {
+                && write_policy.respond_per_each_op && ops.contains(&PropOperation::Get) => {
                     return;
                 }, // it's fine
             Err(e) if e.server_result_code() == Some(ResultCode::BinTypeError) => {
