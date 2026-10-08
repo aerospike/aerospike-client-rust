@@ -74,7 +74,7 @@ pub use node_metrics::{
     PoolGauges, COMMAND_TYPE_COUNT,
 };
 #[cfg(feature = "dynamic-config")]
-pub(crate) use policy::MetricsPolicyConfig;
+pub use policy::MetricsPolicyConfig;
 pub use policy::{
     Labels, LatencyUnit, MetricsPolicy, DEFAULT_LATENCY_COLUMNS, DEFAULT_LATENCY_SHIFT,
     MICROS_LATENCY_COLUMNS, MILLIS_LATENCY_COLUMNS,

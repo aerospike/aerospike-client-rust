@@ -179,7 +179,10 @@
     in: `Key: Hash`, `PartitionFilter: Clone`, `Copy` on the small policy enums, `PartialEq` on every
     policy, `Record`, `Statement` and `Filter`, `UdfLang: Copy + Eq + Hash`, `Bins` from
     `Vec<String>`; `TlsPolicy.config` is an `Arc<rustls::ClientConfig>`, shared with the
-    connector instead of cloned per connection. The
+    connector instead of cloned per connection. `Hash for Value` is total (a map with an invalid
+    key type errors when encoded instead of panicking when hashed), `Replica` is exported at the
+    root, `Record::expiration()` is new, the dynamic-config section types are public and
+    documented, and `Value::particle_type` is crate-private. The
     `Policy` trait is no longer
     exported. Acronyms in
     identifiers are `UpperCamelCase`: `BatchUdfPolicy`, `UdfLang`, `ReadModeAp`/`ReadModeSc`,

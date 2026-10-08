@@ -194,6 +194,7 @@ a supported way to build a policy.
 | `Sampler { range, threshold }` public fields | `range()` / `threshold()`; build with `Sampler::new`, `all`, `never`, `probability` |
 | `CdtContext { id, flags, value }` public fields, `LoopVarPart(pub i64)` | private; use the `ctx_*` builders, and `LoopVarPart::{MAP_KEY, VALUE, INDEX}` or `from_bits` |
 | `recordset.partition_filter().await`, `handle.partition_filter().await` | plain methods, no `.await` |
+| `Value::particle_type()` | crate-private; it was the wire code, never meaningful to callers |
 | `ClientPolicy::set_auth_mode(..) -> Result<()>` | returns nothing; it cannot fail. A password bcrypt refuses is reported by `Client::new` |
 | `RecordMapper::id(&self) -> Value` (the derive panicked on an unconvertible key) | `-> Result<Value>` |
 | `i64::try_from(value)` and the other `TryFrom<Value>` impls erred with a `String` | they err with the crate `Error` (`InvalidArgument`) |
@@ -324,6 +325,14 @@ type by value. Selectors are numbers, not bits, so there is no `|` on them.
 
 No migration is needed for these; see the changelog for details.
 
+- `Value` always hashes, so any value can go in a `HashSet` or key a client-side
+  map; a map with a key the server does not accept (anything but an integer, a
+  string or a blob) fails with `InvalidArgument` when encoded, where 2.x panicked
+  while hashing. `Value::is_valid_map_key` tells in advance.
+- `Replica` is exported at the crate root; `Record::expiration()` returns the
+  raw server stamp; under `dynamic-config` the section types
+  (`config::ReadPolicyConfig`, `WritePolicyConfig`, …) are public, so a custom
+  `ConfigProvider` can build a `ConfigDocument` itself.
 - Derives: `Key: Hash`; `PartitionFilter: Clone` (an independent cursor);
   `Copy` on `GenerationPolicy`, `CommitLevel`, `RecordExistsAction`,
   `QueryDuration`; `PartialEq` on every policy (`TlsPolicy` compares its

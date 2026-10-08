@@ -324,12 +324,25 @@ pub fn pack_array(buf: &mut Option<&mut Buffer>, values: &[Value]) -> Result<usi
     Ok(size)
 }
 
+/// A map key must be an integer, a string or a blob; anything else is a
+/// caller mistake the server would reject, reported here before the request
+/// is sent.
+fn pack_map_key(buf: &mut Option<&mut Buffer>, key: &Value) -> Result<usize> {
+    if !key.is_valid_map_key() {
+        return Err(Error::invalid_argument(format!(
+            "{} cannot be a map key; only integers, strings and blobs can",
+            key.type_label()
+        )));
+    }
+    pack_value(buf, key)
+}
+
 pub fn pack_map(buf: &mut Option<&mut Buffer>, map: &HashMap<Value, Value>) -> Result<usize> {
     let mut size = 0;
 
     size += pack_map_begin(buf, map.len(), MapOrder::Unordered);
     for (key, val) in map {
-        size += pack_value(buf, key)?;
+        size += pack_map_key(buf, key)?;
         size += pack_value(buf, val)?;
     }
 
@@ -348,7 +361,7 @@ pub fn pack_index_map(
 
     size += pack_map_begin(buf, map.len(), MapOrder::Unordered);
     for (key, val) in map {
-        size += pack_value(buf, key)?;
+        size += pack_map_key(buf, key)?;
         size += pack_value(buf, val)?;
     }
 
@@ -363,7 +376,7 @@ pub fn pack_ordered_map(
 
     size += pack_map_begin(buf, map.len(), MapOrder::KeyOrdered);
     for (key, val) in map {
-        size += pack_value(buf, key)?;
+        size += pack_map_key(buf, key)?;
         size += pack_value(buf, val)?;
     }
 
@@ -776,5 +789,19 @@ mod tests {
                 0x82, 0xa2, 0x03, 0x61, 0x01, 0xa2, 0x03, 0x62, 0x02, // canonical inner
             ]
         );
+    }
+
+    #[test]
+    fn maps_with_invalid_keys_are_rejected_before_sending() {
+        let mut map = HashMap::new();
+        map.insert(Value::from(1.5), Value::from(1));
+        let err = pack_value(&mut None, &Value::HashMap(map)).unwrap_err();
+        assert!(err.to_string().contains("map key"), "{err}");
+
+        let mut ok = HashMap::new();
+        ok.insert(Value::from("k"), Value::from(1));
+        ok.insert(Value::from(2), Value::from(2));
+        ok.insert(Value::from(vec![1u8, 2]), Value::from(3));
+        assert!(pack_value(&mut None, &Value::HashMap(ok)).is_ok());
     }
 }

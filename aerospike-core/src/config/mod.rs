@@ -42,10 +42,13 @@ pub use yaml::YamlFileProvider;
 
 use serde::Deserialize;
 
-use crate::batch::{BatchDeletePolicyConfig, BatchUdfPolicyConfig};
-use crate::metrics::MetricsPolicyConfig;
-use crate::policy::{
-    BatchPolicyConfig, ClientPolicyConfig, QueryPolicyConfig, ReadPolicyConfig,
+// The sections of a document, generated from the policy types by
+// `#[derive(Config)]`: a custom [`ConfigProvider`] builds a [`ConfigDocument`]
+// from them.
+pub use crate::batch::{BatchDeletePolicyConfig, BatchUdfPolicyConfig};
+pub use crate::metrics::MetricsPolicyConfig;
+pub use crate::policy::{
+    BasePolicyConfig, BatchPolicyConfig, ClientPolicyConfig, QueryPolicyConfig, ReadPolicyConfig,
     TxnRollPolicyConfig, TxnVerifyPolicyConfig, WritePolicyConfig,
 };
 

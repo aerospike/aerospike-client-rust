@@ -98,6 +98,16 @@ impl Record {
         }
     }
 
+    /// The server's expiration stamp as stored: seconds since the Citrusleaf
+    /// epoch ([`citrusleaf_epoch`]) at which the record expires, `0` when it
+    /// never does. [`time_to_live`](Self::time_to_live) is the remaining
+    /// duration.
+    #[must_use]
+    pub const fn expiration(&self) -> u32 {
+        self.expiration
+    }
+
+    /// The `i`th positional operation result, when `results` were populated.
     /// `None` is returned both for not-populated and out-of-range — callers
     /// can't distinguish.
     #[must_use]

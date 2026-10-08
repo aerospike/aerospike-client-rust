@@ -198,7 +198,8 @@ pub use policy::TlsPolicy;
 pub use policy::{
     AdminPolicy, AuthMode, BasePolicy, BatchPolicy, ClientPolicy, CommitLevel, Concurrency,
     Expiration, GenerationPolicy, QueryDuration, QueryPolicy, ReadModeAp, ReadModeSc,
-    ReadPolicy, ReadTouchTtl, RecordExistsAction, TxnRollPolicy, TxnVerifyPolicy, WritePolicy,
+    ReadPolicy, ReadTouchTtl, RecordExistsAction, Replica, TxnRollPolicy, TxnVerifyPolicy,
+    WritePolicy,
 };
 pub use privilege::{Privilege, PrivilegeCode};
 pub use query::{

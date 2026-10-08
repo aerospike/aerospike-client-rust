@@ -189,6 +189,15 @@ pub fn derive_config(input: TokenStream) -> TokenStream {
             serde_attrs.push(quote!(#[serde(rename = #rename)]));
         }
 
+        // The config field points at the policy field it overrides; the
+        // policy's own doc is not copied, its links would not resolve here.
+        let doc_attrs: Vec<proc_macro2::TokenStream> = {
+            let field_name = name.as_ref().map_or_else(String::new, ToString::to_string);
+            let text =
+                format!("Overrides [`{struct_name}::{field_name}`] when present.");
+            vec![quote!(#[doc = #text])]
+        };
+
         if cfg.flatten {
             let config_ty = match ty {
                 Type::Path(type_path) => {
@@ -203,6 +212,7 @@ pub fn derive_config(input: TokenStream) -> TokenStream {
             };
 
             config_fields.push(quote! {
+                #(#doc_attrs)*
                 #[serde(flatten)]
                 #(#serde_attrs)*
                 pub #name: ::core::option::Option<#config_ty>
@@ -217,6 +227,7 @@ pub fn derive_config(input: TokenStream) -> TokenStream {
             });
         } else {
             config_fields.push(quote! {
+                #(#doc_attrs)*
                 #(#serde_attrs)*
                 pub #name: ::core::option::Option<#ty>
             });
@@ -246,9 +257,13 @@ pub fn derive_config(input: TokenStream) -> TokenStream {
         .filter(|a| a.path().is_ident("serde"))
         .collect();
 
+    let config_doc = format!(
+        "Dynamic-configuration section for [`{struct_name}`]: every field is optional and, \
+         when present, overrides the policy field of the same name on reload."
+    );
     let expanded = quote! {
         #(#serde_struct_attrs)*
-        #[doc(hidden)]
+        #[doc = #config_doc]
         #[derive(
             ::core::default::Default,
             ::core::clone::Clone,

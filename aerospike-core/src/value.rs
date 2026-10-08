@@ -355,32 +355,79 @@ impl PartialEq for Value {
 
 impl Eq for Value {}
 
+/// Every value hashes, so any `Value` can sit in a `HashSet` or key a
+/// `HashMap` on the client; whether the server accepts it as a map key is
+/// checked when the map is encoded ([`Value::is_valid_map_key`]).
+///
+/// Consistent with [`PartialEq`]: the three map variants compare by content
+/// regardless of variant, so maps contribute only their length.
 #[allow(clippy::derived_hash_with_manual_eq)]
 impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match *self {
-            #[allow(clippy::collection_is_never_read)]
-            Value::Nil => {
-                let v: Option<u8> = None;
+            Value::Nil => 0u8.hash(state),
+            Value::Bool(v) => {
+                1u8.hash(state);
                 v.hash(state);
             }
-            Value::Bool(_) => panic!("Booleans cannot be used as map keys."),
-            Value::Int(ref val) => val.hash(state),
-            Value::Float(_) => panic!("Floats cannot be used as map keys."),
-            Value::String(ref val) => val.hash(state),
-            Value::GeoJson(_) => panic!("GeoJson cannot be used as map keys."),
-            Value::Blob(ref val) => val.hash(state),
-            Value::Hll(_) => panic!("HLL cannot be used as map keys."),
-            Value::MultiResult(_) => panic!("MultiValues cannot be used as map keys."),
-            Value::List(_) => panic!("Lists cannot be used as map keys."),
-            Value::HashMap(_) => panic!("HashMaps cannot be used as map keys."),
-            Value::OrderedMap(_) => panic!("OrderedMaps cannot be used as map keys."),
-            Value::SortedMap(_) | Value::KeyValueList(_) => {
-                panic!("SortedMaps cannot be used as map keys.")
+            Value::Int(v) => {
+                2u8.hash(state);
+                v.hash(state);
             }
-            Value::Infinity => panic!("Infinity cannot be used as map keys."),
-            Value::Wildcard => panic!("Wildcard cannot be used as map keys."),
-            Value::Unknown(..) => panic!("Unknown values cannot be used as map keys."),
+            Value::Float(ref v) => {
+                3u8.hash(state);
+                match *v {
+                    FloatValue::F32(bits) => (0u8, u64::from(bits)).hash(state),
+                    FloatValue::F64(bits) => (1u8, bits).hash(state),
+                }
+            }
+            Value::String(ref v) => {
+                4u8.hash(state);
+                v.hash(state);
+            }
+            Value::GeoJson(ref v) => {
+                5u8.hash(state);
+                v.hash(state);
+            }
+            Value::Blob(ref v) => {
+                6u8.hash(state);
+                v.hash(state);
+            }
+            Value::Hll(ref v) => {
+                7u8.hash(state);
+                v.hash(state);
+            }
+            Value::List(ref v) => {
+                8u8.hash(state);
+                v.hash(state);
+            }
+            Value::MultiResult(ref v) => {
+                9u8.hash(state);
+                v.hash(state);
+            }
+            Value::HashMap(ref m) => {
+                10u8.hash(state);
+                m.len().hash(state);
+            }
+            Value::OrderedMap(ref m) => {
+                10u8.hash(state);
+                m.len().hash(state);
+            }
+            Value::SortedMap(ref m) => {
+                10u8.hash(state);
+                m.len().hash(state);
+            }
+            Value::KeyValueList(ref v) => {
+                11u8.hash(state);
+                v.len().hash(state);
+            }
+            Value::Infinity => 12u8.hash(state),
+            Value::Wildcard => 13u8.hash(state),
+            Value::Unknown(code, ref bytes) => {
+                14u8.hash(state);
+                code.hash(state);
+                bytes.hash(state);
+            }
         }
     }
 }
@@ -389,6 +436,14 @@ impl Value {
     /// Returns true if this value is the empty value (nil).
     pub const fn is_nil(&self) -> bool {
         matches!(*self, Value::Nil)
+    }
+
+    /// Whether the server accepts this value as a map key: integers, strings
+    /// and blobs. A map with any other key type is rejected with
+    /// `InvalidArgument` when it is encoded, before anything is sent.
+    #[must_use]
+    pub const fn is_valid_map_key(&self) -> bool {
+        matches!(*self, Value::Int(_) | Value::String(_) | Value::Blob(_))
     }
 
     /// Return the wire particle-type code for the value. Returns the raw
@@ -403,7 +458,7 @@ impl Value {
     /// directly and never asks for a particle code. Reaching here means one was
     /// handed to the client as an ordinary bin value or record key, which is a
     /// caller mistake and is reported as `PARAMETER_ERROR`.
-    pub fn particle_type(&self) -> Result<u8> {
+    pub(crate) fn particle_type(&self) -> Result<u8> {
         let code = match *self {
             Value::Nil => ParticleType::Null as u8,
             Value::Int(_) => ParticleType::Integer as u8,
@@ -1886,5 +1941,39 @@ mod tests {
     fn unknown_values_rejected_in_filters() {
         use crate::query::filter::EqFilterValue;
         let _ = Value::Unknown(9, vec![1, 2, 3]).into_filter_value();
+    }
+
+    #[test]
+    fn every_value_hashes() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        for v in [
+            Value::Nil,
+            Value::from(true),
+            Value::from(1),
+            Value::from(1.5),
+            Value::from("s"),
+            Value::GeoJson("{}".into()),
+            Value::from(vec![1u8]),
+            Value::Hll(vec![2u8]),
+            Value::from(vec![Value::from(1)]),
+            Value::MultiResult(vec![Value::from(1)]),
+            Value::HashMap(HashMap::new()),
+            Value::Infinity,
+            Value::Wildcard,
+            Value::Unknown(7, vec![0]),
+        ] {
+            set.insert(v);
+        }
+        assert_eq!(set.len(), 14);
+        // Equal maps hash equal whatever their variant.
+        let mut a = HashMap::new();
+        a.insert(Value::from(1), Value::from(2));
+        let b: IndexMap<Value, Value> = a.clone().into_iter().collect();
+        let (a, b) = (Value::HashMap(a), Value::OrderedMap(b));
+        assert_eq!(a, b);
+        let mut set = HashSet::new();
+        set.insert(a);
+        assert!(set.contains(&b));
     }
 }
