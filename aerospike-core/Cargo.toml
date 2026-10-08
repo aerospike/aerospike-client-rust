@@ -23,9 +23,14 @@ byteorder = "1.5"
 ripemd = "0.2"
 base64 = "0.23"
 rand = "0.10"
-pwhash = "1.0"
+# Password hashing for `LOGIN` / user management: bcrypt with the fixed salt
+# every Aerospike client uses. Small, maintained, on the same base64/blowfish
+# versions as the rest of the tree.
+bcrypt = { version = "0.19", default-features = false, features = ["std"] }
 serde = { version = "1.0", features = ["derive"], optional = true }
-serde_yml = { version = "0.0.13", optional = true }
+# serde_yaml's maintained continuation (same API); its predecessor serde_yml
+# was a 0.0.x fork.
+serde_norway = { version = "0.9", optional = true }
 aerospike-macro = { workspace = true, optional = true }
 # Everything runtime-specific, tokio included, comes through aerospike-rt.
 aerospike-rt = { workspace = true }
@@ -33,8 +38,13 @@ futures = { version = "0.3.34" }
 async-trait = "0.1.92"
 flate2 = "1"
 regex = "1"
-tokio-rustls = { version = "0.26.5", optional = true }
-rustls = { version = "0.23.45", optional = true }
+# rustls with the `ring` crypto provider: pure Rust + assembly, no cmake or C
+# toolchain on the build host, and exactly one provider compiled in so
+# `ClientConfig::builder()` picks it without a process-level install. A crate
+# that also enables rustls's `aws-lc-rs` feature must install a default
+# `CryptoProvider` itself, as rustls requires whenever two are compiled in.
+tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring", "logging", "tls12"], optional = true }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "logging", "std", "tls12"], optional = true }
 async-channel = "2.5.0"
 # Borrowed, non-owning socket handle for the connection pool liveness probe:
 # one implementation covering tokio, async-std and the TLS inner stream, with no
@@ -51,8 +61,8 @@ mlua = { version = "0.11", features = ["lua54", "vendored", "async", "send"], op
 serialization = ["serde", "indexmap/serde"]
 # Dynamic configuration: read policy overrides from a pluggable source (YAML
 # file out of the box) and apply them at runtime. Pulls serde for deserialization,
-# serde_yml for the file provider, and the Config derive macro.
-dynamic-config = ["serde", "serde_yml", "aerospike-macro"]
+# serde_norway for the file provider, and the Config derive macro.
+dynamic-config = ["serde", "serde_norway", "aerospike-macro"]
 # Client-side Lua for `Client::query_aggregate` (stream UDF aggregation).
 # Bundles a vendored Lua 5.4 interpreter via mlua; off by default so the
 # interpreter is only compiled in when explicitly requested.

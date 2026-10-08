@@ -28,6 +28,16 @@ change are listed in [CHANGELOG.md](CHANGELOG.md).
 trait-bound errors. A crate that already uses `default-features = false` keeps
 building without changes; add `dynamic-config` or `lua` only if you use them.
 
+`rt-async-std` is maintenance only in 3.0: async-std is discontinued upstream,
+so the runtime stays for existing users and may be removed in a later major
+release. New code should pick `rt-tokio`.
+
+`tls` builds rustls with the `ring` crypto provider (2.x used rustls's default
+`aws-lc-rs`), so no cmake or C toolchain is needed. If your crate enables
+rustls's `aws-lc-rs` feature as well, two providers are compiled in and rustls
+requires `CryptoProvider::install_default` before a `ClientConfig` is built;
+with only the client's `tls` feature nothing changes.
+
 ### Errors
 
 `Error` is no longer an enum. It is an opaque struct; the variant moved to

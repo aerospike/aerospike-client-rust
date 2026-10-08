@@ -18,7 +18,6 @@ use std::convert::TryInto;
 use std::str;
 
 use aerospike_rt::sleep;
-use pwhash::bcrypt::{self, BcryptSetup, BcryptVariant};
 
 use crate::cluster::{Cluster, Node};
 use crate::commands;
@@ -1052,14 +1051,41 @@ impl AdminCommand {
 
     /// Hash and return the password.
     pub fn hash_password(password: &str) -> Result<String> {
-        bcrypt::hash_with(
-            BcryptSetup {
-                salt: Some("7EqJtq98hPqEX7fNZaFWoO"),
-                cost: Some(10),
-                variant: Some(BcryptVariant::V2a),
-            },
-            password,
-        )
-        .map_err(std::convert::Into::into)
+        bcrypt::hash_with_salt(password, PASSWORD_HASH_COST, PASSWORD_SALT)
+            .map(|parts| parts.format_for_version(bcrypt::Version::TwoA))
+            .map_err(Error::password_hash_failed)
+    }
+}
+
+/// The salt every Aerospike client hashes passwords with, so the server
+/// compares hashes rather than clear text: `7EqJtq98hPqEX7fNZaFWoO` in
+/// bcrypt's base64 alphabet, decoded to the raw 16 bytes the hasher takes.
+const PASSWORD_SALT: [u8; 16] = [
+    244, 107, 11, 190, 207, 254, 141, 27, 6, 103, 216, 79, 109, 193, 216, 169,
+];
+
+/// bcrypt cost (2^10 rounds), fixed by the server-side format.
+const PASSWORD_HASH_COST: u32 = 10;
+
+#[cfg(test)]
+mod tests {
+    use super::AdminCommand;
+
+    /// Known answers produced by the previous hasher (`pwhash 1.0`) with the
+    /// same salt, cost and `$2a$` variant; the server stores exactly these.
+    #[test]
+    fn password_hashes_are_the_aerospike_bcrypt_format() {
+        for (password, expected) in [
+            ("", "$2a$10$7EqJtq98hPqEX7fNZaFWoOLCkFexA7A9eoJ0Ew.mTDdk.E60D.9zS"),
+            ("password", "$2a$10$7EqJtq98hPqEX7fNZaFWoOqUH6KN8IKy3Yk5Kz..RHGKNAUCoP/LG"),
+            ("aerospike", "$2a$10$7EqJtq98hPqEX7fNZaFWoOg3vLO9BrDMi.IgzR5fG6wXhnUUDTrIG"),
+            ("p@ss w\u{f6}rd", "$2a$10$7EqJtq98hPqEX7fNZaFWoOvOHC3TQiAAgdPnOsxztx/kKSmQ9nwIm"),
+            (
+                "a-very-long-password-that-exceeds-the-72-byte-bcrypt-limit-by-a-fair-margin-xyz",
+                "$2a$10$7EqJtq98hPqEX7fNZaFWoOTJRN/01vjjPR6EbpF8dZ1pUhRxgu35a",
+            ),
+        ] {
+            assert_eq!(AdminCommand::hash_password(password).unwrap(), expected, "{password:?}");
+        }
     }
 }

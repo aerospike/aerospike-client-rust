@@ -501,8 +501,10 @@ impl_from!(
     ParseInt,
     ClientResultCode::ParseError.into()
 );
-impl From<::pwhash::error::Error> for Error {
-    fn from(e: ::pwhash::error::Error) -> Error {
+impl Error {
+    /// The password hasher failed; wraps its message as a client-side
+    /// serialization error.
+    pub(crate) fn password_hash_failed(e: impl std::fmt::Display) -> Error {
         Error::new(
             ErrorKind::Client,
             ClientResultCode::SerializeError.into(),

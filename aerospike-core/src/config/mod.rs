@@ -211,8 +211,8 @@ mod tests {
     /// Parses a single YAML scalar into a config type `T`.
     fn parse<T: for<'de> serde::Deserialize<'de> + 'static>(
         yaml: &str,
-    ) -> Result<T, serde_yml::Error> {
-        serde_yml::from_str(yaml)
+    ) -> Result<T, serde_norway::Error> {
+        serde_norway::from_str(yaml)
     }
 
     const SAMPLE: &str = r#"
@@ -249,7 +249,7 @@ dynamic:
 "#;
 
     fn document() -> ConfigDocument {
-        serde_yml::from_str(SAMPLE).expect("sample config should parse")
+        serde_norway::from_str(SAMPLE).expect("sample config should parse")
     }
 
     #[test]
@@ -350,7 +350,7 @@ dynamic:
         assert_eq!(mp.latency_unit, LatencyUnit::Milliseconds);
 
         // `us` is the other spelling.
-        let doc: ConfigDocument = serde_yml::from_str(
+        let doc: ConfigDocument = serde_norway::from_str(
             "dynamic:\n  metrics:\n    extended:\n      operational:\n        latency_unit: us\n",
         )
         .unwrap();
@@ -362,7 +362,7 @@ dynamic:
         assert_eq!(mp.latency_columns, MetricsPolicy::millis().latency_columns);
 
         // Absent key leaves the policy's unit alone.
-        let doc: ConfigDocument = serde_yml::from_str(
+        let doc: ConfigDocument = serde_norway::from_str(
             "dynamic:\n  metrics:\n    extended:\n      operational:\n        latency_columns: 9\n",
         )
         .unwrap();
@@ -372,7 +372,7 @@ dynamic:
         assert_eq!(mp.latency_columns, 9);
 
         // A bad value is a config error, not a silent fallback.
-        assert!(serde_yml::from_str::<ConfigDocument>(
+        assert!(serde_norway::from_str::<ConfigDocument>(
             "dynamic:\n  metrics:\n    extended:\n      operational:\n        latency_unit: nanos\n"
         )
         .is_err());
@@ -437,7 +437,7 @@ labels:
 
     #[test]
     fn txn_verify_and_roll_sections_merge() {
-        let doc: ConfigDocument = serde_yml::from_str(
+        let doc: ConfigDocument = serde_norway::from_str(
             "version: \"1.0.0\"\n\
              dynamic:\n\
              \x20 txn_verify:\n    socket_timeout: 1500\n    max_retries: 9\n    read_mode_sc: LINEARIZE\n    replica: PREFER_RACK\n\
@@ -473,7 +473,7 @@ labels:
         // The provider enforces `version` presence; the document model itself
         // tolerates its absence so parsing never hard-fails on it.
         let doc: ConfigDocument =
-            serde_yml::from_str("dynamic:\n  read:\n    max_retries: 1\n").unwrap();
+            serde_norway::from_str("dynamic:\n  read:\n    max_retries: 1\n").unwrap();
         assert!(doc.version.is_none());
         // The flattened base config still captured the key.
         let read = doc.dynamic.unwrap().read.unwrap();
@@ -722,7 +722,7 @@ labels:
 
     #[test]
     fn all_batch_sub_sections_parse() {
-        let doc: ConfigDocument = serde_yml::from_str(
+        let doc: ConfigDocument = serde_norway::from_str(
             "version: \"1.0.0\"\n\
              dynamic:\n\
              \x20 batch_read:\n    read_mode_ap: ALL\n    socket_timeout: 3\n    replica: MASTER\n\

@@ -302,8 +302,8 @@ pub fn derive_config(input: TokenStream) -> TokenStream {
             }
 
             /// Deserializes this config from a YAML string.
-            pub fn from_yaml_str(s: &str) -> ::core::result::Result<Self, ::serde_yml::Error> {
-                ::serde_yml::from_str(s)
+            pub fn from_yaml_str(s: &str) -> ::core::result::Result<Self, ::serde_norway::Error> {
+                ::serde_norway::from_str(s)
             }
         }
     };

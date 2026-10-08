@@ -26,6 +26,10 @@
 //!
 //! Nothing here is a stable API: items appear and disappear as the client's
 //! needs change, and versions move in lock-step with `aerospike-core`.
+//!
+//! `rt-async-std` is maintained on a best-effort basis: async-std is
+//! discontinued upstream (its maintainers point at smol), so the feature stays
+//! for existing users and may be removed in a later major release.
 #![warn(missing_docs)]
 
 #[cfg(not(any(feature = "rt-tokio", feature = "rt-async-std")))]

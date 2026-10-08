@@ -1,4 +1,5 @@
 /target
+# A library: the lockfile is not committed; CI resolves fresh.
 /Cargo.lock
 *.todo
 aerospike-rust-client.sublime-project
@@ -9,3 +10,5 @@ Makefile
 proptest-regressions/
 _temp/
 .claude/
+.DS_Store
+*.log

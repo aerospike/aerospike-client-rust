@@ -223,6 +223,16 @@
     full Apache 2.0 licence text; the in-tree crate versions are spelled once in
     `[workspace.dependencies]`; unused dependencies (`lazy_static`, `bencher`, `ripemd`) and
     core's direct `tokio` dependency are gone.
+  * Dependencies: `tls` builds rustls with the `ring` crypto provider instead of `aws-lc-rs`, so
+    building the client needs no cmake or C toolchain and exactly one provider is compiled in (a
+    crate that also enables rustls's `aws-lc-rs` must install a process-level `CryptoProvider`,
+    as rustls requires). Password hashing uses the `bcrypt` crate instead of `pwhash`; the hashes
+    are byte-for-byte the same (`$2a$`, cost 10, the fixed Aerospike salt). The YAML provider
+    reads with `serde_norway` (serde_yaml's maintained continuation) instead of `serde_yml`.
+    `rt-async-std` is maintenance only: async-std is discontinued upstream, so the runtime stays
+    for existing users and may be removed in a later major release.
+  * Repository: `CONTRIBUTING.md` and `SECURITY.md`; the README's sync section describes the
+    self-driving blocking client (no Tokio runtime to set up).
 
 ## [3.0.0-alpha.2]
 

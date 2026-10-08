@@ -81,7 +81,7 @@
 //!
 //! ```text
 //! [dependencies]
-//! aerospike = "1.0.0"
+//! aerospike = "3"
 //! ```
 //!
 //! # Examples
@@ -89,14 +89,11 @@
 //! The following is a very simple example of CRUD operations in an Aerospike database.
 //!
 //! ```rust
-//! #[macro_use]
-//! extern crate aerospike;
-//!
 //! use std::env;
 //! use std::sync::Arc;
 //! use std::time::Instant;
 //!
-//! use aerospike::{Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
+//! use aerospike::{as_bin, as_key, Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
 //! use aerospike::operations;
 //!
 //! fn main() {
@@ -156,15 +153,8 @@
 #![recursion_limit = "1024"]
 #![allow(clippy::too_many_arguments)]
 
-extern crate base64;
-extern crate byteorder;
 #[macro_use]
 extern crate log;
-extern crate pwhash;
-extern crate rand;
-
-#[cfg(feature = "tls")]
-extern crate tokio_rustls;
 
 pub use batch::BatchDeletePolicy;
 pub use batch::BatchOperation;

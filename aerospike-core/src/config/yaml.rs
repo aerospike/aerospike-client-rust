@@ -117,7 +117,7 @@ impl ConfigProvider for YamlFileProvider {
             }
         };
 
-        let doc: ConfigDocument = match serde_yml::from_str(&data) {
+        let doc: ConfigDocument = match serde_norway::from_str(&data) {
             Ok(doc) => doc,
             Err(err) => {
                 self.warn_once(format!(

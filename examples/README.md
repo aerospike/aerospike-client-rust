@@ -29,8 +29,8 @@ The `crud_sync` example is the exception — it requires the `sync` feature, whi
 * `udf` — register a Lua UDF, execute per-record, and run background UDFs
 
 Stream-UDF aggregations (average, sum) are covered through `query_aggregate`.
-Every example is async; the client is async-native, so there are no separate
-synchronous and asynchronous variants.
+Every example except `crud_sync` is async; the client is async-native, so the
+others have no separate synchronous variants.
 
 ## Configuration
 
@@ -39,13 +39,13 @@ The examples connect to Aerospike using the `AEROSPIKE_HOSTS` environment variab
 If the variable is not set, the examples default to:
 
 ```
-127.0.0.1:3100
+127.0.0.1:3000
 ```
 
 You can override this by setting the environment variable before running an example:
 
 ```bash
-export AEROSPIKE_HOSTS="127.0.0.1:3100"
+export AEROSPIKE_HOSTS="127.0.0.1:3000"
 ```
 
 ## How to Run

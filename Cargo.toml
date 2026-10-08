@@ -67,6 +67,8 @@ lua = ["aerospike-core?/lua", "aerospike-sync?/lua"]
 async = ["aerospike-core"]
 sync = ["aerospike-sync"]
 rt-tokio = ["aerospike-core?/rt-tokio", "aerospike-macro/rt-tokio", "aerospike-sync?/rt-tokio"]
+# Maintenance only: async-std is discontinued upstream (its maintainers point
+# at smol). The runtime stays for existing users and may go in a later major.
 rt-async-std = ["aerospike-core?/rt-async-std", "aerospike-macro/rt-async-std", "aerospike-sync?/rt-async-std"]
 # TLS is Tokio-only on either client: core's `tls` pulls in tokio-rustls and
 # forwards the flag to `aerospike-rt`, whose guard rejects `tls` + `rt-async-std`.
@@ -120,8 +122,10 @@ aerospike-rt = { workspace = true }
 futures = { version = "0.3.34" }
 tokio = { version = "1.53.1", features = ["full"] }
 proptest = "1.11.0"
-tokio-rustls = {version = "0.26.5"}
-rustls = {version = "0.23.45"}
+# Same provider as aerospike-core: two providers in one build make
+# `ClientConfig::builder()` panic.
+tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring", "logging", "tls12"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 webpki-roots = "1"
 #console-subscriber = "0.1.5"
 
