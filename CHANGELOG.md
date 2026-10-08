@@ -156,6 +156,11 @@ Upgrading from 2.x: see the [migration guide](https://github.com/aerospike/aeros
     before it packages anything.
 
 * **Bug Fixes**
+  * An `operate` whose operations are all reads routes like a read: the policy's `replica` and
+    `read_mode_sc` pick the node, as they do for `get`. It used to take the write routing, so
+    `PreferRack`, `MasterProles` and `Random` were ignored and the SC read-mode rules never applied.
+    A lone read-with-ops row in a batch, which runs as a single-key `operate`, now routes the same
+    way it would inside a larger batch. An operate containing any write is unchanged.
   * A single-key command on a namespace missing from the partition map (or before the map is
     populated) now fails at once with `InvalidNamespace` (20), matching the batch path and the Java
     client. It used to retry the routing failure until the budget ran out and report
