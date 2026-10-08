@@ -115,7 +115,10 @@ impl<'a> ReadCommand<'a> {
                 r.push(value.clone());
             }
 
-            if !value.is_nil() {
+            // An operate keeps a nil result in the bin view, as the batch parser
+            // does, so a bin's MultiResult lines up with its ops and a lone-key
+            // batch row (which runs as an operate) matches its grouped siblings.
+            if self.wants_results || !value.is_nil() {
                 // list/map operations may return multiple values for the same bin.
                 match bins.entry(name) {
                     Vacant(entry) => {

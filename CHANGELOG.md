@@ -135,6 +135,15 @@
     set, including `rt-async-std`. Visible side effects: `ToValue`/`FromValue` for `HashMap` accept
     any hasher; a secondary-index query plan missing its index name or range is an error instead of
     a panic; `Value::Unknown` reaches Lua as bytes through the same arm as a blob.
+  * [CLIENT-5581] A batch row whose key is alone on its node now carries the same bins as a row
+    grouped with other keys on one node.
+
+* **Breaking Change**
+  * [CLIENT-5582] A single-key `operate` keeps every op's answer in `Record::bins`, a write's
+    `Value::Nil` included, as the batch path already does. A bin written and then read in one call
+    holds `Value::MultiResult([Nil, …, value])` in op order instead of the bare value, and a
+    write-only operate reports each written bin as `Nil` instead of returning no bins. Read an op's
+    answer at its index in `Record::results`, or take the last element of the bin's `MultiResult`.
 
 ## [3.0.0-alpha.2]
 
