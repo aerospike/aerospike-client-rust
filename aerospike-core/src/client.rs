@@ -422,7 +422,32 @@ impl Client {
         self.cluster.partition_map_ready()
     }
 
-    #[doc(hidden)] // test support, not a stable API
+    /// Whether `namespace` runs in strong-consistency mode on this cluster.
+    ///
+    /// Read from the cached partition map, so this is a synchronous lookup
+    /// with no network I/O; it is cheap enough to call on every command, and
+    /// language bindings do exactly that to pick an AP or SC policy per
+    /// namespace. The answer follows the map, which the tend loop refreshes.
+    ///
+    /// Returns `Some(true)` for a strong-consistency namespace, `Some(false)`
+    /// for an available-partition one, and `None` when the namespace is not in
+    /// the partition map: an unknown namespace, or a map not yet populated.
+    ///
+    /// # Example
+    ///
+    /// ```rust,edition2021
+    /// # use aerospike::{Client, ClientPolicy};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
+    /// match client.is_strong_consistency("test") {
+    ///     Some(true) => println!("test is a strong-consistency namespace"),
+    ///     Some(false) => println!("test is an AP namespace"),
+    ///     None => println!("no namespace named test"),
+    /// }
+    /// # }
+    /// ```
     pub fn is_strong_consistency(&self, namespace: &str) -> Option<bool> {
         self.cluster.is_strong_consistency(namespace)
     }

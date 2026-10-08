@@ -25,7 +25,6 @@ use std::sync::Arc;
 
 #[derive(Clone, PartialEq, Eq)]
 /// Determines authentication mode.
-#[non_exhaustive]
 pub enum AuthMode {
     /// No Authentication will be performed
     None,

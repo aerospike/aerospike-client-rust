@@ -107,7 +107,7 @@ instead of returning a new vector.
 | one `BatchPolicy::default()` for every batch | `BatchPolicy::default()` for reads, `BatchPolicy::write_default()` (`max_retries` 0) for batches with writes, deletes or UDF calls |
 | `BatchOperation::batch_record(&self) -> BatchRecord` | `batch_record(&self) -> &BatchRecord`, plus `record()`, `take_record()`, `result_code()`, `in_doubt()`, `error()`, `node()` on the operation itself |
 | `BatchRecord { key, record, result_code, in_doubt }`, all public fields | `key` and `record` stay fields; `result_code()`, `in_doubt()`, `node()`, `error()`, `error_detail()`, `sub_code()`, `server_message()` are methods |
-| `match op { BatchOperation::Read { br, .. } => .. }` on the (hidden) enum variants | `BatchOperation` is a struct; the kind of operation is not inspectable after construction. Read the outcome through `batch_record()`, `record()`, `result_code()`, and keep your own index if you need to know which row was a read, write, delete or UDF |
+| `match op { BatchOperation::Read { br, .. } => .. }` on the (hidden) enum variants | `BatchOperation` is a struct; the kind of operation is not inspectable after construction. Read the outcome through `batch_record()` (or `into_batch_record()` to take it by value), `record()`, `result_code()`, and keep your own index if you need to know which row was a read, write, delete or UDF |
 
 ```rust
 // 2.x
@@ -136,8 +136,12 @@ The sync client's `batch` has the same new signature.
   methods (`add_seeds`, `update_partitions`, `close`, ...) are not available.
 - The `Node` methods that drive the tend loop (`refresh`, `update_partitions`,
   `get_connection`, `close`, ...) and the `Txn` state mutators (`on_write`,
-  `clear`, ...) are crate-private. The getters stay. `Txn::set_state` remains
-  public as a hidden test hook for language bindings.
+  `clear`, ...) are crate-private. The getters stay. Set the timeout at
+  construction with `Txn::with_timeout(self, d)`. `Txn::set_state` (a test
+  hook) and `Txn::set_timeout(&mut self, d)` remain public but hidden from the
+  documentation, for language bindings.
+- `Client::is_strong_consistency(namespace)` is a documented API: whether the
+  namespace is strong-consistency (`None` when it is not in the partition map).
 - `PartitionFilter`'s `done` and `retry` fields are private; use `done()` and
   the constructors. `partitions` and `query::PartitionStatus` stay reachable
   but hidden from the documentation: they exist for language bindings that
@@ -145,13 +149,21 @@ The sync client's `batch` has the same new signature.
 - `BatchPolicy.filter_expression` is gone. Set `base_policy.filter_expression`,
   as on every other policy; that is the field the batch encoder reads.
 
-### Enums are non-exhaustive
+### Server-defined enums are non-exhaustive
 
-`ResultCode`, `ClientResultCode`, `Value`, `AuthMode`, `Replica`, `IndexType`,
-`CollectionIndexType`, `PrivilegeCode`, `CommandType`, `CommitStatus`,
-`AbortStatus`, `TxnState`, `QueryDuration`, `ReadTouchTtl`, `UdfLang` and
-`task::Status` carry `#[non_exhaustive]`. An exhaustive `match` on one of them
-needs a `_` arm.
+`ResultCode`, `ClientResultCode`, `ErrorKind`, `PrivilegeCode` and `Value`
+carry `#[non_exhaustive]`: the server defines these sets and they grow with
+server releases, so a `match` on one of them needs a `_` arm, and the arm has a
+true meaning (an unknown result code, a privilege this client has no name for,
+an error of a kind it does not classify). `ResultCode`, `ClientResultCode` and
+`Value` also carry an explicit `Unknown` variant with the raw value.
+
+The client-side sets stay exhaustive on purpose: `AuthMode`, `Replica`,
+`QueryDuration`, `ReadTouchTtl`, `IndexType`, `CollectionIndexType`, `UdfLang`,
+`CommandType`, `TxnState`, `CommitStatus`, `AbortStatus`, `CommitErrorType` and
+`task::Status`. A new variant in one of these changes what every caller must
+handle, so it is a breaking change that fails your build rather than a case a
+`_` arm can guess at.
 
 ### Policies
 

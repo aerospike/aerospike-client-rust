@@ -19,7 +19,6 @@ use aerospike_rt::time::{Duration, Instant};
 
 /// Status of task
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum Status {
     /// long running task not found
     NotFound,
