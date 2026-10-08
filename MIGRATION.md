@@ -155,8 +155,10 @@ The sync client's `batch` has the same new signature.
 carry `#[non_exhaustive]`: the server defines these sets and they grow with
 server releases, so a `match` on one of them needs a `_` arm, and the arm has a
 true meaning (an unknown result code, a privilege this client has no name for,
-an error of a kind it does not classify). `ResultCode`, `ClientResultCode` and
-`Value` also carry an explicit `Unknown` variant with the raw value.
+an error of a kind it does not classify). `ResultCode`, `ClientResultCode`,
+`PrivilegeCode` and `Value` also carry an explicit `Unknown` variant with the
+raw value; a role listing from a newer server reports a privilege this client
+has no name for as `PrivilegeCode::Unknown(code)` instead of failing.
 
 The client-side sets stay exhaustive on purpose: `AuthMode`, `Replica`,
 `QueryDuration`, `ReadTouchTtl`, `IndexType`, `CollectionIndexType`, `UdfLang`,

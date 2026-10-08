@@ -243,6 +243,8 @@
     cached partition map that bindings call per command to pick the AP or SC policy.
   * `BatchOperation::into_batch_record(self)` moves a finished row's `BatchRecord` out without
     cloning the key, for callers that hand rows on by value.
+  * `PrivilegeCode::Unknown(u8)`: a privilege code the server reports that this client has no
+    name for is kept with its raw value instead of failing the role query as a bad response.
   * CI: pull requests now gate on clippy with warnings denied across every documented feature
     set, rustdoc with warnings denied, a docs.rs-style nightly build, a packaging dry run, each
     feature compiled on its own (`cargo hack`), and a build on current stable beside the MSRV;
