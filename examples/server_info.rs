@@ -40,7 +40,29 @@ pub async fn run() {
 
     let apolicy = AdminPolicy::default();
 
-    println!("cluster nodes: {:?}", client.node_names());
+    // ---- What the client knows about the cluster ----
+    println!("connected:            {}", client.is_connected());
+    println!("cluster nodes:        {:?}", client.node_names());
+    // `cluster_name` is the name the ClientPolicy asked for (validation only);
+    // `server_cluster_name` is what the nodes report, whether or not it was
+    // asked for.
+    println!("expected name:        {:?}", client.cluster_name());
+    println!("server-reported name: {:?}", client.server_cluster_name());
+    // `partition_map_ready` says every namespace has a map; `_complete` says
+    // every partition in it has an owner.
+    println!(
+        "partition map:        ready = {}, complete = {}",
+        client.partition_map_ready(),
+        client.partition_map_complete()
+    );
+    println!(
+        "namespace `test`:     strong consistency = {:?}",
+        client.is_strong_consistency("test")
+    );
+    if let Some(name) = client.node_names().first() {
+        let node = client.get_node(name).expect("node by name");
+        println!("node {name}: address {}, active = {}", node.address(), node.is_active());
+    }
 
     for node in client.nodes() {
         println!("--- node {} (server {:?}) ---", node.name(), node.version());

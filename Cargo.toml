@@ -115,11 +115,15 @@ env_logger = "0.11.11"
 hex = "0.4"
 bencher = "0.1"
 serde_json = "1.0"
+# `examples/object_mapping.rs` maps a serde type through `mapping::serde`.
+serde = { version = "1.0", features = ["derive"] }
 rand = "0.10"
 lazy_static = "1.5"
 aerospike-macro = { workspace = true }
 aerospike-rt = { workspace = true }
 futures = { version = "0.3.34" }
+# `examples/config_pigeon.rs` implements the async `ConfigProvider` trait.
+async-trait = "0.1"
 tokio = { version = "1.53.1", features = ["full"] }
 proptest = "1.11.0"
 # Same provider as aerospike-core: two providers in one build make
@@ -188,6 +192,66 @@ required-features = ["sync"]
 [[example]]
 name = "query_aggregate"
 required-features = ["lua"]
+
+[[example]]
+name = "config_pigeon"
+required-features = ["async", "dynamic-config"]
+
+[[example]]
+name = "hll_operations"
+required-features = ["async"]
+
+[[example]]
+name = "string_operations"
+required-features = ["async"]
+
+[[example]]
+name = "expression_operations"
+required-features = ["async"]
+
+[[example]]
+name = "metrics"
+required-features = ["async", "serialization"]
+
+[[example]]
+name = "query_streaming"
+required-features = ["async"]
+
+[[example]]
+name = "index_management"
+required-features = ["async"]
+
+[[example]]
+name = "error_handling"
+required-features = ["async"]
+
+[[example]]
+name = "read_policies"
+required-features = ["async"]
+
+[[example]]
+name = "security"
+required-features = ["async"]
+
+[[example]]
+name = "tls"
+required-features = ["async", "tls"]
+
+[[example]]
+name = "object_mapping"
+required-features = ["async", "serialization"]
+
+[[example]]
+name = "config_file"
+required-features = ["async", "dynamic-config"]
+
+
+
+
+
+
+
+
 
 # Tests, examples and benches build policies field by field after `default()`,
 # the way callers write them; the struct-update form the lint wants reads worse.

@@ -2,105 +2,77 @@
 
 Welcome to Aerospike's official [Rust client](https://aerospike.com/docs/develop/client/rust).
 
-## AI coding agent entry point
+## About Aerospike
 
-The Aerospike Rust client — crates.io package `aerospike`, async-first over Tokio
-or async-std, with a blocking API behind the `sync` feature. Authoritative
-version: `[workspace.package] version` in the root `Cargo.toml`. Requires Rust
-1.87+ and Aerospike server 6.4+.
+[Aerospike](https://aerospike.com/) is a distributed database built for workloads that need predictable, sub-millisecond latency at high throughput: real-time bidding, fraud detection, user profiles, session stores, and other systems where a request has a tight time budget. A cluster is a set of identical nodes that share the data; records are spread over 4096 partitions that the cluster assigns to nodes automatically, so adding or losing a node rebalances the data without any routing configuration on the client. The Hybrid Memory Architecture keeps the primary index in memory and the records on flash or in memory, which is what lets a small cluster serve large data sets quickly.
 
-**Two things to get right before writing any code:**
+Data is organised into namespaces (the unit of storage policy), sets (the loose equivalent of tables) and records addressed by a key. A record holds bins: typed values that can be integers, floats, strings, blobs, booleans, GeoJSON, HyperLogLog sketches, and nested lists and maps. The server operates on those values in place through its collection data types (CDTs, aka Lists and Maps), bitwise operations and string operations, so a client can modify one element of a map or append to a list without reading and rewriting the record.
 
-1. **The API lives in `aerospike-core/`.** Root [`src/lib.rs`](https://github.com/aerospike/aerospike-client-rust/blob/v3/src/lib.rs) is a
-   thin re-export facade — open it for the feature-selection guard, then go to
-   `aerospike-core/src/` for the actual client implementation.
-2. **Cargo features decide what compiles.** See *Selecting features* below — the
-   wrong feature set is a compile error, not a runtime error.
+Beyond single-record reads and writes, the server offers batch operations across many keys, secondary indexes with queries and scans, filter expressions evaluated on the server to select records or compute values, user-defined functions written in Lua, and multi-record transactions with ACID guarantees on strong-consistency namespaces. Namespaces can run in availability mode or strong-consistency mode, and the Enterprise Edition adds cross-datacenter replication, security (authentication, roles, TLS) and more.
 
-### Selecting features
+## About this client
 
-| Goal | Cargo features |
-|---|---|
-| Async client, Tokio (default) | `default`, or explicitly `["rt-tokio"]` |
-| Async client, async-std | `default-features = false`, `["async", "serialization", "rt-async-std"]` — maintenance only: async-std is discontinued upstream, so this runtime stays for existing users and may go in a later major release |
-| Blocking client | `default-features = false`, `["sync", "serialization", "rt-tokio"]` or `["sync", "serialization", "rt-async-std"]` — the sync crate follows whichever runtime feature the root enables |
-| TLS | add `"tls"` (on by default; **requires `rt-tokio`** — not available under async-std). rustls with the `ring` provider: no C toolchain needed |
-| Runtime config file | add `"dynamic-config"` (on by default) |
-| `query_aggregate` / stream UDFs | add `"lua"` (off by default — compiles a vendored Lua interpreter) |
+This crate is the Rust client for that server. It is async-first: every operation is a future driven by Tokio by default, with async-std as an alternative runtime and a blocking API behind the `sync` feature for code without an async runtime. It speaks the native wire protocol directly, keeps a connection pool per node, follows the cluster's partition map as nodes come and go, and retries and times out according to policies you set per call.
 
-`rt-tokio` and `rt-async-std` are mutually exclusive — enabling both (e.g. adding
-one without disabling defaults first) is a compile error. Full detail in
-[Installation](#installation) below.
+It covers the server's feature set: single-record and batch reads, writes and deletes; operations on lists, maps, bits, HyperLogLog and strings, path expressions; secondary indexes, queries, scans and pagination with resumable cursors; filter and read/write expressions; UDFs, including client-side stream aggregation behind the `lua` feature; multi-record transactions; TLS and authentication; cluster, user and role administration; client metrics; and a dynamic configuration file shared with the other Aerospike clients. The sections below show the main patterns, and the [examples](https://github.com/aerospike/aerospike-client-rust/blob/v3/examples/README.md) directory holds a runnable program for each feature area.
 
-### Where things live
+## For AI coding agents
 
-- **`aerospike-core/src/`** — the client implementation. This is "the Rust client."
-- **`aerospike-sync/`** — thin blocking wrapper; [mirrors the async API](https://github.com/aerospike/aerospike-client-rust/blob/v3/aerospike-sync/README.md) 1:1, so read `aerospike-core` first regardless of which you're generating for.
-- **`examples/`** — one runnable file per feature area; [examples/README.md](https://github.com/aerospike/aerospike-client-rust/blob/v3/examples/README.md) is the routing table (server-version gates included) — read it before writing new example code.
-- **`tests/src/`** — the primary integration suite, one file per feature area, run against a live server. `tests/proptests/` and [`tests/proptest_async/`](https://github.com/aerospike/aerospike-client-rust/blob/v3/tests/proptest_async/README.md) are property-based tests, a different tier. `tests/common/` is shared test harness, not a place to add feature tests.
-- **`benches/`** and **`tools/benchmark/`** — load generators for tuning connection properties, not API usage references.
-
-### Verifying generated code
-
-- `cargo build` / `cargo test` with the right feature set (above) is the first check — a wrong feature set fails here, not at runtime.
-- `cargo test-docs` (alias for `cargo test --workspace --doc`, see `.cargo/config.toml`) runs every public doc-comment example as a compiled, runnable test — e.g. [`select_by_path`](https://docs.rs/aerospike/latest/aerospike/operations/path/fn.select_by_path.html) in `aerospike-core/src/operations/path.rs`. Doc comments are load-bearing, not illustrative-only.
-- `cargo doc --open` builds the reference locally from source — see *Which API reference wins* below for why this matters.
-- `tests/src/examples.rs` runs every example in `examples/` against a live server on every test run.
-
-### Which API reference wins
-
-[docs.rs/aerospike](https://docs.rs/aerospike/) documents the latest published
-release, and every older release stays reachable from its version picker. A
-checkout can be ahead of the latest release, so when the page and the code in
-front of you disagree, run `cargo doc --open`: it builds the reference from the
-exact tree you are reading, and it wins.
+[AGENTS.md](https://github.com/aerospike/aerospike-client-rust/blob/v3/AGENTS.md) is the entry point: which crate holds the API, how the feature flags select what compiles, the 3.0 API conventions, the server version gates, and how to build, lint and test generated code against a live server.
 
 ## Feature highlights
 
 **Execution models:**
 
-- **Async-First:** Built for non-blocking IO, powered by 
-  [Tokio](https://tokio.rs/) by default, with optional support for [async-std](https://async.rs/).
-- **Sync Support:** Blocking APIs are available using a sync sub-crate for 
-  flexibility in legacy or mixed environments.
+- **Async-First:** Built for non-blocking IO, powered by [Tokio](https://tokio.rs/) by default, with optional support for [async-std](https://async.rs/).
+- **Sync Support:** Blocking APIs are available using a sync sub-crate for flexibility in legacy or mixed environments.
 
 **Advanced data operations:**
 
-- **Batch protocol:** full support for read, write, delete, and udf operations through the 
-  new `BatchOperationAPI`.
-- **New query wire protocols:** implements updated query protocols for 
-  improved consistency and performance.
+- **Batch protocol:** full support for read, write, delete, and udf operations through the `BatchOperation` API.
+- **Lists** (`operations::lists`): create, set order, append, insert, set, increment, trim, clear, sort, size, get and remove by index, index range, rank, rank range, value, value list, value range and relative rank, pop, and get range.
+- **Maps** (`operations::maps`): create, set policy and order, put, increment and decrement, clear, size, get and remove by key, key list, key range, relative index, value, value list, value range, relative rank, index, index range, rank and rank range.
+- **Bitwise** (`operations::bitwise`): resize, insert, remove, set, or, xor, and, not, left and right shift, add, subtract, set and get integer, get, count, left and right scan, and base64 encode.
+- **HyperLogLog** (`operations::hll`): init, add, set union, refresh count, fold, get count, get union, get union count, get intersect count, get similarity, and describe.
+- **Strings** (`operations::string`, server 8.2.0+): length and byte length, substring, char at, find, contains, starts and ends with, numeric checks and conversions, case checks and conversion, split, insert, overwrite, concat, append, prepend, snip, replace, trim, pad, repeat, Unicode normalisation, base64 decode, and regex compare and replace.
+- **Path expressions** (`operations::path`, server 8.1.1+): JSONPath-style selection and modification of nested list and map elements in one server-side operation: select by path, values, map keys, map entries or matching tree, and modify or remove by path.
+- Every CDT operation has an expression counterpart in `expressions::{lists, maps, bitwise, hll, string}`, so the same work can run inside a filter or a read/write expression.
 
 **Policy and expression enhancements:**
 
 - **Replica policies:** includes support for Replica, including PreferRack placement.
-- **Policy additions:** new fields such as `allow_inline_ssd`, `respond_all_keys` 
-  in `BatchPolicy`, `read_touch_ttl`, and `QueryDuration` in `QueryPolicy`.
+- **Policy additions:** new fields such as `allow_inline_ssd`, `respond_all_keys` in `BatchPolicy`, `read_touch_ttl`, and `QueryDuration` in `QueryPolicy`.
 - **Rate limiting:** supports `records_per_second` for query throttling.
 
 **Data model improvements:**
 
 - **Type support:** adds support for boolean particle type.
-- **New data constructs:** returns types such as `Exists`, 
-  `OrderedMap`, `UnorderedMap` now supported for 
-  [CDT](https://aerospike.com/docs/develop/data-types/collections/) reads.
+- **New data constructs:** returns types such as `Exists`, `OrderedMap`, `UnorderedMap` now supported for [CDT](https://aerospike.com/docs/develop/data-types/collections/) reads.
 - **Value conversions:** implements `TryFrom<Value>` for the common Rust types, for seamless type interoperability.
-- **Infinity and wildcard:** supports `Infinity`, `Wildcard`, and 
-  corresponding expression builders `expressions::infinity()` and 
-  `expressions::wildcard()`.
-- **Size expressions:** adds `expressions::record_size()`; the server-deprecated
-  `device_size()` and `memory_size()` are not carried into 3.0.
+- **Infinity and wildcard:** supports `Infinity`, `Wildcard`, and corresponding expression builders `expressions::infinity()` and `expressions::wildcard()`.
+- **Size expressions:** adds `expressions::record_size()`; the server-deprecated `device_size()` and `memory_size()` are not carried into 3.0.
 
-Take a look at the [changelog](https://github.com/aerospike/aerospike-client-rust/blob/v3/CHANGELOG.md) for more details.
-Upgrading from 2.x: see [MIGRATION.md](https://github.com/aerospike/aerospike-client-rust/blob/v3/MIGRATION.md).
+Take a look at the [changelog](https://github.com/aerospike/aerospike-client-rust/blob/v3/CHANGELOG.md) for more details. Upgrading from 2.x: see [MIGRATION.md](https://github.com/aerospike/aerospike-client-rust/blob/v3/MIGRATION.md).
 
 ## Getting started
 
 Prerequisites:
 
 - [Aerospike Database](https://aerospike.com/download/server/community/) 6.4 or later.
-- [Rust](https://www.rust-lang.org/) version 1.87 or later 
+- [Rust](https://www.rust-lang.org/) version 1.87 or later
 - [Tokio runtime](https://tokio.rs/) or [async-std](https://async.rs/)
+
+### Upgrading from 2.x
+
+3.0 changes the batch, query, error and policy APIs. The [migration guide](https://github.com/aerospike/aerospike-client-rust/blob/v3/MIGRATION.md) lists every change with its 2.x and 3.0 spelling side by side, and the [changelog](https://github.com/aerospike/aerospike-client-rust/blob/v3/CHANGELOG.md) has the details behind each one.
+
+### Examples
+
+The [`examples/`](https://github.com/aerospike/aerospike-client-rust/blob/v3/examples/README.md) directory holds one runnable program per feature area: CRUD, batch, queries, scans, CDT and bitwise operations, path expressions, UDFs, transactions, server info and a blocking-client variant. Every example runs against a live server in the test suite, so they are kept working. Run one with:
+
+```bash
+AEROSPIKE_HOSTS=127.0.0.1:3000 cargo run --example crud
+```
 
 ## Installation
 
@@ -140,17 +112,13 @@ To use the client in your own project, add one of the following to your `Cargo.t
    aerospike = { version = "<version>", default-features = false, features = ["sync", "serialization", "rt-tokio"]}
    ```
 
-   > **Note:** on Tokio the sync client owns a dedicated runtime and can be
-   > called from inside a caller's Tokio runtime. On async-std it uses
-   > `async_std::task::block_on`, which must not be called from inside an
-   > async-std task. `tls` needs `rt-tokio` with either client.
+   > **Note:** on Tokio the sync client owns a dedicated runtime and can be called from inside a caller's Tokio runtime. On async-std it uses `async_std::task::block_on`, which must not be called from inside an async-std task. `tls` needs `rt-tokio` with either client.
 
    Then run `cargo build` in your project.
 
 ## Core feature examples
 
-The following code examples demonstrate some of the Rust client's new
-features.
+The following code examples demonstrate some of the Rust client's new features.
 
 ### Client connection
 
@@ -174,10 +142,7 @@ let client = Client::new(&policy, &hosts)
 
 #### Sync client
 
-The `sync` feature exposes blocking APIs — no `async`/`.await` at call sites and
-no runtime to set up. The blocking client drives the async client itself: on
-`rt-tokio` it owns a dedicated Tokio runtime, on `rt-async-std` it blocks on
-async-std's global executor.
+The `sync` feature exposes blocking APIs — no `async`/`.await` at call sites and no runtime to set up. The blocking client drives the async client itself: on `rt-tokio` it owns a dedicated Tokio runtime, on `rt-async-std` it blocks on async-std's global executor.
 
 **Cargo.toml**
 ```toml
@@ -185,8 +150,7 @@ async-std's global executor.
 aerospike = { version = "<version>", default-features = false, features = ["sync", "serialization", "rt-tokio"] }
 ```
 
-> Swap `rt-tokio` for `rt-async-std` if your project uses async-std instead.
-> `tls` needs `rt-tokio` with either client.
+> Swap `rt-tokio` for `rt-async-std` if your project uses async-std instead. `tls` needs `rt-tokio` with either client.
 
 **Example:**
 ```rust
@@ -212,12 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-> **Calling it from async code.** On Tokio the blocking client may be called from
-> inside a caller's Tokio runtime: it blocks on its own runtime, not the caller's.
-> On async-std its methods must not be called from inside an async-std task,
-> because `async_std::task::block_on` cannot nest. Task-returning methods
-> (`create_index`, `register_udf`, …) return `aerospike::Task`, whose
-> `wait_till_complete` blocks, and `query_foreach` returns `aerospike::QueryHandle`.
+> **Calling it from async code.** On Tokio the blocking client may be called from inside a caller's Tokio runtime: it blocks on its own runtime, not the caller's. On async-std its methods must not be called from inside an async-std task, because `async_std::task::block_on` cannot nest. Task-returning methods (`create_index`, `register_udf`, …) return `aerospike::Task`, whose `wait_till_complete` blocks, and `query_foreach` returns `aerospike::QueryHandle`.
 
 #### TLS connection without client authentication
 
@@ -226,6 +185,7 @@ Connect to an Aerospike cluster with TLS but without client certificate authenti
 ```rust
 use aerospike::{Client, ClientPolicy, TlsPolicy};
 use rustls::RootCertStore;
+use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::CertificateDer;
 
 fn tls_config_no_client_auth(ca_cert_path: &str) -> rustls::ClientConfig {
@@ -260,6 +220,7 @@ Connect to an Aerospike cluster with TLS and mutual authentication using client 
 ```rust
 use aerospike::{Client, ClientPolicy, TlsPolicy};
 use rustls::RootCertStore;
+use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 fn tls_config_with_client_auth(
@@ -302,19 +263,14 @@ let client = Client::new(&policy, hosts).await
     .expect("Failed to connect to cluster");
 ```
 
-Every connection is encrypted by default. To encrypt only the authentication
-exchange and run the data plane in cleartext, set `for_login_only`:
+Every connection is encrypted by default. To encrypt only the authentication exchange and run the data plane in cleartext, set `for_login_only`:
 
 ```rust
 policy.tls_policy =
     Some(TlsPolicy::new(tls_config_no_client_auth("/path/to/ca-cert.pem")).with_login_only(true));
 ```
 
-The login rides TLS; the client then reads the node's non-TLS address, closes
-the TLS connection and reconnects there, authenticating every later connection
-with the session token. Credentials never cross a cleartext socket. **This
-trades away data-plane encryption**: records, bin values and query results
-travel unencrypted. It requires an `auth_mode` other than `AuthMode::None`.
+The login rides TLS; the client then reads the node's non-TLS address, closes the TLS connection and reconnects there, authenticating every later connection with the session token. Credentials never cross a cleartext socket. **This trades away data-plane encryption**: records, bin values and query results travel unencrypted. It requires an `auth_mode` other than `AuthMode::None`.
 
 **Note**: To use TLS features, enable the `tls` feature in your `Cargo.toml`:
 
@@ -326,14 +282,10 @@ aerospike = { version = "...", features = ["tls"] }
 ### CRUD operations
 
 ```rust
-#[macro_use]
-extern crate aerospike;
-extern crate tokio;
-
 use std::env;
 use std::time::Instant;
 
-use aerospike::{Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
+use aerospike::{as_bin, as_key, Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
 use aerospike::operations;
 
 #[tokio::main]
@@ -384,100 +336,110 @@ async fn main() {
 
 ### Batch operations
 
+`Client::batch` writes each row's outcome into the operations you pass in; read it back through `record()`, `result_code()` and `error()` on each `BatchOperation`. Batches that write use `BatchPolicy::write_default()` (no retries), batches that only read use `BatchPolicy::default()`.
+
 ```rust
-    let mut bpolicy = BatchPolicy::default();
-    let apolicy = AdminPolicy::default();
+use aerospike::{
+    as_bin, as_key, as_val, operations, AdminPolicy, BatchDeletePolicy, BatchOperation,
+    BatchPolicy, BatchReadPolicy, BatchUdfPolicy, BatchWritePolicy, Bins, Task, UdfLang,
+};
 
-    let udf_body = r#"
-	function echo(rec, val)
-  		return val
-	end
-	"#;
+let apolicy = AdminPolicy::default();
 
-    let task = client
-        .register_udf(&apolicy, udf_body.as_bytes(), "test_udf.lua", UdfLang::Lua)
-        .await
-        .unwrap();
-    task.wait_till_complete(None).await.unwrap();
+let udf_body = r#"
+function echo(rec, val)
+    return val
+end
+"#;
 
-    let bin1 = as_bin!("a", "a value");
-    let bin2 = as_bin!("b", "another value");
-    let bin3 = as_bin!("c", 42);
+let task = client
+    .register_udf(&apolicy, udf_body.as_bytes(), "test_udf.lua", UdfLang::Lua)
+    .await
+    .unwrap();
+task.wait_till_complete(None).await.unwrap();
 
-    let key1 = as_key!(namespace, set_name, 1);
-    let key2 = as_key!(namespace, set_name, 2);
-    let key3 = as_key!(namespace, set_name, 3);
+let bin1 = as_bin!("a", "a value");
+let bin2 = as_bin!("b", "another value");
+let bin3 = as_bin!("c", 42);
 
-    let key4 = as_key!(namespace, set_name, -1);
-    // key does not exist
+let key1 = as_key!(namespace, set_name, 1);
+let key2 = as_key!(namespace, set_name, 2);
+let key3 = as_key!(namespace, set_name, 3);
 
-    let selected = Bins::from(["a"]);
-    let all = Bins::All;
-    let none = Bins::None;
+let key4 = as_key!(namespace, set_name, -1);
+// key does not exist
 
-    let wops = vec![
-        operations::put(&bin1),
-        operations::put(&bin2),
-        operations::put(&bin3),
-    ];
+let selected = Bins::from(["a"]);
+let all = Bins::All;
+let none = Bins::None;
 
-    let rops = vec![
-        operations::get_bin(&bin1.name),
-        operations::get_bin(&bin2.name),
-        operations::get_header(),
-    ];
+let wops = vec![
+    operations::put(&bin1),
+    operations::put(&bin2),
+    operations::put(&bin3),
+];
 
-    let bpr = BatchReadPolicy::default();
-    let bpw = BatchWritePolicy::default();
-    let bpd = BatchDeletePolicy::default();
-    let bpu = BatchUdfPolicy::default();
+let rops = vec![
+    operations::get_bin(&bin1.name),
+    operations::get_bin(&bin2.name),
+    operations::get_header(),
+];
 
-    let batch = vec![
-        BatchOperation::write(&bpw, key1.clone(), wops.clone()),
-        BatchOperation::write(&bpw, key2.clone(), wops.clone()),
-        BatchOperation::write(&bpw, key3.clone(), wops.clone()),
-    ];
-    let mut results = client.batch(&bpolicy, &batch).await.unwrap();
+let bpr = BatchReadPolicy::default();
+let bpw = BatchWritePolicy::default();
+let bpd = BatchDeletePolicy::default();
+let bpu = BatchUdfPolicy::default();
 
-    dbg!(&results);
+// Writes: every row carries its outcome after the call.
+let mut batch = vec![
+    BatchOperation::write(&bpw, key1.clone(), wops.clone()),
+    BatchOperation::write(&bpw, key2.clone(), wops.clone()),
+    BatchOperation::write(&bpw, key3.clone(), wops.clone()),
+];
+client.batch(&BatchPolicy::write_default(), &mut batch).await.unwrap();
+for op in &batch {
+    println!("write: {:?} -> {:?}", op.result_code(), op.record());
+}
 
-    // READ Operations
-    let batch = vec![
-        BatchOperation::read(&bpr, key1.clone(), selected),
-        BatchOperation::read(&bpr, key2.clone(), all),
-        BatchOperation::read(&bpr, key3.clone(), none.clone()),
-        BatchOperation::read_ops(&bpr, key3.clone(), rops),
-        BatchOperation::read(&bpr, key4.clone(), none),
-    ];
-    let mut results = client.batch(&bpolicy, &batch).await.unwrap();
+// Reads
+let mut batch = vec![
+    BatchOperation::read(&bpr, key1.clone(), selected),
+    BatchOperation::read(&bpr, key2.clone(), all),
+    BatchOperation::read(&bpr, key3.clone(), none.clone()),
+    BatchOperation::read_ops(&bpr, key3.clone(), rops),
+    BatchOperation::read(&bpr, key4.clone(), none),
+];
+client.batch(&BatchPolicy::default(), &mut batch).await.unwrap();
+for op in &batch {
+    match op.record() {
+        Some(record) => println!("read: {:?}", record.bins),
+        None => println!("read failed: {:?}", op.error()),
+    }
+}
 
-    dbg!(&results);
+// UDF calls
+let mut batch = vec![
+    BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", vec![as_val!(1)]),
+    BatchOperation::udf(&bpu, key2.clone(), "test_udf", "echo", vec![as_val!(2)]),
+    BatchOperation::udf(&bpu, key3.clone(), "test_udf", "echo", vec![as_val!(3)]),
+    BatchOperation::udf(&bpu, key4.clone(), "test_udf", "echo", vec![as_val!(4)]),
+];
+client.batch(&BatchPolicy::write_default(), &mut batch).await.unwrap();
+for op in &batch {
+    println!("udf: {:?} -> {:?}", op.result_code(), op.record());
+}
 
-    // DELETE Operations
-    let batch = vec![
-        BatchOperation::delete(&bpd, key1.clone()),
-        BatchOperation::delete(&bpd, key2.clone()),
-        BatchOperation::delete(&bpd, key3.clone()),
-        BatchOperation::delete(&bpd, key4.clone()),
-    ];
-    let mut results = client.batch(&bpolicy, &batch).await.unwrap();
-
-    dbg!(&results);
-
-    // Read
-    let args1 = &[as_val!(1)];
-    let args2 = &[as_val!(2)];
-    let args3 = &[as_val!(3)];
-    let args4 = &[as_val!(4)];
-    let batch = vec![
-        BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", Some(args1)),
-        BatchOperation::udf(&bpu, key2.clone(), "test_udf", "echo", Some(args2)),
-        BatchOperation::udf(&bpu, key3.clone(), "test_udf", "echo", Some(args3)),
-        BatchOperation::udf(&bpu, key4.clone(), "test_udf", "echo", Some(args4)),
-    ];
-    let mut results = client.batch(&bpolicy, &batch).await.unwrap();
-
-    dbg!(&results);
+// Deletes
+let mut batch = vec![
+    BatchOperation::delete(&bpd, key1.clone()),
+    BatchOperation::delete(&bpd, key2.clone()),
+    BatchOperation::delete(&bpd, key3.clone()),
+    BatchOperation::delete(&bpd, key4.clone()),
+];
+client.batch(&BatchPolicy::write_default(), &mut batch).await.unwrap();
+for op in &batch {
+    println!("delete: {:?}", op.result_code());
+}
 ```
 
 A complete working example can be found in [examples/batch_operations.rs](https://github.com/aerospike/aerospike-client-rust/blob/v3/examples/batch_operations.rs).
@@ -492,7 +454,8 @@ Query records where a bin equals a specific value:
 
 ```rust
 use aerospike::{QueryPolicy, Statement, Bins};
-use aerospike::query::PartitionFilter;
+use aerospike::query::{Filter, PartitionFilter};
+use futures::StreamExt;
 
 let policy = QueryPolicy::default();
 let mut stmt = Statement::new(namespace, set_name, Bins::All);
@@ -537,7 +500,7 @@ let mut rs = rs.into_stream();
 
 while let Some(r) = rs.next().await {
     let rec = r.unwrap();
-    println!("Generation: {}, TTL: {}", rec.generation, rec.expiration);
+    println!("Generation: {}, TTL: {:?}", rec.generation, rec.time_to_live());
 }
 ```
 
@@ -607,7 +570,7 @@ use aerospike::expressions::{eq, int_bin, int_val};
 
 let mut policy = QueryPolicy::default();
 policy.base_policy.filter_expression.replace(
-    eq(int_bin("bin_name".to_string()), int_val(42))
+    eq(int_bin("bin_name"), int_val(42))
 );
 
 let stmt = Statement::new(namespace, set_name, Bins::All);
@@ -646,7 +609,7 @@ while let Some(r) = rs.next().await {
 Before running queries, you need to create a secondary index on the bin you want to query:
 
 ```rust
-use aerospike::{AdminPolicy, IndexType, CollectionIndexType};
+use aerospike::{AdminPolicy, CollectionIndexType, IndexType, Task};
 
 let policy = AdminPolicy::default();
 let task = client
@@ -675,8 +638,8 @@ The Rust client provides flexible timeout configuration through `socket_timeout`
 
 #### Timeout parameters
 
-- **`socket_timeout`**: Socket idle timeout when processing a database command (in milliseconds). Default value 5000 (5 seconds).
-- **`total_timeout`**: Total command timeout, including retries (in milliseconds). Default value 0.
+- **`socket_timeout`**: Socket idle timeout when processing a database command (in milliseconds). Default value 30000 (30 seconds).
+- **`total_timeout`**: Total command timeout, including retries (in milliseconds). Default value 1000 (1 second); `0` means no limit.
 
 #### Timeout behavior rules
 
@@ -737,11 +700,7 @@ For a complete working example demonstrating timeout scenarios, see [`examples/t
 
 ### Dynamic configuration
 
-The client can load policy overrides from a YAML file and apply them at runtime,
-so timeouts, retries, read modes, metrics, and more can be tuned without
-restarting your application. This is gated behind the `dynamic-config` cargo
-feature and uses the same cross-client config file format as the other Aerospike
-clients, so one file can be shared across languages.
+The client can load policy overrides from a YAML file and apply them at runtime, so timeouts, retries, read modes, metrics, and more can be tuned without restarting your application. This is gated behind the `dynamic-config` cargo feature and uses the same cross-client config file format as the other Aerospike clients, so one file can be shared across languages.
 
 ```toml
 [dependencies]
@@ -750,8 +709,7 @@ aerospike = { version = "<version>", features = ["rt-tokio", "dynamic-config"] }
 
 There are two ways to point the client at a config file.
 
-**1. Environment variable** — set `AEROSPIKE_CLIENT_CONFIG_URL` and construct the
-client normally; it is picked up automatically:
+**1. Environment variable** — set `AEROSPIKE_CLIENT_CONFIG_URL` and construct the client normally; it is picked up automatically:
 
 ```bash
 export AEROSPIKE_CLIENT_CONFIG_URL="file:///etc/aerospike/config.yaml"
@@ -763,8 +721,7 @@ export AEROSPIKE_CLIENT_CONFIG_URL="/etc/aerospike/config.yaml"
 let client = Client::new(&ClientPolicy::default(), &"127.0.0.1:3000").await?;
 ```
 
-**2. Explicit provider** — inject a `YamlFileProvider` (no environment variable
-needed):
+**2. Explicit provider** — inject a `YamlFileProvider` (no environment variable needed):
 
 ```rust
 use std::sync::Arc;
@@ -808,29 +765,21 @@ Notes:
 
 - The file **must** contain a top-level `version` key or it is ignored (no error).
 - It is re-read on a background watcher only when its modification time changes.
-- Unsupported sections or keys are ignored rather than causing errors, so a
-  config file written for another client still works.
-- Only the `file://` scheme is built in; register others with
-  `aerospike::config::register_provider`.
+- Unsupported sections or keys are ignored rather than causing errors, so a config file written for another client still works.
+- Only the `file://` scheme is built in; register others with `aerospike::config::register_provider`.
+
+**Any source will do.** A provider is anything that implements `ConfigProvider`: one async `load` that returns a `ConfigDocument`, or `None` when nothing changed. The document is a plain serde type, so it can come from JSON, a key-value store or a service as easily as from a YAML file. [`examples/config_pigeon.rs`](https://github.com/aerospike/aerospike-client-rust/blob/v3/examples/config_pigeon.rs) is a carrier pigeon for a REST service: it fetches the document over HTTP, hands it over only when the service's answer changed, registers its own `pigeon://` scheme (a scheme named after the provider cannot collide with another provider's) so `AEROSPIKE_CLIENT_CONFIG_URL=pigeon://host:port/config` works, and shows a change on the service side reaching a running client.
 
 ### Stream UDF aggregation (client-side Lua)
 
-Aggregation queries (`Client::query_aggregate`) run a stream UDF's
-map/reduce pipeline split across the cluster and the client: each server
-node executes the server-scope operations and returns one partial result,
-and the client combines the partials by running the remaining operations
-(from the first `reduce` onward) in an embedded Lua 5.4 interpreter. The
-interpreter is only compiled in when the `lua` cargo feature is enabled:
+Aggregation queries (`Client::query_aggregate`) run a stream UDF's map/reduce pipeline split across the cluster and the client: each server node executes the server-scope operations and returns one partial result, and the client combines the partials by running the remaining operations (from the first `reduce` onward) in an embedded Lua 5.4 interpreter. The interpreter is only compiled in when the `lua` cargo feature is enabled:
 
 ```toml
 [dependencies]
 aerospike = { version = "<version>", features = ["rt-tokio", "lua"] }
 ```
 
-The UDF must be registered on the server **and** its source must be
-available to the client — either as `<package>.lua` in the directory set
-via `aerospike::lua::set_lua_path` (default `"udf"`), or registered
-in-memory with `aerospike::lua::register_package`:
+The UDF must be registered on the server **and** its source must be available to the client — either as `<package>.lua` in the directory set via `aerospike::lua::set_lua_path` (default `"udf"`), or registered in-memory with `aerospike::lua::register_package`:
 
 ```rust
 use aerospike::*;
@@ -855,16 +804,15 @@ while let Some(value) = stream.next().await {
 }
 ```
 
-See [`examples/query_aggregate.rs`](https://github.com/aerospike/aerospike-client-rust/blob/v3/examples/query_aggregate.rs) for a
-complete working example, including the Lua UDF source.
+See [`examples/query_aggregate.rs`](https://github.com/aerospike/aerospike-client-rust/blob/v3/examples/query_aggregate.rs) for a complete working example, including the Lua UDF source.
 
 ## Good to Know
 
 These patterns appear to require custom application logic or missing library features, but are already handled natively by the client.
 
-* **Single-key batch operations automatically fall back to single-record calls.** If routing assigns only one key to a given node within a batch, the client uses the single-record protocol for that node automatically—no manual routing checks or single-record fallbacks needed. See [`Client::batch`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/struct.Client.html#method.batch).
-* **Use `Client::batch` for multi-key operations instead of sequential loops.** Multi-key reads and writes should always go through `Client::batch` rather than looping individual calls like `get` or `put`. See the cross-references on [`get`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/struct.Client.html#method.get), `put`, `delete`, and `operate`.
-* **Path-based modifications support deletion out of the box.** You can delete path targets using `modify_by_path` or `exp_modify_by_path` by passing `exp_remove_result()`, or simply use the [`remove`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/operations/path/fn.modify_by_path.html) and [`exp_remove`](https://docs.rs/aerospike/3.0.0-alpha.2/aerospike/expressions/fn.exp_modify_by_path.html) wrappers.
+* **Single-key batch operations automatically fall back to single-record calls.** If routing assigns only one key to a given node within a batch, the client uses the single-record protocol for that node automatically—no manual routing checks or single-record fallbacks needed. See [`Client::batch`](https://docs.rs/aerospike/latest/aerospike/struct.Client.html#method.batch).
+* **Use `Client::batch` for multi-key operations instead of sequential loops.** Multi-key reads and writes should always go through `Client::batch` rather than looping individual calls like `get` or `put`. See the cross-references on [`get`](https://docs.rs/aerospike/latest/aerospike/struct.Client.html#method.get), `put`, `delete`, and `operate`.
+* **Path-based modifications support deletion out of the box.** You can delete path targets using `modify_by_path` or `exp_modify_by_path` by passing `exp_remove_result()`, or simply use the [`remove`](https://docs.rs/aerospike/latest/aerospike/operations/path/fn.modify_by_path.html) and [`exp_remove`](https://docs.rs/aerospike/latest/aerospike/expressions/fn.exp_modify_by_path.html) wrappers.
 
 ## Feedback wanted
 
@@ -875,6 +823,4 @@ We need your help with:
 
 You’re not just testing this new client - you’re shaping the future of Rust in databases!
 
-You can reach us through [Github Issues](https://github.com/aerospike/aerospike-client-rust/issues)
-or schedule a meeting to speak directly with our product team using
-[this scheduling link](https://calendar.app.google/sDseJu6vUg8da5Kw5).
+You can reach us through [Github Issues](https://github.com/aerospike/aerospike-client-rust/issues) or schedule a meeting to speak directly with our product team using [this scheduling link](https://calendar.app.google/sDseJu6vUg8da5Kw5).
