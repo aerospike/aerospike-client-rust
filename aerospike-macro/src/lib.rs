@@ -612,7 +612,7 @@ pub fn derive_record_mapper(input: TokenStream) -> TokenStream {
                     ) -> #derive_mod::Result<Self> {
                         let _ = generation;
                         let mut map = bins.clone();
-                        match &key.user_key {
+                        match #derive_mod::Key::user_key(key) {
                             ::core::option::Option::Some(user_key) => {
                                 map.insert(
                                     ::std::string::String::from(#key_name),
@@ -698,7 +698,7 @@ pub fn derive_record_mapper(input: TokenStream) -> TokenStream {
                 ) -> #derive_mod::Result<Self> {
                     let _ = generation;
                     ::core::result::Result::Ok(Self {
-                        #key_ident: match &key.user_key {
+                        #key_ident: match #derive_mod::Key::user_key(key) {
                             ::core::option::Option::Some(user_key) => {
                                 <#key_ty as #derive_mod::FromValue>::from_value(user_key)
                                     .map_err(|e| {

@@ -156,6 +156,10 @@ Upgrading from 2.x: see the [migration guide](https://github.com/aerospike/aeros
     before it packages anything.
 
 * **Bug Fixes**
+  * `#[derive(RecordMapper)]` compiles again outside `aerospike-core`: the generated `from_record`
+    read the private `Key::user_key` field directly and failed with "field `user_key` of struct
+    `Key` is private" in any crate using the derive. It now goes through the public
+    `Key::user_key()` accessor. The new `object_mapping` example exercises the derive.
   * An `operate` whose operations are all reads routes like a read: the policy's `replica` and
     `read_mode_sc` pick the node, as they do for `get`. It used to take the write routing, so
     `PreferRack`, `MasterProles` and `Random` were ignored and the SC read-mode rules never applied.
