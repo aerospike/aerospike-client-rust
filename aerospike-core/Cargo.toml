@@ -43,7 +43,7 @@ regex = "1"
 # `ClientConfig::builder()` picks it without a process-level install. A crate
 # that also enables rustls's `aws-lc-rs` feature must install a default
 # `CryptoProvider` itself, as rustls requires whenever two are compiled in.
-tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring", "logging", "tls12"], optional = true }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "logging", "tls12"], optional = true }
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "logging", "std", "tls12"], optional = true }
 async-channel = "2.5.0"
 # Borrowed, non-owning socket handle for the connection pool liveness probe:
@@ -95,5 +95,5 @@ serde_bytes = "0.11"
 # `aerospike-core` itself.
 aerospike = { path = "../", default-features = false, features = ["async"] }
 aerospike-macro = { workspace = true }
-tokio = { version = "1.53.1", features = ["full"] }
+tokio = { version = "1.53.2", features = ["full"] }
 webpki-roots = "1"

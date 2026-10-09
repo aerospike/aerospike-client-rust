@@ -216,7 +216,7 @@ jobs:
           # and nothing from outside the include list.
           cargo package -p aerospike --no-verify --list > package-list.txt
           grep -q '^tests/common/mod.rs$' package-list.txt
-          ! grep -qE '^(\.github/|.*_TODO\.md$)' package-list.txt
+          ! grep -qE '^(\.github/|(.*_)?TODO\.md$)' package-list.txt
 
   unit-test-coverage:
     name: unit-test-coverage

@@ -18,7 +18,7 @@ rust-version.workspace = true
 [dependencies]
 # "macros" is for `tokio::select!` in the client's connection layer, which
 # reaches tokio only through this crate's re-export.
-tokio = { version = "1.53.1", features = ["fs", "net", "rt", "rt-multi-thread", "time", "io-util", "sync", "macros"], optional = true }
+tokio = { version = "1.53.2", features = ["fs", "net", "rt", "rt-multi-thread", "time", "io-util", "sync", "macros"], optional = true }
 # "io_safety" gates async-std AsFd/AsSocket impls, which the connection layer
 # needs to borrow a socket for its liveness probe without taking ownership of the
 # fd. The feature adds no code of its own.
