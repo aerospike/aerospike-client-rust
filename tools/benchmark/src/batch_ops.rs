@@ -47,9 +47,9 @@ pub(crate) fn build_batch_read_ops(
 
 /// Rebuild a key in another namespace (same set and user key).
 fn rekey(key: &Key, namespace: &Arc<str>) -> Key {
-    match key.user_key.as_ref() {
-        Some(Value::Int(v)) => as_key!(namespace.as_ref(), key.set_name.as_str(), *v),
-        Some(Value::String(s)) => as_key!(namespace.as_ref(), key.set_name.as_str(), s.as_str()),
+    match key.user_key() {
+        Some(Value::Int(v)) => as_key!(namespace.as_ref(), key.set_name(), *v),
+        Some(Value::String(s)) => as_key!(namespace.as_ref(), key.set_name(), s.as_str()),
         _ => key.clone(),
     }
 }

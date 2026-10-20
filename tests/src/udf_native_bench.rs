@@ -101,13 +101,7 @@ fn native_module_2() -> Option<String> {
 
 async fn usable(client: &Client, module: &str, key: &Key) -> bool {
     client
-        .execute_udf(
-            &WritePolicy::default(),
-            key,
-            module,
-            "echo",
-            Some(&[as_val!(1)]),
-        )
+        .execute_udf(&WritePolicy::default(), key, module, "echo", &[as_val!(1)])
         .await
         .is_ok()
 }
@@ -135,7 +129,7 @@ async fn time_aggregation(
     let args = [as_val!("v")];
     let mut statement = Statement::new(namespace, set_name, Bins::All);
 
-    statement.set_aggregate_function(module, function, Some(&args));
+    statement.set_aggregate_function(module, function, &args);
 
     let started = Instant::now();
 
@@ -181,7 +175,7 @@ async fn time_calls(client: &Client, key: &Key, module: &str, function: &str) ->
 
     for _ in 0..CALLS {
         client
-            .execute_udf(&write, key, module, function, None)
+            .execute_udf(&write, key, module, function, &[])
             .await
             .unwrap();
     }
@@ -224,7 +218,7 @@ async fn native_bench() {
             &AdminPolicy::default(),
             LUA,
             &format!("{lua_package}.lua"),
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
         .unwrap();
@@ -281,8 +275,10 @@ async fn native_bench() {
     }
     let scan_ms = scan_started.elapsed().as_secs_f64() * 1000.0;
 
-    eprintln!("
-  plain scan of the same {RECORDS} records: {scan_ms:.1} ms (no UDF at all)");
+    eprintln!(
+        "
+  plain scan of the same {RECORDS} records: {scan_ms:.1} ms (no UDF at all)"
+    );
 
     // --- aggregation: the measurement that means something ---
 
@@ -301,7 +297,10 @@ async fn native_bench() {
             time_aggregation(&client, namespace, set_name, &native, "sum").await;
 
         assert_eq!(lua_total, expected, "Lua computed the wrong total");
-        assert_eq!(nat_total, expected, "the native module computed the wrong total");
+        assert_eq!(
+            nat_total, expected,
+            "the native module computed the wrong total"
+        );
 
         eprintln!(
             "  round {round}:  lua {lua_ms:8.1} ms   native/{native} {nat_ms:8.1} ms   \
@@ -315,8 +314,14 @@ async fn native_bench() {
         if let Some(m) = &native_2 {
             let (ms2, total2) = time_aggregation(&client, namespace, set_name, m, "sum").await;
 
-            assert_eq!(total2, expected, "the second native module computed the wrong total");
-            eprintln!("            native/{m} {ms2:8.1} ms   ({:.2}x lua)", lua_ms / ms2);
+            assert_eq!(
+                total2, expected,
+                "the second native module computed the wrong total"
+            );
+            eprintln!(
+                "            native/{m} {ms2:8.1} ms   ({:.2}x lua)",
+                lua_ms / ms2
+            );
             results.push((m.clone(), ms2));
         }
     }

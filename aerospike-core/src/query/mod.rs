@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -20,14 +20,24 @@ pub use self::filter::{EqFilterValue, Filter, RangeFilterValue};
 pub use self::index_types::{CollectionIndexType, IndexType};
 pub(crate) use self::node_partitions::NodePartitions;
 pub use self::partition_filter::PartitionFilter;
+// Hidden: reachable for language bindings that rebuild cursors; not API.
+#[doc(hidden)]
 pub use self::partition_status::PartitionStatus;
-pub(crate) use self::partition_tracker::PartitionTracker;
+pub(crate) use self::partition_tracker::{PartitionTracker, TrackerShared};
+#[doc(hidden)] // wire-level query-plan types, see the crate root
+pub use self::plan::{
+    QueryPlan, QuerySelection, QueryWhereWire, FLAG_ENC_VARINT, FLAG_EXPLAIN, FLAG_HARD_HINT,
+    FLAG_KNOWN, FLAG_REQUIRE_INDEX,
+};
 pub use self::recordset::RecordStream;
 pub use self::recordset::Recordset;
+pub(crate) use self::recordset::{StreamEntry, RECORD_BATCH};
 #[cfg(feature = "lua")]
 pub use self::result_set::{ResultSet, ResultStream};
+pub use self::sink::QueryHandle;
+pub(crate) use self::sink::{CallbackCtx, QuerySink};
 pub use self::statement::Statement;
-pub use self::udf::UDFLang;
+pub use self::udf::UdfLang;
 
 /// Query filter definitions and filter value traits.
 pub mod filter;
@@ -36,8 +46,11 @@ mod node_partitions;
 mod partition_filter;
 mod partition_status;
 mod partition_tracker;
+#[doc(hidden)]
+pub mod plan;
 mod recordset;
 #[cfg(feature = "lua")]
 mod result_set;
+mod sink;
 mod statement;
 mod udf;

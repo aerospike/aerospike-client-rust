@@ -1,4 +1,4 @@
-// Copyright 2015-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -121,7 +121,6 @@ impl<'a> PeersParser<'a> {
 
         Ok(Some(Peer {
             node_name,
-            tls_name,
             hosts,
             replace_node: None,
             from_node_name: None,
@@ -189,9 +188,7 @@ impl<'a> PeersParser<'a> {
         };
 
         if addr.is_empty() {
-            return Err(Error::parse_peers(
-                "Empty address string for peer",
-            ));
+            return Err(Error::parse_peers("Empty address string for peer"));
         }
 
         // Apply ip_map substitution at parse time, matching Java's
@@ -258,17 +255,19 @@ mod tests {
     use super::*;
 
     #[test]
+    // One scripted walk through every address shape in a single peers reply;
+    // clippy 1.87 counts its assertions past the complexity threshold.
+    #[allow(clippy::cognitive_complexity)]
     fn parse_peers() {
         // Server format: gen,port,[[peer1],[peer2],...]
         let result = PeersParser::new("1234567,3000,[[n1,t1,[192.168.4.10,192.168.3.10]],[n2,t2,[[2018::0002],[2018::0001]:4000]],[n3,t3,[foo1.aerocluster.com,foo2.aerocluster.new:3100]],[n4,t4,[foo2.aerocluster.com:5000]]]")
         .parse()
         .expect("Error parsing peer_string");
 
-        assert_eq!(result.generation, 1234567);
+        assert_eq!(result.generation, 1_234_567);
         assert_eq!(result.peers.len(), 4);
 
         assert_eq!(result.peers[0].node_name, "n1");
-        assert_eq!(result.peers[0].tls_name, "t1");
         assert_eq!(
             result.peers[0].hosts,
             vec![
@@ -323,12 +322,10 @@ mod tests {
         assert_eq!(result.generation, 7);
         assert_eq!(result.peers.len(), 3);
         assert_eq!(result.peers[0].node_name, "BB924A0A129825A");
-        assert_eq!(result.peers[0].tls_name, "");
         assert_eq!(result.peers[0].hosts, vec![Host::new("127.0.0.1", 3109)]);
         assert_eq!(result.peers[1].node_name, "BB9A14D609EE096");
         assert_eq!(result.peers[1].hosts, vec![Host::new("127.0.0.1", 3110)]);
         assert_eq!(result.peers[2].node_name, "BB9A14D609EE099");
-        assert_eq!(result.peers[2].tls_name, "t1");
         assert_eq!(
             result.peers[2].hosts,
             vec![Host::new_tls("127.0.0.1", "t1", 3000)]

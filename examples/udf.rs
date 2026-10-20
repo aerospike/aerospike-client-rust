@@ -1,3 +1,18 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 //! User-defined functions (UDFs): register, execute on a record, and run a
 //! background UDF over a whole set.
 //!
@@ -8,7 +23,7 @@ use std::env;
 
 use aerospike::{as_bin, as_key, as_val};
 use aerospike::{
-    AdminPolicy, Bins, Client, ClientPolicy, ReadPolicy, Statement, Task, UDFLang, Value,
+    AdminPolicy, Bins, Client, ClientPolicy, ReadPolicy, Statement, Task, UdfLang, Value,
     WritePolicy,
 };
 
@@ -46,7 +61,7 @@ pub async fn run() {
 
     // ---- Register the UDF module and wait for cluster-wide distribution ----
     let task = client
-        .register_udf(&apolicy, UDF.as_bytes(), "example_udf.lua", UDFLang::Lua)
+        .register_udf(&apolicy, UDF.as_bytes(), "example_udf.lua", UdfLang::Lua)
         .await
         .unwrap();
     task.wait_till_complete(None).await.unwrap();
@@ -54,10 +69,19 @@ pub async fn run() {
 
     // ---- Execute a UDF against a single record ----
     let key = as_key!("test", "udf_demo", "record-1");
-    client.put(&wpolicy, &key, &[as_bin!("n", 21)]).await.unwrap();
+    client
+        .put(&wpolicy, &key, &[as_bin!("n", 21)])
+        .await
+        .unwrap();
 
     client
-        .execute_udf(&wpolicy, &key, "example_udf", "double_bin", Some(&[as_val!("n")]))
+        .execute_udf(
+            &wpolicy,
+            &key,
+            "example_udf",
+            "double_bin",
+            &[as_val!("n")],
+        )
         .await
         .unwrap();
     let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
@@ -66,7 +90,13 @@ pub async fn run() {
 
     // A UDF can also return a value directly.
     let echoed = client
-        .execute_udf(&wpolicy, &key, "example_udf", "echo", Some(&[as_val!("pong")]))
+        .execute_udf(
+            &wpolicy,
+            &key,
+            "example_udf",
+            "echo",
+            &[as_val!("pong")],
+        )
         .await
         .unwrap();
     println!("echo => {echoed:?}");
@@ -75,12 +105,21 @@ pub async fn run() {
     let set_name = "udf_demo_bg";
     for i in 0..10i64 {
         let key = as_key!("test", set_name, i);
-        client.put(&wpolicy, &key, &[as_bin!("n", i)]).await.unwrap();
+        client
+            .put(&wpolicy, &key, &[as_bin!("n", i)])
+            .await
+            .unwrap();
     }
 
     let stmt = Statement::new("test", set_name, Bins::All);
     let task = client
-        .query_execute_udf(&wpolicy, stmt, "example_udf", "double_bin", Some(&[as_val!("n")]))
+        .query_execute_udf(
+            &wpolicy,
+            stmt,
+            "example_udf",
+            "double_bin",
+            &[as_val!("n")],
+        )
         .await
         .unwrap();
     task.wait_till_complete(None).await.unwrap();
@@ -94,7 +133,10 @@ pub async fn run() {
     assert_eq!(rec.bins.get("n"), Some(&Value::Int(14)));
 
     // ---- Cleanup ----
-    let task = client.remove_udf(&apolicy, "example_udf.lua").await.unwrap();
+    let task = client
+        .remove_udf(&apolicy, "example_udf.lua")
+        .await
+        .unwrap();
     let _ = task.wait_till_complete(None).await;
     for i in 0..10i64 {
         let _ = client.delete(&wpolicy, &as_key!("test", set_name, i)).await;

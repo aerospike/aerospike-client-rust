@@ -16,7 +16,15 @@ on:
   workflow_dispatch:
 
 jobs:
+  # The same gate a pull request passes: lint, docs.rs build, packaging
+  # rehearsal, and the server legs. Nothing is packaged if it fails.
+  gate:
+    name: Pull-request gate
+    uses: ./.github/workflows/build-test.yml
+    secrets: inherit
+
   build-stage:
     name: Build and create release bundle
+    needs: gate
     uses: ./.github/workflows/build-release.yml
     secrets: inherit

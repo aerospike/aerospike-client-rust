@@ -1,4 +1,4 @@
-// Copyright 2015-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -101,42 +101,61 @@ impl TxnRoll {
         let roll_policy = &roll_policy.batch_policy;
         let wp = write_policy_from_base(roll_policy);
 
+        // Whether the server told us the transaction had already been marked
+        // roll-forward — by an earlier attempt whose in-doubt outcome turned
+        // out to have landed. The commit then resolves as ALREADY_COMMITTED
+        // (the C client's refinement) rather than as a failure.
+        let mut already_committed = false;
+
         if self.txn.monitor_exists() {
             if let Some(txn_key) = get_txn_monitor_key(&self.txn) {
-                if let Err(err) = self.mark_roll_forward(&wp, &txn_key).await {
-                    // MRT_ABORTED from the server means it already aborted
-                    // this transaction. Flip the client state to Aborted and
-                    // clear the in-doubt flag so callers don't treat the
-                    // failure as ambiguous.
-                    let is_aborted =
-                        err.server_result_code() == Some(ResultCode::MrtAborted);
+                match self.mark_roll_forward(&wp, &txn_key).await {
+                    Ok(ResultCode::MrtCommitted) => already_committed = true,
+                    Ok(_) => (),
+                    Err(err) => {
+                        // MRT_ABORTED from the server means it already aborted
+                        // this transaction. Flip the client state to Aborted and
+                        // clear the in-doubt flag so callers don't treat the
+                        // failure as ambiguous.
+                        let is_aborted = err.server_result_code() == Some(ResultCode::MrtAborted);
 
-                    if is_aborted {
-                        self.txn.set_in_doubt(false);
-                        self.txn.set_state(TxnState::Aborted);
+                        if is_aborted {
+                            self.txn.set_in_doubt(false);
+                            self.txn.set_state(TxnState::Aborted);
+                            return Err(self.make_commit_error(
+                                CommitErrorType::MarkRollForwardAbandoned,
+                                false,
+                                Some(err),
+                            ));
+                        }
+
+                        // Propagate in-doubt: if the txn or this attempt was
+                        // already in doubt, keep that flag on the commit failure.
+                        let in_doubt = if self.txn.in_doubt() {
+                            true
+                        } else if err.in_doubt() || matches!(err.kind(), crate::ErrorKind::Timeout)
+                        {
+                            self.txn.set_in_doubt(true);
+                            true
+                        } else {
+                            false
+                        };
+
+                        // In doubt means the server may still roll this
+                        // transaction forward: lock the state so `abort` is
+                        // refused and only a commit retry can resolve it. A
+                        // clean failure stays Verified — abortable, releasing
+                        // its record locks right away.
+                        if in_doubt {
+                            self.txn.mark_commit_failed();
+                        }
+
                         return Err(self.make_commit_error(
                             CommitErrorType::MarkRollForwardAbandoned,
-                            false,
+                            in_doubt,
                             Some(err),
                         ));
                     }
-
-                    // Propagate in-doubt: if the txn or this attempt was
-                    // already in doubt, keep that flag on the commit failure.
-                    let in_doubt = if self.txn.in_doubt() {
-                        true
-                    } else if matches!(err.kind(), crate::ErrorKind::Timeout) {
-                        self.txn.set_in_doubt(true);
-                        true
-                    } else {
-                        false
-                    };
-
-                    return Err(self.make_commit_error(
-                        CommitErrorType::MarkRollForwardAbandoned,
-                        in_doubt,
-                        Some(err),
-                    ));
                 }
             }
         }
@@ -144,12 +163,28 @@ impl TxnRoll {
         self.txn.set_state(TxnState::Committed);
         self.txn.set_in_doubt(false);
 
-        if self
-            .roll(roll_policy, INFO4_MRT_ROLL_FORWARD)
-            .await
-            .is_err()
-        {
-            return Ok(CommitStatus::RollForwardAbandoned);
+        // Roll-forward failure used to return Ok(RollForwardAbandoned) and
+        // drop the error. Convenience wrappers then treated that Ok as a
+        // successful commit while the writes were still provisional. Raise
+        // instead so the cause (timeout, server code, node) reaches the
+        // caller; CLOSE_ABANDONED below stays a success.
+        //
+        // The state stays Committed here — the commit point (the roll-forward
+        // mark) is behind us and the server will finish the roll — so `abort`
+        // is already refused as "already committed"; `mark_commit_failed`
+        // would be a no-op on a terminal state and is not called.
+        if let Err(err) = self.roll(roll_policy, INFO4_MRT_ROLL_FORWARD).await {
+            let in_doubt = self.txn.in_doubt()
+                || err.in_doubt()
+                || matches!(err.kind(), crate::ErrorKind::Timeout);
+            if in_doubt {
+                self.txn.set_in_doubt(true);
+            }
+            return Err(self.make_commit_error(
+                CommitErrorType::RollForwardAbandoned,
+                in_doubt,
+                Some(err),
+            ));
         }
 
         if self.txn.close_monitor() {
@@ -160,6 +195,9 @@ impl TxnRoll {
             }
         }
 
+        if already_committed {
+            return Ok(CommitStatus::AlreadyCommitted);
+        }
         Ok(CommitStatus::Ok)
     }
 
@@ -209,6 +247,8 @@ impl TxnRoll {
             .map(|k| BatchRecord::new(k.clone(), false))
             .collect();
 
+        // `Arc<Node>` hashes and compares by node name, which never changes.
+        #[allow(clippy::mutable_key_type)]
         let groups = self.group_by_node(&keys)?;
         let futures = groups.into_iter().map(|(node, idxs)| {
             let cluster = self.cluster.clone();
@@ -221,8 +261,8 @@ impl TxnRoll {
         });
 
         for group_result in join_all(futures).await {
-            for (i, rc) in group_result {
-                records[i].result_code = rc;
+            for (i, row) in group_result {
+                records[i] = row;
             }
         }
         self.verify_records = records;
@@ -236,17 +276,15 @@ impl TxnRoll {
             .iter()
             .find(|r| {
                 !matches!(
-                    r.result_code,
+                    r.result_code(),
                     Some(ResultCode::Ok | ResultCode::KeyNotFoundError | ResultCode::FilteredOut)
                 )
             })
-            .map(|r| r.result_code);
+            .map(BatchRecord::result_code);
         if let Some(code) = failure {
             return Err(match code {
-                Some(rc) => Error::server_error(rc, String::new(), None),
-                None => {
-                    Error::timeout("Verify: no response for one or more records".to_string())
-                }
+                Some(rc) => Error::server_error_bare(rc),
+                None => Error::timeout("Verify: no response for one or more records".to_string()),
             });
         }
         Ok(())
@@ -258,7 +296,7 @@ impl TxnRoll {
     fn group_by_node(&self, keys: &[Key]) -> Result<HashMap<Arc<Node>, Vec<usize>>> {
         let mut groups: HashMap<Arc<Node>, Vec<usize>> = HashMap::new();
         for (i, key) in keys.iter().enumerate() {
-            let mut partition = Partition::for_write(key);
+            let mut partition = Partition::for_write(key, crate::policy::Replica::Master);
             let node = partition.get_node(&self.cluster)?;
             groups.entry(node).or_default().push(i);
         }
@@ -266,33 +304,30 @@ impl TxnRoll {
     }
 
     /// Runs verify for one node's key group: a single-record command for a
-    /// one-key group, otherwise a batch verify. Returns per-index result codes.
+    /// one-key group, otherwise a batch verify. Returns the per-index rows.
     async fn run_verify_group(
         cluster: Arc<Cluster>,
         policy: BatchPolicy,
         node: Arc<Node>,
         group: Vec<(usize, Key, u64)>,
-    ) -> Vec<(usize, Option<ResultCode>)> {
+    ) -> Vec<(usize, BatchRecord)> {
         if group.len() == 1 {
             let (i, key, ver) = &group[0];
+            let node_label = node.to_string();
             let mut cmd = TxnVerifyCommand::new(&policy.base_policy, cluster, key, *ver);
-            let rc = match cmd.execute().await {
-                Ok(()) => cmd.result_code.or(Some(ResultCode::Ok)),
-                Err(_) => cmd.result_code,
-            };
-            return vec![(*i, rc)];
+            let mut row = BatchRecord::new(key.clone(), false);
+            match (cmd.execute().await, cmd.result_code) {
+                (Ok(()), None | Some(ResultCode::Ok)) => row.set_ok(None),
+                (_, Some(rc)) => row.set_error(Error::server_error(rc, node_label, None)),
+                (Err(e), None) => row.set_error(e),
+            }
+            return vec![(*i, row)];
         }
 
         let ops: Vec<(BatchOperation, usize)> = group
             .iter()
             .map(|(i, key, ver)| {
-                (
-                    BatchOperation::TxnVerify {
-                        br: BatchRecord::new(key.clone(), false),
-                        version: Some(*ver),
-                    },
-                    *i,
-                )
+                (BatchOperation::txn_verify(key.clone(), Some(*ver)), *i)
             })
             .collect();
         let cmd = BatchOperateCommand::new(policy, node, ops);
@@ -300,16 +335,26 @@ impl TxnRoll {
             Ok(done) => done
                 .batch_ops
                 .into_iter()
-                .map(|(op, i)| (i, op.batch_record().result_code))
+                .map(|(op, i)| (i, op.batch_record().clone()))
                 .collect(),
-            Err(_) => group.iter().map(|(i, _, _)| (*i, None)).collect(),
+            Err(e) => group
+                .iter()
+                .map(|(i, key, _)| {
+                    let mut row = BatchRecord::new(key.clone(), false);
+                    row.stamp_unanswered(&e, None);
+                    (*i, row)
+                })
+                .collect(),
         }
     }
 
-    /// Mark the transaction monitor record as roll-forward.
-    async fn mark_roll_forward(&self, policy: &WritePolicy, txn_key: &Key) -> Result<()> {
+    /// Mark the transaction monitor record as roll-forward. On success returns
+    /// the server's result code: `Ok`, or `MrtCommitted` when the monitor was
+    /// already marked by an earlier attempt (the command accepts both).
+    async fn mark_roll_forward(&self, policy: &WritePolicy, txn_key: &Key) -> Result<ResultCode> {
         let mut cmd = TxnMarkRollForwardCommand::new(policy, self.cluster.clone(), txn_key);
-        cmd.execute().await
+        cmd.execute().await?;
+        Ok(cmd.result_code.unwrap_or(ResultCode::Ok))
     }
 
     /// Roll forward or back all written keys concurrently. Populates
@@ -325,6 +370,8 @@ impl TxnRoll {
             .map(|k| BatchRecord::new(k.clone(), true))
             .collect();
 
+        // `Arc<Node>` hashes and compares by node name, which never changes.
+        #[allow(clippy::mutable_key_type)]
         let groups = self.group_by_node(&keys)?;
         let futures = groups.into_iter().map(|(node, idxs)| {
             let cluster = self.cluster.clone();
@@ -335,12 +382,11 @@ impl TxnRoll {
         });
 
         for group_result in join_all(futures).await {
-            for (i, rc, in_doubt) in group_result {
-                records[i].result_code = rc;
-                records[i].in_doubt = in_doubt;
-                if in_doubt {
-                    self.txn.on_write_in_doubt(&records[i].key);
+            for (i, row) in group_result {
+                if row.in_doubt() {
+                    self.txn.on_write_in_doubt(&row.key);
                 }
+                records[i] = row;
             }
         }
         self.roll_records = records;
@@ -348,8 +394,8 @@ impl TxnRoll {
         let failure = self
             .roll_records
             .iter()
-            .find(|r| r.result_code != Some(ResultCode::Ok))
-            .map(|r| r.result_code);
+            .find(|r| r.result_code() != Some(ResultCode::Ok))
+            .map(BatchRecord::result_code);
         if let Some(code) = failure {
             let action = if txn_attr == INFO4_MRT_ROLL_FORWARD {
                 "commit"
@@ -357,9 +403,10 @@ impl TxnRoll {
                 "abort"
             };
             return Err(match code {
-                Some(rc) => {
-                    Error::server_error(rc, format!("Failed to {action} one or more records"), None)
-                }
+                Some(rc) => Error::server_error_with_message(
+                    rc,
+                    format!("Failed to {action} one or more records"),
+                ),
                 None => Error::timeout(format!(
                     "Failed to {action}: no response for one or more records"
                 )),
@@ -369,7 +416,8 @@ impl TxnRoll {
     }
 
     /// Runs roll for one node's key group: single-record command for a one-key
-    /// group, otherwise a batch roll. Returns per-index (result code, in_doubt).
+    /// group, otherwise a batch roll. Returns the per-index rows, in-doubt set
+    /// on the row's error where a write may have been applied.
     async fn run_roll_group(
         cluster: Arc<Cluster>,
         policy: BatchPolicy,
@@ -377,28 +425,37 @@ impl TxnRoll {
         txn: Arc<Txn>,
         roll_attr: u8,
         group: Vec<(usize, Key)>,
-    ) -> Vec<(usize, Option<ResultCode>, bool)> {
+    ) -> Vec<(usize, BatchRecord)> {
         if group.len() == 1 {
             let (i, key) = &group[0];
+            let node_label = node.to_string();
             let mut cmd = TxnRollCommand::new(&policy.base_policy, cluster, key, txn, roll_attr);
-            return match cmd.execute().await {
-                Ok(()) => vec![(*i, cmd.result_code.or(Some(ResultCode::Ok)), false)],
-                Err(e) if matches!(e.kind(), crate::ErrorKind::Timeout) => {
-                    vec![(*i, cmd.result_code, true)]
+            let mut row = BatchRecord::new(key.clone(), true);
+            match (cmd.execute().await, cmd.result_code) {
+                (Ok(()), None | Some(ResultCode::Ok)) => row.set_ok(None),
+                (outcome, Some(rc)) => {
+                    let mut row_error = Error::server_error(rc, node_label, None);
+                    if matches!(&outcome, Err(e) if e.is_client_timeout()) {
+                        row_error.force_in_doubt();
+                    }
+                    row.set_error(row_error.chain_cause(outcome.err()));
                 }
-                Err(_) => vec![(*i, cmd.result_code, false)],
-            };
+                (Err(e), None) => {
+                    let mut row_error = e;
+                    if row_error.is_client_timeout() {
+                        row_error.force_in_doubt();
+                    }
+                    row.set_error(row_error);
+                }
+            }
+            return vec![(*i, row)];
         }
 
         let ops: Vec<(BatchOperation, usize)> = group
             .iter()
             .map(|(i, key)| {
                 (
-                    BatchOperation::TxnRoll {
-                        br: BatchRecord::new(key.clone(), true),
-                        txn: txn.clone(),
-                        roll_attr,
-                    },
+                    BatchOperation::txn_roll(key.clone(), txn.clone(), roll_attr),
                     *i,
                 )
             })
@@ -408,14 +465,22 @@ impl TxnRoll {
             Ok(done) => done
                 .batch_ops
                 .into_iter()
-                .map(|(op, i)| {
-                    let br = op.batch_record();
-                    (i, br.result_code, br.in_doubt)
-                })
+                .map(|(op, i)| (i, op.batch_record().clone()))
                 .collect(),
             // Whole node-group failed (e.g. timeout after retries): treat every
             // write in the group as in-doubt, matching Go's no-response rule.
-            Err(_) => group.iter().map(|(i, _)| (*i, None, true)).collect(),
+            Err(e) => {
+                let mut cause = e;
+                cause.force_in_doubt();
+                group
+                    .iter()
+                    .map(|(i, key)| {
+                        let mut row = BatchRecord::new(key.clone(), true);
+                        row.stamp_unanswered(&cause, None);
+                        (*i, row)
+                    })
+                    .collect()
+            }
         }
     }
 

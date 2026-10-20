@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -15,8 +15,8 @@
 
 use std::time::Duration;
 
-use futures::stream::StreamExt;
 use aerospike_rt::sleep;
+use futures::stream::StreamExt;
 
 use crate::common;
 
@@ -285,7 +285,8 @@ async fn batch_read_with_compression() {
         ops.push(BatchOperation::read(&brp, key, Bins::All));
     }
 
-    let results = client.batch(&bpolicy, &ops).await.unwrap();
+    client.batch(&bpolicy, &mut ops).await.unwrap();
+    let results: Vec<BatchRecord> = ops.iter().map(|op| op.batch_record().clone()).collect();
     assert_eq!(results.len(), 50);
 
     for result in &results {
@@ -324,7 +325,7 @@ async fn batch_write_with_compression() {
         ops.push(BatchOperation::write(&bwp, key, wops));
     }
 
-    client.batch(&bpolicy, &ops).await.unwrap();
+    client.batch(&bpolicy, &mut ops).await.unwrap();
 
     // Verify with compressed reads
     let mut rpolicy = ReadPolicy::default();
@@ -406,7 +407,7 @@ async fn query_with_compression() {
 
     // Range query: int in [10, 50)
     let mut stmt = Statement::new(namespace, &set_name, Bins::All);
-    stmt.add_filter(Filter::equal("int", 25));
+    stmt.set_filter(Filter::equal("int", 25));
 
     let pf = PartitionFilter::all();
     let rs = client.query(&qpolicy, pf, stmt).await.unwrap();
@@ -451,10 +452,10 @@ async fn query_operate_with_compression() {
         let mut wpolicy = WritePolicy::default();
         wpolicy.base_policy.use_compression = use_compression;
 
-        let statement = Statement::new(namespace, &set_name, Bins::All);
-        let ops = vec![operations::add(&as_bin!("int", 100))];
+        let mut statement = Statement::new(namespace, &set_name, Bins::All);
+        statement.set_operations([operations::add(&as_bin!("int", 100))]);
         let task = client
-            .query_operate(&wpolicy, statement, &ops)
+            .query_operate(&wpolicy, statement)
             .await
             .unwrap_or_else(|e| panic!("query_operate ({}) failed: {:?}", label, e));
         task.wait_till_complete(Some(Duration::from_secs(30)))
@@ -467,7 +468,7 @@ async fn query_operate_with_compression() {
         for i in 0..200_i64 {
             let key = as_key!(namespace, &set_name, i);
             let rec = client.get(&rpolicy, &key, Bins::All).await.unwrap();
-            let val: i64 = rec.bins["int"].clone().into();
+            let val = i64::try_from(&rec.bins["int"]).unwrap();
             assert_eq!(
                 val,
                 i + expected_int,
@@ -716,7 +717,7 @@ async fn recovery_batch_compressed() {
     }
 
     // This should timeout while reading the large batch response.
-    let result = client.batch(&bpolicy, &ops).await;
+    let result = client.batch(&bpolicy, &mut ops).await;
     assert!(result.is_err(), "Expected timeout error on batch");
 
     // Allow recovery to complete.
@@ -737,15 +738,15 @@ async fn recovery_batch_compressed() {
     }
 
     for _ in 0..30 {
-        let results = client.batch(&bpolicy_normal, &ops).await;
+        let results = client.batch(&bpolicy_normal, &mut ops).await;
         if results.is_err() {
             continue;
         }
 
-        let results = results.unwrap();
-        assert_eq!(results.len(), count);
-        for result in &results {
-            assert!(result.record.is_some());
+        results.unwrap();
+        assert_eq!(ops.len(), count);
+        for op in &ops {
+            assert!(op.record().is_some());
         }
     }
 
@@ -797,21 +798,24 @@ async fn put_get_compression_size_sweep() {
 
     let sizes: &[usize] = &[
         1,
-        64,          // whole message still below the 128-byte threshold
-        200,         // just above the threshold
+        64,  // whole message still below the 128-byte threshold
+        200, // just above the threshold
         4 * 1024,
         64 * 1024 - 1, // encoder chunk boundary
         64 * 1024,
         64 * 1024 + 1,
-        256 * 1024,  // multi-chunk
-        512 * 1024,  // large record
+        256 * 1024, // multi-chunk
+        512 * 1024, // large record
     ];
 
     let mut keys = Vec::new();
     for (i, &size) in sizes.iter().enumerate() {
         for (variant, payload) in [
             ("zeros", vec![7u8; size]),
-            ("random", random_bytes(size, (i as u32 + 1).wrapping_mul(2_654_435_761))),
+            (
+                "random",
+                random_bytes(size, (i as u32 + 1).wrapping_mul(2_654_435_761)),
+            ),
         ] {
             let key = as_key!(namespace, &set_name, format!("sweep-{size}-{variant}"));
             client
@@ -839,11 +843,12 @@ async fn put_get_compression_size_sweep() {
     bpolicy.base_policy.total_timeout = 30000;
     let brp = BatchReadPolicy::default();
 
-    let ops: Vec<BatchOperation> = keys
+    let mut ops: Vec<BatchOperation> = keys
         .iter()
         .map(|(key, _)| BatchOperation::read(&brp, key.clone(), Bins::All))
         .collect();
-    let results = client.batch(&bpolicy, &ops).await.unwrap();
+    client.batch(&bpolicy, &mut ops).await.unwrap();
+    let results: Vec<BatchRecord> = ops.iter().map(|op| op.batch_record().clone()).collect();
     assert_eq!(results.len(), keys.len());
     for (result, (_, payload)) in results.iter().zip(&keys) {
         let record = result.record.as_ref().expect("batch record present");

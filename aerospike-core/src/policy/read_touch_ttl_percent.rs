@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -28,7 +28,7 @@ const DONT_RESET: u32 = 0xFFFF_FFFF; // -1 as i32
 /// recent write) will result in a touch, resetting the TTL to another 10 hours.
 /// Supported in server v8+.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReadTouchTTL {
+pub enum ReadTouchTtl {
     /// 1 - 100 : Reset record TTL on reads when within this percentage of the most recent write TTL
     Percent(u8),
 
@@ -39,12 +39,12 @@ pub enum ReadTouchTTL {
     DontReset,
 }
 
-impl From<ReadTouchTTL> for u32 {
-    fn from(exp: ReadTouchTTL) -> u32 {
+impl From<ReadTouchTtl> for u32 {
+    fn from(exp: ReadTouchTtl) -> u32 {
         match exp {
-            ReadTouchTTL::Percent(pct) => u32::from(pct),
-            ReadTouchTTL::ServerDefault => SERVER_DEFAULT,
-            ReadTouchTTL::DontReset => DONT_RESET,
+            ReadTouchTtl::Percent(pct) => u32::from(pct),
+            ReadTouchTtl::ServerDefault => SERVER_DEFAULT,
+            ReadTouchTtl::DontReset => DONT_RESET,
         }
     }
 }

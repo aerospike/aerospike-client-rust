@@ -142,13 +142,7 @@ fn native_module_2() -> Option<String> {
 
 async fn native_usable(client: &Client, module: &str, key: &Key) -> bool {
     client
-        .execute_udf(
-            &WritePolicy::default(),
-            key,
-            module,
-            "echo",
-            Some(&[as_val!(1)]),
-        )
+        .execute_udf(&WritePolicy::default(), key, module, "echo", &[as_val!(1)])
         .await
         .is_ok()
 }
@@ -192,7 +186,7 @@ async fn run(
     set_name: &str,
     module: &str,
     function: &str,
-    args: Option<&[Value]>,
+    args: &[Value],
 ) -> Run {
     use futures::StreamExt;
 
@@ -272,7 +266,7 @@ async fn best_of(
     set_name: &str,
     module: &str,
     function: &str,
-    args: Option<&[Value]>,
+    args: &[Value],
 ) -> Run {
     let mut best: Option<Run> = None;
 
@@ -324,7 +318,7 @@ async fn agg_bench() {
     let policy = AdminPolicy::default();
 
     client
-        .register_udf(&policy, LUA, &format!("{lua_package}.lua"), UDFLang::Lua)
+        .register_udf(&policy, LUA, &format!("{lua_package}.lua"), UdfLang::Lua)
         .await
         .unwrap()
         .wait_till_complete(None)
@@ -336,7 +330,7 @@ async fn agg_bench() {
             &policy,
             WASM_MODULE,
             &format!("{wasm_package}.wasm"),
-            UDFLang::Wasm,
+            UdfLang::Wasm,
         )
         .await
     {
@@ -400,7 +394,16 @@ async fn agg_bench() {
 
     let mut rows: Vec<(String, Run)> = Vec::new();
 
-    let lua = best_of(3, &client, namespace, set_name, lua_package, "stats", Some(&bin_arg)).await;
+    let lua = best_of(
+        3,
+        &client,
+        namespace,
+        set_name,
+        lua_package,
+        "stats",
+        &bin_arg,
+    )
+    .await;
 
     assert_eq!(lua.count, RECORDS, "lua counted wrong");
     assert_eq!(lua.sum, expected_sum, "lua summed wrong");
@@ -408,7 +411,7 @@ async fn agg_bench() {
 
     if have_wasm {
         // The fixture's `stats` takes no arguments and reads bin `n`.
-        let wasm = best_of(3, &client, namespace, set_name, wasm_package, "stats", None).await;
+        let wasm = best_of(3, &client, namespace, set_name, wasm_package, "stats", &[]).await;
 
         assert_eq!(wasm.count, RECORDS, "wasm counted wrong");
         assert_eq!(wasm.sum, expected_sum, "wasm summed wrong");
@@ -416,14 +419,14 @@ async fn agg_bench() {
     }
 
     if have_native {
-        let n = best_of(3, &client, namespace, set_name, &native, "stats", Some(&bin_arg)).await;
+        let n = best_of(3, &client, namespace, set_name, &native, "stats", &bin_arg).await;
 
         assert_eq!(n.count, RECORDS, "native counted wrong");
         assert_eq!(n.sum, expected_sum, "native summed wrong");
         rows.push((format!("native ({native})"), n));
 
         if let Some(m) = &native_2 {
-            let n2 = best_of(3, &client, namespace, set_name, m, "stats", Some(&bin_arg)).await;
+            let n2 = best_of(3, &client, namespace, set_name, m, "stats", &bin_arg).await;
 
             assert_eq!(n2.count, RECORDS, "second native module counted wrong");
             rows.push((format!("native ({m})"), n2));
@@ -443,26 +446,35 @@ async fn agg_bench() {
     let mut scalar_rows: Vec<(String, Run)> = Vec::new();
 
     // A scalar partial, so `count` stays zero here - only the sum is checked.
-    let lua_sum = best_of(3, &client, namespace, set_name, lua_package, "sum", Some(&bin_arg)).await;
+    let lua_sum = best_of(
+        3,
+        &client,
+        namespace,
+        set_name,
+        lua_package,
+        "sum",
+        &bin_arg,
+    )
+    .await;
 
     assert_eq!(lua_sum.sum, expected_sum, "lua summed wrong");
     scalar_rows.push(("lua".into(), lua_sum));
 
     if have_wasm {
-        let wasm_sum = best_of(3, &client, namespace, set_name, wasm_package, "sum", None).await;
+        let wasm_sum = best_of(3, &client, namespace, set_name, wasm_package, "sum", &[]).await;
 
         assert_eq!(wasm_sum.sum, expected_sum, "wasm summed wrong");
         scalar_rows.push(("wasm (aot)".into(), wasm_sum));
     }
 
     if have_native {
-        let n = best_of(3, &client, namespace, set_name, &native, "sum", Some(&bin_arg)).await;
+        let n = best_of(3, &client, namespace, set_name, &native, "sum", &bin_arg).await;
 
         assert_eq!(n.sum, expected_sum, "native summed wrong");
         scalar_rows.push((format!("native ({native})"), n));
 
         if let Some(m) = &native_2 {
-            let n2 = best_of(3, &client, namespace, set_name, m, "sum", Some(&bin_arg)).await;
+            let n2 = best_of(3, &client, namespace, set_name, m, "sum", &bin_arg).await;
 
             assert_eq!(n2.sum, expected_sum, "second native module summed wrong");
             scalar_rows.push((format!("native ({m})"), n2));
@@ -480,7 +492,10 @@ async fn agg_bench() {
     // isolates the second.
     //
 
-    if let Some(m) = native_2.as_ref().or(if have_native { Some(&native) } else { None }) {
+    if let Some(m) = native_2
+        .as_ref()
+        .or(if have_native { Some(&native) } else { None })
+    {
         // `stats_chunked` against *itself*, not against `stats`: chunk 0 never dumps and chunk 49 dumps at
         // roughly Lua's rate, so the two runs differ in the partial count and in nothing else at all. Comparing
         // against `stats` would have left min/max/seen in one arm and not the other — a smaller difference than
@@ -490,13 +505,30 @@ async fn agg_bench() {
         let control_args = [as_val!("v"), as_val!(0)];
         let chunk_args = [as_val!("v"), as_val!(per_partition)];
 
-        let control = best_of(3, &client, namespace, set_name, m, "stats_chunked", Some(&control_args)).await;
+        let control = best_of(
+            3,
+            &client,
+            namespace,
+            set_name,
+            m,
+            "stats_chunked",
+            &control_args,
+        )
+        .await;
 
         if control.partials == 0 {
             eprintln!("\n  (this module has no `stats_chunked`, so the split is not available)");
         } else {
-            let chunked =
-                best_of(3, &client, namespace, set_name, m, "stats_chunked", Some(&chunk_args)).await;
+            let chunked = best_of(
+                3,
+                &client,
+                namespace,
+                set_name,
+                m,
+                "stats_chunked",
+                &chunk_args,
+            )
+            .await;
 
             for (what, r) in [("control", &control), ("chunked", &chunked)] {
                 assert_eq!(r.count, RECORDS, "the {what} run counted wrong");
@@ -532,7 +564,7 @@ async fn agg_bench() {
 
     let mut emit_rows: Vec<(String, Run)> = Vec::new();
 
-    let lua = best_of(3, &client, namespace, set_name, lua_package, "over", None).await;
+    let lua = best_of(3, &client, namespace, set_name, lua_package, "over", &[]).await;
 
     if lua.records == 0 {
         eprintln!(
@@ -548,7 +580,7 @@ async fn agg_bench() {
     }
 
     if have_native {
-        let n = best_of(3, &client, namespace, set_name, &native, "over", None).await;
+        let n = best_of(3, &client, namespace, set_name, &native, "over", &[]).await;
 
         assert_eq!(
             n.records as i64, expected_emitted,
@@ -557,9 +589,12 @@ async fn agg_bench() {
         emit_rows.push((format!("native ({native})"), n));
 
         if let Some(m) = &native_2 {
-            let n2 = best_of(3, &client, namespace, set_name, m, "over", None).await;
+            let n2 = best_of(3, &client, namespace, set_name, m, "over", &[]).await;
 
-            assert_eq!(n2.records as i64, expected_emitted, "second module emitted wrong");
+            assert_eq!(
+                n2.records as i64, expected_emitted,
+                "second module emitted wrong"
+            );
             emit_rows.push((format!("native ({m})"), n2));
         }
     }
@@ -616,7 +651,9 @@ async fn agg_bench() {
         .truncate(&AdminPolicy::default(), namespace, set_name, 0)
         .await
     {
-        eprintln!("\nnote: could not truncate {set_name} ({e}) - a later run will be slower for it");
+        eprintln!(
+            "\nnote: could not truncate {set_name} ({e}) - a later run will be slower for it"
+        );
     }
 }
 

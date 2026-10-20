@@ -1,4 +1,4 @@
-// Copyright 2015-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ pub struct TxnCloseCommand<'a> {
 
 impl<'a> TxnCloseCommand<'a> {
     pub fn new(policy: &'a WritePolicy, cluster: Arc<Cluster>, key: &'a Key) -> Self {
-        let partition = crate::cluster::partition::Partition::for_write(key);
+        let partition = crate::cluster::partition::Partition::for_write(key, policy.base_policy.replica);
         TxnCloseCommand {
             single_command: SingleCommand::new(cluster, key, partition),
             policy,
@@ -81,7 +81,7 @@ impl Command for TxnCloseCommand<'_> {
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         if let Err(err) = conn.read_header().await {
-            warn!("Parse result error: {err}");
+            debug!("Parse result error: {err}");
             return Err(err);
         }
 
@@ -92,11 +92,12 @@ impl Command for TxnCloseCommand<'_> {
         match result_code {
             ResultCode::Ok | ResultCode::KeyNotFoundError => {}
             _ => {
+                let detail = SingleCommand::read_error_detail(conn).await?;
                 return Err(crate::errors::Error::server_error(
                     result_code,
                     conn.addr.clone(),
-                    None,
-                ))
+                    detail,
+                ));
             }
         }
 

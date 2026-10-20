@@ -50,16 +50,12 @@ const MODULE: &[u8] = include_bytes!("../fixtures/wasm/udf_test.wasm");
 ///
 /// Spelled `std::result::Result` because `aerospike::*` brings its own one-parameter `Result` alias into scope,
 /// and this one carries a reason rather than an `aerospike::Error`.
-async fn register(
-    client: &Client,
-    package: &str,
-    key: &Key,
-) -> std::result::Result<(), String> {
+async fn register(client: &Client, package: &str, key: &Key) -> std::result::Result<(), String> {
     let policy = AdminPolicy::default();
     let write = WritePolicy::default();
 
     match client
-        .register_udf(&policy, MODULE, &format!("{package}.wasm"), UDFLang::Wasm)
+        .register_udf(&policy, MODULE, &format!("{package}.wasm"), UdfLang::Wasm)
         .await
     {
         Ok(task) => {
@@ -90,7 +86,7 @@ async fn register(
     }
 
     match client
-        .execute_udf(&write, key, package, "abi_probe", None)
+        .execute_udf(&write, key, package, "abi_probe", &[])
         .await
     {
         Ok(Some(Value::Int(2))) => Ok(()),
@@ -119,22 +115,17 @@ async fn a_wasm_udf_reads_and_writes_its_record() {
 
     let write = WritePolicy::default();
     let key = as_key!(namespace, set_name, 1);
-    client
-        .put(&write, &key, &[as_bin!("n", 10)])
-        .await
-        .unwrap();
+    client.put(&write, &key, &[as_bin!("n", 10)]).await.unwrap();
 
     if let Err(reason) = register(&client, package, &key).await {
         skipped("a_wasm_udf_reads_and_writes_its_record", &reason);
         return;
     }
 
-
-
     // Once, twice: the second call must see what the first wrote.
     for expected in [11i64, 12] {
         let result = client
-            .execute_udf(&write, &key, package, "increment", None)
+            .execute_udf(&write, &key, package, "increment", &[])
             .await
             .unwrap();
 
@@ -145,7 +136,10 @@ async fn a_wasm_udf_reads_and_writes_its_record() {
         );
     }
 
-    let record = client.get(&ReadPolicy::default(), &key, Bins::All).await.unwrap();
+    let record = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
     assert_eq!(
         record.bins.get("n"),
         Some(&Value::Int(12)),
@@ -164,14 +158,15 @@ async fn arguments_reach_a_wasm_udf() {
 
     let write = WritePolicy::default();
     let key = as_key!(namespace, set_name, 1);
-    client.put(&write, &key, &[as_bin!("other", 1)]).await.unwrap();
+    client
+        .put(&write, &key, &[as_bin!("other", 1)])
+        .await
+        .unwrap();
 
     if let Err(reason) = register(&client, package, &key).await {
         skipped("arguments_reach_a_wasm_udf", &reason);
         return;
     }
-
-
 
     // A string and three integers: the string names the bin, the integers are summed into it.
     let args = vec![
@@ -182,7 +177,7 @@ async fn arguments_reach_a_wasm_udf() {
     ];
 
     let result = client
-        .execute_udf(&write, &key, package, "add_all", Some(&args))
+        .execute_udf(&write, &key, package, "add_all", &args)
         .await
         .unwrap();
     assert_eq!(
@@ -193,7 +188,7 @@ async fn arguments_reach_a_wasm_udf() {
 
     // Again, to show it accumulated rather than recomputed.
     let result = client
-        .execute_udf(&write, &key, package, "add_all", Some(&args))
+        .execute_udf(&write, &key, package, "add_all", &args)
         .await
         .unwrap();
     assert_eq!(result, Some(Value::Int(84)));
@@ -216,10 +211,8 @@ async fn a_wasm_udf_returns_nested_collections() {
         return;
     }
 
-
-
     let result = client
-        .execute_udf(&write, &key, package, "nested", None)
+        .execute_udf(&write, &key, package, "nested", &[])
         .await
         .unwrap();
 
@@ -271,10 +264,8 @@ async fn a_wasm_udf_sees_its_record_metadata() {
         return;
     }
 
-
-
     let result = client
-        .execute_udf(&write, &key, package, "describe", None)
+        .execute_udf(&write, &key, package, "describe", &[])
         .await
         .unwrap();
 
@@ -336,10 +327,8 @@ async fn calling_a_function_a_wasm_module_does_not_export_is_an_error() {
         return;
     }
 
-
-
     let error = client
-        .execute_udf(&write, &key, package, "no_such_function", None)
+        .execute_udf(&write, &key, package, "no_such_function", &[])
         .await
         .expect_err("a missing export must fail rather than return nothing");
 
@@ -378,7 +367,7 @@ async fn bytes_that_are_not_a_wasm_module_are_refused_when_registered() {
     }
 
     let error = client
-        .register_udf(&policy, b"this is not a wasm module", name, UDFLang::Wasm)
+        .register_udf(&policy, b"this is not a wasm module", name, UdfLang::Wasm)
         .await
         .expect_err("nonsense bytes must not register");
 
@@ -424,7 +413,7 @@ async fn a_wasm_udf_reads_a_list_bin() {
     }
 
     let result = client
-        .execute_udf(&write, &key, package, "sum_list", None)
+        .execute_udf(&write, &key, package, "sum_list", &[])
         .await
         .unwrap();
 
@@ -465,7 +454,7 @@ async fn a_wasm_udf_cannot_outgrow_its_memory_limit() {
         return;
     }
 
-    match client.execute_udf(&write, &key, package, "hog", None).await {
+    match client.execute_udf(&write, &key, package, "hog", &[]).await {
         // Refused, and the guest lived to say how far it got.
         Ok(Some(Value::Int(grown))) => assert!(
             grown < 512,
@@ -478,7 +467,6 @@ async fn a_wasm_udf_cannot_outgrow_its_memory_limit() {
         other => panic!("memory was not capped: {other:?}"),
     }
 }
-
 
 /// A stream UDF aggregates across the records a query matched.
 ///
@@ -524,7 +512,7 @@ async fn a_wasm_stream_udf_aggregates() {
 
     let mut statement = Statement::new(namespace, set_name, Bins::All);
 
-    statement.set_aggregate_function(package, "sum", None);
+    statement.set_aggregate_function(package, "sum", &[]);
 
     let records = client
         .query(&QueryPolicy::default(), PartitionFilter::all(), statement)
@@ -556,7 +544,7 @@ async fn a_wasm_stream_udf_aggregates() {
 
     let mut statement = Statement::new(namespace, set_name, Bins::All);
 
-    statement.set_aggregate_function(package, "stats", None);
+    statement.set_aggregate_function(package, "stats", &[]);
 
     let records = client
         .query(&QueryPolicy::default(), PartitionFilter::all(), statement)
@@ -596,17 +584,20 @@ async fn a_wasm_stream_udf_aggregates() {
         "every record must be seen exactly once — a per-record handle table that was not reset, or a \
          record counted twice, would show up here"
     );
-    assert_eq!(summed, expected, "and the sum must agree with the scalar aggregation");
+    assert_eq!(
+        summed, expected,
+        "and the sum must agree with the scalar aggregation"
+    );
 }
 
-/// **A GeoJSON bin survives a round trip through a WASM UDF.**
+/// **A GeoJson bin survives a round trip through a WASM UDF.**
 ///
 /// Until `set_geojson` existed, `mod-wamr` had no GEOJSON kind at all: a geojson bin read as `Type::Other`, its text
 /// was unreachable, and the only way to write text back was `set_str` — which keeps the document and silently turns a
 /// geospatially indexable bin into an ordinary string. The document would look correct and geo queries would stop
 /// matching it.
 ///
-/// So this asserts three things a guest now gets: the bin reports as GeoJSON, its text is readable, and writing it back
+/// So this asserts three things a guest now gets: the bin reports as GeoJson, its text is readable, and writing it back
 /// leaves it a geojson bin rather than a string.
 #[aerospike_macro::test]
 async fn a_wasm_udf_round_trips_a_geojson_bin() {
@@ -622,7 +613,7 @@ async fn a_wasm_udf_round_trips_a_geojson_bin() {
         .put(
             &WritePolicy::default(),
             &key,
-            &[as_bin!("loc", Value::GeoJSON(doc.to_string()))],
+            &[as_bin!("loc", Value::GeoJson(doc.to_string()))],
         )
         .await
         .unwrap();
@@ -641,7 +632,7 @@ async fn a_wasm_udf_round_trips_a_geojson_bin() {
         .cloned();
 
     assert!(
-        matches!(before, Some(Value::GeoJSON(_))),
+        matches!(before, Some(Value::GeoJson(_))),
         "the bin starts as geojson, got {before:?}"
     );
 
@@ -651,7 +642,7 @@ async fn a_wasm_udf_round_trips_a_geojson_bin() {
             &key,
             &format!("{package}.wasm"),
             "geo_roundtrip",
-            Some(&[as_val!("loc")]),
+            &[as_val!("loc")],
         )
         .await
         .expect("the geojson round trip should succeed");
@@ -673,7 +664,7 @@ async fn a_wasm_udf_round_trips_a_geojson_bin() {
 
     assert_eq!(
         after,
-        Some(Value::GeoJSON(doc.to_string())),
+        Some(Value::GeoJson(doc.to_string())),
         "the bin must still be geojson, with the document unchanged"
     );
 

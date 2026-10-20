@@ -1,3 +1,18 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 //! Geospatial queries with a geo2dsphere secondary index.
 //!
 //! Ports of the Java client's `QueryRegion`, `QueryRegionFilter` and
@@ -24,7 +39,7 @@ async fn main() {
 
 async fn count_matching(client: &Client, filter: Filter) -> usize {
     let mut stmt = Statement::new("test", SET, Bins::All);
-    stmt.add_filter(filter);
+    stmt.set_filter(filter);
     client
         .query(&QueryPolicy::default(), PartitionFilter::all(), stmt)
         .await
@@ -68,7 +83,7 @@ pub async fn run() {
         .expect("Failed to create geo index");
     task.wait_till_complete(None).await.unwrap();
 
-    // ---- Store a few points (GeoJSON values) ----
+    // ---- Store a few points (GeoJson values) ----
     let points = [
         ("sf-office", -122.40, 37.79),
         ("oakland", -122.27, 37.80),

@@ -52,7 +52,7 @@ use std::time::Instant;
 
 use aerospike_core::{
     as_bin, as_key, as_val, AdminPolicy, Bins, Client, ClientPolicy, PartitionFilter, QueryPolicy,
-    Statement, Task, UDFLang, Value, WritePolicy,
+    Statement, Task, UdfLang, Value, WritePolicy,
 };
 use futures::StreamExt;
 
@@ -126,7 +126,7 @@ async fn register_lua(client: &Client) -> bool {
             &AdminPolicy::default(),
             LUA.as_bytes(),
             &format!("{LUA_MODULE}.lua"),
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
     else {

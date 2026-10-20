@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -22,8 +22,8 @@ use std::fmt;
 /// no language, and a registered file cannot change language without being re-registered.
 ///
 /// [`Client::execute_udf`]: crate::Client::execute_udf
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UDFLang {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UdfLang {
     /// Lua embedded programming language.
     Lua,
 
@@ -37,25 +37,33 @@ pub enum UDFLang {
     Wasm,
 }
 
-impl UDFLang {
+impl UdfLang {
     /// The name the server knows this language by, as sent in `udf-put`.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            UDFLang::Lua => "LUA",
-            UDFLang::Wasm => "WASM",
+            UdfLang::Lua => "LUA",
+            UdfLang::Wasm => "WASM",
         }
     }
 }
 
-impl fmt::Display for UDFLang {
+impl fmt::Display for UdfLang {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{}", self.as_str())
+        let s = match *self {
+            UdfLang::Lua => "LUA",
+            UdfLang::Wasm => "WASM",
+        };
+
+        write!(f, "{s}")
     }
 }
 
-impl<'a> From<UDFLang> for &'a str {
-    fn from(val: UDFLang) -> &'a str {
-        val.as_str()
+impl<'a> From<UdfLang> for &'a str {
+    fn from(val: UdfLang) -> &'a str {
+        match val {
+            UdfLang::Lua => "LUA",
+            UdfLang::Wasm => "WASM",
+        }
     }
 }

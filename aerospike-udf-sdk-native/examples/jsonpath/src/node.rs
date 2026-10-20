@@ -278,7 +278,7 @@ impl<'r> Node<'r> {
             Kind::Bool => Node::Bool(value.as_bool().unwrap_or(false)),
             Kind::Int => Node::Int(value.as_i64().unwrap_or(0)),
             Kind::Double => Node::Double(value.as_f64().unwrap_or(0.0)),
-            // GeoJSON is carried as its text, which is what it is. Parsing it into an object would be a
+            // GeoJson is carried as its text, which is what it is. Parsing it into an object would be a
             // different feature and a surprising one - a path would silently reach inside a geometry.
             Kind::Str | Kind::GeoJson => Node::string(value.as_str().unwrap_or_default().to_string()),
             Kind::Blob => Node::Blob(value.as_bytes().unwrap_or_default().to_vec()),

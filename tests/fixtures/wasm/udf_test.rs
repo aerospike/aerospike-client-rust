@@ -76,7 +76,7 @@ as_udf::export! {
         0
     }
 
-    /// Read a GeoJSON bin and write it straight back, to prove the particle type survives.
+    /// Read a GeoJson bin and write it straight back, to prove the particle type survives.
     ///
     /// **The point is what it does *not* do.** Before `set_geojson` existed, a geojson bin read as `Type::Other` and
     /// the only way to put text back was `set_str` - which keeps the document and quietly turns a geospatially

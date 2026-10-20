@@ -67,7 +67,7 @@ async fn available(client: &Client, key: &Key) -> std::result::Result<(), String
     let args = [as_val!(7)];
 
     match client
-        .execute_udf(&write, key, &module(), "echo", Some(&args))
+        .execute_udf(&write, key, &module(), "echo", &args)
         .await
     {
         Ok(Some(Value::Int(7))) => Ok(()),
@@ -98,10 +98,7 @@ async fn a_native_udf_reads_and_writes_its_record() {
     let write = WritePolicy::default();
     let key = as_key!(namespace, set_name, 1);
 
-    client
-        .put(&write, &key, &[as_bin!("n", 10)])
-        .await
-        .unwrap();
+    client.put(&write, &key, &[as_bin!("n", 10)]).await.unwrap();
 
     if let Err(reason) = available(&client, &key).await {
         skipped("a_native_udf_reads_and_writes_its_record", &reason);
@@ -109,7 +106,7 @@ async fn a_native_udf_reads_and_writes_its_record() {
     }
 
     let first = client
-        .execute_udf(&write, &key, &module(), "increment", None)
+        .execute_udf(&write, &key, &module(), "increment", &[])
         .await
         .unwrap();
 
@@ -118,7 +115,7 @@ async fn a_native_udf_reads_and_writes_its_record() {
     // The second call is the one that catches an uncommitted write: if the first did not persist, this reads
     // 10 again and answers 11.
     let second = client
-        .execute_udf(&write, &key, &module(), "increment", None)
+        .execute_udf(&write, &key, &module(), "increment", &[])
         .await
         .unwrap();
 
@@ -159,7 +156,7 @@ async fn arguments_reach_a_native_udf() {
 
     let args = [as_val!(4), as_val!(5), as_val!(6)];
     let sum = client
-        .execute_udf(&write, &key, &module(), "add_all", Some(&args))
+        .execute_udf(&write, &key, &module(), "add_all", &args)
         .await
         .unwrap();
 
@@ -168,7 +165,7 @@ async fn arguments_reach_a_native_udf() {
     // An explicit argument reaches `increment` too, so arity 0 and arity 1 both dispatch.
     let by = [as_val!(41)];
     let bumped = client
-        .execute_udf(&write, &key, &module(), "increment", Some(&by))
+        .execute_udf(&write, &key, &module(), "increment", &by)
         .await
         .unwrap();
 
@@ -198,7 +195,7 @@ async fn a_native_udf_reads_a_list_bin() {
     }
 
     let total = client
-        .execute_udf(&write, &key, &module(), "sum_list", None)
+        .execute_udf(&write, &key, &module(), "sum_list", &[])
         .await
         .unwrap();
 
@@ -223,7 +220,7 @@ async fn a_native_udf_returns_nested_collections() {
     }
 
     let result = client
-        .execute_udf(&write, &key, &module(), "nested", None)
+        .execute_udf(&write, &key, &module(), "nested", &[])
         .await
         .unwrap();
 
@@ -272,7 +269,7 @@ async fn a_native_udf_sees_its_record_metadata() {
     }
 
     let result = client
-        .execute_udf(&write, &key, &module(), "describe", None)
+        .execute_udf(&write, &key, &module(), "describe", &[])
         .await
         .unwrap();
 
@@ -322,7 +319,7 @@ async fn calling_a_function_a_native_module_does_not_export_is_an_error() {
     }
 
     let result = client
-        .execute_udf(&write, &key, &module(), "no_such_function", None)
+        .execute_udf(&write, &key, &module(), "no_such_function", &[])
         .await;
 
     assert!(
@@ -347,14 +344,17 @@ async fn too_many_arguments_are_refused_before_the_plugin_runs() {
     client.put(&write, &key, &[as_bin!("n", 5)]).await.unwrap();
 
     if let Err(reason) = available(&client, &key).await {
-        skipped("too_many_arguments_are_refused_before_the_plugin_runs", &reason);
+        skipped(
+            "too_many_arguments_are_refused_before_the_plugin_runs",
+            &reason,
+        );
         return;
     }
 
     // `increment` accepts 0 or 1.
     let args = [as_val!(1), as_val!(2)];
     let result = client
-        .execute_udf(&write, &key, &module(), "increment", Some(&args))
+        .execute_udf(&write, &key, &module(), "increment", &args)
         .await;
 
     assert!(
@@ -407,7 +407,7 @@ async fn a_client_cannot_register_a_native_module() {
             &policy,
             b"function hello() return 1 end",
             &format!("{}.lua", module()),
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await;
 
@@ -419,7 +419,7 @@ async fn a_client_cannot_register_a_native_module() {
 
     // And the native module still answers, which is the thing the refusal protects.
     let echoed = client
-        .execute_udf(&write, &key, &module(), "echo", Some(&[as_val!(99)]))
+        .execute_udf(&write, &key, &module(), "echo", &[as_val!(99)])
         .await
         .unwrap();
 
@@ -476,7 +476,7 @@ async fn collect_partials(
 
     let mut statement = Statement::new(namespace, set_name, Bins::All);
 
-    statement.set_aggregate_function(&module(), function, Some(args));
+    statement.set_aggregate_function(&module(), function, args);
 
     let records = client
         .query(&QueryPolicy::default(), PartitionFilter::all(), statement)
@@ -550,7 +550,8 @@ async fn a_native_aggregation_runs() {
         .sum();
 
     assert_eq!(
-        total, expected,
+        total,
+        expected,
         "{} partial(s) must add up to {expected}",
         partials.len()
     );
@@ -601,13 +602,16 @@ async fn a_native_aggregation_can_emit_records() {
     let set_name = &common::rand_str(10);
 
     if !seed(&client, namespace, set_name).await {
-        skipped("a_native_aggregation_can_emit_records", "no usable native module");
+        skipped(
+            "a_native_aggregation_can_emit_records",
+            "no usable native module",
+        );
         return;
     }
 
     let mut statement = Statement::new(namespace, set_name, Bins::All);
 
-    statement.set_aggregate_function(&module(), "over", None);
+    statement.set_aggregate_function(&module(), "over", &[]);
 
     let records = client
         .query(&QueryPolicy::default(), PartitionFilter::all(), statement)
@@ -650,7 +654,10 @@ async fn a_native_aggregation_dumps_when_it_fills() {
     let set_name = &common::rand_str(10);
 
     if !seed(&client, namespace, set_name).await {
-        skipped("a_native_aggregation_dumps_when_it_fills", "no usable native module");
+        skipped(
+            "a_native_aggregation_dumps_when_it_fills",
+            "no usable native module",
+        );
         return;
     }
 

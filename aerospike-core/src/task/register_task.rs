@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -31,13 +31,15 @@ static RESPONSE_PATTERN: &str = "filename=";
 
 impl RegisterTask {
     /// Initializes `RegisterTask` from client, creation should only be expose to Client
-    pub const fn new(cluster: Arc<Cluster>, package_name: String) -> Self {
+    pub(crate) const fn new(cluster: Arc<Cluster>, package_name: String) -> Self {
         RegisterTask {
             cluster,
             package_name,
         }
     }
 }
+
+impl super::task::sealed::Sealed for RegisterTask {}
 
 #[async_trait::async_trait]
 impl Task for RegisterTask {

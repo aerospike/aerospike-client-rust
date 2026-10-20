@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -13,6 +13,19 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 extern crate env_logger;
+use std::sync::Once;
+
+/// One env_logger init for the whole integration-test binary (`RUST_LOG` applies process-wide).
+static INIT_LOGGER: Once = Once::new();
+
+pub(crate) fn init_test_logger() {
+    INIT_LOGGER.call_once(|| {
+        let _ =
+            env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("error"))
+                .is_test(true)
+                .try_init();
+    });
+}
 #[cfg(feature = "tls")]
 extern crate tokio_rustls;
 #[macro_use]

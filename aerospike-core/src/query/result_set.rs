@@ -73,7 +73,7 @@ impl ResultSet {
 
     #[cfg(feature = "sync")]
     /// Returns a result from the queue if one is available. Otherwise,
-    /// returns None.
+    /// returns None. Available via the blocking `aerospike-sync` client.
     pub fn next_value(&self) -> Option<Result<Value>> {
         self.rx.try_recv().ok()
     }
@@ -90,7 +90,8 @@ impl Iterator for &ResultSet {
     type Item = Result<Value>;
 
     /// Blocking iterator: parks the calling thread until the next value
-    /// arrives; ends once the result set is closed and drained.
+    /// arrives; ends once the result set is closed and drained. Available
+    /// via the blocking `aerospike-sync` client.
     fn next(&mut self) -> Option<Result<Value>> {
         self.rx.recv_blocking().ok()
     }
@@ -128,6 +129,7 @@ impl AsRef<ResultSet> for ResultStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "sync")]
     use std::time::Duration;
 
     use futures::executor::block_on;

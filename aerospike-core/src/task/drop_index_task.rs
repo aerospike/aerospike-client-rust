@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -31,7 +31,7 @@ static SUCCESS_PATTERN: &str = "false";
 
 impl DropIndexTask {
     /// Initializes `DropIndexTask` from client, creation should only be expose to Client
-    pub const fn new(cluster: Arc<Cluster>, namespace: String, index_name: String) -> Self {
+    pub(crate) const fn new(cluster: Arc<Cluster>, namespace: String, index_name: String) -> Self {
         DropIndexTask {
             cluster,
             namespace,
@@ -57,6 +57,8 @@ impl DropIndexTask {
         }
     }
 }
+
+impl super::task::sealed::Sealed for DropIndexTask {}
 
 #[async_trait::async_trait]
 impl Task for DropIndexTask {

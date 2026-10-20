@@ -1,3 +1,18 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 use std::collections::HashMap;
 
 use crate::common;
@@ -86,20 +101,24 @@ proptest_async::proptest! {
             as_ops.push(as_op);
         }
 
-        let res = client.batch(&batch_policy, &as_ops).await;
+        let mut as_ops = as_ops;
+        let res = client
+            .batch(&batch_policy, &mut as_ops)
+            .await
+            .map(|()| -> Vec<BatchRecord> {
+                as_ops.iter().map(|op| op.batch_record().clone()).collect()
+            });
 
         match res {
             Err(e) => panic!("{}", e),
             Ok(res) => {
                 // Data validation
                 for op in res {
-                    op.record.map(|r| {
-                        if let Some(actual_value) = r.bins.get("binName") {
-                            if expected_value != actual_value.as_string() {
-                                panic!("Batch Read: Value for bin 'binName' doesn't match; expected: {:?}, got: {:?}", expected_value, actual_value);
-                            }
+                    if let Some(actual_value) = op.record.as_ref().and_then(|r| r.bins.get("binName")) {
+                        if expected_value != actual_value.as_string() {
+                            panic!("Batch Read: Value for bin 'binName' doesn't match; expected: {:?}, got: {:?}", expected_value, actual_value);
                         }
-                    });
+                    }
                 }
             }
         }
@@ -132,18 +151,12 @@ proptest_async::proptest! {
             // First, we need to discover the names of the bins that proptest-rs
             // has chosen for this run.
 
-            match op {
-                PropBatchOperation::Write(_, ref ops) => {
-                    for sub_op in ops {
-                        match sub_op {
-                            PropOperation::Put(ref bin) => {
-                                puts_to_bins.insert(bin.name.clone(), bin.value.clone());
-                            }
-                           _ => (),
-                        }
+            if let PropBatchOperation::Write(_, ref ops) = op {
+                for sub_op in ops {
+                    if let PropOperation::Put(ref bin) = sub_op {
+                        puts_to_bins.insert(bin.name.clone(), bin.value.clone());
                     }
                 }
-                _ => (),
             }
 
             // Now that we have a list of bins to initialize, let's actually
@@ -151,7 +164,7 @@ proptest_async::proptest! {
             // succeeds, the bin value (and type) will be changed according to
             // the write in the operation list.
 
-            for (bin_name, _) in &puts_to_bins {
+            for bin_name in puts_to_bins.keys() {
                 let bins = [as_bin!(bin_name.clone(), 1)];
                 client.put(&write_policy, &key, &bins).await.expect("initializing put should work");
             }
@@ -167,7 +180,7 @@ proptest_async::proptest! {
                     BatchOperation::write(
                         &bwp,
                         key.clone(),
-                        sub.iter().map(|o| o.to_op()).collect(),
+                        sub.iter().map(|o| o.to_op()).collect::<Vec<_>>(),
                     )
                 }
                 _ => op.to_op(key.clone()),
@@ -177,7 +190,13 @@ proptest_async::proptest! {
 
         // Invoke the batch operation.
 
-        let res = client.batch(&batch_policy, &as_ops).await;
+        let mut as_ops = as_ops;
+        let res = client
+            .batch(&batch_policy, &mut as_ops)
+            .await
+            .map(|()| -> Vec<BatchRecord> {
+                as_ops.iter().map(|op| op.batch_record().clone()).collect()
+            });
 
         match res {
             Err(e) => panic!("ERR: {}", e),
@@ -187,7 +206,7 @@ proptest_async::proptest! {
                 for result in results {
                     // Check the result code to filter out "errors" that aren't
                     // really errors.
-                    match result.result_code {
+                    match result.result_code() {
                         // If a result has been filtered out,
                         Some(ResultCode::FilteredOut) => {
                             // skip the check; it's been filtered out.
@@ -227,13 +246,11 @@ proptest_async::proptest! {
                                                 // provided by proptests-rs.  That means we must have previously
                                                 // client.put() to establish a default record.  Check to make sure the
                                                 // bin's current contents matches proptest-rs's expected value.
-                                                Some(expected_value) => {
-                                                    if *candidate_name == updated_name {
-                                                        if *candidate_value != *expected_value {
+                                                Some(expected_value)
+                                                    if *candidate_name == updated_name
+                                                        && *candidate_value != *expected_value => {
                                                             panic!("For bin \"{:?}\"\n  Expected: {:?}\n  Actual: {:?}\n", updated_name, expected_value, candidate_value);
                                                         }
-                                                    }
-                                                }
 
                                                 // If we found a bin in the reply that does not exist in the puts_to_bins map,
                                                 // it is because it was created by the server in response to an alternative operation
@@ -251,7 +268,7 @@ proptest_async::proptest! {
                         }
 
                         _ => {
-                            eprintln!("WARNING: Unknown result code {:?}", result.result_code);
+                            eprintln!("WARNING: Unknown result code {:?}", result.result_code());
                         }
                     }
                 }
@@ -305,7 +322,13 @@ proptest_async::proptest! {
             as_ops.push(as_op);
         }
 
-        let res = client.batch(&BatchPolicy::default(), &as_ops).await;
+        let mut as_ops = as_ops;
+        let res = client
+            .batch(&BatchPolicy::default(), &mut as_ops)
+            .await
+            .map(|()| -> Vec<BatchRecord> {
+                as_ops.iter().map(|op| op.batch_record().clone()).collect()
+            });
 
         match res {
             Err(e) => panic!("ERR: {}", e),
@@ -322,7 +345,7 @@ proptest_async::proptest! {
                         _ => panic!("Unexpected batch operation"),
                     };
 
-                    match record.result_code {
+                    match record.result_code() {
                         Some(ResultCode::Ok) => (),
                         Some(ResultCode::FilteredOut) => (),
 
@@ -362,7 +385,7 @@ proptest_async::proptest! {
                         }
 
                         _ => {
-                            panic!("Unexpected result code: {:?}", record.result_code);
+                            panic!("Unexpected result code: {:?}", record.result_code());
                         }
                     }
                 }

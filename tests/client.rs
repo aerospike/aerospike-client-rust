@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -75,28 +75,26 @@ async fn close() {
     let client = Client::new(common::client_policy(), &common::hosts())
         .await
         .unwrap();
-    assert_eq!(client.is_connected(), true, "The client is not connected");
+    assert!(client.is_connected(), "The client is not connected");
 
     if let Ok(()) = client.close().await {
-        assert_eq!(
-            client.is_connected(),
-            false,
-            "The client did not disconnect"
-        );
+        assert!(!client.is_connected(), "The client did not disconnect");
     } else {
-        assert!(false, "Failed to close client");
+        panic!("Failed to close client");
     }
 }
 
 #[cfg(feature = "tls")]
 #[aerospike_macro::test]
 async fn tls_client_no_auth() {
-    if common::no_tls() {
+    if common::no_server_tls() {
         return;
     }
 
     let policy = &mut common::client_policy().clone();
-    policy.tls_config = Some(common::tls_config_no_client_auth());
+    policy.tls_policy = Some(aerospike::TlsPolicy::new(
+        common::tls_config_no_client_auth(),
+    ));
     let client = Client::new(policy, &common::hosts()).await.unwrap();
     let names = client.node_names();
     assert!(!names.is_empty());
@@ -106,12 +104,12 @@ async fn tls_client_no_auth() {
 #[cfg(feature = "tls")]
 #[aerospike_macro::test]
 async fn tls_client_auth() {
-    if common::no_tls() {
+    if common::no_mutual_tls() {
         return;
     }
 
     let policy = &mut common::client_policy().clone();
-    policy.tls_config = Some(common::tls_config());
+    policy.tls_policy = Some(aerospike::TlsPolicy::new(common::tls_config()));
     let client = Client::new(policy, &common::hosts()).await.unwrap();
     let names = client.node_names();
     assert!(!names.is_empty());

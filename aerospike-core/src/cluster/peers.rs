@@ -1,4 +1,4 @@
-// Copyright 2015-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,24 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
+
+use crate::locks::lock;
 
 use crate::cluster::Node;
 use crate::net::Host;
-
-/// Locks one of the internal collections, recovering from poisoning (a
-/// panicked tend task must not wedge every subsequent tend).
-fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 /// Represents a peer node discovered from the server's peers list.
 #[derive(Debug, Clone)]
 pub struct Peer {
     pub node_name: String,
-    pub tls_name: String,
     pub hosts: Vec<Host>,
     /// If set, this peer should replace the given existing node
     /// (e.g. when a node's IP address has changed).
@@ -60,7 +55,7 @@ pub struct Peers {
     /// Per-tend list of hosts that already failed to validate. Used to
     /// short-circuit retries against hosts whose connection just failed
     /// within this same tend.
-    invalid_hosts: Mutex<HashMap<Host, ()>>,
+    invalid_hosts: Mutex<HashSet<Host>>,
     /// Per-source-node `peers-generation` values waiting to be committed
     /// once every peer parsed by that node has successfully materialized.
     /// Advance the node's generation only when its full peer set is
@@ -81,7 +76,7 @@ impl Peers {
             peers: Mutex::new(Vec::with_capacity(peer_capacity)),
             nodes: Mutex::new(HashMap::with_capacity(add_capacity)),
             nodes_to_remove: Mutex::new(HashMap::with_capacity(add_capacity)),
-            invalid_hosts: Mutex::new(HashMap::with_capacity(8)),
+            invalid_hosts: Mutex::new(HashSet::with_capacity(8)),
             pending_generations: Mutex::new(HashMap::with_capacity(add_capacity)),
             refresh_count: AtomicUsize::new(0),
             gen_changed: AtomicBool::new(true),
@@ -90,13 +85,13 @@ impl Peers {
 
     /// Mark a host as already-failed for the rest of this tend cycle.
     pub fn fail(&self, host: Host) {
-        lock(&self.invalid_hosts).insert(host, ());
+        lock(&self.invalid_hosts).insert(host);
     }
 
     /// `true` when [`fail`](Self::fail) was called on this host earlier in
     /// the same tend cycle.
     pub fn has_failed(&self, host: &Host) -> bool {
-        lock(&self.invalid_hosts).contains_key(host)
+        lock(&self.invalid_hosts).contains(host)
     }
 
     /// Number of hosts that failed to validate during this tend.
@@ -106,7 +101,7 @@ impl Peers {
 
     /// Snapshot of the failed-host set, for diagnostic messages.
     pub fn invalid_hosts(&self) -> Vec<Host> {
-        lock(&self.invalid_hosts).keys().cloned().collect()
+        lock(&self.invalid_hosts).iter().cloned().collect()
     }
 
     /// Stage a `peers-generation` reported by `parsing_node` so it can be
@@ -135,11 +130,6 @@ impl Peers {
     /// Looks up a new node by name.
     pub fn node_by_name(&self, name: &str) -> Option<Arc<Node>> {
         lock(&self.nodes).get(name).cloned()
-    }
-
-    /// Returns a clone of the new nodes map.
-    pub fn nodes(&self) -> HashMap<String, Arc<Node>> {
-        lock(&self.nodes).clone()
     }
 
     /// Removes and returns all newly created nodes. Used by the tend loop

@@ -2,12 +2,14 @@
 name = "aerospike-client-rust-benchmark"
 version = "0.1.0"
 description = "Benchmark suite for the Aerospike Rust client"
-authors = ["Jan Hecking <jhecking@netgaroo.com>"]
-homepage = "https://www.aerospike.com/"
-repository = "https://github.com/aerospike/aerospike-client-rust/"
-license = "Apache-2.0"
-edition = "2018"
-rust-version = "1.87"
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# A development tool, never a crates.io package.
+publish = false
 
 [dependencies]
 chrono = "0.4"

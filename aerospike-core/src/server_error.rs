@@ -24,7 +24,7 @@
 //! [`ServerErrorDetail`] and via the [`Error::server_error_detail`],
 //! [`Error::sub_code`] and [`Error::server_message`] accessors.
 //!
-//! Requires Aerospike server version 8.1.3 or later; older servers ignore the
+//! Requires Aerospike server version 8.2.0 or later; older servers ignore the
 //! request flags.
 //!
 //! [`Error::server_error_detail`]: crate::errors::Error::server_error_detail
@@ -77,8 +77,10 @@ pub mod sub_code {
     pub const PARAM_STRING_OP_PARAMS_INVALID: u32 = 6;
     /// String op code or modifier/read class mismatch on the wire path.
     pub const PARAM_STRING_OP_INVALID: u32 = 7;
-    /// String context-eval path malformed.
-    pub const PARAM_STRING_CTX_NOT_APPLICABLE: u32 = 8;
+    /// String `CONTEXT_EVAL` envelope malformed — wrong outer element count, a
+    /// missing context list, or a context the op cannot apply.
+    pub const PARAM_STRING_CTX_MALFORMED: u32 = 8;
+
     /// String modify/read index or code-point range out of bounds.
     pub const PARAM_STRING_INDEX_OUT_OF_BOUNDS: u32 = 9;
     /// String regex pattern invalid (compile / ICU failure).
@@ -94,6 +96,10 @@ pub mod sub_code {
     pub const UNAVAIL_INITIAL_BALANCE_UNRESOLVED: u32 = 1;
     /// A needed replica is unavailable (likely a partition split).
     pub const UNAVAIL_REPLICA_UNAVAILABLE: u32 = 2;
+    /// This node is shutting down (for example an index-checkpoint save or
+    /// park) and is leaving the cluster. Fail over to another node: backing
+    /// off and retrying this one cannot succeed, it is going away.
+    pub const UNAVAIL_NODE_SHUTTING_DOWN: u32 = 3;
 
     // -------------------------------------------------------
     // Pairs with ResultCode::UnsupportedFeature (16)
@@ -168,14 +174,12 @@ pub mod sub_code {
     /// Source blob/string is not valid UTF-8 for an `OPNOT_APPLICABLE` path.
     pub const OPNOT_STRING_UTF8_INVALID: u32 = 11;
 
-    // -------------------------------------------------------
-    // Pairs with ResultCode::FilteredOut (27)
-    // -------------------------------------------------------
+    /// Regex evaluation exceeded its resource budget (server 8.2+).
+    pub const OPNOT_STRING_REGEX_LIMIT_EXCEEDED: u32 = 12;
 
-    /// Record filtered out by a metadata-only filter expression.
-    pub const FILTERED_META: u32 = 1;
-    /// Record filtered out by a bin-reading filter expression.
-    pub const FILTERED_BINS: u32 = 2;
+    /// The string is not valid base64 — a length that is not a multiple of 4, a
+    /// character outside the alphabet, or misplaced `=` padding.
+    pub const OPNOT_STRING_B64_INVALID: u32 = 13;
 
     // -------------------------------------------------------
     // Pairs with ResultCode::MrtBlocked (120)
@@ -185,12 +189,102 @@ pub mod sub_code {
     pub const MRT_BLOCKED_RECORD_LOCKED: u32 = 1;
     /// Op belongs to a different MRT than the one holding the lock.
     pub const MRT_BLOCKED_ID_MISMATCH: u32 = 2;
+
+    /// The constant's name for a `(result code, subcode)` pair.
+    ///
+    /// `None` when the pair is not one this client knows. Scoped by the pair
+    /// because subcode values repeat across parent result codes (`1` is
+    /// `PARAM_TTL_INVALID` under `ParameterError` and `MRT_BLOCKED_RECORD_LOCKED`
+    /// under `MrtBlocked`).
+    #[must_use]
+    pub const fn name(rc: crate::ResultCode, sub_code: u32) -> Option<&'static str> {
+        use crate::ResultCode as R;
+        Some(match (rc, sub_code) {
+            (_, NONE) => "NONE",
+            (R::ParameterError, PARAM_TTL_INVALID) => "PARAM_TTL_INVALID",
+            (R::ParameterError, PARAM_BITS_OFFSET_OUT_OF_RANGE) => "PARAM_BITS_OFFSET_OUT_OF_RANGE",
+            (R::ParameterError, PARAM_BITS_SIZE_OUT_OF_RANGE) => "PARAM_BITS_SIZE_OUT_OF_RANGE",
+            (R::ParameterError, PARAM_BITS_RESIZE_EXCEEDED) => "PARAM_BITS_RESIZE_EXCEEDED",
+            (R::ParameterError, PARAM_BIN_COUNT_TOO_LARGE) => "PARAM_BIN_COUNT_TOO_LARGE",
+            (R::ParameterError, PARAM_STRING_OP_PARAMS_INVALID) => "PARAM_STRING_OP_PARAMS_INVALID",
+            (R::ParameterError, PARAM_STRING_OP_INVALID) => "PARAM_STRING_OP_INVALID",
+            (R::ParameterError, PARAM_STRING_CTX_MALFORMED) => "PARAM_STRING_CTX_MALFORMED",
+            (R::ParameterError, PARAM_STRING_INDEX_OUT_OF_BOUNDS) => {
+                "PARAM_STRING_INDEX_OUT_OF_BOUNDS"
+            }
+            (R::ParameterError, PARAM_STRING_REGEX_INVALID) => "PARAM_STRING_REGEX_INVALID",
+            (R::ParameterError, PARAM_STRING_UTF8_INVALID) => "PARAM_STRING_UTF8_INVALID",
+            (R::PartitionUnavailable, UNAVAIL_INITIAL_BALANCE_UNRESOLVED) => {
+                "UNAVAIL_INITIAL_BALANCE_UNRESOLVED"
+            }
+            (R::PartitionUnavailable, UNAVAIL_REPLICA_UNAVAILABLE) => "UNAVAIL_REPLICA_UNAVAILABLE",
+            (R::PartitionUnavailable, UNAVAIL_NODE_SHUTTING_DOWN) => "UNAVAIL_NODE_SHUTTING_DOWN",
+            (R::UnsupportedFeature, UNSUPP_FEAT_MRT_REQUIRES_STRONG_CONSISTENCY) => {
+                "UNSUPP_FEAT_MRT_REQUIRES_STRONG_CONSISTENCY"
+            }
+            (R::UnsupportedFeature, UNSUPP_FEAT_GENERIC) => "UNSUPP_FEAT_GENERIC",
+            (R::BinNotFound, BIN_NOT_FOUND_HLL_CANNOT_CREATE_WITH_OP) => {
+                "BIN_NOT_FOUND_HLL_CANNOT_CREATE_WITH_OP"
+            }
+            (R::BinNotFound, BIN_NOT_FOUND_STRING_VALUE_NOT_FOUND) => {
+                "BIN_NOT_FOUND_STRING_VALUE_NOT_FOUND"
+            }
+            (R::BinNameTooLong, BIN_NAME_COUNT_TOO_LARGE) => "BIN_NAME_COUNT_TOO_LARGE",
+            (R::FailForbidden, FORBID_XDR_FILTER_BLOCKED) => "FORBID_XDR_FILTER_BLOCKED",
+            (R::FailForbidden, FORBID_SET_COUNT_STOP_WRITES) => "FORBID_SET_COUNT_STOP_WRITES",
+            (R::FailForbidden, FORBID_SET_SIZE_STOP_WRITES) => "FORBID_SET_SIZE_STOP_WRITES",
+            (R::FailForbidden, FORBID_CLOCK_SKEW_STOP_WRITES) => "FORBID_CLOCK_SKEW_STOP_WRITES",
+            (R::FailForbidden, FORBID_REPLACE_CONFLICT_RESOLVING) => {
+                "FORBID_REPLACE_CONFLICT_RESOLVING"
+            }
+            (R::FailForbidden, FORBID_TRUNCATED) => "FORBID_TRUNCATED",
+            (R::FailForbidden, FORBID_DURABILITY_VIOLATION) => "FORBID_DURABILITY_VIOLATION",
+            (R::OpNotApplicable, OPNOT_CDT_INDEX_OUT_OF_BOUNDS) => "OPNOT_CDT_INDEX_OUT_OF_BOUNDS",
+            (R::OpNotApplicable, OPNOT_CDT_RANK_OUT_OF_BOUNDS) => "OPNOT_CDT_RANK_OUT_OF_BOUNDS",
+            (R::OpNotApplicable, OPNOT_CDT_BOUNDED_LIST_OVERFLOW) => {
+                "OPNOT_CDT_BOUNDED_LIST_OVERFLOW"
+            }
+            (R::OpNotApplicable, OPNOT_HLL_INDEX_BITS_UNSET) => "OPNOT_HLL_INDEX_BITS_UNSET",
+            (R::OpNotApplicable, OPNOT_HLL_CANNOT_REDUCE_INDEX_BITS) => {
+                "OPNOT_HLL_CANNOT_REDUCE_INDEX_BITS"
+            }
+            (R::OpNotApplicable, OPNOT_HLL_CANNOT_REDUCE_MINHASH_BITS) => {
+                "OPNOT_HLL_CANNOT_REDUCE_MINHASH_BITS"
+            }
+            (R::OpNotApplicable, OPNOT_HLL_CANNOT_FOLD_MINHASH) => "OPNOT_HLL_CANNOT_FOLD_MINHASH",
+            (R::OpNotApplicable, OPNOT_HLL_FOLD_INDEX_BITS_TOO_LARGE) => {
+                "OPNOT_HLL_FOLD_INDEX_BITS_TOO_LARGE"
+            }
+            (R::OpNotApplicable, OPNOT_HLL_INTERSECT_MINHASH_MISMATCH) => {
+                "OPNOT_HLL_INTERSECT_MINHASH_MISMATCH"
+            }
+            (R::OpNotApplicable, OPNOT_STRING_CONVERSION_FAILED) => {
+                "OPNOT_STRING_CONVERSION_FAILED"
+            }
+            (R::OpNotApplicable, OPNOT_STRING_UTF8_INVALID) => "OPNOT_STRING_UTF8_INVALID",
+            (R::OpNotApplicable, OPNOT_STRING_REGEX_LIMIT_EXCEEDED) => {
+                "OPNOT_STRING_REGEX_LIMIT_EXCEEDED"
+            }
+            (R::OpNotApplicable, OPNOT_STRING_B64_INVALID) => "OPNOT_STRING_B64_INVALID",
+            (R::MrtBlocked, MRT_BLOCKED_RECORD_LOCKED) => "MRT_BLOCKED_RECORD_LOCKED",
+            (R::MrtBlocked, MRT_BLOCKED_ID_MISMATCH) => "MRT_BLOCKED_ID_MISMATCH",
+            _ => return None,
+        })
+    }
 }
 
 /// The expression build failed.
 pub const EXP_TRACE_PHASE_BUILD: u32 = 1;
 /// Expression evaluation failed (reserved for a future server branch).
 pub const EXP_TRACE_PHASE_EVAL: u32 = 2;
+
+/// Eval-phase outcome: evaluation faulted.
+pub const EXP_TRACE_OUTCOME_FAULT: u32 = 1;
+/// Eval-phase outcome: the expression evaluated cleanly to FALSE, so the record
+/// simply did not match. This is the case [`ExpressionTrace::operands`] explains.
+pub const EXP_TRACE_OUTCOME_FALSE: u32 = 2;
+/// Eval-phase outcome: a referenced bin or map key was absent.
+pub const EXP_TRACE_OUTCOME_ABSENT: u32 = 3;
 
 /// The msgpack source language (the implied default when the lang key is absent).
 pub const EXP_TRACE_LANG_MSGPACK: u32 = 1;
@@ -214,9 +308,11 @@ const TRACE_KEY_OP: u32 = 3;
 const TRACE_KEY_DEPTH: u32 = 4;
 const TRACE_KEY_PATH: u32 = 5;
 const TRACE_KEY_SNIPPET: u32 = 6;
+const TRACE_KEY_OUTCOME: u32 = 7;
 const TRACE_KEY_LANG: u32 = 8;
 const TRACE_KEY_AEL_OFFSET: u32 = 9;
 const TRACE_KEY_AEL_SPAN: u32 = 10;
+const TRACE_KEY_OPERANDS: u32 = 13;
 
 /// A structured expression build/eval trace surfaced at error-detail verbosity 3.
 ///
@@ -272,6 +368,23 @@ pub struct ExpressionTrace {
     /// budget).
     pub snippet: Option<String>,
 
+    /// Why the record was not matched, on an eval-phase trace:
+    /// [`EXP_TRACE_OUTCOME_FAULT`], [`EXP_TRACE_OUTCOME_FALSE`] or
+    /// [`EXP_TRACE_OUTCOME_ABSENT`]. `None` when absent — the build phase never
+    /// emits it.
+    pub outcome: Option<u32>,
+
+    /// The decisive comparison's operand values as `[lhs, rhs]` — e.g.
+    /// `["15", "18"]` — or `None` when absent.
+    ///
+    /// Emitted only for an [`EXP_TRACE_OUTCOME_FALSE`] trace whose decisive op is
+    /// a comparison, and it is the first tier the server drops when its trace
+    /// budget is tight, so a FALSE outcome does not guarantee it. The strings are
+    /// rendered server-side and capped at 48 bytes: numbers always fit,
+    /// non-scalars arrive as a placeholder (`"<blob>"`, `"<collection>"`), and
+    /// only a long string bin is silently clipped.
+    pub operands: Option<Vec<String>>,
+
     /// Source language: [`EXP_TRACE_LANG_MSGPACK`] or [`EXP_TRACE_LANG_AEL`].
     /// An absent lang key means msgpack (the default), so this reads as
     /// `None` only before parsing; the parser fills [`EXP_TRACE_LANG_MSGPACK`]
@@ -306,6 +419,12 @@ impl fmt::Display for ExpressionTrace {
         if let Some(snippet) = &self.snippet {
             write!(f, ", snippet={snippet}")?;
         }
+        if let Some(outcome) = self.outcome {
+            write!(f, ", outcome={outcome}")?;
+        }
+        if let Some(operands) = &self.operands {
+            write!(f, ", operands=[{}]", operands.join(", "))?;
+        }
         if let Some(lang) = self.lang {
             if lang != EXP_TRACE_LANG_MSGPACK {
                 write!(f, ", lang={lang}")?;
@@ -326,7 +445,7 @@ impl fmt::Display for ExpressionTrace {
 /// Populated only when
 /// [`BasePolicy::error_detail_verbosity`](crate::policy::BasePolicy::error_detail_verbosity)
 /// is greater than zero and the failing branch dispatched a detail. Requires
-/// server version 8.1.3+.
+/// server version 8.2.0+.
 #[cfg_attr(feature = "serialization", derive(serde::Serialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ServerErrorDetail {
@@ -338,9 +457,13 @@ pub struct ServerErrorDetail {
     /// are NOT globally unique. Dispatch on the (result code, subcode) pair.
     pub sub_code: u32,
 
-    /// The formatted server-supplied error detail (human-readable message
-    /// and/or subcode tag). Empty when the server sent a subcode without a
-    /// message at verbosity 1.
+    /// The server-supplied error message, **verbatim**. Empty when the server
+    /// sent a subcode or a trace without a message.
+    ///
+    /// The subcode is deliberately not folded in here: it is
+    /// [`sub_code`](Self::sub_code), and `Error`'s `Display` renders it beside
+    /// the result code, so dispatching on `(result code, subcode)` never
+    /// requires parsing this string.
     pub message: String,
 
     /// The server-supplied expression build trace, or `None` when absent.
@@ -565,21 +688,18 @@ pub(crate) fn parse_error_detail(buf: &[u8]) -> Option<ServerErrorDetail> {
         }
     }
 
-    // The server only serializes subcodes >= 1 (NONE = 0 is never sent), and
-    // pre-formats the display message the same way the Go client does.
-    let formatted = match (&message, sub_code) {
-        (Some(m), Some(sc)) => format!("{m} (subcode={sc})"),
-        (None, Some(sc)) => format!("error subcode={sc}"),
-        (Some(m), None) => m.clone(),
-        (None, None) => {
-            exp_trace.as_ref()?;
-            String::new()
-        }
-    };
+    // The server's message is kept **verbatim**: the subcode is not folded into
+    // it. The `(result code, subcode)` pair is the dispatch key, and a caller
+    // must not have to parse a display string to recover it — so the subcode is
+    // rendered beside the result code by `Error`'s `Display` instead. The server
+    // only serializes subcodes >= 1 (NONE = 0 is never sent).
+    if message.is_none() && sub_code.is_none() {
+        exp_trace.as_ref()?;
+    }
 
     Some(ServerErrorDetail {
         sub_code: sub_code.map_or(sub_code::NONE, |v| v as u32),
-        message: formatted,
+        message: message.unwrap_or_default(),
         exp_trace,
     })
 }
@@ -612,6 +732,8 @@ fn parse_exp_trace(mut cur: Cursor) -> Option<ExpressionTrace> {
             TRACE_KEY_DEPTH => set_u32(&mut t.depth, cur.uint()),
             TRACE_KEY_PATH => set_opt(&mut t.path, cur.str_array()),
             TRACE_KEY_SNIPPET => set_opt(&mut t.snippet, cur.str()),
+            TRACE_KEY_OUTCOME => set_u32(&mut t.outcome, cur.uint()),
+            TRACE_KEY_OPERANDS => set_opt(&mut t.operands, cur.str_array()),
             TRACE_KEY_LANG => set_u32(&mut t.lang, cur.uint()),
             TRACE_KEY_AEL_OFFSET => set_u32(&mut t.ael_offset, cur.uint()),
             TRACE_KEY_AEL_SPAN => set_u32(&mut t.ael_span, cur.uint()),
@@ -739,13 +861,42 @@ mod tests {
     // ============================================================
 
     #[test]
+    fn sub_code_names_are_scoped_by_result_code() {
+        use crate::ResultCode;
+        assert_eq!(
+            sub_code::name(ResultCode::ParameterError, 1),
+            Some("PARAM_TTL_INVALID")
+        );
+        assert_eq!(
+            sub_code::name(ResultCode::PartitionUnavailable, 3),
+            Some("UNAVAIL_NODE_SHUTTING_DOWN")
+        );
+        // The server defines no subcodes under FilteredOut.
+        assert_eq!(sub_code::name(ResultCode::FilteredOut, 1), None);
+        assert_eq!(
+            sub_code::name(ResultCode::OpNotApplicable, 12),
+            Some("OPNOT_STRING_REGEX_LIMIT_EXCEEDED")
+        );
+        assert_eq!(
+            sub_code::name(ResultCode::KeyNotFoundError, 0),
+            Some("NONE")
+        );
+        assert_eq!(
+            sub_code::name(ResultCode::KeyNotFoundError, 1),
+            None,
+            "no subcodes under this code"
+        );
+        assert_eq!(sub_code::name(ResultCode::ParameterError, 99), None);
+    }
+
+    #[test]
     fn parses_fixmap_with_subcode_and_message() {
         let detail = fixmap(&[
             pair(&int_key(1), &fixint(99)),
             pair(&int_key(2), &fixstr("cannot append")),
         ]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, "cannot append (subcode=99)");
+        assert_eq!(d.message, "cannot append");
         assert_eq!(d.sub_code, 99);
     }
 
@@ -753,7 +904,7 @@ mod tests {
     fn parses_fixmap_with_subcode_only() {
         let detail = fixmap(&[pair(&int_key(1), &fixint(42))]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, "error subcode=42");
+        assert_eq!(d.message, "", "a subcode without a message leaves it empty");
         assert_eq!(d.sub_code, 42);
     }
 
@@ -772,7 +923,7 @@ mod tests {
             pair(&int_key(1), &fixint(7)),
         ]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, "swap (subcode=7)");
+        assert_eq!(d.message, "swap");
         assert_eq!(d.sub_code, 7);
     }
 
@@ -784,7 +935,7 @@ mod tests {
             pair(&int_key(2), &str8(multibyte)),
         ]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, format!("{multibyte} (subcode=1)"));
+        assert_eq!(d.message, format!("{multibyte}"));
     }
 
     // ============================================================
@@ -801,7 +952,7 @@ mod tests {
             payload.extend([0xCC, 100 + i, 0xC0]);
         }
         let d = parse_error_detail(&payload).unwrap();
-        assert_eq!(d.message, "boom (subcode=7)");
+        assert_eq!(d.message, "boom");
     }
 
     #[test]
@@ -810,7 +961,7 @@ mod tests {
         payload.extend(pair(&int_key(1), &fixint(9)));
         payload.extend(pair(&int_key(2), &fixstr("m32")));
         let d = parse_error_detail(&payload).unwrap();
-        assert_eq!(d.message, "m32 (subcode=9)");
+        assert_eq!(d.message, "m32");
     }
 
     #[test]
@@ -821,7 +972,7 @@ mod tests {
         payload.extend(int_key(2));
         payload.extend(str32(&big));
         let d = parse_error_detail(&payload).unwrap();
-        assert_eq!(d.message, format!("{big} (subcode=5)"));
+        assert_eq!(d.message, format!("{big}"));
     }
 
     #[test]
@@ -831,7 +982,7 @@ mod tests {
             pair(&int_key(2), &fixstr("fx")),
         ]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, "fx (subcode=127)");
+        assert_eq!(d.message, "fx");
     }
 
     #[test]
@@ -841,7 +992,7 @@ mod tests {
             pair(&int_key(2), &fixstr("u8")),
         ]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, "u8 (subcode=200)");
+        assert_eq!(d.message, "u8");
         assert_eq!(d.sub_code, 200);
     }
 
@@ -852,7 +1003,7 @@ mod tests {
             pair(&int_key(2), &fixstr("hi")),
         ]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, "hi (subcode=1100)");
+        assert_eq!(d.message, "hi");
     }
 
     #[test]
@@ -862,7 +1013,7 @@ mod tests {
             pair(&int_key(2), &fixstr("x")),
         ]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, "x (subcode=70000)");
+        assert_eq!(d.message, "x");
     }
 
     #[test]
@@ -873,8 +1024,8 @@ mod tests {
             pair(&int_key(2), &fixstr("u64")),
         ]);
         let d = parse_error_detail(&detail).unwrap();
-        assert!(d.message.starts_with("u64 (subcode="));
-        assert_eq!(u64::from(d.sub_code), value as u32 as u64);
+        assert_eq!(d.message, "u64");
+        assert_eq!(u64::from(d.sub_code), u64::from(value as u32));
     }
 
     #[test]
@@ -882,7 +1033,7 @@ mod tests {
         let msg = "string8";
         let detail = fixmap(&[pair(&int_key(1), &fixint(3)), pair(&int_key(2), &str8(msg))]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, format!("{msg} (subcode=3)"));
+        assert_eq!(d.message, format!("{msg}"));
     }
 
     #[test]
@@ -893,7 +1044,7 @@ mod tests {
             pair(&int_key(2), &str16(msg)),
         ]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, format!("{msg} (subcode=4)"));
+        assert_eq!(d.message, format!("{msg}"));
     }
 
     // ============================================================
@@ -928,7 +1079,7 @@ mod tests {
             pair(&int_key(2), &fixstr("z")),
         ]);
         let d = parse_error_detail(&payload).unwrap();
-        assert_eq!(d.message, "z (subcode=7)");
+        assert_eq!(d.message, "z");
     }
 
     #[test]
@@ -945,7 +1096,7 @@ mod tests {
         let buf = [0x82, 0x01, 0x04, 0x02, 0xD9, 0x20, b'x'];
         let d = parse_error_detail(&buf).unwrap();
         assert_eq!(d.sub_code, 4);
-        assert_eq!(d.message, "error subcode=4");
+        assert_eq!(d.message, "", "a subcode without a message leaves it empty");
     }
 
     // ============================================================
@@ -1080,6 +1231,67 @@ mod tests {
         assert_eq!(t.ael_span, Some(6));
     }
 
+    /// The eval-phase pair: `outcome` says *why* a record was not matched, and
+    /// for a clean FALSE `operands` carries the decisive comparison's two sides.
+    /// Both were skipped by this parser before the server started sending them.
+    #[test]
+    fn exposes_eval_outcome_and_operands_when_present() {
+        let operands = fixarray(&[fixstr("15"), fixstr("18")]);
+        let trace = fixmap(&[
+            pair(&int_key(1), &fixint(EXP_TRACE_PHASE_EVAL as u8)),
+            pair(&int_key(3), &fixstr("cmp_gt")),
+            pair(&int_key(7), &fixint(EXP_TRACE_OUTCOME_FALSE as u8)),
+            pair(&int_key(13), &operands),
+        ]);
+        let detail = fixmap(&[pair(&int_key(3), &trace)]);
+        let t = parse_error_detail(&detail).unwrap().exp_trace.unwrap();
+
+        assert_eq!(t.phase, Some(EXP_TRACE_PHASE_EVAL));
+        assert_eq!(t.outcome, Some(EXP_TRACE_OUTCOME_FALSE));
+        assert_eq!(
+            t.operands,
+            Some(vec!["15".to_string(), "18".to_string()]),
+            "the decisive comparison's [lhs, rhs]"
+        );
+
+        // Both appear in the rendered trace, since that is what makes a
+        // non-matching filter explainable at a glance.
+        let rendered = t.to_string();
+        assert!(rendered.contains("outcome=2"), "{rendered}");
+        assert!(rendered.contains("operands=[15, 18]"), "{rendered}");
+    }
+
+    /// Absent is the common case: a build-phase trace never carries either, and
+    /// the server drops `operands` first when its trace budget is tight — so a
+    /// FALSE outcome does not guarantee them.
+    #[test]
+    fn eval_fields_are_none_when_the_server_omits_them() {
+        let trace = fixmap(&[
+            pair(&int_key(1), &fixint(EXP_TRACE_PHASE_BUILD as u8)),
+            pair(&int_key(7), &fixint(EXP_TRACE_OUTCOME_FALSE as u8)),
+        ]);
+        let detail = fixmap(&[pair(&int_key(3), &trace)]);
+        let t = parse_error_detail(&detail).unwrap().exp_trace.unwrap();
+
+        assert_eq!(t.outcome, Some(EXP_TRACE_OUTCOME_FALSE));
+        assert_eq!(t.operands, None, "operands are dropped first under budget");
+    }
+
+    /// The server sends the message alone; the subcode is a separate key and
+    /// must not appear in the text.
+    #[test]
+    fn the_message_is_kept_verbatim_beside_its_subcode() {
+        let detail = fixmap(&[
+            pair(&int_key(1), &fixint(13)),
+            pair(&int_key(2), &fixstr("string is not valid base64")),
+        ]);
+        let d = parse_error_detail(&detail).unwrap();
+
+        assert_eq!(d.sub_code, sub_code::OPNOT_STRING_B64_INVALID);
+        assert_eq!(d.message, "string is not valid base64");
+        assert_eq!(d.to_string(), "string is not valid base64");
+    }
+
     #[test]
     fn leaves_exp_trace_none_for_a_plain_subcode_message_response() {
         let detail = fixmap(&[
@@ -1087,7 +1299,7 @@ mod tests {
             pair(&int_key(2), &fixstr("plain")),
         ]);
         let d = parse_error_detail(&detail).unwrap();
-        assert_eq!(d.message, "plain (subcode=4)");
+        assert_eq!(d.message, "plain");
         assert!(d.exp_trace.is_none()); // no key 3 => no expression trace
     }
 
@@ -1148,21 +1360,19 @@ mod tests {
     fn detail_and_trace_display() {
         let d = ServerErrorDetail {
             sub_code: 2,
-            message: "boom (subcode=2)".into(),
+            message: "boom".into(),
             exp_trace: Some(ExpressionTrace {
                 phase: Some(EXP_TRACE_PHASE_BUILD),
                 byte_offset: Some(7),
                 op: Some("add".into()),
                 depth: Some(1),
                 path: Some(vec!["and".into(), "add".into()]),
-                snippet: None,
                 lang: Some(EXP_TRACE_LANG_MSGPACK),
-                ael_offset: None,
-                ael_span: None,
+                ..ExpressionTrace::default()
             }),
         };
         let s = d.to_string();
-        assert!(s.starts_with("boom (subcode=2), ExpressionTrace[phase=1"));
+        assert!(s.starts_with("boom, ExpressionTrace[phase=1"), "{s}");
         assert!(s.contains("path=[and add]"));
         assert!(!s.contains("lang=")); // msgpack default elided
     }

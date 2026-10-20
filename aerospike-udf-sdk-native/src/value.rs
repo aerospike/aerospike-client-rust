@@ -43,7 +43,7 @@ pub enum Kind {
     List,
     /// A map.
     Map,
-    /// GeoJSON.
+    /// GeoJson.
     GeoJson,
     /// Something a UDF has no business interpreting.
     Other,

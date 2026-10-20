@@ -200,7 +200,7 @@ fn core_to_node(local: &mut LocalCtx, value: &CoreValue) -> Node {
         CoreValue::Int(i) => Node::Int(*i),
         CoreValue::Float(f) => Node::Double(f64::from(f.clone())),
         CoreValue::String(s) => Node::Str(s.clone()),
-        CoreValue::GeoJSON(s) => Node::Str(s.clone()),
+        CoreValue::GeoJson(s) => Node::Str(s.clone()),
         CoreValue::Blob(b) | CoreValue::HLL(b) => Node::Blob(b.clone()),
         CoreValue::List(items) | CoreValue::MultiResult(items) => {
             let nodes: Vec<Node> = items.iter().map(|v| core_to_node(local, v)).collect();

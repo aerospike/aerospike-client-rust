@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -16,8 +16,10 @@ use aerospike::{
     as_bin, as_blob, as_geo, as_key, as_list, as_map, as_val, Bins, ReadPolicy, Value, WritePolicy,
 };
 use aerospike::{
-    operations, Expiration, GenerationPolicy, Key, ReadTouchTTL, RecordExistsAction, ResultCode,
+    operations, ErrorKind, Expiration, GenerationPolicy, Key, ReadTouchTtl, RecordExistsAction,
+    ResultCode,
 };
+use aerospike::{BatchOperation, BatchPolicy, BatchWritePolicy};
 use aerospike_rt::sleep;
 use aerospike_rt::time::Duration;
 
@@ -44,15 +46,15 @@ async fn read_touch_ttl() {
     // Read the record before it expires and reset read ttl.
     sleep(Duration::from_secs(1)).await;
     let mut read_policy = ReadPolicy::default();
-    read_policy.base_policy.read_touch_ttl = ReadTouchTTL::Percent(80);
+    read_policy.base_policy.read_touch_ttl = ReadTouchTtl::Percent(80);
     let record = client.get(&read_policy, &key, Bins::All).await.unwrap();
-    assert!(record.bins.get(&bin.clone().name) == Some(&bin.clone().value.into()));
+    assert!(record.bins.get(&bin.clone().name) == Some(&bin.clone().value));
 
     // Read the record again, but don't reset read ttl.
     sleep(Duration::from_secs(1)).await;
-    read_policy.base_policy.read_touch_ttl = ReadTouchTTL::DontReset;
+    read_policy.base_policy.read_touch_ttl = ReadTouchTtl::DontReset;
     let record = client.get(&read_policy, &key, Bins::All).await.unwrap();
-    assert!(record.bins.get(&bin.clone().name) == Some(&bin.clone().value.into()));
+    assert!(record.bins.get(&bin.clone().name) == Some(&bin.clone().value));
 
     // Read the record after it expires, showing it's gone.
     sleep(Duration::from_secs(2)).await;
@@ -65,16 +67,39 @@ async fn read_touch_ttl() {
 }
 
 #[aerospike_macro::test]
-async fn invalid_delete() {
+async fn unknown_namespace_fails_with_invalid_namespace() {
+    // A namespace missing from the partition map cannot appear by retrying,
+    // so every single-key command must fail with the routing error itself,
+    // not retry until the budget is spent and report MaxRetriesExceeded.
     let client = common::client().await;
+    let rpolicy = ReadPolicy::default();
     let wpolicy = WritePolicy::default();
+    let key = as_key!(common::rand_str(14), common::rand_str(10), -1);
+    let bin = as_bin!("a", 1);
 
-    // the namespace will be invalid
-    let invalid_ns_key = as_key!(common::rand_str(14), common::rand_str(10), -1);
-    client
-        .delete(&wpolicy, &invalid_ns_key)
-        .await
-        .expect_err("Should have errored out");
+    let results = [
+        ("get", client.get(&rpolicy, &key, Bins::All).await.map(drop)),
+        ("exists", client.exists(&rpolicy, &key).await.map(drop)),
+        ("put", client.put(&wpolicy, &key, std::slice::from_ref(&bin)).await),
+        ("delete", client.delete(&wpolicy, &key).await.map(drop)),
+        (
+            "operate",
+            client
+                .operate(&wpolicy, &key, &[operations::put(&bin)])
+                .await
+                .map(drop),
+        ),
+    ];
+
+    for (command, result) in results {
+        let err = result.expect_err(command);
+        assert!(
+            matches!(err.kind(), ErrorKind::InvalidNamespace),
+            "{command}: expected InvalidNamespace, got {err:?}"
+        );
+    }
+
+    client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
@@ -148,7 +173,7 @@ async fn connect() {
     assert!(exists);
 
     let bin = as_bin!("bin999", "test string");
-    let ops = &vec![operations::put(&bin), operations::get()];
+    let ops = &[operations::put(&bin), operations::get()];
     client.operate(&wpolicy, &key, ops).await.unwrap();
 
     let existed = common::delete_durably(&client, &wpolicy, &key)
@@ -161,6 +186,65 @@ async fn connect() {
         .unwrap();
     assert!(!existed);
 
+    client.close().await.unwrap();
+}
+
+/// A reply op with no bin name (the server's answer to `touch` / `get_header`
+/// in one operate) is an op result, not a bin: it reaches `results` and never
+/// creates a `""` entry in `bins`, on the single-key and the batch path alike.
+#[aerospike_macro::test]
+async fn operate_header_ops_do_not_create_a_nameless_bin() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let key = as_key!(namespace, set_name, "touch");
+    let wpolicy = WritePolicy::default();
+    client
+        .put(&wpolicy, &key, &[as_bin!("touchbin", "v")])
+        .await
+        .unwrap();
+
+    let ops = [operations::touch(), operations::get_header()];
+    let rec = client.operate(&wpolicy, &key, &ops).await.unwrap();
+    assert!(
+        rec.bins.is_empty(),
+        "nameless op answer landed in bins: {:?}",
+        rec.bins
+    );
+    assert_eq!(rec.results, Some(vec![Value::Nil]));
+
+    let bin = as_bin!("touchbin", "w");
+    let ops = [operations::put(&bin), operations::touch(), operations::get()];
+    let rec = client.operate(&wpolicy, &key, &ops).await.unwrap();
+    assert_eq!(rec.bins.get("touchbin"), Some(&as_val!("w")));
+    assert!(!rec.bins.contains_key(""));
+
+    // The batch path parses the same reply shape.
+    let mut batch = vec![BatchOperation::write(
+        &BatchWritePolicy::default(),
+        key.clone(),
+        vec![operations::touch(), operations::get_header()],
+    )];
+    client
+        .batch(&BatchPolicy::write_default(), &mut batch)
+        .await
+        .unwrap();
+    let record = batch[0].record().expect("the row succeeded");
+    assert!(
+        record.bins.is_empty(),
+        "nameless op answer landed in batch bins: {:?}",
+        record.bins
+    );
+    assert!(record
+        .results
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .all(|v| matches!(v, Value::Nil)));
+
+    common::delete_durably(&client, &wpolicy, &key)
+        .await
+        .unwrap();
     client.close().await.unwrap();
 }
 
@@ -178,14 +262,14 @@ async fn operate_multi_op_same_bin_returns_multi_result() {
         .await
         .unwrap();
 
-    let ops = &[
-        operations::get_bin("count"),
-        operations::get_bin("count"),
-    ];
+    let ops = &[operations::get_bin("count"), operations::get_bin("count")];
     let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
     assert_eq!(
         rec.bins.get("count"),
-        Some(&Value::MultiResult(vec![Value::from(10i64), Value::from(10i64)]))
+        Some(&Value::MultiResult(vec![
+            Value::from(10i64),
+            Value::from(10i64)
+        ]))
     );
 
     client.close().await.unwrap();
@@ -230,11 +314,12 @@ async fn operate_mixed_read_write_keeps_results_aligned() {
     );
     assert_eq!(results[2], Value::from(15i64), "read after the add");
 
-    // The bin view still merges the two reads and skips the write's nil.
+    // The bin view keeps the write's nil too, so it lines up with the ops.
     assert_eq!(
         rec.bins.get("count"),
         Some(&Value::MultiResult(vec![
             Value::from(10i64),
+            Value::Nil,
             Value::from(15i64)
         ]))
     );
@@ -275,6 +360,28 @@ async fn operate_simple_write_between_cdt_ops_keeps_results_aligned() {
     assert_eq!(results[0], Value::from(3i64), "list size after append");
     assert!(results[1].is_nil(), "the add occupies its own slot");
     assert_eq!(results[2], Value::from(3i64), "list size read");
+
+    client.close().await.unwrap();
+}
+
+/// A write-only operate reports each written bin, with the write's nil.
+#[aerospike_macro::test]
+async fn operate_write_only_reports_nil_bins() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let key = as_key!(namespace, set_name, 1);
+    let wpolicy = WritePolicy::default();
+
+    let ops = &[
+        operations::put(&as_bin!("name", "J. Smith")),
+        operations::put(&as_bin!("visits", 1i64)),
+    ];
+    let rec = client.operate(&wpolicy, &key, ops).await.unwrap();
+
+    assert_eq!(rec.bins.get("name"), Some(&Value::Nil));
+    assert_eq!(rec.bins.get("visits"), Some(&Value::Nil));
+    assert_eq!(rec.bins.len(), 2);
 
     client.close().await.unwrap();
 }
@@ -525,4 +632,161 @@ async fn infinity_and_wildcard_are_rejected_not_fatal() {
     assert_eq!(record.bins.get("b"), Some(&as_val!(1)));
 
     client.close().await.unwrap();
+}
+
+/// A foreign particle (`Value::Unknown`) round-trips through a whole-bin
+/// write: the payload comes back byte-for-byte under the same particle-type
+/// code, so a record copied through this client keeps bins it cannot
+/// interpret. Anywhere other than a whole bin value it is still refused
+/// client-side.
+#[aerospike_macro::test]
+async fn unknown_value_round_trips_as_a_bin_value() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let key = as_key!(namespace, set_name, "unknown-particle");
+
+    // 7 = JBLOB, a particle type the server knows and this client does not
+    // interpret. Any payload is opaque to both sides.
+    const JBLOB: u8 = 7;
+    let payload: Vec<u8> = (0..64u8).map(|i| i.wrapping_mul(37)).collect();
+    let bins = [
+        as_bin!("foreign", Value::Unknown(JBLOB, payload.clone())),
+        as_bin!("plain", 42),
+    ];
+    client
+        .put(&WritePolicy::default(), &key, &bins)
+        .await
+        .unwrap();
+
+    let record = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+    assert_eq!(record.bins["plain"], Value::Int(42));
+    match &record.bins["foreign"] {
+        Value::Unknown(code, bytes) => {
+            assert_eq!(*code, JBLOB, "particle-type code must round-trip");
+            assert_eq!(*bytes, payload, "payload must round-trip verbatim");
+        }
+        other => panic!("expected the foreign bin to decode as Value::Unknown, got {other:?}"),
+    }
+
+    // Also through an operate() bin write, and an empty payload.
+    let ops = [operations::put(&as_bin!(
+        "foreign",
+        Value::Unknown(JBLOB, Vec::new())
+    ))];
+    client
+        .operate(&WritePolicy::default(), &key, &ops)
+        .await
+        .unwrap();
+    let record = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+    assert_eq!(record.bins["foreign"], Value::Unknown(JBLOB, Vec::new()));
+
+    // Not inside a collection bin: refused before anything is sent.
+    let nested = as_bin!("list", as_list![Value::Unknown(JBLOB, payload.clone())]);
+    let err = client
+        .put(&WritePolicy::default(), &key, &[nested])
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err.kind(), aerospike::ErrorKind::InvalidArgument),
+        "nested Unknown must be a client-side argument error: {err}"
+    );
+    // Not as a key.
+    assert!(Key::new(namespace, set_name, Value::Unknown(JBLOB, payload)).is_err());
+
+    // Durable: a plain delete of an existing record is forbidden on an SC
+    // namespace.
+    common::delete_durably(&client, &WritePolicy::default(), &key)
+        .await
+        .unwrap();
+}
+
+/// `Record::time_to_live` must agree with the Java/Go/C clients: the server
+/// keeps void times in whole seconds and the clients floor "now" to whole
+/// seconds before subtracting, so a record written with a 500 s TTL and read
+/// back within the same wall-clock second reports exactly 500 — never 499
+/// from a fractional "now", and never 498.
+///
+/// The one thing the client cannot control is the server's clock. When it
+/// runs ahead of the client's, a read in the last `skew` of each client
+/// second sees a void time stamped in the *next* server second and reports
+/// 501; when it runs behind, a read in the first `skew` of each second
+/// reports 499 (the podman VM here has drifted both ways, by tens of
+/// milliseconds). Neither is a client defect, so both are tolerated — but
+/// only as a small minority of the same-second reads: a client that rounded
+/// "now" instead of flooring it would push about half of them off 500. The
+/// samples are spread over more than two seconds so that fraction means
+/// something; packed into a few milliseconds, the whole loop lands in the
+/// skew tail or misses it, which is what made this test flake under load.
+#[aerospike_macro::test]
+async fn ttl_read_back_matches_other_clients() {
+    let client = common::client().await;
+    if !common::ServerCapabilities::detect(&client)
+        .await
+        .explicit_record_ttl_allowed
+    {
+        eprintln!("skipped: this namespace does not allow an explicit record TTL");
+        return;
+    }
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let write_policy = WritePolicy::new(0, Expiration::Seconds(500));
+    let read_policy = ReadPolicy::default();
+    let unix_now = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
+
+    let mut same_second_reads = 0;
+    let mut same_second_skewed = 0;
+    for i in 0..200_i64 {
+        let key = as_key!(namespace, &set_name, i);
+        let before = unix_now();
+        client
+            .put(&write_policy, &key, &[as_bin!("v", i)])
+            .await
+            .unwrap();
+        let record = client.get(&read_policy, &key, Bins::All).await.unwrap();
+        let ttl = record.time_to_live().expect("record has a TTL");
+        let after = unix_now();
+
+        assert_eq!(ttl.subsec_nanos(), 0, "TTL is reported in whole seconds");
+        let secs = ttl.as_secs();
+        // A second ticking over between write and read lowers it by exactly
+        // that many seconds; server clock skew moves it by at most one in
+        // either direction.
+        let elapsed = after - before;
+        assert!(
+            secs <= 501 && 500u64.saturating_sub(secs) <= elapsed + 1,
+            "record {i}: reported {secs}s for a 500s TTL with {elapsed}s elapsed"
+        );
+        if elapsed == 0 {
+            assert!(
+                (499..=501).contains(&secs),
+                "record {i}: same-second read must report the full TTL, got {secs}"
+            );
+            same_second_reads += 1;
+            if secs != 500 {
+                same_second_skewed += 1;
+            }
+        }
+        aerospike_rt::sleep(Duration::from_millis(12)).await;
+    }
+    assert!(
+        same_second_reads > 0,
+        "at least one write/read pair should land in the same second"
+    );
+    assert!(
+        same_second_skewed * 3 < same_second_reads,
+        "{same_second_skewed} of {same_second_reads} same-second reads were off 500: \
+         more than server clock skew explains, so \"now\" is not being floored"
+    );
 }

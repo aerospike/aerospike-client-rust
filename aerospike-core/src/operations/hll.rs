@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -24,74 +24,43 @@ use crate::operations::cdt_context::DEFAULT_CTX;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::Value;
 
-/// `HLLWriteFlags` determines write flags for HLL
-#[derive(Debug, Clone, Copy)]
-pub enum HLLWriteFlags {
+crate::flags::bit_flags! {
+    /// Write flags for HLL operations, carried by [`HllPolicy`]. Combine with `|`.
+    pub struct HllWriteFlags(u8);
     /// Default. Allow create or update.
-    Default = 0,
+    const DEFAULT = 0;
     /// If the bin already exists, the operation will be denied.
     /// If the bin does not exist, a new bin will be created.
-    CreateOnly = 1,
+    const CREATE_ONLY = 1;
     /// If the bin already exists, the bin will be overwritten.
     /// If the bin does not exist, the operation will be denied.
-    UpdateOnly = 2,
+    const UPDATE_ONLY = 2;
     /// Do not raise error if operation is denied.
-    NoFail = 4,
+    const NO_FAIL = 4;
     /// Allow the resulting set to be the minimum of provided index bits.
     /// Also, allow the usage of less precise HLL algorithms when minHash bits
     /// of all participating sets do not match.
-    AllowFold = 8,
+    const ALLOW_FOLD = 8;
 }
 
-/// Something that can be resolved into a set of `ExpWriteFlags`. Either a single [`HLLWriteFlags`], `Option<HLLWriteFlags>`, [`HLLWriteFlags`], etc.
-pub trait ToHLLWriteFlagsBitmask {
-    /// Convert to an i64 bitmask
-    fn to_bitmask(self) -> i64;
+/// `HllPolicy` operation policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HllPolicy {
+    /// The write flags.
+    pub flags: HllWriteFlags,
 }
 
-impl ToHLLWriteFlagsBitmask for HLLWriteFlags {
-    fn to_bitmask(self) -> i64 {
-        self as i64
+impl HllPolicy {
+    /// Use the given [`HllWriteFlags`] (combine them with `|`) when performing HLL operations.
+    pub const fn new(write_flags: HllWriteFlags) -> Self {
+        HllPolicy { flags: write_flags }
     }
 }
 
-impl<T: IntoIterator<Item = HLLWriteFlags>> ToHLLWriteFlagsBitmask for T {
-    fn to_bitmask(self) -> i64 {
-        let mut out = 0;
-        for val in self {
-            out |= val.to_bitmask();
-        }
-        out
-    }
-}
-
-/// `HLLPolicy` operation policy.
-#[derive(Debug, Clone, Copy)]
-pub struct HLLPolicy {
-    /// `CdtListWriteFlags`
-    pub flags: i64,
-}
-
-impl HLLPolicy {
-    /// Use specified `HLLWriteFlags` when performing `HLL` operations
-    pub const fn new(write_flags: HLLWriteFlags) -> Self {
-        HLLPolicy {
-            flags: write_flags as i64,
-        }
-    }
-
-    /// Use specified `HLLWriteFlags` or combination thereof when performing `HLL` operations
-    pub fn new_with_flags<HWF: ToHLLWriteFlagsBitmask>(write_flags: HWF) -> Self {
-        HLLPolicy {
-            flags: write_flags.to_bitmask(),
-        }
-    }
-}
-
-impl Default for HLLPolicy {
+impl Default for HllPolicy {
     /// Returns the default policy for HLL operations.
     fn default() -> Self {
-        HLLPolicy::new(HLLWriteFlags::Default)
+        HllPolicy::new(HllWriteFlags::DEFAULT)
     }
 }
 
@@ -113,16 +82,18 @@ pub(crate) enum HLLOpType {
 /// Creates HLL init operation.
 /// Server creates a new HLL or resets an existing HLL.
 /// Server does not return a value.
-pub fn init(policy: &HLLPolicy, bin: &str, index_bit_count: i64) -> Operation {
+#[must_use]
+pub fn init(policy: &HllPolicy, bin: impl Into<String>, index_bit_count: i64) -> Operation {
     init_with_min_hash(policy, bin, index_bit_count, -1)
 }
 
 /// Creates HLL init operation with minhash bits.
 /// Server creates a new HLL or resets an existing HLL.
 /// Server does not return a value.
+#[must_use]
 pub fn init_with_min_hash(
-    policy: &HLLPolicy,
-    bin: &str,
+    policy: &HllPolicy,
+    bin: impl Into<String>,
     index_bit_count: i64,
     min_hash_bit_count: i64,
 ) -> Operation {
@@ -132,7 +103,7 @@ pub fn init_with_min_hash(
         args: vec![
             CdtArgument::Int(index_bit_count),
             CdtArgument::Int(min_hash_bit_count),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags.bits()),
         ],
     };
     Operation {
@@ -146,16 +117,18 @@ pub fn init_with_min_hash(
 /// Creates HLL add operation. This operation assumes HLL bin already exists.
 /// Server adds values to the HLL set.
 /// Server returns number of entries that caused HLL to update a register.
-pub fn add(policy: &HLLPolicy, bin: &str, list: Vec<Value>) -> Operation {
+#[must_use]
+pub fn add(policy: &HllPolicy, bin: impl Into<String>, list: Vec<Value>) -> Operation {
     add_with_index_and_min_hash(policy, bin, list, -1, -1)
 }
 
 /// Creates HLL add operation.
 /// Server adds values to HLL set. If HLL bin does not exist, use `indexBitCount` to create HLL bin.
 /// Server returns number of entries that caused HLL to update a register.
+#[must_use]
 pub fn add_with_index(
-    policy: &HLLPolicy,
-    bin: &str,
+    policy: &HllPolicy,
+    bin: impl Into<String>,
     list: Vec<Value>,
     index_bit_count: i64,
 ) -> Operation {
@@ -166,9 +139,10 @@ pub fn add_with_index(
 ///
 /// Server adds values to HLL set. If HLL bin does not exist, use `indexBitCount` and `minHashBitCount`
 /// to create HLL bin. Server returns number of entries that caused HLL to update a register.
+#[must_use]
 pub fn add_with_index_and_min_hash(
-    policy: &HLLPolicy,
-    bin: &str,
+    policy: &HllPolicy,
+    bin: impl Into<String>,
     list: Vec<Value>,
     index_bit_count: i64,
     min_hash_bit_count: i64,
@@ -180,7 +154,7 @@ pub fn add_with_index_and_min_hash(
             CdtArgument::List(list),
             CdtArgument::Int(index_bit_count),
             CdtArgument::Int(min_hash_bit_count),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags.bits()),
         ],
     };
     Operation {
@@ -194,13 +168,14 @@ pub fn add_with_index_and_min_hash(
 /// Creates HLL set union operation.
 /// Server sets union of specified HLL objects with HLL bin.
 /// Server does not return a value.
-pub fn set_union(policy: &HLLPolicy, bin: &str, list: Vec<Value>) -> Operation {
+#[must_use]
+pub fn set_union(policy: &HllPolicy, bin: impl Into<String>, list: Vec<Value>) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::SetUnion as u8,
         encoder: Arc::new(pack_hll_op),
         args: vec![
             CdtArgument::List(list),
-            CdtArgument::Byte(policy.flags as u8),
+            CdtArgument::Byte(policy.flags.bits()),
         ],
     };
     Operation {
@@ -213,7 +188,8 @@ pub fn set_union(policy: &HLLPolicy, bin: &str, list: Vec<Value>) -> Operation {
 
 /// Creates HLL refresh operation.
 /// Server updates the cached count (if stale) and returns the count.
-pub fn refresh_count(bin: &str) -> Operation {
+#[must_use]
+pub fn refresh_count(bin: impl Into<String>) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::SetCount as u8,
         encoder: Arc::new(pack_hll_op),
@@ -231,7 +207,8 @@ pub fn refresh_count(bin: &str) -> Operation {
 /// Servers folds `indexBitCount` to the specified value.
 /// This can only be applied when `minHashBitCount` on the HLL bin is 0.
 /// Server does not return a value.
-pub fn fold(bin: &str, index_bit_count: i64) -> Operation {
+#[must_use]
+pub fn fold(bin: impl Into<String>, index_bit_count: i64) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::Fold as u8,
         encoder: Arc::new(pack_hll_op),
@@ -247,7 +224,8 @@ pub fn fold(bin: &str, index_bit_count: i64) -> Operation {
 
 /// Creates HLL getCount operation.
 /// Server returns estimated number of elements in the HLL bin.
-pub fn get_count(bin: &str) -> Operation {
+#[must_use]
+pub fn get_count(bin: impl Into<String>) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::Count as u8,
         encoder: Arc::new(pack_hll_op),
@@ -264,7 +242,8 @@ pub fn get_count(bin: &str) -> Operation {
 /// Creates HLL getUnion operation.
 /// Server returns an HLL object that is the union of all specified HLL objects in the list
 /// with the HLL bin.
-pub fn get_union(bin: &str, list: Vec<Value>) -> Operation {
+#[must_use]
+pub fn get_union(bin: impl Into<String>, list: Vec<Value>) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::Union as u8,
         encoder: Arc::new(pack_hll_op),
@@ -281,7 +260,8 @@ pub fn get_union(bin: &str, list: Vec<Value>) -> Operation {
 /// Creates HLL `get_union_count` operation.
 /// Server returns estimated number of elements that would be contained by the union of these
 /// HLL objects.
-pub fn get_union_count(bin: &str, list: Vec<Value>) -> Operation {
+#[must_use]
+pub fn get_union_count(bin: impl Into<String>, list: Vec<Value>) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::UnionCount as u8,
         encoder: Arc::new(pack_hll_op),
@@ -298,7 +278,8 @@ pub fn get_union_count(bin: &str, list: Vec<Value>) -> Operation {
 /// Creates HLL `get_intersect_count` operation.
 /// Server returns estimated number of elements that would be contained by the intersection of
 /// these HLL objects.
-pub fn get_intersect_count(bin: &str, list: Vec<Value>) -> Operation {
+#[must_use]
+pub fn get_intersect_count(bin: impl Into<String>, list: Vec<Value>) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::IntersectCount as u8,
         encoder: Arc::new(pack_hll_op),
@@ -314,7 +295,8 @@ pub fn get_intersect_count(bin: &str, list: Vec<Value>) -> Operation {
 
 /// Creates HLL getSimilarity operation.
 /// Server returns estimated similarity of these HLL objects. Return type is a double.
-pub fn get_similarity(bin: &str, list: Vec<Value>) -> Operation {
+#[must_use]
+pub fn get_similarity(bin: impl Into<String>, list: Vec<Value>) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::Similarity as u8,
         encoder: Arc::new(pack_hll_op),
@@ -331,7 +313,8 @@ pub fn get_similarity(bin: &str, list: Vec<Value>) -> Operation {
 /// Creates HLL describe operation.
 /// Server returns `indexBitCount` and `minHashBitCount` used to create HLL bin in a list of longs.
 /// The list size is 2.
-pub fn describe(bin: &str) -> Operation {
+#[must_use]
+pub fn describe(bin: impl Into<String>) -> Operation {
     let cdt_op = CdtOperation {
         op: HLLOpType::Describe as u8,
         encoder: Arc::new(pack_hll_op),

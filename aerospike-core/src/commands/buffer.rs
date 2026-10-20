@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ use flate2::Compression;
 
 use std::sync::Arc;
 
-use crate::batch::BatchOperation;
+use crate::batch::{BatchOp, BatchOperation};
 use crate::cluster::Node;
 use crate::commands::field_type::FieldType;
 use crate::commands::BatchAttr;
@@ -31,7 +31,7 @@ use crate::msgpack::encoder;
 use crate::operations::{Operation, OperationBin, OperationData, OperationType};
 use crate::policy::{
     BasePolicy, BatchPolicy, CommitLevel, GenerationPolicy, Policy, QueryDuration, QueryPolicy,
-    ReadModeAP, ReadModeSC, ReadPolicy, RecordExistsAction, WritePolicy,
+    ReadModeAp, ReadModeSc, ReadPolicy, RecordExistsAction, WritePolicy,
 };
 use crate::query::NodePartitions;
 use crate::txn::Txn;
@@ -63,7 +63,7 @@ impl QueryDirection<'_> {
         }
     }
 
-    const fn filter_expression(&self) -> &Option<Expression> {
+    const fn filter_expression(&self) -> Option<&Expression> {
         match self {
             QueryDirection::Foreground(p) => p.filter_expression(),
             QueryDirection::Background(p) => p.filter_expression(),
@@ -171,7 +171,7 @@ pub const INFO4_ERROR_VERBOSITY_SHIFT: u8 = 5;
 pub const INFO4_ERROR_VERBOSITY_MASK: u8 = 0x60;
 
 /// Pack the error-detail verbosity level into its INFO4 bits (5-6).
-pub(crate) const fn error_verbosity_bits(verbosity: u8) -> u8 {
+pub const fn error_verbosity_bits(verbosity: u8) -> u8 {
     (verbosity << INFO4_ERROR_VERBOSITY_SHIFT) & INFO4_ERROR_VERBOSITY_MASK
 }
 
@@ -196,7 +196,7 @@ pub const MAX_BUFFER_SIZE: usize = 120 * 1024 * 1024 + 8; // 120 MB + header
 /// Result of walking a response's field section: the record version (for MRT
 /// bookkeeping) and any extended server-supplied error detail.
 #[derive(Default)]
-pub(crate) struct ParsedFields {
+pub struct ParsedFields {
     pub version: Option<u64>,
     pub error_detail: Option<Box<crate::ServerErrorDetail>>,
 }
@@ -210,7 +210,6 @@ const INITIAL_BUFFER_SIZE: usize = 1024;
 pub struct Buffer {
     pub data_buffer: Vec<u8>,
     pub data_offset: usize,
-    // pub estimated_data_offset: usize,
     pub reclaim_threshold: usize,
     /// When set, allocations larger than `reclaim_threshold` are leased
     /// from the owning cluster's [`crate::net::buffer_pool`] and returned
@@ -241,7 +240,6 @@ impl Buffer {
         Buffer {
             data_buffer: Vec::with_capacity(INITIAL_BUFFER_SIZE),
             data_offset: 0,
-            // estimated_data_offset: 0,
             reclaim_threshold,
             pool: None,
             compress_offset: 0,
@@ -285,8 +283,15 @@ impl Buffer {
 
     pub(crate) fn size_buffer(&mut self) -> Result<()> {
         let offset = self.data_offset;
-        // self.estimated_data_offset = offset;
         self.resize_buffer(offset)
+    }
+
+    /// A wire count field is 16 bits wide; refuse a larger count rather than
+    /// truncate it into a request the server would misparse.
+    fn count_u16(count: usize, what: &str) -> Result<u16> {
+        u16::try_from(count).map_err(|_| {
+            Error::invalid_argument(format!("too many {what}: {count} (at most {})", u16::MAX))
+        })
     }
 
     pub(crate) fn resize_buffer(&mut self, size: usize) -> Result<()> {
@@ -378,6 +383,9 @@ impl Buffer {
     ///   `[8 .. 16]`               → original uncompressed size
     ///   `[16 .. 16+compressed]`   → compressed data
     pub(crate) fn compress(&mut self) -> Result<()> {
+        /// zlib misbehaves on very large single writes; feed it in 64 KB chunks.
+        const STEP: usize = 64 * 1024;
+
         let cmd_start = self.compress_offset;
         // After end() is called, data_offset no longer reflects the command length.
         // Use the buffer length instead.
@@ -416,7 +424,6 @@ impl Buffer {
 
             // Write in 64KB chunks to work around zlib issues (matching Go client behavior).
             let mut pos = 0;
-            const STEP: usize = 64 * 1024;
             while pos + STEP < uncompressed_size {
                 encoder
                     .write_all(&src[pos..pos + STEP])
@@ -487,12 +494,13 @@ impl Buffer {
         }
 
         self.size_buffer()?;
-        self.write_header_write(policy, 0, INFO2_WRITE, field_count, bins.len() as u16);
+        let bin_count = Self::count_u16(bins.len(), "bins")?;
+        self.write_header_write(policy, 0, INFO2_WRITE, field_count, bin_count);
         self.write_key(key, policy.send_key)?;
         self.write_txn(policy.base_policy.txn.as_ref(), version, true);
 
         if let Some(filter) = policy.filter_expression() {
-            self.write_filter_expression(filter, filter_size);
+            self.write_filter_expression(filter, filter_size)?;
         }
         for bin in bins {
             self.write_operation_for_bin(bin.as_ref(), op_type)?;
@@ -519,7 +527,7 @@ impl Buffer {
         self.write_txn(policy.base_policy.txn.as_ref(), version, true);
 
         if let Some(filter) = policy.filter_expression() {
-            self.write_filter_expression(filter, filter_size);
+            self.write_filter_expression(filter, filter_size)?;
         }
 
         self.end();
@@ -543,7 +551,7 @@ impl Buffer {
         self.write_txn(policy.base_policy.txn.as_ref(), version, true);
 
         if let Some(filter) = policy.filter_expression() {
-            self.write_filter_expression(filter, filter_size);
+            self.write_filter_expression(filter, filter_size)?;
         }
 
         self.write_operation_for_operation_type(OperationType::Touch);
@@ -574,7 +582,7 @@ impl Buffer {
         self.write_txn(policy.base_policy.txn.as_ref(), version, false);
 
         if let Some(filter) = policy.base_policy.filter_expression() {
-            self.write_filter_expression(filter, filter_size);
+            self.write_filter_expression(filter, filter_size)?;
         }
 
         self.end();
@@ -600,12 +608,13 @@ impl Buffer {
                 }
 
                 self.size_buffer()?;
-                self.write_header(policy, INFO1_READ, 0, field_count, bin_names.len() as u16);
+                let bin_count = Self::count_u16(bin_names.len(), "bins")?;
+                self.write_header(policy, INFO1_READ, 0, field_count, bin_count);
                 self.write_key(key, false)?;
                 self.write_txn(policy.txn.as_ref(), version, false);
 
                 if let Some(filter) = policy.filter_expression() {
-                    self.write_filter_expression(filter, filter_size);
+                    self.write_filter_expression(filter, filter_size)?;
                 }
 
                 for bin_name in bin_names {
@@ -636,7 +645,7 @@ impl Buffer {
         self.write_txn(policy.txn.as_ref(), version, false);
 
         if let Some(filter) = policy.filter_expression() {
-            self.write_filter_expression(filter, filter_size);
+            self.write_filter_expression(filter, filter_size)?;
         }
 
         self.write_operation_for_bin_name("", OperationType::Read);
@@ -661,7 +670,7 @@ impl Buffer {
         self.write_txn(policy.txn.as_ref(), version, false);
 
         if let Some(filter) = policy.filter_expression() {
-            self.write_filter_expression(filter, filter_size);
+            self.write_filter_expression(filter, filter_size)?;
         }
 
         self.end();
@@ -680,7 +689,7 @@ impl Buffer {
             let field_count = field_count + 1;
             self.write_batch_fields(key, field_count, op_count);
             let exp_size = filter.size()?;
-            self.write_filter_expression(filter, exp_size);
+            self.write_filter_expression(filter, exp_size)?;
         } else {
             self.write_batch_fields(key, field_count, op_count);
         }
@@ -708,11 +717,11 @@ impl Buffer {
 
         if let Some(filter) = filter {
             let exp_size = filter.size()?;
-            self.write_filter_expression(filter, exp_size);
+            self.write_filter_expression(filter, exp_size)?;
         }
 
         if attr.send_key && key.has_value_to_send() {
-            self.write_field_value(&key.user_key.clone().unwrap(), FieldType::Key)?;
+            self.write_field_value(key.user_key.as_ref().unwrap(), FieldType::Key)?;
         }
         Ok(())
     }
@@ -887,12 +896,12 @@ impl Buffer {
         // Write filter expression
         if let Some(filter) = filter {
             let exp_size = filter.size()?;
-            self.write_filter_expression(filter, exp_size);
+            self.write_filter_expression(filter, exp_size)?;
         }
 
         // Write user key
         if attr.send_key && key.has_value_to_send() {
-            self.write_field_value(&key.user_key.clone().unwrap(), FieldType::Key)?;
+            self.write_field_value(key.user_key.as_ref().unwrap(), FieldType::Key)?;
         }
         Ok(())
     }
@@ -927,13 +936,9 @@ impl Buffer {
         // Multi-record-transaction verify/roll batches are homogeneous and use
         // a per-record layout that differs from read/write, so they get their
         // own encoders. The send/parse machinery is shared with this path.
-        match batch_ops.first().map(|(op, _)| op) {
-            Some(BatchOperation::TxnVerify { .. }) => {
-                return self.set_batch_txn_verify(policy, batch_ops)
-            }
-            Some(BatchOperation::TxnRoll { .. }) => {
-                return self.set_batch_txn_roll(policy, batch_ops)
-            }
+        match batch_ops.first().map(|(op, _)| &op.kind) {
+            Some(BatchOp::TxnVerify { .. }) => return self.set_batch_txn_verify(policy, batch_ops),
+            Some(BatchOp::TxnRoll { .. }) => return self.set_batch_txn_roll(policy, batch_ops),
             _ => {}
         }
 
@@ -958,12 +963,24 @@ impl Buffer {
             Vec::new()
         };
 
+        // Whether each row repeats the previous row's header, decided once here
+        // and reused by the write loop below. `match_header` is a deep
+        // structural comparison — namespace and set strings, the per-record
+        // policy including its filter expression, the bin list, every op, and
+        // the transaction version — and the two loops each called it for every
+        // row, so a batch paid 2N comparisons to answer N questions.
+        let mut repeats: Vec<bool> = Vec::with_capacity(batch_ops.len());
+
         let mut prev: Option<&BatchOperation> = None;
         let mut ver_prev: Option<u64> = None;
         for (i, (batch_op, _)) in batch_ops.iter().enumerate() {
             let ver = versions.get(i).copied().flatten();
-            self.data_offset += batch_op.key().digest.len() + 4;
-            if batch_op.match_header(prev, ver, ver_prev) {
+            // The digest is always 20 bytes; `key()` would clone two Strings
+            // to say so.
+            self.data_offset += 20 + 4;
+            let repeat = batch_op.match_header(prev, ver, ver_prev);
+            repeats.push(repeat);
+            if repeat {
                 self.data_offset += 1;
             } else {
                 // Must write full header and namespace/set/bin names.
@@ -971,7 +988,7 @@ impl Buffer {
                 self.data_offset += 12; // header(4) + ttl(4) + field_count(2) + op_count(2) = 12
                 self.data_offset += key.namespace.len() + FIELD_HEADER_SIZE as usize;
                 self.data_offset += key.set_name.len() + FIELD_HEADER_SIZE as usize;
-                self.data_offset += batch_op.size(&policy.filter_expression)?; // + HEADER
+                self.data_offset += batch_op.size(policy.filter_expression())?; // + HEADER
 
                 // Add txn field sizes
                 self.size_txn_batch(txn, ver, batch_op.has_write());
@@ -991,7 +1008,7 @@ impl Buffer {
         self.write_header(&policy.base_policy, INFO1_BATCH, 0, field_count, 0);
 
         if let Some(filter) = policy.filter_expression() {
-            self.write_filter_expression(filter, filter_size);
+            self.write_filter_expression(filter, filter_size)?;
         }
 
         let field_size_offset = self.data_offset;
@@ -1001,19 +1018,16 @@ impl Buffer {
         self.write_u8(Buffer::get_batch_flags(policy));
 
         let mut attr = BatchAttr::default();
-        prev = None;
-        ver_prev = None;
         for (idx, (batch_op, _)) in batch_ops.iter().enumerate() {
             let key = &batch_op.key();
             let ver = versions.get(idx).copied().flatten();
             self.write_u32(idx as u32);
             self.write_bytes(&key.digest);
-            if batch_op.match_header(prev, ver, ver_prev) {
+            if repeats[idx] {
                 self.write_u8(BATCH_MSG_REPEAT);
             } else {
-                match batch_op {
-                    BatchOperation::Read {
-                        br: _,
+                match &batch_op.kind {
+                    BatchOp::Read {
                         policy: brpolicy,
                         bins,
                         ops,
@@ -1061,8 +1075,7 @@ impl Buffer {
                             }
                         }
                     }
-                    BatchOperation::Write {
-                        br: _,
+                    BatchOp::Write {
                         policy: bwpolicy,
                         ops,
                     } => {
@@ -1077,10 +1090,7 @@ impl Buffer {
                             ver,
                         )?;
                     }
-                    BatchOperation::Delete {
-                        br: _,
-                        policy: bdpolicy,
-                    } => {
+                    BatchOp::Delete { policy: bdpolicy } => {
                         attr.set_batch_delete(bdpolicy, policy);
                         self.write_batch_write(
                             key,
@@ -1092,10 +1102,9 @@ impl Buffer {
                             ver,
                         )?;
                     }
-                    BatchOperation::UDF {
-                        br: _,
+                    BatchOp::Udf {
                         policy: bupolicy,
-                        udf_name,
+                        package_name,
                         function_name,
                         args,
                     } => {
@@ -1109,22 +1118,19 @@ impl Buffer {
                             txn,
                             ver,
                         )?;
-                        self.write_field_string(udf_name, FieldType::UdfPackageName);
+                        self.write_field_string(package_name, FieldType::UdfPackageName);
                         self.write_field_string(function_name, FieldType::UdfFunction);
-                        self.write_args(args.as_deref(), FieldType::UdfArgList)?;
+                        self.write_args(args, FieldType::UdfArgList)?;
                     }
                     // Dispatched to dedicated encoders above; never reached here.
-                    BatchOperation::TxnVerify { .. } | BatchOperation::TxnRoll { .. } => {
+                    BatchOp::TxnVerify { .. } | BatchOp::TxnRoll { .. } => {
                         unreachable!("txn verify/roll use their own batch encoders")
                     }
                 }
             }
-            prev = Some(batch_op);
-            ver_prev = ver;
         }
 
-        let field_size =
-            self.data_offset - self.compress_offset - MSG_TOTAL_HEADER_SIZE as usize - 4;
+        let field_size = self.data_offset - field_size_offset - 4;
         NetworkEndian::write_u32(
             &mut self.data_buffer[field_size_offset..field_size_offset + 4],
             field_size as u32,
@@ -1139,7 +1145,7 @@ impl Buffer {
     /// `setBatchTxnVerifyForOffsets` (`BATCH_MSG_INFO | BATCH_MSG_INFO4`, read +
     /// no-bindata, `INFO3_SC_READ_TYPE`, `INFO4_MRT_VERIFY_READ`, then the
     /// namespace/set fields and the record-version field). All `batch_ops` must
-    /// be [`BatchOperation::TxnVerify`].
+    /// be transaction verify rows ([`BatchOperation::txn_verify`]).
     pub(crate) fn set_batch_txn_verify(
         &mut self,
         policy: &BatchPolicy,
@@ -1150,7 +1156,8 @@ impl Buffer {
         self.data_offset += FIELD_HEADER_SIZE as usize + 5;
 
         for (op, _) in batch_ops {
-            if let BatchOperation::TxnVerify { br, version } = op {
+            if let BatchOp::TxnVerify { version } = &op.kind {
+                let br = &op.br;
                 self.data_offset += br.key.digest.len() + 4; // offset(4) + digest
                 self.data_offset += 5; // flags + read + write + info3 + info4
                 self.data_offset += 4; // field_count(2) + op_count(2)
@@ -1171,8 +1178,8 @@ impl Buffer {
         self.write_u8(Buffer::get_batch_flags(policy));
 
         for (idx, (op, _)) in batch_ops.iter().enumerate() {
-            if let BatchOperation::TxnVerify { br, version } = op {
-                let key = &br.key;
+            if let BatchOp::TxnVerify { version } = &op.kind {
+                let key = &op.br.key;
                 self.write_u32(idx as u32);
                 self.write_bytes(&key.digest);
                 self.write_u8(BATCH_MSG_INFO | BATCH_MSG_INFO4);
@@ -1188,8 +1195,7 @@ impl Buffer {
             }
         }
 
-        let field_size =
-            self.data_offset - self.compress_offset - MSG_TOTAL_HEADER_SIZE as usize - 4;
+        let field_size = self.data_offset - field_size_offset - 4;
         NetworkEndian::write_u32(
             &mut self.data_buffer[field_size_offset..field_size_offset + 4],
             field_size as u32,
@@ -1203,7 +1209,7 @@ impl Buffer {
     /// whose txn path already emits the `BATCH_MSG_INFO|INFO4|GEN|TTL` header,
     /// durable-delete write attrs, `txn_attr`, and the MRT id/version/deadline
     /// fields — matching the Go client's `setBatchTxnRollForOffsets`. All
-    /// `batch_ops` must be [`BatchOperation::TxnRoll`].
+    /// `batch_ops` must be transaction roll rows ([`BatchOperation::txn_roll`]).
     pub(crate) fn set_batch_txn_roll(
         &mut self,
         policy: &BatchPolicy,
@@ -1213,8 +1219,8 @@ impl Buffer {
         self.data_offset += FIELD_HEADER_SIZE as usize + 5;
 
         for (op, _) in batch_ops {
-            if let BatchOperation::TxnRoll { br, txn, .. } = op {
-                let key = &br.key;
+            if let BatchOp::TxnRoll { txn, .. } = &op.kind {
+                let key = &op.br.key;
                 let ver = txn.get_read_version(key);
                 self.data_offset += key.digest.len() + 4;
                 self.data_offset += 12; // flags+read+write+info + expiration(4) + fc(2)+oc(2)
@@ -1235,8 +1241,8 @@ impl Buffer {
 
         let no_filter: Option<Expression> = None;
         for (idx, (op, _)) in batch_ops.iter().enumerate() {
-            if let BatchOperation::TxnRoll { br, txn, roll_attr } = op {
-                let key = &br.key;
+            if let BatchOp::TxnRoll { txn, roll_attr } = &op.kind {
+                let key = &op.br.key;
                 let ver = txn.get_read_version(key);
                 self.write_u32(idx as u32);
                 self.write_bytes(&key.digest);
@@ -1250,8 +1256,7 @@ impl Buffer {
             }
         }
 
-        let field_size =
-            self.data_offset - self.compress_offset - MSG_TOTAL_HEADER_SIZE as usize - 4;
+        let field_size = self.data_offset - field_size_offset - 4;
         NetworkEndian::write_u32(
             &mut self.data_buffer[field_size_offset..field_size_offset + 4],
             field_size as u32,
@@ -1354,7 +1359,7 @@ impl Buffer {
                 read_attr,
                 write_attr,
                 field_count,
-                operations.len() as u16,
+                Self::count_u16(operations.len(), "operations")?,
             );
         } else {
             self.write_header(
@@ -1362,14 +1367,14 @@ impl Buffer {
                 read_attr,
                 write_attr,
                 field_count,
-                operations.len() as u16,
+                Self::count_u16(operations.len(), "operations")?,
             );
         }
         self.write_key(key, policy.send_key && has_write)?;
         self.write_txn(policy.base_policy.txn.as_ref(), version, has_write);
 
         if let Some(filter) = policy.filter_expression() {
-            self.write_filter_expression(filter, filter_size);
+            self.write_filter_expression(filter, filter_size)?;
         }
 
         for operation in operations {
@@ -1385,7 +1390,7 @@ impl Buffer {
         key: &Key,
         package_name: &str,
         function_name: &str,
-        args: Option<&[Value]>,
+        args: &[Value],
     ) -> Result<()> {
         self.begin();
 
@@ -1401,7 +1406,7 @@ impl Buffer {
         self.write_key(key, policy.send_key)?;
 
         if let Some(filter) = policy.filter_expression() {
-            self.write_filter_expression(filter, filter_size);
+            self.write_filter_expression(filter, filter_size)?;
         }
 
         self.write_field_string(package_name, FieldType::UdfPackageName);
@@ -1427,8 +1432,9 @@ impl Buffer {
         task_id: u64,
         node: &Node,
         node_partitions: Option<&NodePartitions>,
+        execute_where: Option<&[u8]>,
     ) -> Result<()> {
-        let filter = statement.filters.as_ref().map(|filters| &filters[0]);
+        let filter = statement.filter();
         let is_background = direction.is_background();
         let supports_ops_ext = node.version().supports_query_ops_projection_ext();
         let records_per_second = direction.records_per_second();
@@ -1464,13 +1470,13 @@ impl Buffer {
 
         // ---------- estimation: filter block ----------
         if let Some(filter) = filter {
-            let idx_type = filter.collection_index_type.clone();
+            let idx_type = filter.collection_index_type;
             if idx_type != CollectionIndexType::Default {
                 self.data_offset += 1 + FIELD_HEADER_SIZE as usize;
                 field_count += 1;
             }
 
-            filter_size = 1 + filter.estimate_size()?;
+            filter_size = filter.index_range_field_body_size()?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             field_count += 1;
 
@@ -1500,17 +1506,21 @@ impl Buffer {
             self.data_offset += aggregation.package_name.len() + FIELD_HEADER_SIZE as usize;
             self.data_offset += aggregation.function_name.len() + FIELD_HEADER_SIZE as usize;
 
-            if let Some(ref args) = aggregation.function_args {
-                self.estimate_args_size(Some(args))?;
-            } else {
-                self.estimate_args_size(None)?;
-            }
+            self.estimate_args_size(&aggregation.function_args)?;
             field_count += 4;
         }
 
-        // ---------- estimation: policy filter expression ----------
-        let filter_exp_size = self.estimate_filter_size(direction.filter_expression())?;
+        // ---------- estimation: policy filter expression or plan-driven WHERE ----------
+        let filter_exp_size = if execute_where.is_some() {
+            0
+        } else {
+            self.estimate_filter_size(direction.filter_expression())?
+        };
         if filter_exp_size > 0 {
+            field_count += 1;
+        }
+        if let Some(where_bytes) = execute_where {
+            self.data_offset += where_bytes.len() + FIELD_HEADER_SIZE as usize;
             field_count += 1;
         }
 
@@ -1571,12 +1581,12 @@ impl Buffer {
                 }
                 self.data_offset += op.estimate_size()? + OPERATION_HEADER_SIZE as usize;
             }
-            operations.len() as u16
+            Self::count_u16(operations.len(), "operations")?
         } else if let Bins::Some(ref bin_names) = statement.bins {
             for bin_name in bin_names {
                 self.estimate_operation_size_for_bin_name(bin_name)?;
             }
-            bin_names.len() as u16
+            Self::count_u16(bin_names.len(), "bins")?
         } else {
             0
         };
@@ -1596,7 +1606,7 @@ impl Buffer {
                 }
                 match qpolicy.expected_duration {
                     QueryDuration::Short => info1 |= INFO1_SHORT_QUERY,
-                    QueryDuration::LongRelaxAP => info2 |= INFO2_RELAX_AP_LONG_QUERY,
+                    QueryDuration::LongRelaxAp => info2 |= INFO2_RELAX_AP_LONG_QUERY,
                     QueryDuration::Long => (),
                 }
                 self.write_header_read(
@@ -1628,15 +1638,14 @@ impl Buffer {
         self.write_u64(task_id);
 
         if let Some(filter) = filter {
-            let idx_type = filter.collection_index_type.clone();
+            let idx_type = filter.collection_index_type;
             if idx_type != CollectionIndexType::Default {
                 self.write_field_header(1, FieldType::IndexType);
                 self.write_u8(idx_type as u8);
             }
 
             self.write_field_header(filter_size, FieldType::IndexRange);
-            self.write_u8(1);
-            filter.write(self)?;
+            filter.write_index_range_field(self)?;
 
             if let Some(ref ctx) = filter.context {
                 let ctx_size = encoder::pack_ctx_for_index(&mut None, ctx)?;
@@ -1666,15 +1675,13 @@ impl Buffer {
 
             self.write_field_string(&aggregation.package_name, FieldType::UdfPackageName);
             self.write_field_string(&aggregation.function_name, FieldType::UdfFunction);
-            if let Some(ref args) = aggregation.function_args {
-                self.write_args(Some(args), FieldType::UdfArgList)?;
-            } else {
-                self.write_args(None, FieldType::UdfArgList)?;
-            }
+            self.write_args(&aggregation.function_args, FieldType::UdfArgList)?;
         }
 
-        if let Some(filter_exp) = direction.filter_expression() {
-            self.write_filter_expression(filter_exp, filter_exp_size);
+        if let Some(where_bytes) = execute_where {
+            self.write_field_bytes(where_bytes, FieldType::Where);
+        } else if let Some(filter_exp) = direction.filter_expression() {
+            self.write_filter_expression(filter_exp, filter_exp_size)?;
         }
 
         // Partition tracking fields — only present for foreground
@@ -1723,9 +1730,75 @@ impl Buffer {
         Ok(())
     }
 
+    /// Build a query explain request buffer.
+    pub(crate) fn set_query_explain(
+        &mut self,
+        base_policy: &BasePolicy,
+        namespace: &str,
+        set_name: Option<&str>,
+        where_bytes: &[u8],
+        index_name_hint: Option<&str>,
+        task_id: u64,
+        socket_timeout: u32,
+    ) -> Result<()> {
+        self.begin();
+
+        let set_name = set_name.filter(|s| !s.is_empty());
+        let index_name_hint = index_name_hint.filter(|s| !s.is_empty());
+
+        let mut field_count: u16 = 0;
+
+        self.data_offset += namespace.len() + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
+        if let Some(set) = set_name {
+            self.data_offset += set.len() + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
+        self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
+        self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
+        if let Some(hint) = index_name_hint {
+            self.data_offset += hint.len() + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+
+        self.data_offset += where_bytes.len() + FIELD_HEADER_SIZE as usize;
+        field_count += 1;
+
+        self.size_buffer()?;
+
+        self.write_header_read(base_policy, INFO1_READ, 0, 0, field_count, 0);
+
+        self.write_field_string(namespace, FieldType::Namespace);
+
+        if let Some(set) = set_name {
+            self.write_field_string(set, FieldType::Table);
+        }
+
+        self.write_field_header(4, FieldType::SocketTimeout);
+        self.write_u32(socket_timeout);
+
+        self.write_field_header(8, FieldType::QueryId);
+        self.write_u64(task_id);
+
+        if let Some(hint) = index_name_hint {
+            self.write_field_string(hint, FieldType::IndexName);
+        }
+
+        self.write_field_bytes(where_bytes, FieldType::Where);
+
+        self.end();
+        Ok(())
+    }
+
     #[allow(clippy::ref_option)]
-    fn estimate_filter_size(&mut self, filter: &Option<Expression>) -> Result<usize> {
-        filter.clone().map_or(Ok(0), |filter| {
+    fn estimate_filter_size(&mut self, filter: Option<&Expression>) -> Result<usize> {
+        filter.map_or(Ok(0), |filter| {
             let filter_size = filter.pack(&mut None)?;
             self.data_offset += filter_size + FIELD_HEADER_SIZE as usize;
             // filter_size + FIELD_HEADER_SIZE as usize
@@ -1760,13 +1833,8 @@ impl Buffer {
         Ok(field_count)
     }
 
-    fn estimate_args_size(&mut self, args: Option<&[Value]>) -> Result<()> {
-        if let Some(args) = args {
-            self.data_offset += encoder::pack_array(&mut None, args)? + FIELD_HEADER_SIZE as usize;
-        } else {
-            self.data_offset +=
-                encoder::pack_empty_args_array(&mut None) + FIELD_HEADER_SIZE as usize;
-        }
+    fn estimate_args_size(&mut self, args: &[Value]) -> Result<()> {
+        self.data_offset += encoder::pack_array(&mut None, args)? + FIELD_HEADER_SIZE as usize;
         Ok(())
     }
 
@@ -1774,7 +1842,7 @@ impl Buffer {
         &mut self,
         package_name: &str,
         function_name: &str,
-        args: Option<&[Value]>,
+        args: &[Value],
     ) -> Result<usize> {
         self.data_offset += package_name.len() + FIELD_HEADER_SIZE as usize;
         self.data_offset += function_name.len() + FIELD_HEADER_SIZE as usize;
@@ -1813,15 +1881,15 @@ impl Buffer {
         let mut info_attr: u8 = 0;
 
         match policy.read_mode_sc {
-            ReadModeSC::Session => {}
-            ReadModeSC::Linearize => info_attr |= INFO3_SC_READ_TYPE,
-            ReadModeSC::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
-            ReadModeSC::AllowUnavailable => {
+            ReadModeSc::Session => {}
+            ReadModeSc::Linearize => info_attr |= INFO3_SC_READ_TYPE,
+            ReadModeSc::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
+            ReadModeSc::AllowUnavailable => {
                 info_attr |= INFO3_SC_READ_TYPE | INFO3_SC_READ_RELAX;
             }
         }
 
-        if policy.read_mode_ap == ReadModeAP::All {
+        if policy.read_mode_ap == ReadModeAp::All {
             read_attr |= INFO1_READ_MODE_AP_ALL;
         }
 
@@ -1876,15 +1944,15 @@ impl Buffer {
         let mut info_attr = info_attr;
 
         match policy.read_mode_sc {
-            ReadModeSC::Session => {}
-            ReadModeSC::Linearize => info_attr |= INFO3_SC_READ_TYPE,
-            ReadModeSC::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
-            ReadModeSC::AllowUnavailable => {
+            ReadModeSc::Session => {}
+            ReadModeSc::Linearize => info_attr |= INFO3_SC_READ_TYPE,
+            ReadModeSc::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
+            ReadModeSc::AllowUnavailable => {
                 info_attr |= INFO3_SC_READ_TYPE | INFO3_SC_READ_RELAX;
             }
         }
 
-        if policy.read_mode_ap == ReadModeAP::All {
+        if policy.read_mode_ap == ReadModeAp::All {
             read_attr |= INFO1_READ_MODE_AP_ALL;
         }
 
@@ -2022,15 +2090,15 @@ impl Buffer {
             }
 
             match policy.base_policy.read_mode_sc {
-                ReadModeSC::Session => {}
-                ReadModeSC::Linearize => info_attr |= INFO3_SC_READ_TYPE,
-                ReadModeSC::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
-                ReadModeSC::AllowUnavailable => {
+                ReadModeSc::Session => {}
+                ReadModeSc::Linearize => info_attr |= INFO3_SC_READ_TYPE,
+                ReadModeSc::AllowReplica => info_attr |= INFO3_SC_READ_RELAX,
+                ReadModeSc::AllowUnavailable => {
                     info_attr |= INFO3_SC_READ_TYPE | INFO3_SC_READ_RELAX;
                 }
             }
 
-            if policy.base_policy.read_mode_ap == ReadModeAP::All {
+            if policy.base_policy.read_mode_ap == ReadModeAp::All {
                 read_attr |= INFO1_READ_MODE_AP_ALL;
             }
         }
@@ -2080,9 +2148,10 @@ impl Buffer {
         Ok(())
     }
 
-    fn write_filter_expression(&mut self, filter: &Expression, size: usize) {
+    fn write_filter_expression(&mut self, filter: &Expression, size: usize) -> Result<()> {
         self.write_field_header(size, FieldType::FilterExp);
-        let _ = filter.pack(&mut Some(self));
+        filter.pack(&mut Some(self))?;
+        Ok(())
     }
 
     fn write_field_header(&mut self, size: usize, ftype: FieldType) {
@@ -2117,14 +2186,9 @@ impl Buffer {
         Ok(())
     }
 
-    fn write_args(&mut self, args: Option<&[Value]>, ftype: FieldType) -> Result<()> {
-        if let Some(args) = args {
-            self.write_field_header(encoder::pack_array(&mut None, args)?, ftype);
-            encoder::pack_array(&mut Some(self), args)?;
-        } else {
-            self.write_field_header(encoder::pack_empty_args_array(&mut None), ftype);
-            encoder::pack_empty_args_array(&mut Some(self));
-        }
+    fn write_args(&mut self, args: &[Value], ftype: FieldType) -> Result<()> {
+        self.write_field_header(encoder::pack_array(&mut None, args)?, ftype);
+        encoder::pack_array(&mut Some(self), args)?;
         Ok(())
     }
 
@@ -2175,6 +2239,25 @@ impl Buffer {
 
     pub(crate) const fn skip(&mut self, count: usize) {
         self.data_offset += count;
+    }
+
+    /// Bytes between the read cursor and the end of the buffer.
+    pub(crate) const fn remaining(&self) -> usize {
+        self.data_buffer.len().saturating_sub(self.data_offset)
+    }
+
+    /// Fails unless `n` more bytes can be read. Every length the server
+    /// declares goes through here before it is trusted, so a truncated or
+    /// corrupt reply is a `BadResponse` error, not an out-of-bounds panic.
+    pub(crate) fn ensure(&self, n: usize) -> Result<()> {
+        if n <= self.remaining() {
+            Ok(())
+        } else {
+            Err(Error::bad_response(format!(
+                "response truncated: {n} bytes declared, {} available",
+                self.remaining()
+            )))
+        }
     }
 
     pub(crate) fn peek(&self) -> u8 {
@@ -2335,24 +2418,21 @@ impl Buffer {
     }
 
     pub(crate) fn read_str(&mut self, len: usize) -> Result<String> {
+        self.ensure(len)?;
         let s = str::from_utf8(&self.data_buffer[self.data_offset..self.data_offset + len])?;
         self.data_offset += len;
         Ok(s.to_owned())
     }
 
-
-    // pub(crate) fn read_bytes(&mut self, pos: usize, count: usize) -> &[u8] {
-    //     &self.data_buffer[pos..pos + count]
-    // }
-
     pub(crate) fn read_slice(&self, count: usize) -> &[u8] {
         &self.data_buffer[self.data_offset..self.data_offset + count]
     }
 
-    pub(crate) fn read_blob(&mut self, len: usize) -> Vec<u8> {
+    pub(crate) fn read_blob(&mut self, len: usize) -> Result<Vec<u8>> {
+        self.ensure(len)?;
         let val = self.data_buffer[self.data_offset..self.data_offset + len].to_vec();
         self.data_offset += len;
-        val
+        Ok(val)
     }
 
     pub(crate) fn read_bool(&mut self, len: usize) -> bool {
@@ -2539,9 +2619,19 @@ impl Buffer {
     pub(crate) fn parse_response_fields(&mut self, field_count: usize) -> ParsedFields {
         let mut parsed = ParsedFields::default();
         for _ in 0..field_count {
+            // Fields are optional data: on a corrupt length stop walking
+            // rather than read past the reply.
+            if self.remaining() < 5 {
+                break;
+            }
             let field_len = self.read_u32(None) as usize;
             let field_type = self.read_u8(None);
-            let data_size = field_len - 1;
+            let Some(data_size) = field_len.checked_sub(1) else {
+                break;
+            };
+            if self.remaining() < data_size {
+                break;
+            }
 
             if field_type == FieldType::RecordVersion as u8 && data_size == 7 {
                 parsed.version = Some(Self::version_bytes_to_u64(
@@ -2808,7 +2898,7 @@ impl Buffer {
         self.write_u32(policy.expiration.into());
         self.write_u32(0);
         self.write_u16(field_count);
-        self.write_u16(operations.len() as u16);
+        self.write_u16(Self::count_u16(operations.len(), "operations")?);
         self.data_offset = MSG_TOTAL_HEADER_SIZE as usize;
 
         self.write_key(key, false)?;
@@ -2819,12 +2909,6 @@ impl Buffer {
 
         self.end();
         Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn dump_buffer(&self) {
-        rhexdump!(&self.data_buffer);
-        println!();
     }
 }
 
@@ -2885,8 +2969,8 @@ mod tests {
 
     fn read_heavy_write_policy() -> WritePolicy {
         let mut policy = WritePolicy::default();
-        policy.base_policy.read_mode_sc = ReadModeSC::Linearize;
-        policy.base_policy.read_mode_ap = ReadModeAP::All;
+        policy.base_policy.read_mode_sc = ReadModeSc::Linearize;
+        policy.base_policy.read_mode_ap = ReadModeAp::All;
         policy.base_policy.use_compression = true;
         policy
     }
@@ -2969,8 +3053,8 @@ mod tests {
     }
 
     /// Helper: build a Buffer that looks like a real command was written.
-    /// Returns (buffer, uncompressed_payload) where uncompressed_payload is
-    /// the command bytes at [compress_offset .. data_offset] before end() is called.
+    /// Returns `(buffer, uncompressed_payload)` where `uncompressed_payload` is
+    /// the command bytes at `[compress_offset .. data_offset]` before `end()` is called.
     fn make_command_buffer(payload_size: usize, use_compress: bool) -> Buffer {
         let mut buf = Buffer::new(0);
         buf.set_compress(use_compress, DEFAULT_COMPRESS_THRESHOLD);
@@ -3449,6 +3533,32 @@ mod tests {
     }
 
     #[test]
+    fn query_explain_header_carries_error_verbosity() {
+        for (level, want) in [(0u8, 0x00u8), (1, 0x20), (2, 0x40), (3, 0x60)] {
+            let policy = BasePolicy {
+                error_detail_verbosity: level,
+                ..BasePolicy::default()
+            };
+            let mut buf = Buffer::new(0);
+            buf.set_query_explain(
+                &policy,
+                "test",
+                Some("users"),
+                &[0x02, b'$', b'.', b'a'],
+                None,
+                7,
+                1_000,
+            )
+            .unwrap();
+            assert_eq!(
+                buf.data_buffer[12] & INFO4_ERROR_VERBOSITY_MASK,
+                want,
+                "query explain header level {level}"
+            );
+        }
+    }
+
+    #[test]
     fn write_header_carries_error_verbosity() {
         let mut policy = WritePolicy::default();
         policy.base_policy.error_detail_verbosity = 3;
@@ -3466,6 +3576,35 @@ mod tests {
         out.push(field_type);
         out.extend_from_slice(data);
         out
+    }
+
+    #[test]
+    fn ensure_and_remaining_track_the_read_cursor() {
+        let mut buf = Buffer::new(0);
+        buf.data_buffer = vec![1, 2, 3, 4];
+        buf.data_offset = 1;
+        assert_eq!(buf.remaining(), 3);
+        assert!(buf.ensure(3).is_ok());
+        assert!(buf.ensure(4).is_err());
+        assert!(buf.read_blob(4).is_err());
+        assert!(buf.read_str(4).is_err());
+        assert_eq!(buf.read_blob(3).unwrap(), vec![2, 3, 4]);
+        assert_eq!(buf.remaining(), 0);
+    }
+
+    #[test]
+    fn a_field_length_past_the_reply_stops_the_walk() {
+        let mut buf = Buffer::new(0);
+        // One field claiming 1000 bytes of error detail in a 7-byte reply.
+        buf.data_buffer = vec![0x00, 0x00, 0x03, 0xe9, 45, 0xaa, 0xbb];
+        buf.data_offset = 0;
+        let parsed = buf.parse_response_fields(1);
+        assert!(parsed.error_detail.is_none());
+        // And a zero field length (no room for the type byte).
+        buf.data_buffer = vec![0, 0, 0, 0, 45];
+        buf.data_offset = 0;
+        let parsed = buf.parse_response_fields(1);
+        assert!(parsed.error_detail.is_none() && parsed.version.is_none());
     }
 
     fn parse_fields(fields: &[Vec<u8>]) -> ParsedFields {
@@ -3495,7 +3634,7 @@ mod tests {
             encode_field(FieldType::ErrorMessage as u8, &detail),
         ]);
         let d = parsed.error_detail.expect("detail parsed");
-        assert_eq!(d.message, "ok (subcode=1)");
+        assert_eq!(d.message, "ok");
     }
 
     #[test]
@@ -3516,7 +3655,7 @@ mod tests {
     // ---- set_operate attribute bits (CLIENT-5102: RESPOND_ALL_OPS for
     // string ops; grouping mirrors Go/Java OperateArgs) ----
 
-    /// Build an operate command and return (read_attr, write_attr).
+    /// Build an operate command and return `(read_attr, write_attr)`.
     fn operate_attrs(ops: &[crate::operations::Operation]) -> (u8, u8) {
         let key = test_key();
         let mut buf = Buffer::new(0);
@@ -3595,5 +3734,81 @@ mod tests {
         let (read_attr, write_attr) = operate_attrs(&[scalar::get(), str_op::strlen("b")]);
         assert_ne!(read_attr & INFO1_GET_ALL, 0);
         assert_eq!(write_attr & INFO2_RESPOND_ALL_OPS, 0);
+    }
+
+    /// Every `as_msg_field` declares a size that matches what follows it.
+    ///
+    /// A server walks fields by following each header to the next, so an
+    /// overstated size on any field but the last silently swallows the ones
+    /// after it — and on the last it runs off the end of the message. The C
+    /// server never notices the last one, which is why this went unseen: the
+    /// batch-index field is written last, and its size was computed from the
+    /// end of the *message header* rather than from the field's own offset.
+    /// Anything written in between — a filter expression — made it overstate
+    /// by exactly that much.
+    #[test]
+    fn a_batch_with_a_filter_declares_the_right_field_size() {
+        use crate::expressions as exp;
+
+        let key = crate::Key::new("test", "demo", crate::Value::from(1)).unwrap();
+        let ops = vec![(
+            BatchOperation::read(&crate::BatchReadPolicy::default(), key, crate::Bins::All),
+            0usize,
+        )];
+
+        for filter in [
+            None,
+            Some(exp::ge(exp::int_bin("n".to_string()), exp::int_val(0))),
+        ] {
+            let described = if filter.is_some() {
+                "with a filter expression"
+            } else {
+                "without one"
+            };
+            let mut policy = BatchPolicy::default();
+            policy.base_policy.filter_expression = filter;
+
+            let mut buf = Buffer::with_pool(64 * 1024, test_pool());
+            buf.set_batch_operate(&policy, &ops).expect("encodes");
+
+            // `end()` rewinds `data_offset` to the proto header it just wrote,
+            // so the message runs from there for as far as that header says.
+            let base = buf.compress_offset;
+            let proto = NetworkEndian::read_u64(&buf.data_buffer[base..base + 8]);
+            let msg_len = (proto & 0x0000_ffff_ffff_ffff) as usize;
+            let msg = &buf.data_buffer[base + 8..base + 8 + msg_len];
+
+            // Walk the fields the way a server does: each header says how far
+            // to the next one.
+            let n_fields = NetworkEndian::read_u16(&msg[18..20]) as usize;
+            let mut at = MSG_TOTAL_HEADER_SIZE as usize - 8;
+
+            for i in 0..n_fields {
+                assert!(
+                    at + 4 <= msg.len(),
+                    "field {i} header runs past the message, {described}"
+                );
+                let sz = NetworkEndian::read_u32(&msg[at..at + 4]) as usize;
+                assert!(
+                    sz >= 1,
+                    "field {i} declares no room for its own type byte, {described}"
+                );
+                at += 4 + sz;
+                assert!(
+                    at <= msg.len(),
+                    "field {i} declares {sz} bytes but only {} remain, {described}",
+                    msg.len().saturating_sub(at - sz),
+                );
+            }
+
+            // And the walk lands exactly on the end of the fields, which is
+            // where the operations would start. Overstating leaves it past the
+            // end; understating leaves it short.
+            assert_eq!(
+                at,
+                msg.len(),
+                "walking the fields did not land on the end of the message, {described}"
+            );
+        }
     }
 }

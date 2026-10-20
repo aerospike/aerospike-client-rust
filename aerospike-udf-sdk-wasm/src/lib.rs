@@ -93,13 +93,7 @@ extern "C" {
     fn map_get_type(handle: i32, key: *const u8, key_len: i32) -> i32;
     fn map_get_int(handle: i32, key: *const u8, key_len: i32) -> i64;
     fn map_get_double(handle: i32, key: *const u8, key_len: i32) -> f64;
-    fn map_get_bytes(
-        handle: i32,
-        key: *const u8,
-        key_len: i32,
-        out: *mut u8,
-        out_cap: i32,
-    ) -> i32;
+    fn map_get_bytes(handle: i32, key: *const u8, key_len: i32, out: *mut u8, out_cap: i32) -> i32;
     fn map_get_handle(handle: i32, key: *const u8, key_len: i32) -> i32;
     fn list_ints(handle: i32, out: *mut u8, out_cap: i32) -> i32;
 
@@ -198,7 +192,7 @@ pub enum Type {
     Map,
     /// Something a UDF has no business interpreting.
     Other,
-    /// A GeoJSON document, which reads and writes as its text through [`Record::get_str`] and [`set_geojson`].
+    /// A GeoJson document, which reads and writes as its text through [`Record::get_str`] and [`set_geojson`].
     ///
     /// Distinct from [`Type::Str`] on purpose: the particle type is the difference between a string bin and a
     /// geospatially indexable one, so writing a document back with [`set_str`] would silently make it unqueryable.
@@ -374,7 +368,7 @@ pub fn set_blob(name: &str, value: &[u8]) -> bool {
     }
 }
 
-/// Write a GeoJSON bin from its document text.
+/// Write a GeoJson bin from its document text.
 ///
 /// **Not the same as [`set_str`].** A geojson bin and a string bin differ by particle type, and that type is what makes
 /// the bin geospatially indexable and queryable - so a document written with `set_str` keeps its text and quietly stops
@@ -806,16 +800,12 @@ impl Map {
     }
 
     pub fn put_list(&self, key: &str, value: &List) -> &Self {
-        unsafe {
-            map_put_str_handle(self.handle, key.as_ptr(), key.len() as i32, value.handle)
-        };
+        unsafe { map_put_str_handle(self.handle, key.as_ptr(), key.len() as i32, value.handle) };
         self
     }
 
     pub fn put_map(&self, key: &str, value: &Map) -> &Self {
-        unsafe {
-            map_put_str_handle(self.handle, key.as_ptr(), key.len() as i32, value.handle)
-        };
+        unsafe { map_put_str_handle(self.handle, key.as_ptr(), key.len() as i32, value.handle) };
         self
     }
 

@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use indexmap::map::Entry::{Occupied, Vacant};
 use crate::IndexMap;
+use indexmap::map::Entry::{Occupied, Vacant};
 use std::sync::Arc;
 
 use crate::cluster::partition::Partition;
@@ -34,6 +34,9 @@ pub struct ReadCommand<'a> {
     pub(crate) is_write: bool,
     /// Skip the per-record `results` Vec alloc on non-operate paths.
     pub(crate) wants_results: bool,
+    /// Keep nil answers in `bins`, as the batch parser does. Off for a plain
+    /// get or UDF call, whose nil bins carry nothing.
+    pub(crate) keep_nil_bins: bool,
 }
 
 impl<'a> ReadCommand<'a> {
@@ -41,7 +44,7 @@ impl<'a> ReadCommand<'a> {
         let partition = Partition::for_read(
             &cluster,
             key,
-            policy.replica,
+            policy.base_policy.replica,
             policy.base_policy.read_mode_sc,
         );
         ReadCommand {
@@ -51,6 +54,7 @@ impl<'a> ReadCommand<'a> {
             record: None,
             is_write: false,
             wants_results: false,
+            keep_nil_bins: false,
         }
     }
 
@@ -68,6 +72,7 @@ impl<'a> ReadCommand<'a> {
             record: None,
             is_write: false,
             wants_results: false,
+            keep_nil_bins: false,
         }
     }
 
@@ -98,6 +103,7 @@ impl<'a> ReadCommand<'a> {
         let version = conn.buffer.parse_fields_for_version(field_count);
 
         for _ in 0..op_count {
+            conn.buffer.ensure(8)?;
             let op_size = conn.buffer.read_u32(None) as usize;
             conn.buffer.skip(1);
             let particle_type = conn.buffer.read_u8(None);
@@ -105,14 +111,26 @@ impl<'a> ReadCommand<'a> {
             let name_size = conn.buffer.read_u8(None) as usize;
             let name: String = conn.buffer.read_str(name_size)?;
 
-            let particle_bytes_size = op_size - (4 + name_size);
+            let particle_bytes_size = op_size
+                .checked_sub(4 + name_size)
+                .ok_or_else(|| Error::bad_response("operation shorter than its header"))?;
             let value = bytes_to_particle(particle_type, &mut conn.buffer, particle_bytes_size)?;
 
             if let Some(r) = results.as_mut() {
                 r.push(value.clone());
             }
 
-            if !value.is_nil() {
+            // A reply op with no bin name answers a header op (`touch`,
+            // `get_header`): it is an op result, never a bin.
+            if name.is_empty() {
+                continue;
+            }
+
+            // An operate keeps a nil result in the bin view, as the batch parser
+            // does, so a bin's MultiResult lines up with its ops; a lone-key
+            // batch row (an operate or UDF here) then matches its grouped
+            // siblings.
+            if self.keep_nil_bins || !value.is_nil() {
                 // list/map operations may return multiple values for the same bin.
                 match bins.entry(name) {
                     Vacant(entry) => {
@@ -128,7 +146,10 @@ impl<'a> ReadCommand<'a> {
             }
         }
 
-        Ok((Record::new(None, bins, results, generation, expiration), version))
+        Ok((
+            Record::new(None, bins, results, generation, expiration),
+            version,
+        ))
     }
 }
 
@@ -186,7 +207,7 @@ impl Command for ReadCommand<'_> {
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
         if let Err(err) = conn.read_header().await {
-            warn!("Parse result error: {err}");
+            debug!("Parse result error: {err}");
             return Err(err);
         }
 
@@ -203,7 +224,7 @@ impl Command for ReadCommand<'_> {
         // Read remaining message bytes
         if receive_size > 0 {
             if let Err(err) = conn.read_body(receive_size).await {
-                warn!("Parse result error: {err}");
+                debug!("Parse result error: {err}");
                 return Err(err);
             }
         }
@@ -247,11 +268,7 @@ impl Command for ReadCommand<'_> {
                 // extended server error detail is surfaced (the server may
                 // attach it to KEY_NOT_FOUND / FILTERED_OUT responses).
                 let error_detail = conn.buffer.parse_response_fields(field_count).error_detail;
-                Err(Error::server_error(
-                    rc,
-                    conn.addr.clone(),
-                    error_detail,
-                ))
+                Err(Error::server_error(rc, conn.addr.clone(), error_detail))
             }
         }
     }

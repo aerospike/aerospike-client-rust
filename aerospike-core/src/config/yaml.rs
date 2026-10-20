@@ -1,4 +1,4 @@
-// Copyright 2014-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::locks::lock;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::SystemTime;
@@ -45,6 +46,9 @@ use crate::errors::Result;
 pub struct YamlFileProvider {
     path: PathBuf,
     last_modified: Mutex<Option<SystemTime>>,
+    /// The problem last reported, so a file that stays missing or malformed
+    /// is logged once per state change rather than once per poll.
+    last_warning: Mutex<Option<String>>,
 }
 
 impl YamlFileProvider {
@@ -53,14 +57,27 @@ impl YamlFileProvider {
         Self {
             path: path.into(),
             last_modified: Mutex::new(None),
+            last_warning: Mutex::new(None),
         }
+    }
+
+    fn warn_once(&self, message: String) {
+        let mut last = lock(&self.last_warning);
+        if last.as_deref() != Some(message.as_str()) {
+            warn!("{message}");
+            *last = Some(message);
+        }
+    }
+
+    fn clear_warning(&self) {
+        *lock(&self.last_warning) = None;
     }
 
     /// Returns `true` if the file has changed since the last successful read,
     /// updating the stored modification time. A file with no available mtime is
     /// always treated as changed.
     fn changed_since_last(&self, modified: Option<SystemTime>) -> bool {
-        let mut last = self.last_modified.lock().expect("yaml provider mutex poisoned");
+        let mut last = lock(&self.last_modified);
         match (modified, *last) {
             (Some(m), Some(prev)) if m <= prev => false,
             _ => {
@@ -74,10 +91,13 @@ impl YamlFileProvider {
 #[async_trait]
 impl ConfigProvider for YamlFileProvider {
     async fn load(&self) -> Result<Option<ConfigDocument>> {
-        let metadata = match std::fs::metadata(&self.path) {
+        let metadata = match aerospike_rt::fs::metadata(&self.path).await {
             Ok(m) => m,
             Err(err) => {
-                warn!("Dynamic-config file {} unavailable: {err}", self.path.display());
+                self.warn_once(format!(
+                    "Dynamic-config file {} unavailable: {err}",
+                    self.path.display()
+                ));
                 return Ok(None);
             }
         };
@@ -86,34 +106,38 @@ impl ConfigProvider for YamlFileProvider {
             return Ok(None);
         }
 
-        let data = match std::fs::read_to_string(&self.path) {
+        let data = match aerospike_rt::fs::read_to_string(&self.path).await {
             Ok(d) => d,
             Err(err) => {
-                warn!("Failed to read dynamic-config file {}: {err}", self.path.display());
+                self.warn_once(format!(
+                    "Failed to read dynamic-config file {}: {err}",
+                    self.path.display()
+                ));
                 return Ok(None);
             }
         };
 
-        let doc: ConfigDocument = match serde_yml::from_str(&data) {
+        let doc: ConfigDocument = match serde_norway::from_str(&data) {
             Ok(doc) => doc,
             Err(err) => {
-                warn!(
+                self.warn_once(format!(
                     "Failed to parse dynamic-config file {}: {}",
                     self.path.display(),
                     err.to_string().replace('\n', " ")
-                );
+                ));
                 return Ok(None);
             }
         };
 
         if doc.version.is_none() {
-            warn!(
+            self.warn_once(format!(
                 "Dynamic-config file {} is missing the `version` key; ignoring it",
                 self.path.display()
-            );
+            ));
             return Ok(None);
         }
 
+        self.clear_warning();
         Ok(Some(doc))
     }
 }
@@ -143,7 +167,10 @@ mod tests {
     #[aerospike_macro::test]
     async fn loads_then_returns_none_when_unchanged() {
         let path = temp_path("unchanged");
-        write_file(&path, "version: \"1.0.0\"\ndynamic:\n  read:\n    max_retries: 4\n");
+        write_file(
+            &path,
+            "version: \"1.0.0\"\ndynamic:\n  read:\n    max_retries: 4\n",
+        );
         let provider = YamlFileProvider::new(path.clone());
 
         let first = provider.load().await.unwrap();

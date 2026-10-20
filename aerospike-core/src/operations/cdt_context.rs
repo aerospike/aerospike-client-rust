@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -55,27 +55,33 @@ pub struct CdtContext {
     /// Context Type — full encoded tag including any high-bit flags
     /// such as the AND filter bit. Wider than 8 bits to fit the
     /// `0x204` tag value used by [`ctx_and_filter`].
-    pub id: u16,
+    pub(crate) id: u16,
 
     /// Per-entry create-flag overlay (e.g. list/map order, pad). Stays
     /// `u8`-wide because every flag in this layer fits in 8 bits; widened
     /// only if the wire format ever needs more.
-    pub flags: u8,
+    pub(crate) flags: u8,
 
     /// Context Value
-    pub value: Value,
+    pub(crate) value: Value,
 
     /// Pre-packed expression bytes for expression-based contexts
     pub(crate) expression: Option<Expression>,
 }
 
-/// Converts a context array to base64 to be used in info commands.
-pub fn to_base64(ctx: &[CdtContext]) -> Result<String> {
+/// Packs a context array to the byte stream that [`to_base64`] encodes;
+/// the inverse of [`ctx_from_bytes`].
+pub fn to_bytes(ctx: &[CdtContext]) -> Result<Vec<u8>> {
     let size = pack_ctx_for_index(&mut None, ctx)?;
     let mut buf = Buffer::new(0);
     buf.resize_buffer(size)?;
-    let _ = pack_ctx_for_index(&mut Some(&mut buf), ctx);
-    Ok(BASE64.encode(&buf.data_buffer))
+    pack_ctx_for_index(&mut Some(&mut buf), ctx)?;
+    Ok(std::mem::take(&mut buf.data_buffer))
+}
+
+/// Converts a context array to base64 to be used in info commands.
+pub fn to_base64(ctx: &[CdtContext]) -> Result<String> {
+    Ok(BASE64.encode(to_bytes(ctx)?))
 }
 
 /// Restore a context array from the byte stream emitted by [`to_base64`]
@@ -88,7 +94,7 @@ pub fn to_base64(ctx: &[CdtContext]) -> Result<String> {
 /// *not* reconstructed structurally. That's enough to round-trip the CTX
 /// (re-packing the restored CTX produces the same bytes), but reading the
 /// inner expression as Rust types requires the original
-/// [`Expression`](crate::expressions::Expression) builder.
+/// [`Expression`] builder.
 ///
 /// # Errors
 /// - `BadResponse` on a malformed array header / odd-length entry list.
@@ -598,6 +604,15 @@ impl AsRef<[CdtContext]> for Path {
     }
 }
 
+/// A path is its context entries, so `&path` goes wherever a builder wants
+/// a `&[CdtContext]`.
+impl std::ops::Deref for Path {
+    type Target = [CdtContext];
+    fn deref(&self) -> &[CdtContext] {
+        &self.entries
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -628,7 +643,7 @@ mod tests {
                 assert_eq!(items[0], Value::String("alpha".into()));
                 assert_eq!(items[1], Value::String("gamma".into()));
             }
-            other => panic!("expected Value::List, got {:?}", other),
+            other => panic!("expected Value::List, got {other:?}"),
         }
     }
 
@@ -641,7 +656,7 @@ mod tests {
                 assert_eq!(items[0], Value::Int(1));
                 assert_eq!(items[2], Value::Int(3));
             }
-            other => panic!("expected Value::List, got {:?}", other),
+            other => panic!("expected Value::List, got {other:?}"),
         }
     }
 
@@ -659,6 +674,31 @@ mod tests {
     }
 
     // ---- to_base64 / from_base64 round-trip -----------------------------
+
+    #[test]
+    fn ctx_to_bytes_is_what_to_base64_encodes() {
+        let original = vec![
+            ctx_map_key(Value::String("book".into())),
+            ctx_list_index(2),
+            ctx_all_children_with_filter(expressions::gt(
+                expressions::int_bin("score"),
+                expressions::int_val(10),
+            )),
+        ];
+        let bytes = to_bytes(&original).expect("pack");
+        assert_eq!(
+            BASE64
+                .decode(to_base64(&original).expect("encode"))
+                .unwrap(),
+            bytes
+        );
+        let restored = ctx_from_bytes(&bytes).expect("unpack");
+        assert_eq!(restored.len(), original.len());
+        for (o, r) in original.iter().zip(&restored) {
+            assert_eq!(o.id, r.id);
+        }
+        assert_eq!(to_bytes(&restored).expect("repack"), bytes);
+    }
 
     #[test]
     fn ctx_round_trip_simple_path() {
@@ -704,7 +744,7 @@ mod tests {
                 assert_eq!(items[3], Value::Blob(vec![1, 7, 9]));
                 assert_eq!(items[4], Value::Nil);
             }
-            other => panic!("expected Value::List, got {:?}", other),
+            other => panic!("expected Value::List, got {other:?}"),
         }
     }
 

@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -17,7 +17,7 @@
 /// `QueryDuration` defines the expected query duration. The server treats the query in different ways depending on the expected duration.
 ///
 /// This enum is ignored for aggregation queries, background queries and server versions < 6.0.
-#[derive(Debug, PartialEq, Eq, Clone, Default)]
+#[derive(Debug, PartialEq, Eq, Clone, Default, Copy)]
 pub enum QueryDuration {
     /// Long specifies that the query is expected to return more than 100 records per node. The server optimizes for a large record set in
     /// the following ways:
@@ -40,9 +40,9 @@ pub enum QueryDuration {
     /// Allow server timeouts. The default server timeout for a short query is 1 second.
     Short = 1,
 
-    /// `LongRelaxAP` will treat query as a Long query, but relax read consistency for AP namespaces.
+    /// `LongRelaxAp` will treat query as a Long query, but relax read consistency for AP namespaces.
     /// This value is treated exactly like Long for server versions < 7.1.
-    LongRelaxAP = 2,
+    LongRelaxAp = 2,
 }
 
 // Case-insensitive YAML/config parsing (mirrors the Go client's `ToUpper`).
@@ -53,7 +53,7 @@ impl<'de> serde::Deserialize<'de> for QueryDuration {
         match value.to_ascii_uppercase().as_str() {
             "LONG" => Ok(QueryDuration::Long),
             "SHORT" => Ok(QueryDuration::Short),
-            "LONG_RELAX_AP" => Ok(QueryDuration::LongRelaxAP),
+            "LONG_RELAX_AP" => Ok(QueryDuration::LongRelaxAp),
             other => Err(serde::de::Error::custom(format!(
                 "invalid QueryDuration value: {other}"
             ))),
