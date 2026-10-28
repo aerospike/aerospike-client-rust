@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 262" role="img" aria-label="A record UDF reads, stages, commits and answers; without the commit nothing is written" style="max-width:720px;width:100%;height:auto;display:block;margin:1.2em auto;font-family:inherit">
+<title>A record UDF reads, stages, commits and answers; without the commit nothing is written</title>
+<style>
+.lane { stroke: currentColor; stroke-opacity: .35; stroke-width: 1.5; }
+.lanelabel { font-size: 13px; font-weight: 600; fill: currentColor; }
+.lbl { font-size: 12px; fill: currentColor; }
+.lbl.b { font-weight: 600; }
+.mono { font-family: var(--mono-font, ui-monospace, monospace); font-size: 11.5px; fill: currentColor; }
+.box { fill: none; stroke: currentColor; stroke-opacity: .45; rx: 4; }
+.box.good { stroke: #2fa66b; stroke-opacity: 1; stroke-width: 1.5; }
+.box.bad { stroke: #d9534f; stroke-opacity: 1; stroke-width: 1.5; }
+.ship { fill: none; stroke: currentColor; stroke-opacity: .7; stroke-width: 1.4; marker-end: url(#arrow); }
+.ship.dashed { stroke-dasharray: 5 4; }
+.cap { font-size: 12.5px; fill: currentColor; fill-opacity: .85; }
+.time { font-size: 11px; fill: currentColor; fill-opacity: .6; }
+.tick { stroke: currentColor; stroke-opacity: .3; stroke-dasharray: 3 3; }
+.bar { rx: 3; }
+.barlbl { font-size: 12px; fill: #141414; }
+.region { fill: currentColor; fill-opacity: .04; stroke: currentColor; stroke-opacity: .3; stroke-dasharray: 4 3; rx: 6; }
+.node { fill: none; stroke: currentColor; stroke-opacity: .55; stroke-width: 1.2; rx: 5; }
+.node.good { stroke: #2fa66b; stroke-opacity: 1; stroke-width: 1.5; }
+.node.bad { stroke: #d9534f; stroke-opacity: 1; stroke-width: 1.5; }
+.cell { fill: currentColor; fill-opacity: .07; stroke: currentColor; stroke-opacity: .5; }
+.ship.bad { stroke: #d9534f; stroke-opacity: 1; marker-end: url(#arrow-bad); }
+.slice { fill: currentColor; fill-opacity: .25; }
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="currentColor" fill-opacity=".75"/></marker><marker id="arrow-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="#d9534f"/></marker></defs>
+<text class="lbl" x="26" y="50" text-anchor="start">a client executes module.fn(args) on a key; the server opens the record, takes its lock and calls the export</text>
+<rect class="node" x="26" y="84" width="148" height="54"/>
+<text class="lbl" x="100.0" y="108.0" text-anchor="middle">1 read</text>
+<text class="lbl" x="100.0" y="123.0" text-anchor="middle">bins, metadata, args</text>
+<rect class="node" x="196" y="84" width="148" height="54"/>
+<text class="lbl" x="270.0" y="108.0" text-anchor="middle">2 stage</text>
+<text class="lbl" x="270.0" y="123.0" text-anchor="middle">set_*, bin_remove</text>
+<rect class="node good" x="366" y="84" width="148" height="54"/>
+<text class="lbl" x="440.0" y="108.0" text-anchor="middle">3 commit</text>
+<text class="lbl" x="440.0" y="123.0" text-anchor="middle">rec_update / rec_create</text>
+<rect class="node" x="546" y="84" width="148" height="54"/>
+<text class="lbl" x="620.0" y="108.0" text-anchor="middle">4 answer</text>
+<text class="lbl" x="620.0" y="123.0" text-anchor="middle">result_* or fail</text>
+<line class="ship" x1="174" y1="111.0" x2="196" y2="111.0"/>
+<line class="ship" x1="344" y1="111.0" x2="366" y2="111.0"/>
+<line class="ship" x1="514" y1="111.0" x2="546" y2="111.0"/>
+<text class="lbl b" x="440.0" y="160" text-anchor="middle">the record changes only here</text>
+<path class="ship bad" d="M270.0,138 Q440.0,248 620.0,138"/>
+<text class="time" x="442.5" y="209.0" text-anchor="middle">return without a commit: the staged writes are dropped, the call looks right and changed nothing</text>
+<text class="cap" x="360.0" y="244" text-anchor="middle">Reads borrow from the record until the call ends; a value given to set_*, result_* or a builder moves to the host.</text>
+</svg>

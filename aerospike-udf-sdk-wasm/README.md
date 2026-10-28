@@ -1,60 +1,137 @@
 # aerospike-udf-sdk-wasm
 
-Write Aerospike user-defined functions in Rust and run them as WebAssembly.
+Write Aerospike user-defined functions in Rust and run them as WebAssembly on the server's `mod-wamr` engine.
 
 ```rust
-use aerospike_udf_sdk_wasm::{self as udf, export, Args};
+#![no_std]
+
+use aerospike_udf_sdk_wasm::{self as as_udf, export, Error, Value};
 
 export! {
-    /// Read a bin, write it back incremented, and return the new value.
-    fn increment(_args: Args) -> i32 {
-        let next = udf::bin_int("n") + 1;
+    /// Move `amount` out of this record's balance, unless `dry_run`.
+    fn withdraw(amount: i64, dry_run: Option<bool>) -> Result<Value, Error> {
+        let balance = as_udf::bin("balance")?.int()?;
 
-        udf::set_int("n", next);
+        if balance < amount {
+            return Err(Error::Custom("insufficient funds"));
+        }
 
-        // Staged until committed — the mistake that looks like it worked.
-        if udf::exists() { udf::update() } else { udf::create() };
+        if dry_run != Some(true) {
+            as_udf::set("balance", balance - amount)?;
+            as_udf::update()?;
+        }
 
-        udf::result_int(next);
-
-        0
+        Ok(Value::Int(balance - amount))
     }
 }
 ```
 
-Build it as a `cdylib` for `wasm32-unknown-unknown` and register the `.wasm` with `UDFLang::Wasm`. See
-`examples/udf` for a crate that exercises the whole surface — records, arguments, collections, metadata,
-logging, and aggregation.
+Build it as a `cdylib` for `wasm32-unknown-unknown` and register the `.wasm` with `UdfLang::Wasm`. Read
+`examples/ledger` first: a guarded withdrawal, a posting history trimmed on the host, a summary and an
+aggregation, written to be read. `examples/udf` exercises the whole surface and is the fixture
+`tests/fixtures/wasm` in this repository pins with tests.
+
+## Three ideas
+
+**Every read is a `Value`**, the guest-side analogue of the client's: `bin("x")` returns one, a collection
+iterates them, a map lookup returns one, and a UDF returns one as its result. It is *borrowed*: a string is
+its length and where it sits, fetched on request into a buffer you own (`as_str(&mut buf)`), a `Str<N>` of a
+declared capacity, or — with the `alloc` feature — a `String`. A nested list or map is a `Coll` you iterate
+(`iter()`, `entries()`) or look up (`get`, `get_i`), 128 values per import call.
+
+**Every failure is an `Error`**, and a UDF is `fn name(params) -> Result<Value, Error>`: `Ok` is the result the
+client receives, `Err` fails the call with the error's message, `Error::Custom` carries your own.
+
+**Arguments are typed in the signature.** `export!` decodes `i64`, `f64`, `bool`, `&str`, `&[u8]`, `Str<N>`,
+`Bytes<N>`, `String`, `Vec<u8>`, `Value`, `Coll`, `Option<T>` and a trailing `Args`, checks the count and the
+kinds, and rejects a mismatched call before the body runs — `withdraw: argument 0 (amount): expected an
+integer, got a string`, or `is 300 bytes, at most 64` for a string past its parameter's capacity.
+
+**A module describes its exports.** Beside each UDF the macros export `__udf_sig_<name>`, which the server
+serves as a string when a client executes it like any other function, without running a body:
+`fn withdraw(amount: int, dry_run?: bool) -> value`, or `stream balances { record() end() }`. A client can
+check a call against it, or generate typed bindings from it.
 
 ## What is unusual about it
 
-**No `alloc`, and no allocator at all.** The host never pushes bytes into guest memory uninvited: anything
-returning bytes takes a buffer you own, typically a `static mut` or a stack array. Nothing here allocates, so a
-UDF can be `no_std` with no allocator — which is why a compiled UDF is a few KB rather than tens, and why the
-largest per-call cost in an allocator-based design simply does not exist here.
+**Nothing is msgpack, and nothing is deserialised.** The host is C, holds the record natively, and hands the
+guest its data *by position*: every read is a 16-byte value, and a string or nested collection carries where
+it sits in the stored bytes rather than a copy of them. A value read from the record can be returned, written
+to a bin, or put into a collection you are building without the guest ever decoding it.
 
-**Typed access, not serialisation.** Reading an integer bin is one import call returning an `i64`. Collections
-are read *in place* through handles rather than being serialised, copied and parsed. The practical consequence
-is that **cost is per import call**, so the fast way to use this SDK is to read in bulk or by key:
+**The import call is the unit of cost, not the decode.** Collections cross 128 values per import, in both
+directions: `Coll::iter` reads a window at a time, and `List::extend` / `Map::extend` write one — including
+straight from a stored collection's iterator, `list.extend(stored.iter())`. Reading a 10,000-element list is
+0.27 ms round trip.
 
-| prefer | over | why |
-|---|---|---|
-| `map.get_int("k")`, `map.get_coll("k")` | `map.key_str_at(i, …)` in a loop | one hash lookup, no allocation, no scan |
-| `list.ints_into(&mut buf)` | `list.int_at(j)` in a loop | one call instead of n |
-
-Both alternatives are still there — a map keyed by integers needs the indexed form — but the keyed and bulk
-paths are what the measurements favour, by enough to matter: the indexed-scan version of a map-heavy
-aggregation ran 1.48× slower than the equivalent Lua, and the keyed version is level with it.
+**No allocator unless you ask for one.** Nothing here allocates by default; buffers are yours, and a module
+built this way is a few tens of KB. The `alloc` feature adds `String` and `Vec<u8>` as parameter types and as
+what `Text::to_string` / `Blob::to_vec` return; the `allocator` feature adds dlmalloc as the global allocator
+so a UDF crate needs nothing else. The example module grew from 39 KB to 62 KB when it turned that on.
 
 ## Stream (aggregation) UDFs
 
-A stream UDF is driven by the host one record at a time, and **the whole stream shares one instance** — so
-unlike a record UDF it can accumulate in ordinary `static mut`. `stream!` generates the two exports the host
-looks for, `<name>_record` and `<name>_end`.
+A stream UDF is driven by the host one record at a time, and **one instance sees every record a query thread
+reads** — so unlike a record UDF it can accumulate in ordinary `static mut`. `stream!` generates the two exports
+the host looks for, `<name>_record` and `<name>_end`, with the same typed arguments as a record UDF.
 
-`end` runs once **per node**, so a client receives one partial per node and combines them itself. Lua's
-aggregation looks seamless across nodes only because the Aerospike clients run its final reduce for it; nothing
-does that for WASM.
+`end` runs once **per query thread per node**, so a client receives a handful of partials and combines them
+itself. Lua's aggregation looks seamless across nodes only because the Aerospike clients run its final reduce
+for it; nothing does that for WASM.
+
+## Events
+
+An event handler is a function the server calls at a point in its own processing rather than at a
+client's request: `before-write`, `before-delete`, `before-expire`, `after-read`, `timer`, `xdr-merge` and
+ten others, each an arm of `event!`. The one with the most to say is `xdr-merge`: every incoming XDR write
+to a record that exists on this node is handed, with the current record, to the handler bound to the
+namespace or set, and the handler decides the final record.
+
+```rust
+event! {
+    on xdr_merge
+    fn merge_account(local: Record, remote: Record, conflict: Conflict) -> Result<Resolution, Error> {
+        let pair = conflict.pair();
+        let out = as_udf::map(4)?;
+        if let Some(visits) = pair.int("visits")?.max() { out.put("visits", visits)?; }
+        Ok(Resolution::Record { bins: pair.with_newer(out)?, ttl: None })
+    }
+}
+```
+
+`Record` is a read-only record with its metadata (`ttl`, `source_id`, and per bin `bin_lut` and
+`bin_source_id` where the server keeps them) and bins read as `Option`s, since on either side a bin may
+not exist. `Conflict` says what triggered the event (`Trigger::Always` or `Trigger::Conflict`), which
+policy the handler stands in for and which bins would lose under it, and `pair()` reads a bin from both
+sides into a `Both<T>` with the merges a resolver reaches for: `max`, `min`, `sum`, `merge(f)`, `newer`,
+`older`, `ordered()`. `Resolution` is `KeepLocal`, `TakeRemote`, `Policy` or `Record { bins, ttl }`, where
+the bins are the whole record; a record equal to the current one writes nothing.
+
+Two rules, enforced by nothing but the two DCs disagreeing forever if they are broken. **Pure**: no clock
+(`now()` fails in a handler), no other records, no record-level LUT or generation (the payload carries
+none). **Convergent**: DC A merges (A's record, B's write) while DC B merges (B's record, A's write), and
+the answers must match, in any delivery order and however many times a write is delivered. There are two
+ways to keep it. The time-based way: `newer`/`older`/`ordered` order the sides by a bin's own LUT and then
+source id, the way the server's bin convergence does, which is symmetric where "mine first" is not, and
+is why `Record::with_bins` carries a warning and `Pair::with_newer` is the one to use; `examples/resolver`
+is this. The data-only way: versions and removal markers in the record itself, with
+`Value::cmp_stored` (the stored bytes of two values compared) as the tie-break, so the merge is a function
+of the data alone; `examples/counter` (a grow-only counter, the smallest possible), `examples/pncounter` (the same with a second
+map, so it can go down), `examples/twopset` (a set with removals), `examples/lwwset` (a set with re-adds, on
+a clock) and `examples/crdt` are this, and the book's CRDT tutorial walks them in that order. The server's dry run (`execute_udf` on package `__event__`,
+function `xdr-merge`, arguments `[incoming bins, incoming metadata, other bins?]`) runs a handler against
+a real record and reports `symmetric`, `idempotent` and, given the third record, `associative`.
+
+The macro exports the handler and a signature `event <kind>/1 ...`, which `event-set` checks before
+binding: the version is the contract this SDK was written against, and a server that does not serve it
+refuses the binding rather than handing the handler a payload it would misread. `examples/guard` is the
+worked example for the other kinds.
+
+## The other languages
+
+The same contract has a C header (`aerospike-udf-sdk-wasm-c`) and a Go package for TinyGo
+(`aerospike-udf-sdk-wasm-go`), and each carries the vector top-k example written to the same algorithm as
+`examples/vector` here, so the three languages can be compared on identical work.
 
 ## Versioning
 

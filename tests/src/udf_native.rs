@@ -476,7 +476,7 @@ async fn collect_partials(
 
     let mut statement = Statement::new(namespace, set_name, Bins::All);
 
-    statement.set_aggregate_function(&module(), function, args);
+    statement.set_aggregate_function(module(), function, args);
 
     let records = client
         .query(&QueryPolicy::default(), PartitionFilter::all(), statement)
@@ -611,7 +611,7 @@ async fn a_native_aggregation_can_emit_records() {
 
     let mut statement = Statement::new(namespace, set_name, Bins::All);
 
-    statement.set_aggregate_function(&module(), "over", &[]);
+    statement.set_aggregate_function(module(), "over", &[]);
 
     let records = client
         .query(&QueryPolicy::default(), PartitionFilter::all(), statement)

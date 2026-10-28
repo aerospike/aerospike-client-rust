@@ -46,6 +46,11 @@ pub enum PrivilegeCode {
     /// Requires server version 6+.
     SindexAdmin,
 
+    /// User can bind and unbind server events (`event-set`, `event-remove`): a UDF the server runs at a
+    /// point in its own processing, such as an XDR conflict. Global scope only.
+    /// Requires a server with the event system.
+    EventAdmin,
+
     /// User can read data only.
     Read,
 
@@ -131,6 +136,7 @@ impl TryFrom<u8> for PrivilegeCode {
             2 => Ok(PrivilegeCode::DataAdmin),
             3 => Ok(PrivilegeCode::UdfAdmin),
             4 => Ok(PrivilegeCode::SindexAdmin),
+            5 => Ok(PrivilegeCode::EventAdmin),
             10 => Ok(PrivilegeCode::Read),
             11 => Ok(PrivilegeCode::ReadWrite),
             12 => Ok(PrivilegeCode::ReadWriteUdf),
@@ -152,6 +158,7 @@ impl From<&PrivilegeCode> for u8 {
             PrivilegeCode::DataAdmin => 2,
             PrivilegeCode::UdfAdmin => 3,
             PrivilegeCode::SindexAdmin => 4,
+            PrivilegeCode::EventAdmin => 5,
             PrivilegeCode::Read => 10,
             PrivilegeCode::ReadWrite => 11,
             PrivilegeCode::ReadWriteUdf => 12,
@@ -173,6 +180,7 @@ impl From<&PrivilegeCode> for String {
             PrivilegeCode::DataAdmin => "data-admin".into(),
             PrivilegeCode::UdfAdmin => "udf-admin".into(),
             PrivilegeCode::SindexAdmin => "sindex-admin".into(),
+            PrivilegeCode::EventAdmin => "event-admin".into(),
             PrivilegeCode::Read => "read".into(),
             PrivilegeCode::ReadWrite => "read-write".into(),
             PrivilegeCode::ReadWriteUdf => "read-write-udf".into(),
@@ -195,6 +203,7 @@ impl TryFrom<&str> for PrivilegeCode {
             "data-admin" => Ok(PrivilegeCode::DataAdmin),
             "udf-admin" => Ok(PrivilegeCode::UdfAdmin),
             "sindex-admin" => Ok(PrivilegeCode::SindexAdmin),
+            "event-admin" => Ok(PrivilegeCode::EventAdmin),
             "read" => Ok(PrivilegeCode::Read),
             "read-write" => Ok(PrivilegeCode::ReadWrite),
             "read-write-udf" => Ok(PrivilegeCode::ReadWriteUdf),

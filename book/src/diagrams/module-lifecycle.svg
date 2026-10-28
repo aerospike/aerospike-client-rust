@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 334" role="img" aria-label="A module runs in the interpreter until its ahead-of-time build is ready, and loads compiled after a restart" style="max-width:720px;width:100%;height:auto;display:block;margin:1.2em auto;font-family:inherit">
+<title>A module runs in the interpreter until its ahead-of-time build is ready, and loads compiled after a restart</title>
+<style>
+.lane { stroke: currentColor; stroke-opacity: .35; stroke-width: 1.5; }
+.lanelabel { font-size: 13px; font-weight: 600; fill: currentColor; }
+.lbl { font-size: 12px; fill: currentColor; }
+.lbl.b { font-weight: 600; }
+.mono { font-family: var(--mono-font, ui-monospace, monospace); font-size: 11.5px; fill: currentColor; }
+.box { fill: none; stroke: currentColor; stroke-opacity: .45; rx: 4; }
+.box.good { stroke: #2fa66b; stroke-opacity: 1; stroke-width: 1.5; }
+.box.bad { stroke: #d9534f; stroke-opacity: 1; stroke-width: 1.5; }
+.ship { fill: none; stroke: currentColor; stroke-opacity: .7; stroke-width: 1.4; marker-end: url(#arrow); }
+.ship.dashed { stroke-dasharray: 5 4; }
+.cap { font-size: 12.5px; fill: currentColor; fill-opacity: .85; }
+.time { font-size: 11px; fill: currentColor; fill-opacity: .6; }
+.tick { stroke: currentColor; stroke-opacity: .3; stroke-dasharray: 3 3; }
+.bar { rx: 3; }
+.barlbl { font-size: 12px; fill: #141414; }
+.region { fill: currentColor; fill-opacity: .04; stroke: currentColor; stroke-opacity: .3; stroke-dasharray: 4 3; rx: 6; }
+.node { fill: none; stroke: currentColor; stroke-opacity: .55; stroke-width: 1.2; rx: 5; }
+.node.good { stroke: #2fa66b; stroke-opacity: 1; stroke-width: 1.5; }
+.node.bad { stroke: #d9534f; stroke-opacity: 1; stroke-width: 1.5; }
+.cell { fill: currentColor; fill-opacity: .07; stroke: currentColor; stroke-opacity: .5; }
+.ship.bad { stroke: #d9534f; stroke-opacity: 1; marker-end: url(#arrow-bad); }
+.slice { fill: currentColor; fill-opacity: .25; }
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="currentColor" fill-opacity=".75"/></marker><marker id="arrow-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="#d9534f"/></marker></defs>
+<line class="lane" x1="96" y1="160" x2="696" y2="160"/>
+<text class="lanelabel" x="86" y="164" text-anchor="end" fill="#2f80ed" style="fill:#2f80ed">any module</text>
+<line class="lane" x1="96" y1="236" x2="696" y2="236"/>
+<text class="lanelabel" x="86" y="240" text-anchor="end" fill="#e08a1e" style="fill:#e08a1e">simd128</text>
+<text class="time" x="696" y="252" text-anchor="end">time →</text>
+<line class="tick" x1="120" y1="60" x2="120" y2="262"/>
+<text class="lbl b" x="120" y="54" text-anchor="middle">udf-put</text>
+<line class="tick" x1="340" y1="60" x2="340" y2="262"/>
+<text class="lbl b" x="340" y="54" text-anchor="middle">build ready</text>
+<line class="tick" x1="540" y1="60" x2="540" y2="262"/>
+<text class="lbl b" x="540" y="54" text-anchor="middle">restart</text>
+<text class="time" x="128" y="80" text-anchor="start">validated and instantiated; the build is cached under the hash of the bytes</text>
+<rect class="bar" x="120" y="88.0" width="220" height="16" fill="#2fa66b" fill-opacity="0.45"/>
+<text class="barlbl" x="126" y="100">wamrc, on a background thread</text>
+<text class="time" x="348" y="100" text-anchor="start">aot-compile-threads bounds the wait</text>
+<rect class="bar" x="120" y="152.0" width="220" height="16" fill="#e08a1e" fill-opacity="0.6"/>
+<text class="barlbl" x="126" y="164">interpreter, about Lua speed</text>
+<rect class="bar" x="340" y="152.0" width="200" height="16" fill="#2fa66b" fill-opacity="0.85"/>
+<text class="barlbl" x="346" y="164">compiled: native speed</text>
+<rect class="bar" x="540" y="152.0" width="156" height="16" fill="#2fa66b" fill-opacity="0.85"/>
+<text class="barlbl" x="546" y="164">loads compiled</text>
+<rect class="bar" x="120" y="228.0" width="220" height="16" fill="#d9534f" fill-opacity="0.6"/>
+<text class="barlbl" x="126" y="240">calls wait for the build</text>
+<rect class="bar" x="340" y="228.0" width="200" height="16" fill="#2fa66b" fill-opacity="0.85"/>
+<text class="barlbl" x="346" y="240">compiled: native speed</text>
+<rect class="bar" x="540" y="228.0" width="156" height="16" fill="#2fa66b" fill-opacity="0.85"/>
+<text class="barlbl" x="546" y="240">loads compiled</text>
+<text class="mono" x="340" y="280" text-anchor="middle">wamr: &lt;module&gt; is now running ahead-of-time compiled</text>
+<text class="cap" x="360.0" y="304" text-anchor="middle">A module that uses simd128 cannot run in the interpreter, so its first calls wait for the build instead of running</text>
+<text class="cap" x="360.0" y="321" text-anchor="middle">slow. After a restart the compiled form is loaded from the cache and nothing is compiled again.</text>
+</svg>

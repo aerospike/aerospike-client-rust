@@ -1,0 +1,4 @@
+# 128-bit SIMD for the kernel's four-lane sums. mod-wamr compiles it to NEON ahead of time; the C and Go
+# builds beside this enable the same feature.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]

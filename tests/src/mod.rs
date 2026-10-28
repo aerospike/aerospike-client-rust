@@ -32,6 +32,7 @@ mod compression;
 mod connection_seed;
 #[cfg(feature = "dynamic-config")]
 mod dynamic_config;
+mod events;
 mod examples;
 mod exp;
 mod exp_bitwise;
@@ -60,9 +61,14 @@ mod truncate;
 mod txn;
 mod udf;
 mod udf_agg_bench;
+mod udf_cpp;
+mod udf_go;
+mod udf_java;
 mod udf_native;
 mod udf_native_bench;
+mod udf_vector;
 mod udf_wasm;
+mod xdr_merge;
 mod value_order;
 
 pub(crate) async fn count_results(rs: Arc<Recordset>) -> usize {

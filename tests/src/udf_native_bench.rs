@@ -45,6 +45,12 @@ const RECORDS: i64 = 50_000;
 /// Sequential UDF calls for the per-call section.
 const CALLS: usize = 300;
 
+/// The list `list_bench` sums: long enough that reading it is the call, not the round trip.
+const LIST_LEN: i64 = 10_000;
+
+/// The WASM fixture, whose `sum_list` reads the same bin the Lua and native functions do.
+const WASM_MODULE: &[u8] = include_bytes!("../fixtures/wasm/udf_test.wasm");
+
 /// The Lua equivalents of the native example's functions.
 ///
 /// Deliberately the *same shape* — read a bin, add, commit; and accumulate one bin across a stream — so the
@@ -166,6 +172,123 @@ async fn time_aggregation(
     }
 
     (started.elapsed().as_secs_f64() * 1000.0, total)
+}
+
+/// The best of three rounds of [`time_calls`], in microseconds per call.
+async fn best_us(client: &Client, key: &Key, module: &str, function: &str) -> f64 {
+    let mut best = f64::MAX;
+
+    for _ in 0..3 {
+        best = best.min(time_calls(client, key, module, function).await);
+    }
+
+    best
+}
+
+/// **A 10,000-element list, summed by each engine.**
+///
+/// The row that shaped the WASM guest ABI. A collection is read in place, 128 values per import call, and
+/// this is where that showed: 0.27 ms per call against 0.74 ms for the handle-per-element ABI it replaced.
+/// That older ABI is gone, so what this prints is WASM against Lua's `list.iterator` and the native module's
+/// `sum_list` on the same record - the round trip included in every row, which is why the ratio between
+/// rows is the number to read and not the microseconds.
+///
+/// ```text
+/// cargo test --features serialization,rt-tokio,async list_bench -- --ignored --nocapture
+/// ```
+#[aerospike_macro::test]
+#[ignore]
+async fn list_bench() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let lua_package = &format!("bench_lua_{}", common::rand_str(6));
+    let wasm_package = &format!("bench_wasm_{}", common::rand_str(6));
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1i64);
+
+    let list: Vec<Value> = (1..=LIST_LEN).map(Value::Int).collect();
+    let expected = (1 + LIST_LEN) * LIST_LEN / 2;
+
+    client
+        .put(&write, &key, &[as_bin!("l", Value::List(list))])
+        .await
+        .unwrap();
+
+    let policy = AdminPolicy::default();
+
+    client
+        .register_udf(&policy, LUA, &format!("{lua_package}.lua"), UdfLang::Lua)
+        .await
+        .unwrap()
+        .wait_till_complete(None)
+        .await
+        .unwrap();
+
+    let have_wasm = match client
+        .register_udf(&policy, WASM_MODULE, &format!("{wasm_package}.wasm"), UdfLang::Wasm)
+        .await
+    {
+        Ok(task) => task.wait_till_complete(None).await.is_ok(),
+        Err(e) => {
+            eprintln!("note: WASM unavailable ({e}) - the WASM row will be missing");
+            false
+        }
+    };
+
+    let native = native_module();
+    let have_native = usable(&client, &native, &key).await;
+
+    if !have_native {
+        eprintln!("note: no usable native module '{native}' - the native row will be missing");
+    }
+
+    eprintln!("=== sum_list over a {LIST_LEN}-element list, {CALLS} calls per round, best of 3 ===\n");
+
+    let mut rows: Vec<(String, f64)> = Vec::new();
+
+    // Each engine answers once for correctness, then is timed. A WASM module runs interpreted until its
+    // ahead-of-time build lands a moment after registration; three rounds leave that behind.
+    let answer = client
+        .execute_udf(&write, &key, lua_package, "sum_list", &[])
+        .await
+        .unwrap();
+
+    assert_eq!(answer, Some(Value::Int(expected)), "lua summed wrong");
+    rows.push(("lua".into(), best_us(&client, &key, lua_package, "sum_list").await));
+
+    if have_wasm {
+        let answer = client
+            .execute_udf(&write, &key, wasm_package, "sum_list", &[])
+            .await
+            .unwrap();
+
+        assert_eq!(answer, Some(Value::Int(expected)), "wasm summed wrong");
+        rows.push(("wasm (aot)".into(), best_us(&client, &key, wasm_package, "sum_list").await));
+    }
+
+    if have_native {
+        let answer = client
+            .execute_udf(&write, &key, &native, "sum_list", &[])
+            .await
+            .unwrap();
+
+        assert_eq!(answer, Some(Value::Int(expected)), "native summed wrong");
+        rows.push((format!("native ({native})"), best_us(&client, &key, &native, "sum_list").await));
+    }
+
+    let fastest = rows.iter().map(|(_, us)| *us).fold(f64::MAX, f64::min);
+
+    eprintln!("  {:<22} {:>10}  {:>8}", "engine", "us/call", "vs best");
+
+    for (name, us) in &rows {
+        eprintln!("  {:<22} {:>10.1}  {:>7.2}x", name, us, us / fastest);
+    }
+
+    eprintln!(
+        "\n  every row carries the same round trip; the per-call section of native_bench prints the \
+         plain-write baseline to subtract"
+    );
 }
 
 /// Time `CALLS` sequential calls, returning microseconds per call.

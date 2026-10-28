@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 342" role="img" aria-label="When dc2's clock runs behind, the later write loses" style="max-width:720px;width:100%;height:auto;display:block;margin:1.2em auto;font-family:inherit">
+<title>When dc2's clock runs behind, the later write loses</title>
+<style>
+.lane { stroke: currentColor; stroke-opacity: .35; stroke-width: 1.5; }
+.lanelabel { font-size: 13px; font-weight: 600; fill: currentColor; }
+.lbl { font-size: 12px; fill: currentColor; }
+.lbl.b { font-weight: 600; }
+.mono { font-family: var(--mono-font, ui-monospace, monospace); font-size: 11.5px; fill: currentColor; }
+.box { fill: none; stroke: currentColor; stroke-opacity: .45; rx: 4; }
+.box.good { stroke: #2fa66b; stroke-opacity: 1; stroke-width: 1.5; }
+.box.bad { stroke: #d9534f; stroke-opacity: 1; stroke-width: 1.5; }
+.ship { fill: none; stroke: currentColor; stroke-opacity: .7; stroke-width: 1.4; marker-end: url(#arrow); }
+.ship.dashed { stroke-dasharray: 5 4; }
+.cap { font-size: 12.5px; fill: currentColor; fill-opacity: .85; }
+.time { font-size: 11px; fill: currentColor; fill-opacity: .6; }
+.tick { stroke: currentColor; stroke-opacity: .3; stroke-dasharray: 3 3; }
+.bar { rx: 3; }
+.barlbl { font-size: 12px; fill: #141414; }
+.region { fill: currentColor; fill-opacity: .04; stroke: currentColor; stroke-opacity: .3; stroke-dasharray: 4 3; rx: 6; }
+.node { fill: none; stroke: currentColor; stroke-opacity: .55; stroke-width: 1.2; rx: 5; }
+.node.good { stroke: #2fa66b; stroke-opacity: 1; stroke-width: 1.5; }
+.node.bad { stroke: #d9534f; stroke-opacity: 1; stroke-width: 1.5; }
+.cell { fill: currentColor; fill-opacity: .07; stroke: currentColor; stroke-opacity: .5; }
+.ship.bad { stroke: #d9534f; stroke-opacity: 1; marker-end: url(#arrow-bad); }
+.slice { fill: currentColor; fill-opacity: .25; }
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="currentColor" fill-opacity=".75"/></marker><marker id="arrow-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="#d9534f"/></marker></defs>
+<line class="lane" x1="96" y1="100" x2="696" y2="100"/>
+<text class="lanelabel" x="86" y="104" text-anchor="end" fill="#2f80ed" style="fill:#2f80ed">dc1</text>
+<line class="lane" x1="96" y1="220" x2="696" y2="220"/>
+<text class="lanelabel" x="86" y="224" text-anchor="end" fill="#e08a1e" style="fill:#e08a1e">dc2</text>
+<text class="time" x="696" y="236" text-anchor="end">real time →</text>
+<line class="tick" x1="200" y1="60" x2="200" y2="262"/>
+<text class="time" x="200" y="56" text-anchor="middle">t = 400</text>
+<line class="tick" x1="360" y1="60" x2="360" y2="262"/>
+<text class="time" x="360" y="56" text-anchor="middle">t = 500</text>
+<line class="tick" x1="520" y1="60" x2="520" y2="262"/>
+<text class="time" x="520" y="56" text-anchor="middle">t = 600</text>
+<circle cx="200" cy="100" r="5.5" fill="#2f80ed"/>
+<text class="lbl b" x="190" y="104" text-anchor="end">add(news)</text>
+<rect class="box good" x="161.9" y="66" width="76.1" height="23"/>
+<text class="mono" x="168.9" y="81" xml:space="preserve">stamp 400</text>
+<line class="ship" x1="200" y1="108" x2="300" y2="211"/>
+<path d="M300,213 L307,220 L300,227 L293,220 Z" fill="#2fa66b"/>
+<circle cx="360" cy="220" r="5.5" fill="#e08a1e"/>
+<text class="lbl b" x="370" y="224">remove(news)</text>
+<rect class="box bad" x="287.4" y="246" width="145.1" height="38"/>
+<text class="mono" x="294.4" y="261" xml:space="preserve">dc2 clock reads 300</text>
+<text class="mono" x="294.4" y="276" xml:space="preserve">stamp 300</text>
+<line class="ship" x1="360" y1="212" x2="520" y2="109"/>
+<path d="M520,93 L527,100 L520,107 L513,100 Z" fill="#2fa66b"/>
+<text class="lbl" x="520" y="88" text-anchor="middle">max per tag</text>
+<rect class="box bad" x="500.0" y="128" width="186.5" height="38"/>
+<text class="mono" x="507.0" y="143" xml:space="preserve">+ {news:400}</text>
+<text class="mono" x="507.0" y="158" xml:space="preserve">- {news:300} → news stays</text>
+<text class="time" x="590" y="265" text-anchor="middle">the removal happened later and lost</text>
+<text class="cap" x="360.0" y="316" text-anchor="middle">dc2 removes news a hundred milliseconds after dc1 added it back, but its clock is a second slow, so it stamps 300.</text>
+<text class="cap" x="360.0" y="333" text-anchor="middle">"Last writer wins" means last by the stamp. Step 5 replaces the clock with a version the application raises.</text>
+</svg>

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>com.aerospike.udf</groupId>
+    <artifactId>aerospike-udf-sdk-wasm-java-parent</artifactId>
+    <version>0.1.0</version>
+    <relativePath>../../pom.xml</relativePath>
+  </parent>
+  <artifactId>aerospike-udf-example-guard</artifactId>
+  <packaging>jar</packaging>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.aerospike.udf</groupId>
+      <artifactId>aerospike-udf-sdk-wasm-java</artifactId>
+    </dependency>
+    <!-- The annotation processor that generates the exports; javac finds it on the classpath. -->
+    <dependency>
+      <groupId>com.aerospike.udf</groupId>
+      <artifactId>aerospike-udf-sdk-wasm-java-processor</artifactId>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.teavm</groupId>
+        <artifactId>teavm-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <goals><goal>compile</goal></goals>
+            <phase>process-classes</phase>
+            <configuration>
+              <!-- The generated class carries the exports and the entry point. -->
+              <mainClass>com.aerospike.udf.examples.GuardExports</mainClass>
+              <targetType>WEBASSEMBLY</targetType>
+              <optimizationLevel>FULL</optimizationLevel>
+              <targetDirectory>${project.build.directory}/wasm</targetDirectory>
+              <targetFileName>guard_java.wasm</targetFileName>
+              <debugInformationGenerated>false</debugInformationGenerated>
+              <sourceMapsGenerated>false</sourceMapsGenerated>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

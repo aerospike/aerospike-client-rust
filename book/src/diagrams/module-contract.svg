@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 346" role="img" aria-label="Every read is one sixteen-byte value; bytes and elements cross only when the guest asks" style="max-width:720px;width:100%;height:auto;display:block;margin:1.2em auto;font-family:inherit">
+<title>Every read is one sixteen-byte value; bytes and elements cross only when the guest asks</title>
+<style>
+.lane { stroke: currentColor; stroke-opacity: .35; stroke-width: 1.5; }
+.lanelabel { font-size: 13px; font-weight: 600; fill: currentColor; }
+.lbl { font-size: 12px; fill: currentColor; }
+.lbl.b { font-weight: 600; }
+.mono { font-family: var(--mono-font, ui-monospace, monospace); font-size: 11.5px; fill: currentColor; }
+.box { fill: none; stroke: currentColor; stroke-opacity: .45; rx: 4; }
+.box.good { stroke: #2fa66b; stroke-opacity: 1; stroke-width: 1.5; }
+.box.bad { stroke: #d9534f; stroke-opacity: 1; stroke-width: 1.5; }
+.ship { fill: none; stroke: currentColor; stroke-opacity: .7; stroke-width: 1.4; marker-end: url(#arrow); }
+.ship.dashed { stroke-dasharray: 5 4; }
+.cap { font-size: 12.5px; fill: currentColor; fill-opacity: .85; }
+.time { font-size: 11px; fill: currentColor; fill-opacity: .6; }
+.tick { stroke: currentColor; stroke-opacity: .3; stroke-dasharray: 3 3; }
+.bar { rx: 3; }
+.barlbl { font-size: 12px; fill: #141414; }
+.region { fill: currentColor; fill-opacity: .04; stroke: currentColor; stroke-opacity: .3; stroke-dasharray: 4 3; rx: 6; }
+.node { fill: none; stroke: currentColor; stroke-opacity: .55; stroke-width: 1.2; rx: 5; }
+.node.good { stroke: #2fa66b; stroke-opacity: 1; stroke-width: 1.5; }
+.node.bad { stroke: #d9534f; stroke-opacity: 1; stroke-width: 1.5; }
+.cell { fill: currentColor; fill-opacity: .07; stroke: currentColor; stroke-opacity: .5; }
+.ship.bad { stroke: #d9534f; stroke-opacity: 1; marker-end: url(#arrow-bad); }
+.slice { fill: currentColor; fill-opacity: .25; }
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="currentColor" fill-opacity=".75"/></marker><marker id="arrow-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="#d9534f"/></marker></defs>
+<rect class="region" x="24" y="44" width="176" height="246"/>
+<text class="lbl b" x="34" y="61" style="fill:#2f80ed">host: the record</text>
+<rect class="region" x="504" y="44" width="192" height="246"/>
+<text class="lbl b" x="514" y="61" style="fill:#e08a1e">guest: the module</text>
+<text class="lbl b" x="390" y="60" text-anchor="middle">one value, sixteen bytes</text>
+<rect class="cell" x="298" y="72" width="40" height="20"/>
+<text class="mono" x="318.0" y="86.0" text-anchor="middle">kind</text>
+<rect class="cell" x="338" y="72" width="32" height="20"/>
+<text class="mono" x="354.0" y="86.0" text-anchor="middle">len</text>
+<rect class="cell" x="370" y="72" width="112" height="20"/>
+<text class="mono" x="426.0" y="86.0" text-anchor="middle">payload</text>
+<rect class="node" x="36" y="105" width="150" height="34"/>
+<text class="mono" x="111.0" y="126.5" text-anchor="middle">balance: 42</text>
+<line class="ship" x1="186" y1="122" x2="296" y2="122"/>
+<text class="time" x="241.0" y="114.0" text-anchor="middle">bin("balance")</text>
+<rect class="cell" x="298" y="110" width="40" height="24"/>
+<text class="mono" x="318.0" y="126.0" text-anchor="middle">int</text>
+<rect class="cell" x="338" y="110" width="32" height="24"/>
+<text class="mono" x="354.0" y="126.0" text-anchor="middle"></text>
+<rect class="cell" x="370" y="110" width="112" height="24"/>
+<text class="mono" x="426.0" y="126.0" text-anchor="middle">42</text>
+<line class="ship" x1="482" y1="122" x2="512" y2="122"/>
+<rect class="node" x="514" y="105" width="170" height="34"/>
+<text class="lbl" x="599.0" y="126.5" text-anchor="middle">the integer, in place</text>
+<rect class="node" x="36" y="165" width="150" height="34"/>
+<text class="mono" x="111.0" y="186.5" text-anchor="middle">name: "alice"</text>
+<line class="ship" x1="186" y1="182" x2="296" y2="182"/>
+<text class="time" x="241.0" y="174.0" text-anchor="middle">bin("name")</text>
+<rect class="cell" x="298" y="170" width="40" height="24"/>
+<text class="mono" x="318.0" y="186.0" text-anchor="middle">str</text>
+<rect class="cell" x="338" y="170" width="32" height="24"/>
+<text class="mono" x="354.0" y="186.0" text-anchor="middle">5</text>
+<rect class="cell" x="370" y="170" width="112" height="24"/>
+<text class="mono" x="426.0" y="186.0" text-anchor="middle">handle, offset</text>
+<line class="ship dashed" x1="482" y1="182" x2="512" y2="182"/>
+<rect class="node" x="514" y="165" width="170" height="34"/>
+<text class="lbl" x="599.0" y="179.0" text-anchor="middle">bytes into a buffer</text>
+<text class="lbl" x="599.0" y="194.0" text-anchor="middle">on request</text>
+<rect class="node" x="36" y="225" width="150" height="34"/>
+<text class="mono" x="111.0" y="246.5" text-anchor="middle">tags: [a, b, c]</text>
+<line class="ship" x1="186" y1="242" x2="296" y2="242"/>
+<text class="time" x="241.0" y="234.0" text-anchor="middle">bin("tags")</text>
+<rect class="cell" x="298" y="230" width="40" height="24"/>
+<text class="mono" x="318.0" y="246.0" text-anchor="middle">list</text>
+<rect class="cell" x="338" y="230" width="32" height="24"/>
+<text class="mono" x="354.0" y="246.0" text-anchor="middle">3</text>
+<rect class="cell" x="370" y="230" width="112" height="24"/>
+<text class="mono" x="426.0" y="246.0" text-anchor="middle">handle, offset</text>
+<line class="ship dashed" x1="482" y1="242" x2="512" y2="242"/>
+<rect class="node" x="514" y="225" width="170" height="34"/>
+<text class="lbl" x="599.0" y="239.0" text-anchor="middle">walked with a cursor</text>
+<text class="lbl" x="599.0" y="254.0" text-anchor="middle">128 per import</text>
+<line class="ship" x1="504" y1="274" x2="202" y2="274"/>
+<text class="time" x="353.0" y="289.0" text-anchor="middle">handed back by position: a bin, the result, a collection being built</text>
+<text class="cap" x="360.0" y="318" text-anchor="middle">The host keeps the record and, for the call, the sources a handle points into. A scalar arrives whole; a string</text>
+<text class="cap" x="360.0" y="335" text-anchor="middle">or collection arrives as a handle, and nothing is decoded until the guest asks. A value read can go straight back.</text>
+</svg>

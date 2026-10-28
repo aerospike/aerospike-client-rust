@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The annotation processor behind @Function, @Stream and @On: it generates, for every class that carries
+  them, the <Class>Exports class with the TeaVM @Export methods and the signature exports. It runs inside
+  javac, before TeaVM, and depends on nothing but the JDK; a module names it as a provided dependency (or
+  on the compiler's annotationProcessorPaths) beside the SDK.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>com.aerospike.udf</groupId>
+    <artifactId>aerospike-udf-sdk-wasm-java-parent</artifactId>
+    <version>0.1.0</version>
+    <relativePath>../pom.xml</relativePath>
+  </parent>
+  <artifactId>aerospike-udf-sdk-wasm-java-processor</artifactId>
+  <packaging>jar</packaging>
+  <name>Aerospike WASM UDF SDK for Java: annotation processor</name>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <!-- The processor must not look for itself while it is being compiled. -->
+          <proc>none</proc>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

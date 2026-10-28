@@ -8,7 +8,8 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-aerospike-udf-sdk-wasm = { path = "../.." }
+# `allocator` for the functions that take a `String`; a module that never does leaves it off and is smaller.
+aerospike-udf-sdk-wasm = { path = "../..", features = ["allocator"] }
 
 [profile.release]
 # Small and fast: a UDF module is loaded once and called constantly, and with AoT the size of the wasm

@@ -15,8 +15,17 @@ readme = "README.md"
 # Not a cdylib: this is the library a UDF crate depends on. The UDF crate is the cdylib. See examples/udf.
 crate-type = ["lib"]
 
-# **No dependencies, and no `alloc`.** The host never asks a guest to allocate — it writes only into buffers the
-# guest already owns — so a UDF built on this needs no allocator at all. That is what makes a compiled UDF ~4 KB
-# instead of ~40 KB, and it removed what profiling found to be the largest per-call cost in the alternative
-# design. Adding a dependency here would most likely bring an allocator back with it.
+[features]
+# `String` and `Vec<u8>` as parameter types, and `Text::to_string` / `Blob::to_vec`, for a UDF that wants a
+# string or blob of any length. The UDF crate then needs a global allocator: its own, or `allocator`.
+alloc = []
+# `alloc`, plus dlmalloc as the global allocator, so a UDF crate that enables this needs nothing else.
+allocator = ["alloc", "dep:dlmalloc"]
+
+# **No dependencies, and no `alloc`, by default.** The host never asks a guest to allocate — it writes only
+# into buffers the guest already owns — so a UDF built on this needs no allocator at all. That is what makes a
+# compiled UDF ~4 KB instead of ~40 KB, and it removed what profiling found to be the largest per-call cost in
+# the alternative design. The two features above are the one deliberate exception, for a UDF that wants
+# strings of any length and accepts the size; everything else stays allocation-free.
 [dependencies]
+dlmalloc = { version = "0.2", features = ["global"], optional = true }

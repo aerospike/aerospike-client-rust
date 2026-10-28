@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The Java guest SDK for Aerospike WASM UDFs and its examples. Each example module compiles to one .wasm
+  with TeaVM's linear-memory WebAssembly backend; see README.md for why that backend and that version.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.aerospike.udf</groupId>
+  <artifactId>aerospike-udf-sdk-wasm-java-parent</artifactId>
+  <version>0.1.0</version>
+  <packaging>pom</packaging>
+
+  <modules>
+    <module>sdk</module>
+    <module>processor</module>
+    <module>examples/hello</module>
+    <module>examples/vector</module>
+    <module>examples/guard</module>
+    <module>examples/resolver</module>
+    <module>examples/counter</module>
+    <module>examples/pncounter</module>
+    <module>examples/twopset</module>
+    <module>examples/lwwset</module>
+    <module>examples/crdt</module>
+    <module>examples/udf</module>
+  </modules>
+
+  <properties>
+    <maven.compiler.source>17</maven.compiler.source>
+    <maven.compiler.target>17</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <!-- 0.13.1 is the last TeaVM with the linear-memory WebAssembly backend; 0.14 removed it, and the
+         WebAssembly GC backend that remains needs the exception-handling proposal and JavaScript string
+         builtins, which the server's runtime does not provide. -->
+    <teavm.version>0.13.1</teavm.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.teavm</groupId>
+        <artifactId>teavm-classlib</artifactId>
+        <version>${teavm.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.teavm</groupId>
+        <artifactId>teavm-interop</artifactId>
+        <version>${teavm.version}</version>
+      </dependency>
+      <!-- The backend's runtime classes; the class library lists it at runtime scope only, which the
+           TeaVM plugin does not see, so it is named here at compile scope. -->
+      <dependency>
+        <groupId>org.teavm</groupId>
+        <artifactId>teavm-core</artifactId>
+        <version>${teavm.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.aerospike.udf</groupId>
+        <artifactId>aerospike-udf-sdk-wasm-java</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.aerospike.udf</groupId>
+        <artifactId>aerospike-udf-sdk-wasm-java-processor</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.teavm</groupId>
+          <artifactId>teavm-maven-plugin</artifactId>
+          <version>${teavm.version}</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+</project>

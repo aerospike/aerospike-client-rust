@@ -1,0 +1,23 @@
+[package]
+name = "aerospike-udf-vector-wasm"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Exact top-k over packed float vectors, as a WASM UDF in Rust - the same module as the C and Go ones beside it"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+aerospike-udf-sdk-wasm = { path = "../.." }
+# `f64::sqrt` is std; libm's is correctly rounded, so it answers bit for bit what the C and Go modules get from
+# the `f64.sqrt` instruction. One call per record, next to a 768-element loop.
+libm = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"
+strip = true
+
+[workspace]

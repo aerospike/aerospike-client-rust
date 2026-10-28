@@ -130,6 +130,37 @@ function over(stream)
 end
 "#;
 
+/// The nested-document aggregation in Lua, for `agg_bench_nested`: the same walk the WASM fixture's
+/// `sumnested` does, through the server's object model.
+const LUA_NESTED: &[u8] = br#"
+local function acc(total, rec)
+    local m = rec['m']
+    if m ~= nil then
+        local vals = m['vals']
+        if vals ~= nil then
+            for v in list.iterator(vals) do
+                total = total + v
+            end
+        end
+    end
+    return total
+end
+
+local function comb(a, b)
+    return a + b
+end
+
+function sumnested(stream)
+    return stream : aggregate(0, acc) : reduce(comb)
+end
+"#;
+
+/// Records for `agg_bench_nested`: the number the checked-in measurement was taken at.
+const NESTED_RECORDS: i64 = 50_000;
+
+/// The integers under `m.vals` in every record of `agg_bench_nested`.
+const NESTED_VALS: i64 = 10;
+
 fn native_module() -> String {
     std::env::var("AEROSPIKE_NATIVE_MODULE").unwrap_or_else(|_| "stats".to_string())
 }
@@ -654,6 +685,104 @@ async fn agg_bench() {
         eprintln!(
             "\nnote: could not truncate {set_name} ({e}) - a later run will be slower for it"
         );
+    }
+}
+
+/// **A nested document per record**: the shape on which the first WASM ABI lost to Lua.
+///
+/// Every record carries `m = {"vals": [1..10]}` and the aggregation sums `m.vals` across the set. Lua walks
+/// it through the server's object model; the WASM fixture's `sumnested` looks `vals` up in the map's stored
+/// bytes and iterates the list in place, 128 values per import. The measurement this reproduces is ~120 ms
+/// for 50,000 records, and it stayed there through every cut of the ABI - the query itself costs ~2.3 us per
+/// record and dominates - which is the finding: on nested documents the engine is not where the time goes.
+/// The first ABI's 1.48x loss on this shape came from imports per element, not from the engine.
+///
+/// ```text
+/// cargo test --features serialization,rt-tokio,async agg_bench_nested -- --ignored --nocapture
+/// ```
+#[aerospike_macro::test]
+#[ignore]
+async fn agg_bench_nested() {
+    use futures::stream::StreamExt;
+
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let lua_package = &format!("bench_lua_{}", common::rand_str(6));
+    let wasm_package = &format!("bench_wasm_{}", common::rand_str(6));
+    let write = WritePolicy::default();
+    let policy = AdminPolicy::default();
+
+    client
+        .register_udf(&policy, LUA_NESTED, &format!("{lua_package}.lua"), UdfLang::Lua)
+        .await
+        .unwrap()
+        .wait_till_complete(None)
+        .await
+        .unwrap();
+
+    let have_wasm = match client
+        .register_udf(&policy, WASM_MODULE, &format!("{wasm_package}.wasm"), UdfLang::Wasm)
+        .await
+    {
+        Ok(task) => task.wait_till_complete(None).await.is_ok(),
+        Err(e) => {
+            eprintln!("note: WASM unavailable ({e}) - the WASM row will be missing");
+            false
+        }
+    };
+
+    eprintln!("loading {NESTED_RECORDS} nested records ({LOAD_CONCURRENCY} concurrent)...");
+
+    let started = Instant::now();
+
+    futures::stream::iter(1..=NESTED_RECORDS)
+        .for_each_concurrent(LOAD_CONCURRENCY, |i| {
+            let client = &client;
+            let write = &write;
+
+            async move {
+                let vals: Vec<Value> = (1..=NESTED_VALS).map(Value::Int).collect();
+                let mut m = std::collections::HashMap::new();
+
+                m.insert(Value::from("vals"), Value::List(vals));
+                m.insert(Value::from("id"), Value::Int(i));
+
+                client
+                    .put(write, &as_key!(namespace, set_name, i), &[as_bin!("m", Value::HashMap(m))])
+                    .await
+                    .unwrap();
+            }
+        })
+        .await;
+
+    eprintln!("loaded in {:.1} s\n", started.elapsed().as_secs_f64());
+
+    let expected_sum = NESTED_RECORDS * (1 + NESTED_VALS) * NESTED_VALS / 2;
+
+    eprintln!("=== sum of m.vals over {NESTED_RECORDS} nested records ===\n");
+
+    let mut rows: Vec<(String, Run)> = Vec::new();
+    let lua = best_of(3, &client, namespace, set_name, lua_package, "sumnested", &[]).await;
+
+    assert_eq!(lua.sum, expected_sum, "lua summed wrong");
+    rows.push(("lua".into(), lua));
+
+    if have_wasm {
+        let wasm = best_of(3, &client, namespace, set_name, wasm_package, "sumnested", &[]).await;
+
+        assert_eq!(wasm.sum, expected_sum, "wasm summed wrong");
+        rows.push(("wasm (aot)".into(), wasm));
+    }
+
+    report(&rows, "partials");
+
+    // The same reason agg_bench truncates: records left behind are records the next run walks for nothing.
+    if let Err(e) = client
+        .truncate(&AdminPolicy::default(), namespace, set_name, 0)
+        .await
+    {
+        eprintln!("\nnote: could not truncate {set_name} ({e}) - a later run will be slower for it");
     }
 }
 

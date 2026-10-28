@@ -1,6 +1,6 @@
 # WASM UDFs on WAMR — implementation and measurements
 
-`modules/mod-wamr/` implements WASM UDFs: pure C, on WebAssembly Micro Runtime 2.4.3, with ahead-of-time
+`modules/mod-wamr/` implements WASM UDFs: pure C, on WebAssembly Micro Runtime at upstream `main` (9058db92, 2026-10-21; its version header still reads 2.4.3), with ahead-of-time
 compilation. **It is the only WASM engine.** `modules/mod-wasm` — the Rust/wasmtime implementation this
 document originally compared it against — has been removed; the comparison that justified the removal is kept
 below, because the numbers are why.
@@ -127,30 +127,36 @@ first heap allocation.
 ## 2. Why the ABI is different, and why that was the right call
 
 The instruction was to implement WAMR *as well as possible* rather than mirror the Rust module, because C can
-model the data differently. It can, and this is what it buys:
+model the data differently. It can, and the second generation of the ABI (2026-10-20, see §7 and
+`WASM_UDF_DESIGN.md`) is where that ended up:
 
-- **No msgpack anywhere.** A C module holds `as_val` natively, so a typed question gets a typed answer:
-  `bin_int(name) -> i64` is one call, no buffer, no encoder, no allocation on either side.
-- **Collections cross as handles.** A list or map stays in the record and is walked in place through a
-  per-call table of `as_val*`. The wasmtime path serialises the whole collection, copies it into guest memory
-  and has the guest parse it.
-- **Arguments are not serialised at all.** The guest receives a handle to the very `as_list` the server built.
-- **Results are built directly** in the server's representation, through `list_new` / `map_put` / `result_*`.
+- **No msgpack anywhere, and nothing deserialised.** A C module holds the record natively and lends the
+  guest its data **by position**: every read is a 16-byte value, and a string or nested collection carries
+  where it sits in the stored bytes rather than a copy of them.
+- **Collections are read in place, 128 values per import.** The wasmtime path serialised the whole
+  collection, copied it into guest memory and had the guest parse it; the first WAMR ABI walked it one
+  import per element. Both lost to a window of values decoded straight from the packed particle.
+- **Arguments are one import.** The guest receives their values directly from the `as_list` the server
+  built, strings borrowed in place.
+- **Results are built directly** in the server's representation - and a value read from the record is
+  returned, stored or nested in a built collection from its bytes, with the server's own unpacker building
+  it. The guest never decodes a document it only passes along.
 
 The cost is that the two guest ABIs are incompatible: a module built for one engine does not run on the other,
 and switching engines means re-registering UDFs.
 
 **What it is measurably worth: the allocator, and collections.** A guest needs no allocator, which makes its
-module 12× smaller and removes what profiling had found to be the largest per-call cost on the wasmtime path.
-And reading a collection in place is **1.38× faster than serialising it** at n=10,000 — see §1. What it is
-*not* worth is latency on a single scalar bin, where the two engines are level; a claim to the contrary turned
-out to be a bug in the example.
+module 12x smaller and removes what profiling had found to be the largest per-call cost on the wasmtime path.
+And reading a collection in place is **1.38x faster than serialising it** at n=10,000 with the first ABI, and
+**2.7x faster than that ABI's own handle walk** with the second - see §7. What it is *not* worth is latency on
+a single scalar bin, where the engines are level; a claim to the contrary turned out to be a bug in the
+example.
 
 Two consequences worth stating plainly:
 
 - **`mod-wamr` duplicates the record accessors and value handling.** That is inherent: a shared
   implementation would mean one side calling into the other, which is the C shim arrangement that was just
-  removed. The duplication is deliberate and temporary — it exists so one can win.
+  removed. The duplication is deliberate and temporary - it exists so one can win.
 - **Stream UDFs (aggregation) work.** See §6.
 
 ---
@@ -435,3 +441,185 @@ That is not the same as "switch now". What would decide it:
 3. **x86-64, with Fast JIT.** Both a different code generator and the deployment target most likely to matter.
 4. **The AoT operational story.** Compilation is ~430 ms per module on the SMD thread, and every node
    compiles independently on first registration. That is fine at 89 modules and a question at 1000.
+
+---
+
+## 7. The second ABI, measured (2026-10-20)
+
+The first ABI read a collection through handles, one import per element, and that was where it lost to Lua
+on a map-heavy aggregation (§6, 1.48x slower). mod-native had meanwhile grown packed-form readers - decoding
+a bin's stored msgpack in place, no `as_val` per element - and porting them turned into a second guest ABI
+once one fact was measured: **in WASM the import call is the unit of cost, not the decode.**
+
+Three cuts, each measured interleaved against the previous fixture on the same server, 20 calls each for the
+record UDF and three runs for the aggregation:
+
+| `sum_list` over a 10,000-element list, best | | `sumnested` over 50,000 records |
+|---|---|---|
+| handle walk (first ABI) | 0.74 ms | 115-123 ms |
+| packed reads windowed by offset | 2.54 ms | 110-118 ms |
+| cursor reads, 256 integers per import | 0.23 ms | 113-119 ms |
+| **values by position, 128 per import (second ABI)** | **0.27 ms** | 114-125 ms |
+
+Both rows are now permanent, `#[ignore]`d tests (`list_bench` in `tests/src/udf_native_bench.rs`,
+`agg_bench_nested` in `tests/src/udf_agg_bench.rs`). Their first run, 2026-10-20, on the same node: the list at
+335 µs per call for WASM against 598 µs for the native C module and 689 µs for Lua, round trip included; the
+nested aggregation at 120 ms for WASM against **103 ms for Lua**. So on the nested shape Lua is 16% ahead, not
+level - the earlier "flat ~120 ms" was WASM against its own previous cuts, and the Lua row says where the
+remaining cost is: a `coll_get` plus a cursor per record, two imports where Lua indexes a table.
+
+The second row is the lesson: windowing a list with a `from` offset re-skipped the prefix on every window, and
+a cursor walk of a ten-element nested list spent fifteen imports where the handle path spent three. Bulk
+reads from a cursor's position fixed the first; a one-call "the list under this key" fixed the second; and
+the uniform 16-byte value - 128 per import instead of 256 typed integers - costs 0.04 ms on the big list,
+which bought one way of reading for every kind. The nested aggregation never moved: at ~2.3 us per record
+the query itself dominates, and nothing an engine does shows through.
+
+What the second ABI added beyond speed, each pinned by a unit test and a client test: ordered lists and
+key-ordered maps (their packed metadata element was skipped by neither module before; mod-native was fixed in
+the same change), HLL as a kind of its own written back by position, a stored value returned or stored without
+the guest decoding it, typed arguments rejected before the body runs, and `Result`-returning UDFs. The
+first-generation natives were retired, not kept beside the new ones.
+
+---
+
+## 8. Three languages, one module (2026-10-20)
+
+The question was whether the guest language matters on this ABI. The answer needed three SDKs - the Rust one
+that existed, a C header (`aerospike-udf-sdk-wasm-c`) and a Go package for TinyGo (`aerospike-udf-sdk-wasm-go`;
+standard Go's WebAssembly needs WASI or JavaScript, so TinyGo's freestanding `wasm-unknown` target is what makes
+Go possible here) - and one program written three times to the same algorithm, step for step: the exact top-k
+over packed `f32` vectors that the native SDK's vector example and its Lua port already do. `tests/src/udf_vector.rs`
+holds the three to agree with each other, with Lua and with a local computation, digest for digest, and then
+times them. Cosine, k = 10, 768 dimensions, best of three, one podman node:
+
+| engine | 20,000 records | 100,000 records | per record at 100k | partials per query | module |
+|---|---|---|---|---|---|
+| Lua (`vector.lua`) | 213 ms | 750 ms | 7.5 us | 4,096 | - |
+| WASM, Rust | 118 ms | 239 ms | 2.4 us | 4,096 | 38 KB |
+| WASM, C | 117 ms | 222 ms | 2.2 us | 4,096 | 6.9 KB |
+| WASM, Go (TinyGo) | 116 ms | 214 ms | 2.1 us | 4,096 | 10.5 KB |
+| **native (`vector`, mod-native)** | **10.7 ms** | **37.7 ms** | **0.38 us** | **4** | 3.6 MB |
+
+(The native row was added on a later run of the same node, with the plugin built in the container and
+configured into the image; the WASM and Lua rows above are from that run too. Run to run the WASM rows move
+by up to 10%.)
+
+**The language does not matter.** The three are within 1.5% of each other at 100,000 records and within 7% at
+20,000, and all three are 3.3x Lua. That is what the ABI predicts: per record the work is two imports (the bin,
+then its 3 KB copied straight into a float array) and a 768-element `f64` loop that every compiler turns into
+the same code; the differences between toolchains are in what they do with memory and runtime, which the hot
+path never touches. A single `vec_distance` call costs 250-290 us from every engine, round trip included -
+instantiation and argument decoding are not where a language shows either.
+
+**Against the native module, before the fix: 6x at 100,000 records, 11x at 20,000.** The rows above are
+the first measurement, and the two record counts said where the time went. Between 20,000 and 100,000 records
+each WASM module added 1.2-1.5 us per record and the native one 0.34 us; the rest was fixed per query: ~95 ms
+for WASM, ~4 ms for native. Two causes, of about equal weight:
+
+- **Per stream.** The server ran one Lua or WASM stream per partition: 4,096 instantiations, argument
+  decodings, query copies and partials per query, each partial carrying up to k hits (40,960 hits on the wire
+  for an answer of 10). mod-native keeps one accumulator per query thread, merges them, and sends one partial
+  per node: 4 partials, 40 hits.
+- **Per record.** The 3 KB copy into guest memory and a scalar `f64` loop - the same loop in all three
+  languages, which is why they agreed to the bit - against the native module's NEON kernel over a borrowed
+  particle.
+
+**After the fix: level with native.** Both halves were addressable without leaving WAMR, and were addressed the
+same day (`mod_wamr.c` `apply_stream` + `mod_wamr_flush_thread`; the kernels in the three modules):
+
+- A WASM stream is now **one instance per query thread**, kept across partition slices and finalised when the
+  thread's last slice is done, through the same `as_aggr_flush` hook mod-native uses. A query is 4
+  instantiations and 4 partials instead of 4,096. The guest contract did not change: `_record` per record,
+  `_end` once - a module just sees more records before its `_end`.
+- The kernels sum in **four lanes** (lane `k` holds the elements with index `k` mod 4, folded in one fixed
+  order), which lets each compiler keep the sums in `simd128` registers - plain `f64` reductions do not
+  vectorise - and keeps the three modules and the test's local computation bit-identical. The runtime build
+  gained `WAMR_BUILD_SIMD`, without which a module using SIMD is refused at registration.
+
+| engine | 20,000 records | 100,000 records | per record at 100k | partials per query |
+|---|---|---|---|---|
+| Lua (`vector.lua`) | 214 ms | 738 ms | 7.4 us | 4,096 |
+| WASM, Rust | 13.9 ms | 51.1 ms | 0.51 us | 4 |
+| WASM, C | 11.5 ms | 41.4 ms | 0.41 us | 4 |
+| WASM, Go (TinyGo) | 13.0 ms | 54.4 ms | 0.54 us | 4 |
+| native (`vector`) | 10.6 ms | 42.1 ms | 0.42 us | 4 |
+
+So: **WASM C level with native, Rust and Go within 1.3x, all of them 14-19x Lua**, with the sandbox, `udf-put`
+deployment and per-UDF failure isolation intact. The remaining 0.1 us per record between the Rust/Go rows and
+the C one is a compiler difference in what it made of the lane-split loop, not an ABI cost, and is the next
+thing to look at with the disassembly rather than the stopwatch. A single `vec_distance` call is level across
+all five engines (250-290 us, round trip included).
+
+**The tiers, on the same binary.** A `WAMR_TIER=jit` build keeps the interpreter and AoT as well, so the
+three modes can be compared by `running-mode` alone (LLVM 18 linked into `asd`, 86 MB; the `aot` build links
+none). Same node, same modules, same queries:
+
+| tier | 20,000 records (Rust / C / Go) | 100,000 records (Rust / C / Go) | notes |
+|---|---|---|---|
+| AoT, SIMD kernels | 13.9 / 11.3 / 13.1 ms | 51.3 / 40.8 / 54.6 ms | native: 10.6 / 42.2 ms |
+| LLVM JIT, SIMD kernels | 14.1 / 12.3 / 14.0 ms | 50.8 / 42.8 / 53.2 ms | lazy, per function on first call |
+| AoT, scalar kernels | 14.3 / 13.0 / 13.7 ms | 56.4 / 52.2 / 51.8 ms | the same lane-split loops without `simd128` |
+| interpreter, scalar kernels | 220 / 138 / 161 ms | 1,070 / 653 / 793 ms | Lua: 210 / 723 ms |
+| interpreter, SIMD kernels | - | - | **traps: `unsupported opcode`** |
+
+**Java (2026-10-27).** A fifth row, `wasm java` (TeaVM 0.13.1, linear-memory backend, no SIMD): top-k at
+20,000 records 14.7 ms against Rust 13.3 / C 11.6 / Go 13.2 / native 10.8, i.e. 1.35x native and within
+10 percent of Rust and Go; `vec_distance` single calls 285 us against 244 to 265 for the others and 348 for
+Lua, the difference being the Java runtime's start-up per instance. The lane kernels give bit-identical
+results without SIMD because the fold order is the same.
+
+**WAMR moved twice on 2026-10-21.** `modules/wamr` went from a shallow `main` snapshot of 2026-08-07 to
+the `WAMR-2.4.5` release tag (2026-06-29: three CVE fixes, one in the fast interpreter; older code than
+that snapshot, since the release branch does not track main) and then, at the user's request, to upstream
+`main` at 9058db92 (2026-10-21, 77 commits past the old snapshot; version header still 2.4.3). Nothing
+in mod-wamr changed either time; unit 1427/0 and the four suites green on both. AoT top-k at 20,000
+records, Rust / C / Go against native: 2.4.3 snapshot 13.9 / 11.5 / 13.0 vs 10.6 ms; 2.4.5 15.1 / 12.8 /
+15.0 vs 10.8; main 13.7 / 11.3 / 13.0 vs 10.4. Single calls 245-259 µs against 232 µs native on main.
+All within the usual run-to-run spread; Fast JIT is x86-64 only on every one of them.
+
+Three things fall out:
+
+- **JIT equals AoT.** Both are LLVM's code; the JIT compiles each function on its first call and the three
+  rounds amortise that. What AoT buys is the deployment: no LLVM in `asd`, and a cold node that loads
+  compiled modules from the cache at boot rather than compiling them on first use.
+- **SIMD bought 10-25% on this kernel, not the 2x the first guess was.** Scalar lane-split code under AoT is
+  already within 1.3x of native at 100,000 records; `simd128` closes the rest for C and some of it for Rust,
+  and nothing measurable for Go. The per-thread accumulator was the large half of the fix; the kernel was the
+  small one.
+- **The interpreter is Lua speed** - 0.9-1.5x of it - which is the number to remember for the window between
+  `udf-put` and the AoT landing, and for a `running-mode interp` node. And WAMR's fast interpreter does not
+  implement the whole SIMD instruction set (SIMDe covers a subset): a module built with `simd128` **traps**
+  under it with `unsupported opcode`. On an `aot` node that was the compile window after registration and the
+  first calls after a cold start. **Guarded now:** the loader walks a module's code section once and marks
+  the ones that use SIMD, and a call on such a module waits for its build - promoted to the front of the
+  compile queue, bounded by the call's deadline - instead of running interpreted; every other module runs
+  interpreted meanwhile as before. The first cut waited for *every* module and was measured too: behind the
+  suite's burst of twenty registrations, first calls waited 1-5 s on the serial compiler and blew the
+  client's second. The remaining soft spot is that same burst for a SIMD module: a single compiler process
+  under load did not always finish within a 900 ms budget (`WAMR.todo` 23).
+
+Two bugs found on the way, both fixed: `running-mode interp` on a JIT build ran the JIT, because
+`wasm_runtime_full_init` resets the default running mode after `update` had set it (the mode now goes into the
+init arguments); and the JIT tier's link line hard-coded `-lLLVM-15` (now `LLVM_LINK_LIB`).
+
+**Benchmark hygiene, learned here:** the AoT compiler is one thread and compiles in registration order. A
+bench run straight after the test suite found the vector modules still queued behind twenty fixture modules,
+running interpreted - with SIMD, under SIMDe - and measured 3-5 us per record where the compiled module costs
+0.5. A stream on a SIMD module now waits for its build, so that particular trap is closed; the advice stands
+for anything else: check the log for `aot-compiled` lines before believing a WASM row.
+
+**A finding on the way, now moot: the module's memory layout was a per-instance cost.** First runs had C and
+Go 40-50 ms behind Rust at 20,000 records and level at 100,000 - a per-stream difference. Both compile to a
+2-page initial memory (clang's default 64 KB stack, TinyGo's 4 KB); Rust's 1 MB default stack makes 17 pages.
+Rebuilding Rust with a 64 KB stack made it the slow one (117 -> 197 ms); C with a 1 MB stack the fast one
+(167 -> 119 ms): ~15 us per instance, 60 ms over 4,096 streams. Giving every instance a 1 MB WAMR app heap
+instead was 2x *worse* (the pool is initialised per instance). The mechanism was never pinned down - this
+build runs software bounds checks and mmaps each memory at its exact size - and it stopped mattering: a
+single call costs the same at either layout, and with one instance per query thread C and Go at their default
+2-page layout time the same as at 17 pages (11.9 / 41.0 ms against 11.3 / 40.8 for C; 13.4 / 52.9 against
+13.1 / 54.6 for Go). The builds use their toolchains' default stacks.
+
+Two things the comparison needed from the host: a `digest` native (a top-k hit identifies a record rather than
+shipping it), and running a module's `_initialize` export once per instance, which TinyGo emits for its
+runtime and which no earlier guest had.

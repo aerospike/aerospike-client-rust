@@ -25,6 +25,8 @@
 //! The module they use is a checked-in fixture; `tests/fixtures/wasm/README.md` says why, and keeps the
 //! source it was built from beside it.
 
+use std::collections::HashMap;
+
 use crate::common;
 
 use aerospike::Task;
@@ -669,4 +671,785 @@ async fn a_wasm_udf_round_trips_a_geojson_bin() {
     );
 
     client.delete(&WritePolicy::default(), &key).await.unwrap();
+}
+
+/// The entries of a map value, whichever map flavour the client decoded it as.
+fn map_entries(value: &Value) -> Vec<(Value, Value)> {
+    match value {
+        Value::HashMap(map) => map.clone().into_iter().collect(),
+        Value::OrderedMap(map) => map.clone().into_iter().collect(),
+        Value::SortedMap(map) => map.clone().into_iter().collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The value under a string key in a map value.
+fn entry<'a>(pairs: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
+    pairs
+        .iter()
+        .find(|(k, _)| matches!(k, Value::String(s) if s == key))
+        .map(|(_, v)| v)
+}
+
+/// **A WASM UDF reads lists and maps straight out of their packed form.**
+///
+/// `bin_coll` makes the server deserialise a collection bin into one `as_val` per element before the guest
+/// reads anything. The packed accessors - `bin_list_len`, `bin_list_ints_into`, `bin_map_get` and friends,
+/// ported from mod-native - decode the stored particle in place instead. The fixture's `packed_probe`
+/// exercises the whole family against three bins and reports what it saw; this asserts every figure against
+/// what was written, so a decoder that miscounted, mis-skipped or mis-typed anything shows up by name.
+#[aerospike_macro::test]
+async fn a_wasm_udf_reads_collections_from_their_packed_form() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("wasm_packed_{}", common::rand_str(6));
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+
+    let ints = Value::List(vec![
+        Value::Int(1),
+        Value::Int(2),
+        Value::Int(3),
+        Value::Int(-6),
+        Value::Int(100),
+    ]);
+    let doubles = Value::List(vec![Value::from(1.5f64), Value::from(-2.25f64)]);
+    let mut map: HashMap<Value, Value> = HashMap::new();
+    map.insert(Value::from("x"), Value::Int(42));
+    map.insert(Value::from("f"), Value::from(2.5f64));
+    map.insert(Value::from("s"), Value::from("str"));
+    map.insert(Value::Int(7), Value::Int(70));
+    map.insert(
+        Value::from("l"),
+        Value::List(vec![Value::Int(1), Value::Int(2)]),
+    );
+
+    client
+        .put(
+            &write,
+            &key,
+            &[
+                as_bin!("l", ints),
+                as_bin!("d", doubles),
+                as_bin!("m", Value::HashMap(map)),
+            ],
+        )
+        .await
+        .unwrap();
+
+    if let Err(reason) = register(&client, package, &key).await {
+        skipped("a_wasm_udf_reads_collections_from_their_packed_form", &reason);
+        return;
+    }
+
+    let result = client
+        .execute_udf(&write, &key, package, "packed_probe", &[])
+        .await
+        .unwrap()
+        .expect("packed_probe returns a map");
+    let pairs = map_entries(&result);
+
+    assert_eq!(entry(&pairs, "len"), Some(&Value::Int(5)), "bin_list_len: {result:?}");
+    assert_eq!(entry(&pairs, "sum"), Some(&Value::Int(100)), "bin_list_ints_into: {result:?}");
+    assert_eq!(entry(&pairs, "tail"), Some(&Value::Int(2)), "a window from element 3: {result:?}");
+    assert_eq!(
+        entry(&pairs, "dsum"),
+        Some(&Value::from(-0.75f64)),
+        "bin_list_doubles_into: {result:?}"
+    );
+    assert_eq!(entry(&pairs, "mlen"), Some(&Value::Int(5)), "bin_map_len: {result:?}");
+    assert_eq!(entry(&pairs, "x"), Some(&Value::Int(42)), "bin_map_get, an integer: {result:?}");
+    assert_eq!(
+        entry(&pairs, "f"),
+        Some(&Value::from(2.5f64)),
+        "bin_map_get, a double: {result:?}"
+    );
+    assert_eq!(
+        entry(&pairs, "s"),
+        Some(&Value::from("str")),
+        "bin_map_get_str, a string's bytes: {result:?}"
+    );
+    assert_eq!(
+        entry(&pairs, "k7"),
+        Some(&Value::Int(70)),
+        "bin_map_get_i, an integer key: {result:?}"
+    );
+    assert_eq!(
+        entry(&pairs, "nested"),
+        Some(&Value::Int(2)),
+        "a nested list is reported with its length: {result:?}"
+    );
+    assert_eq!(
+        entry(&pairs, "missing"),
+        Some(&Value::Bool(true)),
+        "a missing key is Absent, not an error: {result:?}"
+    );
+    assert_eq!(
+        entry(&pairs, "found"),
+        Some(&Value::Int(203)),
+        "Cursor::find hands the nested list over with its cursor (2 elements summing to 3): {result:?}"
+    );
+    assert_eq!(
+        entry(&pairs, "bulk"),
+        Some(&Value::Int(3)),
+        "bin_map_get_ints_into reads the list under a key in one call: {result:?}"
+    );
+    assert_eq!(
+        entry(&pairs, "run"),
+        Some(&Value::Int(100)),
+        "Cursor::ints_into reads a run of integers in one call: {result:?}"
+    );
+}
+
+/// **A cursor walks a nested document in place, descending into its collections.**
+///
+/// The fixture's `cursor_probe` flattens everything a cursor over `doc` yields, bracketing nested lists and
+/// maps with their lengths. The expected list pins the order values come out in, that the parent walk
+/// resumes after a child, that a map yields key then value, and that strings come back through
+/// `Cursor::bytes` intact.
+#[aerospike_macro::test]
+async fn a_wasm_udf_walks_a_document_with_a_cursor() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("wasm_cursor_{}", common::rand_str(6));
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+
+    let mut tail: HashMap<Value, Value> = HashMap::new();
+    tail.insert(Value::from("k"), Value::Int(7));
+
+    let doc = Value::List(vec![
+        Value::Int(1),
+        Value::from("two"),
+        Value::from(3.5f64),
+        Value::Bool(true),
+        Value::Nil,
+        Value::List(vec![Value::Int(10), Value::Int(20)]),
+        Value::HashMap(tail),
+    ]);
+
+    client.put(&write, &key, &[as_bin!("doc", doc)]).await.unwrap();
+
+    if let Err(reason) = register(&client, package, &key).await {
+        skipped("a_wasm_udf_walks_a_document_with_a_cursor", &reason);
+        return;
+    }
+
+    let result = client
+        .execute_udf(&write, &key, package, "cursor_probe", &[])
+        .await
+        .unwrap();
+
+    let expected = Value::List(vec![
+        Value::Int(7),
+        Value::Int(1),
+        Value::from("two"),
+        Value::from(3.5f64),
+        Value::Bool(true),
+        Value::Nil,
+        Value::from("["),
+        Value::Int(2),
+        Value::Int(10),
+        Value::Int(20),
+        Value::from("]"),
+        Value::from("{"),
+        Value::Int(1),
+        Value::from("k"),
+        Value::Int(7),
+        Value::from("}"),
+    ]);
+
+    assert_eq!(result, Some(expected), "the flattened walk");
+}
+
+/// **The packed writers store a list without building a value per element.**
+///
+/// `set_list_ints` / `set_list_doubles` pack the guest's slice straight into a LIST particle and apply it as
+/// one op. What matters to a client is only that the bins read back as ordinary lists - including an integer
+/// past 32 bits and a negative one, which exercise the packer's width selection.
+#[aerospike_macro::test]
+async fn a_wasm_udf_writes_lists_from_their_packed_form() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("wasm_write_{}", common::rand_str(6));
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+
+    client.put(&write, &key, &[as_bin!("n", 1)]).await.unwrap();
+
+    if let Err(reason) = register(&client, package, &key).await {
+        skipped("a_wasm_udf_writes_lists_from_their_packed_form", &reason);
+        return;
+    }
+
+    let result = client
+        .execute_udf(&write, &key, package, "write_lists", &[])
+        .await
+        .unwrap();
+
+    assert_eq!(result, Some(Value::Int(1)), "both writes were accepted");
+
+    let record = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        record.bins.get("w"),
+        Some(&Value::List(vec![
+            Value::Int(5),
+            Value::Int(-1),
+            Value::Int(1 << 40)
+        ])),
+        "the integer list, read back as a list"
+    );
+    assert_eq!(
+        record.bins.get("wd"),
+        Some(&Value::List(vec![Value::from(0.5f64), Value::from(-4.0f64)])),
+        "the double list"
+    );
+}
+
+/// **A nested value comes back exactly as stored, without the guest decoding it.**
+///
+/// `last_of_doc` iterates `doc` and returns the last value it saw - a map - as its result. The guest holds
+/// only the value's position; the server unpacks it from the record's own bytes. `copy_vals` does the same
+/// through `set`, writing the list under `m.vals` into another bin.
+#[aerospike_macro::test]
+async fn a_wasm_udf_returns_and_writes_stored_values_by_position() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("wasm_pos_{}", common::rand_str(6));
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+
+    let mut tail: HashMap<Value, Value> = HashMap::new();
+    tail.insert(Value::from("k"), Value::Int(7));
+    tail.insert(Value::from("s"), Value::from("seven"));
+
+    let doc = Value::List(vec![
+        Value::Int(1),
+        Value::List(vec![Value::Int(10), Value::Int(20)]),
+        Value::HashMap(tail.clone()),
+    ]);
+
+    let mut m: HashMap<Value, Value> = HashMap::new();
+    m.insert(
+        Value::from("vals"),
+        Value::List(vec![Value::Int(3), Value::Int(4), Value::Int(5)]),
+    );
+    m.insert(Value::from("tag"), Value::from("x"));
+
+    client
+        .put(&write, &key, &[as_bin!("doc", doc), as_bin!("m", Value::HashMap(m))])
+        .await
+        .unwrap();
+
+    if let Err(reason) = register(&client, package, &key).await {
+        skipped("a_wasm_udf_returns_and_writes_stored_values_by_position", &reason);
+        return;
+    }
+
+    let result = client
+        .execute_udf(&write, &key, package, "last_of_doc", &[])
+        .await
+        .unwrap()
+        .expect("last_of_doc returns the map");
+
+    let mut pairs = map_entries(&result);
+    pairs.sort_by(|a, b| format!("{:?}", a.0).cmp(&format!("{:?}", b.0)));
+
+    assert_eq!(
+        pairs,
+        vec![
+            (Value::from("k"), Value::Int(7)),
+            (Value::from("s"), Value::from("seven")),
+        ],
+        "the stored map, unpacked by the server: {result:?}"
+    );
+
+    let result = client
+        .execute_udf(&write, &key, package, "copy_vals", &[])
+        .await
+        .unwrap();
+
+    assert_eq!(result, Some(Value::Int(3)), "copy_vals reports the list's length");
+
+    let record = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        record.bins.get("copy"),
+        Some(&Value::List(vec![Value::Int(3), Value::Int(4), Value::Int(5)])),
+        "the list under m.vals, written to another bin from its stored bytes"
+    );
+}
+
+/// **The argument contract is enforced before the body runs.**
+///
+/// `add_all` is declared as `(name: &str, numbers: Args)` and `increment` takes nothing. A call that does
+/// not match is rejected with a message naming the function, the position and the parameter, and the
+/// record is untouched.
+#[aerospike_macro::test]
+async fn a_wasm_udf_rejects_arguments_that_do_not_match_its_signature() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("wasm_sig_{}", common::rand_str(6));
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+
+    client.put(&write, &key, &[as_bin!("n", 5)]).await.unwrap();
+
+    if let Err(reason) = register(&client, package, &key).await {
+        skipped("a_wasm_udf_rejects_arguments_that_do_not_match_its_signature", &reason);
+        return;
+    }
+
+    // The wrong kind in the first position.
+    let error = client
+        .execute_udf(&write, &key, package, "add_all", &[Value::Int(1), Value::Int(2)])
+        .await
+        .expect_err("an integer where a string is declared must be rejected");
+    let text = error.to_string();
+
+    assert!(
+        text.contains("add_all: argument 0 (name): expected a string, got an integer"),
+        "the rejection names the parameter and the kinds: {text}"
+    );
+
+    // Too many arguments for a function that takes none.
+    let error = client
+        .execute_udf(&write, &key, package, "increment", &[Value::Int(1)])
+        .await
+        .expect_err("an argument to a function that takes none must be rejected");
+    let text = error.to_string();
+
+    assert!(
+        text.contains("increment takes at most 0 arguments, got 1"),
+        "the rejection names the arity: {text}"
+    );
+
+    // And the record was never touched by either.
+    let record = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+
+    assert_eq!(record.bins.get("n"), Some(&Value::Int(5)), "rejected before the body ran");
+
+    // A matching call still works, with the rest of the arguments typed as they are used.
+    let result = client
+        .execute_udf(
+            &write,
+            &key,
+            package,
+            "add_all",
+            &[Value::from("n"), Value::Int(10), Value::Int(-3)],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result, Some(Value::Int(12)), "5 + 10 - 3 through the typed signature");
+}
+
+/// **Stored values go into built collections by position, a guest GeoJson stays a GeoJson, and a built map
+/// takes integer keys.**
+///
+/// The fixture's `relist` builds `[doc[1], <geojson>, {1: "one", "first": doc[0]}]`: the nested list and the
+/// first element come straight from the record's bytes, with the server building them.
+#[aerospike_macro::test]
+async fn a_wasm_udf_builds_collections_from_stored_values() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("wasm_build_{}", common::rand_str(6));
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+
+    let mut tail: HashMap<Value, Value> = HashMap::new();
+    tail.insert(Value::from("k"), Value::Int(7));
+
+    let doc = Value::List(vec![
+        Value::Int(1),
+        Value::List(vec![Value::Int(10), Value::Int(20)]),
+        Value::HashMap(tail),
+    ]);
+
+    client.put(&write, &key, &[as_bin!("doc", doc)]).await.unwrap();
+
+    if let Err(reason) = register(&client, package, &key).await {
+        skipped("a_wasm_udf_builds_collections_from_stored_values", &reason);
+        return;
+    }
+
+    let result = client
+        .execute_udf(&write, &key, package, "relist", &[Value::Int(1)])
+        .await
+        .unwrap()
+        .expect("relist returns a list");
+
+    let Value::List(items) = &result else {
+        panic!("expected a list, got {result:?}");
+    };
+
+    assert_eq!(items.len(), 3, "three elements: {result:?}");
+    assert_eq!(
+        items[0],
+        Value::List(vec![Value::Int(10), Value::Int(20)]),
+        "doc[1], pushed by position: {result:?}"
+    );
+    assert_eq!(
+        items[1],
+        Value::GeoJson("{\"type\":\"Point\",\"coordinates\":[1.0,2.0]}".to_string()),
+        "a guest geojson is a geojson in the result: {result:?}"
+    );
+
+    let mut pairs = map_entries(&items[2]);
+    pairs.sort_by(|a, b| format!("{:?}", a.0).cmp(&format!("{:?}", b.0)));
+
+    assert_eq!(
+        pairs,
+        vec![
+            (Value::Int(1), Value::from("one")),
+            (Value::from("first"), Value::Int(1)),
+        ],
+        "an integer key and a stored value under a string key: {result:?}"
+    );
+}
+
+/// **An HLL bin reads as an HLL and is written back as one.**
+///
+/// The fixture's `copy_hll` reads bin `h`, writes it to `h2` by position, and reports its size. The copy must
+/// still be an HLL - the server's HLL operations keep working on it - which a guest could not do from bytes,
+/// since the subtype that makes it an HLL is not something the ABI carries from guest memory.
+#[aerospike_macro::test]
+async fn a_wasm_udf_copies_an_hll_bin_intact() {
+    use aerospike::operations::hll::{self, HllPolicy, HllWriteFlags};
+
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("wasm_hll_{}", common::rand_str(6));
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+
+    client.put(&write, &key, &[as_bin!("n", 1)]).await.unwrap();
+
+    let members: Vec<Value> = (0..50).map(|i| Value::from(format!("user-{i}"))).collect();
+    client
+        .operate(
+            &write,
+            &key,
+            &[hll::add_with_index(&HllPolicy::new(HllWriteFlags::DEFAULT), "h", members, 8)],
+        )
+        .await
+        .unwrap();
+
+    if let Err(reason) = register(&client, package, &key).await {
+        skipped("a_wasm_udf_copies_an_hll_bin_intact", &reason);
+        return;
+    }
+
+    let result = client
+        .execute_udf(&write, &key, package, "copy_hll", &[])
+        .await
+        .unwrap();
+
+    assert!(matches!(result, Some(Value::Int(n)) if n > 0), "the HLL's size: {result:?}");
+
+    let record = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        record.bins.get("h2"),
+        record.bins.get("h"),
+        "the copy is byte-for-byte the HLL"
+    );
+    assert!(
+        matches!(record.bins.get("h2"), Some(Value::Hll(_))),
+        "and still an HLL, not a plain blob: {:?}",
+        record.bins.get("h2")
+    );
+
+    // The server's own HLL operations accept the copy, which is the proof that matters.
+    let counted = client
+        .operate(&write, &key, &[hll::get_count("h2")])
+        .await
+        .unwrap();
+
+    assert!(
+        matches!(counted.bins.get("h2"), Some(Value::Int(n)) if *n > 40),
+        "get_count on the copy: {:?}",
+        counted.bins.get("h2")
+    );
+}
+
+/// **A WASM UDF takes strings of any length when it says so, and bounds them when it says that.**
+///
+/// A `String` parameter (the SDK's `alloc` feature) is allocated at the argument's reported length, however
+/// long; a `Str<8>` parameter rejects a longer argument before the body runs, naming the limit. Neither
+/// goes through the 256-byte buffer a `&str` parameter has.
+#[aerospike_macro::test]
+async fn a_wasm_udf_sizes_its_string_parameters() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("wasm_strs_{}", common::rand_str(6));
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+
+    client.put(&write, &key, &[as_bin!("n", 1)]).await.unwrap();
+
+    if let Err(reason) = register(&client, package, &key).await {
+        skipped("a_wasm_udf_sizes_its_string_parameters", &reason);
+        return;
+    }
+
+    // Four times what a `&str` parameter holds.
+    let long: String = (0..1024u32).map(|i| char::from(b'a' + (i % 26) as u8)).collect();
+    let marked = format!("{long}!");
+    let result = client
+        .execute_udf(&write, &key, package, "echo", &[Value::from(long.as_str())])
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result,
+        Some(Value::List(vec![Value::from(marked.as_str()), Value::Int(1025)])),
+        "a String parameter holds the whole argument: {result:?}"
+    );
+
+    let record = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        record.bins.get("echo"),
+        Some(&Value::from(marked.as_str())),
+        "and a heap string can be written to a bin"
+    );
+
+    // One byte over a `Str<8>`.
+    let error = client
+        .execute_udf(&write, &key, package, "tag", &[Value::from("abcdefghi")])
+        .await
+        .expect_err("nine bytes into a Str<8> must be rejected");
+    let text = error.to_string();
+
+    assert!(
+        text.contains("tag: argument 0 (label) is 9 bytes, at most 8"),
+        "the rejection names the limit: {text}"
+    );
+
+    let result = client
+        .execute_udf(&write, &key, package, "tag", &[Value::from("abcdefgh")])
+        .await
+        .unwrap();
+
+    assert_eq!(result, Some(Value::Int(8)), "eight bytes fit exactly");
+
+    let record = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+
+    assert_eq!(record.bins.get("tag"), Some(&Value::from("abcdefgh")), "and were written");
+}
+
+/// **A WASM UDF fills built collections a window at a time.**
+///
+/// `List::extend` and `Map::extend` cross 128 values (64 pairs) per import call instead of one each. 300 of
+/// each is three windows for the lists and five for the map, so a window boundary that dropped, doubled or
+/// misordered a value would show in the count or the order.
+#[aerospike_macro::test]
+async fn a_wasm_udf_fills_collections_in_batches() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("wasm_bulk_{}", common::rand_str(6));
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+
+    client.put(&write, &key, &[as_bin!("n", 1)]).await.unwrap();
+
+    if let Err(reason) = register(&client, package, &key).await {
+        skipped("a_wasm_udf_fills_collections_in_batches", &reason);
+        return;
+    }
+
+    let result = client
+        .execute_udf(&write, &key, package, "bulk", &[Value::Int(300)])
+        .await
+        .unwrap()
+        .expect("bulk returns a list");
+
+    let Value::List(parts) = &result else {
+        panic!("expected a list, got {result:?}");
+    };
+
+    assert_eq!(parts.len(), 3, "ints, labels, map: {result:?}");
+
+    let ints: Vec<Value> = (0..300).map(Value::Int).collect();
+
+    assert_eq!(parts[0], Value::List(ints), "300 integers, in order");
+
+    let labels: Vec<Value> = (0..300).map(|i| Value::from(format!("v{i}"))).collect();
+
+    assert_eq!(parts[1], Value::List(labels), "300 guest strings, copied out of guest memory in order");
+
+    let mut pairs = map_entries(&parts[2]);
+
+    assert_eq!(pairs.len(), 300, "300 entries: {:?}", parts[2]);
+    pairs.sort_by_key(|(_, v)| match v {
+        Value::Int(i) => *i,
+        _ => -1,
+    });
+
+    for (i, (k, v)) in pairs.iter().enumerate() {
+        assert_eq!(
+            (k, v),
+            (&Value::from(format!("v{i}")), &Value::Int(i as i64)),
+            "entry {i}"
+        );
+    }
+}
+
+/// **A WASM UDF copies a stored collection by position, a window at a time.**
+///
+/// `extend(stored.iter())` hands the host every element's position in batches of 128, and the host builds
+/// each from the record's bytes - nothing is decoded in the guest. 200 mixed elements is two windows, with
+/// strings, doubles, nils and nested lists among them; the map goes the same way through `entries()`.
+#[aerospike_macro::test]
+async fn a_wasm_udf_copies_stored_collections_in_batches() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("wasm_copy_{}", common::rand_str(6));
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+
+    let doc: Vec<Value> = (0..200i64)
+        .map(|i| match i % 5 {
+            0 => Value::Int(i),
+            1 => Value::from(format!("s{i}")),
+            2 => Value::List(vec![Value::Int(i), Value::Int(i + 1)]),
+            3 => Value::from(i as f64 / 2.0),
+            _ => Value::Nil,
+        })
+        .collect();
+
+    let mut m: HashMap<Value, Value> = HashMap::new();
+
+    m.insert(Value::from("a"), Value::Int(1));
+    m.insert(Value::from("b"), Value::List(vec![Value::Int(1), Value::Int(2)]));
+    m.insert(Value::from("c"), Value::from("x"));
+    m.insert(Value::Int(7), Value::from("seven"));
+
+    client
+        .put(
+            &write,
+            &key,
+            &[
+                as_bin!("doc", Value::List(doc.clone())),
+                as_bin!("m", Value::HashMap(m.clone())),
+            ],
+        )
+        .await
+        .unwrap();
+
+    if let Err(reason) = register(&client, package, &key).await {
+        skipped("a_wasm_udf_copies_stored_collections_in_batches", &reason);
+        return;
+    }
+
+    let result = client
+        .execute_udf(&write, &key, package, "copy_list", &[])
+        .await
+        .unwrap()
+        .expect("copy_list returns a list");
+
+    let Value::List(parts) = &result else {
+        panic!("expected a list, got {result:?}");
+    };
+
+    assert_eq!(parts.len(), 2, "the list copy and the map copy: {result:?}");
+    assert_eq!(parts[0], Value::List(doc), "every element, by position, in order");
+
+    let by_key = |pairs: &[(Value, Value)]| {
+        let mut sorted: Vec<(Value, Value)> = pairs.to_vec();
+        sorted.sort_by(|a, b| format!("{:?}", a.0).cmp(&format!("{:?}", b.0)));
+        sorted
+    };
+    let want: Vec<(Value, Value)> = m.into_iter().collect();
+
+    assert_eq!(by_key(&map_entries(&parts[1])), by_key(&want), "every entry, by position");
+}
+
+/// **A WASM module describes its own exports.**
+///
+/// Beside every UDF the SDK's macros export `__udf_sig_<name>`, and the host serves it as a string result
+/// when it is executed like any other function - without running any body. The grammar is the contract: a
+/// client can check a call against it before making it, or generate typed bindings from it.
+#[aerospike_macro::test]
+async fn a_wasm_module_describes_its_exports() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("wasm_desc_{}", common::rand_str(6));
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+
+    client.put(&write, &key, &[as_bin!("n", 5)]).await.unwrap();
+
+    if let Err(reason) = register(&client, package, &key).await {
+        skipped("a_wasm_module_describes_its_exports", &reason);
+        return;
+    }
+
+    let signatures = [
+        ("__udf_sig_increment", "fn increment() -> value"),
+        ("__udf_sig_add_all", "fn add_all(name: str[256], numbers: any...) -> value"),
+        ("__udf_sig_relist", "fn relist(index: int) -> value"),
+        ("__udf_sig_tag", "fn tag(label: str[8]) -> value"),
+        ("__udf_sig_echo", "fn echo(text: str) -> value"),
+        ("__udf_sig_sum", "stream sum { record() end() }"),
+    ];
+
+    for (export, want) in signatures {
+        let got = client
+            .execute_udf(&write, &key, package, export, &[])
+            .await
+            .unwrap();
+
+        assert_eq!(got, Some(Value::from(want)), "{export}");
+    }
+
+    // Describing `increment` did not run it.
+    let record = client
+        .get(&ReadPolicy::default(), &key, Bins::All)
+        .await
+        .unwrap();
+
+    assert_eq!(record.bins.get("n"), Some(&Value::Int(5)), "no body ran");
+
+    // A UDF with no signature export is reported the way a missing function is.
+    let error = client
+        .execute_udf(&write, &key, package, "__udf_sig_nope", &[])
+        .await
+        .expect_err("no such export");
+
+    assert!(
+        error.to_string().contains("does not export __udf_sig_nope"),
+        "names the missing export: {error}"
+    );
 }

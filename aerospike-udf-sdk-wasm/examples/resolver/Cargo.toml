@@ -1,0 +1,23 @@
+[package]
+name = "aerospike-udf-resolver"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# No features: the handler builds its answer from the two records' own values, by position, and allocates
+# nothing on the guest side.
+aerospike-udf-sdk-wasm = { path = "../.." }
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"
+strip = true
+
+# Its own workspace root, like the fixture beside it: a wasm32 cdylib cannot be a member of the host
+# workspace. Build with `cargo build --release --target wasm32-unknown-unknown`.
+[workspace]

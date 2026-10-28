@@ -5,6 +5,8 @@
 Upgrading from 2.x: see the [migration guide](https://github.com/aerospike/aerospike-client-rust/blob/v3/MIGRATION.md).
 
 * **New Features**
+  * `PrivilegeCode::EventAdmin` (`event-admin`, code 5): the privilege that binds and unbinds server
+    events (`event-set` / `event-remove` info commands) on servers with the event system.
   * [CLIENT-5387] `TlsPolicy` (Java parity): `ClientPolicy::tls_config: Option<rustls::ClientConfig>`
     is replaced by `ClientPolicy::tls_policy: Option<TlsPolicy>`, which wraps the `rustls::ClientConfig`
     (`TlsPolicy::new(config)`, or `config.into()`) and carries the settings that govern *when* TLS is

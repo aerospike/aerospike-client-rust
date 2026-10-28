@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 300" role="img" aria-label="The purge age must outlast an outage plus the replication lag" style="max-width:720px;width:100%;height:auto;display:block;margin:1.2em auto;font-family:inherit">
+<title>The purge age must outlast an outage plus the replication lag</title>
+<style>
+.lane { stroke: currentColor; stroke-opacity: .35; stroke-width: 1.5; }
+.lanelabel { font-size: 13px; font-weight: 600; fill: currentColor; }
+.lbl { font-size: 12px; fill: currentColor; }
+.lbl.b { font-weight: 600; }
+.mono { font-family: var(--mono-font, ui-monospace, monospace); font-size: 11.5px; fill: currentColor; }
+.box { fill: none; stroke: currentColor; stroke-opacity: .45; rx: 4; }
+.box.good { stroke: #2fa66b; stroke-opacity: 1; stroke-width: 1.5; }
+.box.bad { stroke: #d9534f; stroke-opacity: 1; stroke-width: 1.5; }
+.ship { fill: none; stroke: currentColor; stroke-opacity: .7; stroke-width: 1.4; marker-end: url(#arrow); }
+.ship.dashed { stroke-dasharray: 5 4; }
+.cap { font-size: 12.5px; fill: currentColor; fill-opacity: .85; }
+.time { font-size: 11px; fill: currentColor; fill-opacity: .6; }
+.tick { stroke: currentColor; stroke-opacity: .3; stroke-dasharray: 3 3; }
+.bar { rx: 3; }
+.barlbl { font-size: 12px; fill: #141414; }
+.region { fill: currentColor; fill-opacity: .04; stroke: currentColor; stroke-opacity: .3; stroke-dasharray: 4 3; rx: 6; }
+.node { fill: none; stroke: currentColor; stroke-opacity: .55; stroke-width: 1.2; rx: 5; }
+.node.good { stroke: #2fa66b; stroke-opacity: 1; stroke-width: 1.5; }
+.node.bad { stroke: #d9534f; stroke-opacity: 1; stroke-width: 1.5; }
+.cell { fill: currentColor; fill-opacity: .07; stroke: currentColor; stroke-opacity: .5; }
+.ship.bad { stroke: #d9534f; stroke-opacity: 1; marker-end: url(#arrow-bad); }
+.slice { fill: currentColor; fill-opacity: .25; }
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="currentColor" fill-opacity=".75"/></marker><marker id="arrow-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="#d9534f"/></marker></defs>
+<text class="lbl b" x="120" y="36" text-anchor="start">dc1 removes C, leaves a marker</text>
+<line class="tick" x1="120" y1="44" x2="120" y2="238"/>
+<line class="tick" x1="480" y1="44" x2="480" y2="238"/>
+<text class="lbl b" x="480" y="36" text-anchor="middle">dc2's live copy of C arrives</text>
+<rect class="bar" x="120" y="70.0" width="280" height="16" fill="#e08a1e" fill-opacity="0.85"/>
+<text class="barlbl" x="126" y="82">link down: dc2 has not heard</text>
+<rect class="bar" x="400" y="70.0" width="80" height="16" fill="#e08a1e" fill-opacity="0.5"/>
+<text class="barlbl" x="406" y="82">lag</text>
+<text class="lbl" x="112" y="82" text-anchor="end">between the clusters</text>
+<rect class="bar" x="120" y="120.0" width="230" height="16" fill="#d9534f" fill-opacity="0.85"/>
+<text class="barlbl" x="126" y="132">marker kept for a short purge age</text>
+<text class="lbl b" x="358" y="132" text-anchor="start">purged: C comes back</text>
+<text class="lbl" x="112" y="132" text-anchor="end">too short</text>
+<rect class="bar" x="120" y="170.0" width="480" height="16" fill="#2fa66b" fill-opacity="0.85"/>
+<text class="barlbl" x="126" y="182">marker kept for a purge age longer than outage + lag</text>
+<text class="lbl b" x="608" y="182" text-anchor="start">marker wins</text>
+<text class="lbl" x="112" y="182" text-anchor="end">long enough</text>
+<text class="time" x="696" y="238" text-anchor="end">time →</text>
+<line class="lane" x1="96" y1="222" x2="696" y2="222"/>
+<text class="cap" x="360.0" y="272" text-anchor="middle">A marker purged before the other side has seen the removal lets that side resurrect the entry. The version floor</text>
+<text class="cap" x="360.0" y="289" text-anchor="middle">limits the damage to devices re-added in that window, but the purge age is the real guard.</text>
+</svg>

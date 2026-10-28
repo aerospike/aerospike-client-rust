@@ -1,0 +1,21 @@
+[package]
+name = "aerospike-udf-lwwset"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+aerospike-udf-sdk-wasm = { path = "../.." }
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"
+strip = true
+
+# Its own workspace root, like the other examples. Build with
+# `cargo build --release --target wasm32-unknown-unknown`.
+[workspace]

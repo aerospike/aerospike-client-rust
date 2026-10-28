@@ -1,0 +1,14 @@
+[book]
+title = "Aerospike WASM UDFs"
+description = "Writing record UDFs, stream UDFs and event handlers for the Aerospike server's WebAssembly engine, in Rust, Go, C and Java."
+authors = ["Aerospike, Inc."]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "build"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/aerospike/aerospike-client-rust"
