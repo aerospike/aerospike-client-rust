@@ -65,9 +65,47 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
     set_name
 }
 
+/// Whether every node of the cluster serves Top-K (server 8.2.1).
+fn cluster_supports_top_k(client: &Client) -> bool {
+    client
+        .nodes()
+        .iter()
+        .all(|node| node.version().supports_query_top_k())
+}
+
+/// A client for a Top-K test, or `None` when a node lacks Top-K support,
+/// which makes the test a no-op.
+async fn top_k_client() -> Option<Client> {
+    let client = common::client().await;
+    if cluster_supports_top_k(&client) {
+        Some(client)
+    } else {
+        client.close().await.unwrap();
+        None
+    }
+}
+
+/// Runs a Top-K statement and returns the `id` bin of each record, in the
+/// order the client delivered them.
+async fn ranked_ids(client: &Client, statement: Statement) -> Vec<i64> {
+    client
+        .query(&QueryPolicy::default(), PartitionFilter::all(), statement)
+        .await
+        .unwrap()
+        .into_stream()
+        .map(|result| match result.unwrap().bins["id"] {
+            Value::Int(id) => id,
+            ref value => panic!("expected integer id, got {value:?}"),
+        })
+        .collect()
+        .await
+}
+
 #[aerospike_macro::test]
 async fn query_top_k_pushdown_returns_ordered_results() {
-    let client = common::client().await;
+    let Some(client) = top_k_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let write_policy = WritePolicy::default();
@@ -80,14 +118,6 @@ async fn query_top_k_pushdown_returns_ordered_results() {
             .await
             .unwrap();
     }
-
-    assert!(
-        client
-            .nodes()
-            .iter()
-            .all(|node| node.version().supports_query_top_k()),
-        "Top-K pushdown test requires every node to support query-order-by"
-    );
 
     async fn query_scores(
         client: &Client,
@@ -131,19 +161,12 @@ async fn query_top_k_pushdown_returns_ordered_results() {
 
 #[aerospike_macro::test]
 async fn query_top_k_pushdown_handles_nan_and_nil_double_keys() {
-    let client = common::client().await;
+    let Some(client) = top_k_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let write_policy = WritePolicy::default();
-
-    if !client
-        .nodes()
-        .iter()
-        .all(|node| node.version().supports_query_top_k())
-    {
-        client.close().await.unwrap();
-        return;
-    }
 
     for (id, score) in [
         (0i64, Some(1.0f64)),
@@ -2115,6 +2138,291 @@ async fn query_ops_projection_multiple_bins() {
         count += 1;
     }
     assert_eq!(count, 20);
+
+    client.close().await.unwrap();
+}
+
+// ---- Top-K: the Java client's TestTopKQuery, TestTopKRejections ----
+
+#[aerospike_macro::test]
+async fn top_k_second_order_key_breaks_ties() {
+    let Some(client) = top_k_client().await else {
+        return;
+    };
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let write_policy = WritePolicy::default();
+
+    for (id, score, name) in [(0, 1, "c"), (1, 1, "a"), (2, 0, "b"), (3, 1, "b"), (4, 0, "a")] {
+        let key = as_key!(namespace, &set_name, id);
+        client
+            .put(
+                &write_policy,
+                &key,
+                &[as_bin!("id", id), as_bin!("score", score), as_bin!("name", name)],
+            )
+            .await
+            .unwrap();
+    }
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_order_by("score", OrderByType::Integer, Order::Desc);
+    statement.then_order_by("name", OrderByType::String, Order::Asc);
+    statement.set_top_k(3);
+    assert_eq!(ranked_ids(&client, statement).await, vec![1, 3, 0]);
+
+    // The second key's own direction.
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_order_by("score", OrderByType::Integer, Order::Asc);
+    statement.then_order_by("name", OrderByType::String, Order::Desc);
+    statement.set_top_k(2);
+    assert_eq!(ranked_ids(&client, statement).await, vec![2, 4]);
+
+    client.close().await.unwrap();
+}
+
+// With an operations projection the server answers every op, so a record
+// without the order-by bin still comes back and ranks last.
+#[aerospike_macro::test]
+async fn top_k_missing_order_key_ranks_last_with_an_operations_projection() {
+    let Some(client) = top_k_client().await else {
+        return;
+    };
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let write_policy = WritePolicy::default();
+
+    for (id, score) in [(0, Some(3)), (1, Some(1)), (2, Some(2)), (3, None), (4, None)] {
+        let key = as_key!(namespace, &set_name, id);
+        let mut bins = vec![as_bin!("id", id)];
+        if let Some(score) = score {
+            bins.push(as_bin!("score", score));
+        }
+        client.put(&write_policy, &key, &bins).await.unwrap();
+    }
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_operations(vec![
+        aerospike::operations::get_bin("id"),
+        aerospike::operations::get_bin("score"),
+    ]);
+    statement.set_order_by("score", OrderByType::Integer, Order::Desc);
+    statement.set_top_k(10);
+
+    let ids = ranked_ids(&client, statement).await;
+    assert_eq!(ids.len(), 5, "{ids:?}");
+    assert_eq!(&ids[..3], &[0, 2, 1]);
+    let mut tail = ids[3..].to_vec();
+    tail.sort_unstable();
+    assert_eq!(tail, vec![3, 4], "records without the key rank last");
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn top_k_string_key_is_case_sensitive_unless_flagged() {
+    let Some(client) = top_k_client().await else {
+        return;
+    };
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let write_policy = WritePolicy::default();
+
+    for (id, name) in [(0, "apple"), (1, "Banana"), (2, "cherry")] {
+        let key = as_key!(namespace, &set_name, id);
+        client
+            .put(&write_policy, &key, &[as_bin!("id", id), as_bin!("name", name)])
+            .await
+            .unwrap();
+    }
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_order_by("name", OrderByType::String, Order::Asc);
+    statement.set_top_k(3);
+    assert_eq!(ranked_ids(&client, statement).await, vec![1, 0, 2], "byte order: B < a");
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_order_by_with_flags(
+        "name",
+        OrderByType::String,
+        Order::Asc,
+        OrderByFlags::CaseInsensitive,
+    );
+    statement.set_top_k(3);
+    assert_eq!(ranked_ids(&client, statement).await, vec![0, 1, 2], "folded: a < b < c");
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn top_k_bytes_key_compares_unsigned() {
+    let Some(client) = top_k_client().await else {
+        return;
+    };
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let write_policy = WritePolicy::default();
+
+    for (id, bytes) in [(0, vec![0x80u8]), (1, vec![0x7f]), (2, vec![0x01, 0xff])] {
+        let key = as_key!(namespace, &set_name, id);
+        client
+            .put(
+                &write_policy,
+                &key,
+                &[as_bin!("id", id), as_bin!("b", Value::Blob(bytes))],
+            )
+            .await
+            .unwrap();
+    }
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_order_by("b", OrderByType::Bytes, Order::Asc);
+    statement.set_top_k(3);
+    assert_eq!(ranked_ids(&client, statement).await, vec![2, 1, 0]);
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn top_k_k_above_match_count_returns_every_match_and_an_empty_set_nothing() {
+    let Some(client) = top_k_client().await else {
+        return;
+    };
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let write_policy = WritePolicy::default();
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_order_by("id", OrderByType::Integer, Order::Desc);
+    statement.set_top_k(10);
+    assert!(ranked_ids(&client, statement).await.is_empty());
+
+    for id in 0..3 {
+        let key = as_key!(namespace, &set_name, id);
+        client
+            .put(&write_policy, &key, &[as_bin!("id", id)])
+            .await
+            .unwrap();
+    }
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_order_by("id", OrderByType::Integer, Order::Desc);
+    statement.set_top_k(10);
+    assert_eq!(ranked_ids(&client, statement).await, vec![2, 1, 0]);
+
+    client.close().await.unwrap();
+}
+
+// An order key without k is sent as it is; the server, not the client,
+// refuses it.
+#[aerospike_macro::test]
+async fn an_order_key_without_k_is_rejected_by_the_server() {
+    let Some(client) = top_k_client().await else {
+        return;
+    };
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, 1);
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("id", 1)])
+        .await
+        .unwrap();
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_order_by("id", OrderByType::Integer, Order::Desc);
+
+    let results: Vec<_> = client
+        .query(&QueryPolicy::default(), PartitionFilter::all(), statement)
+        .await
+        .expect("the client forwards the statement")
+        .into_stream()
+        .collect()
+        .await;
+    assert!(
+        results.iter().any(Result::is_err),
+        "the server must refuse an order key without k: {results:?}"
+    );
+
+    client.close().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn top_k_rejects_a_resumed_partition_filter() {
+    let Some(client) = top_k_client().await else {
+        return;
+    };
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+
+    let mut statement = Statement::new(namespace, &set_name, Bins::All);
+    statement.set_order_by("id", OrderByType::Integer, Order::Desc);
+    statement.set_top_k(3);
+
+    let key = as_key!(namespace, &set_name, 1);
+    let err = client
+        .query(&QueryPolicy::default(), PartitionFilter::by_key(&key), statement)
+        .await
+        .expect_err("a filter with a resume digest must be refused");
+    assert!(err.to_string().contains("resumed partition filter"), "{err}");
+
+    client.close().await.unwrap();
+}
+
+// Client-side: no server round trip, so no gate.
+#[aerospike_macro::test]
+async fn top_k_rejects_an_order_key_produced_by_two_projection_operations() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+
+    let mut statement = Statement::new(namespace, "topk", Bins::All);
+    statement.set_operations(vec![
+        aerospike::operations::get_bin("score"),
+        aerospike::operations::get_bin("score"),
+    ]);
+    statement.set_order_by("score", OrderByType::Integer, Order::Desc);
+    statement.set_top_k(3);
+
+    let err = client
+        .query(&QueryPolicy::default(), PartitionFilter::all(), statement)
+        .await
+        .expect_err("a duplicate projection must be refused");
+    assert!(err.to_string().contains("only one projection operation"), "{err}");
+
+    let mut statement = Statement::new(namespace, "topk", Bins::All);
+    statement.set_top_k(3);
+    let err = client
+        .query(&QueryPolicy::default(), PartitionFilter::all(), statement)
+        .await
+        .expect_err("k without an order key must be refused");
+    assert!(err.to_string().contains("requires an order key"), "{err}");
+
+    client.close().await.unwrap();
+}
+
+// On a cluster where a node predates Top-K the query fails up front instead
+// of running unranked; on a capable cluster it runs.
+#[aerospike_macro::test]
+async fn top_k_fails_when_any_node_lacks_support() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+
+    for with_k in [true, false] {
+        let mut statement = Statement::new(namespace, &set_name, Bins::All);
+        statement.set_order_by("id", OrderByType::Integer, Order::Desc);
+        if with_k {
+            statement.set_top_k(3);
+        }
+        let result = client
+            .query(&QueryPolicy::default(), PartitionFilter::all(), statement)
+            .await;
+        if cluster_supports_top_k(&client) {
+            assert!(result.is_ok(), "{result:?}");
+        } else {
+            let err = result.expect_err("an older node must fail the query up front");
+            assert!(err.to_string().contains("not supported by all nodes"), "{err}");
+        }
+    }
 
     client.close().await.unwrap();
 }

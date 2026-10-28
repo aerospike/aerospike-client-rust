@@ -1,7 +1,8 @@
 //! `ORDER BY <bin> LIMIT k` ("Top-K") queries.
 //!
-//! When every target node supports it, the server reduces each node's
-//! candidates before the client performs the final merge.
+//! Every node reduces its own candidates to the best `k`, and the client
+//! merges those into the global answer. Needs Aerospike Server 8.2.1 on every
+//! node; the query fails up front otherwise.
 //!
 //! Run with:
 //!
@@ -31,6 +32,16 @@ async fn main() {
 pub async fn run() {
     let client = connect_to_aerospike().await;
     println!("Connected to Aerospike!");
+
+    if !client
+        .nodes()
+        .iter()
+        .all(|node| node.version().supports_query_top_k())
+    {
+        println!("Skipping: Top-K queries need Aerospike Server 8.2.1 on every node.");
+        client.close().await.unwrap();
+        return;
+    }
 
     populate_test_data(&client).await;
 

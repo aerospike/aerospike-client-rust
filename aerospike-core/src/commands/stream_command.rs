@@ -67,16 +67,19 @@ impl StreamCommand {
         }
     }
 
+    /// Parses one response row into its record, the partition cursor value
+    /// (`bval`) and the row's last-update time (0 when the server sent none),
+    /// plus whether the stream continues.
     async fn parse_record(
         &self,
         conn: &mut BufferedConn<'_>,
         _size: usize,
-    ) -> Result<(Option<Record>, Option<u64>, bool)> {
+    ) -> Result<(Option<Record>, Option<u64>, u64, bool)> {
         let result_code = ResultCode::from(conn.buffer().read_u8(Some(5)));
         if result_code != ResultCode::Ok {
             match result_code {
                 ResultCode::KeyNotFoundError | ResultCode::FilteredOut => {
-                    return Ok((None, None, false))
+                    return Ok((None, None, 0, false))
                 }
                 ResultCode::PartitionUnavailable => (),
                 _ => {
@@ -92,7 +95,7 @@ impl StreamCommand {
         // if cmd is the end marker of the response, do not proceed further
         let info3 = conn.buffer().read_u8(Some(3));
         if info3 & buffer::INFO3_LAST == buffer::INFO3_LAST {
-            return Ok((None, None, false));
+            return Ok((None, None, 0, false));
         }
 
         conn.buffer().skip(6);
@@ -102,7 +105,8 @@ impl StreamCommand {
         let field_count = conn.buffer().read_u16(None) as usize; // almost certainly 0
         let op_count = conn.buffer().read_u16(None) as usize;
 
-        let (key, bval) = StreamCommand::parse_key(conn, field_count).await?;
+        let fields = Self::parse_key_fields(conn, field_count).await?;
+        let (key, bval, last_update_time) = (fields.key, fields.bval, fields.last_update_time);
 
         // Partition is done, don't go further
         if info3 & buffer::INFO3_PARTITION_DONE != 0 {
@@ -116,7 +120,7 @@ impl StreamCommand {
                 drop(tracker);
                 drop(node_partitions);
             }
-            return Ok((None, None, true));
+            return Ok((None, None, 0, true));
         }
 
         let mut bins: IndexMap<String, Value> = IndexMap::with_capacity(op_count);
@@ -142,7 +146,7 @@ impl StreamCommand {
         }
 
         let record = Record::new(Some(key), bins, None, generation, expiration);
-        Ok((Some(record), bval, true))
+        Ok((Some(record), bval, last_update_time, true))
     }
 
     async fn parse_stream(&self, conn: &mut BufferedConn<'_>, size: usize) -> Result<bool> {
@@ -158,7 +162,7 @@ impl StreamCommand {
 
             let res = self.parse_record(conn, size).await;
             match res {
-                Ok((Some(rec), bval, _)) => {
+                Ok((Some(rec), bval, last_update_time, _)) => {
                     let tracker = self.recordset.tracker.lock().await;
                     let mut node_partitions = self.node_partitions.lock().await;
                     if !tracker.allow_record(&mut node_partitions) {
@@ -166,8 +170,10 @@ impl StreamCommand {
                     }
 
                     if let Some(buffer) = &self.top_k_buffer {
+                        // A Top-K row is counted but leaves no resume cursor:
+                        // a retried partition is ranked again from the start.
                         node_partitions.record_count += 1;
-                        buffer.lock().await.accept(rec);
+                        buffer.lock().await.accept(rec, last_update_time);
                     } else {
                         let key = &rec.key.clone().unwrap();
                         self.recordset.push(Ok(rec)).await?;
@@ -181,8 +187,8 @@ impl StreamCommand {
                     drop(tracker);
                     drop(node_partitions);
                 }
-                Ok((None, _, false)) => return Ok(false),
-                Ok((None, _, true)) => {} // handle partition done
+                Ok((None, _, _, false)) => return Ok(false),
+                Ok((None, _, _, true)) => {} // handle partition done
                 Err(err) => {
                     // let _ = self.recordset.push(Err(err)).await;
                     return Err(err);
@@ -191,15 +197,6 @@ impl StreamCommand {
         }
 
         Ok(true)
-    }
-
-    pub async fn parse_key(
-        conn: &mut BufferedConn<'_>,
-        field_count: usize,
-    ) -> Result<(Key, Option<u64>)> {
-        Self::parse_key_and_version(conn, field_count)
-            .await
-            .map(|(key, bval, _version, _detail)| (key, bval))
     }
 
     /// Parse key fields from batch/stream response, also extracting record version if present.
@@ -213,12 +210,23 @@ impl StreamCommand {
         Option<u64>,
         Option<Box<crate::ServerErrorDetail>>,
     )> {
+        Self::parse_key_fields(conn, field_count)
+            .await
+            .map(|fields| (fields.key, fields.bval, fields.version, fields.error_detail))
+    }
+
+    /// Parses the fields of a batch or stream response row.
+    pub async fn parse_key_fields(
+        conn: &mut BufferedConn<'_>,
+        field_count: usize,
+    ) -> Result<RowFields> {
         let mut digest: [u8; 20] = [0; 20];
         let mut namespace: String = String::new();
         let mut set_name: String = String::new();
         let mut orig_key: Option<Value> = None;
         let mut bval = None;
         let mut version = None;
+        let mut last_update_time = 0;
         // A failing row carries the server's explanation as a field; without
         // capturing it here the unknown-field arm below would skip it.
         let mut error_detail: Option<Box<crate::ServerErrorDetail>> = None;
@@ -252,6 +260,9 @@ impl StreamCommand {
                 x if x == FieldType::BValArray as u8 => {
                     bval = Some(conn.buffer().read_le_u64(None));
                 }
+                x if x == FieldType::Lut as u8 && data_size == 8 => {
+                    last_update_time = conn.buffer().read_u64(None);
+                }
                 x if x == FieldType::RecordVersion as u8 && data_size == 7 => {
                     let buf = conn.buffer();
                     version = Some(Buffer::version_bytes_to_u64(
@@ -275,8 +286,8 @@ impl StreamCommand {
             }
         }
 
-        Ok((
-            Key {
+        Ok(RowFields {
+            key: Key {
                 namespace,
                 set_name,
                 user_key: orig_key,
@@ -284,9 +295,23 @@ impl StreamCommand {
             },
             bval,
             version,
+            last_update_time,
             error_detail,
-        ))
+        })
     }
+}
+
+/// The fields of one batch or stream response row.
+pub struct RowFields {
+    pub key: Key,
+    /// The partition cursor value of a query row.
+    pub bval: Option<u64>,
+    /// The record version of a transaction read.
+    pub version: Option<u64>,
+    /// The row's last-update time (field 14), sent on Top-K query rows; 0
+    /// when absent.
+    pub last_update_time: u64,
+    pub error_detail: Option<Box<crate::ServerErrorDetail>>,
 }
 
 #[async_trait::async_trait]

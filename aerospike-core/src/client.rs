@@ -1503,6 +1503,10 @@ impl Client {
         let policy = policy.as_ref();
         Self::validate_top_k_policy(policy, &statement)?;
         let nodes: Vec<Arc<Node>> = self.cluster.nodes();
+        Self::check_order_by_support(&statement, &nodes)?;
+        if statement.has_top_k() {
+            Self::reject_resumed_top_k_filter(&partition_filter)?;
+        }
         let t_policy = policy.clone();
         let tracker = Arc::new(Mutex::new(
             PartitionTracker::new(&t_policy, Arc::new(Mutex::new(partition_filter)), nodes).await?,
@@ -1518,9 +1522,10 @@ impl Client {
         let t_recordset = recordset.clone();
         let defer_recordset = recordset.clone();
         let cluster = self.cluster.clone();
-        // Top-K statements use server-side per-node reduction when available,
-        // then merge candidates globally in the client.
-        let is_top_k = statement.order_by.is_some();
+        // A Top-K statement is reduced on every node and merged in the
+        // client. An order key without `k` runs as a plain query, which the
+        // server refuses when it sees the order-by field.
+        let is_top_k = statement.has_top_k();
         aerospike_rt::spawn(async move {
             if is_top_k {
                 Self::execute_top_k_query_timeout(
@@ -2095,7 +2100,6 @@ impl Client {
                                 cluster,
                                 None,
                                 execute_where,
-                                false,
                             )
                             .await;
                             let result = cmd.execute().await;
@@ -2202,8 +2206,13 @@ impl Client {
         let sleep_multiplier = policy.base_policy.sleep_multiplier();
         let mut sleep_interval = policy.base_policy.sleep_between_retries();
 
-        // Candidate results accumulated for this attempt.
-        let mut all_node_results: Vec<Vec<Record>> = Vec::new();
+        // One accumulator for every node of the query, so a record two nodes
+        // both return is deduplicated by its last-update time.
+        let limit = statement.top_k.expect("Top-K execution requires topK") as usize;
+        let accumulator = Arc::new(Mutex::new(crate::query::TopKAccumulator::new(
+            statement.order_by.clone(),
+            limit,
+        )));
 
         loop {
             let mut timed_out = false;
@@ -2228,7 +2237,14 @@ impl Client {
                 recordset.set_instances(node_list.len() + 1); // +1 is for the async executor
 
                 if recordset.is_active() {
-                    let send_top_k = Self::nodes_support_top_k_pushdown(&node_list).await;
+                    // A node that joined since the query started may predate
+                    // Top-K; it would run a plain query and return unranked
+                    // rows, so the query fails instead.
+                    if !Self::nodes_support_top_k(&node_list).await {
+                        drop(tracker_locked);
+                        recordset.err(Self::top_k_unsupported_error()).await;
+                        return;
+                    }
                     let semaphore = Arc::new(Semaphore::new(if policy.max_concurrent_nodes == 0 {
                         MAX_PERMITS
                     } else {
@@ -2243,36 +2259,24 @@ impl Client {
                         let node_partition = node_partition.clone();
                         let statement = statement.clone();
                         let cluster = cluster.clone();
+                        let accumulator = accumulator.clone();
                         let handle = aerospike_rt::spawn(async move {
                             let permit = semaphore.acquire().await;
-                            let order_by = statement
-                                .order_by
-                                .clone()
-                                .expect("Top-K execution requires orderBy");
-                            let limit =
-                                statement.top_k.expect("Top-K execution requires topK") as usize;
-                            let buffer = Arc::new(Mutex::new(crate::query::TopKAccumulator::new(
-                                order_by, limit,
-                            )));
                             let result = QueryCommand::new(
                                 &policy,
                                 statement,
                                 recordset.clone(),
                                 node_partition,
                                 cluster,
-                                Some(buffer.clone()),
+                                Some(accumulator),
                                 None,
-                                send_top_k,
                             )
                             .await
                             .execute()
                             .await;
 
                             drop(permit);
-                            match result {
-                                Ok(()) => Ok(buffer.lock().await.take_results()),
-                                Err(e) => Err(e),
-                            }
+                            result
                         });
                         handles.push(handle);
                     }
@@ -2289,7 +2293,7 @@ impl Client {
                         Ok(results) => {
                             for r in results {
                                 match r {
-                                    Ok(buf) => all_node_results.push(buf),
+                                    Ok(()) => {}
                                     Err(e) if matches!(e.kind(), ErrorKind::InvalidArgument) => {
                                         fatal_error = Some(e);
                                     }
@@ -2327,9 +2331,7 @@ impl Client {
                             warn!("Top-K query node task error: {e}");
                             round_had_error = true;
                         }
-                        Ok(results) => {
-                            all_node_results.extend(results);
-                        }
+                        Ok(_) => {}
                     }
                 } else {
                     drop(tracker_locked);
@@ -2343,7 +2345,7 @@ impl Client {
 
             if round_had_error {
                 tracker.lock().await.mark_all_for_retry().await;
-                all_node_results.clear();
+                accumulator.lock().await.clear();
                 // Mark this round incomplete.
                 if let Some(np) = node_list.first() {
                     np.lock().await.parts_unavailable += 1;
@@ -2355,12 +2357,8 @@ impl Client {
             match (done, recordset.is_active()) {
                 (Ok(true), true) if !round_had_error => {
                     drop(tracker_locked);
-                    Self::merge_and_push_top_k_results(
-                        &statement,
-                        std::mem::take(&mut all_node_results),
-                        &recordset,
-                    )
-                    .await;
+                    let results = accumulator.lock().await.take_results();
+                    Self::push_top_k_results(results, &recordset).await;
                     return;
                 }
                 (Ok(true), _) | (Ok(_), false) => return,
@@ -2387,9 +2385,9 @@ impl Client {
 
     /// Rejects Top-K options on background queries.
     fn reject_top_k_on_background_query(statement: &Statement) -> Result<()> {
-        if statement.order_by.is_some() || statement.top_k.is_some() {
+        if statement.has_order_by() || statement.has_top_k() {
             return Err(Error::invalid_argument(
-                "orderBy/topK is only valid on foreground (SELECT-style) queries; background \
+                "Top-K is only valid on foreground (SELECT-style) queries; background \
                  (UPDATE-style) queries do not produce a result stream"
                     .to_string(),
             ));
@@ -2398,7 +2396,7 @@ impl Client {
     }
 
     fn validate_top_k_policy(policy: &QueryPolicy, statement: &Statement) -> Result<()> {
-        if statement.top_k.is_none() {
+        if !statement.has_top_k() {
             return Ok(());
         }
         if !policy.include_bin_data || statement.bins.is_none() {
@@ -2414,7 +2412,37 @@ impl Client {
         Ok(())
     }
 
-    async fn nodes_support_top_k_pushdown(node_partitions: &[Arc<Mutex<NodePartitions>>]) -> bool {
+    fn top_k_unsupported_error() -> Error {
+        Error::invalid_argument("Top-K is not supported by all nodes in the cluster".to_string())
+    }
+
+    /// An order key without `k` is left for the server to refuse, but a node
+    /// that predates Top-K skips the field and runs a plain query, so a
+    /// cluster with such a node fails up front.
+    fn check_order_by_support(statement: &Statement, nodes: &[Arc<Node>]) -> Result<()> {
+        if statement.has_order_by()
+            && (nodes.is_empty() || !nodes.iter().all(|node| node.version().supports_query_top_k()))
+        {
+            return Err(Self::top_k_unsupported_error());
+        }
+        Ok(())
+    }
+
+    /// A Top-K query ranks the whole set; it cannot continue from a cursor.
+    fn reject_resumed_top_k_filter(filter: &PartitionFilter) -> Result<()> {
+        let resumed = filter.digest.is_some()
+            || filter.partitions.as_ref().is_some_and(|parts| {
+                parts.iter().any(|part| part.lock().digest.is_some())
+            });
+        if resumed {
+            return Err(Error::invalid_argument(
+                "Top-K is not supported with a resumed partition filter".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn nodes_support_top_k(node_partitions: &[Arc<Mutex<NodePartitions>>]) -> bool {
         for node_partition in node_partitions {
             if !node_partition
                 .lock()
@@ -2429,18 +2457,9 @@ impl Client {
         true
     }
 
-    /// Merges per-node reductions and pushes the final records to `recordset`.
-    async fn merge_and_push_top_k_results(
-        statement: &Statement,
-        all_node_results: Vec<Vec<Record>>,
-        recordset: &Recordset,
-    ) {
-        let Some(order_by) = statement.order_by.clone() else {
-            return;
-        };
-        let limit = statement.top_k.map_or(usize::MAX, |k| k as usize);
-        let merger = crate::query::TopKMerger::new(order_by, limit);
-        for record in merger.merge(all_node_results) {
+    /// Pushes the merged, best-first records to `recordset`.
+    async fn push_top_k_results(records: Vec<Record>, recordset: &Recordset) {
+        for record in records {
             if recordset.push(Ok(record)).await.is_err() {
                 break;
             }
@@ -3643,9 +3662,12 @@ impl Client {
 
 #[cfg(test)]
 mod top_k_execution_tests {
-    //! Tests for Top-K reduction and result merging.
+    //! Tests for the Top-K query's client-side checks and result delivery.
     use super::Client;
-    use crate::query::{NodePartitions, Order, OrderByFlags, OrderByType, PartitionFilter, PartitionTracker, Recordset};
+    use crate::query::{
+        NodePartitions, Order, OrderByType, PartitionFilter, PartitionTracker, Recordset,
+        TopKAccumulator,
+    };
     use crate::{Bins, IndexMap, Key, Record, Result, Statement, Value};
     use aerospike_rt::Mutex;
     use futures::executor::block_on;
@@ -3659,7 +3681,7 @@ mod top_k_execution_tests {
         stmt
     }
 
-    fn record(digest_byte: u8, generation: u32, score: i64) -> Record {
+    fn record(digest_byte: u8, score: i64) -> Record {
         let mut bins = IndexMap::new();
         bins.insert("score".to_string(), Value::Int(score));
         Record::new(
@@ -3671,7 +3693,7 @@ mod top_k_execution_tests {
             }),
             bins,
             None,
-            generation,
+            1,
             0,
         )
     }
@@ -3699,128 +3721,72 @@ mod top_k_execution_tests {
         })
     }
 
+    fn scores(results: Vec<Result<Record>>) -> Vec<i64> {
+        results
+            .into_iter()
+            .map(|r| match r.unwrap().bins["score"] {
+                Value::Int(i) => i,
+                _ => panic!("expected int"),
+            })
+            .collect()
+    }
+
+    fn node_partitions(version: crate::Version) -> Arc<Mutex<NodePartitions>> {
+        Arc::new(Mutex::new(NodePartitions::new(
+            Arc::new(crate::cluster::node::test_node_with_version(version)),
+            0,
+            Arc::new(Vec::new()),
+        )))
+    }
+
     #[test]
-    fn merges_and_pushes_bounded_ordered_results_then_leaves_stream_open() {
+    fn the_shared_accumulator_bounds_and_orders_what_every_node_returned() {
         let rs = empty_recordset();
         let stmt = top_k_statement("score", Order::Desc, 2);
+        let mut accumulator = TopKAccumulator::new(stmt.order_by.clone(), 2);
 
-        // Three "nodes'" worth of already-bounded, per-node-sorted buffers.
-        let per_node = vec![
-            vec![record(1, 1, 5), record(2, 1, 1)],
-            vec![record(3, 1, 9)],
-            vec![record(4, 1, 3)],
-        ];
+        // Three nodes' rows, arriving interleaved.
+        for (record, lut) in [
+            (record(1, 5), 10),
+            (record(3, 9), 10),
+            (record(2, 1), 10),
+            (record(4, 3), 10),
+        ] {
+            accumulator.accept(record, lut);
+        }
+        block_on(Client::push_top_k_results(accumulator.take_results(), &rs));
 
-        block_on(Client::merge_and_push_top_k_results(&stmt, per_node, &rs));
-
-        let scores: Vec<i64> = close_and_drain(&rs)
-            .into_iter()
-            .map(|r| match r.unwrap().bins["score"] {
-                Value::Int(i) => i,
-                _ => panic!("expected int"),
-            })
-            .collect();
-
-        // Best-first (DESC), truncated to k = 2.
-        assert_eq!(scores, vec![9, 5]);
+        assert_eq!(scores(close_and_drain(&rs)), vec![9, 5]);
     }
 
     #[test]
-    fn dedups_by_digest_generation_first_across_node_buffers() {
+    fn a_record_two_nodes_returned_keeps_its_later_updated_copy() {
         let rs = empty_recordset();
         let stmt = top_k_statement("score", Order::Desc, 10);
+        let mut accumulator = TopKAccumulator::new(stmt.order_by.clone(), 10);
+        accumulator.accept(record(1, 9), 100); // stale but better ranked
+        accumulator.accept(record(1, 1), 200); // later update
+        block_on(Client::push_top_k_results(accumulator.take_results(), &rs));
 
-        let stale_but_better = record(1, 1, 9);
-        let fresh_but_worse = record(1, 2, 1);
-
-        block_on(Client::merge_and_push_top_k_results(
-            &stmt,
-            vec![vec![stale_but_better], vec![fresh_but_worse]],
-            &rs,
-        ));
-
-        let results = close_and_drain(&rs);
-        assert_eq!(
-            results.len(),
-            1,
-            "duplicate digest must be deduped across node buffers"
-        );
-        let rec = results[0].as_ref().unwrap();
-        assert_eq!(
-            rec.generation, 2,
-            "generation-first dedup must keep the newer read"
-        );
+        assert_eq!(scores(close_and_drain(&rs)), vec![1]);
     }
 
     #[test]
-    fn order_by_without_top_k_merges_unbounded() {
-        // Without `top_k`, merging sorts without truncating.
+    fn empty_results_push_nothing() {
         let rs = empty_recordset();
-        let mut stmt = Statement::new("ns", "set", Bins::All);
-        stmt.set_order_by("score", OrderByType::Integer, Order::Asc);
-
-        let per_node = vec![vec![record(1, 1, 3), record(2, 1, 1), record(3, 1, 2)]];
-        block_on(Client::merge_and_push_top_k_results(&stmt, per_node, &rs));
-
-        let scores: Vec<i64> = close_and_drain(&rs)
-            .into_iter()
-            .map(|r| match r.unwrap().bins["score"] {
-                Value::Int(i) => i,
-                _ => panic!("expected int"),
-            })
-            .collect();
-        assert_eq!(scores, vec![1, 2, 3]);
-    }
-
-    #[test]
-    fn empty_node_results_push_nothing() {
-        let rs = empty_recordset();
-        let stmt = top_k_statement("score", Order::Desc, 5);
-        block_on(Client::merge_and_push_top_k_results(&stmt, Vec::new(), &rs));
+        block_on(Client::push_top_k_results(Vec::new(), &rs));
         assert!(close_and_drain(&rs).is_empty());
     }
 
     #[test]
-    fn case_insensitive_string_order_by_merges_correctly() {
-        let rs = empty_recordset();
-        let mut stmt = Statement::new("ns", "set", Bins::All);
-        stmt.set_order_by_with_flags(
-            "name",
-            OrderByType::String,
-            Order::Asc,
-            OrderByFlags::CaseInsensitive,
-        );
-
-        let mut upper = record(1, 1, 0);
-        upper
-            .bins
-            .insert("name".to_string(), Value::String("Banana".to_string()));
-        let mut lower = record(2, 1, 0);
-        lower
-            .bins
-            .insert("name".to_string(), Value::String("apple".to_string()));
-
-        block_on(Client::merge_and_push_top_k_results(
-            &stmt,
-            vec![vec![upper], vec![lower]],
-            &rs,
-        ));
-
-        let names: Vec<String> = close_and_drain(&rs)
-            .into_iter()
-            .map(|r| match r.unwrap().bins["name"].clone() {
-                Value::String(s) => s,
-                _ => panic!("expected string"),
-            })
-            .collect();
-        assert_eq!(names, vec!["apple".to_string(), "Banana".to_string()]);
-    }
-
-    #[test]
-    fn background_query_guard_rejects_order_by() {
+    fn background_query_guard_rejects_order_by_with_or_without_k() {
         let stmt = top_k_statement("score", Order::Desc, 5);
         let err = Client::reject_top_k_on_background_query(&stmt).unwrap_err();
         assert!(err.to_string().contains("foreground"));
+
+        let mut order_only = Statement::new("ns", "set", Bins::All);
+        order_only.set_order_by("score", OrderByType::Integer, Order::Desc);
+        assert!(Client::reject_top_k_on_background_query(&order_only).is_err());
     }
 
     #[test]
@@ -3830,23 +3796,56 @@ mod top_k_execution_tests {
     }
 
     #[test]
-    fn top_k_pushdown_requires_every_target_node_to_support_it() {
-        fn node_partitions(version: crate::Version) -> Arc<Mutex<NodePartitions>> {
-            Arc::new(Mutex::new(NodePartitions::new(
-                Arc::new(crate::cluster::node::test_node_with_version(version)),
-                0,
-                Arc::new(Vec::new()),
-            )))
-        }
-
-        let capable = vec![node_partitions(crate::Version::new(8, 1, 3, 0))];
-        assert!(block_on(Client::nodes_support_top_k_pushdown(&capable)));
+    fn top_k_requires_every_target_node_to_support_it() {
+        let capable = vec![node_partitions(crate::Version::new(8, 2, 1, 0))];
+        assert!(block_on(Client::nodes_support_top_k(&capable)));
 
         let mixed = vec![
-            node_partitions(crate::Version::new(8, 1, 3, 0)),
-            node_partitions(crate::Version::new(8, 1, 2, 0)),
+            node_partitions(crate::Version::new(8, 2, 1, 0)),
+            node_partitions(crate::Version::new(8, 2, 0, 0)),
         ];
-        assert!(!block_on(Client::nodes_support_top_k_pushdown(&mixed)));
+        assert!(!block_on(Client::nodes_support_top_k(&mixed)));
+    }
+
+    #[test]
+    fn an_order_key_fails_up_front_on_a_cluster_with_an_older_node() {
+        let newer = Arc::new(crate::cluster::node::test_node_with_version(
+            crate::Version::new(8, 2, 1, 0),
+        ));
+        let older = Arc::new(crate::cluster::node::test_node_with_version(
+            crate::Version::new(8, 1, 3, 0),
+        ));
+
+        let stmt = top_k_statement("score", Order::Desc, 5);
+        assert!(Client::check_order_by_support(&stmt, &[newer.clone()]).is_ok());
+        let err = Client::check_order_by_support(&stmt, &[newer.clone(), older.clone()])
+            .unwrap_err();
+        assert!(err.to_string().contains("not supported by all nodes"), "{err}");
+        assert!(Client::check_order_by_support(&stmt, &[]).is_err());
+
+        // An order key alone is checked the same way: the older node would
+        // skip the field and run a plain query.
+        let mut order_only = Statement::new("ns", "set", Bins::All);
+        order_only.set_order_by("score", OrderByType::Integer, Order::Desc);
+        assert!(Client::check_order_by_support(&order_only, &[older]).is_err());
+
+        let plain = Statement::new("ns", "set", Bins::All);
+        assert!(Client::check_order_by_support(&plain, &[]).is_ok());
+    }
+
+    #[test]
+    fn top_k_rejects_a_resumed_partition_filter() {
+        assert!(Client::reject_resumed_top_k_filter(&PartitionFilter::all()).is_ok());
+        assert!(Client::reject_resumed_top_k_filter(&PartitionFilter::by_range(0, 8)).is_ok());
+
+        let key = Key::new("ns", "set", Value::from("k")).unwrap();
+        let by_key = PartitionFilter::by_key(&key);
+        let err = Client::reject_resumed_top_k_filter(&by_key).unwrap_err();
+        assert!(err.to_string().contains("resumed partition filter"), "{err}");
+
+        let mut resumed = PartitionFilter::all();
+        resumed.partitions = Some(PartitionTracker::init_partitions(0, 4, Some([7; 20])));
+        assert!(Client::reject_resumed_top_k_filter(&resumed).is_err());
     }
 
     #[test]
@@ -3859,17 +3858,5 @@ mod top_k_execution_tests {
         let mut max_records = crate::policy::QueryPolicy::default();
         max_records.max_records = 1;
         assert!(Client::validate_top_k_policy(&max_records, &statement).is_err());
-    }
-
-    #[test]
-    fn merge_uses_order_by_clone_not_the_original_reference() {
-        let rs = empty_recordset();
-        let stmt = top_k_statement("score", Order::Desc, 1);
-        block_on(Client::merge_and_push_top_k_results(
-            &stmt,
-            vec![vec![record(1, 1, 1)]],
-            &rs,
-        ));
-        assert_eq!(stmt.top_k, Some(1));
     }
 }

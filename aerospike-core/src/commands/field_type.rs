@@ -41,6 +41,8 @@ pub enum FieldType {
     DigestArray = 12,
     /// Max records.
     MaxRecords = 13,
+    /// Last-update time of a query row, sent with Top-K rows.
+    Lut = 14,
     /// Bin value array.
     BValArray = 15,
     /// Index name.

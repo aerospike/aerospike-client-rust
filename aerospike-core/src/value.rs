@@ -1901,15 +1901,15 @@ mod tests {
         }
     }
 
-    // The server preserves non-finite element bits.
+    // Signed zeros and the finite extremes keep their bits through both paths.
     #[test]
-    fn non_finite_vector_elements_round_trip_through_both_serde_paths() {
+    fn float_extreme_vector_elements_round_trip_through_both_serde_paths() {
         use crate::Vector;
 
         for value in [
-            Value::Vector(Vector::float32(vec![f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.0])),
-            Value::Vector(Vector::float64(vec![f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.0])),
-            Value::Vector(Vector::float16(vec![0x7c00, 0xfc00, 0x7e00])),
+            Value::Vector(Vector::float32(vec![f32::MAX, f32::MIN, f32::MIN_POSITIVE, -0.0, 0.0])),
+            Value::Vector(Vector::float64(vec![f64::MAX, f64::MIN, f64::MIN_POSITIVE, -0.0, 0.0])),
+            Value::Vector(Vector::float16(vec![0x7bff, 0xfbff, 0x0001, 0x8000, 0x0000])),
         ] {
             assert_eq!(particle_round_trip(&value), value, "particle: {value}");
             assert_eq!(cdt_list_round_trip(value.clone()), value, "cdt: {value}");

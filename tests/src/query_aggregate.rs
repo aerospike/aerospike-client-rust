@@ -58,6 +58,47 @@ function average(s, bin_name)
 end
 ";
 
+/// The Java client's `vector_example.lua`: `echo` is a record UDF, the two
+/// stream functions describe a vector as client-side Lua receives it, since
+/// the stages after `reduce` run in the client.
+const VECTOR_UDF: &str = r#"
+-- Return the argument unchanged.
+function echo(r, value)
+    return value
+end
+
+local function describe(value)
+    local result = map()
+    result["size"] = bytes.size(value)
+    result["type"] = bytes.get_type(value)
+    result["value"] = value
+    return result
+end
+
+function describe_bin(stream, name)
+    local function mapper(rec)
+        return rec[name]
+    end
+    local function keep_first(value1, value2)
+        return value1
+    end
+    return stream : map(mapper) : reduce(keep_first) : map(describe)
+end
+
+function describe_arg(stream, value)
+    local function one(rec)
+        return 1
+    end
+    local function add(count1, count2)
+        return count1 + count2
+    end
+    local function describe_value(count)
+        return describe(value)
+    end
+    return stream : map(one) : reduce(add) : map(describe_value)
+end
+"#;
+
 /// Register the UDF on the server and make the same source available to
 /// the client-side Lua runtime.
 async fn register_udf(client: &Client, package: &str, source: &str) {
@@ -274,6 +315,107 @@ async fn query_aggregate_missing_client_package_errors() {
         }
     }
     assert!(saw_error, "expected the missing package to surface an error");
+
+    client.close().await.unwrap();
+}
+
+/// A vector the client hands to its own Lua reaches it as bytes of particle
+/// type 16 and comes back as a vector. A vector a UDF returns, as a stream
+/// partial or a record UDF result, arrives typed as a plain BLOB holding the
+/// wire value: the server types every bytes result of a UDF as BLOB and the
+/// subtype is not carried. `Vector::from_wire_bytes` decodes it.
+#[aerospike_macro::test]
+async fn query_aggregate_passes_vectors_to_client_side_lua_as_bytes() {
+    let client = common::client().await;
+    if !client
+        .nodes()
+        .iter()
+        .all(|node| node.version().supports_vector())
+    {
+        client.close().await.unwrap();
+        return;
+    }
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+
+    register_udf(&client, "vector_example", VECTOR_UDF).await;
+
+    let vector = Vector::float32(vec![1.5, -2.0]);
+    let wpolicy = WritePolicy::default();
+    for i in 1..=3_i64 {
+        let key = as_key!(namespace, set_name, i);
+        client
+            .put(
+                &wpolicy,
+                &key,
+                &[as_bin!("bin1", i), as_bin!("emb", vector.clone())],
+            )
+            .await
+            .unwrap();
+    }
+
+    fn described(out: &[Value]) -> &std::collections::HashMap<Value, Value> {
+        assert_eq!(out.len(), 1, "{out:?}");
+        match &out[0] {
+            Value::HashMap(map) => map,
+            other => panic!("expected the describe map, got {other:?}"),
+        }
+    }
+
+    fn decoded(value: Option<&Value>) -> Vector {
+        match value {
+            Some(Value::Blob(bytes)) => Vector::from_wire_bytes(bytes).unwrap(),
+            other => panic!("expected the vector's wire bytes as a blob, got {other:?}"),
+        }
+    }
+
+    // A stream partial: the server returns the bin's value as a BLOB.
+    let rs = client
+        .query_aggregate(
+            &QueryPolicy::default(),
+            Statement::new(namespace, set_name, Bins::All),
+            "vector_example",
+            "describe_bin",
+            Some(&[as_val!("emb")]),
+        )
+        .await
+        .unwrap();
+    let out = collect(rs).await;
+    let map = described(&out);
+    assert_eq!(map.get(&Value::from("size")), Some(&Value::Int(14)), "6-byte header + 2 f32");
+    assert_eq!(map.get(&Value::from("type")), Some(&Value::Int(4)), "typed BLOB by the server");
+    assert_eq!(decoded(map.get(&Value::from("value"))), vector);
+
+    // An argument to the stream function: client-side only, typed 16.
+    let rs = client
+        .query_aggregate(
+            &QueryPolicy::default(),
+            Statement::new(namespace, set_name, Bins::All),
+            "vector_example",
+            "describe_arg",
+            Some(&[Value::Vector(vector.clone())]),
+        )
+        .await
+        .unwrap();
+    let out = collect(rs).await;
+    let map = described(&out);
+    assert_eq!(map.get(&Value::from("size")), Some(&Value::Int(14)));
+    assert_eq!(map.get(&Value::from("type")), Some(&Value::Int(16)));
+    assert_eq!(map.get(&Value::from("value")), Some(&Value::Vector(vector.clone())));
+
+    // A record UDF on the server echoes the argument back as a BLOB.
+    let key = as_key!(namespace, set_name, 1);
+    let echoed = client
+        .execute_udf(
+            &wpolicy,
+            &key,
+            "vector_example",
+            "echo",
+            Some(&[Value::Vector(vector.clone())]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(decoded(echoed.as_ref()), vector);
 
     client.close().await.unwrap();
 }

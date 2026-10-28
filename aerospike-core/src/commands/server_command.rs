@@ -114,7 +114,6 @@ impl Command for ServerCommand<'_> {
                 &self.node,
                 None,
                 None,
-                false,
             )
     }
 

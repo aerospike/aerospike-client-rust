@@ -238,6 +238,15 @@ impl Drop for Buffer {
     }
 }
 
+/// Whether an ops projection reads every bin, in which case the server
+/// refuses `RESPOND_ALL_OPS`.
+fn reads_all_bins(operations: Option<&[Operation]>) -> bool {
+    operations.is_some_and(|ops| {
+        ops.iter()
+            .any(|op| op.op == OperationType::Read && op.bin == OperationBin::All)
+    })
+}
+
 impl Buffer {
     pub(crate) fn new(reclaim_threshold: usize) -> Self {
         Buffer {
@@ -1428,6 +1437,10 @@ impl Buffer {
     /// servers, which carried query bin names in a dedicated
     /// `QUERY_BINLIST` field instead of as trailing READ ops, are
     /// not supported.
+    ///
+    /// A Top-K statement writes its order keys (field 46) and limit (field
+    /// 47) whatever the node's version: the caller has already failed the
+    /// query when a node lacks Top-K support.
     #[allow(clippy::cognitive_complexity)]
     pub(crate) fn set_query(
         &mut self,
@@ -1437,7 +1450,6 @@ impl Buffer {
         node: &Node,
         node_partitions: Option<&NodePartitions>,
         execute_where: Option<&[u8]>,
-        send_top_k: bool,
     ) -> Result<()> {
         let filter = statement.filters.as_ref().map(|filters| &filters[0]);
         let is_background = direction.is_background();
@@ -1473,24 +1485,21 @@ impl Buffer {
         self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
 
-        // Top-K pushdown fields.
-        let order_by_size = if send_top_k {
-            let order_by = statement.order_by.as_ref().ok_or_else(|| {
-                Error::invalid_argument("Top-K pushdown requires orderBy".to_string())
-            })?;
-            if statement.top_k.is_none() {
-                return Err(Error::invalid_argument(
-                    "Top-K pushdown requires topK".to_string(),
-                ));
-            }
-            let size = 4 + order_by.bin_name.len();
-            self.data_offset += size + FIELD_HEADER_SIZE as usize;
+        // Top-K fields: the order keys back to back, then the limit. An order
+        // key without a limit is sent as it is, for the server to refuse.
+        let order_by_size: usize = statement
+            .order_by
+            .iter()
+            .map(|key| 4 + key.bin_name.len())
+            .sum();
+        if order_by_size > 0 {
+            self.data_offset += order_by_size + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+        if statement.top_k.is_some() {
             self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
-            field_count += 2;
-            size
-        } else {
-            0
-        };
+            field_count += 1;
+        }
 
         // ---------- estimation: filter block ----------
         if let Some(filter) = filter {
@@ -1637,6 +1646,15 @@ impl Buffer {
                     QueryDuration::LongRelaxAP => info2 |= INFO2_RELAX_AP_LONG_QUERY,
                     QueryDuration::Long => (),
                 }
+                // A Top-K query that projects with operations asks for an
+                // answer to every op, so a record whose order-by bin is absent
+                // still comes back and ranks last instead of being dropped.
+                if statement.has_top_k()
+                    && operation_count > 0
+                    && !reads_all_bins(statement.operations.as_deref())
+                {
+                    info2 |= INFO2_RESPOND_ALL_OPS;
+                }
                 self.write_header_read(
                     direction.base_policy(),
                     info1,
@@ -1665,18 +1683,17 @@ impl Buffer {
         self.write_field_header(8, FieldType::QueryId);
         self.write_u64(task_id);
 
-        if send_top_k {
-            let order_by = statement
-                .order_by
-                .as_ref()
-                .expect("Top-K pushdown requires orderBy");
-            let limit = statement.top_k.expect("Top-K pushdown requires topK");
+        if order_by_size > 0 {
             self.write_field_header(order_by_size, FieldType::OrderBy);
-            self.write_u8(order_by.order_type as u8);
-            self.write_u8(order_by.direction as u8);
-            self.write_u8(order_by.flags.to_wire_bits());
-            self.write_u8(order_by.bin_name.len() as u8);
-            self.write_bytes(order_by.bin_name.as_bytes());
+            for key in &statement.order_by {
+                self.write_u8(key.order_type as u8);
+                self.write_u8(key.direction as u8);
+                self.write_u8(key.flags.to_wire_bits());
+                self.write_u8(key.bin_name.len() as u8);
+                self.write_bytes(key.bin_name.as_bytes());
+            }
+        }
+        if let Some(limit) = statement.top_k {
             self.write_field_u32(limit, FieldType::TopK);
         }
 
@@ -3760,35 +3777,56 @@ mod tests {
         fields
     }
 
-    #[test]
-    fn top_k_fallback_omits_pushdown_fields() {
-        use crate::query::{Order, OrderByType};
-        use crate::{Bins, QueryPolicy, Statement};
-
+    fn query_buffer(stmt: &Statement, policy: &QueryPolicy) -> Buffer {
         let mut buf = Buffer::new(4096);
-        let node = crate::cluster::node::test_node_with_version(crate::Version::default());
-        let mut stmt = Statement::new("test", "test", Bins::All);
-        stmt.set_order_by("score", OrderByType::Integer, Order::Desc);
-        stmt.set_top_k(5);
-
+        let node = crate::cluster::node::test_node_with_version(crate::Version::new(8, 2, 1, 0));
         buf.set_query(
-            QueryDirection::Foreground(&QueryPolicy::default()),
-            &stmt,
+            QueryDirection::Foreground(policy),
+            stmt,
             1,
             &node,
             None,
             None,
-            false,
         )
         .unwrap();
+        buf
+    }
 
-        let fields = read_wire_fields(&buf);
-        assert!(fields
+    fn field_payload(fields: &[(u8, Vec<u8>)], field_type: FieldType) -> Option<&Vec<u8>> {
+        let code = field_type as u8;
+        fields
             .iter()
-            .all(|(field_type, _)| *field_type != FieldType::OrderBy as u8));
-        assert!(fields
-            .iter()
-            .all(|(field_type, _)| *field_type != FieldType::TopK as u8));
+            .find(|(ftype, _)| *ftype == code)
+            .map(|(_, payload)| payload)
+    }
+
+    /// `info2` of the message header: proto header (8 bytes), header size,
+    /// info1, then info2.
+    fn info2_of(buf: &Buffer) -> u8 {
+        buf.data_buffer[buf.compress_offset + 10]
+    }
+
+    #[test]
+    fn a_plain_query_sends_neither_top_k_field() {
+        use crate::{Bins, QueryPolicy, Statement};
+
+        let stmt = Statement::new("test", "test", Bins::All);
+        let fields = read_wire_fields(&query_buffer(&stmt, &QueryPolicy::default()));
+        assert!(field_payload(&fields, FieldType::OrderBy).is_none());
+        assert!(field_payload(&fields, FieldType::TopK).is_none());
+    }
+
+    #[test]
+    fn an_order_key_without_k_is_sent_alone_for_the_server_to_refuse() {
+        use crate::query::{Order, OrderByType};
+        use crate::{Bins, QueryPolicy, Statement};
+
+        let mut stmt = Statement::new("test", "test", Bins::All);
+        stmt.set_order_by("score", OrderByType::Integer, Order::Desc);
+
+        let fields = read_wire_fields(&query_buffer(&stmt, &QueryPolicy::default()));
+        assert!(field_payload(&fields, FieldType::OrderBy).is_some());
+        assert!(field_payload(&fields, FieldType::TopK).is_none());
     }
 
     #[test]
@@ -3796,8 +3834,6 @@ mod tests {
         use crate::query::order_by::{Order, OrderByFlags, OrderByType};
         use crate::{Bins, QueryPolicy, Statement};
 
-        let mut buf = Buffer::new(4096);
-        let node = crate::cluster::node::test_node_with_version(crate::Version::new(8, 1, 3, 0));
         let mut stmt = Statement::new("test", "test", Bins::All);
         stmt.set_order_by_with_flags(
             "score",
@@ -3807,24 +3843,10 @@ mod tests {
         );
         stmt.set_top_k(5);
 
-        buf.set_query(
-            QueryDirection::Foreground(&QueryPolicy::default()),
-            &stmt,
-            1,
-            &node,
-            None,
-            None,
-            true,
-        )
-        .unwrap();
-
-        let fields = read_wire_fields(&buf);
+        let fields = read_wire_fields(&query_buffer(&stmt, &QueryPolicy::default()));
 
         assert_eq!(
-            fields
-                .iter()
-                .find(|(field_type, _)| *field_type == FieldType::OrderBy as u8)
-                .map(|(_, payload)| payload),
+            field_payload(&fields, FieldType::OrderBy),
             Some(&vec![
                 OrderByType::String as u8,
                 Order::Desc as u8,
@@ -3838,12 +3860,85 @@ mod tests {
             ])
         );
         assert_eq!(
-            fields
-                .iter()
-                .find(|(field_type, _)| *field_type == FieldType::TopK as u8)
-                .map(|(_, payload)| payload),
+            field_payload(&fields, FieldType::TopK),
             Some(&5u32.to_be_bytes().to_vec())
         );
+    }
+
+    #[test]
+    fn two_order_keys_encode_back_to_back_in_one_field() {
+        use crate::query::order_by::{Order, OrderByFlags, OrderByType};
+        use crate::{Bins, QueryPolicy, Statement};
+
+        let mut stmt = Statement::new("test", "test", Bins::All);
+        stmt.set_order_by("score", OrderByType::Double, Order::Desc);
+        stmt.then_order_by_with_flags(
+            "nm",
+            OrderByType::String,
+            Order::Asc,
+            OrderByFlags::CaseInsensitive,
+        );
+        stmt.set_top_k(7);
+
+        let fields = read_wire_fields(&query_buffer(&stmt, &QueryPolicy::default()));
+        assert_eq!(
+            field_payload(&fields, FieldType::OrderBy),
+            Some(&vec![
+                OrderByType::Double as u8,
+                Order::Desc as u8,
+                0,
+                5,
+                b's',
+                b'c',
+                b'o',
+                b'r',
+                b'e',
+                OrderByType::String as u8,
+                Order::Asc as u8,
+                1,
+                2,
+                b'n',
+                b'm',
+            ])
+        );
+        assert_eq!(
+            field_payload(&fields, FieldType::TopK),
+            Some(&7u32.to_be_bytes().to_vec())
+        );
+    }
+
+    #[test]
+    fn top_k_with_an_operations_projection_asks_for_every_op_answer() {
+        use crate::operations;
+        use crate::query::{Order, OrderByType};
+        use crate::{Bins, QueryPolicy, Statement};
+
+        let policy = QueryPolicy::default();
+
+        // Operations that read named bins: RESPOND_ALL_OPS set.
+        let mut projected = Statement::new("test", "test", Bins::All);
+        projected.set_operations(vec![operations::get_bin("id"), operations::get_bin("score")]);
+        projected.set_order_by("score", OrderByType::Integer, Order::Desc);
+        projected.set_top_k(3);
+        assert_ne!(info2_of(&query_buffer(&projected, &policy)) & INFO2_RESPOND_ALL_OPS, 0);
+
+        // An operation that reads all bins: the flag would be refused.
+        let mut whole = Statement::new("test", "test", Bins::All);
+        whole.set_operations(vec![operations::get()]);
+        whole.set_order_by("score", OrderByType::Integer, Order::Desc);
+        whole.set_top_k(3);
+        assert_eq!(info2_of(&query_buffer(&whole, &policy)) & INFO2_RESPOND_ALL_OPS, 0);
+
+        // No limit: not a Top-K query.
+        let mut unranked = Statement::new("test", "test", Bins::All);
+        unranked.set_operations(vec![operations::get_bin("score")]);
+        assert_eq!(info2_of(&query_buffer(&unranked, &policy)) & INFO2_RESPOND_ALL_OPS, 0);
+
+        // No operations at all.
+        let mut plain = Statement::new("test", "test", Bins::All);
+        plain.set_order_by("score", OrderByType::Integer, Order::Desc);
+        plain.set_top_k(3);
+        assert_eq!(info2_of(&query_buffer(&plain, &policy)) & INFO2_RESPOND_ALL_OPS, 0);
     }
 
     /// Every `as_msg_field` declares a size that matches what follows it.
@@ -4065,7 +4160,6 @@ mod tests {
                 &node,
                 None,
                 None,
-                false,
             )
             .unwrap();
             assert_eq!(buf.contains_vector(), expected);

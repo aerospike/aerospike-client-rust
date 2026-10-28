@@ -116,14 +116,15 @@ impl Version {
         self >= &Version::new(8, 1, 3, 0)
     }
 
-    /// Server supports VECTOR values and expressions.
+    /// Server supports VECTOR values and expressions (8.2.1).
     pub fn supports_vector(&self) -> bool {
-        self >= &Version::new(8, 1, 3, 0)
+        self >= &Version::new(8, 2, 1, 0)
     }
 
-    /// Returns whether the server supports wire-level Top-K pushdown.
+    /// Server supports server-side Top-K: the order-by and Top-K query fields
+    /// (8.2.1).
     pub fn supports_query_top_k(&self) -> bool {
-        self >= &Version::new(8, 1, 3, 0)
+        self >= &Version::new(8, 2, 1, 0)
     }
 
     /// Server supports two-phase server query selection (field **44** WHERE explain → execute).
@@ -202,9 +203,13 @@ mod tests {
     }
 
     #[test]
-    fn vector_support_requires_server_8_1_3() {
-        assert!(!Version::new(8, 1, 2, 99).supports_vector());
-        assert!(Version::new(8, 1, 3, 0).supports_vector());
+    fn vector_and_top_k_support_require_server_8_2_1() {
+        assert!(!Version::new(8, 1, 3, 0).supports_vector());
+        assert!(!Version::new(8, 2, 0, 99).supports_vector());
+        assert!(Version::new(8, 2, 1, 0).supports_vector());
+
+        assert!(!Version::new(8, 2, 0, 99).supports_query_top_k());
+        assert!(Version::new(8, 2, 1, 0).supports_query_top_k());
     }
 
     #[test]

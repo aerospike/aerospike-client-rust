@@ -21,6 +21,8 @@ The `crud_sync` example is the exception — it requires the `sync` feature, whi
 * `path_expression` — JSONPath-style CDT path expressions (server 8.1.1+)
 * `query` — secondary-index queries, pagination, expression filters
 * `query_aggregate` — stream UDF aggregation (map/reduce in Lua); requires the `lua` feature, see below
+* `query_top_k` — ranked queries: the best `k` records by one or two order keys (server 8.2.1+)
+* `query_vector_top_k` — hybrid vector search: an index filter, ranked by vector distance, Top-K (server 8.2.1+)
 * `record_operations` — single-record ops and write policies (add/append/TTL/generation/replace/send-key)
 * `scan` — full-set scans, paging, resume and parallel consumption
 * `server_info` — the info protocol (build, namespaces, statistics)

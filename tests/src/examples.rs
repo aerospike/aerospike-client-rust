@@ -43,6 +43,10 @@ mod query_example;
 #[allow(dead_code)]
 mod query_top_k_example;
 
+#[path = "../../examples/query_vector_top_k.rs"]
+#[allow(dead_code)]
+mod query_vector_top_k_example;
+
 #[path = "../../examples/timeout_configuration.rs"]
 #[allow(dead_code)]
 mod timeout_configuration_example;
@@ -101,6 +105,11 @@ async fn example_query() {
 #[aerospike_macro::test]
 async fn example_query_top_k() {
     query_top_k_example::run().await;
+}
+
+#[aerospike_macro::test]
+async fn example_query_vector_top_k() {
+    query_vector_top_k_example::run().await;
 }
 
 #[aerospike_macro::test]

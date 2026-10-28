@@ -32,7 +32,7 @@ pub use self::recordset::Recordset;
 #[cfg(feature = "lua")]
 pub use self::result_set::{ResultSet, ResultStream};
 pub use self::statement::Statement;
-pub(crate) use self::top_k_merge::{TopKAccumulator, TopKMerger};
+pub(crate) use self::top_k_merge::TopKAccumulator;
 pub use self::udf::UDFLang;
 
 /// Query filter definitions and filter value traits.

@@ -23,6 +23,9 @@ use crate::Value;
 /// Maximum length, in bytes, of an order-by bin name.
 const MAX_ORDER_BY_BIN_NAME_LEN: usize = 15;
 
+/// How many order keys a Top-K query takes.
+const MAX_ORDER_KEYS: usize = 2;
+
 /// Inclusive bounds for `Statement::set_top_k`'s `k`.
 const TOP_K_MIN: u32 = 1;
 const TOP_K_MAX: u32 = 1000;
@@ -64,10 +67,12 @@ pub struct Statement {
     /// reads as well.
     pub operations: Option<Vec<Operation>>,
 
-    /// Top-K order-by clause. Requires `top_k`.
-    pub order_by: Option<OrderBy>,
+    /// Top-K order keys, at most two, compared in order; empty when the query
+    /// is not ranked. Set with [`Self::set_order_by`] and
+    /// [`Self::then_order_by`].
+    pub order_by: Vec<OrderBy>,
 
-    /// Top-K limit (`k`), in `[1, 1000]`. Must be paired with `order_by`.
+    /// Top-K limit (`k`), in `[1, 1000]`. Requires an order key.
     pub top_k: Option<u32>,
 }
 
@@ -93,7 +98,7 @@ impl Statement {
             aggregation: None,
             filters: None,
             operations: None,
-            order_by: None,
+            order_by: Vec::new(),
             top_k: None,
         }
     }
@@ -148,10 +153,11 @@ impl Statement {
         self.aggregation = Some(agg);
     }
 
-    /// Sets the Top-K order key and direction.
+    /// Sets the Top-K order key and direction, replacing any keys set before.
     ///
-    /// The key must appear in the returned record and be paired with
-    /// `set_top_k` before execution.
+    /// The key must appear in the returned record. Pair it with
+    /// [`Self::set_top_k`]: an order key sent without `k` is refused by the
+    /// server.
     pub fn set_order_by(&mut self, bin_name: &str, order_type: OrderByType, direction: Order) {
         self.set_order_by_with_flags(bin_name, order_type, direction, OrderByFlags::None);
     }
@@ -165,7 +171,26 @@ impl Statement {
         direction: Order,
         flags: OrderByFlags,
     ) {
-        self.order_by = Some(OrderBy {
+        self.order_by.clear();
+        self.then_order_by_with_flags(bin_name, order_type, direction, flags);
+    }
+
+    /// Adds a second order key, consulted when the first compares equal. It
+    /// must name a different bin from the first key; a Top-K query takes at
+    /// most two keys.
+    pub fn then_order_by(&mut self, bin_name: &str, order_type: OrderByType, direction: Order) {
+        self.then_order_by_with_flags(bin_name, order_type, direction, OrderByFlags::None);
+    }
+
+    /// Like [`Self::then_order_by`], with optional modifiers.
+    pub fn then_order_by_with_flags(
+        &mut self,
+        bin_name: &str,
+        order_type: OrderByType,
+        direction: Order,
+        flags: OrderByFlags,
+    ) {
+        self.order_by.push(OrderBy {
             bin_name: bin_name.to_owned(),
             order_type,
             direction,
@@ -173,9 +198,19 @@ impl Statement {
         });
     }
 
-    /// Sets the Top-K limit. Must be paired with `set_order_by`.
+    /// Sets the Top-K limit. Requires an order key, set in any order.
     pub const fn set_top_k(&mut self, k: u32) {
         self.top_k = Some(k);
+    }
+
+    /// Whether this is a Top-K query: a limit is set.
+    pub const fn has_top_k(&self) -> bool {
+        self.top_k.is_some()
+    }
+
+    /// Whether an order key is set, with or without a limit.
+    pub const fn has_order_by(&self) -> bool {
+        !self.order_by.is_empty()
     }
 
     pub(crate) fn validate(&self) -> Result<()> {
@@ -206,76 +241,100 @@ impl Statement {
         Ok(())
     }
 
-    /// Validates `order_by` and `top_k` options.
+    /// Validates the Top-K options.
+    ///
+    /// Only a statement with `top_k` is checked. An order key without `k` is
+    /// sent as it is and refused by the server, which keeps the two clients'
+    /// behaviour the same; `k` without an order key is refused here.
     fn validate_top_k(&self) -> Result<()> {
-        if self.order_by.is_none() && self.top_k.is_none() {
+        let Some(k) = self.top_k else {
             return Ok(());
+        };
+
+        if self.order_by.is_empty() {
+            return Err(Error::invalid_argument(
+                "Top-K requires an order key; call set_order_by()".to_string(),
+            ));
         }
 
-        if self.order_by.is_some() != self.top_k.is_some() {
-            return Err(Error::invalid_argument(
-                "orderBy and topK must be set together".to_string(),
-            ));
+        if self.order_by.len() > MAX_ORDER_KEYS {
+            return Err(Error::invalid_argument(format!(
+                "Top-K takes at most {MAX_ORDER_KEYS} order keys"
+            )));
+        }
+
+        if !(TOP_K_MIN..=TOP_K_MAX).contains(&k) {
+            return Err(Error::invalid_argument(format!(
+                "Top-K limit must be in [{TOP_K_MIN}, {TOP_K_MAX}]; got {k}"
+            )));
         }
 
         if self.aggregation.is_some() {
             return Err(Error::invalid_argument(
-                "orderBy/topK is incompatible with aggregate UDFs; use the UDF's own reduce stage"
+                "Top-K is only valid for foreground queries; it cannot be combined with an \
+                 aggregation UDF"
                     .to_string(),
             ));
         }
 
-        if let Some(ref order_by) = self.order_by {
-            if order_by.bin_name.is_empty() {
-                return Err(Error::invalid_argument(
-                    "orderBy bin name must not be empty".to_string(),
-                ));
-            }
-            if order_by.bin_name.contains('\0') {
-                return Err(Error::invalid_argument(
-                    "orderBy bin name must not contain NUL".to_string(),
-                ));
-            }
+        for key in &self.order_by {
+            self.validate_order_key(key)?;
+        }
 
-            if order_by.bin_name.len() > MAX_ORDER_BY_BIN_NAME_LEN {
+        if self.order_by.len() > 1 && self.order_by[0].bin_name == self.order_by[1].bin_name {
+            return Err(Error::invalid_argument(
+                "Top-K order keys must use different bins".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn validate_order_key(&self, key: &OrderBy) -> Result<()> {
+        let len = key.bin_name.len();
+        if len == 0 || len > MAX_ORDER_BY_BIN_NAME_LEN || key.bin_name.contains('\0') {
+            return Err(Error::invalid_argument(format!(
+                "Top-K order-by bin name must be 1-{MAX_ORDER_BY_BIN_NAME_LEN} UTF-8 bytes without \
+                 NUL"
+            )));
+        }
+
+        if key.flags != OrderByFlags::None && key.order_type != OrderByType::String {
+            return Err(Error::invalid_argument(
+                "Top-K order-by flags are only valid for STRING (CASE_INSENSITIVE on another type)"
+                    .to_string(),
+            ));
+        }
+
+        // The order-by bin must come back with the record: produced by exactly
+        // one projection operation, or named in the bin projection.
+        if let Some(ref operations) = self.operations {
+            let count = operations
+                .iter()
+                .filter(|op| {
+                    matches!(&op.bin, crate::operations::OperationBin::Name(name) if name == &key.bin_name)
+                })
+                .count();
+            if count == 0 {
                 return Err(Error::invalid_argument(format!(
-                    "orderBy bin name '{}' exceeds the {}-character limit",
-                    order_by.bin_name, MAX_ORDER_BY_BIN_NAME_LEN
+                    "Top-K order-by bin '{}' must be included in the operations projection",
+                    key.bin_name
                 )));
             }
-
-            if order_by.flags == OrderByFlags::CaseInsensitive
-                && order_by.order_type != OrderByType::String
-            {
-                return Err(Error::invalid_argument(
-                    "orderBy flag CASE_INSENSITIVE is only valid with type STRING".to_string(),
-                ));
-            }
-
-            // Order-by bin must be one of the projected bins, if a projection is set.
-            if let Some(ref operations) = self.operations {
-                let projected = operations.iter().any(|op| {
-                    matches!(&op.bin, crate::operations::OperationBin::Name(name) if name == &order_by.bin_name)
-                });
-                if !projected {
-                    return Err(Error::invalid_argument(format!(
-                        "orderBy bin '{}' is not in projection; add it to setOperations or remove projection",
-                        order_by.bin_name
-                    )));
-                }
-            } else if let Bins::Some(ref bins) = self.bins {
-                if !bins.iter().any(|b| b == &order_by.bin_name) {
-                    return Err(Error::invalid_argument(format!(
-                        "orderBy bin '{}' is not in projection; add it to setBinNames or remove projection",
-                        order_by.bin_name
-                    )));
-                }
-            }
-        }
-        if let Some(k) = self.top_k {
-            if !(TOP_K_MIN..=TOP_K_MAX).contains(&k) {
+            if count > 1 {
                 return Err(Error::invalid_argument(format!(
-                    "topK must be in [{TOP_K_MIN}, {TOP_K_MAX}]; got {k}"
+                    "Top-K order-by bin '{}' must be produced by only one projection operation",
+                    key.bin_name
+                )));
+            }
+            return Ok(());
+        }
+
+        if let Bins::Some(ref bins) = self.bins {
+            if !bins.iter().any(|b| b == &key.bin_name) {
+                return Err(Error::invalid_argument(format!(
+                    "Top-K order-by bin '{}' must be included in the bin projection",
+                    key.bin_name
                 )));
             }
         }
@@ -299,11 +358,12 @@ mod tests {
     }
 
     #[test]
-    fn order_by_without_top_k_is_rejected() {
+    fn order_by_without_top_k_is_left_for_the_server() {
         let mut stmt = base_statement();
         stmt.set_order_by("score", OrderByType::Integer, Order::Desc);
-        let err = stmt.validate().unwrap_err();
-        assert!(err.to_string().contains("must be set together"));
+        assert!(stmt.validate().is_ok());
+        assert!(stmt.has_order_by());
+        assert!(!stmt.has_top_k());
     }
 
     #[test]
@@ -311,7 +371,73 @@ mod tests {
         let mut stmt = base_statement();
         stmt.set_top_k(10);
         let err = stmt.validate().unwrap_err();
-        assert!(err.to_string().contains("must be set together"));
+        assert!(err.to_string().contains("requires an order key"));
+    }
+
+    #[test]
+    fn setters_accept_any_order() {
+        let mut stmt = base_statement();
+        stmt.set_top_k(10);
+        stmt.set_order_by("score", OrderByType::Integer, Order::Desc);
+        assert!(stmt.validate().is_ok());
+    }
+
+    #[test]
+    fn set_order_by_replaces_and_then_order_by_appends() {
+        let mut stmt = base_statement();
+        stmt.set_order_by("a", OrderByType::Integer, Order::Desc);
+        stmt.then_order_by("b", OrderByType::String, Order::Asc);
+        assert_eq!(stmt.order_by.len(), 2);
+        assert_eq!(stmt.order_by[1].bin_name, "b");
+
+        stmt.set_order_by("c", OrderByType::Integer, Order::Asc);
+        assert_eq!(stmt.order_by.len(), 1);
+        assert_eq!(stmt.order_by[0].bin_name, "c");
+    }
+
+    #[test]
+    fn second_order_key_is_valid_and_checked_like_the_first() {
+        let mut stmt = Statement::new("ns", "set", Bins::from(["a", "b"]));
+        stmt.set_order_by("a", OrderByType::Integer, Order::Desc);
+        stmt.then_order_by("b", OrderByType::String, Order::Asc);
+        stmt.set_top_k(10);
+        assert!(stmt.validate().is_ok());
+
+        stmt.then_order_by_with_flags(
+            "b",
+            OrderByType::Integer,
+            Order::Asc,
+            OrderByFlags::CaseInsensitive,
+        );
+        let err = stmt.validate().unwrap_err();
+        assert!(err.to_string().contains("at most 2 order keys"), "{err}");
+
+        let mut stmt = Statement::new("ns", "set", Bins::from(["a"]));
+        stmt.set_order_by("a", OrderByType::Integer, Order::Desc);
+        stmt.then_order_by("b", OrderByType::String, Order::Asc);
+        stmt.set_top_k(10);
+        let err = stmt.validate().unwrap_err();
+        assert!(err.to_string().contains("bin projection"), "{err}");
+    }
+
+    #[test]
+    fn order_keys_on_the_same_bin_are_rejected() {
+        let mut stmt = base_statement();
+        stmt.set_order_by("a", OrderByType::Integer, Order::Desc);
+        stmt.then_order_by("a", OrderByType::Integer, Order::Asc);
+        stmt.set_top_k(10);
+        let err = stmt.validate().unwrap_err();
+        assert!(err.to_string().contains("different bins"), "{err}");
+    }
+
+    #[test]
+    fn order_by_bin_produced_by_two_operations_is_rejected() {
+        let mut stmt = base_statement();
+        stmt.set_operations(vec![operations::get_bin("dist"), operations::get_bin("dist")]);
+        stmt.set_order_by("dist", OrderByType::Double, Order::Asc);
+        stmt.set_top_k(10);
+        let err = stmt.validate().unwrap_err();
+        assert!(err.to_string().contains("only one projection operation"), "{err}");
     }
 
     #[test]
@@ -347,7 +473,7 @@ mod tests {
         stmt.set_top_k(10);
         stmt.set_aggregate_function("pkg", "func", None);
         let err = stmt.validate().unwrap_err();
-        assert!(err.to_string().contains("aggregate UDF"));
+        assert!(err.to_string().contains("aggregation UDF"));
     }
 
     #[test]
@@ -387,7 +513,7 @@ mod tests {
         );
         stmt.set_top_k(10);
         let err = stmt.validate().unwrap_err();
-        assert!(err.to_string().contains("15-character limit"));
+        assert!(err.to_string().contains("1-15 UTF-8 bytes"));
     }
 
     #[test]
@@ -404,7 +530,7 @@ mod tests {
         stmt.set_order_by("bad\0name", OrderByType::Integer, Order::Desc);
         stmt.set_top_k(10);
         let err = stmt.validate().unwrap_err();
-        assert!(err.to_string().contains("must not contain NUL"));
+        assert!(err.to_string().contains("without NUL"));
     }
 
     #[test]
@@ -413,7 +539,7 @@ mod tests {
         stmt.set_order_by("c", OrderByType::Integer, Order::Desc);
         stmt.set_top_k(10);
         let err = stmt.validate().unwrap_err();
-        assert!(err.to_string().contains("is not in projection"));
+        assert!(err.to_string().contains("bin projection"));
     }
 
     #[test]
@@ -431,7 +557,7 @@ mod tests {
         stmt.set_order_by("dist", OrderByType::Double, Order::Asc);
         stmt.set_top_k(10);
         let err = stmt.validate().unwrap_err();
-        assert!(err.to_string().contains("is not in projection"));
+        assert!(err.to_string().contains("operations projection"));
     }
 
     #[test]

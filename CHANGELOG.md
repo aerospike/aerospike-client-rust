@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.1.0]
+
+* **New Features**
+  * `Vector`: the `VECTOR` particle (`float16`, `int32`, `float32`, `float64`), vector bins and
+    vector-distance expressions (`euclidean_squared_distance`, `dot_product`, `cosine_similarity`).
+    Server 8.2.1. The client refuses an empty vector, a NaN or infinite element, and any vector on a
+    cluster with a node that predates vectors; it decodes only format version 1 with an exact length.
+    `Vector::from_wire_bytes` decodes a vector a UDF handed back, which the server types as a BLOB.
+  * Top-K queries: `Statement::set_order_by`, `then_order_by` (a second key on another bin) and
+    `set_top_k`. Every node ranks its own rows and the client merges them, keeping the later-updated
+    copy of a record two nodes both returned. Server 8.2.1 on every node, or the query fails up front;
+    an order key without `k` is refused by the server. Example `query_vector_top_k`.
+
 ## [3.0.0-alpha.2]
 
 * **New Features**

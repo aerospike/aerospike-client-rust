@@ -26,9 +26,29 @@ use aerospike::expressions::{bin_exists, vector_bin};
 use aerospike::operations::exp::{read_exp, ExpReadFlags};
 use aerospike::query::{Order, OrderByType, PartitionFilter};
 use aerospike::{
-    as_bin, as_key, BatchOperation, BatchPolicy, BatchReadPolicy, Bins, QueryPolicy, ReadPolicy,
-    Statement, Value, Vector, VectorElementType, WritePolicy,
+    as_bin, as_key, BatchOperation, BatchPolicy, BatchReadPolicy, BatchUDFPolicy, Bins, Client,
+    QueryPolicy, ReadPolicy, Statement, Value, Vector, VectorElementType, WritePolicy,
 };
+
+/// Whether every node of the cluster serves vectors (server 8.2.1).
+fn cluster_supports_vector(client: &Client) -> bool {
+    client
+        .nodes()
+        .iter()
+        .all(|node| node.version().supports_vector())
+}
+
+/// A client for a test that stores vectors, or `None` when a node lacks
+/// vector support, which makes the test a no-op.
+async fn vector_client() -> Option<Client> {
+    let client = common::client().await;
+    if cluster_supports_vector(&client) {
+        Some(client)
+    } else {
+        client.close().await.unwrap();
+        None
+    }
+}
 
 async fn write_query_vector(client: &aerospike::Client, key: &aerospike::Key, v: &Vector) {
     let wpolicy = WritePolicy::default();
@@ -46,7 +66,9 @@ fn float_bin(rec: &aerospike::Record, name: &str) -> f64 {
 
 #[aerospike_macro::test]
 async fn vectors_round_trip_through_server() {
-    let client = common::client().await;
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let key = as_key!(namespace, &set_name, "round-trip");
@@ -57,14 +79,14 @@ async fn vectors_round_trip_through_server() {
         ("f32", Vector::float32(vec![0.5, -1.5, 2.0])),
         ("f64", Vector::float64(vec![0.25, -0.5, 1.0])),
         (
-            "f32-special",
-            Vector::float32(vec![f32::NAN, f32::INFINITY, f32::NEG_INFINITY]),
+            "f32-extremes",
+            Vector::float32(vec![f32::MAX, f32::MIN, f32::MIN_POSITIVE, -0.0]),
         ),
         (
-            "f64-special",
-            Vector::float64(vec![f64::NAN, f64::INFINITY, f64::NEG_INFINITY]),
+            "f64-extremes",
+            Vector::float64(vec![f64::MAX, f64::MIN, f64::MIN_POSITIVE, -0.0]),
         ),
-        ("f16-special", Vector::float16(vec![0x7c00, 0xfc00, 0x7e00])),
+        ("f16-extremes", Vector::float16(vec![0x7bff, 0xfbff, 0x0001, 0x8000])),
     ];
 
     common::delete_durably(&client, &write_policy, &key)
@@ -93,7 +115,9 @@ async fn vectors_round_trip_through_server() {
 
 #[aerospike_macro::test]
 async fn vector_bin_can_be_absent_without_being_an_empty_vector() {
-    let client = common::client().await;
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let key = as_key!(namespace, &set_name, "missing-vector");
@@ -122,7 +146,9 @@ async fn vector_bin_can_be_absent_without_being_an_empty_vector() {
 
 #[aerospike_macro::test]
 async fn multiple_vector_and_scalar_bins_in_one_record() {
-    let client = common::client().await;
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let key = as_key!(namespace, &set_name, "multi-bin");
@@ -162,7 +188,9 @@ async fn multiple_vector_and_scalar_bins_in_one_record() {
 
 #[aerospike_macro::test]
 async fn overwriting_a_vector_bin_replaces_element_type_and_dimensions() {
-    let client = common::client().await;
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let key = as_key!(namespace, &set_name, "overwrite");
@@ -203,7 +231,9 @@ async fn overwriting_a_vector_bin_replaces_element_type_and_dimensions() {
 
 #[aerospike_macro::test]
 async fn a_vector_bin_can_be_replaced_by_a_scalar_and_back() {
-    let client = common::client().await;
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let key = as_key!(namespace, &set_name, "type-churn");
@@ -245,7 +275,9 @@ async fn a_vector_bin_can_be_replaced_by_a_scalar_and_back() {
 
 #[aerospike_macro::test]
 async fn reading_selected_bins_returns_only_the_requested_vector() {
-    let client = common::client().await;
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let key = as_key!(namespace, &set_name, "select");
@@ -277,7 +309,9 @@ async fn reading_selected_bins_returns_only_the_requested_vector() {
 
 #[aerospike_macro::test]
 async fn single_dimension_vector_round_trips_through_server() {
-    let client = common::client().await;
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let key = as_key!(namespace, &set_name, "one-dim");
@@ -304,7 +338,9 @@ async fn single_dimension_vector_round_trips_through_server() {
 
 #[aerospike_macro::test]
 async fn element_type_is_preserved_distinctly_through_the_server() {
-    let client = common::client().await;
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let key = as_key!(namespace, &set_name, "types");
@@ -348,8 +384,10 @@ async fn element_type_is_preserved_distinctly_through_the_server() {
 }
 
 #[aerospike_macro::test]
-async fn signed_zero_and_non_finite_survive_the_server_bit_exact() {
-    let client = common::client().await;
+async fn signed_zeros_survive_the_server_bit_exact() {
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let key = as_key!(namespace, &set_name, "bits");
@@ -359,9 +397,9 @@ async fn signed_zero_and_non_finite_survive_the_server_bit_exact() {
         .await
         .unwrap();
 
-    let f32v = Vector::float32(vec![-0.0, 0.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY]);
-    let f64v = Vector::float64(vec![-0.0, 0.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY]);
-    let f16v = Vector::float16(vec![0x8000, 0x0000, 0x7e00, 0x7c00, 0xfc00]);
+    let f32v = Vector::float32(vec![-0.0, 0.0]);
+    let f64v = Vector::float64(vec![-0.0, 0.0]);
+    let f16v = Vector::float16(vec![0x8000, 0x0000]);
     client
         .put(
             &write_policy,
@@ -391,9 +429,94 @@ async fn signed_zero_and_non_finite_survive_the_server_bit_exact() {
     client.close().await.unwrap();
 }
 
+// An empty vector has no meaning on the server, so the client refuses it
+// before anything is sent.
+#[aerospike_macro::test]
+async fn empty_vectors_are_rejected_client_side() {
+    for result in [
+        Vector::try_float16(vec![]),
+        Vector::try_int32(vec![]),
+        Vector::try_float32(vec![]),
+        Vector::try_float64(vec![]),
+    ] {
+        let err = result.expect_err("an empty vector must be refused");
+        assert!(err.to_string().contains("at least 1 dimension"), "{err}");
+    }
+}
+
+// NaN and the infinities are refused at construction, for every float width.
+#[aerospike_macro::test]
+async fn non_finite_elements_are_rejected_client_side() {
+    assert!(Vector::try_float32(vec![1.0, f32::NAN]).is_err());
+    assert!(Vector::try_float32(vec![f32::INFINITY]).is_err());
+    assert!(Vector::try_float32(vec![f32::NEG_INFINITY]).is_err());
+    assert!(Vector::try_float64(vec![f64::NAN]).is_err());
+    assert!(Vector::try_float64(vec![f64::INFINITY]).is_err());
+    assert!(Vector::try_float64(vec![0.0, f64::NEG_INFINITY]).is_err());
+    // float16 +inf, -inf and a NaN, as bit patterns.
+    for pattern in [0x7c00u16, 0xfc00, 0x7e00] {
+        assert!(Vector::try_float16(vec![pattern]).is_err(), "{pattern:#06x}");
+    }
+    // The finite extremes are fine.
+    assert!(Vector::try_float32(vec![f32::MAX, f32::MIN]).is_ok());
+    assert!(Vector::try_float64(vec![f64::MAX, f64::MIN]).is_ok());
+    assert!(Vector::try_float16(vec![0x7bff, 0xfbff]).is_ok());
+}
+
+// A vector nested anywhere in a UDF's arguments is subject to the same
+// cluster check as a vector bin: on a cluster with a node that predates
+// vectors the call fails before anything is sent. The positive path is the
+// round-trip tests above.
+#[aerospike_macro::test]
+async fn vector_udf_arguments_are_checked_against_the_cluster() {
+    let client = common::client().await;
+    if cluster_supports_vector(&client) {
+        client.close().await.unwrap();
+        return;
+    }
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let key = as_key!(namespace, &set_name, "udf-args");
+    let vector = Value::Vector(Vector::float32(vec![1.0, 2.0]));
+
+    for args in [
+        vec![vector.clone()],
+        vec![Value::from(1), Value::List(vec![vector.clone()])],
+    ] {
+        let err = client
+            .execute_udf(
+                &WritePolicy::default(),
+                &key,
+                "vector_example",
+                "echo",
+                Some(&args),
+            )
+            .await
+            .expect_err("a vector argument must be refused on an unsupported cluster");
+        assert!(err.to_string().contains("not supported by all nodes"), "{err}");
+    }
+
+    let ops = vec![BatchOperation::udf(
+        &BatchUDFPolicy::default(),
+        key.clone(),
+        "vector_example",
+        "echo",
+        Some(vec![vector]),
+    )];
+    let err = client
+        .batch(&BatchPolicy::default(), &ops)
+        .await
+        .expect_err("a vector UDF argument in a batch must be refused on an unsupported cluster");
+    assert!(err.to_string().contains("not supported by all nodes"), "{err}");
+
+    client.close().await.unwrap();
+}
+
 #[aerospike_macro::test]
 async fn int32_vector_preserves_full_signed_range() {
-    let client = common::client().await;
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let key = as_key!(namespace, &set_name, "i32-range");
@@ -420,7 +543,9 @@ async fn int32_vector_preserves_full_signed_range() {
 
 #[aerospike_macro::test]
 async fn large_vector_crossing_16bit_length_boundary_round_trips() {
-    let client = common::client().await;
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let key = as_key!(namespace, &set_name, "large");
@@ -446,9 +571,33 @@ async fn large_vector_crossing_16bit_length_boundary_round_trips() {
     client.close().await.unwrap();
 }
 
+/// A refused write: the server answers `PARAMETER_ERROR` and nothing is stored.
+async fn assert_refused_as_parameter_error(
+    client: &Client,
+    key: &aerospike::Key,
+    result: Result<(), aerospike::Error>,
+    what: &str,
+) {
+    let err = result.expect_err(&format!("{what} must be refused by the server"));
+    assert_eq!(
+        err.server_result_code(),
+        Some(aerospike::ResultCode::ParameterError),
+        "{what}: {err}"
+    );
+    assert!(
+        !client.exists(&Default::default(), key).await.unwrap(),
+        "{what}: nothing must be stored"
+    );
+}
+
+// A vector is a bin of its own, never a list or map element: the server
+// refuses it in any list or map walk, as a client value, a CDT operation value
+// or a context key.
 #[aerospike_macro::test]
-async fn vector_nested_in_a_list_bin_round_trips_through_server() {
-    let client = common::client().await;
+async fn vector_nested_in_a_list_bin_is_refused_by_the_server() {
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let key = as_key!(namespace, &set_name, "list-nest");
@@ -461,26 +610,21 @@ async fn vector_nested_in_a_list_bin_round_trips_through_server() {
     let list = Value::List(vec![
         Value::Int(1),
         Value::Vector(Vector::float32(vec![0.5, -1.5, 2.0])),
-        Value::Vector(Vector::int32(vec![7, 8, 9])),
         Value::String("tail".to_string()),
     ]);
-    client
-        .put(&write_policy, &key, &[as_bin!("items", list.clone())])
-        .await
-        .unwrap();
-
-    let record = client
-        .get(&Default::default(), &key, Bins::All)
-        .await
-        .unwrap();
-    assert_eq!(record.bins.get("items"), Some(&list));
+    let result = client
+        .put(&write_policy, &key, &[as_bin!("items", list)])
+        .await;
+    assert_refused_as_parameter_error(&client, &key, result, "a vector in a list bin").await;
 
     client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
-async fn vector_nested_in_a_map_bin_round_trips_through_server() {
-    let client = common::client().await;
+async fn vector_nested_in_a_map_bin_is_refused_by_the_server() {
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let key = as_key!(namespace, &set_name, "map-nest");
@@ -495,25 +639,19 @@ async fn vector_nested_in_a_map_bin_round_trips_through_server() {
         Value::from("a"),
         Value::Vector(Vector::float64(vec![1.5, 2.5])),
     );
-    map.insert(Value::from("b"), Value::Vector(Vector::int32(vec![-3, 3])));
-    let map_value = Value::HashMap(map);
-    client
-        .put(&write_policy, &key, &[as_bin!("by_key", map_value.clone())])
-        .await
-        .unwrap();
-
-    let record = client
-        .get(&Default::default(), &key, Bins::All)
-        .await
-        .unwrap();
-    assert_eq!(record.bins.get("by_key"), Some(&map_value));
+    let result = client
+        .put(&write_policy, &key, &[as_bin!("by_key", Value::HashMap(map))])
+        .await;
+    assert_refused_as_parameter_error(&client, &key, result, "a vector in a map bin").await;
 
     client.close().await.unwrap();
 }
 
 #[aerospike_macro::test]
 async fn batch_read_returns_records_with_vector_bins() {
-    let client = common::client().await;
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let write_policy = WritePolicy::default();
@@ -564,7 +702,9 @@ async fn batch_read_returns_records_with_vector_bins() {
 
 #[aerospike_macro::test]
 async fn filter_expression_referencing_a_vector_bin_matches_the_record() {
-    let client = common::client().await;
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let key = as_key!(namespace, &set_name, "vector-filter");
@@ -586,7 +726,9 @@ async fn filter_expression_referencing_a_vector_bin_matches_the_record() {
 
 #[aerospike_macro::test]
 async fn euclidean_squared_distance_to_self_is_zero() {
-    let client = common::client().await;
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let key = as_key!(namespace, &set_name, "v1");
@@ -614,7 +756,9 @@ async fn euclidean_squared_distance_to_self_is_zero() {
 
 #[aerospike_macro::test]
 async fn dot_product_matches_sum_of_squares_for_self() {
-    let client = common::client().await;
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let key = as_key!(namespace, &set_name, "v2");
@@ -644,7 +788,9 @@ async fn dot_product_matches_sum_of_squares_for_self() {
 
 #[aerospike_macro::test]
 async fn cosine_similarity_to_self_is_one() {
-    let client = common::client().await;
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let key = as_key!(namespace, &set_name, "v3");
@@ -672,7 +818,9 @@ async fn cosine_similarity_to_self_is_one() {
 
 #[aerospike_macro::test]
 async fn euclidean_squared_distance_is_sum_of_squared_differences() {
-    let client = common::client().await;
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let key = as_key!(namespace, &set_name, "v4");
@@ -700,7 +848,9 @@ async fn euclidean_squared_distance_is_sum_of_squared_differences() {
 
 #[aerospike_macro::test]
 async fn vector_distance_is_unknown_for_incomparable_values() {
-    let client = common::client().await;
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let query = Vector::float32(vec![1.0, 2.0]);
@@ -747,7 +897,9 @@ async fn vector_distance_is_unknown_for_incomparable_values() {
 
 #[aerospike_macro::test]
 async fn vector_distance_projection_supports_top_k_nearest_query() {
-    let client = common::client().await;
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let write_policy = WritePolicy::default();
@@ -800,12 +952,14 @@ async fn vector_distance_projection_supports_top_k_nearest_query() {
     client.close().await.unwrap();
 }
 
-// A vector reaches the wire nested inside a CDT operation, not just as a
-// top-level bin. On a supporting cluster the client-side safeguard must let
-// this through and the values must round-trip.
+// A vector reaches the wire nested inside a CDT operation too. The client's
+// cluster check lets it through on a supporting cluster, and the server then
+// refuses it the way it refuses any vector element.
 #[aerospike_macro::test]
-async fn vector_written_through_a_cdt_list_operation_round_trips() {
-    let client = common::client().await;
+async fn vector_written_through_a_cdt_list_operation_is_refused_by_the_server() {
+    let Some(client) = vector_client().await else {
+        return;
+    };
     let namespace = common::namespace();
     let set_name = common::rand_str(10);
     let key = as_key!(namespace, &set_name, "cdt-list-vector");
@@ -815,37 +969,21 @@ async fn vector_written_through_a_cdt_list_operation_round_trips() {
         .await
         .unwrap();
 
-    let v1 = Vector::float32(vec![1.0, 2.0, 3.0]);
-    let v2 = Vector::int32(vec![7, 8]);
     let list_policy = aerospike::operations::lists::ListPolicy::default();
-    client
+    let result = client
         .operate(
             &write_policy,
             &key,
-            &[
-                aerospike::operations::lists::append(
-                    &list_policy,
-                    "items",
-                    Value::Vector(v1.clone()),
-                ),
-                aerospike::operations::lists::append(
-                    &list_policy,
-                    "items",
-                    Value::Vector(v2.clone()),
-                ),
-            ],
+            &[aerospike::operations::lists::append(
+                &list_policy,
+                "items",
+                Value::Vector(Vector::float32(vec![1.0, 2.0, 3.0])),
+            )],
         )
         .await
-        .unwrap();
-
-    let record = client
-        .get(&Default::default(), &key, Bins::All)
-        .await
-        .unwrap();
-    assert_eq!(
-        record.bins.get("items"),
-        Some(&Value::List(vec![Value::Vector(v1), Value::Vector(v2)]))
-    );
+        .map(|_| ());
+    assert_refused_as_parameter_error(&client, &key, result, "a vector appended to a list")
+        .await;
 
     client.close().await.unwrap();
 }

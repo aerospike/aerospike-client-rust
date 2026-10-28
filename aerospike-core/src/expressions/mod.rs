@@ -518,6 +518,11 @@ pub fn key(exp_type: ExpType) -> Expression {
 }
 
 /// Creates an expression from a base64-encoded expression string.
+///
+/// Packed bytes are opaque to the client, so an expression rebuilt this way
+/// skips the check that refuses a vector expression when not every node in
+/// the cluster supports vectors. A node without vector support then refuses
+/// the expression itself, as it does any expression it cannot parse.
 pub fn from_base64(b64: &str) -> Result<Expression> {
     let bytes = BASE64
         .decode(b64)

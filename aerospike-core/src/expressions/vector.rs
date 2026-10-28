@@ -117,8 +117,8 @@ mod tests {
             let expected = [
                 0x93, // array(3)
                 opcode, 0x93, 0x51, 0x0a, 0xa1, 0x76, // vector bin "v"
-                0xad, 0x04, // BLOB particle, 12-byte complete VECTOR wire value
-                0x01, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, // VECTOR header
+                0xab, 0x04, // BLOB particle, 10-byte complete VECTOR wire value
+                0x01, 0x03, 0x01, 0x00, 0x00, 0x00, // VECTOR header: version, type, dimensions
                 0x00, 0x00, 0x80, 0x3f, // float32 1.0, little-endian
             ];
 
