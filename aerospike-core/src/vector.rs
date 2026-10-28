@@ -38,17 +38,17 @@ use crate::commands::buffer::Buffer;
 use crate::errors::{Error, Result};
 
 /// Current vector wire-format version.
-pub(crate) const VECTOR_VERSION: u8 = 1;
+pub const VECTOR_VERSION: u8 = 1;
 
 /// Size in bytes of the fixed vector header (`version`, `element_type` and
 /// `dimensions`).
-pub(crate) const VECTOR_HEADER_SIZE: usize = 6;
+pub const VECTOR_HEADER_SIZE: usize = 6;
 
 /// A `float16` whose exponent bits are all set is an infinity or a NaN.
 const FLOAT16_EXPONENT_MASK: u16 = 0x7c00;
 
 /// Maximum size in bytes of a vector's element array.
-pub(crate) const VECTOR_MAX_ELEMENTS_BYTES: usize = 1 << 18;
+pub const VECTOR_MAX_ELEMENTS_BYTES: usize = 1 << 18;
 
 /// Wire encoding of [`Vector`] elements.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -403,7 +403,7 @@ impl Vector {
             )));
         }
 
-        let bytes = buf.read_blob(data_size);
+        let bytes = buf.read_blob(data_size)?;
         let data = match element_type {
             VectorElementType::Float16 => VectorData::Float16(
                 bytes
@@ -651,8 +651,8 @@ mod tests {
             Vector::int32(vec![-5, 0, 7, i32::MIN, i32::MAX])
         );
         assert_eq!(
-            round_trip(&Vector::float32(vec![0.1, -2.5, 3.14159])),
-            Vector::float32(vec![0.1, -2.5, 3.14159])
+            round_trip(&Vector::float32(vec![0.1, -2.5, 3.5])),
+            Vector::float32(vec![0.1, -2.5, 3.5])
         );
         assert_eq!(
             round_trip(&Vector::float64(vec![0.1, -2.5, f64::MAX])),
@@ -827,7 +827,7 @@ mod tests {
     fn from_bytes_rejects_trailing_bytes() {
         let body: Vec<u8> = 7.0f32.to_bits().to_le_bytes().to_vec();
         let trailing = [0xAAu8, 0xBB, 0xCC];
-        let mut full = body.clone();
+        let mut full = body;
         full.extend_from_slice(&trailing);
         let len = VECTOR_HEADER_SIZE + full.len();
 

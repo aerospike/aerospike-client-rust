@@ -1,4 +1,4 @@
-// Copyright 2015-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -13,27 +13,27 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use std::collections::HashMap;
-use std::time::Duration;
 use indexmap::IndexMap;
+use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::result::Result as StdResult;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use aerospike_rt::Mutex as AsyncMutex;
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use hazarc::AtomicArc;
 
-use crate::cluster::node_validator::NodeValidator;
+use crate::cluster::node_validator::{normalize_cluster_name, NodeValidator};
 use crate::cluster::peers::Peers;
 use crate::cluster::peers_parser::PeersParser;
 use crate::cluster::CLIENT_VERSION;
 use crate::commands::Message;
 use crate::errors::{Error, Result};
-use crate::metrics::NodeMetrics;
+use crate::metrics::{CloseReason, NodeMetrics, PoolGauges};
 use crate::net::{Connection, ConnectionPool, Host, PooledConnection, TailVerdict};
 use crate::policy::{AdminPolicy, ClientPolicy};
 use crate::Version;
@@ -80,6 +80,11 @@ pub struct Node {
     responded: AtomicBool,
     active: AtomicBool,
     version: Version,
+    /// Cluster name **as reported by the server** (`cluster-name` info),
+    /// refreshed every tend. Distinct from `ClientPolicy::cluster_name`,
+    /// which is what the user asked to validate against. `None` when the
+    /// server has no cluster name configured.
+    server_cluster_name: RwLock<Option<String>>,
     /// Per-`error_rate_window` circuit breaker state. `error_rate_count`
     /// is bumped on every retriable failure (network error, server
     /// `TIMEOUT` / `DEVICE_OVERLOAD` / `KEY_BUSY`, connection-close-on-error)
@@ -109,7 +114,7 @@ async fn await_spawned_task<T>(handle: aerospike_rt::task::JoinHandle<Option<T>>
     use futures::FutureExt;
     std::panic::AssertUnwindSafe(async move {
         #[cfg(feature = "rt-tokio")]
-        return handle.await.ok().flatten(); 
+        return handle.await.ok().flatten();
 
         #[cfg(feature = "rt-async-std")]
         return handle.await; // task panic re-raises here → caught below
@@ -133,7 +138,7 @@ impl Drop for Node {
 
 impl Node {
     #![allow(missing_docs)]
-    pub fn new(
+    pub(crate) fn new(
         client_policy: ClientPolicy,
         nv: Arc<NodeValidator>,
         metrics: Arc<NodeMetrics>,
@@ -148,14 +153,18 @@ impl Node {
             address: nv.address.clone(),
 
             host: nv.aliases[0].clone(),
-            rebalance_generation: AtomicIsize::new(if client_policy.rack_aware() {
-                -1
-            } else {
-                0
-            }),
+            rebalance_generation: AtomicIsize::new(if client_policy.rack_aware() { -1 } else { 0 }),
+            // Under `for_login_only` the pool's addresses are the cleartext
+            // ones; it keeps the node's TLS address and the token from
+            // validation so it can renew the session over TLS without ever
+            // logging in on a clear socket.
             connection_pool: ConnectionPool::new(
                 nv.aliases[0].clone(),
                 client_policy.clone(),
+                nv.login_host.clone().map(|tls_host| crate::net::LoginOnly {
+                    tls_host,
+                    session: nv.session.clone(),
+                }),
                 Some(metrics.clone()),
                 buffer_pool,
             ),
@@ -182,6 +191,7 @@ impl Node {
             reference_count: AtomicUsize::new(0),
             responded: AtomicBool::new(false),
             active: AtomicBool::new(true),
+            server_cluster_name: RwLock::new(nv.cluster_name.clone()),
             version: nv.version.clone(),
             rack_ids: AtomicArc::from(HashMap::new()),
             hostname: std::sync::OnceLock::new(),
@@ -219,6 +229,7 @@ impl Node {
 
     /// Cache the hostname that resolved to this node's IP. No-op on the
     /// second call — first writer wins.
+    #[doc(hidden)] // test support, not a stable API
     pub fn cache_hostname(&self, name: String) {
         let _ = self.hostname.set(name);
     }
@@ -229,22 +240,26 @@ impl Node {
     }
 
     /// Increments the reference count by 1.
+    #[doc(hidden)] // test support, not a stable API
     pub fn increment_reference_count(&self) {
         self.reference_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Resets the reference count to 0. Called at the start of each tend
     /// cycle, before peer refresh.
+    #[doc(hidden)] // test support, not a stable API
     pub fn reset_reference_count(&self) {
         self.reference_count.store(0, Ordering::Relaxed);
     }
 
     /// Resets the per-tend `partition_changed` flag.
+    #[doc(hidden)] // test support, not a stable API
     pub fn set_partition_changed(&self, changed: bool) {
         self.partition_changed.store(changed, Ordering::Relaxed);
     }
 
     /// Resets the per-tend `rebalance_changed` flag.
+    #[doc(hidden)] // test support, not a stable API
     pub fn set_rebalance_changed(&self, changed: bool) {
         self.rebalance_changed.store(changed, Ordering::Relaxed);
     }
@@ -266,7 +281,7 @@ impl Node {
     /// peers / partition / rebalance generations. Does NOT fetch the full
     /// peer list — that happens in [`refresh_peers`](Self::refresh_peers)
     /// only when `peers.gen_changed` ends up true.
-    pub async fn refresh(&self, peers: &Peers) -> Result<()> {
+    pub(crate) async fn refresh(&self, peers: &Peers) -> Result<()> {
         if !self.is_active() {
             return Ok(());
         }
@@ -350,7 +365,7 @@ impl Node {
     ///
     /// Only called when `peers.gen_changed` is true (i.e., when any node's
     /// peers generation changed during phase 1).
-    pub async fn refresh_peers(&self, peers: &Peers) -> Result<()> {
+    pub(crate) async fn refresh_peers(&self, peers: &Peers) -> Result<()> {
         // Don't refresh peers when node connection has already failed during this tend.
         if self.failures() > 0 || !self.is_active() {
             return Ok(());
@@ -417,6 +432,7 @@ impl Node {
     /// Commit a previously-staged peers-generation. Called by the cluster
     /// after `materialize_peers` confirms that every peer parsed by this
     /// node was reachable.
+    #[doc(hidden)] // test support, not a stable API
     pub fn commit_peers_generation(&self, generation: isize) {
         self.peers_generation.store(generation, Ordering::Relaxed);
     }
@@ -434,7 +450,7 @@ impl Node {
         self.increase_failures();
     }
 
-    /// Parses `peers-generation` from `info_map` and compares with the
+    /// Parses `peers_generation` from `info_map` and compares with the
     /// stored value. Sets `peers.gen_changed = true` if they differ.
     ///
     /// When the server's reported generation goes *backward* (`stored > gen`)
@@ -469,8 +485,31 @@ impl Node {
 
     fn validate_node(&self, info_map: &IndexMap<String, String>) -> Result<()> {
         self.verify_node_name(info_map)?;
+        // Record what the server reports before deciding whether it matches
+        // what was configured: discovery must not depend on validation.
+        self.record_cluster_name(info_map);
         self.verify_cluster_name(info_map)?;
         Ok(())
+    }
+
+    /// Stores the server-reported cluster name from a tend response.
+    fn record_cluster_name(&self, info_map: &IndexMap<String, String>) {
+        let reported = normalize_cluster_name(info_map.get("cluster-name"));
+        let mut current = crate::locks::write(&self.server_cluster_name);
+        if *current != reported {
+            *current = reported;
+        }
+    }
+
+    /// Cluster name as reported by this node's server on the last tend
+    /// (`cluster-name` info), or `None` when the server has none configured.
+    ///
+    /// This is the *discovered* name, independent of
+    /// [`ClientPolicy::cluster_name`], which only sets what to validate
+    /// against. Use it to select per-cluster settings (`system.<name>`
+    /// blocks) without opting into validation.
+    pub fn cluster_name(&self) -> Option<String> {
+        crate::locks::read(&self.server_cluster_name).clone()
     }
 
     fn verify_node_name(&self, info_map: &IndexMap<String, String>) -> Result<()> {
@@ -540,27 +579,12 @@ impl Node {
         }
     }
 
-    pub fn update_partitions(&self, info_map: &IndexMap<String, String>) -> Result<()> {
-        match info_map.get(PARTITION_GENERATION) {
-            None => {
-                return Err(Error::bad_response(
-                    "Missing partition generation".to_string(),
-                ))
-            }
-            Some(gen_string) => {
-                let gen = gen_string.parse::<isize>()?;
-                self.partition_generation.store(gen, Ordering::Relaxed);
-            }
-        }
-
-        Ok(())
-    }
-
+    #[doc(hidden)] // test support, not a stable API
     pub fn set_partition_generation(&self, gen: isize) {
         self.partition_generation.store(gen, Ordering::Relaxed);
     }
 
-    pub fn update_rebalance_generation(&self, info_map: &IndexMap<String, String>) -> Result<()> {
+    pub(crate) fn update_rebalance_generation(&self, info_map: &IndexMap<String, String>) -> Result<()> {
         if let Some(gen_string) = info_map.get(REBALANCE_GENERATION) {
             let gen = gen_string.parse::<isize>()?;
             self.rebalance_generation.store(gen, Ordering::Relaxed);
@@ -570,8 +594,7 @@ impl Node {
     }
 
     /// Returns true if this node hosts the given namespace on exactly the
-    /// given rack (Java `Node.hasRack`). Rack preference ordering is the
-    /// caller's concern — see `Partition::get_rack_node`.
+    /// given rack. Rack preference ordering is the caller's concern.
     pub fn has_rack(&self, namespace: &str, rack_id: usize) -> bool {
         self.rack_ids
             .load()
@@ -579,6 +602,7 @@ impl Node {
             .is_some_and(|r| *r == rack_id)
     }
 
+    #[doc(hidden)] // test support, not a stable API
     pub fn parse_rack(&self, buf: &str) -> Result<()> {
         let new_table = buf
             .split(';')
@@ -586,7 +610,7 @@ impl Node {
             .map(|entry| {
                 let (key, val) = entry
                     .split_once(':')
-                    .ok_or(Error::bad_response("Invalid rack entry"))?;
+                    .ok_or_else(|| Error::bad_response("Invalid rack entry"))?;
                 let ns = key.trim();
                 // Aerospike server enforces 1..=31 for namespace names.
                 // Reject anything outside that to avoid populating the rack
@@ -605,7 +629,7 @@ impl Node {
     }
 
     // Get a connection to the node from the connection pool
-    pub async fn get_connection(&self, hint: u8) -> Result<PooledConnection> {
+    pub(crate) fn get_connection(&self, hint: u8) -> Result<PooledConnection> {
         if !self.is_active() {
             return Err(Error::invalid_node(format!(
                 "Cannot get a connection for node. The node `{self}` is inactive"
@@ -661,7 +685,7 @@ impl Node {
     }
 
     /// Returns the per-node metrics sink.
-    pub fn metrics(&self) -> &Arc<NodeMetrics> {
+    pub const fn metrics(&self) -> &Arc<NodeMetrics> {
         &self.metrics
     }
 
@@ -671,8 +695,28 @@ impl Node {
         self.connection_pool.reserved_conns() as u64
     }
 
+    /// Point-in-time connection-pool gauges (metrics Tier 0, read at snapshot
+    /// time by walking the pool): total owned, idle in the pool, and in
+    /// background timeout recovery. `total` counts reserved slots, so a
+    /// connection still being opened is already "in use".
+    pub fn pool_gauges(&self) -> PoolGauges {
+        PoolGauges {
+            total: self.connection_pool.reserved_conns() as u64,
+            in_pool: self.connection_pool.idle_conns() as u64,
+            recovering: self.connection_pool.recovering_conns() as u64,
+        }
+    }
+
+    /// Closes every idle pooled connection, counting each as closed because
+    /// the node left the cluster. Called by the cluster when it removes the
+    /// node, before the node's final metrics drain, so the closes are not
+    /// lost to the deferred pool teardown in `Drop`.
+    pub(crate) fn close_idle_connections(&self) {
+        self.connection_pool.clear_all();
+    }
+
     // Put a connection to the node back in the connection pool
-    pub fn put_connection(&self, mut pconn: PooledConnection) {
+    pub(crate) fn put_connection(&self, mut pconn: PooledConnection) {
         if self.is_active() {
             if let Some(conn) = pconn.conn.take() {
                 pconn.queue.put_back(conn);
@@ -694,7 +738,7 @@ impl Node {
     }
 
     // Adds a failure to the failure count
-    pub fn increase_failures(&self) -> usize {
+    pub(crate) fn increase_failures(&self) -> usize {
         self.failures.fetch_add(1, Ordering::Relaxed)
     }
 
@@ -713,15 +757,8 @@ impl Node {
     }
 
     // Add an alias to the node
-    pub fn add_alias(&self, alias: Host) {
-        let mut aliases = self.aliases();
-        aliases.push(alias);
-        self.aliases.store(Arc::new(aliases));
-        self.reference_count.fetch_add(1, Ordering::Relaxed);
-    }
-
     // Set the node inactive and close all connections in the pool
-    pub fn close(&self) {
+    pub(crate) fn close(&self) {
         self.inactivate();
     }
 
@@ -741,7 +778,7 @@ impl Node {
         let deadline = aerospike_rt::time::Instant::now()
             + std::time::Duration::from_millis(u64::from(policy.timeout()).max(1000));
         let mut conn = loop {
-            match self.get_connection(0).await {
+            match self.get_connection(0) {
                 Ok(conn) => break conn,
                 Err(err)
                     if err.is_pool_empty() && aerospike_rt::time::Instant::now() < deadline =>
@@ -766,28 +803,50 @@ impl Node {
     /// next call reopens. Use this for tend-time traffic only —
     /// operational commands should go through the pool via
     /// [`info`](Self::info).
+    /// Tear down the tend connection if open, so the next call opens a
+    /// fresh socket.
+    #[doc(hidden)] // test support, not a stable API
+    pub async fn close_tend_connection(&self) {
+        let mut guard = self.tend_connection.lock().await;
+        if let Some(mut c) = guard.take() {
+            c.close();
+        }
+    }
+
+    #[doc(hidden)] // test support, not a stable API
     pub async fn tend_info(
         &self,
         policy: &AdminPolicy,
         commands: &[&str],
     ) -> Result<IndexMap<String, String>> {
         let mut guard = self.tend_connection.lock().await;
-        if guard.is_none() {
+        let conn = if let Some(conn) = guard.as_mut() {
+            conn
+        } else {
             // Open lazily. The first call after Node::new pays the
             // TCP-handshake + LOGIN here; subsequent calls reuse the
             // already-authenticated socket.
-            let conn = Connection::new(
+            // The tend socket is part of the data plane: cleartext under
+            // `for_login_only`, so it authenticates with the pool's session
+            // token rather than sending credentials (the pool renews the
+            // token over TLS when it has to).
+            let session = self
+                .connection_pool
+                .login_session()
+                .await
+                .map_err(|e| e.chain_error("Failed to obtain a TLS session for tend"))?;
+            let conn = Connection::open(
                 &self.host,
                 &self.client_policy,
-                self.client_policy.hashed_pass().as_ref(),
+                self.client_policy.hashed_pass().ok().flatten().as_ref(),
+                session.as_ref(),
             )
             .await
+            .map(|(conn, _session)| conn)
+            .map_err(crate::Error::from)
             .map_err(|e| e.chain_error("Failed to open tend connection"))?;
-            *guard = Some(conn);
-        }
-
-        // SAFETY: we just ensured `guard` is `Some`.
-        let conn = guard.as_mut().expect("tend connection just opened");
+            guard.insert(conn)
+        };
         match Message::info(policy, conn, commands).await {
             Ok(map) => Ok(map),
             Err(e) => {
@@ -798,15 +857,6 @@ impl Node {
                 }
                 Err(e)
             }
-        }
-    }
-
-    /// Tear down the tend connection if open. Called from `close()` and on
-    /// quick-restart so the next call opens a fresh socket.
-    pub async fn close_tend_connection(&self) {
-        let mut guard = self.tend_connection.lock().await;
-        if let Some(mut c) = guard.take() {
-            c.close();
         }
     }
 
@@ -832,7 +882,7 @@ impl Node {
         self.peers_count.load(Ordering::Relaxed)
     }
 
-    /// Total number of times [`refresh`](Self::refresh) has been called
+    /// Total number of times the node has been refreshed by the tend loop
     /// (whether or not it succeeded). Used as a split-cluster guard.
     pub fn refresh_count(&self) -> usize {
         self.refresh_count.load(Ordering::Relaxed)
@@ -847,6 +897,7 @@ impl Node {
 
     /// Increment the per-node error counter. No-op when the cluster
     /// breaker is disabled (`max_error_rate == 0`).
+    #[doc(hidden)] // test support, not a stable API
     pub fn incr_error_rate(&self) {
         if self.client_policy.max_error_rate > 0 {
             self.error_rate_count.fetch_add(1, Ordering::Relaxed);
@@ -855,6 +906,7 @@ impl Node {
 
     /// `true` when the breaker is disabled or the count is still under
     /// the cluster-level threshold.
+    #[doc(hidden)] // test support, not a stable API
     pub fn error_rate_within_limit(&self) -> bool {
         let cluster_max = self.client_policy.max_error_rate;
         cluster_max == 0 || self.error_rate_count.load(Ordering::Relaxed) <= cluster_max
@@ -862,6 +914,7 @@ impl Node {
 
     /// Returns `Err(MaxErrorRate(addr))` when the breaker has tripped.
     /// Use before sending a command at this node.
+    #[doc(hidden)] // test support, not a stable API
     pub fn validate_error_count(&self) -> Result<()> {
         if self.error_rate_within_limit() {
             Ok(())
@@ -876,6 +929,7 @@ impl Node {
     /// the cluster cap). Previous window clean → next ceiling doubles
     /// (capped at cluster max); previous window tripped → next ceiling
     /// halves with a floor of 1.
+    #[doc(hidden)] // test support, not a stable API
     pub fn reset_error_rate(&self) {
         let cluster_max = self.client_policy.max_error_rate;
         if cluster_max == 0 {
@@ -945,7 +999,7 @@ impl Node {
     /// so the pool is settled and the returned count is final.
     ///
     /// Returns the number of connections processed (reaped + refreshed).
-    pub async fn reap_and_refresh_idle_connections(&self) -> usize {
+    pub(crate) async fn reap_and_refresh_idle_connections(&self) -> usize {
         let policy = &self.client_policy;
         if policy.conn_pools_per_node == 0 {
             return 0;
@@ -988,8 +1042,7 @@ impl Node {
                     drop(conn);
                     queue.reduce_capacity();
                     droppable = droppable.saturating_sub(1);
-                    self.metrics.incr_connections_idle_dropped();
-                    self.metrics.incr_connections_closed();
+                    self.metrics.incr_connections_closed(CloseReason::Idle);
                     total_processed += 1;
                     queues_without_work = 0;
                 }
@@ -1025,12 +1078,11 @@ impl Node {
         // slowest one. A healed connection re-pools into its own queue, and a
         // failed one frees that queue's reserved slot.
         for (queue, handle) in probe_handles {
-            match await_spawned_task(handle).await {
-                Some(conn) => queue.put_back(conn),
-                None => {
-                    queue.reduce_capacity();
-                    self.metrics.incr_connections_closed();
-                }
+            if let Some(conn) = await_spawned_task(handle).await {
+                queue.put_back(conn);
+            } else {
+                queue.reduce_capacity();
+                self.metrics.incr_connections_closed(CloseReason::Error);
             }
             total_processed += 1;
         }
@@ -1092,15 +1144,17 @@ impl fmt::Display for Node {
 /// tests elsewhere in the crate that need to exercise version-gated
 /// wire-encode paths (e.g. `commands::buffer::tests`) without a live server.
 #[cfg(test)]
-pub(crate) fn test_node_with_version(version: crate::Version) -> Node {
+pub fn test_node_with_version(version: crate::Version) -> Node {
     let policy = ClientPolicy::default();
     let nv = Arc::new(NodeValidator {
         name: "test-node".to_string(),
         aliases: vec![Host::new("127.0.0.1", 3000)],
         address: "127.0.0.1:3000".to_string(),
         client_policy: policy.clone(),
-        use_new_info: true,
         version,
+        cluster_name: None,
+        session: None,
+        login_host: None,
         detect_load_balancer: false,
     });
     let metrics = Arc::new(crate::metrics::NodeMetrics::new(
@@ -1144,15 +1198,12 @@ mod node_tests {
         node.close();
         assert!(!node.is_active());
 
-        let err = node.get_connection(0).await.unwrap_err();
+        let err = node.get_connection(0).unwrap_err();
         assert!(
             matches!(err.kind(), crate::ErrorKind::InvalidNode),
             "expected InvalidNode, got {err:?}"
         );
-        assert!(
-            err.to_string().contains("inactive"),
-            "unexpected: {err}"
-        );
+        assert!(err.to_string().contains("inactive"), "unexpected: {err}");
         assert_eq!(
             node.connection_pool.num_conns(),
             before,
@@ -1165,7 +1216,6 @@ mod node_tests {
         let node = create_node_with_connection().await;
         let pconn = node
             .get_connection(0)
-            .await
             .expect("active node with one mock conn in pool");
         assert_eq!(node.connection_pool.num_conns(), 0);
 
@@ -1186,7 +1236,6 @@ mod node_tests {
         let queue_witness = {
             let pconn = arc
                 .get_connection(0)
-                .await
                 .expect("pool should have one connection");
             let q = pconn.queue.clone();
             arc.put_connection(pconn);
@@ -1224,19 +1273,27 @@ mod node_tests {
             aliases: vec![Host::new("127.0.0.1", 3000)],
             address: "127.0.0.1:3000".to_string(),
             client_policy: policy.clone(),
-            use_new_info: true,
             version: Version::default(),
+            cluster_name: None,
+            session: None,
+            login_host: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
             crate::metrics::MetricsPolicy::default(),
         ));
-        let node = Node::new(policy, nv, metrics, Arc::new(std::sync::atomic::AtomicUsize::new(0)), None);
+        let node = Node::new(
+            policy,
+            nv,
+            metrics,
+            Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            None,
+        );
 
         // Trigger 4 pool misses with distinct hints — each reports pool-empty
         // and spawns a background fill on its own queue.
         for hint in 0..4u8 {
-            let err = node.get_connection(hint).await.unwrap_err();
+            let err = node.get_connection(hint).unwrap_err();
             assert!(
                 err.is_pool_empty(),
                 "pool miss must report ConnectionPoolEmpty, got {err:?}"
@@ -1253,9 +1310,9 @@ mod node_tests {
         }
 
         let queues = node.connection_pool.queues();
-        for i in 0..4 {
+        for (i, queue) in queues.iter().enumerate().take(4) {
             assert_eq!(
-                queues[i].reserved_count(),
+                queue.reserved_count(),
                 1,
                 "queue[{i}] must have exactly 1 reserved connection"
             );
@@ -1270,7 +1327,7 @@ mod node_tests {
     async fn get_connection_retry_picks_up_background_fill() {
         let node = test_node();
 
-        let err = node.get_connection(0).await.unwrap_err();
+        let err = node.get_connection(0).unwrap_err();
         assert!(err.is_pool_empty());
 
         // Let the spawned fill task run (dummy connection, completes fast).
@@ -1283,7 +1340,6 @@ mod node_tests {
 
         let conn = node
             .get_connection(0)
-            .await
             .expect("retry must pick up the background-filled connection");
         drop(conn);
     }
@@ -1303,8 +1359,10 @@ mod node_tests {
             aliases: vec![Host::new("127.0.0.1", 3000)],
             address: "127.0.0.1:3000".to_string(),
             client_policy: policy.clone(),
-            use_new_info: true,
             version: Version::default(),
+            cluster_name: None,
+            session: None,
+            login_host: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
@@ -1320,8 +1378,8 @@ mod node_tests {
 
         // On a current-thread runtime no spawned task runs until we await, so
         // both calls observe the first fill still "in flight".
-        let _ = node.get_connection(0).await.unwrap_err(); // spawns (1 <= threshold)
-        let _ = node.get_connection(0).await.unwrap_err(); // capped (2 > threshold)
+        let _ = node.get_connection(0).unwrap_err(); // spawns (1 <= threshold)
+        let _ = node.get_connection(0).unwrap_err(); // capped (2 > threshold)
 
         for _ in 0..20 {
             aerospike_rt::sleep(aerospike_rt::time::Duration::from_millis(1)).await;
@@ -1345,14 +1403,22 @@ mod node_tests {
             aliases: vec![Host::new("127.0.0.1", 3000)],
             address: "127.0.0.1:3000".to_string(),
             client_policy: policy.clone(),
-            use_new_info: true,
             version: Version::default(),
+            cluster_name: None,
+            session: None,
+            login_host: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
             crate::metrics::MetricsPolicy::default(),
         ));
-        let node = Node::new(policy, nv, metrics, Arc::new(std::sync::atomic::AtomicUsize::new(0)), None);
+        let node = Node::new(
+            policy,
+            nv,
+            metrics,
+            Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            None,
+        );
 
         let mut in_flight = Vec::new();
         for i in 0..5 {
@@ -1452,8 +1518,10 @@ mod pool_health_tests {
             aliases: vec![Host::new(&addr.ip().to_string(), addr.port())],
             address: addr.to_string(),
             client_policy: policy.clone(),
-            use_new_info: true,
             version: Version::default(),
+            cluster_name: None,
+            session: None,
+            login_host: None,
             detect_load_balancer: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
@@ -1462,7 +1530,7 @@ mod pool_health_tests {
         Node::new(policy, nv, metrics, Arc::new(AtomicUsize::new(0)), None)
     }
 
-    /// Park `n` real TCP conns (make_conn's test shim has no socket).
+    /// Park `n` real TCP conns (`make_conn`'s test shim has no socket).
     async fn park_conns(node: &Node, addr: SocketAddr, policy: &ClientPolicy, n: usize) {
         let queue = &node.connection_pool.queues()[0];
         for _ in 0..n {
@@ -1544,7 +1612,10 @@ mod pool_health_tests {
         park_conns(&node, addr, &policy, 2).await;
 
         let processed = node.reap_and_refresh_idle_connections().await;
-        assert_eq!(processed, 0, "nothing is expired, so tend must touch nothing");
+        assert_eq!(
+            processed, 0,
+            "nothing is expired, so tend must touch nothing"
+        );
         assert_eq!(node.connection_pool.num_conns(), 2);
     }
 
@@ -1571,7 +1642,7 @@ mod pool_health_tests {
     }
 
     /// A dead floor connection fails its probe and is evicted, freeing the
-    /// slot for fill_min_conns to replace.
+    /// slot for `fill_min_conns` to replace.
     #[aerospike_macro::test]
     async fn dead_floor_conn_is_evicted_by_probe() {
         let (addr, _dead) = spawn_fake_node(true).await; // peer FINs everything
@@ -1589,7 +1660,7 @@ mod pool_health_tests {
         );
     }
 
-    /// idle_timeout = 0: no deadline exists, so tend must touch nothing —
+    /// `idle_timeout = 0`: no deadline exists, so tend must touch nothing —
     /// no drops, no probes. Dead sockets are the checkout peek's job.
     #[aerospike_macro::test]
     async fn idle_timeout_zero_tend_is_noop() {
@@ -1619,7 +1690,10 @@ mod pool_health_tests {
 
         let processed = node.reap_and_refresh_idle_connections().await;
 
-        assert_eq!(processed, 5, "3 retired + 2 probed: every conn accounted for");
+        assert_eq!(
+            processed, 5,
+            "3 retired + 2 probed: every conn accounted for"
+        );
         assert_eq!(
             node.connection_pool.total_reserved(),
             2,

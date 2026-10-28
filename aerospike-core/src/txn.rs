@@ -1,4 +1,4 @@
-// Copyright 2015-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not
 // use this file except in compliance with the License. You may obtain a copy of
@@ -12,6 +12,7 @@
 
 //! Multi-Record Transaction (MRT) support.
 
+use crate::locks::{read, write};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering};
 use std::sync::RwLock;
@@ -67,7 +68,23 @@ pub enum TxnState {
     Committed,
     /// Transaction has been aborted.
     Aborted,
+    /// A commit attempt failed with an **in-doubt** outcome: the request to
+    /// mark the transaction roll-forward may or may not have reached the
+    /// server, which may therefore still be rolling the transaction forward.
+    ///
+    /// From here [`Client::abort`](crate::Client::abort) is refused (a
+    /// rollback could discard writes the server is committing) and
+    /// [`Client::commit`](crate::Client::commit) may be retried; a retry is
+    /// the only way to resolve the transaction from the client side. A clean,
+    /// not-in-doubt commit failure never enters this state — it stays
+    /// [`Verified`](Self::Verified) and abortable.
+    CommitFailed,
 }
+
+/// Message carried by the error [`Client::abort`](crate::Client::abort)
+/// returns for a transaction in [`TxnState::CommitFailed`].
+pub const COMMIT_FAILED_ABORT_MESSAGE: &str =
+    "Abort not allowed because a commit already failed on this transaction with an in-doubt outcome";
 
 /// Transaction commit status code.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +94,10 @@ pub enum CommitStatus {
     /// Already committed.
     AlreadyCommitted,
     /// Transaction client roll forward abandoned. Server will eventually commit.
+    ///
+    /// `Client::commit` no longer returns this variant: it fails with
+    /// [`CommitErrorType::RollForwardAbandoned`] so the underlying cause is
+    /// not dropped. Kept so existing matches on this enum continue to compile.
     RollForwardAbandoned,
     /// Transaction has been rolled forward, but client close was abandoned.
     CloseAbandoned,
@@ -93,6 +114,12 @@ pub enum AbortStatus {
     RollBackAbandoned,
     /// Transaction has been rolled back, but client close was abandoned.
     CloseAbandoned,
+    /// Abort was refused because a commit already failed on this transaction
+    /// with an in-doubt outcome ([`TxnState::CommitFailed`]); see
+    /// [`COMMIT_FAILED_ABORT_MESSAGE`]. [`Client::abort`](crate::Client::abort)
+    /// reports this as an error with `ClientResultCode::TxnFailed`; the
+    /// variant exists for API parity with the other Aerospike clients.
+    CommitFailed,
 }
 
 /// Transaction commit error status.
@@ -106,6 +133,8 @@ pub enum CommitErrorType {
     VerifyFailAbortAbandoned,
     /// Transaction client mark roll forward abandoned.
     MarkRollForwardAbandoned,
+    /// Transaction client roll forward abandoned. Writes are not yet visible.
+    RollForwardAbandoned,
 }
 
 impl std::fmt::Display for CommitErrorType {
@@ -124,9 +153,17 @@ impl std::fmt::Display for CommitErrorType {
                 f,
                 "Transaction client mark roll forward abandoned. Server will eventually abort the Transaction."
             ),
+            Self::RollForwardAbandoned => write!(
+                f,
+                "Transaction client roll forward abandoned. The writes are not yet visible. Server will eventually commit the Transaction."
+            ),
         }
     }
 }
+
+/// A read inside a transaction: its key and the record version the server
+/// reported for it, if any.
+type TxnRead = (Key, Option<u64>);
 
 /// Multi-Record Transaction.
 ///
@@ -135,7 +172,7 @@ impl std::fmt::Display for CommitErrorType {
 /// configuration `transaction-duration` as the timeout (default 10 seconds).
 pub struct Txn {
     id: i64,
-    reads: RwLock<HashMap<[u8; 20], (Key, Option<u64>)>>,
+    reads: RwLock<HashMap<[u8; 20], TxnRead>>,
     writes: RwLock<HashMap<[u8; 20], Key>>,
     state: RwLock<TxnState>,
     namespace: RwLock<Option<String>>,
@@ -149,13 +186,22 @@ impl std::fmt::Debug for Txn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Txn")
             .field("id", &self.id)
-            .field("state", &*self.state.read().unwrap())
-            .field("namespace", &*self.namespace.read().unwrap())
+            .field("state", &*read(&self.state))
+            .field("namespace", &*read(&self.namespace))
             .field("timeout", &self.timeout)
             .field("deadline", &self.deadline.load(Ordering::Relaxed))
-            .finish()
+            .finish_non_exhaustive()
     }
 }
+
+/// Two transactions are the same transaction when they carry the same id.
+impl PartialEq for Txn {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for Txn {}
 
 impl Txn {
     /// Create a new transaction with a random transaction ID.
@@ -198,75 +244,91 @@ impl Txn {
 
     /// Return the transaction state.
     pub fn state(&self) -> TxnState {
-        *self.state.read().unwrap()
+        *read(&self.state)
     }
 
     /// Set the transaction state.
+    ///
+    /// Hidden: a test hook for language bindings that need to force a
+    /// non-open state without a cluster. `commit` and `abort` drive the
+    /// transitions in real use.
+    #[doc(hidden)]
     pub fn set_state(&self, state: TxnState) {
-        *self.state.write().unwrap() = state;
+        *write(&self.state) = state;
+    }
+
+    /// Records that a commit attempt failed with an in-doubt outcome: the
+    /// state becomes [`TxnState::CommitFailed`] unless the transaction has
+    /// already reached a terminal state ([`Committed`](TxnState::Committed) or
+    /// [`Aborted`](TxnState::Aborted)), which are left untouched.
+    pub(crate) fn mark_commit_failed(&self) {
+        let mut state = write(&self.state);
+        if !matches!(*state, TxnState::Committed | TxnState::Aborted) {
+            *state = TxnState::CommitFailed;
+        }
     }
 
     /// Process the results of a record read. For internal use only.
-    pub fn on_read(&self, key: &Key, version: Option<u64>) {
+    pub(crate) fn on_read(&self, key: &Key, version: Option<u64>) {
         if let Some(ver) = version {
-            let mut reads = self.reads.write().unwrap();
+            let mut reads = write(&self.reads);
             reads.insert(key.digest, (key.clone(), Some(ver)));
         }
     }
 
     /// Get record version for a given key.
     pub fn get_read_version(&self, key: &Key) -> Option<u64> {
-        let reads = self.reads.read().unwrap();
+        let reads = read(&self.reads);
         reads.get(&key.digest).and_then(|(_, v)| *v)
     }
 
     /// Check if a read exists for the given key.
     pub fn read_exists_for_key(&self, key: &Key) -> bool {
-        let reads = self.reads.read().unwrap();
+        let reads = read(&self.reads);
         reads.contains_key(&key.digest)
     }
 
     /// Get all read keys and their versions.
     pub fn get_reads(&self) -> Vec<(Key, Option<u64>)> {
-        let reads = self.reads.read().unwrap();
+        let reads = read(&self.reads);
         reads.values().cloned().collect()
     }
 
     /// Process the results of a record write. For internal use only.
-    pub fn on_write(&self, key: &Key, version: Option<u64>, result_code: ResultCode) {
+    pub(crate) fn on_write(&self, key: &Key, version: Option<u64>, result_code: ResultCode) {
         if version.is_some() {
-            let mut reads = self.reads.write().unwrap();
+            let mut reads = write(&self.reads);
             reads.insert(key.digest, (key.clone(), version));
         } else if result_code == ResultCode::Ok {
-            let mut reads = self.reads.write().unwrap();
+            let mut reads = write(&self.reads);
             reads.remove(&key.digest);
-            let mut writes = self.writes.write().unwrap();
+            let mut writes = write(&self.writes);
             writes.insert(key.digest, key.clone());
         }
     }
 
     /// Add key to write hash when write command is in doubt (usually caused by timeout).
-    pub fn on_write_in_doubt(&self, key: &Key) {
+    pub(crate) fn on_write_in_doubt(&self, key: &Key) {
         self.write_in_doubt.store(true, Ordering::Relaxed);
-        self.writes.write().unwrap().insert(key.digest, key.clone());
-        self.reads.write().unwrap().remove(&key.digest);
+        write(&self.writes).insert(key.digest, key.clone());
+        write(&self.reads).remove(&key.digest);
     }
 
     /// Get all write keys.
     pub fn get_writes(&self) -> Vec<Key> {
-        let writes = self.writes.read().unwrap();
+        let writes = read(&self.writes);
         writes.values().cloned().collect()
     }
 
     /// Check if a write exists for the given key.
     pub fn write_exists_for_key(&self, key: &Key) -> bool {
-        let writes = self.writes.read().unwrap();
+        let writes = read(&self.writes);
         writes.contains_key(&key.digest)
     }
 
     /// Return transaction namespace.
     pub fn namespace(&self) -> Option<String> {
-        self.namespace.read().unwrap().clone()
+        read(&self.namespace).clone()
     }
 
     /// Verify current transaction state and namespace for a future command.
@@ -277,7 +339,7 @@ impl Txn {
 
     /// Verify that the transaction state allows future commands.
     pub fn verify_command(&self) -> Result<()> {
-        if *self.state.read().unwrap() != TxnState::Open {
+        if *read(&self.state) != TxnState::Open {
             return Err(Error::client_error(
                 "Issuing commands to this transaction is forbidden because it has been ended by a commit or abort".to_string(),
             ));
@@ -287,8 +349,8 @@ impl Txn {
 
     /// Set transaction namespace only if doesn't already exist.
     /// If namespace already exists, verify new namespace is the same.
-    pub fn set_namespace(&self, ns: &str) -> Result<()> {
-        let mut guard = self.namespace.write().unwrap();
+    pub(crate) fn set_namespace(&self, ns: &str) -> Result<()> {
+        let mut guard = write(&self.namespace);
         match &*guard {
             None => {
                 *guard = Some(ns.to_string());
@@ -306,7 +368,24 @@ impl Txn {
         Duration::from_secs(u64::from(self.timeout))
     }
 
-    /// Set transaction timeout in seconds.
+    /// Returns the transaction with its timeout set. A `Txn` is shared as
+    /// `Arc<Txn>` once commands run under it, so the timeout is chosen here,
+    /// at construction: `Arc::new(Txn::new().with_timeout(t))`. Zero (the
+    /// default) means the server's `transaction-duration` applies.
+    #[must_use]
+    pub const fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout.as_secs() as u32;
+        self
+    }
+
+    /// Sets the transaction timeout in place.
+    ///
+    /// Hidden: for language bindings that expose the timeout as a settable
+    /// attribute on an already-constructed transaction. Needs unique access,
+    /// so it cannot change a transaction that commands already share (reach
+    /// it through `Arc::get_mut`). Rust code sets the timeout at construction
+    /// with [`with_timeout`](Self::with_timeout).
+    #[doc(hidden)]
     pub const fn set_timeout(&mut self, timeout: Duration) {
         self.timeout = timeout.as_secs() as u32;
     }
@@ -322,6 +401,7 @@ impl Txn {
     }
 
     /// Set transaction in-doubt status.
+    #[doc(hidden)] // test support, not a stable API
     pub fn set_in_doubt(&self, in_doubt: bool) {
         self.in_doubt.store(in_doubt, Ordering::Relaxed);
     }
@@ -333,7 +413,7 @@ impl Txn {
     }
 
     /// Return if the MRT monitor record should be closed/deleted.
-    pub fn close_monitor(&self) -> bool {
+    pub(crate) fn close_monitor(&self) -> bool {
         self.deadline.load(Ordering::Relaxed) != 0 && !self.write_in_doubt.load(Ordering::Relaxed)
     }
 
@@ -353,13 +433,13 @@ impl Txn {
     }
 
     /// Clear transaction. Remove all tracked keys and reset transient flags.
-    pub fn clear(&self) {
-        *self.namespace.write().unwrap() = None;
+    pub(crate) fn clear(&self) {
+        *write(&self.namespace) = None;
         self.deadline.store(0, Ordering::Relaxed);
         self.write_in_doubt.store(false, Ordering::Relaxed);
         self.in_doubt.store(false, Ordering::Relaxed);
-        self.reads.write().unwrap().clear();
-        self.writes.write().unwrap().clear();
+        write(&self.reads).clear();
+        write(&self.writes).clear();
     }
 }
 
@@ -375,4 +455,72 @@ pub(crate) fn get_txn_monitor_key(txn: &Txn) -> Option<Key> {
         Key::new(ns, "<ERO~MRT".to_string(), crate::Value::Int(txn.id()))
             .expect("Failed to create transaction monitor key")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mark_commit_failed_transitions_from_open_and_verified() {
+        let txn = Txn::new();
+        assert_eq!(txn.state(), TxnState::Open);
+        txn.mark_commit_failed();
+        assert_eq!(txn.state(), TxnState::CommitFailed);
+
+        let txn = Txn::new();
+        txn.set_state(TxnState::Verified);
+        txn.mark_commit_failed();
+        assert_eq!(txn.state(), TxnState::CommitFailed);
+
+        // Idempotent.
+        txn.mark_commit_failed();
+        assert_eq!(txn.state(), TxnState::CommitFailed);
+    }
+
+    #[test]
+    fn mark_commit_failed_preserves_terminal_states() {
+        for terminal in [TxnState::Committed, TxnState::Aborted] {
+            let txn = Txn::new();
+            txn.set_state(terminal);
+            txn.mark_commit_failed();
+            assert_eq!(txn.state(), terminal, "{terminal:?} must stay terminal");
+        }
+    }
+
+    #[test]
+    fn commit_failed_rejects_further_commands() {
+        let txn = Txn::new();
+        txn.mark_commit_failed();
+        let err = txn
+            .verify_command()
+            .expect_err("a CommitFailed transaction must not accept commands");
+        assert!(err.to_string().contains("ended by a commit or abort"));
+        assert!(txn.prepare_read("test").is_err());
+    }
+
+    #[test]
+    fn set_timeout_matches_with_timeout() {
+        let mut txn = Txn::new();
+        assert_eq!(txn.timeout(), Duration::ZERO);
+        txn.set_timeout(Duration::from_secs(30));
+        assert_eq!(txn.timeout(), Duration::from_secs(30));
+        assert_eq!(txn.timeout_secs(), 30);
+        assert_eq!(
+            Txn::new().with_timeout(Duration::from_secs(30)).timeout_secs(),
+            txn.timeout_secs()
+        );
+
+        // Sub-second durations truncate to whole seconds on both paths.
+        txn.set_timeout(Duration::from_millis(1500));
+        assert_eq!(txn.timeout_secs(), 1);
+    }
+
+    #[test]
+    fn abort_refusal_message_is_verbatim_from_sibling_clients() {
+        assert_eq!(
+            COMMIT_FAILED_ABORT_MESSAGE,
+            "Abort not allowed because a commit already failed on this transaction with an in-doubt outcome"
+        );
+    }
 }

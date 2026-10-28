@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -32,33 +32,56 @@ use serde::Serialize;
 /// Records can be identified using a specified namespace, an optional set name and a user defined
 /// key which must be unique within a set. Records can also be identified by namespace/digest,
 /// which is the combination used on the server.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The digest is derived from the set name and the user key when the key is
+/// built, so the parts are read through accessors and cannot drift apart.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 pub struct Key {
-    /// Namespace.
-    pub namespace: String,
+    pub(crate) namespace: String,
+    pub(crate) set_name: String,
+    pub(crate) user_key: Option<Value>,
+    pub(crate) digest: [u8; 20],
+}
 
-    /// Set name.
-    pub set_name: String,
+impl Key {
+    /// The namespace.
+    #[must_use]
+    pub fn namespace(&self) -> &str {
+        &self.namespace
+    }
 
-    /// Original user key.
-    pub user_key: Option<Value>,
+    /// The set name; empty when the key has no set.
+    #[must_use]
+    pub fn set_name(&self) -> &str {
+        &self.set_name
+    }
 
-    /// Unique server hash value generated from set name and user key.
-    pub digest: [u8; 20],
+    /// The user key, when the key was built from one.
+    #[must_use]
+    pub const fn user_key(&self) -> Option<&Value> {
+        self.user_key.as_ref()
+    }
+
+    /// The 20-byte digest the server addresses the record by.
+    #[must_use]
+    pub const fn digest(&self) -> [u8; 20] {
+        self.digest
+    }
 }
 
 impl Key {
     /// Construct a new key given a namespace, a set name and a user key value.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Only integers, strings and blobs (`Vec<u8>`) can be used as user keys. The constructor will
-    /// panic if any other value type is passed.
-    pub fn new<S>(namespace: S, set_name: S, key: Value) -> Result<Self>
-    where
-        S: Into<String>,
-    {
+    /// Only integers, strings and blobs (`Vec<u8>`) can be used as user keys;
+    /// any other value type is rejected with `InvalidArgument`.
+    pub fn new(
+        namespace: impl Into<String>,
+        set_name: impl Into<String>,
+        key: Value,
+    ) -> Result<Self> {
         let mut key = Key {
             namespace: namespace.into(),
             set_name: set_name.into(),
@@ -70,24 +93,24 @@ impl Key {
         Ok(key)
     }
 
-    /// Construct a new key from namespace, optional set name, user key and digest.
-    /// The server handles record identifiers by digest only.
-    /// The digest will be set to the provided value and not validated.
-    pub fn key_with_digest<S>(
-        namespace: String,
-        set_name: Option<String>,
-        key: Option<Value>,
+    /// Construct a key from a digest the caller already has, for example one
+    /// read back from a record or stored elsewhere. The server addresses
+    /// records by digest only, so the digest is taken as given and not
+    /// validated; an empty `set_name` means no set, and `user_key` is sent to
+    /// the server only when a write policy asks for it.
+    #[must_use]
+    pub fn with_digest(
+        namespace: impl Into<String>,
+        set_name: impl Into<String>,
+        user_key: Option<Value>,
         digest: [u8; 20],
-    ) -> Result<Self>
-    where
-        S: Into<String>,
-    {
-        Ok(Self {
-            namespace,
-            set_name: set_name.unwrap_or_default(),
-            user_key: key,
+    ) -> Self {
+        Self {
+            namespace: namespace.into(),
+            set_name: set_name.into(),
+            user_key,
             digest,
-        })
+        }
     }
 
     fn compute_digest(&mut self) -> Result<()> {
@@ -155,7 +178,6 @@ macro_rules! as_key {
 
 #[cfg(test)]
 mod tests {
-    use std::str;
 
     macro_rules! digest {
         ($x:expr) => {
@@ -164,8 +186,26 @@ mod tests {
     }
     macro_rules! str_repeat {
         ($c:expr, $n:expr) => {
-            str::from_utf8(&[$c as u8; $n]).unwrap()
+            std::iter::repeat_n($c, $n).collect::<String>()
         };
+    }
+
+    #[test]
+    fn mixed_string_types_and_unsupported_user_keys() {
+        let ns = String::from("test");
+        let key = crate::Key::new(ns, "set", crate::Value::from(1)).unwrap();
+        assert_eq!(key.namespace, "test");
+        assert!(crate::Key::new("test", "set", crate::Value::from(1.5)).is_err());
+        assert!(crate::Key::new("test", "set", crate::Value::Nil).is_err());
+    }
+
+    #[test]
+    fn with_digest_keeps_the_digest_as_given() {
+        let digest = [7u8; 20];
+        let key = crate::Key::with_digest("test", "", None, digest);
+        assert_eq!(key.digest, digest);
+        assert_eq!(key.set_name, "");
+        assert!(key.user_key.is_none());
     }
 
     #[test]
@@ -192,50 +232,41 @@ mod tests {
         assert_eq!(digest!(&1isize), "82d7213b469812947c109a6d341e3b5b1dedec1f");
 
         assert_eq!(
-            digest!(i64::min_value()),
+            digest!(i64::MIN),
             "7185c2a47fb02c996daed26b4e01b83240aee9d4"
         );
         assert_eq!(
-            digest!(i64::max_value()),
+            digest!(i64::MAX),
             "1698328974afa62c8e069860c1516f780d63dbb8"
         );
         assert_eq!(
-            digest!(i32::min_value()),
+            digest!(i32::MIN),
             "d635a867b755f8f54cdc6275e6fb437df82a728c"
         );
         assert_eq!(
-            digest!(i32::max_value()),
+            digest!(i32::MAX),
             "fa8c47b8b898af1bbcb20af0d729ca68359a2645"
         );
         assert_eq!(
-            digest!(i16::min_value()),
+            digest!(i16::MIN),
             "7f41e9dd1f3fe3694be0430e04c8bfc7d51ec2af"
         );
         assert_eq!(
-            digest!(i16::max_value()),
+            digest!(i16::MAX),
             "309fc9c2619c4f65ff7f4cd82085c3ee7a31fc7c"
         );
-        assert_eq!(
-            digest!(i8::min_value()),
-            "93191e549f8f3548d7e2cfc958ddc8c65bcbe4c6"
-        );
-        assert_eq!(
-            digest!(i8::max_value()),
-            "a58f7d98bf60e10fe369c82030b1c9dee053def9"
-        );
+        assert_eq!(digest!(i8::MIN), "93191e549f8f3548d7e2cfc958ddc8c65bcbe4c6");
+        assert_eq!(digest!(i8::MAX), "a58f7d98bf60e10fe369c82030b1c9dee053def9");
 
         assert_eq!(
-            digest!(u32::max_value()),
+            digest!(u32::MAX),
             "2cdf52bf5641027042b9cf9a499e509a58b330e2"
         );
         assert_eq!(
-            digest!(u16::max_value()),
+            digest!(u16::MAX),
             "3f0dd44352749a9fd5b7ec44213441ef54c46d57"
         );
-        assert_eq!(
-            digest!(u8::max_value()),
-            "5a7dd3ea237c30c8735b051524e66fd401a10f6a"
-        );
+        assert_eq!(digest!(u8::MAX), "5a7dd3ea237c30c8735b051524e66fd401a10f6a");
     }
 
     #[test]
@@ -318,6 +349,6 @@ mod tests {
     #[test]
     #[should_panic(expected = "Aerospike does not support u64 natively on server-side.")]
     fn unsupported_u64_key() {
-        as_key!("namespace", "set", u64::max_value());
+        as_key!("namespace", "set", u64::MAX);
     }
 }

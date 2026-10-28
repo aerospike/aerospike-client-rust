@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -22,6 +22,7 @@ use serde::Serialize;
 /// Database operation error codes. The error codes are defined in the server-side file proto.h.
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ResultCode {
     /// `OperationType` was successful.
     Ok,
@@ -77,7 +78,8 @@ pub enum ResultCode {
     /// Specified bin name does not exist in record.
     BinNotFound,
 
-    /// Specified bin name does not exist in record.
+    /// The storage device is overloaded; the server rejected the command
+    /// (retried by the client like a timeout).
     DeviceOverload,
 
     /// Key type mismatch.
@@ -86,7 +88,7 @@ pub enum ResultCode {
     /// Invalid namespace.
     InvalidNamespace,
 
-    /// Bin name length greater than 14 characters.
+    /// Bin name length greater than 15 characters, or too many unique bin names.
     BinNameTooLong,
 
     /// `OperationType` not allowed at this time.
@@ -111,8 +113,11 @@ pub enum ResultCode {
     /// Write command loses conflict to XDR.
     LostConflict,
 
+    /// A string in the request is not valid UTF-8. Server 8.2.0+.
+    InvalidEncoding,
+
     /// Write can't complete until XDR finishes shipping.
-    XDRKeyBusy,
+    XdrKeyBusy,
 
     /// Transaction record blocked by another transaction.
     MrtBlocked,
@@ -189,7 +194,7 @@ pub enum ResultCode {
     /// Privilege is invalid.
     InvalidPrivilege,
 
-    /// Invalid IP address allowlist.
+    /// Invalid IP address allowlist (`INVALID_WHITELIST` in the server and the Java/Go clients).
     InvalidAllowlist,
 
     /// Quotas not enabled on server.
@@ -204,7 +209,8 @@ pub enum ResultCode {
     /// User does not posses the required role to perform the database operation.
     RoleViolation,
 
-    /// Command not allowed because sender IP address not allowlisted.
+    /// Command not allowed because the sender IP address is not allowlisted
+    /// (`NOT_WHITELISTED` in the server and the Java/Go clients).
     NotAllowlisted,
 
     /// Quota exceeded.
@@ -225,7 +231,8 @@ pub enum ResultCode {
     /// Invalid `GeoJSON` on insert/update
     InvalidGeojson,
 
-    /// Secondary index already exists.
+    /// Secondary index already exists (`INDEX_FOUND` in the server and Go,
+    /// `INDEX_ALREADY_EXISTS` in Java).
     IndexFound,
 
     /// Requested secondary index does not exist.
@@ -300,7 +307,8 @@ impl ResultCode {
             26 => ResultCode::OpNotApplicable,
             27 => ResultCode::FilteredOut,
             28 => ResultCode::LostConflict,
-            32 => ResultCode::XDRKeyBusy,
+            29 => ResultCode::InvalidEncoding,
+            32 => ResultCode::XdrKeyBusy,
             120 => ResultCode::MrtBlocked,
             121 => ResultCode::MrtVersionMismatch,
             122 => ResultCode::MrtExpired,
@@ -369,8 +377,8 @@ impl ResultCode {
             ResultCode::ClusterKeyMismatch => String::from("Cluster key mismatch"),
             ResultCode::ServerMemError => String::from("Server memory error"),
             ResultCode::Timeout => String::from("Timeout"),
-            ResultCode::AlwaysForbidden => String::from("Xds not available"),
-            ResultCode::PartitionUnavailable => String::from("Server not available"),
+            ResultCode::AlwaysForbidden => String::from("Operation not allowed"),
+            ResultCode::PartitionUnavailable => String::from("Partition unavailable"),
             ResultCode::BinTypeError => String::from("Bin type error"),
             ResultCode::RecordTooBig => String::from("Record too big"),
             ResultCode::KeyBusy => String::from("Hot key"),
@@ -381,15 +389,16 @@ impl ResultCode {
             ResultCode::KeyMismatch => String::from("Key mismatch"),
             ResultCode::InvalidNamespace => String::from("Namespace not found"),
             ResultCode::BinNameTooLong => {
-                String::from("Bin name length greater than 14 characters")
+                String::from("Bin name length greater than 15 characters or maximum bins exceeded")
             }
-            ResultCode::FailForbidden => String::from("OperationType not allowed at this time"),
+            ResultCode::FailForbidden => String::from("Operation not allowed at this time"),
             ResultCode::ElementNotFound => String::from("Element not found"),
             ResultCode::ElementExists => String::from("Element already exists"),
             ResultCode::OpNotApplicable => String::from("Operation not applicable"),
-            ResultCode::FilteredOut => String::from("Transaction filtered out"),
-            ResultCode::LostConflict => String::from("Write command loses conflict to XDR"),
-            ResultCode::XDRKeyBusy => {
+            ResultCode::FilteredOut => String::from("Command filtered out"),
+            ResultCode::LostConflict => String::from("Command failed due to conflict with XDR"),
+            ResultCode::InvalidEncoding => String::from("Invalid UTF-8 encoding"),
+            ResultCode::XdrKeyBusy => {
                 String::from("Write can't complete until XDR finishes shipping")
             }
             ResultCode::MrtBlocked => {
@@ -428,12 +437,12 @@ impl ResultCode {
             ResultCode::InvalidRole => String::from("Invalid role"),
             ResultCode::RoleAlreadyExists => String::from("Role already exists"),
             ResultCode::InvalidPrivilege => String::from("Invalid privilege"),
-            ResultCode::InvalidAllowlist => String::from("Invalid whitelist"),
+            ResultCode::InvalidAllowlist => String::from("Invalid allowlist"),
             ResultCode::QuotasNotEnabled => String::from("Quotas not enabled"),
             ResultCode::InvalidQuota => String::from("Invalid quota"),
             ResultCode::NotAuthenticated => String::from("Not authenticated"),
             ResultCode::RoleViolation => String::from("Role violation"),
-            ResultCode::NotAllowlisted => String::from("Command not whitelisted"),
+            ResultCode::NotAllowlisted => String::from("Command not allowlisted"),
             ResultCode::QuotaExceeded => String::from("Quota exceeded"),
             ResultCode::UdfBadResponse => String::from("Udf returned error"),
             ResultCode::BatchDisabled => String::from("Batch functionality has been disabled"),
@@ -461,7 +470,7 @@ impl ResultCode {
 }
 
 impl From<ResultCode> for u8 {
-    /// Wire value of the result code (inverse of [`ResultCode::from_u8`]).
+    /// Wire value of the result code (inverse of `ResultCode::from(u8)`).
     fn from(rc: ResultCode) -> u8 {
         match rc {
             ResultCode::Ok => 0,
@@ -492,7 +501,8 @@ impl From<ResultCode> for u8 {
             ResultCode::OpNotApplicable => 26,
             ResultCode::FilteredOut => 27,
             ResultCode::LostConflict => 28,
-            ResultCode::XDRKeyBusy => 32,
+            ResultCode::InvalidEncoding => 29,
+            ResultCode::XdrKeyBusy => 32,
             ResultCode::MrtBlocked => 120,
             ResultCode::MrtVersionMismatch => 121,
             ResultCode::MrtExpired => 122,
@@ -567,9 +577,8 @@ impl fmt::Display for ResultCode {
     }
 }
 
-
-/// Client-side error codes, mirroring the Java client's negative `ResultCode`
-/// constants.
+/// Client-side error codes: the negative values a failure that never reached
+/// the server reports through [`Error::result_code`](crate::errors::Error::result_code).
 ///
 /// Server failures carry a [`ResultCode`] (non-negative wire
 /// value); failures generated on the client carry one of these, so downstream
@@ -578,10 +587,11 @@ impl fmt::Display for ResultCode {
 /// code via
 /// [`Error::client_result_code`](crate::errors::Error::client_result_code).
 ///
-/// Note: client-side *timeouts* use the server `TIMEOUT` (9) code, matching
-/// the Java client, and therefore do not appear here.
+/// Note: client-side *timeouts* use the server `TIMEOUT` (9) code and
+/// therefore do not appear here.
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ClientResultCode {
     /// Transaction has already been aborted.
     TxnAlreadyAborted,
@@ -592,7 +602,10 @@ pub enum ClientResultCode {
     /// Transaction failed.
     TxnFailed,
 
-    /// One or more keys failed in a batch.
+    /// One or more keys failed in a batch. Reserved; not produced by this
+    /// client: per-key outcomes live on the rows of the caller's
+    /// [`BatchOperation`](crate::BatchOperation)s, and a batch that fails
+    /// returns the failure that ended it.
     BatchFailed,
 
     /// No response received from server.
@@ -607,8 +620,7 @@ pub enum ClientResultCode {
     /// Client serialization error.
     SerializeError,
 
-    /// Asynchronous delay queue is full. Reserved for Java compatibility;
-    /// not produced by this client.
+    /// Asynchronous delay queue is full. Reserved; not produced by this client.
     AsyncQueueFull,
 
     /// Server is not accepting requests (connection failure).
@@ -663,31 +675,19 @@ impl ClientResultCode {
     /// Convert a client result code into a string.
     pub fn into_string(self) -> String {
         match self {
-            ClientResultCode::TxnAlreadyAborted => {
-                String::from("Transaction already aborted")
-            }
-            ClientResultCode::TxnAlreadyCommitted => {
-                String::from("Transaction already committed")
-            }
+            ClientResultCode::TxnAlreadyAborted => String::from("Transaction already aborted"),
+            ClientResultCode::TxnAlreadyCommitted => String::from("Transaction already committed"),
             ClientResultCode::TxnFailed => String::from("Transaction failed"),
-            ClientResultCode::BatchFailed => {
-                String::from("One or more keys failed in a batch")
-            }
-            ClientResultCode::NoResponse => {
-                String::from("No response received from server")
-            }
+            ClientResultCode::BatchFailed => String::from("One or more keys failed in a batch"),
+            ClientResultCode::NoResponse => String::from("No response received from server"),
             ClientResultCode::MaxErrorRate => String::from("Max errors limit reached"),
             ClientResultCode::MaxRetriesExceeded => String::from("Max retries exceeded"),
             ClientResultCode::SerializeError => String::from("Serialize error"),
-            ClientResultCode::AsyncQueueFull => {
-                String::from("Async delay queue is full")
-            }
+            ClientResultCode::AsyncQueueFull => String::from("Async delay queue is full"),
             ClientResultCode::ServerNotAvailable => {
                 String::from("Server is not accepting requests")
             }
-            ClientResultCode::NoMoreConnections => {
-                String::from("No more available connections")
-            }
+            ClientResultCode::NoMoreConnections => String::from("No more available connections"),
             ClientResultCode::QueryTerminated => String::from("Query was terminated"),
             ClientResultCode::ScanTerminated => String::from("Scan was terminated"),
             ClientResultCode::InvalidNodeError => String::from("Invalid node"),
@@ -707,7 +707,7 @@ impl From<i32> for ClientResultCode {
 }
 
 impl From<ClientResultCode> for i32 {
-    /// Java-compatible numeric value (inverse of [`ClientResultCode::from_i32`]).
+    /// Numeric value (inverse of `ClientResultCode::from(i32)`).
     fn from(rc: ClientResultCode) -> i32 {
         match rc {
             ClientResultCode::TxnAlreadyAborted => -19,
@@ -780,6 +780,11 @@ mod tests {
     #[test]
     fn from_result_code() {
         assert_eq!(ResultCode::KeyNotFoundError, ResultCode::from(2u8));
+        assert_eq!(ResultCode::InvalidEncoding, ResultCode::from(29u8));
+        assert_eq!(
+            ResultCode::InvalidEncoding.to_string(),
+            "Invalid UTF-8 encoding"
+        );
     }
 
     #[test]

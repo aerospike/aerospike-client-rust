@@ -64,10 +64,7 @@ async fn prepare_scope_fixture(client: &Client) -> ScopeFixture {
     let blob_hex = hex::encode(blob_bytes);
 
     let mut map = HashMap::new();
-    map.insert(
-        Value::String(MAP_KEY.into()),
-        Value::String("v1".into()),
-    );
+    map.insert(Value::String(MAP_KEY.into()), Value::String("v1".into()));
 
     let key1 = as_key!(namespace, &set_name, "k1");
     client
@@ -117,14 +114,7 @@ async fn prepare_scope_fixture(client: &Client) -> ScopeFixture {
     ] {
         let task = client
             .create_index_on_bin(
-                &apolicy,
-                namespace,
-                &set_name,
-                bin,
-                index_name,
-                index_type,
-                cit,
-                None,
+                &apolicy, namespace, &set_name, bin, index_name, index_type, cit, None,
             )
             .await
             .unwrap_or_else(|e| panic!("failed to create {bin} index: {e}"));

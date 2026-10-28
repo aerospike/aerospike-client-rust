@@ -38,11 +38,11 @@ pub struct LuaList(pub(crate) Vec<Value>);
 pub struct LuaMap(pub(crate) HashMap<Value, Value>);
 
 /// Userdata wrapper for a `GeoJSON` value inside the Lua interpreter.
-/// Like the Java client's `LuaGeoJSON`: an opaque value that stringifies
-/// to its `GeoJSON` text and round-trips back to [`Value::GeoJSON`].
-pub struct LuaGeoJSON(pub(crate) String);
+/// Like the Java client's `LuaGeoJson`: an opaque value that stringifies
+/// to its `GeoJSON` text and round-trips back to [`Value::GeoJson`].
+pub struct LuaGeoJson(pub(crate) String);
 
-impl UserData for LuaGeoJSON {
+impl UserData for LuaGeoJson {
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
         methods.add_meta_method(MetaMethod::ToString, |_, this, ()| Ok(this.0.clone()));
         methods.add_meta_method(MetaMethod::Len, |_, this, ()| Ok(this.0.len() as i64));
@@ -62,17 +62,19 @@ pub fn value_to_lua(lua: &Lua, value: Value) -> mlua::Result<LuaValue> {
             FloatValue::F64(bits) => f64::from_bits(bits),
         }),
         Value::String(s) => LuaValue::String(lua.create_string(&s)?),
-        Value::GeoJSON(s) => LuaValue::UserData(lua.create_userdata(LuaGeoJSON(s))?),
-        Value::Blob(b) => {
-            LuaValue::UserData(lua.create_userdata(LuaBytes::new(b, ParticleType::BLOB))?)
+        Value::GeoJson(s) => LuaValue::UserData(lua.create_userdata(LuaGeoJson(s))?),
+        // An opaque foreign payload has no Lua notion either, so it travels
+        // as plain bytes like a blob.
+        Value::Blob(b) | Value::Unknown(_, b) => {
+            LuaValue::UserData(lua.create_userdata(LuaBytes::new(b, ParticleType::Blob))?)
         }
-        Value::HLL(b) => {
-            LuaValue::UserData(lua.create_userdata(LuaBytes::new(b, ParticleType::HLL))?)
+        Value::Hll(b) => {
+            LuaValue::UserData(lua.create_userdata(LuaBytes::new(b, ParticleType::Hll))?)
         }
         // A vector reaches Lua as bytes of particle type 16 holding the
         // stored wire value, as the Java client passes it.
         Value::Vector(v) => LuaValue::UserData(
-            lua.create_userdata(LuaBytes::new(v.wire_bytes(), ParticleType::VECTOR))?,
+            lua.create_userdata(LuaBytes::new(v.wire_bytes(), ParticleType::Vector))?,
         ),
         Value::List(items) | Value::MultiResult(items) => {
             LuaValue::UserData(lua.create_userdata(LuaList(items))?)
@@ -91,11 +93,6 @@ pub fn value_to_lua(lua: &Lua, value: Value) -> mlua::Result<LuaValue> {
             return Err(mlua::Error::runtime(
                 "Infinity/Wildcard values cannot be passed to Lua",
             ))
-        }
-        // Opaque foreign payload: Lua has no notion of unknown particle
-        // types, so surface it as plain bytes (like blobs).
-        Value::Unknown(_, b) => {
-            LuaValue::UserData(lua.create_userdata(LuaBytes::new(b, ParticleType::BLOB))?)
         }
     })
 }
@@ -120,9 +117,9 @@ pub fn lua_to_value(value: &LuaValue) -> mlua::Result<Value> {
             } else if let Ok(map) = ud.borrow::<LuaMap>() {
                 Value::HashMap(map.0.clone())
             } else if let Ok(bytes) = ud.borrow::<LuaBytes>() {
-                if bytes.particle_type == ParticleType::HLL as u8 {
-                    Value::HLL(bytes.bytes.clone())
-                } else if bytes.particle_type == ParticleType::VECTOR as u8 {
+                if bytes.particle_type == ParticleType::Hll as u8 {
+                    Value::Hll(bytes.bytes.clone())
+                } else if bytes.particle_type == ParticleType::Vector as u8 {
                     Value::Vector(
                         crate::Vector::from_wire_bytes(&bytes.bytes)
                             .map_err(|e| mlua::Error::runtime(e.to_string()))?,
@@ -130,8 +127,8 @@ pub fn lua_to_value(value: &LuaValue) -> mlua::Result<Value> {
                 } else {
                     Value::Blob(bytes.bytes.clone())
                 }
-            } else if let Ok(geo) = ud.borrow::<LuaGeoJSON>() {
-                Value::GeoJSON(geo.0.clone())
+            } else if let Ok(geo) = ud.borrow::<LuaGeoJson>() {
+                Value::GeoJson(geo.0.clone())
             } else {
                 return Err(mlua::Error::runtime(
                     "unsupported userdata in stream result",

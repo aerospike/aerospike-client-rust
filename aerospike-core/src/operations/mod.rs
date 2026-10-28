@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -28,7 +28,7 @@ pub mod string;
 
 use self::cdt::CdtOperation;
 pub use self::lists::{ListOrderType, ListPolicy, ListReturnType, ListSortFlags, ListWriteFlags};
-pub use self::maps::{MapOrder, MapPolicy, MapReturnType, MapWriteFlags, MapWriteMode};
+pub use self::maps::{MapOrder, MapPolicy, MapReturnType, MapWriteFlags};
 pub use self::scalar::*;
 use self::string::StringOp;
 
@@ -140,9 +140,9 @@ impl Operation {
             OperationData::None => 0,
             OperationData::Value(value) => value.estimate_size()?,
             OperationData::EXPOp(ref exp_op) => exp_op.estimate_size()?,
-            OperationData::CdtSelectByPath(ctx, flag) => pack_path_select(&mut None, ctx, flag.0)?,
+            OperationData::CdtSelectByPath(ctx, flag) => pack_path_select(&mut None, ctx, flag.bits())?,
             OperationData::CdtModifyByPath(ctx, flag, exp) => {
-                pack_path_modify_exp(&mut None, ctx, flag.0, exp)?
+                pack_path_modify_exp(&mut None, ctx, flag.bits(), exp)?
             }
             OperationData::CdtListOp(ref cdt_op)
             | OperationData::CdtMapOp(ref cdt_op)
@@ -165,7 +165,7 @@ impl Operation {
 
         match &self.data {
             OperationData::None => {
-                size += self.write_op_header_to(buffer, ParticleType::NULL as u8);
+                size += self.write_op_header_to(buffer, ParticleType::Null as u8);
             }
             OperationData::Value(value) => {
                 size += self.write_op_header_to(buffer, value.particle_type()?);
@@ -179,19 +179,19 @@ impl Operation {
                 size += cdt_op.write_to(buffer, &self.ctx)?;
             }
             OperationData::EXPOp(ref exp) => {
-                size += self.write_op_header_to(buffer, ParticleType::BLOB as u8);
+                size += self.write_op_header_to(buffer, ParticleType::Blob as u8);
                 size += exp.write_to(buffer)?;
             }
             OperationData::CdtSelectByPath(ctx, flag) => {
-                size += self.write_op_header_to(buffer, ParticleType::BLOB as u8);
-                size += pack_path_select(&mut Some(buffer), ctx, flag.0)?;
+                size += self.write_op_header_to(buffer, ParticleType::Blob as u8);
+                size += pack_path_select(&mut Some(buffer), ctx, flag.bits())?;
             }
             OperationData::CdtModifyByPath(ctx, flag, exp) => {
-                size += self.write_op_header_to(buffer, ParticleType::BLOB as u8);
-                size += pack_path_modify_exp(&mut Some(buffer), ctx, flag.0, exp)?;
+                size += self.write_op_header_to(buffer, ParticleType::Blob as u8);
+                size += pack_path_modify_exp(&mut Some(buffer), ctx, flag.bits(), exp)?;
             }
             OperationData::StringOp(ref s_op) => {
-                size += self.write_op_header_to(buffer, ParticleType::STRING as u8);
+                size += self.write_op_header_to(buffer, ParticleType::String as u8);
                 size += s_op.write_to(buffer, &self.ctx)?;
             }
         }
@@ -216,8 +216,8 @@ impl Operation {
 
     /// Set the context of the operation. Required for nested structures
     #[must_use]
-    pub fn context(mut self, ctx: Vec<CdtContext>) -> Self {
-        self.ctx = ctx;
+    pub fn context(mut self, ctx: impl Into<Vec<CdtContext>>) -> Self {
+        self.ctx = ctx.into();
         self
     }
 }

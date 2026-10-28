@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,6 +13,7 @@
 // limitations under the License.
 
 pub mod admin_command;
+pub mod as_msg_fields;
 pub mod batch_attr;
 pub mod batch_operate_command;
 pub mod buffer;
@@ -20,7 +21,6 @@ pub mod delete_command;
 pub mod execute_udf_command;
 pub mod exists_command;
 pub mod info_command;
-pub mod as_msg_fields;
 pub mod operate_command;
 pub mod particle_type;
 pub mod query_command;
@@ -44,13 +44,13 @@ use std::sync::Arc;
 pub use self::batch_attr::BatchAttr;
 pub use self::batch_operate_command::BatchOperateCommand;
 pub use self::delete_command::DeleteCommand;
-pub use self::execute_udf_command::ExecuteUDFCommand;
+pub use self::execute_udf_command::ExecuteUdfCommand;
 pub use self::exists_command::ExistsCommand;
 pub use self::info_command::Message;
 pub use self::operate_command::OperateCommand;
 pub use self::particle_type::ParticleType;
-pub(crate) use self::query_explain_command::QueryExplainCommand;
 pub use self::query_command::QueryCommand;
+pub use self::query_explain_command::QueryExplainCommand;
 pub use self::read_command::ReadCommand;
 pub use self::server_command::ServerCommand;
 pub use self::single_command::SingleCommand;
@@ -92,7 +92,7 @@ pub trait Command {
         None
     }
     /// The cluster this command runs against, used by the retry loop to record
-    /// cluster-wide counters (`exceeded-max-retries` / `exceeded-total-timeout`).
+    /// cluster-wide counters (`exceeded_max_retries` / `exceeded_total_timeout`).
     /// Defaulted to `None` for commands that carry only a node handle
     /// (streaming / server-background commands).
     fn cluster(&self) -> Option<&Cluster> {
@@ -105,16 +105,16 @@ pub trait Command {
 /// the command's retry budget (see the retry loops), so this bounds how hot
 /// the wait loop spins; the wait itself is bounded by the command deadline
 /// plus [`POOL_EMPTY_MAX_WAITS`].
-pub(crate) const POOL_EMPTY_WAIT: std::time::Duration = std::time::Duration::from_millis(1);
+pub const POOL_EMPTY_WAIT: std::time::Duration = std::time::Duration::from_millis(1);
 
 /// Upper bound on consecutive pool-empty waits for commands without a total
 /// timeout (`total_timeout == 0` means no deadline): ~5s at
 /// [`POOL_EMPTY_WAIT`] pacing. Beyond this the pool-empty error is handled
 /// like any other connection failure.
-pub(crate) const POOL_EMPTY_MAX_WAITS: usize = 5_000;
+pub const POOL_EMPTY_MAX_WAITS: usize = 5_000;
 
 /// Rejects VECTOR payloads when any cluster node lacks support.
-pub(crate) fn check_vector_support(has_vector: bool, all_nodes_support_vector: bool) -> Result<()> {
+pub fn check_vector_support(has_vector: bool, all_nodes_support_vector: bool) -> Result<()> {
     if has_vector && !all_nodes_support_vector {
         return Err(Error::invalid_argument(
             "Vector is not supported by all nodes in the cluster: VECTOR values require every \
@@ -147,7 +147,7 @@ pub fn is_network_error(err: &Error) -> bool {
 /// transitional state.
 pub fn is_retriable_server_error(err: &Error) -> bool {
     match err.kind() {
-        crate::ErrorKind::Server { rc, .. } | crate::ErrorKind::BatchRow { rc, .. } => matches!(
+        crate::ErrorKind::Server { rc, .. } => matches!(
             rc,
             ResultCode::Timeout
                 | ResultCode::DeviceOverload
@@ -164,7 +164,7 @@ pub fn should_retry(err: &Error) -> bool {
 }
 
 /// Contract tests for the three predicates that gate retry + socket reuse.
-/// `Error::Connection` must be retriable 
+/// `Error::Connection` must be retriable
 /// `Error::Io` must NOT be (regression guard — if someone re-introduces
 /// `Err(e.into())` at a socket site, the loopback tests catch the producer
 /// regression while these pin the predicate semantics).
@@ -193,10 +193,14 @@ mod tests_retry_predicates {
     fn is_network_error_contract() {
         // (err, expected, label)
         let cases: &[(Error, bool, &str)] = &[
-            (conn_err(),                              true,  "Error::Connection"),
-            (timeout_err(),                           true,  "Error::Timeout"),
-            (io_err(),                                false, "Error::Io — regression guard"),
-            (server_err(ResultCode::DeviceOverload),  false, "server error is not a network error"),
+            (conn_err(), true, "Error::Connection"),
+            (timeout_err(), true, "Error::Timeout"),
+            (io_err(), false, "Error::Io — regression guard"),
+            (
+                server_err(ResultCode::DeviceOverload),
+                false,
+                "server error is not a network error",
+            ),
         ];
         for (err, expected, label) in cases {
             assert_eq!(is_network_error(err), *expected, "{label}: err={err:?}");
@@ -206,15 +210,35 @@ mod tests_retry_predicates {
     #[test]
     fn should_retry_contract() {
         let cases: &[(Error, bool, &str)] = &[
-            (conn_err(),                                true,  "Connection retries"),
-            (timeout_err(),                             true,  "Timeout retries"),
-            (io_err(),                                  false, "Io does NOT retry"),
-            (server_err(ResultCode::Timeout),           true,  "server TIMEOUT retries"),
-            (server_err(ResultCode::DeviceOverload),    true,  "DEVICE_OVERLOAD retries"),
-            (server_err(ResultCode::KeyBusy),           true,  "KEY_BUSY retries"),
-            (server_err(ResultCode::PartitionUnavailable), true, "PARTITION_UNAVAILABLE retries"),
-            (server_err(ResultCode::KeyNotFoundError),  false, "KEY_NOT_FOUND does NOT retry"),
-            (server_err(ResultCode::ParameterError),    false, "PARAMETER_ERROR does NOT retry"),
+            (conn_err(), true, "Connection retries"),
+            (timeout_err(), true, "Timeout retries"),
+            (io_err(), false, "Io does NOT retry"),
+            (
+                server_err(ResultCode::Timeout),
+                true,
+                "server TIMEOUT retries",
+            ),
+            (
+                server_err(ResultCode::DeviceOverload),
+                true,
+                "DEVICE_OVERLOAD retries",
+            ),
+            (server_err(ResultCode::KeyBusy), true, "KEY_BUSY retries"),
+            (
+                server_err(ResultCode::PartitionUnavailable),
+                true,
+                "PARTITION_UNAVAILABLE retries",
+            ),
+            (
+                server_err(ResultCode::KeyNotFoundError),
+                false,
+                "KEY_NOT_FOUND does NOT retry",
+            ),
+            (
+                server_err(ResultCode::ParameterError),
+                false,
+                "PARAMETER_ERROR does NOT retry",
+            ),
         ];
         for (err, expected, label) in cases {
             assert_eq!(should_retry(err), *expected, "{label}: err={err:?}");
@@ -225,11 +249,23 @@ mod tests_retry_predicates {
     fn keep_connection_contract() {
         // true = keep, false = drop (caller calls invalidate)
         let cases: &[(Error, bool, &str)] = &[
-            (conn_err(),                               false, "Connection: socket broken — drop"),
-            (timeout_err(),                            true,  "Timeout: deadline elapsed, socket may recover — keep"),
-            (io_err(),                                 false, "Io: conservative drop"),
-            (server_err(ResultCode::KeyNotFoundError), true,  "ordinary server error: response complete — keep"),
-            (server_err(ResultCode::ScanAbort),        false, "ScanAbort: stream mid-frame — drop"),
+            (conn_err(), false, "Connection: socket broken — drop"),
+            (
+                timeout_err(),
+                true,
+                "Timeout: deadline elapsed, socket may recover — keep",
+            ),
+            (io_err(), false, "Io: conservative drop"),
+            (
+                server_err(ResultCode::KeyNotFoundError),
+                true,
+                "ordinary server error: response complete — keep",
+            ),
+            (
+                server_err(ResultCode::ScanAbort),
+                false,
+                "ScanAbort: stream mid-frame — drop",
+            ),
         ];
         for (err, expected, label) in cases {
             assert_eq!(keep_connection(err), *expected, "{label}: err={err:?}");

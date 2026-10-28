@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -15,7 +15,7 @@
 //
 
 /// `GenerationPolicy` determines how to handle record writes based on record generation.
-#[derive(Debug, PartialEq, Eq, Clone, Default)]
+#[derive(Debug, PartialEq, Eq, Clone, Default, Copy)]
 pub enum GenerationPolicy {
     /// None means: Do not use record generation to restrict writes.
     #[default]

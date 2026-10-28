@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use super::{PolicyLike, ReadModeAP, ReadModeSC, Replica};
+use super::{PolicyLike, ReadModeAp, ReadModeSc, Replica};
 use crate::expressions::Expression;
 use crate::policy::BasePolicy;
 #[cfg(feature = "dynamic-config")]
@@ -21,15 +21,12 @@ use crate::policy::BasePolicyConfig;
 
 /// `ReadPolicy` encapsulates parameters for transaction policy attributes
 /// used in all database operation calls.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 #[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct ReadPolicy {
     /// Base policy instance
     #[cfg_attr(feature = "dynamic-config", config(flatten))]
     pub base_policy: BasePolicy,
-
-    /// Defines algorithm used to determine the target node for a command. The replica algorithm only affects single record and batch commands.
-    pub replica: Replica,
 }
 
 impl Default for BasePolicy {
@@ -41,9 +38,10 @@ impl Default for BasePolicy {
             max_retries: 2,
             sleep_between_retries: 0,
             sleep_multiplier: 1.0,
-            read_mode_ap: ReadModeAP::One,
-            read_mode_sc: ReadModeSC::Session,
-            read_touch_ttl: super::ReadTouchTTL::ServerDefault,
+            read_mode_ap: ReadModeAp::One,
+            read_mode_sc: ReadModeSc::Session,
+            replica: Replica::default(),
+            read_touch_ttl: super::ReadTouchTtl::ServerDefault,
             use_compression: false,
             compression_threshold: 128,
             filter_expression: None,
@@ -55,9 +53,9 @@ impl Default for BasePolicy {
 }
 
 impl BasePolicy {
-    /// Get the Optional Filter Expression
-    pub const fn filter_expression(&self) -> &Option<Expression> {
-        &self.filter_expression
+    /// The filter expression, if one is set.
+    pub const fn filter_expression(&self) -> Option<&Expression> {
+        self.filter_expression.as_ref()
     }
 }
 

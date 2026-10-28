@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,8 +20,8 @@ use crate::commands::{Command, SingleCommand, StreamCommand};
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::QueryPolicy;
-use crate::query::{NodePartitions, TopKAccumulator};
-use crate::{Recordset, Statement};
+use crate::query::{NodePartitions, QuerySink, TopKAccumulator};
+use crate::Statement;
 
 use aerospike_rt::Mutex;
 
@@ -33,29 +33,19 @@ pub struct QueryCommand<'a> {
 }
 
 impl<'a> QueryCommand<'a> {
-    pub async fn new(
+    pub fn new(
         policy: &'a QueryPolicy,
         statement: Arc<Statement>,
-        recordset: Arc<Recordset>,
-        node_partitions: Arc<Mutex<NodePartitions>>,
+        sink: QuerySink,
+        node_partitions: NodePartitions,
         cluster: Arc<Cluster>,
         top_k_buffer: Option<Arc<Mutex<TopKAccumulator>>>,
         execute_where: Option<Arc<[u8]>>,
     ) -> Self {
-        let node = {
-            let node_partitions = node_partitions.lock().await;
-            node_partitions.node.clone()
-        };
+        let node = node_partitions.node.clone();
 
         QueryCommand {
-            stream_command: StreamCommand::new(
-                node,
-                recordset,
-                node_partitions,
-                false,
-                cluster,
-                top_k_buffer,
-            ),
+            stream_command: StreamCommand::new(node, sink, node_partitions, cluster, top_k_buffer),
             policy,
             statement,
             execute_where,
@@ -64,6 +54,12 @@ impl<'a> QueryCommand<'a> {
 
     pub async fn execute(&mut self) -> Result<()> {
         SingleCommand::execute(self.policy, self).await
+    }
+
+    /// Returns this node's partition set to the executor once the command has
+    /// run, error or not.
+    pub(crate) fn into_node_partitions(self) -> NodePartitions {
+        self.stream_command.into_node_partitions()
     }
 }
 
@@ -82,15 +78,14 @@ impl Command for QueryCommand<'_> {
     }
 
     async fn prepare_buffer(&mut self, conn: &mut Connection) -> Result<()> {
-        let node_partitions = self.stream_command.node_partitions.lock().await;
-        let node = node_partitions.node.clone();
+        let node_partitions = self.stream_command.node_partitions();
         let execute_where = self.execute_where.as_deref();
         conn.buffer.set_query(
             QueryDirection::Foreground(self.policy),
             &self.statement,
-            self.stream_command.recordset.task_id(),
-            &node,
-            Some(&node_partitions),
+            self.stream_command.sink.task_id(),
+            &node_partitions.node,
+            Some(node_partitions),
             execute_where,
         )
     }
@@ -105,7 +100,7 @@ impl Command for QueryCommand<'_> {
 
     fn command_type(&self) -> crate::metrics::CommandType {
         // A statement with secondary-index filters is a query; otherwise a scan.
-        if self.statement.filters.is_some() {
+        if self.statement.filter().is_some() {
             crate::metrics::CommandType::Query
         } else {
             crate::metrics::CommandType::Scan

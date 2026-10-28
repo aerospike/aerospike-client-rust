@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::net::ToSocketAddrs;
 use std::str;
 use std::vec::Vec;
 
@@ -32,13 +31,33 @@ pub struct NodeValidator {
     pub aliases: Vec<Host>,
     pub address: String,
     pub client_policy: ClientPolicy,
-    pub use_new_info: bool,
     pub version: Version,
+    /// Cluster name the node reported in its `cluster-name` info response,
+    /// normalized by [`normalize_cluster_name`]. Captured unconditionally so
+    /// the discovered name is available even when
+    /// `ClientPolicy::cluster_name` is unset and no validation runs.
+    pub cluster_name: Option<String>,
+    /// Session token from the TLS login, kept only when
+    /// [`ClientPolicy::for_login_only`](crate::ClientPolicy::for_login_only)
+    /// is active: the cleartext connections that follow authenticate with it
+    /// instead of sending credentials.
+    pub session: Option<crate::commands::admin_command::SessionInfo>,
+    /// The node's TLS address, kept under `for_login_only` so the pool can
+    /// log in again over TLS when the session expires.
+    pub login_host: Option<Host>,
     /// Whether this validator was created for a seed host. When true,
     /// `validate_alias` queries `service-{tls,clear}-{std,alt}` and, if the
     /// seed isn't listed in the response, treats the seed as a load
     /// balancer and rewrites `aliases` to the first reachable real backend.
     pub detect_load_balancer: bool,
+}
+
+/// Normalizes a `cluster-name` info value: a server without a configured
+/// cluster name answers `null` (or nothing), which is "no name", not a name.
+pub fn normalize_cluster_name(raw: Option<&String>) -> Option<String> {
+    raw.map(|s| s.trim())
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("null"))
+        .map(str::to_owned)
 }
 
 // Generates a node validator
@@ -49,8 +68,10 @@ impl NodeValidator {
             aliases: vec![],
             address: String::new(),
             client_policy,
-            use_new_info: true,
             version: Version::default(),
+            cluster_name: None,
+            session: None,
+            login_host: None,
             detect_load_balancer: false,
         }
     }
@@ -70,6 +91,7 @@ impl NodeValidator {
     #[allow(clippy::option_if_let_else)]
     pub async fn validate_node(&mut self, cluster: &Cluster, host: &Host) -> Result<()> {
         self.resolve_aliases(host)
+            .await
             .map_err(|e| e.chain_error("Failed to resolve host aliases"))?;
 
         let mut last_err = None;
@@ -93,9 +115,10 @@ impl NodeValidator {
         self.aliases.clone()
     }
 
-    fn resolve_aliases(&mut self, host: &Host) -> Result<()> {
-        self.aliases = (host.name.as_ref(), host.port)
-            .to_socket_addrs()?
+    async fn resolve_aliases(&mut self, host: &Host) -> Result<()> {
+        self.aliases = aerospike_rt::lookup_host(host.name.as_ref(), host.port)
+            .await?
+            .into_iter()
             .map(|addr| {
                 Host::new_tls(
                     &addr.ip().to_string(),
@@ -116,8 +139,28 @@ impl NodeValidator {
     }
 
     async fn validate_alias(&mut self, cluster: &Cluster, alias: &Host) -> Result<()> {
-        let mut conn =
-            Connection::new(alias, &self.client_policy, cluster.hashed_pass().as_ref()).await?;
+        // `for_login_only` keeps exactly one connection encrypted: this one,
+        // which carries the credential exchange. Java does the same in
+        // `NodeValidator.validateAddress` before handing off to `SwitchClear`.
+        let login_only = self.client_policy.login_only_active();
+        let (mut conn, session) = if login_only {
+            Connection::open_tls_login(alias, &self.client_policy, cluster.hashed_pass().as_ref())
+                .await
+                .map_err(Error::from)?
+        } else {
+            (
+                Connection::new(alias, &self.client_policy, cluster.hashed_pass().as_ref()).await?,
+                None,
+            )
+        };
+        if login_only {
+            self.session = session;
+            self.login_host = Some(alias.clone());
+            // The cleartext address is about to be read from the service
+            // command, so there is nothing left for load-balancer detection
+            // to resolve (Java disables it here for the same reason).
+            self.detect_load_balancer = false;
+        }
         let admin_policy = AdminPolicy {
             timeout: self.client_policy.timeout,
         };
@@ -137,8 +180,19 @@ impl NodeValidator {
                 None
             };
 
+        // Under `for_login_only` the node's non-TLS address is fetched in the
+        // same round trip that validates it.
+        let clear_command: Option<&'static str> = if login_only {
+            Some(self.client_policy.clear_service_string())
+        } else {
+            None
+        };
+
         let mut commands: Vec<&str> = vec!["node", "cluster-name", "build", "partition-generation"];
         if let Some(cmd) = address_command {
+            commands.push(cmd);
+        }
+        if let Some(cmd) = clear_command {
             commands.push(cmd);
         }
 
@@ -181,6 +235,12 @@ impl NodeValidator {
                 }
             }
         }
+
+        // Discovery is separate from validation: the server's name is kept
+        // whatever the policy says, so callers can select per-cluster
+        // settings from it; the configured name, when present, is asserted
+        // below exactly as before.
+        self.cluster_name = normalize_cluster_name(info_map.get("cluster-name"));
 
         if let Some(ref cluster_name) = cluster.cluster_name() {
             match info_map.get("cluster-name") {
@@ -227,7 +287,79 @@ impl NodeValidator {
             }
         }
 
+        // The TLS connection has done its one job (the login) and is already
+        // closed. Move this node onto its cleartext address for good.
+        if let Some(cmd) = clear_command {
+            let raw = info_map.get(cmd).cloned().unwrap_or_default();
+            self.switch_to_clear_address(&raw).await?;
+        }
+
         Ok(())
+    }
+
+    /// Point this node at a non-TLS address (`for_login_only`).
+    ///
+    /// Mirrors Java's `SwitchClear`: walk the addresses the node reported,
+    /// apply `ip_map`, and keep the first one that accepts a cleartext
+    /// connection authenticated with the session token. Proving the token
+    /// works before committing is the point — a clear address that cannot
+    /// authenticate is no use, and finding out now beats finding out on the
+    /// first command.
+    async fn switch_to_clear_address(&mut self, raw: &str) -> Result<()> {
+        let session = self.session.clone();
+        for entry in raw.split(';') {
+            if entry.trim().is_empty() {
+                continue;
+            }
+            let parsed = match entry.to_hosts() {
+                Ok(v) => v,
+                Err(e) => {
+                    debug!("for_login_only: cannot parse clear service entry `{entry}`: {e}");
+                    continue;
+                }
+            };
+            for mut host in parsed {
+                // A cleartext endpoint has no TLS name to verify against.
+                host.tls_name = None;
+                if let Some(ref ip_map) = self.client_policy.ip_map {
+                    if let Some(mapped) = ip_map.get(&host.name) {
+                        host.name.clone_from(mapped);
+                    }
+                }
+                for resolved in aerospike_rt::lookup_host(host.name.as_str(), host.port)
+                    .await
+                    .unwrap_or_default()
+                {
+                    let candidate = Host::new(&resolved.ip().to_string(), resolved.port());
+                    match Connection::open(&candidate, &self.client_policy, None, session.as_ref())
+                        .await
+                    {
+                        Ok((mut probe, _)) => {
+                            probe.close();
+                            drop(probe);
+                            debug!(
+                                "for_login_only: node {} switched to clear address {}",
+                                self.name, candidate
+                            );
+                            self.address = candidate.address();
+                            self.aliases = vec![candidate];
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            debug!(
+                                "for_login_only: clear address {candidate} unusable: {}",
+                                Error::from(e)
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(Error::invalid_node(format!(
+            "for_login_only: node {} reported no usable non-TLS address (service response: `{raw}`)",
+            self.name
+        )))
     }
 
     async fn maybe_swap_lb_address(&mut self, cluster: &Cluster, seed: &Host, raw: &str) {
@@ -270,10 +402,9 @@ impl NodeValidator {
         // recurse into a full re-validation: the cluster-level seed loop
         // will re-validate via `services()`/peer-discovery anyway.
         for candidate in &real_hosts {
-            for resolved in (candidate.name.as_str(), candidate.port)
-                .to_socket_addrs()
-                .into_iter()
-                .flatten()
+            for resolved in aerospike_rt::lookup_host(candidate.name.as_str(), candidate.port)
+                .await
+                .unwrap_or_default()
             {
                 let addr_str = resolved.ip().to_string();
                 let real_alias = Host::new_tls(
@@ -313,4 +444,22 @@ fn host_is_loopback(host: &Host) -> bool {
         return ip.is_loopback();
     }
     matches!(host.name.as_str(), "localhost" | "::1")
+}
+
+#[cfg(test)]
+mod cluster_name_tests {
+    use super::normalize_cluster_name;
+
+    #[test]
+    fn normalize_treats_null_and_empty_as_no_name() {
+        assert_eq!(normalize_cluster_name(None), None);
+        assert_eq!(normalize_cluster_name(Some(&String::new())), None);
+        assert_eq!(normalize_cluster_name(Some(&"  ".to_string())), None);
+        assert_eq!(normalize_cluster_name(Some(&"null".to_string())), None);
+        assert_eq!(normalize_cluster_name(Some(&"NULL".to_string())), None);
+        assert_eq!(
+            normalize_cluster_name(Some(&" production ".to_string())),
+            Some("production".to_string())
+        );
+    }
 }

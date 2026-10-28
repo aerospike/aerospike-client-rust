@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -15,19 +15,20 @@
 
 #[cfg(feature = "tls")]
 use std::convert::TryFrom;
-#[cfg(feature = "tls")]
-use std::sync::Arc;
-
 use std::io::Read;
+#[cfg(all(test, feature = "tls", feature = "rt-tokio"))]
+use std::sync::Arc;
 #[cfg(feature = "rt-tokio")]
 use std::pin::Pin;
 
+#[cfg(not(test))]
 use crate::commands::admin_command::AdminCommand;
 use crate::commands::buffer::{self, Buffer, MAX_BUFFER_SIZE};
 use crate::errors::{Error, Result};
 use crate::net::Host;
-use crate::policy::{AuthMode, ClientPolicy};
-use crate::XorShift;
+#[cfg(not(test))]
+use crate::policy::AuthMode;
+use crate::policy::ClientPolicy;
 #[cfg(feature = "rt-async-std")]
 use aerospike_rt::async_std::net::Shutdown;
 #[cfg(feature = "rt-tokio")]
@@ -77,7 +78,7 @@ enum Liveness {
 
 /// A pooled connection's position relative to its idle deadline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum IdleStatus {
+pub enum IdleStatus {
     /// No deadline armed (`idle_timeout = 0`), or plenty of time left.
     Fresh,
     /// The deadline falls inside the caller's expiry horizon.
@@ -100,6 +101,100 @@ pub enum Netsocket {
     TestDummy,
 }
 
+/// Scratch size for [`Netsocket::discard_counted`].
+const DISCARD_CHUNK: usize = 4096;
+
+impl Netsocket {
+    /// Writes all of `buf`, then flushes. Every byte the socket accepts is
+    /// added to `progress` **as it is accepted**, so the count is exact even
+    /// when the future fails partway or is dropped by a timeout: whatever
+    /// left the client is in `progress`, whatever did not is not.
+    ///
+    /// The flush matters on TLS: tokio-rustls can accept plaintext into the
+    /// session's outgoing buffer and report success with ciphertext unsent
+    /// (see `TlsStream::poll_write`); on plain TCP it is a no-op.
+    async fn write_counted(&mut self, buf: &[u8], progress: &mut usize) -> std::io::Result<()> {
+        let mut written = 0;
+        while written < buf.len() {
+            let n = match self {
+                Netsocket::Tcp(conn) => conn.write(&buf[written..]).await?,
+                #[cfg(feature = "tls")]
+                Netsocket::Tls(conn) => conn.write(&buf[written..]).await?,
+                #[cfg(test)]
+                Netsocket::TestDummy => unreachable!(),
+            };
+            if n == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "failed to write whole buffer",
+                ));
+            }
+            written += n;
+            *progress += n;
+        }
+        match self {
+            Netsocket::Tcp(conn) => conn.flush().await,
+            #[cfg(feature = "tls")]
+            Netsocket::Tls(conn) => conn.flush().await,
+            #[cfg(test)]
+            Netsocket::TestDummy => unreachable!(),
+        }
+    }
+
+    /// Fills all of `buf`, adding every byte read to `progress` as it lands
+    /// — the read-side twin of [`write_counted`](Self::write_counted). A
+    /// peer that closes early yields `UnexpectedEof` with the bytes received
+    /// so far already counted.
+    async fn read_counted(&mut self, buf: &mut [u8], progress: &mut usize) -> std::io::Result<()> {
+        let mut filled = 0;
+        while filled < buf.len() {
+            let n = match self {
+                Netsocket::Tcp(conn) => conn.read(&mut buf[filled..]).await?,
+                #[cfg(feature = "tls")]
+                Netsocket::Tls(conn) => conn.read(&mut buf[filled..]).await?,
+                #[cfg(test)]
+                Netsocket::TestDummy => unreachable!(),
+            };
+            if n == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "failed to fill whole buffer",
+                ));
+            }
+            filled += n;
+            *progress += n;
+        }
+        Ok(())
+    }
+
+    /// Reads and throws away exactly `len` bytes, counting them into
+    /// `progress` chunk by chunk (same exactness contract as
+    /// [`read_counted`](Self::read_counted)).
+    async fn discard_counted(&mut self, len: usize, progress: &mut usize) -> std::io::Result<()> {
+        let mut scratch = [0u8; DISCARD_CHUNK];
+        let mut remaining = len;
+        while remaining > 0 {
+            let want = min(remaining, DISCARD_CHUNK);
+            let n = match self {
+                Netsocket::Tcp(conn) => conn.read(&mut scratch[..want]).await?,
+                #[cfg(feature = "tls")]
+                Netsocket::Tls(conn) => conn.read(&mut scratch[..want]).await?,
+                #[cfg(test)]
+                Netsocket::TestDummy => unreachable!(),
+            };
+            if n == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "peer closed while draining",
+                ));
+            }
+            remaining -= n;
+            *progress += n;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 #[allow(clippy::struct_field_names)]
 pub struct Connection {
@@ -111,12 +206,26 @@ pub struct Connection {
     idle_timeout: Option<Duration>,
     idle_deadline: Option<Instant>,
 
-    rnd: XorShift,
-
     // connection object
     pub(crate) conn: Netsocket,
 
+    /// Bytes read in the *current read phase* (header, body, one stream
+    /// segment). Timeout recovery resumes from this offset, so every state
+    /// transition resets it. Not a per-command total — see
+    /// [`bytes_received`](Self::bytes_received) for that.
     bytes_read: usize,
+
+    /// Bytes actually read from the socket since the current command started
+    /// (its `flush`), across all read phases, **including** bytes read before
+    /// a timeout or I/O error cut a phase short. Reported to the
+    /// bytes-received metrics; reset only when the next command starts
+    /// writing.
+    bytes_received: usize,
+
+    /// Bytes actually accepted by the socket for the current command,
+    /// including a partial write before a timeout or I/O error. Reported to
+    /// the bytes-sent metrics; reset when the command starts writing.
+    bytes_sent: usize,
 
     pub buffer: Buffer,
 
@@ -158,9 +267,46 @@ macro_rules! io_with_timeout {
         }
         #[cfg(feature = "rt-async-std")]
         {
-            aerospike_rt::timeout($timeout, $io).await
+            // Same `Result<_, ()>` shape as the tokio arm so callers match one way.
+            aerospike_rt::timeout($timeout, $io).await.map_err(|_| ())
         }
     }};
+}
+
+/// Phase of opening a connection at which it failed. Lets the connection pool
+/// attribute a failed open to the right metrics counter (`metrics.md` §4.4:
+/// `connection.open.failure` / `tls.handshake.failure` / `auth.failure`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// The test build's `open` shim never reaches TLS or auth.
+#[cfg_attr(test, allow(dead_code))]
+pub enum ConnectPhase {
+    /// The TCP connect (or its timeout) failed; no handshake was attempted.
+    Tcp,
+    /// The socket was up but the TLS handshake failed.
+    Tls,
+    /// TCP (and TLS, when configured) succeeded; login / session
+    /// authentication failed.
+    Auth,
+}
+
+/// A failed [`Connection::open`]: the underlying error tagged with the phase
+/// that produced it. Converts into the plain error with `?` / `From`.
+#[derive(Debug)]
+pub struct ConnectError {
+    pub(crate) phase: ConnectPhase,
+    pub(crate) error: Error,
+}
+
+impl ConnectError {
+    pub(crate) const fn new(phase: ConnectPhase, error: Error) -> Self {
+        ConnectError { phase, error }
+    }
+}
+
+impl From<ConnectError> for Error {
+    fn from(failure: ConnectError) -> Error {
+        failure.error
+    }
 }
 
 impl Connection {
@@ -176,14 +322,25 @@ impl Connection {
             crate::commands::buffer::Buffer::with_pool(self.buffer.reclaim_threshold, pool);
     }
 
-    #[cfg(feature = "tls")]
+    /// Wraps the socket in TLS when the policy has a TLS config **and** this
+    /// particular connection is meant to be encrypted. `use_tls` is false for
+    /// the cleartext data plane under
+    /// [`ClientPolicy::for_login_only`](crate::ClientPolicy::for_login_only);
+    /// the decision is made once, here, and never revisited for the life of
+    /// the connection.
+    #[cfg(all(feature = "tls", not(test)))]
+    #[allow(clippy::unused_async)] // the TLS build awaits the handshake here
     async fn get_netsocket(
         stream: TcpStream,
         host: &Host,
         policy: &ClientPolicy,
+        use_tls: bool,
     ) -> Result<Netsocket> {
-        if let Some(tls_config) = policy.tls_config.clone() {
-            let connector = TlsConnector::from(Arc::new(tls_config));
+        if !use_tls {
+            return Ok(Netsocket::Tcp(stream));
+        }
+        if let Some(tls_config) = policy.tls_policy.as_ref().map(|tls| tls.config.clone()) {
+            let connector = TlsConnector::from(tls_config);
             let server_name = host
                 .tls_name
                 .clone()
@@ -197,13 +354,27 @@ impl Connection {
         }
     }
 
-    #[cfg(not(feature = "tls"))]
+    #[cfg(all(not(feature = "tls"), not(test)))]
+    #[allow(clippy::unused_async)] // the TLS build awaits the handshake here
     async fn get_netsocket(
         stream: TcpStream,
         _host: &Host,
         _policy: &ClientPolicy,
+        _use_tls: bool,
     ) -> Result<Netsocket> {
         Ok(Netsocket::Tcp(stream))
+    }
+
+    /// Sets `TCP_NODELAY` on a freshly opened socket (disables Nagle).
+    ///
+    /// Nagle withholds a small segment while earlier data is still unacked,
+    /// which stalls against the peer's delayed ACK until Linux's
+    /// `TCP_DELACK_MIN` (40ms) expires.
+    ///
+    /// Best-effort. A platform that refuses the option still yields a usable
+    /// connection, so the error is dropped rather than failing the connect.
+    fn set_nodelay(stream: &TcpStream) {
+        let _ = stream.set_nodelay(true);
     }
 
     #[cfg(not(test))]
@@ -212,33 +383,86 @@ impl Connection {
         policy: &ClientPolicy,
         hashed_pass: Option<&String>,
     ) -> Result<Self> {
-        Self::new_with_session(host, policy, hashed_pass, None)
+        Self::open(host, policy, hashed_pass, None)
             .await
             .map(|(conn, _session)| conn)
+            .map_err(Error::from)
     }
 
     /// Like [`new`](Self::new) but optionally reuses a previously-issued
     /// session token to authenticate via `AUTHENTICATE` instead of `LOGIN`.
     /// On success returns the connection plus a fresh `SessionInfo` if the
     /// server issued one (i.e. when we fell back to a full login).
+    ///
+    /// Failures carry the [`ConnectPhase`] they happened in so the connection
+    /// pool can attribute them (TCP vs TLS handshake vs authentication) for
+    /// metrics without parsing error text. [`ConnectError`] converts into a
+    /// plain [`Error`] with `?`.
     #[cfg(not(test))]
-    pub async fn new_with_session(
+    pub(crate) async fn open(
         host: &Host,
         policy: &ClientPolicy,
         hashed_pass: Option<&String>,
         session: Option<&crate::commands::admin_command::SessionInfo>,
-    ) -> Result<(Self, Option<crate::commands::admin_command::SessionInfo>)> {
+    ) -> std::result::Result<
+        (Self, Option<crate::commands::admin_command::SessionInfo>),
+        ConnectError,
+    > {
+        // Under `for_login_only` this is a data-plane connection: plain TCP,
+        // and authenticated with a session token only. A full LOGIN here
+        // would put credentials on a cleartext socket, which is precisely
+        // what the setting exists to avoid, so it is refused.
+        let login_only = policy.login_only_active();
+        Self::open_inner(host, policy, hashed_pass, session, !login_only, !login_only).await
+    }
+
+    /// Opens a **TLS** connection and performs the full credential exchange,
+    /// whatever `for_login_only` says. This is the one connection that setting
+    /// keeps encrypted: node validation and session renewal use it to obtain a
+    /// token, then close it and move to the cleartext address.
+    #[cfg(not(test))]
+    pub(crate) async fn open_tls_login(
+        host: &Host,
+        policy: &ClientPolicy,
+        hashed_pass: Option<&String>,
+    ) -> std::result::Result<
+        (Self, Option<crate::commands::admin_command::SessionInfo>),
+        ConnectError,
+    > {
+        Self::open_inner(host, policy, hashed_pass, None, true, true).await
+    }
+
+    #[cfg(not(test))]
+    async fn open_inner(
+        host: &Host,
+        policy: &ClientPolicy,
+        hashed_pass: Option<&String>,
+        session: Option<&crate::commands::admin_command::SessionInfo>,
+        use_tls: bool,
+        allow_full_login: bool,
+    ) -> std::result::Result<
+        (Self, Option<crate::commands::admin_command::SessionInfo>),
+        ConnectError,
+    > {
         let addr = host.address();
         let stream =
             aerospike_rt::timeout(policy.connect_timeout(), TcpStream::connect(addr.clone())).await;
-        if stream.is_err() {
-            return Err(Error::connection(
-                "Could not open network connection".to_string(),
-            ));
-        }
+        let stream = match stream {
+            Ok(Ok(stream)) => stream,
+            Ok(Err(io)) => return Err(ConnectError::new(ConnectPhase::Tcp, Error::from(io))),
+            Err(_) => {
+                return Err(ConnectError::new(
+                    ConnectPhase::Tcp,
+                    Error::connection("Could not open network connection".to_string()),
+                ))
+            }
+        };
 
-        let stream = stream.unwrap()?;
-        let stream = Self::get_netsocket(stream, host, policy).await?;
+        Self::set_nodelay(&stream);
+
+        let stream = Self::get_netsocket(stream, host, policy, use_tls)
+            .await
+            .map_err(|err| ConnectError::new(ConnectPhase::Tls, err))?;
 
         let idle_timeout = if policy.idle_timeout > 0 {
             Some(Duration::from_millis(u64::from(policy.idle_timeout)))
@@ -250,6 +474,8 @@ impl Connection {
             addr,
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
             bytes_read: 0,
+            bytes_received: 0,
+            bytes_sent: 0,
             conn: stream,
             // Governs the login/authenticate I/O below (the only I/O before a
             // command runs); commands overwrite it via `set_socket_timeout`
@@ -263,7 +489,6 @@ impl Connection {
             can_recover_connection: false,
             response_decompressed: false,
             compressed_stream_body: false,
-            rnd: XorShift::new(),
             // Far-future deadline; reset before each IO so this never fires first.
             #[cfg(feature = "rt-tokio")]
             sleep: Box::pin(aerospike_rt::tokio::time::sleep(
@@ -283,30 +508,65 @@ impl Connection {
             _ => false,
         };
         if !used_session {
-            new_session = conn.authenticate(&policy.auth_mode, hashed_pass).await?;
+            // No usable token and this connection may not carry credentials:
+            // the caller has to obtain one over TLS first (see
+            // `open_tls_login`). Only reachable with `for_login_only`.
+            if !allow_full_login && policy.auth_enabled() {
+                conn.close();
+                return Err(ConnectError::new(
+                    ConnectPhase::Auth,
+                    Error::client_error(
+                        "for_login_only: refusing to send credentials over a cleartext \
+                         connection; a session token obtained over TLS is required",
+                    ),
+                ));
+            }
+            new_session = conn
+                .authenticate(&policy.auth_mode, hashed_pass)
+                .await
+                .map_err(|err| ConnectError::new(ConnectPhase::Auth, err))?;
         }
         conn.refresh();
         Ok((conn, new_session))
     }
 
-    /// Test-mode shim that mirrors the production
-    /// [`new_with_session`](Self::new_with_session) signature so call sites
-    /// like `ConnectionPool::make_conn` link under `cfg(test)`. Always
-    /// returns a fresh `(connection, None)` pair — the test build never
-    /// goes near a real LOGIN, so the cached-session fast path is moot.
+    /// Test-mode shim that mirrors the production [`open`](Self::open)
+    /// signature so call sites like `ConnectionPool::make_conn` link under
+    /// `cfg(test)`. Always returns a fresh `(connection, None)` pair — the
+    /// test build never goes near a real LOGIN, so the cached-session fast
+    /// path is moot.
+    /// `cfg(test)` twin of [`open_tls_login`](Self::open_tls_login); the test
+    /// build has no real LOGIN, so it yields a plain dummy connection.
     #[cfg(test)]
-    pub async fn new_with_session(
+    pub(crate) async fn open_tls_login(
+        host: &Host,
+        policy: &ClientPolicy,
+        hashed_pass: Option<&String>,
+    ) -> std::result::Result<
+        (Self, Option<crate::commands::admin_command::SessionInfo>),
+        ConnectError,
+    > {
+        Self::open(host, policy, hashed_pass, None).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn open(
         host: &Host,
         policy: &ClientPolicy,
         hashed_pass: Option<&String>,
         _session: Option<&crate::commands::admin_command::SessionInfo>,
-    ) -> Result<(Self, Option<crate::commands::admin_command::SessionInfo>)> {
+    ) -> std::result::Result<
+        (Self, Option<crate::commands::admin_command::SessionInfo>),
+        ConnectError,
+    > {
         Self::new(host, policy, hashed_pass)
             .await
             .map(|c| (c, None))
+            .map_err(|err| ConnectError::new(ConnectPhase::Tcp, err))
     }
 
     #[cfg(test)]
+    #[allow(clippy::unused_async)] // mirrors the real constructor's signature
     pub async fn new(
         host: &Host,
         policy: &ClientPolicy,
@@ -314,29 +574,29 @@ impl Connection {
     ) -> Result<Self> {
         let addr = host.address();
         let stream = Netsocket::TestDummy;
-        let rnd = XorShift::new();
 
         let idle_timeout = if policy.idle_timeout > 0 {
-            Some(Duration::from_millis(policy.idle_timeout as u64))
+            Some(Duration::from_millis(u64::from(policy.idle_timeout)))
         } else {
             None
         };
 
         let mut conn = Connection {
-            addr: addr.into(),
+            addr,
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
             bytes_read: 0,
+            bytes_received: 0,
+            bytes_sent: 0,
             conn: stream,
             socket_timeout: policy.login_timeout().as_millis() as u32,
             timeout_delay: 0,
             deadline: None,
-            idle_timeout: idle_timeout,
+            idle_timeout,
             idle_deadline: idle_timeout.map(|timeout| Instant::now() + timeout),
             state: ConnectionState::Ready,
             can_recover_connection: false,
             response_decompressed: false,
             compressed_stream_body: false,
-            rnd: rnd,
             // Far-future deadline; reset before each IO so this never fires first.
             #[cfg(feature = "rt-tokio")]
             sleep: Box::pin(aerospike_rt::tokio::time::sleep(
@@ -363,6 +623,8 @@ impl Connection {
             addr: "127.0.0.1:0".into(),
             buffer: Buffer::new(policy.buffer_reclaim_threshold),
             bytes_read: 0,
+            bytes_received: 0,
+            bytes_sent: 0,
             conn: Netsocket::Tcp(stream),
             socket_timeout: 5_000,
             timeout_delay: 0,
@@ -373,7 +635,6 @@ impl Connection {
             can_recover_connection: false,
             response_decompressed: false,
             compressed_stream_body: false,
-            rnd: XorShift::new(),
             // Far-future deadline; reset before each IO so this never fires first.
             sleep: Box::pin(aerospike_rt::tokio::time::sleep(
                 aerospike_rt::time::Duration::from_secs(3600),
@@ -381,12 +642,6 @@ impl Connection {
         };
         conn.refresh();
         conn
-    }
-
-    /// Returns the connection's per-connection random generator, used by the
-    /// metrics sampler to decide whether to record a command.
-    pub(crate) const fn rng(&mut self) -> &mut XorShift {
-        &mut self.rnd
     }
 
     pub fn close(&mut self) {
@@ -413,38 +668,26 @@ impl Connection {
 
     pub async fn flush(&mut self) -> Result<()> {
         self.state = ConnectionState::Writing;
+        // A new command starts on the wire: both per-command byte counters
+        // restart here.
+        self.bytes_received = 0;
+        self.bytes_sent = 0;
         let timeout = self.deadline();
-        let buf = &self.buffer.data_buffer;
-        let res = match self.conn {
-            Netsocket::Tcp(ref mut conn) => {
-                io_with_timeout!(self, timeout, async {
-                    conn.write_all(buf).await?;
-                    conn.flush().await
-                })
-            }
-            #[cfg(feature = "tls")]
-            Netsocket::Tls(ref mut conn) => {
-                // `write_all` alone is not enough on a TLS stream: when the
-                // socket is not writable, tokio-rustls accepts the plaintext
-                // into the session's outgoing buffer and reports success with
-                // ciphertext still unsent. Nothing on the read path drives
-                // those bytes out, so the command would wait for a reply to a
-                // request the server never fully received. See the note on
-                // `tokio_rustls::client::TlsStream::poll_write`.
-                io_with_timeout!(self, timeout, async {
-                    conn.write_all(buf).await?;
-                    conn.flush().await
-                })
-            }
-            #[cfg(test)]
-            _ => unreachable!(),
-        };
+        let mut sent = 0usize;
+        let res = io_with_timeout!(
+            self,
+            timeout,
+            self.conn.write_counted(&self.buffer.data_buffer, &mut sent)
+        );
+        // Counted before looking at the outcome: a partial write is still
+        // bytes the server may have received.
+        self.bytes_sent += sent;
 
         match res {
             Ok(Ok(())) => (),
             // classify socket I/O errors as Connection err and hence command retries.
             Ok(Err(e)) => return Err(Error::connection(format!("flush: {e}"))),
-            Err(_) => {
+            Err(()) => {
                 return Err(Error::timeout(
                     "Timeout writing to network connection".to_string(),
                 ));
@@ -463,6 +706,9 @@ impl Connection {
     pub(crate) const fn reset_state(&mut self) {
         self.state = ConnectionState::Ready;
         self.bytes_read = 0;
+        // `bytes_received` is deliberately left alone: parsers call this as
+        // their last step and the metrics code reads the total *after* the
+        // parse returns. The next command's `flush` clears it.
         self.response_decompressed = false;
         self.compressed_stream_body = false;
     }
@@ -605,6 +851,13 @@ impl Connection {
 
     /// Decompress zlib data and replace the buffer contents with the decompressed data.
     fn inflate(&mut self, compressed_data: &[u8], uncompressed_size: usize) -> Result<()> {
+        // The size is the server's claim; the same cap that bounds every
+        // other buffer bounds the inflated reply.
+        if uncompressed_size > MAX_BUFFER_SIZE {
+            return Err(Error::bad_response(format!(
+                "declared uncompressed size {uncompressed_size} exceeds the {MAX_BUFFER_SIZE} byte buffer limit"
+            )));
+        }
         let mut decoder = ZlibDecoder::new(compressed_data);
         let mut decompressed = vec![0u8; uncompressed_size];
         decoder
@@ -631,6 +884,11 @@ impl Connection {
             // Callers expect the body to start at offset 0 in data_buffer, so
             // shift the body portion to the front.
             let body_start = buffer::MSG_TOTAL_HEADER_SIZE as usize;
+            if body_start + receive_size > self.buffer.data_buffer.len() {
+                return Err(Error::bad_response(
+                    "decompressed reply shorter than its declared body",
+                ));
+            }
             self.buffer
                 .data_buffer
                 .copy_within(body_start..body_start + receive_size, 0);
@@ -653,30 +911,23 @@ impl Connection {
         self.buffer.resize_buffer(size + pos)?;
 
         let timeout = self.deadline();
-        let read_result = match self.conn {
-            Netsocket::Tcp(ref mut conn) => {
-                io_with_timeout!(
-                    self,
-                    timeout,
-                    conn.read_exact(&mut self.buffer.data_buffer[pos..])
-                )
-            }
-            #[cfg(feature = "tls")]
-            Netsocket::Tls(ref mut conn) => {
-                io_with_timeout!(
-                    self,
-                    timeout,
-                    conn.read_exact(&mut self.buffer.data_buffer[pos..])
-                )
-            }
-            #[cfg(test)]
-            _ => unreachable!(),
-        };
+        let mut got = 0usize;
+        let read_result = io_with_timeout!(
+            self,
+            timeout,
+            self.conn
+                .read_counted(&mut self.buffer.data_buffer[pos..], &mut got)
+        );
+        // Exact on every outcome. `bytes_read` advancing by the partial count
+        // is also what lets timeout recovery resume from the right offset
+        // (`ConnectionRecovery` reads `total - bytes_read` more).
+        self.bytes_read += got;
+        self.bytes_received += got;
 
         match read_result {
-            Ok(Ok(_)) => self.bytes_read += size,
+            Ok(Ok(())) => (),
             Ok(Err(e)) => return Err(Error::connection(format!("read: {e}"))),
-            Err(_) => {
+            Err(()) => {
                 return Err(Error::timeout(
                     "Timeout reading from the network connection",
                 ))
@@ -691,30 +942,20 @@ impl Connection {
     /// Writes to the connection until done or timeout has been reached.
     pub async fn write_all(&mut self, buf: &[u8]) -> Result<()> {
         self.state = ConnectionState::Writing;
+        self.bytes_received = 0;
+        self.bytes_sent = 0;
 
         let timeout = self.deadline();
-        let res = match self.conn {
-            Netsocket::Tcp(ref mut conn) => {
-                io_with_timeout!(self, timeout, conn.write_all(buf))
-            }
-            #[cfg(feature = "tls")]
-            Netsocket::Tls(ref mut conn) => {
-                // See `flush`: a TLS write is only on the wire once flushed.
-                io_with_timeout!(self, timeout, async {
-                    conn.write_all(buf).await?;
-                    conn.flush().await
-                })
-            }
-            #[cfg(test)]
-            _ => unreachable!(),
-        };
+        let mut sent = 0usize;
+        let res = io_with_timeout!(self, timeout, self.conn.write_counted(buf, &mut sent));
+        self.bytes_sent += sent;
 
         match res {
             Ok(Ok(())) => (),
             Ok(Err(e)) => {
                 return Err(Error::connection(format!("write: {e}")));
             }
-            Err(_) => {
+            Err(()) => {
                 return Err(Error::timeout(
                     "Timeout writing to the network connection".to_string(),
                 ));
@@ -730,46 +971,32 @@ impl Connection {
         self.state = ConnectionState::ReadingBody(buf.len());
 
         let timeout = self.deadline();
-        let res = match self.conn {
-            Netsocket::Tcp(ref mut conn) => {
-                io_with_timeout!(self, timeout, conn.read_exact(buf))
-            }
-            #[cfg(feature = "tls")]
-            Netsocket::Tls(ref mut conn) => {
-                io_with_timeout!(self, timeout, conn.read_exact(buf))
-            }
-            #[cfg(test)]
-            _ => unreachable!(),
-        };
+        let mut got = 0usize;
+        let res = io_with_timeout!(self, timeout, self.conn.read_counted(buf, &mut got));
+        self.bytes_read += got;
+        self.bytes_received += got;
 
         match res {
-            Ok(Ok(_)) => (),
+            Ok(Ok(())) => (),
             Ok(Err(e)) => return Err(Error::connection(format!("read_all: {e}"))),
-            Err(_) => {
+            Err(()) => {
                 return Err(Error::timeout(
                     "Timeout reading from the network connection".to_string(),
                 ))
             }
         }
 
-        self.bytes_read += buf.len();
         self.refresh();
         Ok(())
-    }
-
-    pub fn is_idle(&self) -> bool {
-        self.idle_deadline
-            .is_some_and(|idle_dl| Instant::now() >= idle_dl)
     }
 
     /// Where this connection stands relative to its idle deadline. A deadline
     /// within `expiry_horizon` counts as expiring.
     pub(crate) fn idle_status(&self, now: Instant, expiry_horizon: Duration) -> IdleStatus {
         match self.idle_deadline {
-            None => IdleStatus::Fresh,
             Some(deadline) if now >= deadline => IdleStatus::Expired,
             Some(deadline) if now + expiry_horizon >= deadline => IdleStatus::ExpiringSoon,
-            Some(_) => IdleStatus::Fresh,
+            _ => IdleStatus::Fresh,
         }
     }
 
@@ -847,6 +1074,7 @@ impl Connection {
         }
     }
 
+    #[cfg(not(test))]
     async fn authenticate(
         &mut self,
         auth_mode: &AuthMode,
@@ -872,6 +1100,7 @@ impl Connection {
     /// when a previous `LOGIN` round-trip on this pool produced a still-
     /// valid token. The token-authenticate path is tried before falling
     /// back to a fresh `login()`.
+    #[cfg(not(test))]
     async fn authenticate_with_session(
         &mut self,
         auth_mode: &AuthMode,
@@ -896,8 +1125,28 @@ impl Connection {
         self.bytes_read = 0;
     }
 
-    pub const fn bytes_read(&self) -> usize {
+    /// Bytes read from the socket by the current command so far — the
+    /// per-command total the bytes-received metrics report. Unlike
+    /// [`bytes_read`](Self::bytes_read) it survives the header/body/segment
+    /// state transitions inside a response, and the parser's closing
+    /// `reset_state`; it is cleared only when the next command begins
+    /// writing (`flush` / `write_all`).
+    #[cfg(all(test, feature = "rt-tokio"))]
+    pub(crate) const fn bytes_read(&self) -> usize {
         self.bytes_read
+    }
+
+    pub const fn bytes_received(&self) -> usize {
+        self.bytes_received
+    }
+
+    /// Bytes the socket accepted for the current command so far — the
+    /// per-command total the bytes-sent metrics report. Exact on every
+    /// outcome: a write cut short by a timeout or I/O error leaves the bytes
+    /// that did go out counted here. Reset when the next command begins
+    /// writing (`flush` / `write_all`).
+    pub const fn bytes_sent(&self) -> usize {
+        self.bytes_sent
     }
 
     pub(crate) const fn should_attempt_recovery(&self) -> bool {
@@ -906,52 +1155,20 @@ impl Connection {
 
     // reads the rest of the message to empty the connection buffer
     // before returning the connection back to the pool.
-    async fn drain(&mut self, mut limit: usize, timeout: Duration) -> Result<()> {
-        while limit > 0 {
-            let count = match self.conn {
-                Netsocket::Tcp(ref mut conn) => {
-                    let mut reader = conn.take(limit as u64);
-                    let mut sink = aerospike_rt::io::sink();
-                    io_with_timeout!(
-                        self,
-                        timeout,
-                        aerospike_rt::io::copy(&mut reader, &mut sink)
-                    )
-                    .unwrap_or_else(|_| {
-                        Err(std::io::Error::new(
-                            std::io::ErrorKind::TimedOut,
-                            "Timeout draining the connection",
-                        ))
-                    })
-                    .map_err(|e| Error::timeout(format!("Timeout draining the connection {e}")))?
-                }
-
-                #[cfg(feature = "tls")]
-                Netsocket::Tls(ref mut conn) => {
-                    let mut reader = conn.take(limit as u64);
-                    let mut sink = aerospike_rt::io::sink();
-                    io_with_timeout!(
-                        self,
-                        timeout,
-                        aerospike_rt::io::copy(&mut reader, &mut sink)
-                    )
-                    .unwrap_or_else(|_| {
-                        Err(std::io::Error::new(
-                            std::io::ErrorKind::TimedOut,
-                            "Timeout draining the connection",
-                        ))
-                    })
-                    .map_err(|e| Error::timeout(format!("Timeout draining the connection {e}")))?
-                }
-                #[cfg(test)]
-                _ => unreachable!(),
-            };
-
-            limit -= count as usize;
-            self.bytes_read += count as usize;
+    async fn drain(&mut self, limit: usize, timeout: Duration) -> Result<()> {
+        let mut got = 0usize;
+        let res = io_with_timeout!(self, timeout, self.conn.discard_counted(limit, &mut got));
+        self.bytes_read += got;
+        self.bytes_received += got;
+        match res {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(Error::timeout(format!(
+                "Timeout draining the connection {e}"
+            ))),
+            Err(()) => Err(Error::timeout(
+                "Timeout draining the connection".to_string(),
+            )),
         }
-
-        Ok(())
     }
 }
 
@@ -982,7 +1199,7 @@ impl<'a> BufferedConn<'a> {
     pub fn new(conn: &'a mut Connection) -> Self {
         BufferedConn {
             conn,
-            cache: Vec::with_capacity(4 * 1024),
+            cache: Vec::with_capacity(64 * 1024),
             limit: 0,
             pos: 0,
             bytes_read: 0,
@@ -1002,7 +1219,7 @@ impl<'a> BufferedConn<'a> {
     ) -> Self {
         BufferedConn {
             conn,
-            cache: Vec::with_capacity(4 * 1024),
+            cache: Vec::with_capacity(64 * 1024),
             limit: 0,
             pos: 0,
             bytes_read: 0,
@@ -1083,34 +1300,33 @@ impl<'a> BufferedConn<'a> {
             return Ok(size);
         }
 
-        if self.limit <= 0 {
+        if self.limit == 0 {
             return Ok(0);
         }
 
         let size = min(self.cache.capacity(), self.limit);
         self.resize_cache(size)?;
+        // The socket read is the moment the connection is used — refreshing
+        // per parsed piece instead of per read costs a timestamp every few
+        // bytes of a large stream.
+        self.conn.refresh();
 
         let deadline = self.conn.deadline();
-        let read_result = match self.conn.conn {
-            Netsocket::Tcp(ref mut conn) => {
-                io_with_timeout!(self.conn, deadline, conn.read_exact(&mut self.cache))
-            }
-
-            #[cfg(feature = "tls")]
-            Netsocket::Tls(ref mut conn) => {
-                io_with_timeout!(self.conn, deadline, conn.read_exact(&mut self.cache))
-            }
-            #[cfg(test)]
-            _ => unreachable!(),
-        };
+        let mut got = 0usize;
+        let read_result = io_with_timeout!(
+            self.conn,
+            deadline,
+            self.conn.conn.read_counted(&mut self.cache, &mut got)
+        );
+        // Exact on every outcome (see `Netsocket::read_counted`).
+        self.limit -= got;
+        self.conn.bytes_read += got;
+        self.conn.bytes_received += got;
 
         match read_result {
-            Ok(Ok(_)) => {
-                self.limit -= self.cache.len();
-                self.conn.bytes_read += self.cache.len();
-            }
+            Ok(Ok(())) => (),
             Ok(Err(e)) => return Err(Error::connection(format!("buffered_read: {e}"))),
-            Err(_) => {
+            Err(()) => {
                 return Err(Error::timeout(
                     "Timeout reading from the network connection",
                 ))
@@ -1135,58 +1351,38 @@ impl<'a> BufferedConn<'a> {
 
             let _ = self.resize_cache(0);
             self.pos = 0;
-            assert!(self.exhausted());
+            debug_assert!(self.exhausted());
             self.conn.state = ConnectionState::Ready;
             return Ok(());
         }
 
-        while self.limit > 0 {
-            let count = match self.conn.conn {
-                Netsocket::Tcp(ref mut conn) => {
-                    let mut reader = conn.take(self.limit as u64);
-                    let mut sink = aerospike_rt::io::sink();
-                    io_with_timeout!(
-                        self.conn,
-                        timeout,
-                        aerospike_rt::io::copy(&mut reader, &mut sink)
-                    )
-                    .unwrap_or_else(|_| {
-                        Err(std::io::Error::new(
-                            std::io::ErrorKind::TimedOut,
-                            "Timeout draining the connection",
-                        ))
-                    })
-                    .map_err(|e| Error::timeout(format!("Timeout draining the connection {e}")))?
-                }
-                #[cfg(feature = "tls")]
-                Netsocket::Tls(ref mut conn) => {
-                    let mut reader = conn.take(self.limit as u64);
-                    let mut sink = aerospike_rt::io::sink();
-                    io_with_timeout!(
-                        self.conn,
-                        timeout,
-                        aerospike_rt::io::copy(&mut reader, &mut sink)
-                    )
-                    .unwrap_or_else(|_| {
-                        Err(std::io::Error::new(
-                            std::io::ErrorKind::TimedOut,
-                            "Timeout draining the connection",
-                        ))
-                    })
-                    .map_err(|e| Error::timeout(format!("Timeout draining the connection {e}")))?
-                }
-                #[cfg(test)]
-                _ => unreachable!(),
-            };
-
-            self.limit -= count as usize;
-            self.bytes_read += count as usize;
-            self.conn.bytes_read += count as usize;
+        let mut got = 0usize;
+        let res = io_with_timeout!(
+            self.conn,
+            timeout,
+            self.conn.conn.discard_counted(self.limit, &mut got)
+        );
+        self.limit -= got;
+        self.bytes_read += got;
+        self.conn.bytes_read += got;
+        self.conn.bytes_received += got;
+        match res {
+            Ok(Ok(())) => (),
+            Ok(Err(e)) => {
+                return Err(Error::timeout(format!(
+                    "Timeout draining the connection {e}"
+                )))
+            }
+            Err(()) => {
+                return Err(Error::timeout(
+                    "Timeout draining the connection".to_string(),
+                ))
+            }
         }
 
         let _ = self.resize_cache(0);
         self.pos = 0;
-        assert!(self.exhausted());
+        debug_assert!(self.exhausted());
 
         self.conn.state = ConnectionState::Ready;
 
@@ -1195,7 +1391,7 @@ impl<'a> BufferedConn<'a> {
 
     #[inline]
     pub(crate) const fn exhausted(&self) -> bool {
-        self.limit <= 0 && self.decoder_remaining == 0 && self.empty()
+        self.limit == 0 && self.decoder_remaining == 0 && self.empty()
     }
 
     #[inline]
@@ -1224,6 +1420,19 @@ impl<'a> BufferedConn<'a> {
     }
 
     pub async fn read_buffer(&mut self, size: usize) -> Result<usize> {
+        // A declared length larger than what is left of the message is
+        // corruption, not a reason to block on the socket (or underflow
+        // `limit`).
+        let available = if self.decoder.is_some() {
+            self.len() + self.decoder_remaining
+        } else {
+            self.len() + self.limit
+        };
+        if size > available {
+            return Err(Error::bad_response(format!(
+                "response truncated: {size} bytes declared, {available} available"
+            )));
+        }
         self.conn.buffer.resize_buffer(size)?;
 
         if (self.limit > 0 || self.decoder.is_some()) && self.empty() {
@@ -1236,9 +1445,8 @@ impl<'a> BufferedConn<'a> {
             // we have data left in the buffer, but we need more
             let cached = self.cached_read_rest();
             let remaining = size - cached;
-            if self.decoder.is_some() {
+            if let Some(decoder) = self.decoder.as_mut() {
                 // Decoder mode: decompress directly into data_buffer
-                let decoder = self.decoder.as_mut().unwrap();
                 decoder
                     .read_exact(&mut self.conn.buffer.data_buffer[cached..cached + remaining])
                     .map_err(|e| Error::client_error(format!("Decompression error: {e}")))?;
@@ -1257,7 +1465,6 @@ impl<'a> BufferedConn<'a> {
         self.bytes_read += size;
 
         self.conn.buffer.reset_offset();
-        self.conn.refresh();
 
         Ok(size)
     }
@@ -1388,7 +1595,9 @@ impl<'a> ConnectionRecovery<'a> {
             Ok(receive_size)
         } else {
             let header_length = self.conn.buffer.read_u8(Some(8));
-            let receive_size = proto_size - usize::from(header_length);
+            let receive_size = proto_size
+                .checked_sub(usize::from(header_length))
+                .ok_or_else(|| Error::bad_response("proto size shorter than its header"))?;
             Ok(receive_size)
         }
     }
@@ -1586,6 +1795,7 @@ mod liveness_probe_tests {
     use aerospike_rt::net::{TcpListener, TcpStream};
 
     /// Half-close the accepted socket, so the client side sees FIN.
+    #[cfg_attr(feature = "rt-async-std", allow(unused_mut))] // only tokio's shutdown needs `&mut`
     async fn spawn_finning_peer() -> String {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap().to_string();
@@ -1619,12 +1829,43 @@ mod liveness_probe_tests {
         addr
     }
 
+    /// `TCP_NODELAY` must be set on every socket the client opens. Asserted
+    /// through the real getsockopt rather than by trusting the setter, so a
+    /// platform that silently ignores the option fails here instead of in
+    /// production.
+    ///
+    /// This covers [`Connection::set_nodelay`], not its call site: under
+    /// `cfg(test)` `Connection::new` returns a `Netsocket::TestDummy` and never
+    /// opens a socket, so the real connect path is unreachable from a unit
+    /// test.
+    #[aerospike_macro::test]
+    async fn sockets_are_opened_with_tcp_nodelay() {
+        let addr = spawn_quiet_peer().await;
+        let stream = TcpStream::connect(&*addr).await.unwrap();
+
+        assert!(
+            !socket2::SockRef::from(&stream).tcp_nodelay().unwrap(),
+            "a fresh socket is expected to start with TCP_NODELAY unset; if the \
+             platform default changed, this test no longer proves anything"
+        );
+
+        Connection::set_nodelay(&stream);
+
+        assert!(
+            socket2::SockRef::from(&stream).tcp_nodelay().unwrap(),
+            "TCP_NODELAY must be set: Nagle deadlocks against the peer's \
+             delayed ACK for 40ms on any request written as more than one write"
+        );
+    }
+
     /// Build a `Connection` around a real socket, bypassing the handshake.
     fn conn_over(stream: TcpStream) -> Connection {
         let mut conn = Connection {
             addr: "127.0.0.1:0".into(),
             buffer: Buffer::new(0),
             bytes_read: 0,
+            bytes_received: 0,
+            bytes_sent: 0,
             conn: Netsocket::Tcp(stream),
             socket_timeout: 5_000,
             timeout_delay: 0,
@@ -1635,7 +1876,6 @@ mod liveness_probe_tests {
             can_recover_connection: false,
             response_decompressed: false,
             compressed_stream_body: false,
-            rnd: XorShift::new(),
             #[cfg(feature = "rt-tokio")]
             sleep: Box::pin(aerospike_rt::tokio::time::sleep(Duration::from_secs(3600))),
         };
@@ -1717,6 +1957,8 @@ mod tests_eof_loopback {
             addr: "127.0.0.1:0".into(),
             buffer: Buffer::new(0),
             bytes_read: 0,
+            bytes_received: 0,
+            bytes_sent: 0,
             conn: Netsocket::Tcp(stream),
             socket_timeout: 5_000,
             timeout_delay: 0,
@@ -1727,7 +1969,6 @@ mod tests_eof_loopback {
             can_recover_connection: false,
             response_decompressed: false,
             compressed_stream_body: false,
-            rnd: XorShift::new(),
             // Far-future deadline; reset before each IO so this never fires first.
             sleep: Box::pin(aerospike_rt::tokio::time::sleep(
                 aerospike_rt::time::Duration::from_secs(3600),
@@ -1781,6 +2022,69 @@ mod tests_eof_loopback {
         addr
     }
 
+    /// Spawn a peer that sends exactly `n` bytes and then half-closes —
+    /// a response cut short.
+    async fn spawn_short_peer(n: usize) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        aerospike_rt::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                use tokio::io::AsyncWriteExt;
+                let _ = sock.write_all(&vec![7u8; n]).await;
+                let _ = sock.shutdown().await;
+                aerospike_rt::sleep(std::time::Duration::from_secs(60)).await;
+                drop(sock);
+            }
+        });
+        addr
+    }
+
+    // ─── Exact byte accounting on every outcome ───────────────────────────
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn partial_read_before_eof_is_counted_exactly() {
+        let addr = spawn_short_peer(10).await;
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut conn = conn_from_stream(stream);
+
+        let err = conn
+            .read_buffer(100)
+            .await
+            .expect_err("peer sent 10 of the 100 requested bytes");
+        assert!(
+            matches!(err.kind(), crate::ErrorKind::Connection),
+            "short read must surface as a connection error, got: {err:?}"
+        );
+        // The failed read still accounts for exactly what arrived, on both
+        // the metrics total and the recovery offset.
+        assert_eq!(conn.bytes_received(), 10);
+        assert_eq!(conn.bytes_read(), 10);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn writes_count_every_byte_and_restart_per_command() {
+        let addr = spawn_idle_peer().await;
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut conn = conn_from_stream(stream);
+
+        conn.write_all(&[1u8; 1234]).await.unwrap();
+        assert_eq!(conn.bytes_sent(), 1234);
+
+        // `flush` writes the command buffer and starts a new count.
+        conn.buffer.data_buffer = vec![2u8; 77];
+        conn.flush().await.unwrap();
+        assert_eq!(
+            conn.bytes_sent(),
+            77,
+            "flush restarts the per-command count"
+        );
+        assert_eq!(
+            conn.bytes_received(),
+            0,
+            "a new command starts with nothing read"
+        );
+    }
+
     // ─── Bug 1: socket I/O errors classified as Error::Connection ─────────
 
     #[tokio::test(flavor = "current_thread")]
@@ -1796,13 +2100,11 @@ mod tests_eof_loopback {
 
         assert!(
             matches!(err.kind(), crate::ErrorKind::Connection),
-            "expected connection error on peer FIN, got: {:?}",
-            err
+            "expected connection error on peer FIN, got: {err:?}"
         );
         assert!(
             is_network_error(&err),
-            "is_network_error must accept this so the retry gate engages; err = {:?}",
-            err
+            "is_network_error must accept this so the retry gate engages; err = {err:?}"
         );
     }
 
@@ -1830,13 +2132,11 @@ mod tests_eof_loopback {
 
         assert!(
             matches!(err.kind(), crate::ErrorKind::Connection),
-            "expected connection error on peer-closed write, got: {:?}",
-            err
+            "expected connection error on peer-closed write, got: {err:?}"
         );
         assert!(
             is_network_error(&err),
-            "is_network_error must accept this; err = {:?}",
-            err
+            "is_network_error must accept this; err = {err:?}"
         );
     }
 
@@ -1887,7 +2187,7 @@ mod tests_eof_loopback {
 
         let host = Host::new("127.0.0.1", 0);
         let policy = ClientPolicy::default();
-        let q = Queue::with_capacity(1, host, policy, None, None);
+        let q = Queue::with_capacity(1, host, policy, None, None, None);
 
         let addr = spawn_fin_peer().await;
         let stream = TcpStream::connect(addr).await.unwrap();
@@ -1920,7 +2220,7 @@ mod tests_eof_loopback {
 
         let host = Host::new("127.0.0.1", 0);
         let policy = ClientPolicy::default();
-        let q = Queue::with_capacity(1, host, policy, None, None);
+        let q = Queue::with_capacity(1, host, policy, None, None, None);
 
         let addr = spawn_idle_peer().await;
         let stream = TcpStream::connect(addr).await.unwrap();
@@ -2092,6 +2392,8 @@ giXBCqFUdjj6IPPzkDZtMO1fU3lfoCm6z5EGqRhWg8An6dxdhFCdc2AZ
             addr: addr.to_string(),
             buffer: Buffer::new(0),
             bytes_read: 0,
+            bytes_received: 0,
+            bytes_sent: 0,
             conn: Netsocket::Tls(tls),
             socket_timeout: 30_000,
             timeout_delay: 0,
@@ -2102,7 +2404,6 @@ giXBCqFUdjj6IPPzkDZtMO1fU3lfoCm6z5EGqRhWg8An6dxdhFCdc2AZ
             can_recover_connection: false,
             response_decompressed: false,
             compressed_stream_body: false,
-            rnd: XorShift::new(),
             sleep: Box::pin(aerospike_rt::tokio::time::sleep(Duration::from_secs(3600))),
         };
         conn.refresh();

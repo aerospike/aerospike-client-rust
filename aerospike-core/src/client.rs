@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -21,17 +21,15 @@ use std::sync::Arc;
 use std::vec::Vec;
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use regex::Regex;
-use std::sync::LazyLock;
 
-use aerospike_rt::{sleep, Mutex};
+use aerospike_rt::sleep;
 
 use crate::batch::{BatchExecutor, BatchOperation};
 use crate::cluster::{Cluster, Node};
 use crate::commands::admin_command::AdminCommand;
 use crate::commands::buffer::Buffer;
 use crate::commands::{
-    DeleteCommand, ExecuteUDFCommand, ExistsCommand, OperateCommand, QueryCommand, ReadCommand,
+    DeleteCommand, ExecuteUdfCommand, ExistsCommand, OperateCommand, QueryCommand, ReadCommand,
     ServerCommand, TouchCommand, WriteCommand,
 };
 use crate::errors::{Error, ErrorKind, Result};
@@ -39,6 +37,7 @@ use crate::expressions::Expression;
 use crate::net::ToHosts;
 use crate::operations::cdt_context::{to_base64, CdtContext};
 use crate::operations::{Operation, OperationType};
+use crate::policy::Policy;
 use crate::policy::{
     AdminPolicy, BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, TxnRollPolicy,
     TxnVerifyPolicy, WritePolicy,
@@ -46,15 +45,18 @@ use crate::policy::{
 use crate::query::plan::{QueryPlan, QueryWhereWire, FLAG_EXPLAIN, FLAG_HARD_HINT};
 #[cfg(feature = "lua")]
 use crate::query::ResultSet;
-use crate::query::{NodePartitions, PartitionFilter, PartitionTracker};
+use crate::query::{
+    CallbackCtx, NodePartitions, PartitionFilter, PartitionTracker, QueryHandle, QuerySink,
+    StreamEntry, TopKAccumulator,
+};
 use crate::task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, UdfRemoveTask};
 use crate::txn::{AbortStatus, CommitStatus, Txn, TxnState};
 use crate::txn_roll::TxnRoll;
+use crate::Version;
 use crate::{
     BatchRecord, Bin, Bins, CollectionIndexType, IndexType, Key, Privilege, Record, Recordset,
-    ResultCode, Role, Statement, UDFLang, User, Value,
+    ResultCode, Role, Statement, UdfLang, User, Value,
 };
-use crate::{Policy, Version};
 use aerospike_rt::fs::File;
 #[cfg(feature = "rt-tokio")]
 use aerospike_rt::io::AsyncReadExt;
@@ -68,8 +70,11 @@ const MAX_PERMITS: usize = 256;
 /// Instantiate a Client instance to access an Aerospike database cluster and perform database
 /// operations.
 ///
-/// The client is thread-safe. Only one client instance should be used per cluster. Multiple
-/// threads should share this cluster instance.
+/// The client is thread-safe, and cloning it is cheap: every clone shares
+/// the same cluster, connection pools and background tasks, so hand a clone
+/// to each task or thread rather than opening a second client to the same
+/// cluster. [`close`](Self::close) shuts that shared cluster down for every
+/// clone.
 ///
 /// Your application uses this class' API to perform database operations such as writing and
 /// reading records, and selecting sets of records. Write operations include specialized
@@ -83,17 +88,32 @@ const MAX_PERMITS: usize = 256;
 ///
 /// * [`Client::new`] to create a client, [`Client::close`] to shut it down
 /// * [`ClientPolicy`] for connection configuration
+#[derive(Clone)]
 pub struct Client {
     /// Cluster management object holding the cluster map and node connections.
-    ///
-    /// # See also
-    ///
-    /// * [`nodes`](Self::nodes), [`node_names`](Self::node_names), [`get_node`](Self::get_node)
-    pub cluster: Arc<Cluster>,
+    /// Reached through [`nodes`](Self::nodes), [`node_names`](Self::node_names),
+    /// [`get_node`](Self::get_node) and [`random_node`](Self::random_node).
+    pub(crate) cluster: Arc<Cluster>,
 }
 
-unsafe impl Send for Client {}
-unsafe impl Sync for Client {}
+// The client crosses threads by virtue of its fields, never by assertion: a
+// field that stops being thread-safe fails this line instead of compiling.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Client>();
+};
+
+/// Closes a query sink when dropped, so consumers are released whether the
+/// producer task finished, failed or panicked. An explicit `close()` at the
+/// end of the task used to leave a `Recordset` reader waiting forever after
+/// a panic, because the recordset holds both ends of its channel.
+struct CloseSinkOnExit(QuerySink);
+
+impl Drop for CloseSinkOnExit {
+    fn drop(&mut self) {
+        self.0.close();
+    }
+}
 
 impl Client {
     /// Initializes Aerospike client with suitable hosts to seed the cluster map. The client policy
@@ -121,7 +141,10 @@ impl Client {
     ///
     /// # Arguments
     ///
-    /// * `policy` — Client policy (timeouts, connection limits, authentication). Must pass [`ClientPolicy::validate`].
+    /// * `policy` — Client policy (timeouts, connection limits, authentication). An inconsistent
+    ///   policy (a minimum pool larger than the maximum, a tend interval under 250 ms, TLS
+    ///   for the login only without authentication) is rejected here with an error before
+    ///   any connection is made.
     /// * `hosts` — Seed hosts; any type implementing [`ToHosts`] (e.g. string like `"host1:3000,host2:3000"`).
     ///
     /// # Returns
@@ -250,7 +273,8 @@ impl Client {
         Ok(Client { cluster })
     }
 
-    /// Closes the connection to the Aerospike cluster.
+    /// Closes the connection to the Aerospike cluster, for this client and
+    /// every clone of it.
     ///
     /// # Examples
     ///
@@ -340,8 +364,7 @@ impl Client {
 
     /// Send info commands to a randomly selected cluster node and return
     /// the parsed key/value response. The map preserves the server's
-    /// response order — one entry per command, in request order. The Rust
-    /// counterpart of Java's `Info.request(policy, node, commands...)`.
+    /// response order — one entry per command, in request order.
     ///
     /// # Examples
     ///
@@ -386,10 +409,77 @@ impl Client {
         self.cluster.nodes()
     }
 
+    /// The cluster name this client validates nodes against
+    /// ([`ClientPolicy::cluster_name`]), or `None` when validation is off.
+    pub fn cluster_name(&self) -> Option<String> {
+        self.cluster.cluster_name()
+    }
+
+    /// A random active node, for commands that any node can answer.
+    pub fn random_node(&self) -> Result<Arc<Node>> {
+        self.cluster.get_random_node()
+    }
+
+    #[doc(hidden)] // test support, not a stable API
+    pub fn partition_map_ready(&self) -> bool {
+        self.cluster.partition_map_ready()
+    }
+
+    /// Whether `namespace` runs in strong-consistency mode on this cluster.
+    ///
+    /// Read from the cached partition map, so this is a synchronous lookup
+    /// with no network I/O; it is cheap enough to call on every command, and
+    /// language bindings do exactly that to pick an AP or SC policy per
+    /// namespace. The answer follows the map, which the tend loop refreshes.
+    ///
+    /// Returns `Some(true)` for a strong-consistency namespace, `Some(false)`
+    /// for an available-partition one, and `None` when the namespace is not in
+    /// the partition map: an unknown namespace, or a map not yet populated.
+    ///
+    /// # Example
+    ///
+    /// ```rust,edition2021
+    /// # use aerospike::{Client, ClientPolicy};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
+    /// match client.is_strong_consistency("test") {
+    ///     Some(true) => println!("test is a strong-consistency namespace"),
+    ///     Some(false) => println!("test is an AP namespace"),
+    ///     None => println!("no namespace named test"),
+    /// }
+    /// # }
+    /// ```
+    pub fn is_strong_consistency(&self, namespace: &str) -> Option<bool> {
+        self.cluster.is_strong_consistency(namespace)
+    }
+
+    #[doc(hidden)] // test support, not a stable API
+    pub fn partition_map_complete(&self) -> bool {
+        self.cluster.partition_map_complete()
+    }
+
+    /// The cluster name the connected servers report (`cluster-name` info),
+    /// discovered during tend regardless of whether
+    /// `ClientPolicy::cluster_name` is set. `None` when the servers have no
+    /// cluster name configured (or no node has been tended yet).
+    ///
+    /// Setting `ClientPolicy::cluster_name` still only *validates* nodes
+    /// against a name; this accessor is how a caller learns the name without
+    /// opting into that validation, for example to pick a per-cluster
+    /// configuration block and fall back to a default when it is `None`.
+    pub fn server_cluster_name(&self) -> Option<String> {
+        self.cluster.server_cluster_name()
+    }
+
     /// Enables periodic client metrics collection, (re)shaping per-node
-    /// histograms to `policy`. While enabled the client records connection,
-    /// tend, latency and result-code statistics that can be read with
-    /// [`Client::metrics`]. Collection is off by default.
+    /// histograms to `policy`. While enabled the client records the Tier 0
+    /// instruments (pool gauges, connection opened/closed, tend and node
+    /// counts) and, if [`MetricsPolicy::operational`](crate::metrics::MetricsPolicy::operational)
+    /// is set, the per-command latency, bytes, result-code, retry/error and
+    /// connection-failure statistics. Read them with [`Client::metrics`].
+    /// Collection is off by default.
     pub fn enable_metrics(&self, policy: crate::metrics::MetricsPolicy) {
         self.cluster.enable_metrics(policy);
     }
@@ -406,26 +496,32 @@ impl Client {
 
     /// Returns a snapshot of the cluster's collected statistics: per-node
     /// metrics keyed by host, a cluster-aggregated view (carrying the node
-    /// labels), and the total node / open-connection counts.
+    /// labels), the total node count and the connection-pool gauges
+    /// (open / in-use / in-pool / recovering) summed across nodes.
     ///
-    /// Returns empty/zeroed statistics if metrics have never been enabled.
+    /// Callable while collection is disabled: the pool gauges are read live
+    /// from the pools on every call, while counters and histograms are
+    /// whatever was accumulated when collection was last on (zero if never).
     pub fn metrics(&self) -> crate::metrics::ClusterMetrics {
         let nodes = self.cluster.metrics_copy();
         let policy = self.cluster.metrics_policy();
         let mut aggregated = crate::metrics::NodeMetricsSnapshot::new((*policy).clone());
-        let mut open_connections = 0u64;
         for snapshot in nodes.values() {
+            // `aggregate` sums the stamped pool gauges along with the counters.
             aggregated.aggregate(snapshot);
-            open_connections += snapshot.open_connections();
         }
         aggregated.set_labels(self.cluster.node_labels());
-        aggregated.set_open_connections(open_connections);
+        let gauges = aggregated.pool_gauges();
 
         crate::metrics::ClusterMetrics {
             nodes,
             cluster_aggregated: aggregated,
             total_nodes: self.cluster.nodes().len(),
-            open_connections,
+            open_connections: gauges.total,
+            connections_in_use: gauges.in_use(),
+            connections_in_pool: gauges.in_pool,
+            recover_queue_size: gauges.recovering,
+            nodes_invalid: self.cluster.nodes_invalid_count(),
             exceeded_max_retries: self.cluster.max_retries_exceeded_count(),
             exceeded_total_timeout: self.cluster.total_timeout_exceeded_count(),
         }
@@ -456,7 +552,9 @@ impl Client {
     ///
     /// # See also
     ///
-    /// * [`put`](Self::put), [`operate`](Self::operate), [`exists`](Self::exists)
+    /// * [`put`](Self::put), [`operate`](Self::operate), [`exists`](Self::exists),
+    ///   [`batch`](Self::batch) (fetching many keys at once, prefer this over a loop of
+    ///   individual [`get`](Self::get) calls)
     ///
     /// # Examples
     ///
@@ -505,10 +603,12 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub async fn get<T>(&self, policy: &ReadPolicy, key: &Key, bins: T) -> Result<Record>
-    where
-        T: Into<Bins> + Send + Sync + 'static,
-    {
+    pub async fn get(
+        &self,
+        policy: &ReadPolicy,
+        key: &Key,
+        bins: impl Into<Bins>,
+    ) -> Result<Record> {
         let policy = self.cluster.resolve_read(policy);
         let policy = policy.as_ref();
         if let Some(txn) = &policy.base_policy.txn {
@@ -520,89 +620,78 @@ impl Client {
         Ok(command.record.unwrap())
     }
 
-    /// Read multiple record for specified batch keys in one batch call. This method allows
-    /// different namespaces/bins to be requested for each key in the batch. If the `BatchRead` key
-    /// field is not found, the corresponding record field will be `None`. The policy can be used
-    /// to specify timeouts and maximum concurrent threads. This method requires Aerospike Server
-    /// version >= 3.6.0.
+    /// Execute a batch of operations (read, write, delete, UDF — one per
+    /// [`Key`]) in one call, writing each operation's result **into the
+    /// operation itself**. Read results back through
+    /// [`BatchOperation::record`]/[`take_record`](BatchOperation::take_record)/
+    /// [`result_code`](BatchOperation::result_code)/[`in_doubt`](BatchOperation::in_doubt),
+    /// or borrow the whole row via [`BatchOperation::batch_record`].
+    ///
+    /// No result vector is allocated, the operations are not cloned into the
+    /// engine, and parsed records are never deep-copied — they are parsed
+    /// straight into the caller's rows. The slice is reusable across calls; prior results are cleared
+    /// on entry. Ordering is untouched, so result-to-operation correlation is
+    /// positional.
     ///
     /// # Arguments
     ///
     /// * `policy` — Batch policy (timeouts, max concurrent nodes).
-    /// * `batch` — Slice of [`BatchOperation`] items (read, write, delete, UDF) keyed by [`Key`].
-    ///
-    /// # Returns
-    ///
-    /// `Ok(Vec<BatchRecord>)` with one [`BatchRecord`] per operation; each record field is `Some` if the key was found, `None` otherwise. Order matches the input batch.
+    /// * `ops` — Slice of [`BatchOperation`] items keyed by [`Key`]; results
+    ///   land on these.
     ///
     /// # Errors
     ///
-    /// * Returns an error if the batch request fails (e.g. timeout, cluster error). Individual key-not-found is indicated by `record: None` in the corresponding [`BatchRecord`].
+    /// * Returns an error if the batch request fails (e.g. timeout, cluster error).
+    ///   Individual key-not-found is indicated by `record: None` in the corresponding [`BatchRecord`].
+    ///
+    /// Per-key outcomes (key not found, filtered out, a key the cluster
+    /// cannot route) are **not** errors — they live on each row's result
+    /// code, with `record()` returning `None`. An `Err` is returned for the
+    /// first whole-node failure; every row still carries its own outcome,
+    /// and rows a timeout left unanswered have `result_code() == None`. Rows
+    /// answered before a timeout struck keep their results — the per-command
+    /// policy deadlines bound the wait.
+    ///
+    /// # Performance
+    ///
+    /// If key routing assigns only a single key to a specific cluster node, the client automatically
+    /// sends that request using the single-record protocol rather than the batch protocol.
+    /// This optimization happens per node behind the scenes, so you don't need to manually check
+    /// key counts or fall back to single-record calls like [`get`](Self::get) or [`put`](Self::put).
     ///
     /// # See also
     ///
     /// * [`BatchOperation`], [`BatchRecord`], [`get`](Self::get)
     ///
+    /// `policy` is the batch-wide parent policy. A batch of reads takes
+    /// [`BatchPolicy::default`]; a batch with writes, deletes or UDF calls
+    /// should take [`BatchPolicy::write_default`], which does not retry.
+    ///
     /// # Examples
     ///
-    /// Fetch multiple records in a single client request
-    ///
     /// ```rust,edition2021
+    /// # extern crate aerospike;
     /// # use aerospike::*;
     ///
     /// # #[tokio::main]
     /// # async fn main() {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or(String::from("127.0.0.1:3000"));
     /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
-    /// let bins = Bins::from(["name", "age"]);
-    /// let bin1 = as_bin!("a", "a value");
-    /// let bin2 = as_bin!("b", "another value");
-    /// let bin3 = as_bin!("c", 42);
-    ///
-    /// let key1 = as_key!("test", "test", 1);
-    /// let key2 = as_key!("test", "test", 2);
-    /// let key3 = as_key!("test", "test", 3);
-    ///
-    /// let key4 = as_key!("test", "test", -1);
-    /// // key does not exist
-    ///
-    /// let selected = Bins::from(["a"]);
-    /// let all = Bins::All;
-    /// let none = Bins::None;
-    ///
-    /// let wops = vec![
-    ///     operations::put(&bin1),
-    ///     operations::put(&bin2),
-    ///     operations::put(&bin3),
-    /// ];
-    ///
-    /// let rops = vec![
-    ///     operations::get_bin(&bin1.name),
-    ///     operations::get_bin(&bin2.name),
-    ///     operations::get_header(),
-    /// ];
-    ///
     /// let bpolicy = BatchPolicy::default();
-    /// let bpr = BatchReadPolicy::default();
-    /// let bpw = BatchWritePolicy::default();
-    /// let bpd = BatchDeletePolicy::default();
-    /// let bpu = BatchUDFPolicy::default();
+    /// let brp = BatchReadPolicy::default();
+    /// let key1 = as_key!("test", "test", "key1");
+    /// let key2 = as_key!("test", "test", "key2");
     ///
-    /// let batch = vec![
-    ///     BatchOperation::write(&bpw, key1.clone(), wops.clone()),
-    ///     BatchOperation::read(&bpr, key1.clone(), selected),
-    ///     BatchOperation::read(&bpr, key2.clone(), all),
-    ///     BatchOperation::read(&bpr, key3.clone(), none.clone()),
-    ///     BatchOperation::read_ops(&bpr, key3.clone(), rops),
-    ///     BatchOperation::delete(&bpd, key1.clone()),
-    ///     BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", None),
+    /// let mut ops = vec![
+    ///     BatchOperation::read(&brp, key1, Bins::All),
+    ///     BatchOperation::read(&brp, key2, Bins::from(["a", "b"])),
     /// ];
-    /// match client.batch(&bpolicy, &batch).await {
-    ///     Ok(results) => {
-    ///         for result in results {
-    ///             match result.record {
-    ///                 Some(record) => println!("{:?} => {:?}", result.key, record.bins),
-    ///                 None => println!("No such record: {:?}", result.key),
+    /// match client.batch(&bpolicy, &mut ops).await {
+    ///     Ok(()) => {
+    ///         for op in &ops {
+    ///             match op.record() {
+    ///                 Some(record) => println!("{:?} => {:?}", op.batch_record().key, record.bins),
+    ///                 None => println!("No such record: {:?}", op.batch_record().key),
     ///             }
     ///         }
     ///     }
@@ -610,11 +699,7 @@ impl Client {
     /// }
     /// # }
     /// ```
-    pub async fn batch(
-        &self,
-        policy: &BatchPolicy,
-        ops: &[BatchOperation],
-    ) -> Result<Vec<BatchRecord>> {
+    pub async fn batch(&self, policy: &BatchPolicy, ops: &mut [BatchOperation]) -> Result<()> {
         let policy = self.cluster.resolve_batch(policy);
         let policy = policy.as_ref();
         if let Some(txn) = &policy.base_policy.txn {
@@ -630,59 +715,68 @@ impl Client {
         executor.execute(policy, ops).await
     }
 
-    /// Execute multiple batch operations and return results as an async stream.
+    /// Execute a batch of operations, reporting each row to `on_row` as its
+    /// result arrives — the reactive sibling of [`batch`](Self::batch).
     ///
-    /// Unlike [`batch`](Self::batch), results arrive in the order they are received from each
-    /// server node rather than the order of `ops`. Each item is a pair of
-    /// `(original_index, BatchRecord)` so the caller can match results back to their input
-    /// operations. The stream ends automatically once all server nodes have responded.
+    /// The batch owns `ops`. Every row's outcome reaches the hook **exactly
+    /// once**: answered rows as they are parsed, on the node task, before
+    /// the rest of the response is read; rows the server never answers
+    /// (unroutable keys, a failed node, rows an abort left behind) once at
+    /// the end, carrying the result code they were stamped with — or `None`
+    /// if they were never sent. `on_row(index, row)` receives the row's
+    /// position in `ops` and the row itself; return `false` to abort the
+    /// remaining work.
     ///
-    /// Ownership of `ops` is taken so it can be shared cheaply across per-node tasks without
-    /// cloning the operations themselves.
+    /// The hook is async and awaited inline, so it may do I/O — but while
+    /// it runs, that node's response is not being read; keep per-row awaits
+    /// short. Invocations run concurrently across nodes and serially within
+    /// one. The hook must not panic. Dropping the returned future stops the
+    /// batch: nothing fires afterwards, and running groups tear down.
     ///
-    /// # Examples
+    /// # Errors
     ///
-    /// ```rust,edition2021
-    /// # use aerospike::*;
-    /// use futures::StreamExt;
-    ///
-    /// # #[tokio::main]
-    /// # async fn main() {
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
-    /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
-    /// let key = as_key!("test", "test", 1);
-    /// let batch = vec![BatchOperation::read(&BatchReadPolicy::default(), key, Bins::All)];
-    ///
-    /// let mut stream = client.batch_stream(&BatchPolicy::default(), batch).await.unwrap();
-    /// while let Some((idx, br)) = stream.next().await {
-    ///     println!("op[{}]: {:?}", idx, br.record);
-    /// }
-    /// # }
-    /// ```
-    pub async fn batch_stream(
+    /// Per-key outcomes are not errors; they reach the hook on each row. An
+    /// `Err` is the first whole-node failure. An abort from the hook is the
+    /// caller's decision and returns `Ok(())`.
+    pub async fn batch_foreach<F, Fut>(
         &self,
         policy: &BatchPolicy,
-        ops: Vec<BatchOperation>,
-    ) -> Result<impl futures::Stream<Item = (usize, BatchRecord)>> {
+        ops: &mut [BatchOperation],
+        on_row: F,
+    ) -> Result<()>
+    where
+        F: Fn(usize, &BatchRecord) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = bool> + Send + 'static,
+    {
+        // Dropping this future — the caller lost interest — stops the hook
+        // from firing again and lets running groups wind down.
+        struct CancelOnDrop(Arc<crate::batch::BatchHook>);
+        impl Drop for CancelOnDrop {
+            fn drop(&mut self) {
+                self.0.cancel();
+            }
+        }
+
         let policy = self.cluster.resolve_batch(policy);
         let policy = policy.as_ref();
-        // Mirror `batch`'s TXN preamble — when a transaction is
-        // attached to the policy, each key in the batch needs to be
-        // registered with the MRT monitor before any per-node command
-        // runs. The streaming variant takes ownership of `ops` so we
-        // pass a borrow into the monitor before handing ownership
-        // through to the executor.
         if let Some(txn) = &policy.base_policy.txn {
             crate::txn_monitor::add_keys_from_records(
                 self.cluster.clone(),
                 &policy.base_policy,
                 txn,
-                &ops,
+                ops,
             )
             .await?;
         }
+
+        let hook = Arc::new(crate::batch::BatchHook::new(
+            Box::new(move |idx, row| Box::pin(on_row(idx, row))),
+            ops.len(),
+        ));
+        let _guard = CancelOnDrop(Arc::clone(&hook));
+
         let executor = BatchExecutor::new(self.cluster.clone());
-        executor.execute_stream(policy, ops).await
+        executor.execute_foreach(policy, ops, hook).await
     }
 
     /// Write record bin(s). The policy specifies the transaction timeout, record expiration, and
@@ -704,7 +798,9 @@ impl Client {
     ///
     /// # See also
     ///
-    /// * [`get`](Self::get), [`operate`](Self::operate), [`add`](Self::add), [`delete`](Self::delete)
+    /// * [`get`](Self::get), [`operate`](Self::operate), [`add`](Self::add), [`delete`](Self::delete),
+    ///   [`batch`](Self::batch) (writing many keys at once, prefer this over a loop of
+    ///   individual [`put`](Self::put) calls)
     ///
     /// # Examples
     ///
@@ -941,7 +1037,9 @@ impl Client {
     ///
     /// # See also
     ///
-    /// * [`put`](Self::put), [`get`](Self::get), [`touch`](Self::touch)
+    /// * [`put`](Self::put), [`get`](Self::get), [`touch`](Self::touch),
+    ///   [`batch`](Self::batch) (deleting many keys at once, prefer this over a loop of
+    ///   individual [`delete`](Self::delete) calls)
     ///
     /// # Examples
     ///
@@ -1092,7 +1190,9 @@ impl Client {
     ///
     /// # See also
     ///
-    /// * [`get`](Self::get), [`put`](Self::put), [`operations`](crate::operations)
+    /// * [`get`](Self::get), [`put`](Self::put), [`operations`](crate::operations),
+    ///   [`batch`](Self::batch) (running per-key operations across many keys at once, prefer
+    ///   this over a loop of individual [`operate`](Self::operate) calls)
     ///
     /// # Examples
     ///
@@ -1113,7 +1213,8 @@ impl Client {
     ///     operations::get_bin("a"),
     /// ];
     /// match client.operate(&WritePolicy::default(), &key, &ops).await {
-    ///     Ok(record) => println!("The new value is {:?}", record.bins.get("a")),
+    ///     // One answer per op, in op order; the add answers nil.
+    ///     Ok(record) => println!("The new value is {:?}", record.results.unwrap()[1]),
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// # }
@@ -1125,10 +1226,9 @@ impl Client {
         ops: &[Operation],
     ) -> Result<Record> {
         if ops.is_empty() {
-            return Err(Error::server_error(
+            return Err(Error::server_error_with_message(
                 ResultCode::ParameterError,
                 "no operations defined",
-                None,
             ));
         }
         let policy = self.cluster.resolve_write(policy);
@@ -1154,7 +1254,7 @@ impl Client {
     /// * `policy` — Admin policy (timeout).
     /// * `udf_body` — Raw UDF source bytes (e.g. Lua code).
     /// * `server_path` — Path name on the server (e.g. `"example.lua"`).
-    /// * `language` — [`UDFLang`] (e.g. [`UDFLang::Lua`]).
+    /// * `language` — [`UdfLang`] (e.g. [`UdfLang::Lua`]).
     ///
     /// # Returns
     ///
@@ -1203,7 +1303,7 @@ impl Client {
     /// "#;
     ///
     /// match client.register_udf(&AdminPolicy::default(), code.as_bytes(),
-    ///                           "example.lua", UDFLang::Lua).await {
+    ///                           "example.lua", UdfLang::Lua).await {
     ///     Ok(_task) => { /* wait for task or use it */ }
     ///     Err(err) => println!("Failed to register UDF: {}", err),
     /// }
@@ -1214,7 +1314,7 @@ impl Client {
         policy: &AdminPolicy,
         udf_body: &[u8],
         server_path: &str,
-        language: UDFLang,
+        language: UdfLang,
     ) -> Result<RegisterTask> {
         let udf_body = BASE64.encode(udf_body);
 
@@ -1226,9 +1326,8 @@ impl Client {
             language
         );
         let node = self.cluster.get_random_node()?;
-        self.send_info_cmd(policy, node, &cmd)
-            .await
-            .map_err(|e| e.chain_error("Error registering UDF"))?;
+        self.send_info_cmd(policy, node, &cmd, "Error registering UDF")
+            .await?;
 
         Ok(RegisterTask::new(
             Arc::clone(&self.cluster),
@@ -1248,7 +1347,7 @@ impl Client {
     /// * `policy` — Admin policy (timeout).
     /// * `client_path` — Local file path to the UDF source file.
     /// * `server_path` — Path name on the server (e.g. `"example.lua"`).
-    /// * `language` — [`UDFLang`] (e.g. [`UDFLang::Lua`]).
+    /// * `language` — [`UdfLang`] (e.g. [`UdfLang::Lua`]).
     ///
     /// # Returns
     ///
@@ -1265,7 +1364,7 @@ impl Client {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// # use aerospike::{Client, ClientPolicy, AdminPolicy, UDFLang};
+    /// # use aerospike::{Client, ClientPolicy, AdminPolicy, UdfLang};
     /// # #[tokio::main]
     /// # async fn main() {
     /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
@@ -1274,7 +1373,7 @@ impl Client {
     ///     &AdminPolicy::default(),
     ///     "/path/to/my_udf.lua",
     ///     "my_udf.lua",
-    ///     UDFLang::Lua,
+    ///     UdfLang::Lua,
     /// ).await {
     ///     Ok(task) => { /* wait for task.wait_till_complete(None).await */ }
     ///     Err(err) => eprintln!("Failed to register UDF from file: {}", err),
@@ -1286,7 +1385,7 @@ impl Client {
         policy: &AdminPolicy,
         client_path: &str,
         server_path: &str,
-        language: UDFLang,
+        language: UdfLang,
     ) -> Result<RegisterTask> {
         let path = Path::new(client_path);
         let mut file = File::open(&path).await?;
@@ -1338,9 +1437,8 @@ impl Client {
         let cmd = format!("udf-remove:filename={server_path};");
         let node = self.cluster.get_random_node()?;
         // Sample response: {"udf-remove:filename=server_path;": "ok"}
-        self.send_info_cmd(policy, node, &cmd)
-            .await
-            .map_err(|e| e.chain_error("UDF Remove failed"))?;
+        self.send_info_cmd(policy, node, &cmd, "UDF Remove failed")
+            .await?;
 
         Ok(UdfRemoveTask::new(
             Arc::clone(&self.cluster),
@@ -1388,7 +1486,7 @@ impl Client {
     ///     &key,
     ///     "my_module",
     ///     "my_function",
-    ///     Some(&[as_val!(42)]),
+    ///     &[as_val!(42)],
     /// ).await {
     ///     Ok(Some(val)) => println!("UDF returned: {:?}", val),
     ///     Ok(None) => println!("UDF returned nothing"),
@@ -1400,15 +1498,15 @@ impl Client {
         &self,
         policy: &WritePolicy,
         key: &Key,
-        server_path: &str,
+        package_name: &str,
         function_name: &str,
-        args: Option<&[Value]>,
+        args: &[Value],
     ) -> Result<Option<Value>> {
-        let mut command = ExecuteUDFCommand::new(
+        let mut command = ExecuteUdfCommand::new(
             policy,
             self.cluster.clone(),
             key,
-            server_path,
+            package_name,
             function_name,
             args,
         );
@@ -1447,9 +1545,26 @@ impl Client {
     ///
     /// `Ok(Arc<Recordset>)` — a shared record set. Consume with [`Recordset::into_stream`] and iterate the stream for records. The recordset is closed when the stream is dropped or exhausted.
     ///
+    /// # Delivery guarantee
+    ///
+    /// **At-least-once, loss-free.** Records flow through a bounded buffer
+    /// between the node streams and the consumer, and the resume cursor
+    /// advances only for records the consumer has actually taken out — so
+    /// closing the recordset early and resuming from
+    /// [`Recordset::partition_filter`] re-fetches anything undelivered,
+    /// never skips it. Duplicates are possible in two narrow cases: a retry
+    /// round re-fetching a range that still had buffered copies in flight,
+    /// and a resume re-fetching records that one of several concurrent
+    /// consumers delivered ahead of a sibling's gap; both are bounded by
+    /// the in-flight window. For exactly-once delivery use
+    /// [`query_foreach`](Self::query_foreach), which trades the buffer (and
+    /// its slow-consumer isolation) for callback delivery with an atomic
+    /// cursor commit.
+    ///
     /// # Errors
     ///
-    /// * Returns an error if the statement is invalid (e.g. [`Statement::validate`] fails) or initial partition assignment fails.
+    /// * Returns an error if the statement is invalid (an aggregation with an empty package or
+    ///   function name, bins and operations both set) or initial partition assignment fails.
     ///
     /// # Panics
     /// Panics if the async block fails
@@ -1490,6 +1605,9 @@ impl Client {
     /// }
     /// # }
     /// ```
+    // Spawns the per-partition workers on the caller's runtime and may grow a
+    // server round trip; the call shape must not change when it does.
+    #[allow(clippy::unused_async)]
     pub async fn query(
         &self,
         policy: &QueryPolicy,
@@ -1508,49 +1626,93 @@ impl Client {
             Self::reject_resumed_top_k_filter(&partition_filter)?;
         }
         let t_policy = policy.clone();
-        let tracker = Arc::new(Mutex::new(
-            PartitionTracker::new(&t_policy, Arc::new(Mutex::new(partition_filter)), nodes).await?,
-        ));
+        let tracker = PartitionTracker::new(&t_policy, partition_filter, &nodes)?;
 
         let recordset = Arc::new(Recordset::new(
             policy.record_queue_size,
             policy.max_records,
             usize::MAX, // will be reset later
-            tracker.clone(),
+            tracker.shared(),
         ));
 
-        let t_recordset = recordset.clone();
-        let defer_recordset = recordset.clone();
+        let sink = QuerySink::Channel(recordset.clone());
+        let close_on_exit = CloseSinkOnExit(sink.clone());
         let cluster = self.cluster.clone();
-        // A Top-K statement is reduced on every node and merged in the
-        // client. An order key without `k` runs as a plain query, which the
-        // server refuses when it sees the order-by field.
-        let is_top_k = statement.has_top_k();
+        // A Top-K statement is ranked on every node and merged in the client
+        // by one shared accumulator. An order key without `k` runs as a plain
+        // query, which the server refuses when it sees the order-by field.
+        let top_k = Self::top_k_accumulator(&statement);
         aerospike_rt::spawn(async move {
-            if is_top_k {
-                Self::execute_top_k_query_timeout(
-                    cluster,
-                    &t_policy,
-                    tracker.clone(),
-                    statement.clone(),
-                    t_recordset,
-                )
+            Self::execute_query_timeout(cluster, &t_policy, tracker, statement, sink, None, top_k)
                 .await;
-            } else {
-                Self::execute_query_timeout(
-                    cluster,
-                    &t_policy,
-                    tracker.clone(),
-                    statement.clone(),
-                    t_recordset,
-                    None,
-                )
-                .await;
-            }
-            defer_recordset.close();
+            drop(close_on_exit);
         });
 
         Ok(recordset)
+    }
+
+    /// Execute a scan or query, delivering records through `callback` instead
+    /// of a [`Recordset`] stream.
+    ///
+    /// The callback is `async`, invoked **inline on the node streams,
+    /// concurrently from up to one task per node**, with each record (or
+    /// stream error) as a `Result<Record>`; its future resolving to `false`
+    /// aborts the query. There is no channel and no buffering: the resume
+    /// cursor is committed the moment an invocation's future resolves, so
+    /// delivery is **exactly-once** — a cancelled query resumed from
+    /// [`QueryHandle::partition_filter`] neither loses nor repeats a record.
+    /// (The stream API, [`query`](Self::query), is at-least-once: loss-free,
+    /// with bounded duplicates possible on retries and multi-consumer
+    /// resumes.) The callback may await freely — a write, a channel send —
+    /// but it runs on the node task: while its future is pending that node's
+    /// stream does not read, so a slow callback backpressures the server
+    /// directly. Never block the thread inside it. Invocations run
+    /// concurrently — one at a time per node, in parallel across nodes.
+    ///
+    /// The returned [`QueryHandle`] can [`wait`](QueryHandle::wait) for
+    /// completion or [`cancel`](QueryHandle::cancel); dropping it detaches,
+    /// leaving the query running.
+    // Spawns the per-partition workers on the caller's runtime and may grow a
+    // server round trip; the call shape must not change when it does.
+    #[allow(clippy::unused_async)]
+    pub async fn query_foreach<F, Fut>(
+        &self,
+        policy: &QueryPolicy,
+        partition_filter: PartitionFilter,
+        statement: Statement,
+        callback: F,
+    ) -> Result<QueryHandle>
+    where
+        F: Fn(Result<Record>) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = bool> + Send + 'static,
+    {
+        statement.validate()?;
+        Self::reject_top_k_on_callback_query(&statement)?;
+        let statement = Arc::new(statement);
+
+        let policy = self.cluster.resolve_query(policy);
+        let policy = policy.as_ref();
+        let nodes: Vec<Arc<Node>> = self.cluster.nodes();
+        let t_policy = policy.clone();
+        let tracker = PartitionTracker::new(&t_policy, partition_filter, &nodes)?;
+
+        let ctx = Arc::new(CallbackCtx::new(
+            Box::new(move |res| Box::pin(callback(res))),
+            tracker.shared(),
+        ));
+        let sink = QuerySink::Callback(Arc::clone(&ctx));
+        let close_on_exit = CloseSinkOnExit(sink.clone());
+        let cluster = self.cluster.clone();
+        let task = aerospike_rt::spawn(async move {
+            Self::execute_query_timeout(cluster, &t_policy, tracker, statement, sink, None, None)
+                .await;
+            drop(close_on_exit);
+        });
+
+        Ok(QueryHandle {
+            ctx,
+            task: Some(task),
+        })
     }
 
     /// Phase 1 of internal server-led query selection (field `44` WHERE explain).
@@ -1581,7 +1743,7 @@ impl Client {
         }
 
         let flags = explain_where_flags.unwrap_or(FLAG_EXPLAIN);
-        if flags & FLAG_HARD_HINT != 0 && index_name_hint.map(str::is_empty).unwrap_or(true) {
+        if flags & FLAG_HARD_HINT != 0 && index_name_hint.is_none_or(str::is_empty) {
             return Err(Error::invalid_argument(
                 "HARD_HINT requires a non-empty index name hint",
             ));
@@ -1610,6 +1772,9 @@ impl Client {
     /// [`Version::supports_query_selection`](crate::Version::supports_query_selection);
     /// do not call with a filtered-out plan (orchestration belongs in the binding layer).
     #[doc(hidden)]
+    // Spawns the per-partition workers on the caller's runtime and may grow a
+    // server round trip; the call shape must not change when it does.
+    #[allow(clippy::unused_async)]
     pub async fn query_with_plan(
         &self,
         policy: &QueryPolicy,
@@ -1618,17 +1783,10 @@ impl Client {
         plan: QueryPlan,
     ) -> Result<Arc<Recordset>> {
         if plan.is_filtered_out() {
-            return Err(Error::server_error(
-                ResultCode::FilteredOut,
-                String::new(),
-                None,
-            ));
+            return Err(Error::server_error_bare(ResultCode::FilteredOut));
         }
 
-        statement.filters = match plan.filter_for_execute()? {
-            Some(filter) => Some(vec![filter]),
-            None => None,
-        };
+        statement.filter = plan.filter_for_execute()?;
 
         let execute_where = Some(Arc::from(plan.into_execute_where_bytes()));
         statement.validate()?;
@@ -1638,31 +1796,31 @@ impl Client {
         let policy = policy.as_ref();
         let nodes: Vec<Arc<Node>> = self.cluster.nodes();
         let t_policy = policy.clone();
-        let tracker = Arc::new(Mutex::new(
-            PartitionTracker::new(&t_policy, Arc::new(Mutex::new(partition_filter)), nodes).await?,
-        ));
+        let tracker = PartitionTracker::new(&t_policy, partition_filter, &nodes)?;
 
         let recordset = Arc::new(Recordset::new(
             policy.record_queue_size,
             policy.max_records,
             usize::MAX, // will be reset later
-            tracker.clone(),
+            tracker.shared(),
         ));
 
-        let t_recordset = recordset.clone();
-        let defer_recordset = recordset.clone();
+        let sink = QuerySink::Channel(recordset.clone());
+        let close_on_exit = CloseSinkOnExit(sink.clone());
         let cluster = self.cluster.clone();
+        let top_k = Self::top_k_accumulator(&statement);
         aerospike_rt::spawn(async move {
             Self::execute_query_timeout(
                 cluster,
                 &t_policy,
-                tracker.clone(),
-                statement.clone(),
-                t_recordset,
+                tracker,
+                statement,
+                sink,
                 execute_where,
+                top_k,
             )
             .await;
-            defer_recordset.close();
+            drop(close_on_exit);
         });
 
         Ok(recordset)
@@ -1710,7 +1868,7 @@ impl Client {
     ///         stmt,
     ///         "sum_example",
     ///         "sum_single_bin",
-    ///         Some(&[as_val!("score")]),
+    ///         &[as_val!("score")],
     ///     )
     ///     .await?;
     /// let mut stream = rs.into_stream();
@@ -1727,7 +1885,7 @@ impl Client {
         mut statement: Statement,
         package_name: &str,
         function_name: &str,
-        function_args: Option<&[Value]>,
+        function_args: &[Value],
     ) -> Result<Arc<ResultSet>> {
         use futures::StreamExt;
 
@@ -1758,7 +1916,7 @@ impl Client {
         // is tied up per aggregation.
         let package = package_name.to_owned();
         let function = function_name.to_owned();
-        let args: Vec<Value> = function_args.map(<[Value]>::to_vec).unwrap_or_default();
+        let args: Vec<Value> = function_args.to_vec();
         aerospike_rt::spawn(async move {
             use futures::FutureExt;
             // `output_tx` moves into the pipeline and is dropped when it
@@ -1836,10 +1994,9 @@ impl Client {
             return Ok(value);
         }
         if let Some(reason) = record.bins.swap_remove("FAILURE") {
-            return Err(Error::server_error(
+            return Err(Error::server_error_with_message(
                 ResultCode::QueryGeneric,
                 format!("aggregation UDF failed on the server: {reason}"),
-                None,
             ));
         }
         Err(Error::bad_response(format!(
@@ -1848,14 +2005,16 @@ impl Client {
         )))
     }
 
-    /// Execute a query and apply operations to matching records on the server.
-    /// This method sends the command to all nodes and returns an `ExecuteTask`
-    /// that can be used to monitor the progress of the background job.
+    /// Apply the statement's operations to every matching record on the
+    /// server. This method sends the command to all nodes and returns an
+    /// `ExecuteTask` that can be used to monitor the progress of the
+    /// background job.
     ///
-    /// The statement's filters determine which records are affected. If no filter
-    /// is specified, all records in the namespace/set are processed (scan mode).
-    ///
-    /// Only write operations are allowed. Read operations will result in an error.
+    /// The statement's filter determines which records are affected. If no
+    /// filter is specified, all records in the namespace/set are processed
+    /// (scan mode). The operations come from
+    /// [`Statement::set_operations`]; only write operations are allowed, and a
+    /// statement without operations is rejected with `ParameterError`.
     ///
     /// # Examples
     ///
@@ -1863,9 +2022,9 @@ impl Client {
     /// # use aerospike::*;
     /// # async fn example(client: &Client) -> Result<()> {
     /// let wpolicy = WritePolicy::default();
-    /// let statement = Statement::new("ns", "set", Bins::All);
-    /// let ops = vec![operations::put(&Bin::new("bin".into(), Value::Int(42)))];
-    /// let task = client.query_operate(&wpolicy, statement, &ops).await?;
+    /// let mut statement = Statement::new("ns", "set", Bins::All);
+    /// statement.set_operations([operations::put(&Bin::new("bin", Value::Int(42)))]);
+    /// let task = client.query_operate(&wpolicy, statement).await?;
     /// task.wait_till_complete(None).await?;
     /// # Ok(())
     /// # }
@@ -1873,21 +2032,14 @@ impl Client {
     pub async fn query_operate(
         &self,
         write_policy: &WritePolicy,
-        mut statement: Statement,
-        operations: &[Operation],
+        statement: Statement,
     ) -> Result<ExecuteTask> {
-        if operations.is_empty() {
-            return Err(Error::server_error(
+        if statement.operations.as_ref().is_none_or(Vec::is_empty) {
+            return Err(Error::server_error_with_message(
                 ResultCode::ParameterError,
                 "no operations defined",
-                None,
             ));
         }
-        // Inject the ops into `statement.operations` so the unified
-        // `set_query` background path consumes them via the Statement.
-        // The legacy `&[Operation]` parameter is preserved on the
-        // public API for backwards compatibility.
-        statement.operations = Some(operations.to_vec());
         statement.validate()?;
         Self::reject_top_k_on_background_query(&statement)?;
         let nodes = self.cluster.nodes();
@@ -1896,7 +2048,7 @@ impl Client {
         }
 
         let task_id: u64 = rand::random();
-        let scan = statement.filters.is_none();
+        let scan = statement.filter().is_none();
 
         let mut last_err: Option<Error> = None;
         for node in &nodes {
@@ -1947,7 +2099,7 @@ impl Client {
     ///     statement,
     ///     "my_udf_package",
     ///     "my_function",
-    ///     Some(&[as_val!(42)]),
+    ///     &[as_val!(42)],
     /// ).await?;
     /// task.wait_till_complete(None).await?;
     /// # Ok(())
@@ -1959,7 +2111,7 @@ impl Client {
         mut statement: Statement,
         package_name: &str,
         function_name: &str,
-        args: Option<&[Value]>,
+        args: &[Value],
     ) -> Result<ExecuteTask> {
         Self::reject_top_k_on_background_query(&statement)?;
         statement.set_aggregate_function(package_name, function_name, args);
@@ -1970,7 +2122,7 @@ impl Client {
         }
 
         let task_id: u64 = rand::random();
-        let scan = statement.filters.is_none();
+        let scan = statement.filter().is_none();
 
         let mut last_err: Option<Error> = None;
         for node in &nodes {
@@ -1996,13 +2148,14 @@ impl Client {
     async fn execute_query_timeout(
         cluster: Arc<Cluster>,
         policy: &QueryPolicy,
-        tracker: Arc<Mutex<PartitionTracker>>,
+        tracker: PartitionTracker,
         statement: Arc<Statement>,
-        recordset: Arc<Recordset>,
+        sink: QuerySink,
         execute_where: Option<Arc<[u8]>>,
+        top_k: Option<Arc<aerospike_rt::Mutex<TopKAccumulator>>>,
     ) {
         if policy.total_timeout() > 0 {
-            let rs_closer = recordset.clone();
+            let timed_sink = sink.clone();
             if aerospike_rt::timeout(
                 Duration::from_millis(u64::from(policy.total_timeout())),
                 Self::execute_query(
@@ -2010,15 +2163,16 @@ impl Client {
                     policy,
                     tracker,
                     statement,
-                    recordset,
+                    sink,
                     execute_where.clone(),
+                    top_k,
                 ),
             )
             .await
             .is_err()
             {
-                let _ = rs_closer
-                    .push(Err(Error::timeout("Timeout".to_string())))
+                timed_sink
+                    .fatal(Error::timeout("Timeout".to_string()))
                     .await;
             }
         } else {
@@ -2027,20 +2181,25 @@ impl Client {
                 policy,
                 tracker,
                 statement,
-                recordset,
+                sink,
                 execute_where,
+                top_k,
             )
             .await;
         }
     }
 
+    /// Runs the query rounds. With `top_k`, every node ranks its rows into the
+    /// shared accumulator and the merged result is delivered once the last
+    /// round completes; a node that lacks Top-K support fails the query.
     async fn execute_query(
         cluster: Arc<Cluster>,
         policy: &QueryPolicy,
-        tracker: Arc<Mutex<PartitionTracker>>,
+        mut tracker: PartitionTracker,
         statement: Arc<Statement>,
-        recordset: Arc<Recordset>,
+        sink: QuerySink,
         execute_where: Option<Arc<[u8]>>,
+        top_k: Option<Arc<aerospike_rt::Mutex<TopKAccumulator>>>,
     ) {
         let namespace = statement.namespace.clone();
         // Exponential backoff between whole-cluster retry rounds: the sleep
@@ -2051,28 +2210,33 @@ impl Client {
         let mut sleep_interval = policy.base_policy.sleep_between_retries();
         loop {
             let mut timed_out = false;
+            let mut faulted = false;
             {
-                let mut tracker_locked = tracker.lock().await;
-                match tracker_locked
-                    .assign_partitions_to_nodes(cluster.clone(), &namespace)
-                    .await
-                {
-                    Ok(()) => (),
-                    Err(e) => {
-                        recordset.err(e).await;
-                        tracker_locked.partition_error().await;
-                        return;
-                    }
+                if let Err(e) = tracker.assign_partitions_to_nodes(&cluster, &namespace) {
+                    sink.fatal(e).await;
+                    tracker.partition_error();
+                    return;
                 }
 
-                let list = tracker_locked.node_partitions_list();
+                // Taken by value: each set is *moved* into its node's task and
+                // comes back in the join value, so the compiler — not the
+                // protocol's word — guarantees one writer at a time.
+                let list = tracker.take_node_partitions();
                 let mut handles = Vec::with_capacity(list.len());
-                recordset.set_instances(list.len() + 1); // +1 is for the async executor
+                sink.set_instances(list.len() + 1); // +1 is for the async executor
 
                 // used for join errors
-                let err_recordset = recordset.clone();
+                let err_sink = sink.clone();
 
-                if recordset.is_active() {
+                // A node that joined since the query started may predate
+                // Top-K; it would run a plain query and return unranked rows.
+                if top_k.is_some() && !Self::nodes_support_top_k(&list) {
+                    tracker.restore_node_partitions(list);
+                    sink.fatal(Self::top_k_unsupported_error()).await;
+                    return;
+                }
+
+                if sink.is_active() {
                     let semaphore = Arc::new(Semaphore::new(if policy.max_concurrent_nodes == 0 {
                         MAX_PERMITS
                     } else {
@@ -2081,12 +2245,12 @@ impl Client {
 
                     for node_partition in list {
                         let semaphore = semaphore.clone();
-                        let recordset = recordset.clone();
+                        let sink = sink.clone();
                         let policy = policy.clone();
-                        let node_partition = node_partition.clone();
                         let statement = statement.clone();
                         let cluster = cluster.clone();
                         let execute_where = execute_where.clone();
+                        let top_k = top_k.clone();
                         let handle = aerospike_rt::spawn(async move {
                             let permit = semaphore.acquire().await;
                             // QueryCommand handles both filtered queries
@@ -2095,63 +2259,91 @@ impl Client {
                             let mut cmd = QueryCommand::new(
                                 &policy,
                                 statement,
-                                recordset.clone(),
+                                sink,
                                 node_partition,
                                 cluster,
-                                None,
+                                top_k,
                                 execute_where,
-                            )
-                            .await;
+                            );
                             let result = cmd.execute().await;
 
                             drop(permit);
-                            result
+                            // Handed back on every path, error included, so a
+                            // failed node still reports what it read and which
+                            // of its partitions need retrying.
+                            (result, cmd.into_node_partitions())
                         });
 
                         handles.push(handle);
                     }
 
-                    drop(tracker_locked);
-
-                    match futures::future::try_join_all(handles).await {
-                        Err(e) => err_recordset.err(Error::client_error(e.to_string())).await,
-                        #[cfg(feature = "rt-async-std")]
-                        Ok(_) => (),
+                    let mut returned = Vec::with_capacity(handles.len());
+                    for outcome in futures::future::join_all(handles).await {
+                        // Unwrap the runtime's join wrapper: tokio reports a
+                        // panicked or cancelled task here, async-std propagates
+                        // the panic instead.
                         #[cfg(feature = "rt-tokio")]
-                        Ok(errs) => {
-                            for err in errs {
-                                match err {
-                                    // Socket I/O errors now surface as Error::Connection (was Error::Io).
-                                    Err(e)
-                                        if matches!(
-                                            e.kind(),
-                                            ErrorKind::Timeout
-                                                | ErrorKind::Io(_)
-                                                | ErrorKind::Connection
-                                        ) =>
-                                    {
-                                        timed_out = true;
-                                    }
-                                    Err(e) => {
-                                        tracker.lock().await.partition_error().await;
-                                        err_recordset.err(e).await;
-                                    }
-                                    Ok(()) => (),
-                                }
+                        let outcome = match outcome {
+                            Ok(outcome) => outcome,
+                            Err(e) => {
+                                // The task died holding its partition set;
+                                // there is nothing to hand back.
+                                err_sink.err(Error::client_error(e.to_string())).await;
+                                continue;
                             }
+                        };
+
+                        let (result, node_partition) = outcome;
+                        returned.push(node_partition);
+                        match result {
+                            // Socket I/O errors now surface as Error::Connection (was Error::Io).
+                            Err(e)
+                                if matches!(
+                                    e.kind(),
+                                    ErrorKind::Timeout | ErrorKind::Io(_) | ErrorKind::Connection
+                                ) =>
+                            {
+                                timed_out = true;
+                            }
+                            // A cancelled or aborted stream: its partitions
+                            // still hold undelivered records, so the round
+                            // must not be treated as cleanly complete — the
+                            // cursor's `done` flag is a promise that a resume
+                            // has nothing left to fetch.
+                            Err(e) if matches!(e.kind(), ErrorKind::StreamTerminated) => {
+                                faulted = true;
+                                tracker.partition_error();
+                                err_sink.err(e).await;
+                            }
+                            // A genuine error (a server rejection, say) ends
+                            // the query as before: deterministic failures are
+                            // not retried.
+                            Err(e) => {
+                                tracker.partition_error();
+                                err_sink.err(e).await;
+                            }
+                            Ok(()) => (),
                         }
                     }
+                    tracker.restore_node_partitions(returned);
+                } else {
+                    tracker.restore_node_partitions(list);
                 }
             };
 
-            let mut tracker = tracker.lock().await;
-            let done = tracker.is_complete(policy, timed_out).await;
-            match (done, recordset.is_active()) {
-                (Ok(true), _) | (Ok(_), false) => return,
+            let done = tracker.is_complete(policy, timed_out, faulted);
+            match (done, sink.is_active()) {
+                (Ok(true), true) => {
+                    if let Some(accumulator) = &top_k {
+                        let results = accumulator.lock().await.take_results();
+                        Self::push_top_k_results(results, &sink).await;
+                    }
+                    return;
+                }
+                (Ok(_), false) => return,
                 (Err(e), _) => {
-                    tracker.partition_error().await;
-                    recordset.err(e).await;
-                    drop(tracker);
+                    tracker.partition_error();
+                    sink.fatal(e).await;
                     return;
                 }
                 _ => (),
@@ -2165,221 +2357,7 @@ impl Client {
                 ));
             }
 
-            recordset.reset_task_id();
-        }
-    }
-
-    async fn execute_top_k_query_timeout(
-        cluster: Arc<Cluster>,
-        policy: &QueryPolicy,
-        tracker: Arc<Mutex<PartitionTracker>>,
-        statement: Arc<Statement>,
-        recordset: Arc<Recordset>,
-    ) {
-        if policy.total_timeout() > 0 {
-            let rs_closer = recordset.clone();
-            if aerospike_rt::timeout(
-                Duration::from_millis(u64::from(policy.total_timeout())),
-                Self::execute_top_k_query(cluster, policy, tracker, statement, recordset),
-            )
-            .await
-            .is_err()
-            {
-                let _ = rs_closer
-                    .push(Err(Error::timeout("Timeout".to_string())))
-                    .await;
-            }
-        } else {
-            Self::execute_top_k_query(cluster, policy, tracker, statement, recordset).await;
-        }
-    }
-
-    /// Executes an ordered Top-K query.
-    async fn execute_top_k_query(
-        cluster: Arc<Cluster>,
-        policy: &QueryPolicy,
-        tracker: Arc<Mutex<PartitionTracker>>,
-        statement: Arc<Statement>,
-        recordset: Arc<Recordset>,
-    ) {
-        let namespace = statement.namespace.clone();
-        let sleep_multiplier = policy.base_policy.sleep_multiplier();
-        let mut sleep_interval = policy.base_policy.sleep_between_retries();
-
-        // One accumulator for every node of the query, so a record two nodes
-        // both return is deduplicated by its last-update time.
-        let limit = statement.top_k.expect("Top-K execution requires topK") as usize;
-        let accumulator = Arc::new(Mutex::new(crate::query::TopKAccumulator::new(
-            statement.order_by.clone(),
-            limit,
-        )));
-
-        loop {
-            let mut timed_out = false;
-            let mut round_had_error = false;
-            let mut fatal_error: Option<Error> = None;
-            let node_list: Vec<Arc<Mutex<NodePartitions>>>;
-            {
-                let mut tracker_locked = tracker.lock().await;
-                match tracker_locked
-                    .assign_partitions_to_nodes(cluster.clone(), &namespace)
-                    .await
-                {
-                    Ok(()) => (),
-                    Err(e) => {
-                        recordset.err(e).await;
-                        tracker_locked.partition_error().await;
-                        return;
-                    }
-                }
-
-                node_list = tracker_locked.node_partitions_list().to_vec();
-                recordset.set_instances(node_list.len() + 1); // +1 is for the async executor
-
-                if recordset.is_active() {
-                    // A node that joined since the query started may predate
-                    // Top-K; it would run a plain query and return unranked
-                    // rows, so the query fails instead.
-                    if !Self::nodes_support_top_k(&node_list).await {
-                        drop(tracker_locked);
-                        recordset.err(Self::top_k_unsupported_error()).await;
-                        return;
-                    }
-                    let semaphore = Arc::new(Semaphore::new(if policy.max_concurrent_nodes == 0 {
-                        MAX_PERMITS
-                    } else {
-                        policy.max_concurrent_nodes
-                    }));
-
-                    let mut handles = Vec::with_capacity(node_list.len());
-                    for node_partition in &node_list {
-                        let semaphore = semaphore.clone();
-                        let recordset = recordset.clone();
-                        let policy = policy.clone();
-                        let node_partition = node_partition.clone();
-                        let statement = statement.clone();
-                        let cluster = cluster.clone();
-                        let accumulator = accumulator.clone();
-                        let handle = aerospike_rt::spawn(async move {
-                            let permit = semaphore.acquire().await;
-                            let result = QueryCommand::new(
-                                &policy,
-                                statement,
-                                recordset.clone(),
-                                node_partition,
-                                cluster,
-                                Some(accumulator),
-                                None,
-                            )
-                            .await
-                            .execute()
-                            .await;
-
-                            drop(permit);
-                            result
-                        });
-                        handles.push(handle);
-                    }
-
-                    drop(tracker_locked);
-
-                    // JoinHandle result types differ by runtime.
-                    #[cfg(feature = "rt-tokio")]
-                    match futures::future::try_join_all(handles).await {
-                        Err(e) => {
-                            warn!("Top-K query node task join error: {e}");
-                            round_had_error = true;
-                        }
-                        Ok(results) => {
-                            for r in results {
-                                match r {
-                                    Ok(()) => {}
-                                    Err(e) if matches!(e.kind(), ErrorKind::InvalidArgument) => {
-                                        fatal_error = Some(e);
-                                    }
-                                    Err(e)
-                                        if matches!(
-                                            e.kind(),
-                                            ErrorKind::Timeout
-                                                | ErrorKind::Io(_)
-                                                | ErrorKind::Connection
-                                        ) =>
-                                    {
-                                        timed_out = true;
-                                        round_had_error = true;
-                                    }
-                                    Err(_) => round_had_error = true,
-                                }
-                            }
-                        }
-                    }
-                    #[cfg(feature = "rt-async-std")]
-                    match futures::future::try_join_all(handles).await {
-                        Err(e) if matches!(e.kind(), ErrorKind::InvalidArgument) => {
-                            fatal_error = Some(e);
-                        }
-                        Err(e)
-                            if matches!(
-                                e.kind(),
-                                ErrorKind::Timeout | ErrorKind::Io(_) | ErrorKind::Connection
-                            ) =>
-                        {
-                            timed_out = true;
-                            round_had_error = true;
-                        }
-                        Err(e) => {
-                            warn!("Top-K query node task error: {e}");
-                            round_had_error = true;
-                        }
-                        Ok(_) => {}
-                    }
-                } else {
-                    drop(tracker_locked);
-                }
-            }
-
-            if let Some(e) = fatal_error {
-                recordset.err(e).await;
-                return;
-            }
-
-            if round_had_error {
-                tracker.lock().await.mark_all_for_retry().await;
-                accumulator.lock().await.clear();
-                // Mark this round incomplete.
-                if let Some(np) = node_list.first() {
-                    np.lock().await.parts_unavailable += 1;
-                }
-            }
-
-            let mut tracker_locked = tracker.lock().await;
-            let done = tracker_locked.is_complete(policy, timed_out).await;
-            match (done, recordset.is_active()) {
-                (Ok(true), true) if !round_had_error => {
-                    drop(tracker_locked);
-                    let results = accumulator.lock().await.take_results();
-                    Self::push_top_k_results(results, &recordset).await;
-                    return;
-                }
-                (Ok(true), _) | (Ok(_), false) => return,
-                (Err(e), _) => {
-                    tracker_locked.partition_error().await;
-                    recordset.err(e).await;
-                    return;
-                }
-                _ => (),
-            }
-            drop(tracker_locked);
-
-            if let Some(interval) = sleep_interval {
-                sleep(interval).await;
-                sleep_interval = Some(crate::policy::next_retry_interval(
-                    interval,
-                    sleep_multiplier,
-                ));
-            }
-
-            recordset.reset_task_id();
+            sink.reset_task_id();
         }
     }
 
@@ -2442,26 +2420,59 @@ impl Client {
         Ok(())
     }
 
-    async fn nodes_support_top_k(node_partitions: &[Arc<Mutex<NodePartitions>>]) -> bool {
-        for node_partition in node_partitions {
-            if !node_partition
-                .lock()
-                .await
-                .node
-                .version()
-                .supports_query_top_k()
-            {
-                return false;
-            }
-        }
-        true
+    fn nodes_support_top_k(node_partitions: &[NodePartitions]) -> bool {
+        node_partitions
+            .iter()
+            .all(|np| np.node.version().supports_query_top_k())
     }
 
-    /// Pushes the merged, best-first records to `recordset`.
-    async fn push_top_k_results(records: Vec<Record>, recordset: &Recordset) {
-        for record in records {
-            if recordset.push(Ok(record)).await.is_err() {
-                break;
+    /// Top-K ranks once every node has answered, so it cannot deliver inline.
+    fn reject_top_k_on_callback_query(statement: &Statement) -> Result<()> {
+        if statement.has_top_k() {
+            return Err(Error::invalid_argument(
+                "Top-K is only supported by Client::query; query_foreach delivers records as \
+                 they arrive"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// The accumulator a Top-K statement's node commands share; `None` for a
+    /// plain query.
+    fn top_k_accumulator(
+        statement: &Statement,
+    ) -> Option<Arc<aerospike_rt::Mutex<TopKAccumulator>>> {
+        statement.top_k.map(|k| {
+            Arc::new(aerospike_rt::Mutex::new(TopKAccumulator::new(
+                statement.order_by.clone(),
+                k as usize,
+            )))
+        })
+    }
+
+    /// Delivers the merged, best-first records. A Top-K result moves no resume
+    /// cursor, so the entries carry no delivery stamp.
+    async fn push_top_k_results(records: Vec<Record>, sink: &QuerySink) {
+        match sink {
+            QuerySink::Channel(rs) => {
+                let batch: Vec<StreamEntry> = records
+                    .into_iter()
+                    .map(|record| StreamEntry {
+                        result: Ok(record),
+                        bval: None,
+                        stamp: None,
+                    })
+                    .collect();
+                let _ = rs.push_batch(batch).await;
+            }
+            QuerySink::Callback(ctx) => {
+                for record in records {
+                    if !(ctx.callback)(Ok(record)).await {
+                        sink.close();
+                        break;
+                    }
+                }
             }
         }
     }
@@ -2518,7 +2529,7 @@ impl Client {
             let size = expression.size()?;
             let mut buf = Buffer::new(0);
             buf.resize_buffer(size)?;
-            let _ = expression.pack(&mut Some(&mut buf));
+            expression.pack(&mut Some(&mut buf))?;
             let exp_str = BASE64.encode(&buf.data_buffer);
 
             format!("xdr-set-filter:dc={datacenter};namespace={namespace};exp={exp_str}")
@@ -2526,9 +2537,8 @@ impl Client {
             format!("xdr-set-filter:dc={datacenter};namespace={namespace};exp=null")
         };
 
-        self.send_info_cmd(policy, node, &cmd)
+        self.send_info_cmd(policy, node, &cmd, "Error setting XDR filter")
             .await
-            .map_err(|e| e.chain_error("Error setting XDR filter"))
     }
 
     /// Removes all records in the specified namespace/set efficiently.
@@ -2600,9 +2610,8 @@ impl Client {
         }
 
         let node = self.cluster.get_random_node()?;
-        self.send_info_cmd(policy, node, &cmd)
+        self.send_info_cmd(policy, node, &cmd, "Error truncating ns/set")
             .await
-            .map_err(|e| e.chain_error("Error truncating ns/set"))
     }
 
     /// Creates a secondary index on a bin. This asynchronous server call
@@ -2621,7 +2630,7 @@ impl Client {
     ///
     /// # Returns
     ///
-    /// `Ok(IndexTask)` to poll or wait for index creation to complete (e.g. [`IndexTask::wait_till_complete`](crate::task::IndexTask::wait_till_complete)).
+    /// `Ok(IndexTask)` to poll or wait for index creation to complete (e.g. [`Task::wait_till_complete`](crate::Task::wait_till_complete)).
     ///
     /// # Errors
     ///
@@ -2754,6 +2763,64 @@ impl Client {
         .await
     }
 
+    /// Creates a set index: a secondary index on record presence per set, with
+    /// no bin, type, context or expression. This asynchronous server call
+    /// returns before the index is built; wait on the returned task.
+    ///
+    /// Requires server 8.1.2+ ([`Version::supports_set_index`]). The server
+    /// builds it through the sindex framework, so the `sindex-admin` role is
+    /// enough — the older `set-config … enable-index=true` route needs
+    /// `set-config`. Dropped with [`drop_index`](Self::drop_index) like any
+    /// other index.
+    ///
+    /// # Errors
+    ///
+    /// `set_name` is required: a set index with no set is rejected here, before
+    /// anything is sent. Server failures come back as the server reports them.
+    ///
+    /// ```rust,edition2021
+    /// # extern crate aerospike;
+    /// # use aerospike::*;
+    /// # use std::env;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// # let hosts = env::var("AEROSPIKE_HOSTS").unwrap_or(String::from("127.0.0.1:3000"));
+    /// # let client = Client::new(&ClientPolicy::default(), &hosts).await.unwrap();
+    /// let policy = AdminPolicy::default();
+    ///
+    /// match client.create_set_index(&policy, "test", "demo", "demo_set_idx").await {
+    ///     Err(err) => println!("Failed to create set index: {}", err),
+    ///     Ok(task) => { /* wait for task with task.wait_till_complete(None).await */ }
+    /// }
+    /// # }
+    /// ```
+    pub async fn create_set_index(
+        &self,
+        policy: &AdminPolicy,
+        namespace: &str,
+        set_name: &str,
+        index_name: &str,
+    ) -> Result<IndexTask> {
+        if set_name.is_empty() {
+            return Err(Error::invalid_argument(
+                "a set index requires a set name".to_string(),
+            ));
+        }
+        self.create_index(
+            policy,
+            namespace,
+            set_name,
+            "",
+            index_name,
+            IndexType::Numeric,
+            CollectionIndexType::Set,
+            None,
+            None,
+        )
+        .await
+    }
+
     /// Creates a secondary index on a bin or using expression. This asynchronous server call
     /// returns before the command is complete.
     ///
@@ -2787,6 +2854,27 @@ impl Client {
 
         cmd.push_str(";indexname=");
         cmd.push_str(index_name);
+
+        if collection_index_type == CollectionIndexType::Set {
+            // A set index takes nothing else: the server rejects a bin, a type,
+            // a context or an expression on it (`ERROR:4:type parameter is not
+            // supported for set index`). The command is exactly what the Java
+            // and Go clients send.
+            if !bin_name.is_empty() || expression.is_some() || ctx.is_some_and(|c| !c.is_empty()) {
+                return Err(Error::invalid_argument(
+                    "a set index takes no bin, expression or context; use create_set_index"
+                        .to_string(),
+                ));
+            }
+            cmd.push_str(";indextype=set");
+            self.send_info_cmd(policy, node, &cmd, "Create index failed")
+                .await?;
+            return Ok(IndexTask::new(
+                Arc::clone(&self.cluster),
+                namespace.to_string(),
+                index_name.to_string(),
+            ));
+        }
 
         if let Some(ctx) = ctx {
             if !ctx.is_empty() {
@@ -2822,9 +2910,8 @@ impl Client {
 
         write!(cmd, "{index_type}").unwrap();
 
-        self.send_info_cmd(policy, node, &cmd)
-            .await
-            .map_err(|e| e.chain_error("Error creating index"))?;
+        self.send_info_cmd(policy, node, &cmd, "Create index failed")
+            .await?;
         Ok(IndexTask::new(
             Arc::clone(&self.cluster),
             namespace.to_string(),
@@ -2894,9 +2981,8 @@ impl Client {
         cmd.push_str(";indexname=");
         cmd.push_str(index_name);
 
-        self.send_info_cmd(policy, node, &cmd)
-            .await
-            .map_err(|e| e.chain_error("Error dropping index"))?;
+        self.send_info_cmd(policy, node, &cmd, "Drop index failed")
+            .await?;
         Ok(DropIndexTask::new(
             Arc::clone(&self.cluster),
             namespace.to_string(),
@@ -2904,11 +2990,20 @@ impl Client {
         ))
     }
 
-    async fn send_info_cmd(&self, policy: &AdminPolicy, node: Arc<Node>, cmd: &str) -> Result<()> {
+    /// Sends an info command and turns a non-`ok` response into a server
+    /// error prefixed with `context`. A transport failure on the way
+    /// propagates untouched, as it does in the Java client.
+    async fn send_info_cmd(
+        &self,
+        policy: &AdminPolicy,
+        node: Arc<Node>,
+        cmd: &str,
+        context: &str,
+    ) -> Result<()> {
         let response = node.info(policy, &[cmd]).await?;
         if let Some(response) = response.get(cmd) {
             if response != "ok" && !response.is_empty() {
-                return Err(Self::parse_info_error(response));
+                return Err(Error::info_command_failure(context, response));
             }
         }
 
@@ -3092,7 +3187,7 @@ impl Client {
             {
                 AdminCommand::change_password(policy, &cluster, user, password).await
             }
-            crate::AuthMode::PKI => Err(Error::client_error("Can't change PKI user's password")),
+            crate::AuthMode::Pki => Err(Error::client_error("Can't change PKI user's password")),
             _ => AdminCommand::set_password(policy, &cluster, user, password).await,
         }
     }
@@ -3547,32 +3642,6 @@ impl Client {
         AdminCommand::set_quotas(policy, &cluster, role_name, read_quota, write_quota).await
     }
 
-    fn parse_info_error(response: &str) -> Error {
-        static RE: LazyLock<Regex> = LazyLock::new(|| {
-            Regex::new(r"^(?i)(fail|error)((:|=)(?P<code>[0-9]+))?((:|=)(?P<msg>.+))?$").unwrap()
-        });
-
-        if !RE.is_match(response) {
-            return Error::server_error(ResultCode::ServerError, response, None);
-        }
-
-        // 'm' is a 'Match', and 'as_str()' returns the matching part of the haystack.
-        let parts = RE
-            .captures(response)
-            .map(|caps| {
-                let code = caps.name("code").map_or_else(
-                    || ResultCode::ServerError,
-                    |code| ResultCode::from(code.as_str().parse::<u8>().unwrap()),
-                );
-                let msg = caps.name("msg").map_or(response, |msg| msg.as_str());
-
-                (code, msg)
-            })
-            .unwrap();
-
-        Error::server_error(parts.0, parts.1, None)
-    }
-
     /// Commit a multi-record transaction (MRT). This will verify record versions,
     /// mark the transaction as roll-forward, commit all written records, and close
     /// the transaction monitor.
@@ -3585,9 +3654,17 @@ impl Client {
     /// * `txn` - The transaction to commit (wrapped in `Arc`).
     ///
     /// # Returns
-    /// `CommitStatus` indicating the outcome of the commit operation on success,
-    /// or `ErrorKind::Commit` with per-key records and an `in_doubt` flag on
-    /// failure.
+    /// `CommitStatus` indicating the outcome of the commit operation on success
+    /// (`Ok`, `AlreadyCommitted`, `CloseAbandoned`), or `ErrorKind::Commit` with
+    /// per-key records and an `in_doubt` flag on failure — including an
+    /// abandoned roll-forward, whose writes are not yet visible.
+    ///
+    /// A failure with `in_doubt() == true` leaves the transaction in
+    /// [`TxnState::CommitFailed`]: the server may still be rolling it
+    /// forward, so [`abort`](Self::abort) is refused and the only recovery is
+    /// to call `commit` again. If the retry finds the server already marked
+    /// the transaction roll-forward, it completes the roll and returns
+    /// `AlreadyCommitted`.
     pub async fn commit(&self, txn: &Arc<Txn>) -> Result<CommitStatus> {
         self.commit_with_policies(&TxnVerifyPolicy::default(), &TxnRollPolicy::default(), txn)
             .await
@@ -3613,12 +3690,14 @@ impl Client {
                 tr.verify(verify_policy, roll_policy).await?;
                 tr.commit(roll_policy).await
             }
-            TxnState::Verified => tr.commit(roll_policy).await,
+            // A verified transaction goes straight to the roll-forward mark.
+            // That is also the only recovery path after an in-doubt commit
+            // failure: the verify already passed, so the commit is retried.
+            TxnState::Verified | TxnState::CommitFailed => tr.commit(roll_policy).await,
             TxnState::Committed => Ok(CommitStatus::AlreadyCommitted),
-            TxnState::Aborted => Err(Error::server_error(
+            TxnState::Aborted => Err(Error::server_error_with_message(
                 ResultCode::MrtAborted,
-                "Transaction already aborted".to_string(),
-                None,
+                "Transaction already aborted",
             )),
         }
     }
@@ -3629,6 +3708,12 @@ impl Client {
     /// Uses a default policy for the roll. Use
     /// [`abort_with_policy`](Self::abort_with_policy) to control timeouts and
     /// retries.
+    ///
+    /// Abort is **refused** with `ClientResultCode::TxnFailed` after a commit
+    /// failed with an in-doubt outcome ([`TxnState::CommitFailed`]): the
+    /// server may still be rolling the transaction forward, and a rollback
+    /// could discard writes it is committing. Retry [`commit`](Self::commit)
+    /// instead.
     ///
     /// # Arguments
     /// * `txn` - The transaction to abort (wrapped in `Arc`).
@@ -3650,10 +3735,15 @@ impl Client {
 
         match txn.state() {
             TxnState::Open | TxnState::Verified => tr.abort(roll_policy).await,
-            TxnState::Committed => Err(Error::server_error(
+            // The roll-forward mark may have reached the server: rolling back
+            // now could discard writes it is committing. Only a commit retry
+            // can resolve the transaction from here.
+            TxnState::CommitFailed => {
+                Err(Error::txn_failed(crate::txn::COMMIT_FAILED_ABORT_MESSAGE))
+            }
+            TxnState::Committed => Err(Error::server_error_with_message(
                 ResultCode::MrtCommitted,
-                "Transaction already committed".to_string(),
-                None,
+                "Transaction already committed",
             )),
             TxnState::Aborted => Ok(AbortStatus::AlreadyAborted),
         }
@@ -3665,11 +3755,10 @@ mod top_k_execution_tests {
     //! Tests for the Top-K query's client-side checks and result delivery.
     use super::Client;
     use crate::query::{
-        NodePartitions, Order, OrderByType, PartitionFilter, PartitionTracker, Recordset,
-        TopKAccumulator,
+        NodePartitions, Order, OrderByType, PartitionFilter, PartitionTracker, QuerySink,
+        Recordset, TopKAccumulator,
     };
     use crate::{Bins, IndexMap, Key, Record, Result, Statement, Value};
-    use aerospike_rt::Mutex;
     use futures::executor::block_on;
     use futures::StreamExt;
     use std::sync::Arc;
@@ -3699,13 +3788,13 @@ mod top_k_execution_tests {
     }
 
     fn empty_recordset() -> Arc<Recordset> {
-        let tracker = block_on(PartitionTracker::new(
+        let tracker = PartitionTracker::new(
             &crate::policy::QueryPolicy::default(),
-            Arc::new(Mutex::new(PartitionFilter::all())),
-            Vec::new(),
-        ))
+            PartitionFilter::all(),
+            &[],
+        )
         .expect("tracker");
-        Arc::new(Recordset::new(8, 0, 1, Arc::new(Mutex::new(tracker))))
+        Arc::new(Recordset::new(8, 0, 1, tracker.shared()))
     }
 
     /// Closes and drains a recordset.
@@ -3731,19 +3820,19 @@ mod top_k_execution_tests {
             .collect()
     }
 
-    fn node_partitions(version: crate::Version) -> Arc<Mutex<NodePartitions>> {
-        Arc::new(Mutex::new(NodePartitions::new(
+    fn node_partitions(version: crate::Version) -> NodePartitions {
+        NodePartitions::new(
             Arc::new(crate::cluster::node::test_node_with_version(version)),
             0,
             Arc::new(Vec::new()),
-        )))
+        )
     }
 
     #[test]
     fn the_shared_accumulator_bounds_and_orders_what_every_node_returned() {
         let rs = empty_recordset();
         let stmt = top_k_statement("score", Order::Desc, 2);
-        let mut accumulator = TopKAccumulator::new(stmt.order_by.clone(), 2);
+        let mut accumulator = TopKAccumulator::new(stmt.order_by, 2);
 
         // Three nodes' rows, arriving interleaved.
         for (record, lut) in [
@@ -3754,7 +3843,8 @@ mod top_k_execution_tests {
         ] {
             accumulator.accept(record, lut);
         }
-        block_on(Client::push_top_k_results(accumulator.take_results(), &rs));
+        let sink = QuerySink::Channel(rs.clone());
+        block_on(Client::push_top_k_results(accumulator.take_results(), &sink));
 
         assert_eq!(scores(close_and_drain(&rs)), vec![9, 5]);
     }
@@ -3763,10 +3853,11 @@ mod top_k_execution_tests {
     fn a_record_two_nodes_returned_keeps_its_later_updated_copy() {
         let rs = empty_recordset();
         let stmt = top_k_statement("score", Order::Desc, 10);
-        let mut accumulator = TopKAccumulator::new(stmt.order_by.clone(), 10);
+        let mut accumulator = TopKAccumulator::new(stmt.order_by, 10);
         accumulator.accept(record(1, 9), 100); // stale but better ranked
         accumulator.accept(record(1, 1), 200); // later update
-        block_on(Client::push_top_k_results(accumulator.take_results(), &rs));
+        let sink = QuerySink::Channel(rs.clone());
+        block_on(Client::push_top_k_results(accumulator.take_results(), &sink));
 
         assert_eq!(scores(close_and_drain(&rs)), vec![1]);
     }
@@ -3774,8 +3865,18 @@ mod top_k_execution_tests {
     #[test]
     fn empty_results_push_nothing() {
         let rs = empty_recordset();
-        block_on(Client::push_top_k_results(Vec::new(), &rs));
+        let sink = QuerySink::Channel(rs.clone());
+        block_on(Client::push_top_k_results(Vec::new(), &sink));
         assert!(close_and_drain(&rs).is_empty());
+    }
+
+    #[test]
+    fn only_a_top_k_statement_gets_an_accumulator() {
+        assert!(Client::top_k_accumulator(&top_k_statement("score", Order::Desc, 5)).is_some());
+        let mut order_only = Statement::new("ns", "set", Bins::All);
+        order_only.set_order_by("score", OrderByType::Integer, Order::Desc);
+        assert!(Client::top_k_accumulator(&order_only).is_none());
+        assert!(Client::top_k_accumulator(&Statement::new("ns", "set", Bins::All)).is_none());
     }
 
     #[test]
@@ -3796,15 +3897,26 @@ mod top_k_execution_tests {
     }
 
     #[test]
+    fn callback_query_guard_rejects_top_k_only() {
+        let stmt = top_k_statement("score", Order::Desc, 5);
+        let err = Client::reject_top_k_on_callback_query(&stmt).unwrap_err();
+        assert!(err.to_string().contains("query_foreach"), "{err}");
+
+        let mut order_only = Statement::new("ns", "set", Bins::All);
+        order_only.set_order_by("score", OrderByType::Integer, Order::Desc);
+        assert!(Client::reject_top_k_on_callback_query(&order_only).is_ok());
+    }
+
+    #[test]
     fn top_k_requires_every_target_node_to_support_it() {
         let capable = vec![node_partitions(crate::Version::new(8, 2, 1, 0))];
-        assert!(block_on(Client::nodes_support_top_k(&capable)));
+        assert!(Client::nodes_support_top_k(&capable));
 
         let mixed = vec![
             node_partitions(crate::Version::new(8, 2, 1, 0)),
             node_partitions(crate::Version::new(8, 2, 0, 0)),
         ];
-        assert!(!block_on(Client::nodes_support_top_k(&mixed)));
+        assert!(!Client::nodes_support_top_k(&mixed));
     }
 
     #[test]
@@ -3818,7 +3930,7 @@ mod top_k_execution_tests {
 
         let stmt = top_k_statement("score", Order::Desc, 5);
         assert!(Client::check_order_by_support(&stmt, &[newer.clone()]).is_ok());
-        let err = Client::check_order_by_support(&stmt, &[newer.clone(), older.clone()])
+        let err = Client::check_order_by_support(&stmt, &[newer, older.clone()])
             .unwrap_err();
         assert!(err.to_string().contains("not supported by all nodes"), "{err}");
         assert!(Client::check_order_by_support(&stmt, &[]).is_err());

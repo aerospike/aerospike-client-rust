@@ -1,9 +1,24 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 use aerospike::{as_bin, as_key, as_val};
 
 use aerospike::operations;
-use aerospike::{BatchPolicy, Bins, Client, ClientPolicy, UDFLang};
+use aerospike::{BatchPolicy, BatchRecord, Bins, Client, ClientPolicy, UdfLang};
 use aerospike_core::{
-    AdminPolicy, BatchDeletePolicy, BatchOperation, BatchReadPolicy, BatchUDFPolicy,
+    AdminPolicy, BatchDeletePolicy, BatchOperation, BatchReadPolicy, BatchUdfPolicy,
     BatchWritePolicy, Task,
 };
 use rand::distr::Alphanumeric;
@@ -23,7 +38,7 @@ pub async fn run() {
     cpolicy.use_services_alternate = std::env::var("AEROSPIKE_USE_SERVICES_ALTERNATE")
         .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
         .unwrap_or(false);
-    let hosts = env::var("AEROSPIKE_HOSTS").unwrap_or(String::from("127.0.0.1:3100"));
+    let hosts = env::var("AEROSPIKE_HOSTS").unwrap_or(String::from("127.0.0.1:3000"));
     let client = Client::new(&cpolicy, &hosts)
         .await
         .expect("Failed to connect to cluster");
@@ -45,13 +60,16 @@ end
     println!("Registering UDF...");
     let apolicy = AdminPolicy::default();
     let task = client
-        .register_udf(&apolicy, udf_body.as_bytes(), "test_udf.lua", UDFLang::Lua)
+        .register_udf(&apolicy, udf_body.as_bytes(), "test_udf.lua", UdfLang::Lua)
         .await
         .unwrap();
     task.wait_till_complete(None).await.unwrap();
     println!("UDF registered successfully!");
 
+    // Reads take the default parent policy; batches that write take the
+    // write default, which does not retry.
     let bpolicy = BatchPolicy::default();
+    let bpolicy_w = BatchPolicy::write_default();
 
     let bin1 = as_bin!("a", "a value");
     let bin2 = as_bin!("b", "another value");
@@ -81,29 +99,31 @@ end
     let bpr = BatchReadPolicy::default();
     let bpw = BatchWritePolicy::default();
     let bpd = BatchDeletePolicy::default();
-    let bpu = BatchUDFPolicy::default();
+    let bpu = BatchUdfPolicy::default();
 
     // WRITE Operations
     println!("\n--- Batch WRITE operations ---");
-    let batch = vec![
+    let mut batch = vec![
         BatchOperation::write(&bpw, key1.clone(), wops.clone()),
         BatchOperation::write(&bpw, key2.clone(), wops.clone()),
         BatchOperation::write(&bpw, key3.clone(), wops.clone()),
     ];
-    let results = client.batch(&bpolicy, &batch).await.unwrap();
+    client.batch(&bpolicy_w, &mut batch).await.unwrap();
+    let results: Vec<&BatchRecord> = batch.iter().map(BatchOperation::batch_record).collect();
     println!("Write results:");
     dbg!(&results);
 
     // READ Operations
     println!("\n--- Batch READ operations ---");
-    let batch = vec![
+    let mut batch = vec![
         BatchOperation::read(&bpr, key1.clone(), selected),
         BatchOperation::read(&bpr, key2.clone(), all),
         BatchOperation::read(&bpr, key3.clone(), none.clone()),
         BatchOperation::read_ops(&bpr, key3.clone(), rops),
         BatchOperation::read(&bpr, key4.clone(), none.clone()),
     ];
-    let results = client.batch(&bpolicy, &batch).await.unwrap();
+    client.batch(&bpolicy, &mut batch).await.unwrap();
+    let results: Vec<&BatchRecord> = batch.iter().map(BatchOperation::batch_record).collect();
     println!("Read results:");
     dbg!(&results);
 
@@ -113,25 +133,27 @@ end
     let args2 = vec![as_val!(2)];
     let args3 = vec![as_val!(3)];
     let args4 = vec![as_val!(4)];
-    let batch = vec![
-        BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", Some(args1)),
-        BatchOperation::udf(&bpu, key2.clone(), "test_udf", "echo", Some(args2)),
-        BatchOperation::udf(&bpu, key3.clone(), "test_udf", "echo", Some(args3)),
-        BatchOperation::udf(&bpu, key4.clone(), "test_udf", "echo", Some(args4)),
+    let mut batch = vec![
+        BatchOperation::udf(&bpu, key1.clone(), "test_udf", "echo", args1),
+        BatchOperation::udf(&bpu, key2.clone(), "test_udf", "echo", args2),
+        BatchOperation::udf(&bpu, key3.clone(), "test_udf", "echo", args3),
+        BatchOperation::udf(&bpu, key4.clone(), "test_udf", "echo", args4),
     ];
-    let results = client.batch(&bpolicy, &batch).await.unwrap();
+    client.batch(&bpolicy_w, &mut batch).await.unwrap();
+    let results: Vec<&BatchRecord> = batch.iter().map(BatchOperation::batch_record).collect();
     println!("UDF results:");
     dbg!(&results);
 
     // DELETE Operations
     println!("\n--- Batch DELETE operations ---");
-    let batch = vec![
+    let mut batch = vec![
         BatchOperation::delete(&bpd, key1.clone()),
         BatchOperation::delete(&bpd, key2.clone()),
         BatchOperation::delete(&bpd, key3.clone()),
         BatchOperation::delete(&bpd, key4.clone()),
     ];
-    let results = client.batch(&bpolicy, &batch).await.unwrap();
+    client.batch(&bpolicy_w, &mut batch).await.unwrap();
+    let results: Vec<&BatchRecord> = batch.iter().map(BatchOperation::batch_record).collect();
     println!("Delete results:");
     dbg!(&results);
 

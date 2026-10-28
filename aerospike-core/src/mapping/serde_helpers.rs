@@ -35,7 +35,7 @@
 //! Every helper's encoding matches the bespoke engine's `ToValue` /
 //! `FromValue` impl for the same type, so the two engines stay
 //! byte-compatible for these fields. Under serde-based serializers other
-//! than Aerospike's, the helpers degrade gracefully (GeoJSON to a plain
+//! than Aerospike's, the helpers degrade gracefully (`GeoJSON` to a plain
 //! string, HLL/blob to the serializer's byte representation).
 
 use std::fmt;
@@ -113,12 +113,12 @@ impl<'de> Deserialize<'de> for Hll {
 
 // ===== field helper modules ===================================================
 
-/// Store a `String` field as the server's queryable GeoJSON particle:
+/// Store a `String` field as the server's queryable `GeoJSON` particle:
 /// `#[serde(with = "serde_helpers::geo_json")]`.
 pub mod geo_json {
     use super::{Deserialize, Deserializer, Serializer, GEO_JSON_TOKEN};
 
-    /// Emit the GeoJSON marker around the document string.
+    /// Emit the `GeoJSON` marker around the document string.
     ///
     /// # Errors
     /// Errors of the underlying serializer.
@@ -135,7 +135,7 @@ pub mod geo_json {
     }
 }
 
-/// Store a `Vec<u8>` field as the server's HyperLogLog particle:
+/// Store a `Vec<u8>` field as the server's `HyperLogLog` particle:
 /// `#[serde(with = "serde_helpers::hll")]`.
 pub mod hll {
     use super::{BytesShim, BytesVisitor, Deserializer, Serializer, HLL_TOKEN};
@@ -216,9 +216,8 @@ fn nanos_to_system_time<E: de::Error>(nanos: i64) -> Result<SystemTime, E> {
     time.ok_or_else(|| E::custom(format!("timestamp {nanos}ns is unrepresentable")))
 }
 
-/// Store a [`SystemTime`] field as epoch **milliseconds** (the Java
-/// client's `Date.getTime()` encoding, and the bespoke engine's
-/// `ToValue` encoding): `#[serde(with =
+/// Store a [`SystemTime`] field as epoch **milliseconds** (the bespoke
+/// engine's `ToValue` encoding): `#[serde(with =
 /// "serde_helpers::system_time_as_millis")]`.
 pub mod system_time_as_millis {
     use super::{
@@ -355,7 +354,7 @@ mod tests {
             thumbnail: vec![1, 2, 3],
             sketch: vec![9, 9],
             created: UNIX_EPOCH + Duration::from_millis(1_700_000_000_123),
-            ttl: Duration::from_nanos(1_500_000),
+            ttl: Duration::from_micros(1_500),
             geo_wrapped: GeoJson::new(r#"{"type":"Point","coordinates":[3.0,4.0]}"#),
             hll_wrapped: Hll::new(vec![7, 7, 7]),
         }
@@ -371,11 +370,11 @@ mod tests {
     #[test]
     fn helpers_emit_native_particles() {
         let value = to_value(&sample()).unwrap();
-        assert!(matches!(field(&value, "location"), Value::GeoJSON(_)));
-        assert!(matches!(field(&value, "geo_wrapped"), Value::GeoJSON(_)));
+        assert!(matches!(field(&value, "location"), Value::GeoJson(_)));
+        assert!(matches!(field(&value, "geo_wrapped"), Value::GeoJson(_)));
         assert_eq!(field(&value, "thumbnail"), &Value::Blob(vec![1, 2, 3]));
-        assert_eq!(field(&value, "sketch"), &Value::HLL(vec![9, 9]));
-        assert_eq!(field(&value, "hll_wrapped"), &Value::HLL(vec![7, 7, 7]));
+        assert_eq!(field(&value, "sketch"), &Value::Hll(vec![9, 9]));
+        assert_eq!(field(&value, "hll_wrapped"), &Value::Hll(vec![7, 7, 7]));
         assert_eq!(field(&value, "created"), &Value::Int(1_700_000_000_123));
         assert_eq!(field(&value, "ttl"), &Value::Int(1_500_000));
     }
@@ -392,6 +391,10 @@ mod tests {
     fn engines_agree_on_helper_encodings() {
         use super::super::ToValue;
 
+        // A newtype over a helper-encoded time; used at the end of the test.
+        #[derive(Serialize)]
+        struct T(#[serde(with = "super::system_time_as_millis")] SystemTime);
+
         // GeoJson / Hll wrappers and time types encode identically
         // through ToValue (bespoke engine) and serde helpers.
         let geo = GeoJson::new("{}");
@@ -402,26 +405,27 @@ mod tests {
         let time = UNIX_EPOCH + Duration::from_millis(123_456);
         let bespoke = time.to_value().unwrap();
         // Newtype structs serialize transparently as their inner value.
-        #[derive(Serialize)]
-        struct T(#[serde(with = "super::system_time_as_millis")] SystemTime);
         assert_eq!(bespoke, to_value(&T(time)).unwrap());
     }
 
     #[test]
     fn pre_epoch_and_range_errors() {
+        #[derive(Serialize, Deserialize, Debug, PartialEq)]
+        struct T(#[serde(with = "super::system_time_as_millis")] SystemTime);
+        // Only ever built by deserialization; the field exists for the `with`.
+        #[allow(dead_code)]
+        #[derive(Deserialize, Debug)]
+        struct D(#[serde(with = "super::duration_as_nanos")] Duration);
+
         // Pre-epoch times are negative and round-trip (newtype structs
         // encode transparently as the inner value).
         let before = UNIX_EPOCH - Duration::from_millis(500);
-        #[derive(Serialize, Deserialize, Debug, PartialEq)]
-        struct T(#[serde(with = "super::system_time_as_millis")] SystemTime);
         let value = to_value(&T(before)).unwrap();
         assert_eq!(value, Value::Int(-500));
         let back: T = from_value(&value).unwrap();
         assert_eq!(back.0, before);
 
         // Negative durations are rejected on read.
-        #[derive(Deserialize, Debug)]
-        struct D(#[serde(with = "super::duration_as_nanos")] Duration);
         assert!(from_value::<D>(&Value::Int(-1)).is_err());
     }
 

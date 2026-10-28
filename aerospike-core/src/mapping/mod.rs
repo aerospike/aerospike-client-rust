@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Object mapping — the contract for converting between application
-//! types and Aerospike records (port of the Java SDK's `RecordMapper`).
+//! types and Aerospike records.
 //!
 //! Implement [`RecordMapper`] for an entity type to store it as a record
 //! and read it back:
@@ -54,8 +54,8 @@
 //!             ))),
 //!         };
 //!         Ok(Customer {
-//!             id: match key.user_key {
-//!                 Some(Value::Int(id)) => id,
+//!             id: match key.user_key() {
+//!                 Some(Value::Int(id)) => *id,
 //!                 _ => 0,
 //!             },
 //!             name: get_str("name")?,
@@ -63,18 +63,16 @@
 //!         })
 //!     }
 //!
-//!     fn id(&self) -> Value {
-//!         Value::from(self.id)
+//!     fn id(&self) -> aerospike::Result<Value> {
+//!         Ok(Value::from(self.id))
 //!     }
 //! }
 //! ```
 //!
 //! For types you don't own (the orphan rule prevents implementing this
 //! trait for them), wrap them in a newtype and implement the mapper on
-//! the wrapper — the Rust idiom replacing the Java SDK's external
-//! mapper objects and `RecordMappingFactory` registry, which exist
-//! because Java resolves mappers at runtime; Rust resolves the
-//! implementation at compile time.
+//! the wrapper; the implementation is resolved at compile time, so no
+//! runtime registry of mappers is needed.
 
 #[cfg(feature = "serialization")]
 pub mod serde;
@@ -113,7 +111,11 @@ pub trait RecordMapper: Sized {
     fn from_record(bins: &IndexMap<String, Value>, key: &Key, generation: u32) -> Result<Self>;
 
     /// The user key identifying this value within its dataset.
-    fn id(&self) -> Value;
+    ///
+    /// # Errors
+    /// Implementations report a key field that cannot be represented as a
+    /// [`Value`].
+    fn id(&self) -> Result<Value>;
 }
 
 // ===== Field-level conversions ==============================================
@@ -318,7 +320,7 @@ impl ToValue for Vec<u8> {
 impl FromValue for Vec<u8> {
     fn from_value(value: &Value) -> Result<Self> {
         match value {
-            Value::Blob(bytes) | Value::HLL(bytes) => Ok(bytes.clone()),
+            Value::Blob(bytes) | Value::Hll(bytes) => Ok(bytes.clone()),
             other => type_mismatch("a blob", other),
         }
     }
@@ -374,7 +376,7 @@ impl<T: FromValue> FromValue for Vec<T> {
     }
 }
 
-impl<K: ToValue, V: ToValue> ToValue for HashMap<K, V> {
+impl<K: ToValue, V: ToValue, S: std::hash::BuildHasher> ToValue for HashMap<K, V, S> {
     fn to_value(&self) -> Result<Value> {
         let mut out: HashMap<Value, Value> = HashMap::with_capacity(self.len());
         for (k, v) in self {
@@ -384,9 +386,10 @@ impl<K: ToValue, V: ToValue> ToValue for HashMap<K, V> {
     }
 }
 
-impl<K, V: FromValue> FromValue for HashMap<K, V>
+impl<K, V: FromValue, S> FromValue for HashMap<K, V, S>
 where
     K: FromValue + Eq + std::hash::Hash,
+    S: std::hash::BuildHasher + Default,
 {
     fn from_value(value: &Value) -> Result<Self> {
         map_entries(value)?
@@ -418,22 +421,24 @@ where
 
 // -- Aerospike-specific wrapper types ------------------------------------------
 
-/// A field stored as the server's native GeoJSON particle
-/// ([`Value::GeoJSON`]) instead of a plain string — queryable with
-/// geospatial filters. Works in both derive engines; under serde-based
+/// A field stored as the server's native `GeoJSON` particle
+/// ([`Value::GeoJson`]) instead of a plain string — queryable with
+/// geospatial filters.
+///
+/// Works in both derive engines; under serde-based
 /// serializers other than Aerospike's (JSON, YAML, ...) it encodes
 /// transparently as the inner string.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GeoJson(pub String);
 
 impl GeoJson {
-    /// Wrap a GeoJSON document string.
+    /// Wrap a `GeoJSON` document string.
     #[must_use]
     pub fn new(geo_json: impl Into<String>) -> GeoJson {
         GeoJson(geo_json.into())
     }
 
-    /// The GeoJSON document string.
+    /// The `GeoJSON` document string.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -448,22 +453,24 @@ impl GeoJson {
 
 impl ToValue for GeoJson {
     fn to_value(&self) -> Result<Value> {
-        Ok(Value::GeoJSON(self.0.clone()))
+        Ok(Value::GeoJson(self.0.clone()))
     }
 }
 
 impl FromValue for GeoJson {
     fn from_value(value: &Value) -> Result<Self> {
         match value {
-            Value::GeoJSON(s) | Value::String(s) => Ok(GeoJson(s.clone())),
+            Value::GeoJson(s) | Value::String(s) => Ok(GeoJson(s.clone())),
             other => type_mismatch("a GeoJSON document", other),
         }
     }
 }
 
-/// A field stored as the server's HyperLogLog particle ([`Value::HLL`])
+/// A field stored as the server's `HyperLogLog` particle ([`Value::Hll`])
 /// instead of a plain blob — as written by HLL operations or backup
-/// restores. Works in both derive engines; under serde-based serializers
+/// restores.
+///
+/// Works in both derive engines; under serde-based serializers
 /// other than Aerospike's it encodes transparently as bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Hll(pub Vec<u8>);
@@ -490,14 +497,14 @@ impl Hll {
 
 impl ToValue for Hll {
     fn to_value(&self) -> Result<Value> {
-        Ok(Value::HLL(self.0.clone()))
+        Ok(Value::Hll(self.0.clone()))
     }
 }
 
 impl FromValue for Hll {
     fn from_value(value: &Value) -> Result<Self> {
         match value {
-            Value::HLL(bytes) | Value::Blob(bytes) => Ok(Hll(bytes.clone())),
+            Value::Hll(bytes) | Value::Blob(bytes) => Ok(Hll(bytes.clone())),
             other => type_mismatch("an HLL value", other),
         }
     }
@@ -505,8 +512,8 @@ impl FromValue for Hll {
 
 // -- std::time ------------------------------------------------------------------
 
-/// [`SystemTime`] encodes as epoch **milliseconds** (matching the Java
-/// client's `Date.getTime()` bins); pre-epoch times are negative. Use
+/// [`SystemTime`] encodes as epoch **milliseconds**; pre-epoch times are
+/// negative. Use
 /// the `serde_helpers` time modules for other resolutions under the
 /// serde engine.
 impl ToValue for SystemTime {
@@ -590,6 +597,7 @@ pub mod __derive {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::float_cmp)] // the literals under test are exactly representable
     use super::*;
 
     #[test]
@@ -624,7 +632,7 @@ mod tests {
         );
         // HLL reads back as bytes too.
         assert_eq!(
-            Vec::<u8>::from_value(&Value::HLL(vec![9])).unwrap(),
+            Vec::<u8>::from_value(&Value::Hll(vec![9])).unwrap(),
             vec![9]
         );
         // Other integer vecs are lists.

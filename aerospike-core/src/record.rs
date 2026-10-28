@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -31,11 +31,17 @@ use crate::Value;
 /// beyond 2106 representable. [`Record::time_to_live`] converts against it, and
 /// it is public so callers doing their own void-time arithmetic agree with the
 /// server on the origin.
-pub static CITRUSLEAF_EPOCH: std::sync::LazyLock<SystemTime> =
-    std::sync::LazyLock::new(|| UNIX_EPOCH + Duration::new(1_262_304_000, 0));
+#[must_use]
+pub fn citrusleaf_epoch() -> SystemTime {
+    UNIX_EPOCH + Duration::from_secs(CITRUSLEAF_EPOCH_UNIX_SECS)
+}
+
+/// [`citrusleaf_epoch`] as whole seconds since the Unix epoch
+/// (2010-01-01T00:00:00Z).
+pub const CITRUSLEAF_EPOCH_UNIX_SECS: u64 = 1_262_304_000;
 
 /// Container object for a database record.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serialization", derive(Serialize))]
 pub struct Record {
     /// Record key. When reading a record from the database, the key is not set in the returned
@@ -43,6 +49,12 @@ pub struct Record {
     pub key: Option<Key>,
 
     /// Map of named record bins, in the order the server returned them.
+    ///
+    /// For an operate, every op the server answers lands here, a write's
+    /// `Value::Nil` included; a bin answered more than once holds a
+    /// `Value::MultiResult` of its answers in op order. An op that names no
+    /// bin (`touch`, `get_header`) answers in [`results`](Self::results)
+    /// only and never creates a nameless bin.
     pub bins: IndexMap<String, Value>,
 
     /// Positional op results in request order; `None` on non-operate paths.
@@ -64,7 +76,7 @@ impl Record {
     /// `expiration` is public, so this is the only way to set that one.
     ///
     /// `expiration` is the server's own encoding: **seconds since the Citrusleaf
-    /// epoch** (2010-01-01 UTC, [`CITRUSLEAF_EPOCH`]) at which the record expires,
+    /// epoch** (2010-01-01 UTC, [`citrusleaf_epoch`]) at which the record expires,
     /// with `0` meaning it never does. It is not a TTL, and it is not a Unix
     /// timestamp; [`Record::time_to_live`] converts it to the remaining duration.
     ///
@@ -92,6 +104,16 @@ impl Record {
         }
     }
 
+    /// The server's expiration stamp as stored: seconds since the Citrusleaf
+    /// epoch ([`citrusleaf_epoch`]) at which the record expires, `0` when it
+    /// never does. [`time_to_live`](Self::time_to_live) is the remaining
+    /// duration.
+    #[must_use]
+    pub const fn expiration(&self) -> u32 {
+        self.expiration
+    }
+
+    /// The `i`th positional operation result, when `results` were populated.
     /// `None` is returned both for not-populated and out-of-range — callers
     /// can't distinguish.
     #[must_use]
@@ -101,20 +123,36 @@ impl Record {
 
     /// Returns the remaining time-to-live (TTL, a.k.a. expiration time) for the record or `None`
     /// if the record never expires.
-    #[allow(clippy::option_if_let_else)]
     pub fn time_to_live(&self) -> Option<Duration> {
         match self.expiration {
             0 => None,
-            secs_since_epoch => {
-                let expiration = *CITRUSLEAF_EPOCH + Duration::new(u64::from(secs_since_epoch), 0);
-                match expiration.duration_since(SystemTime::now()) {
-                    Ok(d) => Some(d),
-                    // Record was not expired at server but it looks expired at client
-                    // because of delay or clock difference, present it as not-expired.
-                    Err(_) => Some(Duration::new(1u64, 0)),
-                }
-            }
+            secs_since_epoch => Some(Duration::from_secs(ttl_secs(
+                secs_since_epoch,
+                unix_now_secs(),
+            ))),
         }
+    }
+}
+
+/// Current time as whole seconds since the Unix epoch.
+fn unix_now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// Remaining seconds until a void time given in seconds since the Citrusleaf
+/// epoch, evaluated at `now_unix_secs` (whole seconds since the Unix epoch).
+///
+/// A record may not have expired on the server yet look expired here because
+/// of delay or clock skew; report `1` rather than `0`, whose old meaning is
+/// "never expires" (Java `Record.getTimeToLive`, Go `types.TTL`).
+fn ttl_secs(secs_since_citrusleaf_epoch: u32, now_unix_secs: u64) -> u64 {
+    let void_time = CITRUSLEAF_EPOCH_UNIX_SECS + u64::from(secs_since_citrusleaf_epoch);
+    if void_time > now_unix_secs {
+        void_time - now_unix_secs
+    } else {
+        1
     }
 }
 
@@ -139,7 +177,7 @@ impl fmt::Display for Record {
 
 #[cfg(test)]
 mod tests {
-    use super::{Record, CITRUSLEAF_EPOCH};
+    use super::{citrusleaf_epoch, Record};
     use crate::IndexMap;
     use std::time::{Duration, SystemTime};
 
@@ -147,13 +185,42 @@ mod tests {
     fn ttl_expiration_future() {
         let expiration = SystemTime::now() + Duration::new(1000, 0);
         let secs_since_epoch = expiration
-            .duration_since(*CITRUSLEAF_EPOCH)
+            .duration_since(citrusleaf_epoch())
             .unwrap()
             .as_secs();
         let record = Record::new(None, IndexMap::new(), None, 0, secs_since_epoch as u32);
         let ttl = record.time_to_live();
         assert!(ttl.is_some());
-        assert!(1000 - ttl.unwrap().as_secs() <= 1);
+        // Whole seconds, and exact unless the wall clock ticked over between
+        // the two `now()` reads.
+        let ttl = ttl.unwrap();
+        assert_eq!(ttl.subsec_nanos(), 0);
+        assert!(1000 - ttl.as_secs() <= 1);
+    }
+
+    /// The arithmetic the other clients do: void time minus the *floored*
+    /// current second. A sub-second "now" would make every one of these one
+    /// second short.
+    #[test]
+    fn ttl_floors_now_to_whole_seconds() {
+        use super::{ttl_secs, CITRUSLEAF_EPOCH_UNIX_SECS};
+        // A record written at Unix second `w` with a 500 s TTL has void time
+        // w + 500. Read back within the same second -> 500; one second later
+        // -> 499; never 498 because of a fractional "now".
+        let w: u64 = 1_800_000_000;
+        let void = (w + 500 - CITRUSLEAF_EPOCH_UNIX_SECS) as u32;
+        assert_eq!(ttl_secs(void, w), 500);
+        assert_eq!(ttl_secs(void, w + 1), 499);
+        assert_eq!(ttl_secs(void, w + 499), 1);
+        // At and past the void time: 1, never 0 (0 used to mean "never
+        // expires").
+        assert_eq!(ttl_secs(void, w + 500), 1);
+        assert_eq!(ttl_secs(void, w + 10_000), 1);
+        // Void times beyond 2106 stay representable through the 2010 epoch.
+        assert_eq!(
+            ttl_secs(u32::MAX, w),
+            CITRUSLEAF_EPOCH_UNIX_SECS + u64::from(u32::MAX) - w
+        );
     }
 
     #[test]

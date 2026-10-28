@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -16,7 +16,7 @@
 //! HLL Aerospike Filter Expressions.
 
 use crate::expressions::{int_val, ExpOp, ExpType, Expression, ExpressionArgument, MODIFY};
-use crate::operations::hll::HLLPolicy;
+use crate::operations::hll::HllPolicy;
 use crate::Value;
 
 const MODULE: i64 = 2;
@@ -34,13 +34,15 @@ pub(crate) enum HllExpOp {
 }
 
 /// Creates expression that creates a new HLL or resets an existing HLL.
-pub fn init(policy: HLLPolicy, index_bit_count: Expression, bin: Expression) -> Expression {
+#[must_use]
+pub fn init(policy: HllPolicy, index_bit_count: Expression, bin: Expression) -> Expression {
     init_with_min_hash(policy, index_bit_count, int_val(-1), bin)
 }
 
 /// Creates expression that creates a new HLL or resets an existing HLL with minhash bits.
+#[must_use]
 pub fn init_with_min_hash(
-    policy: HLLPolicy,
+    policy: HllPolicy,
     index_bit_count: Expression,
     min_hash_count: Expression,
     bin: Expression,
@@ -51,7 +53,7 @@ pub fn init_with_min_hash(
             ExpressionArgument::Value(Value::from(HllExpOp::Init as i64)),
             ExpressionArgument::FilterExpression(index_bit_count),
             ExpressionArgument::FilterExpression(min_hash_count),
-            ExpressionArgument::Value(Value::from(policy.flags)),
+            ExpressionArgument::Value(Value::from(policy.flags.bits())),
         ],
     )
 }
@@ -59,33 +61,35 @@ pub fn init_with_min_hash(
 /// Creates expression that adds list values to a HLL set and returns HLL set.
 /// The function assumes HLL bin already exists.
 /// ```
-/// use aerospike::operations::hll::HLLPolicy;
+/// use aerospike::operations::hll::HllPolicy;
 /// use aerospike::Value;
 /// use aerospike::expressions::{gt, list_val, hll_bin, int_val};
 /// use aerospike::expressions::hll::add;
 ///
 /// // Add values to HLL bin "a" and check count > 7
 /// let list = vec![Value::from(1)];
-/// gt(add(HLLPolicy::default(), list_val(list), hll_bin("a".to_string())), int_val(7));
+/// let _ = gt(add(HllPolicy::default(), list_val(list), hll_bin("a".to_string())), int_val(7));
 /// ```
-pub fn add(policy: HLLPolicy, list: Expression, bin: Expression) -> Expression {
+#[must_use]
+pub fn add(policy: HllPolicy, list: Expression, bin: Expression) -> Expression {
     add_with_index_and_min_hash(policy, list, int_val(-1), int_val(-1), bin)
 }
 
 /// Creates expression that adds values to a HLL set and returns HLL set.
 /// If HLL bin does not exist, use `indexBitCount` to create HLL bin.
 /// ```
-/// use aerospike::operations::hll::HLLPolicy;
+/// use aerospike::operations::hll::HllPolicy;
 /// use aerospike::Value;
 /// use aerospike::expressions::{gt, list_val, int_val, hll_bin};
 /// use aerospike::expressions::hll::add_with_index;
 ///
 /// // Add values to HLL bin "a" and check count > 7
 /// let list = vec![Value::from(1)];
-/// gt(add_with_index(HLLPolicy::default(), list_val(list), int_val(10), hll_bin("a".to_string())), int_val(7));
+/// let _ = gt(add_with_index(HllPolicy::default(), list_val(list), int_val(10), hll_bin("a".to_string())), int_val(7));
 /// ```
+#[must_use]
 pub fn add_with_index(
-    policy: HLLPolicy,
+    policy: HllPolicy,
     list: Expression,
     index_bit_count: Expression,
     bin: Expression,
@@ -97,16 +101,17 @@ pub fn add_with_index(
 /// exist, use `indexBitCount` and `minHashBitCount` to create HLL set.
 /// ```
 /// use aerospike::expressions::{gt, list_val, int_val, hll_bin};
-/// use aerospike::operations::hll::HLLPolicy;
+/// use aerospike::operations::hll::HllPolicy;
 /// use aerospike::Value;
 /// use aerospike::expressions::hll::add_with_index_and_min_hash;
 ///
 /// // Add values to HLL bin "a" and check count > 7
 /// let list = vec![Value::from(1)];
-/// gt(add_with_index_and_min_hash(HLLPolicy::default(), list_val(list), int_val(10), int_val(20), hll_bin("a".to_string())), int_val(7));
+/// let _ = gt(add_with_index_and_min_hash(HllPolicy::default(), list_val(list), int_val(10), int_val(20), hll_bin("a".to_string())), int_val(7));
 /// ```
+#[must_use]
 pub fn add_with_index_and_min_hash(
-    policy: HLLPolicy,
+    policy: HllPolicy,
     list: Expression,
     index_bit_count: Expression,
     min_hash_count: Expression,
@@ -119,7 +124,7 @@ pub fn add_with_index_and_min_hash(
             ExpressionArgument::FilterExpression(list),
             ExpressionArgument::FilterExpression(index_bit_count),
             ExpressionArgument::FilterExpression(min_hash_count),
-            ExpressionArgument::Value(Value::from(policy.flags)),
+            ExpressionArgument::Value(Value::from(policy.flags.bits())),
         ],
     )
 }
@@ -130,12 +135,13 @@ pub fn add_with_index_and_min_hash(
 /// // HLL bin "a" count > 7
 /// use aerospike::expressions::{gt, hll_bin, int_val};
 /// use aerospike::expressions::hll::get_count;
-/// gt(get_count(hll_bin("a".to_string())), int_val(7));
+/// let _ = gt(get_count(hll_bin("a".to_string())), int_val(7));
 /// ```
+#[must_use]
 pub fn get_count(bin: Expression) -> Expression {
     add_read(
         bin,
-        ExpType::INT,
+        ExpType::Int,
         vec![ExpressionArgument::Value(Value::from(
             HllExpOp::Count as i64,
         ))],
@@ -150,16 +156,17 @@ pub fn get_count(bin: Expression) -> Expression {
 /// use aerospike::expressions::{hll_bin, blob_val};
 ///
 /// // Union of HLL bins "a" and "b"
-/// get_union(hll_bin("a".to_string()), hll_bin("b".to_string()));
+/// let _ = get_union(hll_bin("a".to_string()), hll_bin("b".to_string()));
 ///
 /// // Union of local HLL list with bin "b"
 /// let blob: Vec<u8> = vec![];
-/// get_union(hll_bin("b".to_string()), blob_val(blob));
+/// let _ = get_union(hll_bin("b".to_string()), blob_val(blob));
 /// ```
+#[must_use]
 pub fn get_union(list: Expression, bin: Expression) -> Expression {
     add_read(
         bin,
-        ExpType::HLL,
+        ExpType::Hll,
         vec![
             ExpressionArgument::Value(Value::from(HllExpOp::Union as i64)),
             ExpressionArgument::FilterExpression(list),
@@ -175,16 +182,17 @@ pub fn get_union(list: Expression, bin: Expression) -> Expression {
 /// use aerospike::expressions::{hll_bin, blob_val};
 ///
 /// // Union count of HLL bins "a" and "b"
-/// get_union_count(hll_bin("a".to_string()), hll_bin("b".to_string()));
+/// let _ = get_union_count(hll_bin("a".to_string()), hll_bin("b".to_string()));
 ///
 /// // Union count of local HLL list with bin "b"
 /// let blob: Vec<u8> = vec![];
-/// get_union_count(hll_bin("b".to_string()), blob_val(blob));
+/// let _ = get_union_count(hll_bin("b".to_string()), blob_val(blob));
 /// ```
+#[must_use]
 pub fn get_union_count(list: Expression, bin: Expression) -> Expression {
     add_read(
         bin,
-        ExpType::INT,
+        ExpType::Int,
         vec![
             ExpressionArgument::Value(Value::from(HllExpOp::UnionCount as i64)),
             ExpressionArgument::FilterExpression(list),
@@ -200,16 +208,17 @@ pub fn get_union_count(list: Expression, bin: Expression) -> Expression {
 /// use aerospike::expressions::hll::get_union_count;
 ///
 /// // Intersect count of HLL bins "a" and "b"
-/// get_union_count(hll_bin("a".to_string()), hll_bin("b".to_string()));
+/// let _ = get_union_count(hll_bin("a".to_string()), hll_bin("b".to_string()));
 ///
 /// // Intersect count of local HLL list with bin "b"
 /// let blob: Vec<u8> = vec![];
-/// get_union_count(hll_bin("b".to_string()), blob_val(blob));
+/// let _ = get_union_count(hll_bin("b".to_string()), blob_val(blob));
 /// ```
+#[must_use]
 pub fn get_intersect_count(list: Expression, bin: Expression) -> Expression {
     add_read(
         bin,
-        ExpType::INT,
+        ExpType::Int,
         vec![
             ExpressionArgument::Value(Value::from(HllExpOp::IntersectCount as i64)),
             ExpressionArgument::FilterExpression(list),
@@ -224,12 +233,13 @@ pub fn get_intersect_count(list: Expression, bin: Expression) -> Expression {
 /// use aerospike::expressions::hll::get_similarity;
 ///
 /// // Similarity of HLL bins "a" and "b" >= 0.75
-/// ge(get_similarity(hll_bin("a".to_string()), hll_bin("b".to_string())), float_val(0.75));
+/// let _ = ge(get_similarity(hll_bin("a".to_string()), hll_bin("b".to_string())), float_val(0.75));
 /// ```
+#[must_use]
 pub fn get_similarity(list: Expression, bin: Expression) -> Expression {
     add_read(
         bin,
-        ExpType::FLOAT,
+        ExpType::Float,
         vec![
             ExpressionArgument::Value(Value::from(HllExpOp::Similarity as i64)),
             ExpressionArgument::FilterExpression(list),
@@ -247,12 +257,13 @@ pub fn get_similarity(list: Expression, bin: Expression) -> Expression {
 /// use aerospike::expressions::hll::describe;
 ///
 /// // Bin "a" `indexBitCount` < 10
-/// lt(get_by_index(ListReturnType::Values, ExpType::INT, int_val(0), describe(hll_bin("a".to_string())), &[]), int_val(10));
+/// let _ = lt(get_by_index(ListReturnType::VALUES, ExpType::Int, int_val(0), describe(hll_bin("a".to_string())), &[]), int_val(10));
 /// ```
+#[must_use]
 pub fn describe(bin: Expression) -> Expression {
     add_read(
         bin,
-        ExpType::LIST,
+        ExpType::List,
         vec![ExpressionArgument::Value(Value::from(
             HllExpOp::Describe as i64,
         ))],
@@ -268,12 +279,13 @@ pub fn describe(bin: Expression) -> Expression {
 /// let list: Vec<Value> = vec![Value::from("x")];
 ///
 /// // Bin "a" may contain value "x"
-/// eq(may_contain(list_val(list), hll_bin("a".to_string())), int_val(1));
+/// let _ = eq(may_contain(list_val(list), hll_bin("a".to_string())), int_val(1));
 /// ```
+#[must_use]
 pub fn may_contain(list: Expression, bin: Expression) -> Expression {
     add_read(
         bin,
-        ExpType::INT,
+        ExpType::Int,
         vec![
             ExpressionArgument::Value(Value::from(HllExpOp::MayContain as i64)),
             ExpressionArgument::FilterExpression(list),
@@ -304,7 +316,7 @@ pub(crate) fn add_write(bin: Expression, arguments: Vec<ExpressionArgument>) -> 
         val: None,
         bin: Some(Box::new(bin)),
         flags: Some(MODULE | MODIFY),
-        module: Some(ExpType::HLL),
+        module: Some(ExpType::Hll),
         exps: None,
         arguments: Some(arguments),
         bytes: None,

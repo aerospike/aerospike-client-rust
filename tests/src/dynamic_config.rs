@@ -1,4 +1,4 @@
-// Copyright 2015-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -41,7 +41,8 @@ fn config_yaml(metrics_enabled: bool) -> String {
     format!(
         "version: \"1.0.0\"\n\
          static:\n  client:\n    config_interval: 1\n\
-         dynamic:\n  metrics:\n    enable: {metrics_enabled}\n    latency_columns: 9\n"
+         dynamic:\n  metrics:\n    enabled: {metrics_enabled}\n\
+         \x20   extended:\n      operational:\n        enabled: true\n        latency_columns: 9\n"
     )
 }
 
@@ -79,9 +80,11 @@ async fn dynamic_config_applies_and_reloads() {
     let _ = std::fs::remove_file(&path);
 }
 
-/// `dynamic.metrics.latency_unit` picks the resolution of the latency
-/// histograms, and a later reload can switch it - which discards the samples
-/// collected in the previous unit, since they cannot share buckets.
+/// `dynamic.metrics.extended.operational.latency_unit` picks the resolution
+/// of the latency histograms, and a later reload can switch it - which
+/// discards the samples collected in the previous unit, since they cannot
+/// share buckets. The operational group has to be enabled for any latency
+/// sample to exist in the first place.
 #[aerospike_macro::test]
 async fn dynamic_metrics_latency_unit_applies_and_switches() {
     use aerospike::{CommandType, LatencyUnit};
@@ -90,7 +93,8 @@ async fn dynamic_metrics_latency_unit_applies_and_switches() {
         format!(
             "version: \"1.0.0\"\n\
              static:\n  client:\n    config_interval: 1\n\
-             dynamic:\n  metrics:\n    enable: true\n    latency_unit: {unit}\n"
+             dynamic:\n  metrics:\n    enabled: true\n\
+             \x20   extended:\n      operational:\n        enabled: true\n        latency_unit: {unit}\n"
         )
     };
 
@@ -168,7 +172,11 @@ async fn dynamic_config_overrides_do_not_break_operations() {
         .await
         .expect("put with dynamic write override");
     let record = client
-        .get(&aerospike::ReadPolicy::default(), &key, aerospike::Bins::All)
+        .get(
+            &aerospike::ReadPolicy::default(),
+            &key,
+            aerospike::Bins::All,
+        )
         .await
         .expect("get with dynamic read override");
     assert_eq!(record.bins.get("bin").unwrap().to_string(), "value");
@@ -220,25 +228,29 @@ async fn dynamic_config_batch_sub_policies_apply() {
         .iter()
         .map(|k| BatchOperation::write(&bwp, k.clone(), wops.clone()))
         .collect();
-    let write_results = client
-        .batch(&BatchPolicy::default(), &writes)
+    let mut writes = writes;
+    client
+        .batch(&BatchPolicy::default(), &mut writes)
         .await
         .expect("batch write with batch_write sub-section config");
-    assert_eq!(write_results.len(), 3);
+    assert_eq!(writes.len(), 3);
 
     let brp = BatchReadPolicy::default();
     let reads: Vec<BatchOperation> = keys
         .iter()
         .map(|k| BatchOperation::read(&brp, k.clone(), Bins::All))
         .collect();
-    let read_results = client
-        .batch(&BatchPolicy::default(), &reads)
+    let mut reads = reads;
+    client
+        .batch(&BatchPolicy::default(), &mut reads)
         .await
         .expect("batch read with batch_read sub-section config");
-    assert_eq!(read_results.len(), 3);
-    for br in &read_results {
+    assert_eq!(reads.len(), 3);
+    for op in &reads {
         assert_eq!(
-            br.record.as_ref().and_then(|r| r.bins.get("v")).map(ToString::to_string),
+            op.record()
+                .and_then(|r| r.bins.get("v"))
+                .map(ToString::to_string),
             Some("1".to_string())
         );
     }
@@ -248,8 +260,9 @@ async fn dynamic_config_batch_sub_policies_apply() {
         .iter()
         .map(|k| BatchOperation::delete(&bdp, k.clone()))
         .collect();
+    let mut deletes = deletes;
     client
-        .batch(&BatchPolicy::default(), &deletes)
+        .batch(&BatchPolicy::default(), &mut deletes)
         .await
         .expect("batch delete with batch_delete sub-section config");
 

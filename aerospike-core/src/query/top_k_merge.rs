@@ -204,12 +204,6 @@ impl TopKAccumulator {
         }
     }
 
-    /// Forgets every retained record, for a retried round.
-    pub fn clear(&mut self) {
-        self.by_digest.clear();
-        self.worst_first.clear();
-    }
-
     /// Drains retained records in best-first order.
     pub fn take_results(&mut self) -> Vec<Record> {
         self.worst_first.clear();
@@ -460,16 +454,6 @@ mod tests {
         assert!(!accumulator.by_digest.contains_key(&[3; 20]));
         accumulator.accept(score(4, 15), 0); // displaces 10
         assert_eq!(digests(&accumulator.take_results()), vec![2, 4]);
-    }
-
-    #[test]
-    fn clear_forgets_everything() {
-        let mut accumulator = TopKAccumulator::new(by_score(Order::Desc), 5);
-        accumulator.accept(score(1, 10), 0);
-        accumulator.clear();
-        assert!(accumulator.take_results().is_empty());
-        accumulator.accept(score(2, 1), 0);
-        assert_eq!(digests(&accumulator.take_results()), vec![2]);
     }
 
     #[test]

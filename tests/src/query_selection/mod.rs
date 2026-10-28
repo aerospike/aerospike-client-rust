@@ -17,7 +17,7 @@
 //! Ported from Java fluent `QuerySelectionIntegrationTest`,
 //! `QuerySelectionHintFlagsTest`, and `QuerySelectionExplainScopeTest`.
 //!
-//! Requires Aerospike Server >= 8.1.3; tests self-skip when the connected
+//! Requires Aerospike Server >= 8.2.0; tests self-skip when the connected
 //! node's [`Version::supports_query_selection`] is false.
 //!
 //! Debug query-plan logs (matching Java `Loggers.QUERY`):
@@ -55,12 +55,11 @@ pub(crate) struct QuerySelectionFixture {
 
 pub(crate) async fn supports_query_selection(client: &Client) -> bool {
     let ok = client
-        .cluster
-        .get_random_node()
+        .random_node()
         .map(|node| node.version().supports_query_selection())
         .unwrap_or(false);
     if !ok {
-        eprintln!("Skipping: server does not support query selection (requires >= 8.1.3)");
+        eprintln!("Skipping: server does not support query selection (requires >= 8.2.0)");
     }
     ok
 }
@@ -85,10 +84,7 @@ pub(crate) async fn prepare_fixture(client: &Client) -> QuerySelectionFixture {
     }
 
     let _index_guard = common::lock_index_ops().await;
-    for (bin, index_name) in [
-        (AGE_BIN, &age_index_name),
-        (SCORE_BIN, &score_index_name),
-    ] {
+    for (bin, index_name) in [(AGE_BIN, &age_index_name), (SCORE_BIN, &score_index_name)] {
         let task = client
             .create_index_on_bin(
                 &apolicy,
@@ -257,7 +253,14 @@ async fn query_selection_explain_contradiction_predicate_filtered_out() {
     }
 
     let fixture = prepare_fixture(&client).await;
-    let plan = explain_plan(&client, &fixture.set_name, "$.age > 100 and $.age < 10", None, None).await;
+    let plan = explain_plan(
+        &client,
+        &fixture.set_name,
+        "$.age > 100 and $.age < 10",
+        None,
+        None,
+    )
+    .await;
 
     assert_eq!(plan.selection(), QuerySelection::FilteredOut);
     assert!(plan.is_filtered_out());
@@ -396,7 +399,15 @@ async fn query_selection_execute_no_matches_returns_empty_stream() {
     assert_eq!(plan.selection(), QuerySelection::SecondaryIndex);
     assert_eq!(plan.index_name(), Some(fixture.age_index_name.as_str()));
 
-    let rs = execute_ael(&client, &fixture.set_name, ael, Bins::from([AGE_BIN]), None, None).await;
+    let rs = execute_ael(
+        &client,
+        &fixture.set_name,
+        ael,
+        Bins::from([AGE_BIN]),
+        None,
+        None,
+    )
+    .await;
     assert_eq!(count_records(rs).await, 0);
 
     client.close().await.unwrap();
@@ -518,7 +529,10 @@ async fn query_selection_multi_index_auto_selects_matching_index() {
     );
 
     assert_eq!(score_plan.selection(), QuerySelection::SecondaryIndex);
-    assert_eq!(score_plan.index_name(), Some(fixture.score_index_name.as_str()));
+    assert_eq!(
+        score_plan.index_name(),
+        Some(fixture.score_index_name.as_str())
+    );
     assert_eq!(
         collect_int_bin(score_rs, SCORE_BIN).await,
         vec![40, 41, 42, 43, 44]
@@ -558,10 +572,7 @@ async fn query_selection_explain_for_index_hint_on_wrong_existing_index() {
     assert_eq!(plan.selection(), QuerySelection::SecondaryIndex);
     assert_ne!(plan.index_name(), Some(fixture.score_index_name.as_str()));
     assert_eq!(plan.index_name(), Some(fixture.age_index_name.as_str()));
-    assert_eq!(
-        collect_int_bin(rs, AGE_BIN).await,
-        vec![14, 15, 16, 17, 18]
-    );
+    assert_eq!(collect_int_bin(rs, AGE_BIN).await, vec![14, 15, 16, 17, 18]);
 
     client.close().await.unwrap();
 }

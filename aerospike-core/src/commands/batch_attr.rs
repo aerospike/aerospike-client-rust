@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 use crate::batch::BatchDeletePolicy;
 use crate::batch::BatchReadPolicy;
-use crate::batch::BatchUDFPolicy;
+use crate::batch::BatchUdfPolicy;
 use crate::batch::BatchWritePolicy;
 use crate::commands::buffer;
 use crate::expressions::Expression;
@@ -22,8 +22,8 @@ use crate::operations::{Operation, OperationBin, OperationType};
 use crate::policy::BatchPolicy;
 use crate::CommitLevel;
 use crate::GenerationPolicy;
-use crate::ReadModeAP;
-use crate::ReadModeSC;
+use crate::ReadModeAp;
+use crate::ReadModeSc;
 use crate::RecordExistsAction;
 
 #[derive(Default)]
@@ -44,20 +44,20 @@ impl BatchAttr {
         self.filter_expression = rp
             .filter_expression
             .clone()
-            .or_else(|| parent.filter_expression.clone());
+            .or_else(|| parent.base_policy.filter_expression.clone());
         self.read_attr = buffer::INFO1_READ;
 
-        if parent.base_policy.read_mode_ap == ReadModeAP::All {
+        if parent.base_policy.read_mode_ap == ReadModeAp::All {
             self.read_attr |= buffer::INFO1_READ_MODE_AP_ALL;
         }
 
         self.write_attr = 0;
 
         match parent.base_policy.read_mode_sc {
-            ReadModeSC::Session => self.info_attr = 0,
-            ReadModeSC::Linearize => self.info_attr = buffer::INFO3_SC_READ_TYPE,
-            ReadModeSC::AllowReplica => self.info_attr = buffer::INFO3_SC_READ_RELAX,
-            ReadModeSC::AllowUnavailable => {
+            ReadModeSc::Session => self.info_attr = 0,
+            ReadModeSc::Linearize => self.info_attr = buffer::INFO3_SC_READ_TYPE,
+            ReadModeSc::AllowReplica => self.info_attr = buffer::INFO3_SC_READ_RELAX,
+            ReadModeSc::AllowUnavailable => {
                 self.info_attr = buffer::INFO3_SC_READ_TYPE | buffer::INFO3_SC_READ_RELAX;
             }
         }
@@ -100,7 +100,7 @@ impl BatchAttr {
         self.filter_expression = wp
             .filter_expression
             .clone()
-            .or_else(|| parent.filter_expression.clone());
+            .or_else(|| parent.base_policy.filter_expression.clone());
         self.read_attr = 0;
         self.write_attr = buffer::INFO2_WRITE | buffer::INFO2_RESPOND_ALL_OPS;
         self.info_attr = 0;
@@ -189,11 +189,11 @@ impl BatchAttr {
         }
     }
 
-    pub(crate) fn set_batch_udf(&mut self, up: &BatchUDFPolicy, parent: &BatchPolicy) {
+    pub(crate) fn set_batch_udf(&mut self, up: &BatchUdfPolicy, parent: &BatchPolicy) {
         self.filter_expression = up
             .filter_expression
             .clone()
-            .or_else(|| parent.filter_expression.clone());
+            .or_else(|| parent.base_policy.filter_expression.clone());
         self.read_attr = 0;
         self.write_attr = buffer::INFO2_WRITE;
         self.info_attr = 0;
@@ -224,7 +224,7 @@ impl BatchAttr {
         self.filter_expression = dp
             .filter_expression
             .clone()
-            .or_else(|| parent.filter_expression.clone());
+            .or_else(|| parent.base_policy.filter_expression.clone());
         self.read_attr = 0;
         self.write_attr =
             buffer::INFO2_WRITE | buffer::INFO2_RESPOND_ALL_OPS | buffer::INFO2_DELETE;

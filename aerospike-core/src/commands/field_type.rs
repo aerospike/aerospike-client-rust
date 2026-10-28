@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -71,7 +71,7 @@ pub enum FieldType {
     FilterExp = 43,
     /// Extended server-supplied error detail (msgpack map: subcode, message,
     /// expression trace). Present on failure responses only when
-    /// error-detail verbosity was requested. Requires server 8.1.3+.
+    /// error-detail verbosity was requested. Requires server 8.2.0+.
     ErrorMessage = 45,
     /// String AEL WHERE clause for query explain/execute.
     Where = 44,

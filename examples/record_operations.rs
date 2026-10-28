@@ -1,3 +1,18 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 //! Single-record operations and write-policy behaviors.
 //!
 //! Ports of the Java client's `Add`, `Append`, `Prepend`, `Touch`, `Expire`,
@@ -115,7 +130,10 @@ pub async fn run() {
     let _ = client.delete(&wpolicy, &missing).await;
     let mut replace_only = WritePolicy::default();
     replace_only.record_exists_action = RecordExistsAction::ReplaceOnly;
-    match client.put(&replace_only, &missing, &[as_bin!("b", 1)]).await {
+    match client
+        .put(&replace_only, &missing, &[as_bin!("b", 1)])
+        .await
+    {
         Err(e) if e.server_result_code() == Some(ResultCode::KeyNotFoundError) => {
             println!("replace: replace-only on missing record correctly rejected");
         }
@@ -153,8 +171,11 @@ pub async fn run() {
         scalar::get_bin("count"),
     ];
     let rec = client.operate(&wpolicy, &key, &ops).await.unwrap();
-    println!("operate: put+add+get => {:?}", rec.bins.get("count"));
-    assert_eq!(rec.bins.get("count"), Some(&Value::Int(42)));
+    // One answer per op, in op order; the put and the add answer nil, so the
+    // get's answer is at its own index (`bins["count"]` holds all three).
+    let results = rec.results.expect("an operate returns positional results");
+    println!("operate: put+add+get => {:?}", results[2]);
+    assert_eq!(results, vec![Value::Nil, Value::Nil, Value::Int(42)]);
 
     client.delete(&wpolicy, &key).await.unwrap();
     client.close().await.unwrap();

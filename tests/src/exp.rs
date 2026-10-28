@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -40,7 +40,7 @@ async fn create_test_set(client: &Client, no_records: usize) -> String {
         let key = as_key!(namespace, &set_name, i);
         let ibin = as_bin!("bin", i);
         let sbin = as_bin!("bin2", format!("{}", i));
-        let fbin = as_bin!("bin3", i as f64 / 3 as f64);
+        let fbin = as_bin!("bin3", i as f64 / 3_f64);
         let str = format!("{}{}", "blob", i);
         let bbin = as_bin!("bin4", str.as_bytes());
         let lbin = as_bin!("bin5", as_list!("a", "b", i));
@@ -219,7 +219,7 @@ async fn expression_data_types() {
         &client,
         ne(
             bin_type("bin".to_string()),
-            int_val(ParticleType::NULL as i64),
+            int_val(ParticleType::Null as i64),
         ),
         &set_name,
     )
@@ -583,9 +583,9 @@ fn expression_rec_ops() {
 
     let rs = test_filter(&client, eq(digest_modulo(3), int_val(1)), &set_name).await;
     let count = count_results(rs).await;
-    assert_eq!(count > 0 && count < 100, true, "DIGEST MODULO Test Failed");
+    assert!(count > 0 && count < 100, "DIGEST MODULO Test Failed");
 
-    let rs = test_filter(&client, eq(key(ExpType::INT), int_val(50)), &set_name).await;
+    let rs = test_filter(&client, eq(key(ExpType::Int), int_val(50)), &set_name).await;
     let count = count_results(rs).await;
     // 0 because key is not saved
     assert_eq!(count, 0, "KEY Test Failed");
@@ -603,7 +603,7 @@ fn expression_rec_ops() {
         &client,
         regex_compare(
             "[1-5]".to_string(),
-            RegexFlag::ICASE as i64,
+            RegexFlags::ICASE,
             string_bin("bin2".to_string()),
         ),
         &set_name,
@@ -635,7 +635,7 @@ async fn test_geo_val_bug() {
 
     // geo_compare with a literal GeoJSON circle via geo_val()
     let circle = r#"{"type":"AeroCircle","coordinates":[[-122.0,37.5],1000]}"#;
-    let expr = geo_compare(geo_bin("point".into()), geo_val(circle.into()));
+    let expr = geo_compare(geo_bin("point"), geo_val(circle));
 
     let mut qp = QueryPolicy::default();
     qp.base_policy.filter_expression = Some(expr);
@@ -680,41 +680,41 @@ async fn expression_commands() {
     let key = as_key!(namespace, &set_name, 15);
     wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(16)));
     let test = common::delete_durably(&client, &wpolicy, &key).await;
-    assert_eq!(test.is_err(), true, "DELETE EXP Err Test Failed");
+    assert!(test.is_err(), "DELETE EXP Err Test Failed");
 
     wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let test = common::delete_durably(&client, &wpolicy, &key).await;
-    assert_eq!(test.is_ok(), true, "DELETE EXP Ok Test Failed");
+    assert!(test.is_ok(), "DELETE EXP Ok Test Failed");
 
     // PUT
     let key = as_key!(namespace, &set_name, 25);
     wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let test = client.put(&wpolicy, &key, &[as_bin!("bin", 26)]).await;
-    assert_eq!(test.is_err(), true, "PUT Err Test Failed");
+    assert!(test.is_err(), "PUT Err Test Failed");
 
     wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(25)));
     let test = client.put(&wpolicy, &key, &[as_bin!("bin", 26)]).await;
-    assert_eq!(test.is_ok(), true, "PUT Ok Test Failed");
+    assert!(test.is_ok(), "PUT Ok Test Failed");
 
     // GET
     let key = as_key!(namespace, &set_name, 35);
     rpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let test = client.get(&rpolicy, &key, Bins::All).await;
-    assert_eq!(test.is_err(), true, "GET Err Test Failed");
+    assert!(test.is_err(), "GET Err Test Failed");
 
     rpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(35)));
     let test = client.get(&rpolicy, &key, Bins::All).await;
-    assert_eq!(test.is_ok(), true, "GET Ok Test Failed");
+    assert!(test.is_ok(), "GET Ok Test Failed");
 
     // EXISTS
     let key = as_key!(namespace, &set_name, 45);
     wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let test = client.exists(&rpolicy, &key).await;
-    assert_eq!(test.is_err(), true, "EXISTS Err Test Failed");
+    assert!(test.is_err(), "EXISTS Err Test Failed");
 
     rpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(45)));
     let test = client.exists(&rpolicy, &key).await;
-    assert_eq!(test.is_ok(), true, "EXISTS Ok Test Failed");
+    assert!(test.is_ok(), "EXISTS Ok Test Failed");
 
     // APPEND
     let key = as_key!(namespace, &set_name, 55);
@@ -722,13 +722,13 @@ async fn expression_commands() {
     let test = client
         .add(&wpolicy, &key, &[as_bin!("test55", "test")])
         .await;
-    assert_eq!(test.is_err(), true, "APPEND Err Test Failed");
+    assert!(test.is_err(), "APPEND Err Test Failed");
 
     wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(55)));
     let test = client
         .add(&wpolicy, &key, &[as_bin!("test55", "test")])
         .await;
-    assert_eq!(test.is_ok(), true, "APPEND Ok Test Failed");
+    assert!(test.is_ok(), "APPEND Ok Test Failed");
 
     // PREPEND
     let key = as_key!(namespace, &set_name, 55);
@@ -736,23 +736,23 @@ async fn expression_commands() {
     let test = client
         .prepend(&wpolicy, &key, &[as_bin!("test55", "test")])
         .await;
-    assert_eq!(test.is_err(), true, "PREPEND Err Test Failed");
+    assert!(test.is_err(), "PREPEND Err Test Failed");
 
     wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(55)));
     let test = client
         .prepend(&wpolicy, &key, &[as_bin!("test55", "test")])
         .await;
-    assert_eq!(test.is_ok(), true, "PREPEND Ok Test Failed");
+    assert!(test.is_ok(), "PREPEND Ok Test Failed");
 
     // TOUCH
     let key = as_key!(namespace, &set_name, 65);
     wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let test = client.touch(&wpolicy, &key).await;
-    assert_eq!(test.is_err(), true, "TOUCH Err Test Failed");
+    assert!(test.is_err(), "TOUCH Err Test Failed");
 
     wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(65)));
     let test = client.touch(&wpolicy, &key).await;
-    assert_eq!(test.is_ok(), true, "TOUCH Ok Test Failed");
+    assert!(test.is_ok(), "TOUCH Ok Test Failed");
 
     // SCAN
     spolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(75)));
@@ -780,12 +780,12 @@ async fn expression_commands() {
     let key = as_key!(namespace, &set_name, 85);
     wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(15)));
     let op = client.operate(&wpolicy, &key, &ops).await;
-    assert_eq!(op.is_err(), true, "OPERATE Err Test Failed");
+    assert!(op.is_err(), "OPERATE Err Test Failed");
 
     let key = as_key!(namespace, &set_name, 85);
     wpolicy.base_policy.filter_expression = Some(eq(int_bin("bin".to_string()), int_val(85)));
     let op = client.operate(&wpolicy, &key, &ops).await;
-    assert_eq!(op.is_ok(), true, "OPERATE Ok Test Failed");
+    assert!(op.is_ok(), "OPERATE Ok Test Failed");
 
     // BATCH GET
     let bpr = BatchReadPolicy::default();
@@ -797,13 +797,12 @@ async fn expression_commands() {
         batch_ops.push(bo);
     }
     bpolicy.base_policy.filter_expression = Some(gt(int_bin("bin".to_string()), int_val(84)));
-    match client.batch(&bpolicy, &batch_ops).await {
-        Ok(results) => {
-            for result in results {
+    match client.batch(&bpolicy, &mut batch_ops).await {
+        Ok(()) => {
+            for op in &batch_ops {
                 let mut count = 0;
-                match result.record {
-                    Some(_) => count += 1,
-                    None => {}
+                if op.record().is_some() {
+                    count += 1
                 }
                 assert_eq!(count, 1, "BATCH GET Ok Test Failed")
             }
@@ -823,13 +822,13 @@ async fn expression_commands() {
 // ============================================================
 
 async fn server_supports_server_compiled_ael(client: &Client) -> bool {
-    let supported = match client.cluster.get_random_node() {
+    let supported = match client.random_node() {
         Ok(node) => node.version().supports_server_compiled_ael(),
         Err(_) => false,
     };
 
     if !supported {
-        eprintln!("Skipping: server does not compile AEL text (requires >= 8.1.3)");
+        eprintln!("Skipping: server does not compile AEL text (requires >= 8.2.0)");
     }
 
     supported

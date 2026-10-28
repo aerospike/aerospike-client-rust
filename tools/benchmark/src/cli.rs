@@ -27,7 +27,7 @@ use std::str::FromStr;
 use clap::Parser;
 
 use aerospike::policy::Replica;
-use aerospike::{CommitLevel, ReadModeAP, ReadModeSC};
+use aerospike::{CommitLevel, ReadModeAp, ReadModeSc};
 
 use crate::{
     db_object_spec::{parse_object_spec_list, DBObjectSpec},
@@ -380,8 +380,8 @@ pub struct Options {
     pub key_file: Option<PathBuf>,
     pub string_keys: bool,
     pub replica: Replica,
-    pub read_mode_ap: ReadModeAP,
-    pub read_mode_sc: ReadModeSC,
+    pub read_mode_ap: ReadModeAp,
+    pub read_mode_sc: ReadModeSc,
     pub commit_level: CommitLevel,
     pub timeout: Option<u32>,
     pub socket_timeout: Option<u32>,
@@ -438,11 +438,7 @@ fn from_cli(cli: Cli) -> Result<Options, String> {
                 .unwrap_or_default(),
         )),
         (None, None) => None,
-        _ => {
-            return Err(
-                "--udf-package and --udf-function must be specified together".to_string(),
-            )
-        }
+        _ => return Err("--udf-package and --udf-function must be specified together".to_string()),
     };
 
     let partition_ids = cli
@@ -463,7 +459,8 @@ fn from_cli(cli: Cli) -> Result<Options, String> {
         })
         .unwrap_or_default();
 
-    let duration_secs = parse_duration_secs(cli.duration, cli.transactions, workload_kind(&workload))?;
+    let duration_secs =
+        parse_duration_secs(cli.duration, cli.transactions, workload_kind(&workload))?;
 
     let options = Options {
         hosts: cli
@@ -471,9 +468,7 @@ fn from_cli(cli: Cli) -> Result<Options, String> {
             .or_else(|| env::var("AEROSPIKE_HOSTS").ok())
             .unwrap_or_else(|| String::from("127.0.0.1:3000")),
         user: cli.user,
-        password: cli
-            .password
-            .or_else(|| env::var("AEROSPIKE_PASSWORD").ok()),
+        password: cli.password.or_else(|| env::var("AEROSPIKE_PASSWORD").ok()),
         cluster_name: cli.cluster_name,
         namespace: cli.namespace,
         set: cli.set,
@@ -512,14 +507,14 @@ fn from_cli(cli: Cli) -> Result<Options, String> {
             _ => Replica::Sequence,
         },
         read_mode_ap: match cli.read_mode_ap.as_str() {
-            "all" => ReadModeAP::All,
-            _ => ReadModeAP::One,
+            "all" => ReadModeAp::All,
+            _ => ReadModeAp::One,
         },
         read_mode_sc: match cli.read_mode_sc.as_str() {
-            "linearize" => ReadModeSC::Linearize,
-            "allow-replica" => ReadModeSC::AllowReplica,
-            "allow-unavailable" => ReadModeSC::AllowUnavailable,
-            _ => ReadModeSC::Session,
+            "linearize" => ReadModeSc::Linearize,
+            "allow-replica" => ReadModeSc::AllowReplica,
+            "allow-unavailable" => ReadModeSc::AllowUnavailable,
+            _ => ReadModeSc::Session,
         },
         commit_level: match cli.commit_level.as_str() {
             "master" => CommitLevel::CommitMaster,
@@ -621,7 +616,9 @@ fn custom_validations(opts: &Options) -> Result<(), String> {
             return Err("--mrt-size cannot be combined with --batch-size".to_string());
         }
         if opts.workload == Workload::Initialize && opts.keys % (mrt as i64) != 0 {
-            return Err("--keys must be a multiple of --mrt-size for the Insert workload".to_string());
+            return Err(
+                "--keys must be a multiple of --mrt-size for the Insert workload".to_string(),
+            );
         }
     }
     if opts.udf.is_some() && opts.batch_size > 1 {
@@ -756,7 +753,7 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(o.replica, Replica::PreferRack);
-        assert_eq!(o.read_mode_sc, ReadModeSC::Linearize);
+        assert_eq!(o.read_mode_sc, ReadModeSc::Linearize);
         assert_eq!(o.commit_level, CommitLevel::CommitMaster);
     }
 }

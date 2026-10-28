@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,54 +18,64 @@ use std::fmt;
 use crate::errors::Error;
 
 /// Default privileges defined on the server.
+///
+/// The server defines this set and extends it over time. A code this client
+/// has no name for comes back as [`Unknown`](Self::Unknown) with the raw
+/// value, so a role listing from a newer server still succeeds.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd)]
+#[non_exhaustive]
 pub enum PrivilegeCode {
     /// User can edit/remove other users. Global scope only.
-    UserAdmin = 0,
+    UserAdmin,
 
     /// User can perform systems administration functions on a database that do not involve user
     /// administration. Examples include server configuration.
     /// Global scope only.
-    SysAdmin = 1,
+    SysAdmin,
 
     /// User can perform UDF and SINDEX administration actions. Global scope only.
-    DataAdmin = 2,
+    DataAdmin,
 
     /// User can perform user-defined function(UDF) administration actions.
     /// Examples include create/drop UDF. Global scope only.
     /// Requires server version 6+
-    UDFAdmin = 3,
+    UdfAdmin,
 
     /// User can perform secondary index administration actions.
     /// Examples include create/drop index. Global scope only.
     /// Requires server version 6+.
-    SIndexAdmin = 4,
+    SindexAdmin,
 
     /// User can read data only.
-    Read = 10,
+    Read,
 
     /// User can read and write data.
-    ReadWrite = 11,
+    ReadWrite,
 
     /// User can read and write data through user-defined functions.
-    ReadWriteUDF = 12,
+    ReadWriteUdf,
 
     /// User can read and write data through user-defined functions.
-    Write = 13,
+    Write,
 
     /// User can truncate data only.
     /// Requires server version 6+
-    Truncate = 14,
+    Truncate,
 
     /// User can perform data masking administration actions.
     /// Global scope only.
-    MaskingAdmin = 15,
+    MaskingAdmin,
 
     /// User can read masked data only.
-    ReadMasked = 16,
+    ReadMasked,
 
     /// User can write masked data only.
-    WriteMasked = 17,
+    WriteMasked,
+
+    /// A privilege code the server reported that this client has no name
+    /// for, with the raw value. Scoped like a data privilege, and never sent
+    /// back to the server by name.
+    Unknown(u8),
 }
 
 impl PrivilegeCode {
@@ -110,6 +120,8 @@ impl Privilege {
     }
 }
 
+/// Every code converts: one this client has no name for becomes
+/// [`PrivilegeCode::Unknown`], so this never fails.
 impl TryFrom<u8> for PrivilegeCode {
     type Error = Error;
     fn try_from(pc: u8) -> std::result::Result<Self, Self::Error> {
@@ -117,17 +129,17 @@ impl TryFrom<u8> for PrivilegeCode {
             0 => Ok(PrivilegeCode::UserAdmin),
             1 => Ok(PrivilegeCode::SysAdmin),
             2 => Ok(PrivilegeCode::DataAdmin),
-            3 => Ok(PrivilegeCode::UDFAdmin),
-            4 => Ok(PrivilegeCode::SIndexAdmin),
+            3 => Ok(PrivilegeCode::UdfAdmin),
+            4 => Ok(PrivilegeCode::SindexAdmin),
             10 => Ok(PrivilegeCode::Read),
             11 => Ok(PrivilegeCode::ReadWrite),
-            12 => Ok(PrivilegeCode::ReadWriteUDF),
+            12 => Ok(PrivilegeCode::ReadWriteUdf),
             13 => Ok(PrivilegeCode::Write),
             14 => Ok(PrivilegeCode::Truncate),
             15 => Ok(PrivilegeCode::MaskingAdmin),
             16 => Ok(PrivilegeCode::ReadMasked),
             17 => Ok(PrivilegeCode::WriteMasked),
-            _ => Err(Error::bad_response(format!("invalid privilege code {pc}"))),
+            _ => Ok(PrivilegeCode::Unknown(pc)),
         }
     }
 }
@@ -138,16 +150,17 @@ impl From<&PrivilegeCode> for u8 {
             PrivilegeCode::UserAdmin => 0,
             PrivilegeCode::SysAdmin => 1,
             PrivilegeCode::DataAdmin => 2,
-            PrivilegeCode::UDFAdmin => 3,
-            PrivilegeCode::SIndexAdmin => 4,
+            PrivilegeCode::UdfAdmin => 3,
+            PrivilegeCode::SindexAdmin => 4,
             PrivilegeCode::Read => 10,
             PrivilegeCode::ReadWrite => 11,
-            PrivilegeCode::ReadWriteUDF => 12,
+            PrivilegeCode::ReadWriteUdf => 12,
             PrivilegeCode::Write => 13,
             PrivilegeCode::Truncate => 14,
             PrivilegeCode::MaskingAdmin => 15,
             PrivilegeCode::ReadMasked => 16,
             PrivilegeCode::WriteMasked => 17,
+            PrivilegeCode::Unknown(code) => *code,
         }
     }
 }
@@ -158,16 +171,17 @@ impl From<&PrivilegeCode> for String {
             PrivilegeCode::UserAdmin => "user-admin".into(),
             PrivilegeCode::SysAdmin => "sys-admin".into(),
             PrivilegeCode::DataAdmin => "data-admin".into(),
-            PrivilegeCode::UDFAdmin => "udf-admin".into(),
-            PrivilegeCode::SIndexAdmin => "sindex-admin".into(),
+            PrivilegeCode::UdfAdmin => "udf-admin".into(),
+            PrivilegeCode::SindexAdmin => "sindex-admin".into(),
             PrivilegeCode::Read => "read".into(),
             PrivilegeCode::ReadWrite => "read-write".into(),
-            PrivilegeCode::ReadWriteUDF => "read-write-udf".into(),
+            PrivilegeCode::ReadWriteUdf => "read-write-udf".into(),
             PrivilegeCode::Write => "write".into(),
             PrivilegeCode::Truncate => "truncate".into(),
             PrivilegeCode::MaskingAdmin => "masking-admin".into(),
             PrivilegeCode::ReadMasked => "read-masked".into(),
             PrivilegeCode::WriteMasked => "write-masked".into(),
+            PrivilegeCode::Unknown(code) => format!("unknown-{code}"),
         }
     }
 }
@@ -179,11 +193,11 @@ impl TryFrom<&str> for PrivilegeCode {
             "user-admin" => Ok(PrivilegeCode::UserAdmin),
             "sys-admin" => Ok(PrivilegeCode::SysAdmin),
             "data-admin" => Ok(PrivilegeCode::DataAdmin),
-            "udf-admin" => Ok(PrivilegeCode::UDFAdmin),
-            "sindex-admin" => Ok(PrivilegeCode::SIndexAdmin),
+            "udf-admin" => Ok(PrivilegeCode::UdfAdmin),
+            "sindex-admin" => Ok(PrivilegeCode::SindexAdmin),
             "read" => Ok(PrivilegeCode::Read),
             "read-write" => Ok(PrivilegeCode::ReadWrite),
-            "read-write-udf" => Ok(PrivilegeCode::ReadWriteUDF),
+            "read-write-udf" => Ok(PrivilegeCode::ReadWriteUdf),
             "write" => Ok(PrivilegeCode::Write),
             "truncate" => Ok(PrivilegeCode::Truncate),
             "masking-admin" => Ok(PrivilegeCode::MaskingAdmin),
@@ -191,5 +205,24 @@ impl TryFrom<&str> for PrivilegeCode {
             "write-masked" => Ok(PrivilegeCode::WriteMasked),
             _ => Err(Error::bad_response(format!("invalid privilege code {pc}"))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_code_round_trips_and_scopes() {
+        let code = PrivilegeCode::try_from(200u8).expect("unknown codes are kept, not rejected");
+        assert_eq!(code, PrivilegeCode::Unknown(200));
+        assert_eq!(u8::from(&code), 200);
+        assert_eq!(String::from(&code), "unknown-200");
+        assert!(code.can_scope());
+        assert_eq!(
+            PrivilegeCode::try_from(11u8).expect("named code"),
+            PrivilegeCode::ReadWrite
+        );
+        assert!(PrivilegeCode::try_from("no-such-privilege").is_err());
     }
 }

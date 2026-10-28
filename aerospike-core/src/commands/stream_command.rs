@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@ use crate::IndexMap;
 use std::io::Read;
 use std::sync::Arc;
 
-use aerospike_rt::Mutex;
 use flate2::read::ZlibDecoder;
 
 use crate::cluster::{Cluster, Node};
@@ -25,53 +24,76 @@ use crate::commands::field_type::FieldType;
 use crate::commands::Command;
 use crate::errors::{Error, ErrorKind, Result};
 use crate::net::{BufferedConn, Connection};
-use crate::query::{NodePartitions, Recordset, TopKAccumulator};
+use crate::query::{NodePartitions, QuerySink, Recordset, StreamEntry, TopKAccumulator, RECORD_BATCH};
 use crate::value::bytes_to_particle;
+use aerospike_rt::Mutex;
 use crate::{Key, Record, ResultCode, Value};
 
 pub struct StreamCommand {
-    is_scan: bool,
     node: Arc<Node>,
     /// The owning cluster, surfaced via [`Command::cluster`] so the retry loop
     /// can record cluster-wide `exceeded-*` counters for scans/queries.
     cluster: Arc<Cluster>,
-    pub(crate) recordset: Arc<Recordset>,
-    pub(crate) node_partitions: Arc<Mutex<NodePartitions>>,
-    /// Bounded accumulator for Top-K query results.
-    pub(crate) top_k_buffer: Option<Arc<Mutex<TopKAccumulator>>>,
+    pub(crate) sink: QuerySink,
+    /// This node's share of the query, owned outright for the life of the
+    /// command. The executor moves it in and takes it back from the join
+    /// value, so the single-writer story is checked by the compiler rather
+    /// than promised by the protocol.
+    node_partitions: NodePartitions,
+    /// Announces this stream's end to the sink when the command goes away,
+    /// however it goes away. A guard field rather than `impl Drop` on the
+    /// command itself, which would forbid moving `node_partitions` back out
+    /// at the end.
+    _end: EndSignal,
+    /// Bounded accumulator of a Top-K query, shared by every node command;
+    /// `None` for a plain query.
+    top_k_buffer: Option<Arc<Mutex<TopKAccumulator>>>,
 }
 
-impl Drop for StreamCommand {
+/// Signals end-of-stream to the sink on drop.
+struct EndSignal(QuerySink);
+
+impl Drop for EndSignal {
     fn drop(&mut self) {
-        // signal_end
-        self.recordset.signal_end();
+        self.0.signal_end();
     }
 }
 
 impl StreamCommand {
-    pub const fn new(
+    pub fn new(
         node: Arc<Node>,
-        recordset: Arc<Recordset>,
-        node_partitions: Arc<Mutex<NodePartitions>>,
-        is_scan: bool,
+        sink: QuerySink,
+        node_partitions: NodePartitions,
         cluster: Arc<Cluster>,
         top_k_buffer: Option<Arc<Mutex<TopKAccumulator>>>,
     ) -> Self {
         StreamCommand {
-            is_scan,
             node,
             cluster,
-            recordset,
+            _end: EndSignal(sink.clone()),
+            sink,
             node_partitions,
             top_k_buffer,
         }
+    }
+
+    /// This node's partition set, for the request buffer.
+    pub(crate) const fn node_partitions(&self) -> &NodePartitions {
+        &self.node_partitions
+    }
+
+    /// Hands the partition set back to the executor once the command is done,
+    /// so completion and retry planning can read what this node did. Consumes
+    /// the command; the end-of-stream signal fires here.
+    pub(crate) fn into_node_partitions(self) -> NodePartitions {
+        self.node_partitions
     }
 
     /// Parses one response row into its record, the partition cursor value
     /// (`bval`) and the row's last-update time (0 when the server sent none),
     /// plus whether the stream continues.
     async fn parse_record(
-        &self,
+        &mut self,
         conn: &mut BufferedConn<'_>,
         _size: usize,
     ) -> Result<(Option<Record>, Option<u64>, u64, bool)> {
@@ -83,10 +105,26 @@ impl StreamCommand {
                 }
                 ResultCode::PartitionUnavailable => (),
                 _ => {
+                    // A start failure's explanation (field 45) rides in this
+                    // same record-shaped message, so walk the field section
+                    // before giving up on the stream. The caller drains what
+                    // follows.
+                    conn.buffer().skip(6);
+                    let _ = conn.buffer().read_u32(None); // generation
+                    let _ = conn.buffer().read_u32(None); // expiration
+                    conn.buffer().skip(4);
+                    let field_count = conn.buffer().read_u16(None) as usize;
+                    let _ = conn.buffer().read_u16(None); // op count
+                    // A malformed field section must not mask the server's result
+                    // code; the caller drains the message by size either way.
+                    let error_detail = Self::parse_key_and_version(conn, field_count)
+                        .await
+                        .ok()
+                        .and_then(|(_, _, _, detail)| detail);
                     return Err(Error::server_error(
                         result_code,
                         conn.conn.addr.clone(),
-                        None,
+                        error_detail,
                     ));
                 }
             }
@@ -112,13 +150,9 @@ impl StreamCommand {
         if info3 & buffer::INFO3_PARTITION_DONE != 0 {
             // return Ok((None, true));
             if result_code != ResultCode::Ok {
-                let tracker = self.recordset.tracker.lock().await;
-                let mut node_partitions = self.node_partitions.lock().await;
-                tracker
-                    .partition_unavailable(&mut node_partitions, generation as u16)
-                    .await;
-                drop(tracker);
-                drop(node_partitions);
+                self.sink
+                    .tracker()
+                    .partition_unavailable(&mut self.node_partitions, generation as u16);
             }
             return Ok((None, None, 0, true));
         }
@@ -135,7 +169,11 @@ impl StreamCommand {
             conn.read_buffer(name_size).await?;
             let name: String = conn.buffer().read_str(name_size)?;
 
-            let particle_bytes_size = op_size - (4 + name_size);
+            let particle_bytes_size = op_size
+
+                .checked_sub(4 + name_size)
+
+                .ok_or_else(|| Error::bad_response("operation shorter than its header"))?;
             conn.read_buffer(particle_bytes_size).await?;
             let value = bytes_to_particle(particle_type, conn.buffer(), particle_bytes_size)?;
 
@@ -149,53 +187,122 @@ impl StreamCommand {
         Ok((Some(record), bval, last_update_time, true))
     }
 
-    async fn parse_stream(&self, conn: &mut BufferedConn<'_>, size: usize) -> Result<bool> {
+    /// Hands the accumulated batch to the consumer and counts it against
+    /// this node's round.
+    ///
+    /// Only the *count* is recorded here — it drives the executor's
+    /// max-records budget and page-done planning, which reason about what the
+    /// server sent this round. The resume *cursor* is deliberately not
+    /// touched: it is committed at the consumer edge, record by record, as
+    /// the user takes them out — so a stream closed with records still
+    /// buffered resumes from the last record the user saw, not the last one
+    /// parsed. A failed push counts nothing: those records are re-fetched by
+    /// the next round.
+    async fn flush_batch(
+        recordset: &Recordset,
+        node_partitions: &mut NodePartitions,
+        batch: &mut Vec<StreamEntry>,
+    ) -> Result<()> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+        let count = batch.len() as u64;
+        recordset.push_batch(std::mem::take(batch)).await?;
+        node_partitions.record_count += count;
+        Ok(())
+    }
+
+    async fn parse_stream(&mut self, conn: &mut BufferedConn<'_>, size: usize) -> Result<bool> {
+        // One channel send per RECORD_BATCH records, not per record: the
+        // queue-slot handoff and consumer wakeup were the hot path's largest
+        // single cost.
+        let mut batch: Vec<StreamEntry> = Vec::with_capacity(RECORD_BATCH);
+
         'outer: while !conn.exhausted() {
             // Read header.
             if let Err(err) = conn
                 .read_buffer(buffer::MSG_REMAINING_HEADER_SIZE as usize)
                 .await
             {
-                warn!("Parse result error: {err}");
+                debug!("Parse result error: {err}");
                 return Err(err);
             }
 
             let res = self.parse_record(conn, size).await;
             match res {
                 Ok((Some(rec), bval, last_update_time, _)) => {
-                    let tracker = self.recordset.tracker.lock().await;
-                    let mut node_partitions = self.node_partitions.lock().await;
-                    if !tracker.allow_record(&mut node_partitions) {
+                    // No lock on this path: the tracker's record-facing state
+                    // is atomics, and the partition set has a single writer —
+                    // this command.
+                    if !self.sink.tracker().allow_record(&mut self.node_partitions) {
                         continue 'outer;
                     }
 
                     if let Some(buffer) = &self.top_k_buffer {
-                        // A Top-K row is counted but leaves no resume cursor:
-                        // a retried partition is ranked again from the start.
-                        node_partitions.record_count += 1;
+                        // A Top-K row is ranked, not delivered: it is counted
+                        // but leaves no resume cursor, so a retried partition
+                        // is ranked again from the start, and the accumulator
+                        // shared by every node deduplicates by digest.
+                        self.node_partitions.record_count += 1;
                         buffer.lock().await.accept(rec, last_update_time);
-                    } else {
-                        let key = &rec.key.clone().unwrap();
-                        self.recordset.push(Ok(rec)).await?;
+                        continue 'outer;
+                    }
 
-                        if self.is_scan {
-                            tracker.set_digest(&mut node_partitions, key).await?;
-                        } else {
-                            tracker.set_last(&mut node_partitions, key, bval).await?;
+                    match &self.sink {
+                        QuerySink::Channel(rs) => {
+                            // Stamp after the allow gate: rejected records
+                            // are neither delivered nor sequenced.
+                            let key = rec.key.as_ref().unwrap();
+                            let stamp = rs.tracker.stamp_delivery(key.partition_id());
+                            batch.push(StreamEntry {
+                                result: Ok(rec),
+                                bval,
+                                stamp,
+                            });
+                            if batch.len() >= RECORD_BATCH {
+                                Self::flush_batch(rs, &mut self.node_partitions, &mut batch)
+                                    .await?;
+                            }
+                        }
+                        QuerySink::Callback(ctx) => {
+                            // Inline, C-style: the callback runs here on the
+                            // node task and the cursor commits the moment its
+                            // future resolves — delivery and commit are
+                            // atomic, which is what makes this mode
+                            // exactly-once, cancel and resume included.
+                            let key = rec.key.as_ref().unwrap();
+                            let (pid, digest) = (key.partition_id(), key.digest);
+                            let keep_going = (ctx.callback)(Ok(rec)).await;
+                            ctx.tracker.commit_direct(pid, digest, bval);
+                            self.node_partitions.record_count += 1;
+                            if !keep_going {
+                                self.sink.close();
+                            }
+                            if !self.sink.is_active() {
+                                return Err(Error::stream_terminated(None));
+                            }
                         }
                     }
-                    drop(tracker);
-                    drop(node_partitions);
                 }
-                Ok((None, _, _, false)) => return Ok(false),
+                Ok((None, _, _, false)) => {
+                    if let QuerySink::Channel(rs) = &self.sink {
+                        Self::flush_batch(rs, &mut self.node_partitions, &mut batch).await?;
+                    }
+                    return Ok(false);
+                }
                 Ok((None, _, _, true)) => {} // handle partition done
                 Err(err) => {
+                    // Not flushed: the un-pushed tail is dropped with its
+                    // progress uncommitted, so a retry round re-fetches it.
                     // let _ = self.recordset.push(Err(err)).await;
                     return Err(err);
                 }
             }
         }
 
+        if let QuerySink::Channel(rs) = &self.sink {
+            Self::flush_batch(rs, &mut self.node_partitions, &mut batch).await?;
+        }
         Ok(true)
     }
 
@@ -326,7 +433,7 @@ impl Command for StreamCommand {
         // `unreachable!()` on the assumption that only `QueryCommand`
         // drives a `StreamCommand`; implementing it here keeps any direct
         // driver from panicking and from sending a zero timeout.
-        let server_timeout = self.recordset.tracker.lock().await.server_timeout();
+        let server_timeout = self.sink.tracker().server_timeout();
         conn.buffer.write_timeout(server_timeout);
         Ok(())
     }
@@ -335,10 +442,12 @@ impl Command for StreamCommand {
         conn.flush().await
     }
 
-    #[allow(unused_variables)]
+    // The stream command drives its own IO from `execute`; these `Command`
+    // hooks are never reached, and answering conservatively costs nothing.
     async fn prepare_buffer(&mut self, _conn: &mut Connection) -> Result<()> {
-        // should be implemented downstream
-        unreachable!()
+        Err(Error::client_error(
+            "StreamCommand does not use the single-command buffer path",
+        ))
     }
 
     fn get_node(&mut self) -> Result<Arc<Node>> {
@@ -346,15 +455,15 @@ impl Command for StreamCommand {
     }
 
     fn hint(&self) -> u8 {
-        unreachable!()
+        0
     }
 
     fn can_retry(&mut self) -> bool {
-        unreachable!()
+        false
     }
 
     fn can_recover_connection(&mut self) -> bool {
-        unreachable!()
+        false
     }
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
@@ -380,9 +489,16 @@ impl Command for StreamCommand {
                 // Read the 8-byte uncompressed size
                 conn.read_buffer(8).await?;
                 let uncompressed_size = conn.buffer().read_u64(Some(0)) as usize;
+                if uncompressed_size > crate::commands::buffer::MAX_BUFFER_SIZE {
+                    return Err(Error::bad_response(format!(
+                        "declared uncompressed size {uncompressed_size} exceeds the buffer limit"
+                    )));
+                }
 
                 // Read all remaining compressed data
-                let compressed_len = size - 8;
+                let compressed_len = size
+                    .checked_sub(8)
+                    .ok_or_else(|| Error::bad_response("compressed reply shorter than its size header"))?;
                 conn.read_buffer(compressed_len).await?;
                 let compressed_data = conn.buffer().data_buffer[..compressed_len].to_vec();
 
@@ -405,7 +521,9 @@ impl Command for StreamCommand {
                 if inner_size > 0 {
                     // Stream-decompress the rest on demand (body after the
                     // 8-byte proto header we already consumed).
-                    let body_decompressed_size = uncompressed_size - 8;
+                    let body_decompressed_size = uncompressed_size
+                        .checked_sub(8)
+                        .ok_or_else(|| Error::bad_response("uncompressed size shorter than its header"))?;
                     let mut inner_conn =
                         BufferedConn::new_with_decoder(conn.conn, decoder, body_decompressed_size);
 

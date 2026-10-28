@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -14,7 +14,6 @@
 // the License.
 
 use std::future::Future;
-use std::pin::Pin;
 use std::str;
 use std::sync::Arc;
 #[cfg(feature = "rt-tokio")]
@@ -26,15 +25,16 @@ use aerospike_core::errors::Result;
 use aerospike_core::operations::{CdtContext, Operation};
 use aerospike_core::query::PartitionFilter;
 use aerospike_core::txn::{AbortStatus, CommitStatus, Txn};
+use crate::query_handle::QueryHandle;
+use crate::blocking_task::Task;
 use aerospike_core::DropIndexTask;
 use aerospike_core::UdfRemoveTask;
 use aerospike_core::{
     AdminPolicy, BatchOperation, BatchPolicy, BatchRecord, Bin, Bins, ClientPolicy,
     CollectionIndexType, ExecuteTask, IndexTask, IndexType, Key, Node, Privilege, QueryPolicy,
     ReadPolicy, Record, Recordset, RegisterTask, Role, Statement, ToHosts, TxnRollPolicy,
-    TxnVerifyPolicy, UDFLang, User, Value, WritePolicy,
+    TxnVerifyPolicy, UdfLang, User, Value, WritePolicy,
 };
-use futures::Stream;
 
 #[cfg(feature = "rt-tokio")]
 static SYNC_RT: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
@@ -63,7 +63,7 @@ static SYNC_RT: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
 /// die when the caller's runtime shuts down, poisoning the shared client
 /// for everyone else.
 #[cfg(feature = "rt-tokio")]
-fn block_on<F>(f: F) -> F::Output
+pub(crate) fn block_on<F>(f: F) -> F::Output
 where
     F: Future + Send,
     F::Output: Send,
@@ -97,38 +97,18 @@ where
 /// cannot drive async-std's IO and timers, so waiting on them would
 /// deadlock or busy-spin.
 #[cfg(feature = "rt-async-std")]
-fn block_on<F: Future>(f: F) -> F::Output {
+pub(crate) fn block_on<F: Future>(f: F) -> F::Output {
     async_std::task::block_on(f)
-}
-
-/// Blocking iterator over the items emitted by
-/// [`Client::batch_stream`]. Each [`Iterator::next`] call returns the
-/// next `(original_index, BatchRecord)` as soon as some per-node task
-/// produces one; iteration ends once every per-node task has
-/// finished and the underlying stream is closed.
-///
-/// Each `next()` drives the underlying stream through the crate's
-/// [`block_on`] bridge: the calling thread parks with a real waker and
-/// is woken exactly when an item (or the end of the stream) arrives —
-/// no polling loop, no busy CPU while waiting.
-pub struct BatchStream {
-    inner: Pin<Box<dyn Stream<Item = (usize, BatchRecord)> + Send>>,
-}
-
-impl Iterator for BatchStream {
-    type Item = (usize, BatchRecord);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        use futures::StreamExt;
-        block_on(self.inner.next())
-    }
 }
 
 /// Instantiate a Client instance to access an Aerospike database cluster and perform database
 /// operations.
 ///
-/// The client is thread-safe. Only one client instance should be used per cluster. Multiple
-/// threads should share this cluster instance.
+/// The client is thread-safe, and cloning it is cheap: every clone shares
+/// the same cluster, connection pools and background tasks, so hand a clone
+/// to each task or thread rather than opening a second client to the same
+/// cluster. [`close`](Self::close) shuts that shared cluster down for every
+/// clone.
 ///
 /// Your application uses this class' API to perform database operations such as writing and
 /// reading records, and selecting sets of records. Write operations include specialized
@@ -137,12 +117,16 @@ impl Iterator for BatchStream {
 /// Each record may have multiple bins, unless the Aerospike server nodes are configured as
 /// "single-bin". In "multi-bin" mode, partial records may be written or read by specifying the
 /// relevant subset of bins.
+#[derive(Clone)]
 pub struct Client {
     async_client: aerospike_core::Client,
 }
 
-unsafe impl Send for Client {}
-unsafe impl Sync for Client {}
+// Thread safety comes from the wrapped client, checked rather than asserted.
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Client>();
+};
 
 impl Client {
     /// Initializes Aerospike client with suitable hosts to seed the cluster map. The client policy
@@ -203,7 +187,8 @@ impl Client {
         })
     }
 
-    /// Closes the connection to the Aerospike cluster.
+    /// Closes the connection to the Aerospike cluster, for this client and
+    /// every clone of it.
     pub fn close(&self) -> Result<()> {
         block_on(self.async_client.close())?;
         Ok(())
@@ -240,7 +225,6 @@ impl Client {
     ) -> Result<aerospike_core::IndexMap<String, String>> {
         block_on(self.async_client.info(policy, commands))
     }
-
 
     /// Returns a list of active server nodes in the cluster.
     pub fn nodes(&self) -> Vec<Arc<Node>> {
@@ -292,14 +276,10 @@ impl Client {
     ///         => println!("Error fetching record: {}", err),
     /// }
     /// ```
-    ///
-    /// # Panics
-    /// Panics if the return is invalid
-    pub fn get<T>(&self, policy: &ReadPolicy, key: &Key, bins: T) -> Result<Record>
-    where
-        T: Into<Bins> + Send + Sync + 'static,
-    {
-        block_on(self.async_client.get(policy, key, bins))
+    pub fn get(&self, policy: &ReadPolicy, key: &Key, bins: impl Into<Bins>) -> Result<Record> {
+        // The async future holds its arguments until first polled, so convert
+        // here: `block_on` needs a `Send` future and `Bins` is `Send`.
+        block_on(self.async_client.get(policy, key, bins.into()))
     }
 
     /// Read multiple record for specified batch keys in one batch call. This method allows
@@ -324,12 +304,12 @@ impl Client {
     ///   let key = as_key!("test", "test", i);
     ///   batch_ops.push(BatchOperation::read(&bpr, key, bins.clone()));
     /// }
-    /// match client.batch(&BatchPolicy::default(), &batch_ops) {
-    ///     Ok(results) => {
-    ///       for result in results {
-    ///         match result.record {
-    ///           Some(record) => println!("{:?} => {:?}", result.key, record.bins),
-    ///           None => println!("No such record: {:?}", result.key),
+    /// match client.batch(&BatchPolicy::default(), &mut batch_ops) {
+    ///     Ok(()) => {
+    ///       for op in &batch_ops {
+    ///         match op.record() {
+    ///           Some(record) => println!("{:?} => {:?}", op.batch_record().key, record.bins),
+    ///           None => println!("No such record: {:?}", op.batch_record().key),
     ///         }
     ///       }
     ///     }
@@ -337,52 +317,32 @@ impl Client {
     ///         => println!("Error executing batch request: {}", err),
     /// }
     /// ```
-    pub fn batch(
-        &self,
-        policy: &BatchPolicy,
-        batch_records: &[BatchOperation],
-    ) -> Result<Vec<BatchRecord>> {
+    ///
+    /// Results are written into the operations themselves; see the async
+    /// `Client::batch` for the full contract.
+    pub fn batch(&self, policy: &BatchPolicy, batch_records: &mut [BatchOperation]) -> Result<()> {
         block_on(self.async_client.batch(policy, batch_records))
     }
 
-    /// Execute multiple batch operations and return results as a
-    /// blocking [`Iterator`]. Sync equivalent of the async
-    /// `Client::batch_stream`.
-    ///
-    /// Unlike [`batch`](Self::batch), items arrive in the order they
-    /// are received from each server node rather than the order of
-    /// `ops`. Each item is `(original_index, BatchRecord)` so callers
-    /// can match results back to their input vec. Iteration ends once
-    /// every per-node task has completed.
-    ///
-    /// Internally this drives the async streaming variant: the
-    /// per-node tasks are spawned on the underlying tokio runtime,
-    /// each emits its `(idx, BatchRecord)` onto a channel as soon as
-    /// it returns, and the [`BatchStream`] iterator pulls those items
-    /// without ever blocking the runtime — it follows the same
-    /// `try_recv` + `yield` pattern used by [`Recordset`].
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// # use aerospike_sync::*;
-    /// # let hosts = std::env::var("AEROSPIKE_HOSTS").unwrap_or_else(|_| "127.0.0.1:3000".to_string());
-    /// # let client = Client::new(&ClientPolicy::default(), &hosts).unwrap();
-    /// let key = as_key!("test", "test", 1);
-    /// let batch = vec![BatchOperation::read(&BatchReadPolicy::default(), key, Bins::All)];
-    /// for (idx, br) in client.batch_stream(&BatchPolicy::default(), batch).unwrap() {
-    ///     println!("op[{}]: {:?}", idx, br.record);
-    /// }
-    /// ```
-    pub fn batch_stream(
+    /// Execute a batch, reporting each row to `on_row` as its result
+    /// arrives. Blocking equivalent of the async `Client::batch_foreach`:
+    /// same exactly-once-per-row contract, same abort-on-`false`. The hook
+    /// is async on the wire side; a plain closure returns
+    /// `std::future::ready(true)`.
+    pub fn batch_foreach<F>(
         &self,
         policy: &BatchPolicy,
-        ops: Vec<BatchOperation>,
-    ) -> Result<BatchStream> {
-        let stream = block_on(self.async_client.batch_stream(policy, ops))?;
-        Ok(BatchStream {
-            inner: Box::pin(stream),
-        })
+        ops: &mut [BatchOperation],
+        on_row: F,
+    ) -> Result<()>
+    where
+        F: Fn(usize, &BatchRecord) -> bool + Send + Sync + 'static,
+    {
+        block_on(self.async_client.batch_foreach(
+            policy,
+            ops,
+            move |idx: usize, row: &BatchRecord| std::future::ready(on_row(idx, row)),
+        ))
     }
 
     /// Write record bin(s). The policy specifies the transaction timeout, record expiration and
@@ -545,7 +505,8 @@ impl Client {
     ///     operations::get_bin("a"),
     /// ];
     /// match client.operate(&WritePolicy::default(), &key, &ops) {
-    ///     Ok(record) => println!("The new value is {}", record.bins.get("a").unwrap()),
+    ///     // One answer per op, in op order; the add answers nil.
+    ///     Ok(record) => println!("The new value is {}", record.results.unwrap()[1]),
     ///     Err(err) => println!("Error writing record: {}", err),
     /// }
     /// ```
@@ -594,19 +555,19 @@ impl Client {
     /// "#;
     ///
     /// client.register_udf(&AdminPolicy::default(), code.as_bytes(),
-    ///                     "example.lua", UDFLang::Lua).unwrap();
+    ///                     "example.lua", UdfLang::Lua).unwrap();
     /// ```
     pub fn register_udf(
         &self,
         policy: &AdminPolicy,
         udf_body: &[u8],
         server_path: &str,
-        language: UDFLang,
-    ) -> Result<RegisterTask> {
+        language: UdfLang,
+    ) -> Result<Task<RegisterTask>> {
         block_on(
             self.async_client
                 .register_udf(policy, udf_body, server_path, language),
-        )
+        ).map(Task::new)
     }
 
     /// Register a package containing user-defined functions (UDF) with the cluster. This
@@ -620,37 +581,34 @@ impl Client {
         policy: &AdminPolicy,
         client_path: &str,
         server_path: &str,
-        language: UDFLang,
-    ) -> Result<RegisterTask> {
+        language: UdfLang,
+    ) -> Result<Task<RegisterTask>> {
         block_on(self.async_client.register_udf_from_file(
             policy,
             client_path,
             server_path,
             language,
-        ))
+        )).map(Task::new)
     }
 
     /// Remove a user-defined function (UDF) module from the server.
-    pub fn remove_udf(&self, policy: &AdminPolicy, server_path: &str) -> Result<UdfRemoveTask> {
-        block_on(self.async_client.remove_udf(policy, server_path))
+    pub fn remove_udf(&self, policy: &AdminPolicy, server_path: &str) -> Result<Task<UdfRemoveTask>> {
+        block_on(self.async_client.remove_udf(policy, server_path)).map(Task::new)
     }
 
     /// Execute a user-defined function on the server and return the results. The function operates
     /// on a single record. The UDF package name is required to locate the UDF.
-    ///
-    /// # Panics
-    /// Panics if the return is invalid
     pub fn execute_udf(
         &self,
         policy: &WritePolicy,
         key: &Key,
-        server_path: &str,
+        package_name: &str,
         function_name: &str,
-        args: Option<&[Value]>,
+        args: &[Value],
     ) -> Result<Option<Value>> {
         block_on(
             self.async_client
-                .execute_udf(policy, key, server_path, function_name, args),
+                .execute_udf(policy, key, package_name, function_name, args),
         )
     }
 
@@ -688,6 +646,30 @@ impl Client {
         block_on(self.async_client.query(policy, partition_filter, statement))
     }
 
+    /// Runs a query and hands every record to `callback` as it arrives,
+    /// without buffering a [`Recordset`]. The callback returns `false` to stop
+    /// the query. Returns a [`QueryHandle`] to [`wait`](QueryHandle::wait) for
+    /// completion or [`cancel`](QueryHandle::cancel); dropping it detaches,
+    /// leaving the query running.
+    pub fn query_foreach<F>(
+        &self,
+        policy: &QueryPolicy,
+        partition_filter: PartitionFilter,
+        statement: Statement,
+        callback: F,
+    ) -> Result<QueryHandle>
+    where
+        F: Fn(Result<Record>) -> bool + Send + Sync + 'static,
+    {
+        block_on(self.async_client.query_foreach(
+            policy,
+            partition_filter,
+            statement,
+            move |record: Result<Record>| std::future::ready(callback(record)),
+        ))
+        .map(QueryHandle::new)
+    }
+
     /// Execute a stream UDF aggregation query and return a
     /// [`aerospike_core::query::ResultSet`] with the aggregated values
     /// (requires the `lua` feature).
@@ -704,7 +686,7 @@ impl Client {
         statement: Statement,
         package_name: &str,
         function_name: &str,
-        function_args: Option<&[Value]>,
+        function_args: &[Value],
     ) -> Result<Arc<aerospike_core::query::ResultSet>> {
         block_on(self.async_client.query_aggregate(
             policy,
@@ -715,19 +697,15 @@ impl Client {
         ))
     }
 
-    /// Execute a query and apply operations to matching records on the server.
-    /// Returns an `ExecuteTask` that can be used to monitor the progress of the
-    /// background job.
+    /// Apply the statement's operations ([`Statement::set_operations`]) to
+    /// every matching record on the server. Returns an `ExecuteTask` that can
+    /// be used to monitor the progress of the background job.
     pub fn query_operate(
         &self,
         write_policy: &WritePolicy,
         statement: Statement,
-        operations: &[Operation],
-    ) -> Result<ExecuteTask> {
-        block_on(
-            self.async_client
-                .query_operate(write_policy, statement, operations),
-        )
+    ) -> Result<Task<ExecuteTask>> {
+        block_on(self.async_client.query_operate(write_policy, statement)).map(Task::new)
     }
 
     /// Apply a user-defined function to records matching the statement filter.
@@ -739,15 +717,15 @@ impl Client {
         statement: Statement,
         package_name: &str,
         function_name: &str,
-        args: Option<&[Value]>,
-    ) -> Result<ExecuteTask> {
+        args: &[Value],
+    ) -> Result<Task<ExecuteTask>> {
         block_on(self.async_client.query_execute_udf(
             write_policy,
             statement,
             package_name,
             function_name,
             args,
-        ))
+        )).map(Task::new)
     }
 
     /// Sets XDR filter for given datacenter name and namespace. The expression filter indicates
@@ -807,6 +785,24 @@ impl Client {
     /// let _ = client.create_index_on_bin(&AdminPolicy::default(), "foo", "bar", "baz",
     ///     "idx_foo_bar_baz", IndexType::Numeric, CollectionIndexType::Default, None);
     /// ```
+    /// Creates a set index (record presence per set; no bin, type, context or
+    /// expression). Requires server 8.1.2+. See the async client's
+    /// `create_set_index`.
+    pub fn create_set_index(
+        &self,
+        policy: &AdminPolicy,
+        namespace: &str,
+        set_name: &str,
+        index_name: &str,
+    ) -> Result<Task<IndexTask>> {
+        block_on(
+            self.async_client
+                .create_set_index(policy, namespace, set_name, index_name),
+        ).map(Task::new)
+    }
+
+    /// Creates a secondary index on a bin, optionally inside a CDT context.
+    /// Blocking wrapper over the async client's `create_index_on_bin`.
     pub fn create_index_on_bin(
         &self,
         policy: &AdminPolicy,
@@ -817,7 +813,7 @@ impl Client {
         index_type: IndexType,
         collection_index_type: CollectionIndexType,
         ctx: Option<&[CdtContext]>,
-    ) -> Result<IndexTask> {
+    ) -> Result<Task<IndexTask>> {
         block_on(self.async_client.create_index_on_bin(
             policy,
             namespace,
@@ -827,7 +823,7 @@ impl Client {
             index_type,
             collection_index_type,
             ctx,
-        ))
+        )).map(Task::new)
     }
 
     /// Create a secondary index using an expression. This asynchronous server call
@@ -857,7 +853,7 @@ impl Client {
         index_type: IndexType,
         collection_index_type: CollectionIndexType,
         expression: &Expression,
-    ) -> Result<IndexTask> {
+    ) -> Result<Task<IndexTask>> {
         block_on(self.async_client.create_index_using_expression(
             policy,
             namespace,
@@ -866,7 +862,7 @@ impl Client {
             index_type,
             collection_index_type,
             expression,
-        ))
+        )).map(Task::new)
     }
 
     /// Delete secondary index.
@@ -876,11 +872,11 @@ impl Client {
         namespace: &str,
         set_name: &str,
         index_name: &str,
-    ) -> Result<DropIndexTask> {
+    ) -> Result<Task<DropIndexTask>> {
         block_on(
             self.async_client
                 .drop_index(policy, namespace, set_name, index_name),
-        )
+        ).map(Task::new)
     }
 
     /// Creates a new user with password and roles. Clear-text password will be hashed using bcrypt
@@ -1071,46 +1067,10 @@ impl Client {
     pub fn metrics(&self) -> aerospike_core::ClusterMetrics {
         self.async_client.metrics()
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Duration;
-
-    /// A BatchStream over a hand-built stream (no server, no items
-    /// needed): the empty stream must terminate immediately and stay
-    /// terminated.
-    #[test]
-    fn batch_stream_over_empty_stream_ends_immediately() {
-        let mut bs = BatchStream {
-            inner: Box::pin(futures::stream::iter(Vec::<(usize, BatchRecord)>::new())),
-        };
-        assert!(bs.next().is_none());
-        assert!(bs.next().is_none());
-    }
-
-    /// The parked-consumer edge case: `next()` must genuinely park (not
-    /// spin) and be woken when the producing side closes the channel.
-    /// Uses an async_channel receiver as the stream — the same channel
-    /// family the real batch executor uses.
-    #[test]
-    fn batch_stream_parked_next_wakes_when_producer_closes() {
-        let (tx, rx) = async_channel::bounded::<(usize, BatchRecord)>(4);
-        let mut bs = BatchStream { inner: Box::pin(rx) };
-
-        let (done_tx, done_rx) = std::sync::mpsc::channel();
-        let consumer = std::thread::spawn(move || {
-            let item = bs.next(); // parks: channel empty, still open
-            let _ = done_tx.send(item.is_none());
-        });
-
-        std::thread::sleep(Duration::from_millis(100));
-        drop(tx); // producer goes away -> channel closes -> stream ends
-        let ended_clean = done_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("parked BatchStream::next was not woken by channel close");
-        assert!(ended_clean, "expected None once the producer closed");
-        consumer.join().unwrap();
+    /// The cluster name reported by the servers, discovered during tend.
+    /// See [`aerospike_core::Client::server_cluster_name`].
+    pub fn server_cluster_name(&self) -> Option<String> {
+        self.async_client.server_cluster_name()
     }
 }

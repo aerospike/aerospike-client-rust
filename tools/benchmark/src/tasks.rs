@@ -47,6 +47,8 @@ pub enum OpType {
     Txn,
 }
 
+// Each variant owns its workload's state; the benchmark holds one per thread.
+#[allow(clippy::large_enum_variant)]
 pub enum TaskType {
     Insert(InsertTask),
     ReadUpdate(ReadUpdateTask),
@@ -298,7 +300,7 @@ impl ReadUpdateTask {
                     key,
                     &udf.package,
                     &udf.function,
-                    Some(&udf.values),
+                    &udf.values,
                 ))
                 .await;
             results.push((status, duration, OpType::Read));
@@ -327,7 +329,7 @@ impl ReadUpdateTask {
         rng: &mut StdRng,
         results: &mut Vec<(Status, Duration, OpType)>,
         batch_ops: &mut Vec<BatchOperation>,
-        _bins_buffer: &mut Vec<Bin>,
+        _bins_buffer: &mut [Bin],
     ) {
         if keys.is_empty() {
             return;
@@ -345,9 +347,8 @@ impl ReadUpdateTask {
                     &self.args.batch_namespaces,
                     batch_ops,
                 );
-                let ops = batch_ops.as_slice();
                 let (status, duration) = self
-                    .timed_execution(self.client.batch(&self.args.batch_policy, ops))
+                    .timed_execution(self.client.batch(&self.args.batch_policy, batch_ops))
                     .await;
                 results.push((status, duration, OpType::Read));
             }
@@ -403,10 +404,9 @@ impl ReadUpdateTask {
                     batch_ops,
                     bins_buffer,
                 );
-                let ops = batch_ops.as_slice();
                 let policy = self.args.batch_policy.clone();
                 let (status, duration) = self
-                    .timed_execution(self.client.batch(&policy, ops))
+                    .timed_execution(self.client.batch(&policy, batch_ops))
                     .await;
                 results.push((status, duration, OpType::Write));
             }
@@ -560,7 +560,7 @@ impl TransactionTask {
                     batch_ops,
                 );
                 let (status, duration) = self
-                    .timed_execution(self.client.batch(&self.args.batch_policy, batch_ops.as_slice()))
+                    .timed_execution(self.client.batch(&self.args.batch_policy, batch_ops))
                     .await;
                 results.push((status, duration, OpType::Read));
             }

@@ -180,7 +180,14 @@ fn filter_in_client_scope_after_reduce() {
 
 #[test]
 fn missing_function_is_an_error() {
-    let err = run("pipeline_nofn", "-- empty package", "no_such_fn", vec![], vec![]).unwrap_err();
+    let err = run(
+        "pipeline_nofn",
+        "-- empty package",
+        "no_such_fn",
+        vec![],
+        vec![],
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("no_such_fn"), "{err}");
 }
 
@@ -190,15 +197,9 @@ fn missing_function_is_an_error() {
 async fn missing_package_is_an_error() {
     let (_input_tx, input_rx) = async_channel::unbounded::<Value>();
     let (output_tx, _output_rx) = async_channel::unbounded();
-    let err = run_aggregate_pipeline(
-        "no_such_package_xyz",
-        "f",
-        vec![],
-        input_rx,
-        output_tx,
-    )
-    .await
-    .unwrap_err();
+    let err = run_aggregate_pipeline("no_such_package_xyz", "f", vec![], input_rx, output_tx)
+        .await
+        .unwrap_err();
     assert!(err.to_string().contains("no_such_package_xyz"), "{err}");
 }
 
@@ -251,8 +252,8 @@ fn value_conversion_round_trip() {
     // without losing their variant.
     for case in [
         Value::Blob(vec![1, 2, 255]),
-        Value::HLL(vec![3, 4, 5]),
-        Value::GeoJSON(r#"{"type":"Point","coordinates":[1.0,2.0]}"#.to_owned()),
+        Value::Hll(vec![3, 4, 5]),
+        Value::GeoJson(r#"{"type":"Point","coordinates":[1.0,2.0]}"#.to_owned()),
     ] {
         let lua_value = value_to_lua(&lua, case.clone()).unwrap();
         assert_eq!(lua_to_value(&lua_value).unwrap(), case, "{case:?}");
@@ -356,7 +357,7 @@ fn bytes_flow_through_the_pipeline() {
 fn geojson_stringifies_in_lua() {
     let lua = new_instance().unwrap();
     let geo = r#"{"type":"Point","coordinates":[1.0,2.0]}"#;
-    let lua_value = value_to_lua(&lua, Value::GeoJSON(geo.to_owned())).unwrap();
+    let lua_value = value_to_lua(&lua, Value::GeoJson(geo.to_owned())).unwrap();
     lua.globals().set("g", lua_value).unwrap();
     let text: String = lua.load("return tostring(g)").eval().unwrap();
     assert_eq!(text, geo);
@@ -379,7 +380,10 @@ fn lua_tables_convert_by_shape() {
 
     // Empty tables become empty maps.
     let empty: mlua::Value = lua.load("return {}").eval().unwrap();
-    assert_eq!(lua_to_value(&empty).unwrap(), Value::HashMap(HashMap::new()));
+    assert_eq!(
+        lua_to_value(&empty).unwrap(),
+        Value::HashMap(HashMap::new())
+    );
 }
 
 #[test]

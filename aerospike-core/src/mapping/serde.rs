@@ -14,7 +14,9 @@
 
 //! serde ↔ [`Value`] bridge (the `serde_json::value` analog): serialize
 //! any `T: Serialize` into a [`Value`] tree and deserialize any
-//! `T: Deserialize` back out. This powers the `#[record(serde)]` engine
+//! `T: Deserialize` back out.
+//!
+//! This powers the `#[record(serde)]` engine
 //! of the `RecordMapper` derive and is usable standalone.
 //!
 //! Encoding notes (differences from the bespoke derive engine — the
@@ -101,7 +103,7 @@ pub fn from_bins<T: DeserializeOwned>(bins: &IndexMap<String, Value>) -> Result<
 /// Serde builds its own diagnostics through `ser::Error` / `de::Error`, so this
 /// is a plain carrier for the message it hands over. Nothing here corresponds to
 /// a server result code: a value that cannot be represented as a
-/// [`Value`](crate::Value) fails before any command is sent.
+/// [`Value`] fails before any command is sent.
 #[derive(Debug)]
 pub struct SerdeError(String);
 
@@ -247,13 +249,13 @@ impl ser::Serializer for ValueSerializer {
     ) -> std::result::Result<Value, SerdeError> {
         match name {
             GEO_JSON_TOKEN => match value.serialize(ValueSerializer)? {
-                Value::String(s) => Ok(Value::GeoJSON(s)),
+                Value::String(s) => Ok(Value::GeoJson(s)),
                 other => Err(SerdeError(format!(
                     "the GeoJSON helper expects a string, got {other:?}"
                 ))),
             },
             HLL_TOKEN => match value.serialize(ValueSerializer)? {
-                Value::Blob(bytes) => Ok(Value::HLL(bytes)),
+                Value::Blob(bytes) => Ok(Value::Hll(bytes)),
                 other => Err(SerdeError(format!(
                     "the HLL helper expects bytes, got {other:?}"
                 ))),
@@ -523,8 +525,8 @@ impl<'de> de::Deserializer<'de> for ValueDeserializer<'de> {
             Value::Int(n) => visitor.visit_i64(*n),
             Value::Float(FloatValue::F32(bits)) => visitor.visit_f32(f32::from_bits(*bits)),
             Value::Float(FloatValue::F64(bits)) => visitor.visit_f64(f64::from_bits(*bits)),
-            Value::String(s) | Value::GeoJSON(s) => visitor.visit_borrowed_str(s),
-            Value::Blob(bytes) | Value::HLL(bytes) => visitor.visit_borrowed_bytes(bytes),
+            Value::String(s) | Value::GeoJson(s) => visitor.visit_borrowed_str(s),
+            Value::Blob(bytes) | Value::Hll(bytes) => visitor.visit_borrowed_bytes(bytes),
             Value::List(items) => visitor.visit_seq(SeqDeserializer { iter: items.iter() }),
             map @ (Value::HashMap(_) | Value::OrderedMap(_) | Value::SortedMap(_)) => visitor
                 .visit_map(MapDeserializer {

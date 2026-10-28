@@ -146,10 +146,10 @@ async fn nearest_shoes(client: &Client) -> Vec<i64> {
     let distance = euclidean_squared_distance(&query, vector_bin("embedding".to_string()));
 
     let mut stmt = Statement::new(DEFAULT_NAMESPACE, DEFAULT_SET, Bins::All);
-    stmt.add_filter(Filter::equal("category", "shoes"));
+    stmt.set_filter(Filter::equal("category", "shoes"));
     stmt.set_operations(vec![
         get_bin("id"),
-        read_exp("distance", distance, ExpReadFlags::Default),
+        read_exp("distance", distance, ExpReadFlags::DEFAULT),
     ]);
     stmt.set_order_by("distance", OrderByType::Double, Order::Asc);
     stmt.set_top_k(3);

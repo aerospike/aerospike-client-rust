@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -21,7 +21,6 @@ use std::env;
 use aerospike::CollectionIndexType;
 use aerospike::Task;
 
-use rand;
 use rand::distr::Alphanumeric;
 use rand::RngExt;
 
@@ -54,7 +53,7 @@ lazy_static! {
         env::var("AEROSPIKE_CLEANUP").map(|v| v.trim().eq_ignore_ascii_case("true") || v.trim().eq_ignore_ascii_case("1")).unwrap_or(false);
 }
 
-#[cfg(all(any(feature = "rt-tokio"), not(feature = "rt-async-std")))]
+#[cfg(all(feature = "rt-tokio", not(feature = "rt-async-std")))]
 lazy_static! {
     pub static ref RUNTIME: tokio::runtime::Runtime = {
         use tokio::runtime;
@@ -73,9 +72,7 @@ lazy_static! {
         let mut policy = ClientPolicy::default();
         if let Ok(user) = env::var("AEROSPIKE_USER") {
             let password = env::var("AEROSPIKE_PASSWORD").unwrap_or_default();
-            policy
-                .set_auth_mode(AuthMode::Internal(user, password))
-                .unwrap();
+            policy.set_auth_mode(AuthMode::Internal(user, password));
         }
         policy.cluster_name = AEROSPIKE_CLUSTER.clone();
         policy.use_services_alternate = AEROSPIKE_USE_SERVICES_ALTERNATE.clone();
@@ -89,14 +86,12 @@ lazy_static! {
         let mut policy = ClientPolicy::default();
         if let Ok(user) = env::var("AEROSPIKE_USER") {
             let password = env::var("AEROSPIKE_PASSWORD").unwrap_or_default();
-            policy
-                .set_auth_mode(AuthMode::Internal(user, password))
-                .unwrap();
+            policy.set_auth_mode(AuthMode::Internal(user, password));
             policy.cluster_name = AEROSPIKE_CLUSTER.clone();
         }
-        policy.use_services_alternate = AEROSPIKE_USE_SERVICES_ALTERNATE.clone();
-        if !no_tls() {
-            policy.tls_config = Some(tls_config_no_client_auth());
+        policy.use_services_alternate = *AEROSPIKE_USE_SERVICES_ALTERNATE;
+        if !no_server_tls() {
+            policy.tls_policy = Some(aerospike::TlsPolicy::new(tls_config_no_client_auth()));
         }
         policy
     };
@@ -105,13 +100,25 @@ lazy_static! {
     static ref AEROSPIKE_KEY_FILE: String = env::var("AEROSPIKE_KEY_FILE").unwrap_or_default();
 }
 
+/// True when no TLS server is available at all (CA cert not set).
+/// Use this to skip tests that require any TLS connection.
 #[cfg(feature = "tls")]
-pub fn no_tls() -> bool {
+pub fn no_server_tls() -> bool {
+    AEROSPIKE_CACERT_FILE.is_empty()
+}
+
+/// True when mutual TLS (client certificate auth) is not available.
+/// Use this to skip tests that require the client to present a certificate.
+/// Satisfied only when both AEROSPIKE_CACERT_FILE and AEROSPIKE_KEY_FILE are
+/// set AND the server is started with enable-tls-client-auth: "true".
+/// Auto-activates tls_client_auth the moment shared-workflows gains that flag.
+#[cfg(feature = "tls")]
+pub fn no_mutual_tls() -> bool {
     AEROSPIKE_CACERT_FILE.is_empty() || AEROSPIKE_KEY_FILE.is_empty()
 }
 
 pub fn hosts() -> &'static str {
-    &*AEROSPIKE_HOSTS
+    &AEROSPIKE_HOSTS
 }
 
 #[cfg(feature = "tls")]
@@ -154,20 +161,20 @@ pub fn tls_config_no_client_auth() -> rustls::ClientConfig {
 
 #[cfg(feature = "tls")]
 pub fn tls_cacert_file() -> &'static str {
-    &*AEROSPIKE_CACERT_FILE
+    &AEROSPIKE_CACERT_FILE
 }
 
 #[cfg(feature = "tls")]
 pub fn tls_key_file() -> &'static str {
-    &*AEROSPIKE_KEY_FILE
+    &AEROSPIKE_KEY_FILE
 }
 
 pub fn namespace() -> &'static str {
-    &*AEROSPIKE_NAMESPACE
+    &AEROSPIKE_NAMESPACE
 }
 
 pub fn prop_setname() -> &'static str {
-    &*AEROSPIKE_PROP_SET_NAME
+    &AEROSPIKE_PROP_SET_NAME
 }
 
 pub fn prop_setname_multi() -> String {
@@ -175,7 +182,7 @@ pub fn prop_setname_multi() -> String {
 }
 
 pub fn client_policy() -> &'static ClientPolicy {
-    &*GLOBAL_CLIENT_POLICY
+    &GLOBAL_CLIENT_POLICY
 }
 
 static INDEX_OPS: OnceCell<Mutex<()>> = OnceCell::const_new();
@@ -204,8 +211,7 @@ pub async fn lock_index_ops() -> tokio::sync::MutexGuard<'static, ()> {
 
 async fn list_indexes(client: &Client, namespace: &str) -> Vec<HashMap<String, String>> {
     let node = client
-        .cluster
-        .get_random_node()
+        .random_node()
         .expect("no nodes available");
 
     let cmd = format!("sindex-list:namespace={namespace}");
@@ -251,8 +257,18 @@ pub async fn drop_all_indexes(client: &Client, namespace: &str) {
 /// from tests or tools as well.
 pub async fn cleanup(client: &Client, namespace: &str) {
     drop_all_indexes(client, namespace).await;
+    // Cut off two seconds in the past rather than "now" (`0`). The truncate
+    // runs asynchronously on the server against a fixed last-update-time
+    // cutoff, and a test's first write can land in the same millisecond as
+    // that cutoff and be swept away with the previous run's data — the
+    // `batch_delete_row_shape` flake. Everything older than two seconds is
+    // still everything a previous run left behind.
+    let before_nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos().saturating_sub(2_000_000_000) as i64)
+        .unwrap_or(0);
     match client
-        .truncate(&AdminPolicy::default(), namespace, "", 0)
+        .truncate(&AdminPolicy::default(), namespace, "", before_nanos)
         .await
     {
         Ok(_) => println!("cleanup: truncated namespace {namespace}"),
@@ -260,9 +276,10 @@ pub async fn cleanup(client: &Client, namespace: &str) {
     }
 }
 
-/// Drop every index and truncate the namespace exactly once per test binary,
-/// blocking every caller until it has finished. No-op unless
-/// `AEROSPIKE_CLEANUP` is set.
+/// Once per test binary, before any test touches the server: refuse to run
+/// against a node whose set-name table is nearly full (see
+/// [`check_set_capacity`]), then — only when `AEROSPIKE_CLEANUP` is set — drop
+/// every index and truncate the namespace. Blocks every caller until done.
 ///
 /// Blocking rather than `async` on purpose: the point is that no test proceeds
 /// to write while the truncate is in flight, and an `await` in a cancellable
@@ -270,19 +287,55 @@ pub async fn cleanup(client: &Client, namespace: &str) {
 /// point that hands out a client, so a test cannot reach the server ahead of it.
 pub fn ensure_clean_namespace() {
     SUITE_CLEANUP.call_once(|| {
-        if !*AEROSPIKE_CLEANUP {
-            return;
-        }
-
         // On its own thread: this runs inside a test's runtime, and driving
         // another runtime from a runtime thread panics.
         std::thread::scope(|scope| {
             scope
                 .spawn(block_on_cleanup)
                 .join()
-                .expect("suite cleanup panicked");
+                .expect("suite prelude panicked");
         });
     });
+}
+
+/// The server's set-name table (`AS_SET_MAX_COUNT`), the most a namespace can
+/// ever hold: set names are never freed, not even by a truncate. Override with
+/// `AEROSPIKE_SET_NAME_CAP` to test the guard.
+fn set_name_cap() -> usize {
+    env::var("AEROSPIKE_SET_NAME_CAP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4095)
+}
+
+/// Set names one full run of this suite mints (every test writes into a fresh
+/// random set): ~420 measured on 2026-10-01, rounded up.
+const SET_NAMES_PER_RUN: usize = 500;
+
+/// Fail the whole binary up front, with one message, when the namespace cannot
+/// absorb another run's worth of set names. Without this the table fills
+/// mid-run and every later test fails with `ParameterError` on its first
+/// write, which reads as hundreds of unrelated failures.
+pub async fn check_set_capacity(client: &Client, namespace: &str) {
+    if env::var("AEROSPIKE_IGNORE_SET_CAPACITY").is_ok() {
+        return;
+    }
+    let cmd = format!("sets/{namespace}");
+    let Ok(info) = client.info(&AdminPolicy::default(), &[cmd.as_str()]).await else {
+        return; // not fatal: the tests will report their own connection problems
+    };
+    let used = info
+        .get(&cmd)
+        .map_or(0, |v| v.split(';').filter(|e| !e.trim().is_empty()).count());
+    let cap = set_name_cap();
+    assert!(
+        used + SET_NAMES_PER_RUN <= cap,
+        "namespace `{namespace}` has {used} of {cap} set names in use and a full run mints \
+         about {SET_NAMES_PER_RUN} more. Set names are never freed (a truncate keeps them), so \
+         this run would exhaust the table and every test after that point would fail with \
+         ParameterError on its first write. Recreate the node (or point AEROSPIKE_HOSTS at a \
+         fresh one). Set AEROSPIKE_IGNORE_SET_CAPACITY=1 to run anyway."
+    );
 }
 
 #[cfg(all(feature = "rt-tokio", not(feature = "rt-async-std")))]
@@ -298,18 +351,23 @@ fn block_on_cleanup() {
 /// A client of its own, because the caller's client belongs to the caller's
 /// runtime and its futures cannot be driven from this one.
 async fn cleanup_the_namespace() {
-    let client = Client::new(&GLOBAL_CLIENT_POLICY, &*AEROSPIKE_HOSTS)
-        .await
-        .unwrap_or_else(|e| {
-            panic!(
-                "AEROSPIKE_CLEANUP is set but the namespace could not be cleaned: \
-                 could not connect to AEROSPIKE_HOSTS={}: {}",
-                hosts(),
-                e
-            )
-        });
+    let client = match Client::new(&GLOBAL_CLIENT_POLICY, &*AEROSPIKE_HOSTS).await {
+        Ok(client) => client,
+        Err(e) if *AEROSPIKE_CLEANUP => panic!(
+            "AEROSPIKE_CLEANUP is set but the namespace could not be cleaned: \
+             could not connect to AEROSPIKE_HOSTS={}: {}",
+            hosts(),
+            e
+        ),
+        // No cleanup asked for: let each test report the connection failure
+        // in its own words.
+        Err(_) => return,
+    };
 
-    cleanup(&client, namespace()).await;
+    check_set_capacity(&client, namespace()).await;
+    if *AEROSPIKE_CLEANUP {
+        cleanup(&client, namespace()).await;
+    }
 
     let _ = client.close().await;
 }
@@ -374,14 +432,14 @@ pub fn rand_str(sz: usize) -> String {
 
 pub async fn enterprise_edition() -> bool {
     let client = client().await;
-    let node = client.cluster.get_random_node();
-    if let Err(_) = node {
+    let node = client.random_node();
+    if node.is_err() {
         return false;
     }
 
     let node = node.unwrap();
-    let edition = node.info(&AdminPolicy::default(), &vec!["edition"]).await;
-    if let Err(_) = edition {
+    let edition = node.info(&AdminPolicy::default(), &["edition"]).await;
+    if edition.is_err() {
         return false;
     }
 
@@ -442,7 +500,7 @@ pub fn is_index_not_found(err: &Error) -> bool {
 /// Returns `false` on any communication error so tests that key off this
 /// default to the AP-compatible path.
 pub async fn namespace_is_sc(client: &aerospike::Client, ns: &str) -> bool {
-    let node = match client.cluster.get_random_node() {
+    let node = match client.random_node() {
         Ok(n) => n,
         Err(_) => return false,
     };
@@ -474,12 +532,16 @@ macro_rules! namespace_sc {
 #[derive(Clone, Copy, Debug)]
 pub struct ServerCapabilities {
     pub explicit_record_ttl_allowed: bool,
+    /// Whether the SC namespace allows non-durable ("expunge") deletes on existing
+    /// records. Only meaningful when the namespace is SC; `false` on AP namespaces.
+    pub sc_allow_expunge: bool,
 }
 
 impl ServerCapabilities {
     pub async fn detect(client: &aerospike::Client) -> Self {
         Self {
             explicit_record_ttl_allowed: explicit_record_ttl_probe(client).await,
+            sc_allow_expunge: sc_allow_expunge_probe(client).await,
         }
     }
 }
@@ -548,6 +610,24 @@ async fn explicit_record_ttl_probe(client: &aerospike::Client) -> bool {
     }
 }
 
+/// Reads `strong-consistency-allow-expunge` straight off the server's own
+/// `info namespace/{ns}` output -- it's a config value, not something worth a
+/// synthetic behavioral probe like `explicit_record_ttl_probe`.
+async fn sc_allow_expunge_probe(client: &aerospike::Client) -> bool {
+    let node = match client.random_node() {
+        Ok(n) => n,
+        Err(_) => return false,
+    };
+    let info_key = format!("namespace/{}", namespace());
+    match node.info(&AdminPolicy::default(), &[&info_key]).await {
+        Ok(map) => map
+            .get(&info_key)
+            .map(|info| info.contains("strong-consistency-allow-expunge=true"))
+            .unwrap_or(false),
+        Err(_) => false,
+    }
+}
+
 pub async fn security_enabled() -> bool {
     if !enterprise_edition().await {
         return false;
@@ -555,7 +635,7 @@ pub async fn security_enabled() -> bool {
 
     let client = client().await;
     let roles = client.query_users(&AdminPolicy::default(), None).await;
-    if let Err(_) = roles {
+    if roles.is_err() {
         return false;
     }
 
@@ -583,7 +663,7 @@ end
             &ap,
             udf_body.as_bytes(),
             "test_udf_proptests1.lua",
-            aerospike::UDFLang::Lua,
+            aerospike::UdfLang::Lua,
         )
         .await
         .unwrap();

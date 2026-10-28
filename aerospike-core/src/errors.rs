@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -16,12 +16,11 @@
 //! Error and Result types for the Aerospike client.
 //!
 //! [`Error`] is an opaque struct carrying metadata common to every failure —
-//! a Java-compatible [`result_code`](Error::result_code) (negative for
+//! a numeric [`result_code`](Error::result_code) (negative for
 //! client-side failures, the server [`ResultCode`] value otherwise), the node,
 //! iteration count, in-doubt flag, retry sub-errors, and an optional causal
 //! [`source`](std::error::Error::source) — plus an [`ErrorKind`] describing
-//! the specific failure. This mirrors the Java client's `AerospikeException`
-//! base class + subclasses.
+//! the specific failure.
 //!
 //! # Examples
 //!
@@ -61,16 +60,16 @@
 #![allow(missing_docs)]
 
 use std::fmt;
+use std::sync::LazyLock;
+
+use regex::Regex;
 
 use crate::{ClientResultCode, ResultCode};
-#[cfg(feature = "rt-tokio")]
-use aerospike_rt::task;
 
 /// The specific failure carried by an [`Error`].
 ///
-/// The "subclass" half of the Java `AerospikeException` hierarchy; metadata
-/// common to every failure (result code, node, iteration, in-doubt,
-/// sub-errors, cause) lives on [`Error`] itself.
+/// Metadata common to every failure (result code, node, iteration, in-doubt,
+/// sub-errors, cause) lives on [`Error`] itself; the kind says what went wrong.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ErrorKind {
@@ -85,27 +84,6 @@ pub enum ErrorKind {
         rc: ResultCode,
         /// Extended server-supplied error detail, when attached.
         detail: Option<Box<crate::ServerErrorDetail>>,
-    },
-    /// Per-row error inside a batch response. Internal to the batch parse
-    /// flow; user-visible row outcomes ride on
-    /// [`BatchRecord`](crate::BatchRecord) instead.
-    BatchRow {
-        /// Index of the failing row in the batch request.
-        index: u32,
-        /// The server result code for this row.
-        rc: ResultCode,
-        /// True when this row was the final record of the response stream.
-        last: bool,
-        /// Extended server-supplied detail for this row, when attached.
-        detail: Option<Box<crate::ServerErrorDetail>>,
-    },
-    /// A batch command failed after per-key processing began. Carries every
-    /// [`BatchRecord`](crate::BatchRecord) outcome known to the client
-    /// (successes, per-key errors, and in-doubt marks for unanswered writes),
-    /// mirroring Java's `AerospikeException.BatchRecordArray`.
-    BatchFailed {
-        /// Per-key outcomes in the original request order.
-        records: Vec<crate::BatchRecord>,
     },
     /// Client-side timeout: the deadline elapsed or the retry budget was
     /// exhausted before a response arrived. Server-reported timeouts are
@@ -154,8 +132,6 @@ pub enum ErrorKind {
     },
     /// Untyped client-side error.
     Client,
-    /// Error decoding a Base64-encoded value.
-    Base64(::base64::DecodeError),
     /// Error interpreting a byte sequence as UTF-8.
     InvalidUtf8(::std::str::Utf8Error),
     /// Error during an I/O operation.
@@ -164,11 +140,6 @@ pub enum ErrorKind {
     ParseAddr(::std::net::AddrParseError),
     /// Error parsing a string as an integer.
     ParseInt(::std::num::ParseIntError),
-    /// Error while hashing a password for user authentication.
-    PwHash(::pwhash::error::Error),
-    /// Async runtime error (e.g. task join failure).
-    #[cfg(feature = "rt-tokio")]
-    Async(task::JoinError),
 }
 
 /// Metadata common to every error — the "base class" half of the Java
@@ -214,6 +185,22 @@ impl fmt::Debug for Error {
 // ---------------------------------------------------------------------------
 
 impl Error {
+    /// Mark this error in doubt regardless of the retry-loop rule. For rows a
+    /// command-level failure never answered: the request may have reached the
+    /// server, and the row's copy of the failure must say so.
+    pub(crate) fn force_in_doubt(&mut self) {
+        self.0.in_doubt = true;
+    }
+
+    /// Clear in-doubt on this error and every cause. For a read row's copy of
+    /// a write command's failure: a read can never be in doubt.
+    pub(crate) fn clear_in_doubt(&mut self) {
+        self.0.in_doubt = false;
+        if let Some(s) = &mut self.0.source {
+            s.clear_in_doubt();
+        }
+    }
+
     fn new(kind: ErrorKind, result_code: i32, message: Option<String>) -> Error {
         Error(Box::new(ErrorInner {
             kind,
@@ -230,7 +217,7 @@ impl Error {
     /// Server failure with the given result code, reporting node, and
     /// optional extended error detail.
     #[must_use]
-    pub fn server_error(
+    pub(crate) fn server_error(
         rc: ResultCode,
         node: impl Into<String>,
         detail: Option<Box<crate::ServerErrorDetail>>,
@@ -244,50 +231,63 @@ impl Error {
         e
     }
 
-    /// Per-row batch error (internal to the batch response parse flow).
+    /// Server failure whose text arrived in the response body rather than as
+    /// a result code alone — an info command's `FAIL:<code>:<message>`. The
+    /// message becomes the base message; no node is recorded because info
+    /// commands are not retried across nodes.
     #[must_use]
-    pub(crate) fn batch_row(
-        index: u32,
-        rc: ResultCode,
-        last: bool,
-        node: impl Into<String>,
-        detail: Option<Box<crate::ServerErrorDetail>>,
-    ) -> Error {
-        let mut e = Error::new(
-            ErrorKind::BatchRow {
-                index,
-                rc,
-                last,
-                detail,
-            },
+    pub(crate) fn server_error_with_message(rc: ResultCode, message: impl Into<String>) -> Error {
+        Error::new(
+            ErrorKind::Server { rc, detail: None },
             i32::from(u8::from(rc)),
-            None,
-        );
-        e.0.node = Some(node.into());
-        e
+            Some(message.into()),
+        )
     }
 
-    /// Batch command failure carrying every per-key outcome known to the
-    /// client. `source` is the failure that aborted the batch.
+    /// Server result code with no node and no message: for outcomes the client
+    /// derives itself from a response set (a verify-failure code, a missing
+    /// key re-injected for a batch row, a plan filtered out before it ran).
+    /// The result code's description serves as the message.
     #[must_use]
-    pub fn batch_failed(records: Vec<crate::BatchRecord>, source: Error) -> Error {
-        let mut e = Error::new(
-            ErrorKind::BatchFailed { records },
-            ClientResultCode::BatchFailed.into(),
+    pub(crate) fn server_error_bare(rc: ResultCode) -> Error {
+        Error::new(
+            ErrorKind::Server { rc, detail: None },
+            i32::from(u8::from(rc)),
             None,
-        );
-        e.0.in_doubt = source.in_doubt();
-        e.0.source = Some(Box::new(source));
-        e
+        )
+    }
+
+    /// Failure reported in an info command's response body,
+    /// `ERROR|FAIL[:<code>][:<message>]`, prefixed with the operation that
+    /// issued it. The parsed code is the primary result code; a missing or
+    /// out-of-range code falls back to `ServerError`, and a response that is
+    /// not in the error format is kept whole as the message.
+    #[must_use]
+    pub(crate) fn info_command_failure(context: &str, response: &str) -> Error {
+        static RE: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"^(?i)(fail|error)((:|=)(?P<code>[0-9]+))?((:|=)(?P<msg>.+))?$").unwrap()
+        });
+        let (rc, msg) = match RE.captures(response) {
+            Some(caps) => {
+                let rc = caps
+                    .name("code")
+                    .and_then(|c| c.as_str().parse::<u8>().ok())
+                    .map_or(ResultCode::ServerError, ResultCode::from);
+                let msg = caps.name("msg").map_or(response, |m| m.as_str());
+                (rc, msg)
+            }
+            None => (ResultCode::ServerError, response),
+        };
+        Error::server_error_with_message(rc, format!("{context}: {msg}"))
     }
 
     /// Client-side timeout, not (yet) in-doubt. Write retry loops mark the
     /// error in-doubt via [`set_in_doubt`](Self::set_in_doubt) when at least
-    /// one attempt reached the wire. Uses the Java-compatible `TIMEOUT` (9)
+    /// one attempt reached the wire. Uses the `TIMEOUT` (9)
     /// result code; use [`max_retries_exceeded`](Self::max_retries_exceeded)
     /// when the retry budget (not the clock) ran out.
     #[must_use]
-    pub fn timeout(msg: impl Into<String>) -> Error {
+    pub(crate) fn timeout(msg: impl Into<String>) -> Error {
         Error::new(
             ErrorKind::Timeout,
             i32::from(u8::from(ResultCode::Timeout)),
@@ -296,9 +296,9 @@ impl Error {
     }
 
     /// Retry budget exhausted before the command completed
-    /// (`MAX_RETRIES_EXCEEDED`, Java parity).
+    /// (`MAX_RETRIES_EXCEEDED`).
     #[must_use]
-    pub fn max_retries_exceeded(msg: impl Into<String>) -> Error {
+    pub(crate) fn max_retries_exceeded(msg: impl Into<String>) -> Error {
         Error::new(
             ErrorKind::Timeout,
             ClientResultCode::MaxRetriesExceeded.into(),
@@ -310,7 +310,7 @@ impl Error {
     /// the error in-doubt via [`set_in_doubt`](Self::set_in_doubt) when at
     /// least one attempt reached the wire.
     #[must_use]
-    pub fn connection(msg: impl Into<String>) -> Error {
+    pub(crate) fn connection(msg: impl Into<String>) -> Error {
         Error::new(
             ErrorKind::Connection,
             ClientResultCode::ServerNotAvailable.into(),
@@ -320,7 +320,7 @@ impl Error {
 
     /// The connection pool had no ready connection (pacing signal).
     #[must_use]
-    pub fn pool_empty() -> Error {
+    pub(crate) fn pool_empty() -> Error {
         Error::new(
             ErrorKind::ConnectionPoolEmpty,
             ClientResultCode::NoMoreConnections.into(),
@@ -330,7 +330,7 @@ impl Error {
 
     /// Exceeded max. number of connections per node.
     #[must_use]
-    pub fn no_more_connections() -> Error {
+    pub(crate) fn no_more_connections() -> Error {
         Error::new(
             ErrorKind::NoMoreConnections,
             ClientResultCode::NoMoreConnections.into(),
@@ -340,7 +340,7 @@ impl Error {
 
     /// Per-node circuit breaker tripped for `node`.
     #[must_use]
-    pub fn max_error_rate(node: impl Into<String>) -> Error {
+    pub(crate) fn max_error_rate(node: impl Into<String>) -> Error {
         let mut e = Error::new(
             ErrorKind::MaxErrorRate,
             ClientResultCode::MaxErrorRate.into(),
@@ -352,7 +352,7 @@ impl Error {
 
     /// Cluster node is invalid or not currently active.
     #[must_use]
-    pub fn invalid_node(msg: impl Into<String>) -> Error {
+    pub(crate) fn invalid_node(msg: impl Into<String>) -> Error {
         Error::new(
             ErrorKind::InvalidNode,
             ClientResultCode::InvalidNodeError.into(),
@@ -362,7 +362,7 @@ impl Error {
 
     /// Invalid or unknown namespace.
     #[must_use]
-    pub fn invalid_namespace(msg: impl Into<String>) -> Error {
+    pub(crate) fn invalid_namespace(msg: impl Into<String>) -> Error {
         Error::new(
             ErrorKind::InvalidNamespace,
             i32::from(u8::from(ResultCode::InvalidNamespace)),
@@ -370,8 +370,8 @@ impl Error {
         )
     }
 
-    /// Invalid argument passed to a client API (Java parity: the positive
-    /// `PARAMETER_ERROR` code, like Java's client-side validation).
+    /// Invalid argument passed to a client API. Carries the positive
+    /// `PARAMETER_ERROR` code, the same code the server uses for a bad parameter.
     #[must_use]
     pub fn invalid_argument(msg: impl Into<String>) -> Error {
         Error::new(
@@ -383,7 +383,7 @@ impl Error {
 
     /// The client received a server response it could not process.
     #[must_use]
-    pub fn bad_response(msg: impl Into<String>) -> Error {
+    pub(crate) fn bad_response(msg: impl Into<String>) -> Error {
         Error::new(
             ErrorKind::BadResponse,
             ClientResultCode::ParseError.into(),
@@ -393,7 +393,7 @@ impl Error {
 
     /// Parsing a peer string failed.
     #[must_use]
-    pub fn parse_peers(msg: impl Into<String>) -> Error {
+    pub(crate) fn parse_peers(msg: impl Into<String>) -> Error {
         Error::new(
             ErrorKind::ParsePeers,
             ClientResultCode::ParseError.into(),
@@ -403,7 +403,7 @@ impl Error {
 
     /// A UDF returned an error response.
     #[must_use]
-    pub fn udf_bad_response(msg: impl Into<String>) -> Error {
+    pub(crate) fn udf_bad_response(msg: impl Into<String>) -> Error {
         Error::new(
             ErrorKind::UdfBadResponse,
             i32::from(u8::from(ResultCode::UdfBadResponse)),
@@ -414,7 +414,7 @@ impl Error {
     /// A record stream was terminated; `cause` carries the originating error
     /// when one is available.
     #[must_use]
-    pub fn stream_terminated(cause: Option<Error>) -> Error {
+    pub(crate) fn stream_terminated(cause: Option<Error>) -> Error {
         let mut e = Error::new(
             ErrorKind::StreamTerminated,
             ClientResultCode::ScanTerminated.into(),
@@ -426,7 +426,7 @@ impl Error {
 
     /// Transaction commit failure with per-stage records.
     #[must_use]
-    pub fn commit_failed(
+    pub(crate) fn commit_failed(
         error_type: crate::txn::CommitErrorType,
         verify_records: Vec<crate::BatchRecord>,
         roll_records: Vec<crate::BatchRecord>,
@@ -445,6 +445,18 @@ impl Error {
         e.0.in_doubt = in_doubt;
         e.0.source = source.map(Box::new);
         e
+    }
+
+    /// A transaction-level refusal or failure that is not a commit outcome
+    /// (those use [`Error::commit_failed`]), e.g. an abort refused after an
+    /// in-doubt commit failure. Carries `ClientResultCode::TxnFailed`.
+    #[must_use]
+    pub(crate) fn txn_failed(msg: impl Into<String>) -> Error {
+        Error::new(
+            ErrorKind::Client,
+            ClientResultCode::TxnFailed.into(),
+            Some(msg.into()),
+        )
     }
 
     /// Untyped client-side error.
@@ -468,11 +480,11 @@ macro_rules! impl_from {
     };
 }
 
-impl_from!(
-    ::base64::DecodeError,
-    Base64,
-    ClientResultCode::ParseError.into()
-);
+impl From<::base64::DecodeError> for Error {
+    fn from(e: ::base64::DecodeError) -> Error {
+        Error::bad_response(format!("Invalid base64: {e}"))
+    }
+}
 impl_from!(
     ::std::str::Utf8Error,
     InvalidUtf8,
@@ -489,13 +501,19 @@ impl_from!(
     ParseInt,
     ClientResultCode::ParseError.into()
 );
-impl_from!(
-    ::pwhash::error::Error,
-    PwHash,
-    ClientResultCode::SerializeError.into()
-);
-#[cfg(feature = "rt-tokio")]
-impl_from!(task::JoinError, Async, ClientResultCode::ClientError.into());
+impl Error {
+    /// The password hasher failed; wraps its message as a client-side
+    /// serialization error.
+    pub(crate) fn password_hash_failed(e: impl std::fmt::Display) -> Error {
+        Error::new(
+            ErrorKind::Client,
+            ClientResultCode::SerializeError.into(),
+            Some(format!(
+                "Error hashing a password for user authentication: {e}"
+            )),
+        )
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Accessors (the Java "base class" getters)
@@ -508,7 +526,7 @@ impl Error {
         &self.0.kind
     }
 
-    /// Java-compatible numeric result code: the server [`ResultCode`] wire
+    /// Numeric result code: the server [`ResultCode`] wire
     /// value for server failures, a negative [`ClientResultCode`] value for
     /// client-side failures. Uniform across every error.
     #[must_use]
@@ -521,7 +539,7 @@ impl Error {
     /// for failures generated on the client. Drills into the cause chain.
     ///
     /// `None` for server failures and for client-side timeouts (which use
-    /// the server `TIMEOUT` code, matching the Java client — check for those
+    /// the server `TIMEOUT` code — check for those
     /// via [`kind`](Self::kind) / [`ErrorKind::Timeout`]).
     #[must_use]
     pub fn client_result_code(&self) -> Option<ClientResultCode> {
@@ -549,7 +567,7 @@ impl Error {
     }
 
     /// Errors from prior retry attempts of the same command. Empty when no
-    /// retry occurred (Java: `getSubExceptions`).
+    /// retry occurred.
     #[must_use]
     pub fn sub_errors(&self) -> &[Error] {
         &self.0.sub_errors
@@ -560,11 +578,9 @@ impl Error {
     /// [`std::error::Error::source`] also exposes the chain, but as
     /// `&dyn Error`, so reading the cause's [`kind`](Self::kind) or
     /// [`result_code`](Self::result_code) through it needs a downcast. This is
-    /// the same link, typed: an aggregate
-    /// [`ErrorKind::BatchFailed`](ErrorKind::BatchFailed) reports the
-    /// `BATCH_FAILED` code (Java `AerospikeException.BatchRecordArray` parity)
-    /// and this reaches the underlying timeout or server failure without
-    /// parsing the message.
+    /// the same link, typed: a retry-decorated error reports
+    /// `MAX_RETRIES_EXCEEDED` on top, and this reaches the underlying timeout
+    /// or server failure without parsing the message.
     ///
     /// Only the direct cause; walk it repeatedly for the whole chain. Returns
     /// `None` for causes that are not this crate's errors (an `io::Error`
@@ -576,24 +592,18 @@ impl Error {
     }
 
     /// The message without the metadata decoration that [`fmt::Display`]
-    /// adds (Java: `getBaseMessage`).
+    /// adds.
     #[must_use]
     pub fn base_message(&self) -> String {
         let i = &*self.0;
         match &i.kind {
             ErrorKind::Server { rc, detail } => {
-                let mut s = format!("Server error: {rc:?}");
+                let mut s = i.message.clone().unwrap_or_else(|| rc.to_string());
                 if let Some(d) = detail {
                     use std::fmt::Write as _;
                     let _ = write!(s, ", Detail: {d}");
                 }
                 s
-            }
-            ErrorKind::BatchRow { index, rc, .. } => {
-                format!("Batch row error: index {index}, {rc:?}")
-            }
-            ErrorKind::BatchFailed { records } => {
-                format!("Batch failed ({} records)", records.len())
             }
             ErrorKind::Timeout => format!(
                 "Client Timeout: {}",
@@ -627,35 +637,35 @@ impl Error {
                 "Bad Server Response: {}",
                 i.message.as_deref().unwrap_or_default()
             ),
-            ErrorKind::UdfBadResponse => format!(
-                "UDF Bad Response: {}",
-                i.message.as_deref().unwrap_or_default()
-            ),
+            // The FAILURE text is the server's message, shown bare like a
+            // server error's; the result code already says it came from a UDF.
+            ErrorKind::UdfBadResponse => i
+                .message
+                .clone()
+                .unwrap_or_else(|| ResultCode::UdfBadResponse.to_string()),
             ErrorKind::StreamTerminated => "Record stream was terminated".into(),
             ErrorKind::Commit { error_type, .. } => {
                 format!("Commit failed: {error_type}")
             }
-            ErrorKind::Base64(e) => format!("Error decoding Base64 encoded value: {e}"),
             ErrorKind::InvalidUtf8(e) => {
                 format!("Error interpreting a sequence of u8 as a UTF-8 encoded string: {e}")
             }
             ErrorKind::Io(e) => format!("Error during an I/O operation: {e}"),
             ErrorKind::ParseAddr(e) => format!("Error parsing an IP or socket address: {e}"),
             ErrorKind::ParseInt(e) => format!("Error parsing an integer: {e}"),
-            ErrorKind::PwHash(e) => {
-                format!("Error returned while hashing a password for user authentication: {e}")
-            }
-            #[cfg(feature = "rt-tokio")]
-            ErrorKind::Async(e) => format!("Async runtime error: {e}"),
             // Java `getBaseMessage` contract: the explicit message, else the
             // result code's descriptive string.
-            _ => i.message.clone().unwrap_or_else(|| {
-                if i.result_code < 0 {
-                    ClientResultCode::from(i.result_code).into_string()
-                } else {
-                    ResultCode::from(i.result_code as u8).into_string()
-                }
-            }),
+            _ => i.message.clone().unwrap_or_else(|| self.code_string()),
+        }
+    }
+
+    /// The result code's descriptive string, server or client side.
+    fn code_string(&self) -> String {
+        let code = self.0.result_code;
+        if code < 0 {
+            ClientResultCode::from(code).into_string()
+        } else {
+            ResultCode::from(code as u8).into_string()
         }
     }
 
@@ -664,23 +674,47 @@ impl Error {
     #[must_use]
     pub fn server_result_code(&self) -> Option<ResultCode> {
         match &self.0.kind {
-            ErrorKind::Server { rc, .. } | ErrorKind::BatchRow { rc, .. } => Some(*rc),
+            ErrorKind::Server { rc, .. } => Some(*rc),
             _ => self.0.source.as_ref().and_then(|s| s.server_result_code()),
         }
+    }
+
+    /// True when this error, or any cause in its chain, carries one of the
+    /// given server result codes. Unlike
+    /// [`server_result_code`](Self::server_result_code), which reports the
+    /// first server code it meets, this keeps walking, so a retry-decorated
+    /// error whose root was `KeyBusy` still matches `KeyBusy`.
+    #[must_use]
+    pub fn matches(&self, codes: &[ResultCode]) -> bool {
+        let own = match &self.0.kind {
+            ErrorKind::Server { rc, .. } => codes.contains(rc),
+            _ => false,
+        };
+        own || self.0.source.as_ref().is_some_and(|s| s.matches(codes))
+    }
+
+    /// True when this error, or any cause in its chain, carries one of the
+    /// given client-side result codes. See [`matches`](Self::matches).
+    #[must_use]
+    pub fn matches_client(&self, codes: &[ClientResultCode]) -> bool {
+        let own =
+            self.0.result_code < 0 && codes.contains(&ClientResultCode::from(self.0.result_code));
+        own || self
+            .0
+            .source
+            .as_ref()
+            .is_some_and(|s| s.matches_client(codes))
     }
 
     /// Returns the extended server-supplied error detail (subcode, message,
     /// expression trace), if the server attached one. Requires
     /// [`BasePolicy::error_detail_verbosity`](crate::policy::BasePolicy::error_detail_verbosity)
-    /// greater than zero and server version 8.1.3+. Drills into the cause
+    /// greater than zero and server version 8.2.0+. Drills into the cause
     /// chain so checks still work after retry decoration.
     #[must_use]
     pub fn server_error_detail(&self) -> Option<&crate::ServerErrorDetail> {
         match &self.0.kind {
             ErrorKind::Server {
-                detail: Some(d), ..
-            }
-            | ErrorKind::BatchRow {
                 detail: Some(d), ..
             } => Some(d),
             _ => self.0.source.as_ref().and_then(|s| s.server_error_detail()),
@@ -738,11 +772,11 @@ impl Error {
     /// the pool. Client-side errors and the `SCAN_ABORT` / `QUERY_ABORTED`
     /// server codes require the socket to be discarded (it may still have
     /// stream bytes pending); client timeouts keep the socket for background
-    /// recovery (Java: `AerospikeException.keepConnection`).
+    /// recovery.
     #[must_use]
-    pub fn keep_connection(&self) -> bool {
+    pub(crate) fn keep_connection(&self) -> bool {
         match &self.0.kind {
-            ErrorKind::Server { rc, .. } | ErrorKind::BatchRow { rc, .. } => {
+            ErrorKind::Server { rc, .. } => {
                 !matches!(rc, ResultCode::ScanAbort | ResultCode::QueryAborted)
             }
             ErrorKind::Timeout => true,
@@ -752,7 +786,7 @@ impl Error {
 
     /// True when this error is the connection-pool pacing signal.
     #[must_use]
-    pub fn is_pool_empty(&self) -> bool {
+    pub(crate) fn is_pool_empty(&self) -> bool {
         matches!(self.0.kind, ErrorKind::ConnectionPoolEmpty)
     }
 }
@@ -781,7 +815,7 @@ impl Error {
 
     /// Make `outer` the primary error with `self` as its (deepest) cause.
     #[must_use]
-    pub fn wrap(self, mut outer: Error) -> Error {
+    pub(crate) fn wrap(self, mut outer: Error) -> Error {
         outer.append_source(self);
         outer
     }
@@ -789,7 +823,7 @@ impl Error {
     /// Chain `cause` as the underlying cause of this error. If `cause` is
     /// `None`, returns `self` unchanged.
     #[must_use]
-    pub fn chain_cause(mut self, cause: Option<Error>) -> Error {
+    pub(crate) fn chain_cause(mut self, cause: Option<Error>) -> Error {
         if let Some(c) = cause {
             self.append_source(c);
         }
@@ -798,7 +832,7 @@ impl Error {
 
     /// Set the reporting node, when not already known.
     #[must_use]
-    pub fn with_node(mut self, node: impl Into<String>) -> Error {
+    pub(crate) fn with_node(mut self, node: impl Into<String>) -> Error {
         if self.0.node.is_none() {
             self.0.node = Some(node.into());
         }
@@ -806,9 +840,9 @@ impl Error {
     }
 
     /// Attach retry context: iteration count, last node attempted, and the
-    /// errors of prior attempts (Java: `setIteration` / `setSubExceptions`).
+    /// errors of prior attempts.
     #[must_use]
-    pub fn with_retry_context(
+    pub(crate) fn with_retry_context(
         mut self,
         iterations: u32,
         node: Option<&str>,
@@ -830,7 +864,7 @@ impl Error {
     /// Walks the cause chain, so it works whether it is applied to the naked
     /// terminal error or after retry context / exit-timeout wrapping.
     #[must_use]
-    pub fn set_in_doubt(mut self, is_write: bool, commands_sent: u32) -> Self {
+    pub(crate) fn set_in_doubt(mut self, is_write: bool, commands_sent: u32) -> Self {
         self.mark_in_doubt(is_write, commands_sent);
         self
     }
@@ -841,14 +875,14 @@ impl Error {
             return;
         }
         let eligible = match &self.0.kind {
-            ErrorKind::Server { rc, .. } | ErrorKind::BatchRow { rc, .. } => {
+            ErrorKind::Server { rc, .. } => {
                 commands_sent > 1 || (commands_sent == 1 && matches!(rc, ResultCode::Timeout))
             }
-            // Client-side timeouts / connection failures on a write command
-            // where at least one command reached the wire are always
-            // in-doubt: the request may have been applied without a response.
-            ErrorKind::Timeout | ErrorKind::Connection => commands_sent >= 1,
-            _ => false,
+            // Any client-side failure on a write command after at least one
+            // attempt reached the wire is in doubt (the Go rule): the request
+            // may have been applied without a readable response, whatever
+            // stopped the client from reading it.
+            _ => commands_sent >= 1,
         };
         if eligible {
             self.0.in_doubt = true;
@@ -863,10 +897,122 @@ impl Error {
 // Display / std::error::Error
 // ---------------------------------------------------------------------------
 
+/// Field-by-field clone. `Io` rebuilds its `std::io::Error` from the kind
+/// and text, since that type is not `Clone`; everything else copies as is.
+impl Clone for Error {
+    fn clone(&self) -> Self {
+        let i = &*self.0;
+        let kind = match &i.kind {
+            ErrorKind::Server { rc, detail } => ErrorKind::Server {
+                rc: *rc,
+                detail: detail.clone(),
+            },
+            ErrorKind::Commit {
+                error_type,
+                verify_records,
+                roll_records,
+            } => ErrorKind::Commit {
+                error_type: error_type.clone(),
+                verify_records: verify_records.clone(),
+                roll_records: roll_records.clone(),
+            },
+            ErrorKind::Timeout => ErrorKind::Timeout,
+            ErrorKind::Connection => ErrorKind::Connection,
+            ErrorKind::ConnectionPoolEmpty => ErrorKind::ConnectionPoolEmpty,
+            ErrorKind::NoMoreConnections => ErrorKind::NoMoreConnections,
+            ErrorKind::MaxErrorRate => ErrorKind::MaxErrorRate,
+            ErrorKind::InvalidNode => ErrorKind::InvalidNode,
+            ErrorKind::InvalidNamespace => ErrorKind::InvalidNamespace,
+            ErrorKind::InvalidArgument => ErrorKind::InvalidArgument,
+            ErrorKind::BadResponse => ErrorKind::BadResponse,
+            ErrorKind::ParsePeers => ErrorKind::ParsePeers,
+            ErrorKind::UdfBadResponse => ErrorKind::UdfBadResponse,
+            ErrorKind::StreamTerminated => ErrorKind::StreamTerminated,
+            ErrorKind::Client => ErrorKind::Client,
+            ErrorKind::InvalidUtf8(e) => ErrorKind::InvalidUtf8(*e),
+            ErrorKind::Io(e) => ErrorKind::Io(std::io::Error::new(e.kind(), e.to_string())),
+            ErrorKind::ParseAddr(e) => ErrorKind::ParseAddr(e.clone()),
+            ErrorKind::ParseInt(e) => ErrorKind::ParseInt(e.clone()),
+        };
+        let message = i.message.clone();
+        Error(Box::new(ErrorInner {
+            kind,
+            result_code: i.result_code,
+            message,
+            node: i.node.clone(),
+            iteration: i.iteration,
+            in_doubt: i.in_doubt,
+            sub_errors: i.sub_errors.clone(),
+            source: i.source.clone(),
+        }))
+    }
+}
+
+impl ErrorKind {
+    /// The variant's name, without its payload: `"Server"`, `"Timeout"`, …
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            ErrorKind::Server { .. } => "Server",
+            ErrorKind::Timeout => "Timeout",
+            ErrorKind::Connection => "Connection",
+            ErrorKind::ConnectionPoolEmpty => "ConnectionPoolEmpty",
+            ErrorKind::NoMoreConnections => "NoMoreConnections",
+            ErrorKind::MaxErrorRate => "MaxErrorRate",
+            ErrorKind::InvalidNode => "InvalidNode",
+            ErrorKind::InvalidNamespace => "InvalidNamespace",
+            ErrorKind::InvalidArgument => "InvalidArgument",
+            ErrorKind::BadResponse => "BadResponse",
+            ErrorKind::ParsePeers => "ParsePeers",
+            ErrorKind::UdfBadResponse => "UdfBadResponse",
+            ErrorKind::StreamTerminated => "StreamTerminated",
+            ErrorKind::Commit { .. } => "Commit",
+            ErrorKind::Client => "Client",
+            ErrorKind::InvalidUtf8(_) => "InvalidUtf8",
+            ErrorKind::Io(_) => "Io",
+            ErrorKind::ParseAddr(_) => "ParseAddr",
+            ErrorKind::ParseInt(_) => "ParseInt",
+        }
+    }
+}
+
+/// Serializes the error as a structured record rather than its `Display`
+/// text, so a consumer can dispatch on it: `kind` (the variant name),
+/// `result_code`, `message` (the base message, no metadata), `node`,
+/// `iteration`, `in_doubt`, `server_error_detail` (subcode, message, trace, when
+/// the server sent any), `sub_errors` (earlier attempts) and `source` (the
+/// cause), the last two recursively in the same shape.
+#[cfg(feature = "serialization")]
+impl serde::Serialize for Error {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let i = &*self.0;
+        let detail = match &i.kind {
+            ErrorKind::Server { detail, .. } => detail.as_deref(),
+            _ => None,
+        };
+        let mut e = serializer.serialize_struct("Error", 9)?;
+        e.serialize_field("kind", i.kind.name())?;
+        e.serialize_field("result_code", &i.result_code)?;
+        e.serialize_field("message", &self.base_message())?;
+        e.serialize_field("node", &i.node)?;
+        e.serialize_field("iteration", &i.iteration)?;
+        e.serialize_field("in_doubt", &i.in_doubt)?;
+        e.serialize_field("server_error_detail", &detail)?;
+        e.serialize_field("sub_errors", &i.sub_errors)?;
+        e.serialize_field("source", &i.source)?;
+        e.end()
+    }
+}
+
 impl fmt::Display for Error {
-    /// Uniform, Java-style format:
+    /// Uniform format:
     /// `Error <code>[, SubCode: N][, iter=N][, In Doubt: true][, node=X]: <base message>`
-    /// followed by one indented line per sub-error and the cause chain.
+    /// followed by a `sub-errors:` block (one indented line per prior attempt)
+    /// and the cause chain.
     ///
     /// The subcode is rendered here, beside the result code, rather than folded
     /// into the server's message — the `(result code, subcode)` pair is the
@@ -877,6 +1023,12 @@ impl fmt::Display for Error {
         write!(f, "Error {}", i.result_code)?;
         if self.sub_code() != crate::server_error::sub_code::NONE {
             write!(f, ", SubCode: {}", self.sub_code())?;
+            if let Some(name) = self
+                .server_result_code()
+                .and_then(|rc| crate::server_error::sub_code::name(rc, self.sub_code()))
+            {
+                write!(f, " ({name})")?;
+            }
         }
         if let Some(it) = i.iteration {
             write!(f, ", iter={it}")?;
@@ -904,14 +1056,10 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match &self.0.kind {
-            ErrorKind::Base64(e) => Some(e),
             ErrorKind::InvalidUtf8(e) => Some(e),
             ErrorKind::Io(e) => Some(e),
             ErrorKind::ParseAddr(e) => Some(e),
             ErrorKind::ParseInt(e) => Some(e),
-            ErrorKind::PwHash(e) => Some(e),
-            #[cfg(feature = "rt-tokio")]
-            ErrorKind::Async(e) => Some(e),
             _ => self
                 .0
                 .source
@@ -973,10 +1121,6 @@ mod tests {
             Error::client_error("x").result_code(),
             i32::from(ClientResultCode::ClientError)
         );
-        assert_eq!(
-            Error::batch_failed(vec![], Error::timeout("t")).result_code(),
-            i32::from(ClientResultCode::BatchFailed)
-        );
     }
 
     #[test]
@@ -989,10 +1133,6 @@ mod tests {
         assert_eq!(
             Error::connection("c").client_result_code(),
             Some(ClientResultCode::ServerNotAvailable)
-        );
-        assert_eq!(
-            Error::batch_failed(vec![], Error::timeout("t")).client_result_code(),
-            Some(ClientResultCode::BatchFailed)
         );
         // Server failures and client timeouts (Java TIMEOUT=9) report None.
         assert_eq!(detailed().client_result_code(), None);
@@ -1026,6 +1166,59 @@ mod tests {
             Error::max_error_rate("n").base_message(),
             "Max error rate exceeded for node n; backing off"
         );
+    }
+
+    #[test]
+    fn server_base_message_is_the_human_string() {
+        let err = Error::server_error(ResultCode::KeyExistsError, "BB9051616AC4202", None);
+        assert_eq!(err.base_message(), "Key already exists");
+        assert_eq!(
+            err.to_string(),
+            "Error 5, node=BB9051616AC4202: Key already exists"
+        );
+    }
+
+    #[test]
+    fn udf_base_message_is_the_failure_text() {
+        let failure = "/opt/aerospike/usr/udf/lua/example.lua:3: bad argument";
+        let err = Error::udf_bad_response(failure);
+        assert_eq!(err.base_message(), failure);
+        assert_eq!(err.to_string(), format!("Error 100: {failure}"));
+    }
+
+    #[test]
+    fn info_command_failure_keeps_the_server_code_and_text() {
+        let err = Error::info_command_failure(
+            "Create index failed",
+            "FAIL:200:'idx' already exists with different definition",
+        );
+        assert!(matches!(err.kind(), ErrorKind::Server { .. }));
+        assert_eq!(err.result_code(), 200);
+        assert_eq!(err.server_result_code(), Some(ResultCode::IndexFound));
+        assert_eq!(
+            err.base_message(),
+            "Create index failed: 'idx' already exists with different definition"
+        );
+        assert_eq!(err.node(), None);
+        assert_eq!(
+            err.to_string(),
+            "Error 200: Create index failed: 'idx' already exists with different definition"
+        );
+    }
+
+    #[test]
+    fn info_command_failure_tolerates_odd_responses() {
+        // No code: the text is the message under the generic server code.
+        let err = Error::info_command_failure("Drop index failed", "ERROR:no such index");
+        assert_eq!(err.server_result_code(), Some(ResultCode::ServerError));
+        assert_eq!(err.base_message(), "Drop index failed: no such index");
+        // A code outside u8 must not panic; it degrades to the generic code.
+        let err = Error::info_command_failure("Truncate failed", "FAIL:300:bad");
+        assert_eq!(err.server_result_code(), Some(ResultCode::ServerError));
+        assert_eq!(err.base_message(), "Truncate failed: bad");
+        // Not in the error format at all: kept whole.
+        let err = Error::info_command_failure("Truncate failed", "unexpected");
+        assert_eq!(err.base_message(), "Truncate failed: unexpected");
     }
 
     #[test]
@@ -1131,6 +1324,68 @@ mod tests {
     }
 
     #[test]
+    fn any_client_side_failure_after_a_send_is_in_doubt() {
+        // Go's rule: once a write reached the wire, a failure the client
+        // produced itself (here: an unreadable response) leaves the write in
+        // doubt; before the first send nothing is.
+        assert!(Error::bad_response("truncated").set_in_doubt(true, 1).in_doubt());
+        assert!(Error::pool_empty().set_in_doubt(true, 2).in_doubt());
+        assert!(!Error::bad_response("truncated").set_in_doubt(true, 0).in_doubt());
+        // A definitive server answer is not in doubt after one send.
+        assert!(!Error::server_error(ResultCode::KeyNotFoundError, "n", None)
+            .set_in_doubt(true, 1)
+            .in_doubt());
+    }
+
+    #[test]
+    fn matches_walks_the_whole_chain() {
+        let root = Error::server_error(ResultCode::KeyBusy, "A1: 10.0.0.1:3000", None);
+        let outer = root.wrap(Error::max_retries_exceeded("Timeout after 3 tries"));
+
+        // The first server code in the chain is KeyBusy; a second, different
+        // server code deeper down must still be found.
+        assert!(outer.matches(&[ResultCode::KeyBusy]));
+        assert!(outer.matches(&[ResultCode::Timeout, ResultCode::KeyBusy]));
+        assert!(!outer.matches(&[ResultCode::KeyNotFoundError]));
+        assert!(!outer.matches(&[]));
+        assert!(outer.matches_client(&[ClientResultCode::MaxRetriesExceeded]));
+        assert!(!outer.matches_client(&[ClientResultCode::ParseError]));
+
+        let two_deep = Error::server_error(ResultCode::DeviceOverload, "A1", None)
+            .wrap(Error::server_error(ResultCode::Timeout, "A1", None))
+            .wrap(Error::client_error("gave up"));
+        assert_eq!(two_deep.server_result_code(), Some(ResultCode::Timeout));
+        assert!(
+            two_deep.matches(&[ResultCode::DeviceOverload]),
+            "{two_deep}"
+        );
+    }
+
+    #[test]
+    fn display_names_a_known_subcode() {
+        let detail = crate::ServerErrorDetail {
+            sub_code: crate::server_error::sub_code::OPNOT_CDT_INDEX_OUT_OF_BOUNDS,
+            message: String::new(),
+            exp_trace: None,
+        };
+        let err = Error::server_error(ResultCode::OpNotApplicable, "A1", Some(Box::new(detail)));
+        let s = err.to_string();
+        assert!(s.contains(", SubCode: 1 (OPNOT_CDT_INDEX_OUT_OF_BOUNDS)"), "{s}");
+
+        let detail = crate::ServerErrorDetail {
+            sub_code: 77,
+            message: String::new(),
+            exp_trace: None,
+        };
+        let err = Error::server_error(ResultCode::FilteredOut, "A1", Some(Box::new(detail)));
+        let s = err.to_string();
+        assert!(
+            s.contains(", SubCode: 77,") || s.ends_with("SubCode: 77"),
+            "unknown subcode stays bare: {s}"
+        );
+    }
+
+    #[test]
     fn retry_exhaustion_chain_is_in_doubt() {
         // The exact shape single_command builds on retry exit with
         // max_retries=0: last_err.wrap(exit_err) makes the exit error primary
@@ -1218,39 +1473,22 @@ mod tests {
         .keep_connection());
     }
 
-    // ---- batch partial results (Java BatchRecordArray parity) ----
-
-    #[test]
-    fn batch_failed_carries_records_and_cause() {
-        let key = crate::Key::new("ns", "set", crate::Value::from("k")).unwrap();
-        let mut rec = crate::BatchRecord::new(key, true);
-        rec.in_doubt = true;
-        let cause = Error::timeout("Timeout after 2 tries").set_in_doubt(true, 1);
-
-        let err = Error::batch_failed(vec![rec], cause);
-        assert_eq!(err.result_code(), i32::from(ClientResultCode::BatchFailed));
-        assert!(err.in_doubt(), "batch failure inherits cause in-doubt");
-        match err.kind() {
-            ErrorKind::BatchFailed { records } => {
-                assert_eq!(records.len(), 1);
-                assert!(records[0].in_doubt);
-            }
-            other => panic!("expected BatchFailed, got {other:?}"),
-        }
-        // Cause chain reachable via std::error::Error.
-        assert!(std::error::Error::source(&err).is_some());
-    }
+    // ---- cause chain ----
 
     #[test]
     fn cause_reaches_the_underlying_failure_typed() {
-        // What a batch failure looks like: BATCH_FAILED on top (Java
-        // BatchRecordArray parity), the real cause one link down.
+        // What a failed command looks like after retries: MAX_RETRIES_EXCEEDED
+        // on top, the real cause one link down.
         let inner = Error::timeout("Timeout reading from the network connection");
-        let middle = Error::max_retries_exceeded("Timeout after 1 tries").chain_cause(Some(inner));
-        let err = Error::batch_failed(vec![], middle.set_in_doubt(true, 1));
+        let err = Error::max_retries_exceeded("Timeout after 1 tries")
+            .chain_cause(Some(inner))
+            .set_in_doubt(true, 1);
 
-        assert_eq!(err.result_code(), i32::from(ClientResultCode::BatchFailed));
-        assert!(err.in_doubt(), "in-doubt is inherited from the cause");
+        assert_eq!(
+            err.result_code(),
+            i32::from(ClientResultCode::MaxRetriesExceeded)
+        );
+        assert!(err.in_doubt());
 
         // The timeout is reachable without parsing the message.
         let timeout_code = i32::from(u8::from(ResultCode::Timeout));
@@ -1260,13 +1498,7 @@ mod tests {
             codes.push(e.result_code());
             link = e.cause();
         }
-        assert_eq!(
-            codes,
-            vec![
-                i32::from(ClientResultCode::MaxRetriesExceeded),
-                timeout_code
-            ]
-        );
+        assert_eq!(codes, vec![timeout_code]);
 
         // A leaf error has no cause.
         assert!(Error::timeout("t").cause().is_none());
@@ -1277,6 +1509,5 @@ mod tests {
         // is_write == false: nothing could have been applied.
         let err = Error::timeout("Timeout").set_in_doubt(false, 3);
         assert!(!err.in_doubt());
-        assert!(!Error::batch_failed(vec![], err).in_doubt());
     }
 }

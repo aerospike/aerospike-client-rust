@@ -1,3 +1,18 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 //! Stream UDF aggregation: run a map/reduce Lua UDF over a query, with the
 //! server computing per-node partials and the client combining them in an
 //! embedded Lua interpreter (requires the `lua` cargo feature).
@@ -9,7 +24,7 @@ use std::env;
 
 use aerospike::{as_bin, as_key, as_val};
 use aerospike::{
-    AdminPolicy, Bins, Client, ClientPolicy, QueryPolicy, Statement, Task, UDFLang, Value,
+    AdminPolicy, Bins, Client, ClientPolicy, QueryPolicy, Statement, Task, UdfLang, Value,
     WritePolicy,
 };
 use futures::StreamExt;
@@ -77,7 +92,7 @@ pub async fn run() {
             &AdminPolicy::default(),
             UDF.as_bytes(),
             "example_aggregate.lua",
-            UDFLang::Lua,
+            UdfLang::Lua,
         )
         .await
         .unwrap();
@@ -105,7 +120,7 @@ pub async fn run() {
             stmt,
             "example_aggregate",
             "sum_single_bin",
-            Some(&[as_val!("score")]),
+            &[as_val!("score")],
         )
         .await
         .unwrap();
@@ -124,7 +139,7 @@ pub async fn run() {
             stmt,
             "example_aggregate",
             "average",
-            Some(&[as_val!("score")]),
+            &[as_val!("score")],
         )
         .await
         .unwrap();

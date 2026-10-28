@@ -100,7 +100,21 @@ impl Version {
 
     /// Server supports CDT string operations (`StringOperation` builders).
     pub fn supports_string_operations(&self) -> bool {
-        self >= &Version::new(8, 1, 3, 0)
+        self >= &Version::new(8, 2, 0, 0)
+    }
+
+    /// Server accepts `INTEGER` as a secondary-index type
+    /// ([`IndexType::Integer`](crate::IndexType::Integer)); older servers
+    /// only know `NUMERIC`.
+    pub fn supports_integer_index(&self) -> bool {
+        self >= &Version::new(8, 2, 0, 0)
+    }
+
+    /// Server creates set indexes through the sindex framework
+    /// (`sindex-create … indextype=set`), see
+    /// [`Client::create_set_index`](crate::Client::create_set_index).
+    pub fn supports_set_index(&self) -> bool {
+        self >= &Version::new(8, 1, 2, 0)
     }
 
     /// Server supports extended error detail (subcode, message, expression
@@ -108,12 +122,13 @@ impl Version {
     /// [`BasePolicy::error_detail_verbosity`](crate::policy::BasePolicy::error_detail_verbosity).
     /// Older servers ignore the request flags.
     pub fn supports_extended_error_detail(&self) -> bool {
-        self >= &Version::new(8, 1, 3, 0)
+        self >= &Version::new(8, 2, 0, 0)
     }
 
-    /// Server accepts server-compiled textual AEL on filter field 43.
+    /// Server accepts server-compiled textual AEL on filter field 43 (`[128, <utf-8 bin>]`),
+    /// from 8.2.0 on.
     pub fn supports_server_compiled_ael(&self) -> bool {
-        self >= &Version::new(8, 1, 3, 0)
+        self >= &Version::new(8, 2, 0, 0)
     }
 
     /// Server supports VECTOR values and expressions (8.2.1).
@@ -129,7 +144,7 @@ impl Version {
 
     /// Server supports two-phase server query selection (field **44** WHERE explain → execute).
     pub fn supports_query_selection(&self) -> bool {
-        self >= &Version::new(8, 1, 3, 0)
+        self >= &Version::new(8, 2, 0, 0)
     }
 }
 
@@ -156,25 +171,26 @@ impl<'a> VersionParser<'a> {
             )));
         }
 
-        // 'm' is a 'Match', and 'as_str()' returns the matching part of the haystack.
-        let (major, minor, patch, build) = RE
-            .captures(self.s)
-            .map(|caps| {
-                (
-                    caps.name("major").unwrap().as_str(),
-                    caps.name("minor").unwrap().as_str(),
-                    caps.name("patch").unwrap().as_str(),
-                    caps.name("build").unwrap().as_str(),
-                )
-            })
-            .unwrap();
-
-        let (major, minor, patch, build) = (
-            major.parse::<u64>().unwrap(),
-            minor.parse::<u64>().unwrap(),
-            patch.parse::<u64>().unwrap(),
-            build.parse::<u64>().unwrap(),
-        );
+        let caps = RE.captures(self.s).ok_or_else(|| {
+            Error::client_error(format!("Could not parse node version string `{}`", self.s))
+        })?;
+        // A component that does not fit in u64 is as unusable as a missing one.
+        let part = |name: &str| -> Result<u64> {
+            caps.name(name)
+                .ok_or_else(|| {
+                    Error::client_error(format!("Could not parse node version string `{}`", self.s))
+                })?
+                .as_str()
+                .parse::<u64>()
+                .map_err(|err| {
+                    Error::client_error(format!(
+                        "Could not parse node version string `{}`: {err}",
+                        self.s
+                    ))
+                })
+        };
+        let (major, minor, patch, build) =
+            (part("major")?, part("minor")?, part("patch")?, part("build")?);
 
         Ok(Version {
             major,
@@ -210,6 +226,18 @@ mod tests {
 
         assert!(!Version::new(8, 2, 0, 99).supports_query_top_k());
         assert!(Version::new(8, 2, 1, 0).supports_query_top_k());
+    }
+
+    #[test]
+    fn oversized_components_are_errors_not_panics() {
+        // Each component is parsed as u64; a longer digit run must fail
+        // the parse, not overflow inside an unwrap.
+        assert!(VersionParser::new("99999999999999999999.1.2.3")
+            .parse()
+            .is_err());
+        assert!(VersionParser::new("1.2.3.99999999999999999999")
+            .parse()
+            .is_err());
     }
 
     #[test]

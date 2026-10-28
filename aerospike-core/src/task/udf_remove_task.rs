@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -28,7 +28,7 @@ pub struct UdfRemoveTask {
 
 impl UdfRemoveTask {
     /// Initializes `UdfRemoveTask` from client, creation should only be expose to Client
-    pub const fn new(cluster: Arc<Cluster>, package_name: String) -> Self {
+    pub(crate) const fn new(cluster: Arc<Cluster>, package_name: String) -> Self {
         UdfRemoveTask {
             cluster,
             package_name,
@@ -48,6 +48,8 @@ impl UdfRemoveTask {
         }
     }
 }
+
+impl super::task::sealed::Sealed for UdfRemoveTask {}
 
 #[async_trait::async_trait]
 impl Task for UdfRemoveTask {

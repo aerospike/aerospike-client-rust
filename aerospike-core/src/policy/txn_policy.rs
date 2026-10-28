@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use super::{BatchPolicy, BasePolicy, PolicyLike, ReadModeSC, Replica};
+use super::{BasePolicy, BatchPolicy, PolicyLike, ReadModeSc, Replica};
 #[cfg(feature = "dynamic-config")]
 use crate::policy::BatchPolicyConfig;
 
@@ -21,11 +21,10 @@ use crate::policy::BatchPolicyConfig;
 /// checking the versions of the records that took part in the transaction
 /// before it is committed.
 ///
-/// Like the Aerospike Go client's `TxnVerifyPolicy`, this wraps a
-/// [`BatchPolicy`]: verification is sent to the server as one batch command per
+/// Wraps a [`BatchPolicy`]: verification is sent to the server as one batch command per
 /// node, so the batch knobs (`concurrency`, `allow_inline`, `respond_all_keys`,
 /// `replica`, read modes) all apply.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct TxnVerifyPolicy {
     /// Batch policy instance.
@@ -38,12 +37,12 @@ impl Default for TxnVerifyPolicy {
         // Matches Go's `NewTxnVerifyPolicy`: linearized SC reads, master
         // replica, 5 retries, 3s socket / 10s total timeout, 1s sleep.
         let mut bp = BatchPolicy::default();
-        bp.base_policy.read_mode_sc = ReadModeSC::Linearize;
+        bp.base_policy.read_mode_sc = ReadModeSc::Linearize;
         bp.base_policy.max_retries = 5;
         bp.base_policy.socket_timeout = 3_000;
         bp.base_policy.total_timeout = 10_000;
         bp.base_policy.sleep_between_retries = 1_000;
-        bp.replica = Replica::Master;
+        bp.base_policy.replica = Replica::Master;
         Self { batch_policy: bp }
     }
 }
@@ -57,9 +56,8 @@ impl PolicyLike for TxnVerifyPolicy {
 /// Policy for the *roll* phase of a multi-record transaction — rolling records
 /// forward on commit or back on abort.
 ///
-/// Like the Aerospike Go client's `TxnRollPolicy`, this wraps a [`BatchPolicy`]:
-/// rolling is sent as one batch command per node.
-#[derive(Debug, Clone)]
+/// Wraps a [`BatchPolicy`]: rolling is sent as one batch command per node.
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "dynamic-config", derive(aerospike_macro::Config))]
 pub struct TxnRollPolicy {
     /// Batch policy instance.
@@ -76,7 +74,7 @@ impl Default for TxnRollPolicy {
         bp.base_policy.socket_timeout = 3_000;
         bp.base_policy.total_timeout = 10_000;
         bp.base_policy.sleep_between_retries = 1_000;
-        bp.replica = Replica::Master;
+        bp.base_policy.replica = Replica::Master;
         Self { batch_policy: bp }
     }
 }
@@ -94,12 +92,15 @@ mod tests {
     #[test]
     fn txn_verify_defaults_match_go() {
         let p = TxnVerifyPolicy::default();
-        assert_eq!(p.batch_policy.base_policy.read_mode_sc, ReadModeSC::Linearize);
+        assert_eq!(
+            p.batch_policy.base_policy.read_mode_sc,
+            ReadModeSc::Linearize
+        );
         assert_eq!(p.batch_policy.base_policy.max_retries, 5);
         assert_eq!(p.batch_policy.base_policy.socket_timeout, 3_000);
         assert_eq!(p.batch_policy.base_policy.total_timeout, 10_000);
         assert_eq!(p.batch_policy.base_policy.sleep_between_retries, 1_000);
-        assert_eq!(p.batch_policy.replica, Replica::Master);
+        assert_eq!(p.batch_policy.base_policy.replica, Replica::Master);
     }
 
     #[test]
@@ -109,8 +110,8 @@ mod tests {
         assert_eq!(p.batch_policy.base_policy.socket_timeout, 3_000);
         assert_eq!(p.batch_policy.base_policy.total_timeout, 10_000);
         assert_eq!(p.batch_policy.base_policy.sleep_between_retries, 1_000);
-        assert_eq!(p.batch_policy.replica, Replica::Master);
+        assert_eq!(p.batch_policy.base_policy.replica, Replica::Master);
         // Roll does not force a read mode — stays at the BasePolicy default.
-        assert_eq!(p.batch_policy.base_policy.read_mode_sc, ReadModeSC::Session);
+        assert_eq!(p.batch_policy.base_policy.read_mode_sc, ReadModeSc::Session);
     }
 }

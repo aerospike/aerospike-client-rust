@@ -18,7 +18,7 @@ use crate::commands::buffer::FIELD_HEADER_SIZE;
 use crate::commands::field_type::FieldType;
 use crate::errors::{Error, Result};
 
-/// Parses AS_MSG response field TLVs (length, type, value) into a map keyed by field type.
+/// Parses `AS_MSG` response field TLVs (length, type, value) into a map keyed by field type.
 ///
 /// This is wire-format parsing only; callers interpret fields via [`FieldType`]. Today the sole
 /// caller is query explain (`query_explain_command`), which reads `INDEX_NAME`, `INDEX_RANGE`, and
@@ -40,9 +40,7 @@ impl AsMsgFields {
 
     pub fn utf8_field(&self, field_type: FieldType) -> Option<String> {
         let data = self.field(field_type)?;
-        std::str::from_utf8(data)
-            .map(str::to_owned)
-            .ok()
+        std::str::from_utf8(data).map(str::to_owned).ok()
     }
 }
 
@@ -57,9 +55,7 @@ fn parse_msg_fields(
     for _ in 0..field_count {
         let field_header_size = FIELD_HEADER_SIZE as usize;
         if pos + field_header_size > buffer.len() {
-            return Err(Error::bad_response(
-                "truncated message field header",
-            ));
+            return Err(Error::bad_response("truncated message field header"));
         }
         let len = u32::from_be_bytes([
             buffer[pos],
@@ -72,9 +68,7 @@ fn parse_msg_fields(
         pos += 1;
         let size = len.saturating_sub(1);
         if pos + size > buffer.len() {
-            return Err(Error::bad_response(
-                "truncated message field body",
-            ));
+            return Err(Error::bad_response("truncated message field body"));
         }
         let value = if size > 0 {
             buffer[pos..pos + size].to_vec()

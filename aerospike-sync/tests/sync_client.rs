@@ -141,7 +141,11 @@ fn operate_combines_write_and_read() {
         .put(&wpolicy, &key, &[as_bin!("counter", 10)])
         .unwrap();
     let record = client.operate(&wpolicy, &key, &ops).unwrap();
-    assert_eq!(record.bins.get("counter"), Some(&as_val!(15)));
+    assert_eq!(record.results, Some(vec![Value::Nil, as_val!(15)]));
+    assert_eq!(
+        record.bins.get("counter"),
+        Some(&Value::MultiResult(vec![Value::Nil, as_val!(15)]))
+    );
 }
 
 #[test]
@@ -168,51 +172,59 @@ fn batch_reads_return_all_records_in_order() {
         Bins::All,
     ));
 
-    let results = client.batch(&BatchPolicy::default(), &ops).unwrap();
-    assert_eq!(results.len(), COUNT as usize + 1);
-    for (i, br) in results.iter().take(COUNT as usize).enumerate() {
-        let record = br
-            .record
-            .as_ref()
+    client.batch(&BatchPolicy::default(), &mut ops).unwrap();
+    assert_eq!(ops.len(), COUNT as usize + 1);
+    for (i, op) in ops.iter().take(COUNT as usize).enumerate() {
+        let record = op
+            .record()
             .unwrap_or_else(|| panic!("batch record {i} missing"));
         assert_eq!(record.bins.get("i"), Some(&as_val!(i as i64)));
     }
     assert!(
-        results[COUNT as usize].record.is_none(),
+        ops[COUNT as usize].record().is_none(),
         "missing key must have no record"
     );
 }
 
 #[test]
-fn batch_stream_yields_every_index_exactly_once() {
+fn batch_foreach_reports_all_rows() {
     let client = client();
     let ns = namespace();
-    let set = unique_set("sync_bstream");
+    let set = unique_set("sync_bforeach");
     let wpolicy = WritePolicy::default();
-    const COUNT: usize = 40;
-
+    const COUNT: usize = 20;
     for i in 0..COUNT {
         let key = as_key!(&ns, &set, i as i64);
         client
             .put(&wpolicy, &key, &[as_bin!("i", i as i64)])
             .unwrap();
     }
-
     let brp = BatchReadPolicy::default();
-    let ops: Vec<BatchOperation> = (0..COUNT)
+    let mut ops: Vec<BatchOperation> = (0..COUNT)
         .map(|i| BatchOperation::read(&brp, as_key!(&ns, &set, i as i64), Bins::All))
         .collect();
+    ops.push(BatchOperation::read(
+        &brp,
+        as_key!(&ns, &set, "missing"),
+        Bins::All,
+    ));
 
-    // Items arrive in per-node completion order; every original index
-    // must appear exactly once with the right payload.
-    let mut seen = [false; COUNT];
-    for (idx, br) in client.batch_stream(&BatchPolicy::default(), ops).unwrap() {
-        assert!(!seen[idx], "index {idx} yielded twice");
-        seen[idx] = true;
-        let record = br.record.expect("existing key must have a record");
-        assert_eq!(record.bins.get("i"), Some(&as_val!(idx as i64)));
-    }
-    assert!(seen.iter().all(|s| *s), "not all indexes were yielded");
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let s = seen.clone();
+    client
+        .batch_foreach(&BatchPolicy::default(), &mut ops, move |idx, row| {
+            s.lock().unwrap().push((idx, row.record.is_some()));
+            true
+        })
+        .unwrap();
+    let mut seen = seen.lock().unwrap().clone();
+    seen.sort();
+    assert_eq!(seen.len(), COUNT + 1);
+    assert!(seen[..COUNT]
+        .iter()
+        .enumerate()
+        .all(|(i, (idx, found))| *idx == i && *found));
+    assert_eq!(seen[COUNT], (COUNT, false));
 }
 
 #[test]
@@ -248,62 +260,6 @@ fn query_streams_all_records() {
     }
     assert_eq!(count, COUNT as usize);
     assert_eq!(total, COUNT * (COUNT - 1) / 2);
-}
-
-#[test]
-fn batch_stream_with_empty_ops_terminates() {
-    // Zero batch operations: the iterator must end immediately (or the
-    // call must error cleanly) — never hang. Watchdogged so a wedge is a
-    // failure, not a stuck test run.
-    let (done_tx, done_rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let client = client();
-        let outcome = match client.batch_stream(&BatchPolicy::default(), Vec::new()) {
-            Ok(stream) => stream.count(), // must be 0 items
-            Err(_) => 0,
-        };
-        let _ = done_tx.send(outcome);
-    });
-    let items = done_rx
-        .recv_timeout(std::time::Duration::from_secs(30))
-        .expect("empty batch_stream wedged");
-    assert_eq!(items, 0);
-}
-
-#[test]
-fn dropping_batch_stream_early_is_safe() {
-    // Consuming only part of a batch stream and dropping the iterator
-    // must not wedge the client: the per-node producers observe the
-    // closed channel and stop. The client must remain fully usable.
-    let client = client();
-    let ns = namespace();
-    let set = unique_set("sync_bdrop");
-    let wpolicy = WritePolicy::default();
-    const COUNT: usize = 40;
-
-    for i in 0..COUNT {
-        let key = as_key!(&ns, &set, i as i64);
-        client
-            .put(&wpolicy, &key, &[as_bin!("i", i as i64)])
-            .unwrap();
-    }
-
-    let brp = BatchReadPolicy::default();
-    let ops: Vec<BatchOperation> = (0..COUNT)
-        .map(|i| BatchOperation::read(&brp, as_key!(&ns, &set, i as i64), Bins::All))
-        .collect();
-
-    let mut stream = client.batch_stream(&BatchPolicy::default(), ops).unwrap();
-    // Take a few items, then walk away mid-stream.
-    for _ in 0..3 {
-        assert!(stream.next().is_some());
-    }
-    drop(stream);
-
-    // The client is still healthy afterwards.
-    let key = as_key!(&ns, &set, 0);
-    let record = client.get(&ReadPolicy::default(), &key, Bins::All).unwrap();
-    assert_eq!(record.bins.get("i"), Some(&as_val!(0)));
 }
 
 #[test]
@@ -473,4 +429,68 @@ fn works_from_inside_an_async_std_task_too() {
         })
         .await;
     });
+}
+
+#[test]
+fn background_task_waits_blocking() {
+    use aerospike_sync::task::Status;
+    use aerospike_sync::{operations, Bins, Statement};
+    use std::time::Duration;
+
+    let client = client();
+    let ns = namespace();
+    let set = unique_set("sync_task");
+    let wpolicy = WritePolicy::default();
+    for i in 0..5i64 {
+        client
+            .put(&wpolicy, &as_key!(&ns, &set, i), &[as_bin!("i", i)])
+            .unwrap();
+    }
+
+    let mut stmt = Statement::new(&ns, &set, Bins::All);
+    stmt.set_operations([operations::put(&as_bin!("tag", 1))]);
+    let task = client.query_operate(&wpolicy, stmt).unwrap();
+    let status = task
+        .wait_till_complete(Some(Duration::from_secs(30)))
+        .unwrap();
+    assert_eq!(status, Status::Complete);
+    assert_eq!(task.query_status().unwrap(), Status::Complete);
+
+    let record = client
+        .get(&aerospike_sync::ReadPolicy::default(), &as_key!(&ns, &set, 0i64), Bins::All)
+        .unwrap();
+    assert_eq!(record.bins.get("tag"), Some(&aerospike_sync::Value::Int(1)));
+}
+
+#[test]
+fn query_foreach_handle_waits_blocking() {
+    use aerospike_sync::{Bins, PartitionFilter, QueryPolicy, Statement};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let client = client();
+    let ns = namespace();
+    let set = unique_set("sync_qforeach");
+    let wpolicy = WritePolicy::default();
+    const COUNT: usize = 200;
+    for i in 0..COUNT as i64 {
+        client
+            .put(&wpolicy, &as_key!(&ns, &set, i), &[as_bin!("i", i)])
+            .unwrap();
+    }
+
+    let seen = Arc::new(AtomicUsize::new(0));
+    let counter = seen.clone();
+    let stmt = Statement::new(&ns, &set, Bins::All);
+    let mut handle = client
+        .query_foreach(&QueryPolicy::default(), PartitionFilter::all(), stmt, move |record| {
+            record.unwrap();
+            counter.fetch_add(1, Ordering::SeqCst);
+            true
+        })
+        .unwrap();
+    handle.wait().unwrap();
+    assert!(!handle.is_active());
+    assert_eq!(seen.load(Ordering::SeqCst), COUNT);
+    assert!(handle.partition_filter().is_some());
 }

@@ -1,4 +1,4 @@
-// Copyright 2015-2024 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -21,9 +21,10 @@ pub mod peers;
 pub mod peers_parser;
 pub mod version_parser;
 
+use crate::locks::lock;
 use aerospike_rt::time::{Duration, Instant};
 use std::collections::HashMap;
-use std::net::ToSocketAddrs;
+use std::fmt::Write as _;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::vec::Vec;
@@ -39,7 +40,7 @@ use crate::commands::admin_command::AdminCommand;
 #[cfg(feature = "dynamic-config")]
 use crate::config::{ConfigDocument, ConfigProvider, DynConfig, DynamicConfig};
 use crate::errors::{Error, Result};
-use crate::metrics::{Labels, MetricsPolicy, NodeMetrics, NodeMetricsSnapshot};
+use crate::metrics::{Labels, MetricsPolicy, NodeMetrics, NodeMetricsSnapshot, PoolGauges};
 use crate::net::Host;
 use crate::policy::{
     BatchPolicy, ClientPolicy, QueryPolicy, ReadPolicy, TxnRollPolicy, TxnVerifyPolicy, WritePolicy,
@@ -110,6 +111,12 @@ pub struct Cluster {
     tend_count: std::sync::atomic::AtomicUsize,
 
     tend_channel: Mutex<Sender<()>>,
+    /// The tend task. `close()` awaits it so the node and alias cleanup the
+    /// task performs as its last act is complete when `close()` returns.
+    tend_task: std::sync::Mutex<Option<aerospike_rt::task::JoinHandle<()>>>,
+    /// The dynamic-config watcher; `close()` cancels it.
+    #[cfg(feature = "dynamic-config")]
+    config_watch_task: std::sync::Mutex<Option<aerospike_rt::task::JoinHandle<()>>>,
     closed: AtomicBool,
 
     // Per-host seed validation errors recorded during the most recent
@@ -131,6 +138,11 @@ pub struct Cluster {
     // the cluster-aggregated metrics.
     max_retries_exceeded_count: AtomicU64,
     total_timeout_exceeded_count: AtomicU64,
+    // Peer hosts that failed validation during tend (Tier 0 event counter,
+    // `metrics.md` §4.2 `cluster.nodes.invalid`). Counts every failure, so a
+    // host that stays unreachable adds one per tend it is tried in —
+    // Java's `invalidNodeCount` semantics.
+    nodes_invalid_count: AtomicU64,
 
     // Cluster-wide count of connections currently being opened by background
     // fill tasks; shared into every node and checked against
@@ -176,44 +188,9 @@ struct ConvergenceState {
 }
 
 impl Cluster {
-    pub async fn new(mut policy: ClientPolicy, hosts: &[Host]) -> Result<Arc<Self>> {
-        // updated the hashed password
-        let _ = policy.set_auth_mode(policy.auth_mode.clone());
-
+    pub async fn new(policy: ClientPolicy, hosts: &[Host]) -> Result<Arc<Self>> {
         let (tx, rx) = mpsc::channel(100);
-        let buffer_pool = crate::net::buffer_pool::TieredBufferPool::from_policy(&policy);
-        let cluster = Arc::new(Cluster {
-            hashed_pass: AtomicArc::from(policy.hashed_pass()),
-            client_policy: AtomicArc::from(policy),
-            buffer_pool,
-
-            seeds: AtomicArc::from(hosts.to_vec()),
-            aliases: AtomicArc::from(HashMap::new()),
-            // Let disconnected clusters return the normal connection error.
-            nodes: AtomicArc::from(NodeSnapshot {
-                nodes: vec![],
-                all_nodes_support_vector: true,
-            }),
-
-            partition_map: AtomicArc::from(HashMap::default()),
-            node_index: AtomicIsize::new(0),
-            replica_index: AtomicIsize::new(0),
-            tend_count: std::sync::atomic::AtomicUsize::new(0),
-
-            tend_channel: Mutex::new(tx),
-            closed: AtomicBool::new(false),
-            last_seed_errors: std::sync::Mutex::new(Vec::new()),
-
-            metrics_enabled: AtomicBool::new(false),
-            metrics_policy: AtomicArc::from(MetricsPolicy::default()),
-            metrics: std::sync::Mutex::new(HashMap::new()),
-            max_retries_exceeded_count: AtomicU64::new(0),
-            total_timeout_exceeded_count: AtomicU64::new(0),
-            opening_connections: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-
-            #[cfg(feature = "dynamic-config")]
-            dyn_config: std::sync::OnceLock::new(),
-        });
+        let cluster = Self::assemble(policy, hosts, tx)?;
         // Seed the cluster and tend until the partition table is fully
         // formed and stable, so the returned client can route its very
         // first command.
@@ -263,9 +240,59 @@ impl Cluster {
         cluster.merge_seeds(&discovered);
 
         let cluster_for_tend = cluster.clone();
-        let _res = aerospike_rt::spawn(Cluster::tend_thread(cluster_for_tend, rx));
+        let handle = aerospike_rt::spawn(Cluster::tend_thread(cluster_for_tend, rx));
+        *lock(&cluster.tend_task) = Some(handle);
         debug!("New cluster initialized and ready to be used...");
         Ok(cluster)
+    }
+
+    fn assemble(policy: ClientPolicy, hosts: &[Host], tx: Sender<()>) -> Result<Arc<Self>> {
+        let buffer_pool = crate::net::buffer_pool::TieredBufferPool::from_policy(&policy);
+        Ok(Arc::new(Cluster {
+            hashed_pass: AtomicArc::from(policy.hashed_pass()?),
+            client_policy: AtomicArc::from(policy),
+            buffer_pool,
+
+            seeds: AtomicArc::from(hosts.to_vec()),
+            aliases: AtomicArc::from(HashMap::new()),
+            // Let disconnected clusters return the normal connection error.
+            nodes: AtomicArc::from(NodeSnapshot {
+                nodes: vec![],
+                all_nodes_support_vector: true,
+            }),
+
+            partition_map: AtomicArc::from(HashMap::default()),
+            node_index: AtomicIsize::new(0),
+            replica_index: AtomicIsize::new(0),
+            tend_count: std::sync::atomic::AtomicUsize::new(0),
+
+            tend_channel: Mutex::new(tx),
+            tend_task: std::sync::Mutex::new(None),
+            #[cfg(feature = "dynamic-config")]
+            config_watch_task: std::sync::Mutex::new(None),
+            closed: AtomicBool::new(false),
+            last_seed_errors: std::sync::Mutex::new(Vec::new()),
+
+            metrics_enabled: AtomicBool::new(false),
+            metrics_policy: AtomicArc::from(MetricsPolicy::default()),
+            metrics: std::sync::Mutex::new(HashMap::new()),
+            max_retries_exceeded_count: AtomicU64::new(0),
+            total_timeout_exceeded_count: AtomicU64::new(0),
+            nodes_invalid_count: AtomicU64::new(0),
+            opening_connections: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+
+            #[cfg(feature = "dynamic-config")]
+            dyn_config: std::sync::OnceLock::new(),
+        }))
+    }
+
+    /// A cluster that has never tended: no nodes and an empty partition map.
+    /// Routing code that only consults the partition map can be exercised
+    /// against it without a server.
+    #[cfg(test)]
+    pub(crate) fn new_unconnected(policy: ClientPolicy) -> Arc<Self> {
+        let (tx, _rx) = mpsc::channel(1);
+        Self::assemble(policy, &[], tx).expect("default test policy assembles")
     }
 
     async fn tend_thread(cluster: Arc<Cluster>, mut rx: Receiver<()>) {
@@ -278,8 +305,20 @@ impl Cluster {
                 Ok(()) => unreachable!(),
                 Err(TryRecvError::Closed) => break,
                 Err(TryRecvError::Empty) => {
-                    if let Err(err) = cluster.tend().await {
-                        log_error_chain!(err, "Error tending cluster");
+                    // A panic inside one tend cycle (a malformed partition
+                    // map, say) must not end the tend task: that would freeze
+                    // the cluster view silently for the life of the client.
+                    match std::panic::AssertUnwindSafe(cluster.tend())
+                        .catch_unwind()
+                        .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(err)) => {
+                            log_error_chain!(err, "Error tending cluster");
+                        }
+                        Err(_) => {
+                            error!("Cluster tend cycle panicked; the cluster view was not refreshed");
+                        }
                     }
                     // Sleep until the next cycle, but wake immediately when
                     // `close()` closes the channel — otherwise shutdown
@@ -413,7 +452,7 @@ impl Cluster {
                     self.materialize_peers(&peers).await;
 
                     // Decide which existing nodes can be dropped.
-                    self.find_nodes_to_remove(&peers).await;
+                    self.find_nodes_to_remove(&peers);
 
                     let nodes_to_remove = peers.get_nodes_to_remove();
                     if !nodes_to_remove.is_empty() {
@@ -520,13 +559,15 @@ impl Cluster {
                 if *partitions {
                     match PartitionTokenizer::from_node(node, admin_policy).await {
                         Ok(tokens) => {
-                            let mut map = shared_map
-                                .expect("shared map initialized when any node refreshes partitions")
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner);
-                            match tokens.update_partition(&mut map, node) {
+                            let shared = shared_map
+                                .expect("shared map initialized when any node refreshes partitions");
+                            // Merge into a scratch copy so a parse error part
+                            // way through cannot leave the shared map half
+                            // updated with this node's entries.
+                            let mut scratch = lock(shared).clone();
+                            match tokens.update_partition(&mut scratch, node) {
                                 Ok(()) => {
-                                    drop(map);
+                                    *lock(shared) = scratch;
                                     if metrics_enabled {
                                         node.metrics().incr_partition_map_update();
                                     }
@@ -650,6 +691,7 @@ impl Cluster {
                 let mut nv = NodeValidator::new(self.client_policy());
                 if let Err(err) = nv.validate_node(self, host).await {
                     peers.fail(host.clone());
+                    self.incr_node_invalid();
                     warn!("Add peer node `{host}` failed: `{err}`");
                     continue;
                 }
@@ -730,7 +772,7 @@ impl Cluster {
                     return true;
                 }
 
-                if let Ok(addrs) = (host.name.as_str(), host.port).to_socket_addrs() {
+                if let Ok(addrs) = aerospike_rt::lookup_host(host.name.as_str(), host.port).await {
                     for addr in addrs {
                         let ip_str = addr.ip().to_string();
                         if ip_str == node_host.name || addr.ip().is_loopback() {
@@ -919,18 +961,26 @@ impl Cluster {
         };
     }
 
+    /// The cluster name the client was **configured** to validate against
+    /// (`ClientPolicy::cluster_name`). `None` unless the user set one. For the
+    /// name the servers actually report, see
+    /// [`server_cluster_name`](Self::server_cluster_name).
     pub fn cluster_name(&self) -> Option<String> {
         self.client_policy().cluster_name
     }
 
-    pub fn client_policy(&self) -> ClientPolicy {
-        (*self.client_policy.load().clone()).clone()
+    /// The cluster name **reported by the servers** on the last tend, or
+    /// `None` when no active node reports one (no name configured on the
+    /// server, or no node yet). Discovered unconditionally, so it is
+    /// available without setting `ClientPolicy::cluster_name`; use it to
+    /// select per-cluster settings, and fall back to a default block when it
+    /// is `None`. Validation behaviour is unchanged and still opt-in.
+    pub fn server_cluster_name(&self) -> Option<String> {
+        self.nodes().iter().find_map(|node| node.cluster_name())
     }
 
-    pub fn add_seeds(&self, new_seeds: &[Host]) {
-        let mut seeds = self.seeds.load().to_vec();
-        seeds.extend_from_slice(new_seeds);
-        self.seeds.store(Arc::new(seeds));
+    pub fn client_policy(&self) -> ClientPolicy {
+        (*self.client_policy.load().clone()).clone()
     }
 
     /// Append only those hosts that aren't already in the seed list.
@@ -948,41 +998,6 @@ impl Cluster {
         if changed {
             self.seeds.store(Arc::new(seeds));
         }
-    }
-
-    pub fn alias_exists(&self, host: &Host) -> bool {
-        let aliases = self.aliases.load();
-        aliases.contains_key(host)
-    }
-
-    pub fn node_partitions(&self, node: &Node, namespace: &str) -> Vec<u16> {
-        let mut res: Vec<u16> = vec![];
-        let partitions = self.partition_map.load();
-
-        if let Some(node_array) = partitions.get(namespace) {
-            for (i, (_, tnode)) in node_array.nodes.iter().enumerate().take(node::PARTITIONS) {
-                if tnode.as_ref().is_some_and(|tnode| tnode.as_ref() == node) {
-                    res.push(i as u16);
-                }
-            }
-        }
-
-        res
-    }
-
-    pub async fn update_partitions(
-        &self,
-        partition_map: &mut PartitionTable,
-        node: &Arc<Node>,
-    ) -> Result<()> {
-        // Issue `replicas` + `partition-generation` over the node's
-        // long-lived tend connection (Java's `tendConnection` reuse).
-        let admin_policy = AdminPolicy {
-            timeout: self.client_policy.load().timeout,
-        };
-        let tokens = PartitionTokenizer::from_node(node, &admin_policy).await?;
-        tokens.update_partition(partition_map, node)?;
-        Ok(())
     }
 
     pub async fn update_rack_ids(&self, node: &Arc<Node>) -> Result<()> {
@@ -1042,9 +1057,9 @@ impl Cluster {
         }
 
         let mut sb = String::with_capacity(64 + errs.len() * 80);
-        sb.push_str(&format!("Failed to connect to [{}] host(s):\n", errs.len()));
+        let _ = writeln!(sb, "Failed to connect to [{}] host(s):", errs.len());
         for (host, err) in &errs {
-            sb.push_str(&format!("  {host} {err}\n"));
+            let _ = writeln!(sb, "  {host} {err}");
         }
         sb
     }
@@ -1107,10 +1122,10 @@ impl Cluster {
             // node names + per-peer multi-host fallback. Use a throwaway
             // `Peers` so any pending generation produced here doesn't bleed
             // into the next tend cycle's accounting.
-            let mut harvest = Peers::new(16, 16);
+            let harvest = Peers::new(16, 16);
             harvest.set_gen_changed(false);
             harvest.reset_refresh_count();
-            if let Err(err) = seed_node.refresh_peers(&mut harvest).await {
+            if let Err(err) = seed_node.refresh_peers(&harvest).await {
                 self.record_seed_error(seed.clone(), &err);
                 log_error_chain!(err, "Seed peer fetch failed: {}", seed);
                 seed_node.close();
@@ -1162,6 +1177,7 @@ impl Cluster {
                     if let Err(err) = peer_nv.validate_node(self, host).await {
                         self.record_seed_error(host.clone(), &err);
                         harvest.fail(host.clone());
+                        self.incr_node_invalid();
                         log_error_chain!(err, "Seeding peer host {} failed", host);
                         continue;
                     }
@@ -1278,7 +1294,7 @@ impl Cluster {
 
         // Reshape retained per-host snapshots.
         {
-            let mut metrics = self.metrics.lock().unwrap();
+            let mut metrics = lock(&self.metrics);
             for snapshot in metrics.values_mut() {
                 let mut reshaped = NodeMetricsSnapshot::new(policy.clone());
                 reshaped.aggregate(snapshot);
@@ -1290,7 +1306,7 @@ impl Cluster {
             }
         }
 
-        for node in self.nodes().iter() {
+        for node in &self.nodes() {
             node.metrics().reshape(&policy);
             node.metrics().set_enabled(true);
         }
@@ -1299,7 +1315,7 @@ impl Cluster {
     /// Disables metrics collection.
     pub fn disable_metrics(&self) {
         self.metrics_enabled.store(false, Ordering::Relaxed);
-        for node in self.nodes().iter() {
+        for node in &self.nodes() {
             node.metrics().set_enabled(false);
         }
     }
@@ -1309,6 +1325,7 @@ impl Cluster {
     /// Overlays the cluster's current dynamic `read`-section config (if any) onto a
     /// user-supplied policy. Returns the original borrowed when dynamic config is
     /// off or absent (zero cost); an owned, merged copy otherwise.
+    #[cfg_attr(not(feature = "dynamic-config"), allow(clippy::missing_const_for_fn))]
     pub(crate) fn resolve_read<'a>(&self, policy: &'a ReadPolicy) -> Cow<'a, ReadPolicy> {
         #[cfg(feature = "dynamic-config")]
         if let Some(dc) = self.dyn_config.get() {
@@ -1322,6 +1339,7 @@ impl Cluster {
     }
 
     /// As [`resolve_read`](Self::resolve_read) for the `write` section.
+    #[cfg_attr(not(feature = "dynamic-config"), allow(clippy::missing_const_for_fn))]
     pub(crate) fn resolve_write<'a>(&self, policy: &'a WritePolicy) -> Cow<'a, WritePolicy> {
         #[cfg(feature = "dynamic-config")]
         if let Some(dc) = self.dyn_config.get() {
@@ -1335,6 +1353,7 @@ impl Cluster {
     }
 
     /// As [`resolve_read`](Self::resolve_read) for the `query` section.
+    #[cfg_attr(not(feature = "dynamic-config"), allow(clippy::missing_const_for_fn))]
     pub(crate) fn resolve_query<'a>(&self, policy: &'a QueryPolicy) -> Cow<'a, QueryPolicy> {
         #[cfg(feature = "dynamic-config")]
         if let Some(dc) = self.dyn_config.get() {
@@ -1348,6 +1367,7 @@ impl Cluster {
     }
 
     /// As [`resolve_read`](Self::resolve_read) for the `batch` section.
+    #[cfg_attr(not(feature = "dynamic-config"), allow(clippy::missing_const_for_fn))]
     pub(crate) fn resolve_batch<'a>(&self, policy: &'a BatchPolicy) -> Cow<'a, BatchPolicy> {
         #[cfg(feature = "dynamic-config")]
         if let Some(dc) = self.dyn_config.get() {
@@ -1361,6 +1381,7 @@ impl Cluster {
     }
 
     /// As [`resolve_read`](Self::resolve_read) for the `txn_verify` section.
+    #[cfg_attr(not(feature = "dynamic-config"), allow(clippy::missing_const_for_fn))]
     pub(crate) fn resolve_txn_verify<'a>(
         &self,
         policy: &'a TxnVerifyPolicy,
@@ -1377,6 +1398,7 @@ impl Cluster {
     }
 
     /// As [`resolve_read`](Self::resolve_read) for the `txn_roll` section.
+    #[cfg_attr(not(feature = "dynamic-config"), allow(clippy::missing_const_for_fn))]
     pub(crate) fn resolve_txn_roll<'a>(&self, policy: &'a TxnRollPolicy) -> Cow<'a, TxnRollPolicy> {
         #[cfg(feature = "dynamic-config")]
         if let Some(dc) = self.dyn_config.get() {
@@ -1397,7 +1419,14 @@ impl Cluster {
     // handled by `patch_batch_wire`. No-ops when the feature/config is absent.
 
     /// Overlays the `batch_read` section onto a batch read's effective read policy.
-    #[cfg_attr(not(feature = "dynamic-config"), allow(unused_variables))]
+    #[cfg_attr(
+        not(feature = "dynamic-config"),
+        allow(
+            unused_variables,
+            clippy::missing_const_for_fn,
+            clippy::needless_pass_by_ref_mut
+        )
+    )]
     pub(crate) fn apply_batch_read(&self, policy: &mut ReadPolicy) {
         #[cfg(feature = "dynamic-config")]
         if let Some(dc) = self.dyn_config.get() {
@@ -1410,7 +1439,14 @@ impl Cluster {
     }
 
     /// Overlays the `batch_write` section onto a batch write's effective write policy.
-    #[cfg_attr(not(feature = "dynamic-config"), allow(unused_variables))]
+    #[cfg_attr(
+        not(feature = "dynamic-config"),
+        allow(
+            unused_variables,
+            clippy::missing_const_for_fn,
+            clippy::needless_pass_by_ref_mut
+        )
+    )]
     pub(crate) fn apply_batch_write(&self, policy: &mut WritePolicy) {
         #[cfg(feature = "dynamic-config")]
         if let Some(dc) = self.dyn_config.get() {
@@ -1422,7 +1458,14 @@ impl Cluster {
 
     /// Overlays the `batch_delete` section's `send_key`/`durable_delete` onto a
     /// batch delete's effective write policy.
-    #[cfg_attr(not(feature = "dynamic-config"), allow(unused_variables))]
+    #[cfg_attr(
+        not(feature = "dynamic-config"),
+        allow(
+            unused_variables,
+            clippy::missing_const_for_fn,
+            clippy::needless_pass_by_ref_mut
+        )
+    )]
     pub(crate) fn apply_batch_delete(&self, policy: &mut WritePolicy) {
         #[cfg(feature = "dynamic-config")]
         if let Some(dc) = self.dyn_config.get() {
@@ -1439,7 +1482,14 @@ impl Cluster {
 
     /// Overlays the `batch_udf` section's `send_key`/`durable_delete` onto a
     /// batch UDF's effective write policy.
-    #[cfg_attr(not(feature = "dynamic-config"), allow(unused_variables))]
+    #[cfg_attr(
+        not(feature = "dynamic-config"),
+        allow(
+            unused_variables,
+            clippy::missing_const_for_fn,
+            clippy::needless_pass_by_ref_mut
+        )
+    )]
     pub(crate) fn apply_batch_udf(&self, policy: &mut WritePolicy) {
         #[cfg(feature = "dynamic-config")]
         if let Some(dc) = self.dyn_config.get() {
@@ -1460,7 +1510,14 @@ impl Cluster {
     /// read modes, so this only affects reads). Per-section timeouts are
     /// command-level here and come from the already-resolved parent `batch`
     /// section. No-op when the feature/config is absent.
-    #[cfg_attr(not(feature = "dynamic-config"), allow(unused_variables))]
+    #[cfg_attr(
+        not(feature = "dynamic-config"),
+        allow(
+            unused_variables,
+            clippy::missing_const_for_fn,
+            clippy::needless_pass_by_ref_mut
+        )
+    )]
     pub(crate) fn patch_batch_wire(
         &self,
         parent: &mut BatchPolicy,
@@ -1468,7 +1525,7 @@ impl Cluster {
     ) {
         #[cfg(feature = "dynamic-config")]
         {
-            use crate::batch::BatchOperation;
+            use crate::batch::BatchOp;
             let Some(dc) = self.dyn_config.get() else {
                 return;
             };
@@ -1497,8 +1554,8 @@ impl Cluster {
             }
 
             for (op, _) in ops.iter_mut() {
-                match op {
-                    BatchOperation::Write { policy, .. } => {
+                match &mut op.kind {
+                    BatchOp::Write { policy, .. } => {
                         if let Some(cfg) = &dynamic.batch_write {
                             if let Some(send_key) = cfg.send_key {
                                 policy.send_key = send_key;
@@ -1508,21 +1565,19 @@ impl Cluster {
                             }
                         }
                     }
-                    BatchOperation::Delete { policy, .. } => {
+                    BatchOp::Delete { policy } => {
                         if let Some(cfg) = dynamic.batch_delete.clone() {
                             cfg.merge_into(policy);
                         }
                     }
-                    BatchOperation::UDF { policy, .. } => {
+                    BatchOp::Udf { policy, .. } => {
                         if let Some(cfg) = dynamic.batch_udf.clone() {
                             cfg.merge_into(policy);
                         }
                     }
                     // Reads carry no wire-patchable sub-policy here; txn
                     // verify/roll never flow through the public batch wire path.
-                    BatchOperation::Read { .. }
-                    | BatchOperation::TxnVerify { .. }
-                    | BatchOperation::TxnRoll { .. } => {}
+                    BatchOp::Read { .. } | BatchOp::TxnVerify { .. } | BatchOp::TxnRoll { .. } => {}
                 }
             }
         }
@@ -1544,7 +1599,8 @@ impl Cluster {
         // OnceLock: set once at construction; ignore the (impossible) re-set.
         let _ = self.dyn_config.set(dyn_config);
         let cluster = self.clone();
-        let _res = aerospike_rt::spawn(Cluster::config_watch_thread(cluster));
+        let handle = aerospike_rt::spawn(Cluster::config_watch_thread(cluster));
+        *lock(&self.config_watch_task) = Some(handle);
     }
 
     /// Applies a freshly-loaded config document: the `static` section once (on the
@@ -1580,14 +1636,24 @@ impl Cluster {
     }
 
     /// Applies the `dynamic.metrics` section: toggles collection via the existing
-    /// metrics API and folds any latency-histogram overrides into the policy.
+    /// metrics API and folds the `extended.operational` block (its `enabled`
+    /// flag and latency-histogram overrides) plus any custom labels into the
+    /// policy.
     #[cfg(feature = "dynamic-config")]
     fn apply_metrics_config(&self, metrics: &crate::config::MetricsConfig) {
-        // Builds the next metrics policy from the current one, folding in the
-        // latency-histogram overrides and any custom labels.
+        // Builds the next metrics policy from the current one.
         let next_policy = || {
             let mut policy = (*self.metrics_policy()).clone();
-            metrics.policy.clone().merge_into(&mut policy);
+            if let Some(operational) = metrics
+                .extended
+                .as_ref()
+                .and_then(|ext| ext.operational.as_ref())
+            {
+                operational.policy.clone().merge_into(&mut policy);
+                if let Some(on) = operational.enabled {
+                    policy.operational = on;
+                }
+            }
             if let Some(labels) = &metrics.labels {
                 // The cross-client schema models labels as a single flat map;
                 // `Labels` holds a list of entries (empty maps are dropped).
@@ -1595,7 +1661,7 @@ impl Cluster {
             }
             policy
         };
-        match metrics.enable {
+        match metrics.enabled {
             Some(false) => self.disable_metrics(),
             Some(true) => self.enable_metrics(next_policy()),
             // No explicit toggle: refine the policy only if already enabled.
@@ -1649,10 +1715,18 @@ impl Cluster {
         }
     }
 
+    /// Records a peer host that failed node validation during tend (Tier 0:
+    /// gated on collection being enabled only, never sampled).
+    fn incr_node_invalid(&self) {
+        if self.metrics_enabled() {
+            self.nodes_invalid_count.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
     /// Drains each node's live metrics and merges them into the per-host
     /// accumulator.
     fn aggregate_node_metrics(&self, nodes: &[Arc<Node>]) {
-        let mut metrics = self.metrics.lock().unwrap();
+        let mut metrics = lock(&self.metrics);
         for node in nodes {
             let host = node.host().to_string();
             let drained = node.metrics().get_and_reset();
@@ -1666,25 +1740,43 @@ impl Cluster {
     }
 
     /// Aggregates and returns a clone of the per-host statistics, stamping each
-    /// active node's open-connection gauge.
+    /// active node's connection-pool gauges (open / in-use / in-pool /
+    /// recovering) from a live pool walk.
+    ///
+    /// Deliberately not gated on `metrics_enabled()`: the pool walk is the
+    /// spec's always-available part of the pull API (`metrics.md` §5.5.3), so
+    /// a snapshot taken while collection is off still carries current gauges
+    /// alongside frozen counters.
     pub fn metrics_copy(&self) -> HashMap<String, NodeMetricsSnapshot> {
         let nodes = self.nodes();
         self.aggregate_node_metrics(&nodes);
 
-        let mut open_by_host: HashMap<String, u64> = HashMap::new();
-        for node in nodes.iter() {
-            open_by_host.insert(node.host().to_string(), node.open_connections());
+        // Live gauges per active node: pool walk + the circuit-breaker
+        // window's current error count.
+        let mut gauges_by_host: HashMap<String, (PoolGauges, u64)> = HashMap::new();
+        for node in &nodes {
+            gauges_by_host.insert(
+                node.host().to_string(),
+                (node.pool_gauges(), node.error_rate_count() as u64),
+            );
         }
 
-        let metrics = self.metrics.lock().unwrap();
+        let metrics = lock(&self.metrics);
         let mut res = HashMap::with_capacity(metrics.len());
         for (host, snapshot) in metrics.iter() {
             let mut copy = snapshot.clone();
-            // Active nodes report their current open count; removed hosts 0.
-            copy.set_open_connections(open_by_host.get(host).copied().unwrap_or(0));
+            // Active nodes report their current state; removed hosts 0.
+            let (pool, error_rate) = gauges_by_host.get(host).copied().unwrap_or_default();
+            copy.set_pool_gauges(pool);
+            copy.set_error_rate(error_rate);
             res.insert(host.clone(), copy);
         }
         res
+    }
+
+    /// Value of the invalid-peer counter (failed node validations during tend).
+    pub fn nodes_invalid_count(&self) -> u64 {
+        self.nodes_invalid_count.load(Ordering::Relaxed)
     }
 
     /// Value of the max-retries-exceeded counter.
@@ -1697,17 +1789,24 @@ impl Cluster {
         self.total_timeout_exceeded_count.load(Ordering::Relaxed)
     }
 
-    /// Builds the per-node reserved labels (node/host/cluster/app-id) merged
-    /// with the user-provided labels.
+    /// Builds the per-node reserved labels (`node`, `host`, `cluster`,
+    /// `app_id`) merged with the user-provided labels.
     pub fn node_labels(&self) -> Labels {
         let policy = self.metrics_policy();
         let user_labels = &policy.labels;
         let client_policy = self.client_policy();
-        let cluster_name = client_policy.cluster_name.clone().unwrap_or_default();
-        let app_id = client_policy.application_id.clone().unwrap_or_default();
+        // The `cluster` label prefers the configured name and otherwise uses
+        // the one the servers report, so an unvalidated cluster is still
+        // labelled (metrics.md §4.1: "from the server, or from explicit
+        // client config").
+        let cluster_name = client_policy
+            .cluster_name
+            .or_else(|| self.server_cluster_name())
+            .unwrap_or_default();
+        let app_id = client_policy.application_id.unwrap_or_default();
 
         let mut labels = Labels::new();
-        for node in self.nodes().iter() {
+        for node in &self.nodes() {
             let mut entries: HashMap<String, String> = HashMap::new();
             for label_map in user_labels.entries() {
                 for (k, v) in label_map {
@@ -1717,7 +1816,7 @@ impl Cluster {
             entries.insert("node".to_string(), node.name().to_string());
             entries.insert("host".to_string(), node.host().to_string());
             entries.insert("cluster".to_string(), cluster_name.clone());
-            entries.insert("app-id".to_string(), app_id.clone());
+            entries.insert("app_id".to_string(), app_id.clone());
             labels.push(entries);
         }
         labels
@@ -1731,7 +1830,7 @@ impl Cluster {
     ///   refreshes also failed (refreshCount == 0).
     /// - Multi-node clusters: remove if referenceCount == 0 (not referenced by
     ///   any peer) AND either failing or not in partition map.
-    async fn find_nodes_to_remove(&self, peers: &Peers) {
+    fn find_nodes_to_remove(&self, peers: &Peers) {
         let refresh_count = peers.refresh_count();
         let nodes = self.nodes();
 
@@ -1792,18 +1891,22 @@ impl Cluster {
                 self.remove_alias(&alias);
             }
         }
-        // Record the removal and drain the node's final metrics into the
-        // per-host accumulator so they survive the node going away (the map
-        // keeps removed-host entries, reported with zero open connections).
+        // Close the node and its idle connections first (each counted as a
+        // node-removed close), THEN record the removal and drain the node's
+        // final metrics into the per-host accumulator so they survive the
+        // node going away (the map keeps removed-host entries, reported with
+        // zero open connections). Connections still on loan are closed later
+        // by the pool's own teardown and are not observed here.
+        for node in &mut nodes_to_remove {
+            debug!("Closing node {node}");
+            node.close();
+            node.close_idle_connections();
+        }
         if self.metrics_enabled() {
             for node in &nodes_to_remove {
                 node.metrics().incr_node_removed();
             }
             self.aggregate_node_metrics(&nodes_to_remove);
-        }
-        for node in &mut nodes_to_remove {
-            debug!("Closing node {node}");
-            node.close();
         }
         self.remove_nodes(&nodes_to_remove);
     }
@@ -2030,11 +2133,6 @@ impl Cluster {
         partition.get_node(self)
     }
 
-    pub fn get_master_node(&self, namespace: &str, partition_id: usize) -> Result<Arc<Node>> {
-        let partition = Partition::new(namespace, partition_id);
-        partition.get_master_node(self)
-    }
-
     pub fn get_random_node(&self) -> Result<Arc<Node>> {
         let node_array = self.nodes();
         let length = node_array.len() as isize;
@@ -2103,6 +2201,23 @@ impl Cluster {
         // exiting (see `tend_thread`), preserving the single-writer
         // invariant on those fields.
         self.tend_channel.lock().await.close_channel();
+
+        // The watcher only polls, so cancel it outright. The tend task does
+        // the node and alias cleanup as its last act: wait for it, so that
+        // nothing of this client is still running when `close()` returns.
+        #[cfg(feature = "dynamic-config")]
+        if let Some(handle) = lock(&self.config_watch_task).take() {
+            aerospike_rt::abort(handle);
+        }
+        let tend = lock(&self.tend_task).take();
+        if let Some(handle) = tend {
+            // Tokio hands back a `Result` (a panicked tend task was already
+            // logged by the task itself); async-std hands back `()`.
+            #[cfg(feature = "rt-tokio")]
+            let _ = handle.await;
+            #[cfg(feature = "rt-async-std")]
+            handle.await;
+        }
         Ok(())
     }
 }

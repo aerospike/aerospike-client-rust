@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ use flate2::read::ZlibDecoder;
 use crate::cluster::{Cluster, Node};
 use crate::commands::buffer;
 use crate::commands::buffer::QueryDirection;
+use crate::commands::stream_command::StreamCommand;
 use crate::commands::{Command, SingleCommand};
 use crate::errors::{Error, ErrorKind, Result};
 use crate::net::{BufferedConn, Connection};
@@ -37,10 +38,6 @@ pub struct ServerCommand<'a> {
     write_policy: &'a WritePolicy,
     statement: &'a Statement,
     task_id: u64,
-    /// `true` for the UDF-execute payload (statement carries an
-    /// aggregation), `false` for the ops payload
-    /// (`statement.operations` is set).
-    is_udf: bool,
 }
 
 impl<'a> ServerCommand<'a> {
@@ -57,7 +54,6 @@ impl<'a> ServerCommand<'a> {
             write_policy,
             statement,
             task_id,
-            is_udf: false,
         }
     }
 
@@ -74,7 +70,6 @@ impl<'a> ServerCommand<'a> {
             write_policy,
             statement,
             task_id,
-            is_udf: true,
         }
     }
 
@@ -103,18 +98,14 @@ impl Command for ServerCommand<'_> {
         // Both background ops (carried on `statement.operations`) and
         // background UDF execute (carried on `statement.aggregation`)
         // share the same write-header wire path through `set_query`.
-        // `is_udf` is informational — the unified path picks the
-        // payload up directly from the statement.
-        let _ = self.is_udf;
-        conn.buffer
-            .set_query(
-                QueryDirection::Background(self.write_policy),
-                self.statement,
-                self.task_id,
-                &self.node,
-                None,
-                None,
-            )
+        conn.buffer.set_query(
+            QueryDirection::Background(self.write_policy),
+            self.statement,
+            self.task_id,
+            &self.node,
+            None,
+            None,
+        )
     }
 
     fn get_node(&mut self) -> Result<Arc<Node>> {
@@ -157,9 +148,16 @@ impl Command for ServerCommand<'_> {
                 // Read the 8-byte uncompressed size
                 conn.read_buffer(8).await?;
                 let uncompressed_size = conn.buffer().read_u64(Some(0)) as usize;
+                if uncompressed_size > crate::commands::buffer::MAX_BUFFER_SIZE {
+                    return Err(Error::bad_response(format!(
+                        "declared uncompressed size {uncompressed_size} exceeds the buffer limit"
+                    )));
+                }
 
                 // Read all remaining compressed data
-                let compressed_len = size - 8;
+                let compressed_len = size
+                    .checked_sub(8)
+                    .ok_or_else(|| Error::bad_response("compressed reply shorter than its size header"))?;
                 conn.read_buffer(compressed_len).await?;
                 let compressed_data = conn.buffer().data_buffer[..compressed_len].to_vec();
 
@@ -179,7 +177,9 @@ impl Command for ServerCommand<'_> {
                 if inner_size > 0 {
                     // Stream-decompress the rest on demand (body after the
                     // 8-byte proto header we already consumed).
-                    let body_decompressed_size = uncompressed_size - 8;
+                    let body_decompressed_size = uncompressed_size
+                        .checked_sub(8)
+                        .ok_or_else(|| Error::bad_response("uncompressed size shorter than its header"))?;
                     let mut inner_conn =
                         BufferedConn::new_with_decoder(conn.conn, decoder, body_decompressed_size);
 
@@ -223,25 +223,41 @@ impl ServerCommand<'_> {
 
             let result_code = ResultCode::from(conn.buffer().read_u8(Some(5)));
 
-            // Check for end of response
-            let info3 = conn.buffer().read_u8(Some(3));
-            if info3 & buffer::INFO3_LAST == buffer::INFO3_LAST {
-                if result_code != ResultCode::Ok {
-                    return Err(Error::server_error(
-                        result_code,
-                        conn.conn.addr.clone(),
-                        None,
-                    ));
-                }
+            // A background query/scan returns KEY_NOT_FOUND when the set does
+            // not exist on this node. That is "set absent", not a failure of
+            // the job. The Java client's ServerCommand treats it the same way.
+            if result_code == ResultCode::KeyNotFoundError {
                 return Ok(false);
             }
 
+            let info3 = conn.buffer().read_u8(Some(3));
+
             if result_code != ResultCode::Ok {
+                // The failure's explanation (field 45) rides in this same
+                // message, end marker or not: walk the field section before
+                // failing the job. The caller drains what follows.
+                conn.buffer().skip(6);
+                let _ = conn.buffer().read_u32(None); // generation
+                let _ = conn.buffer().read_u32(None); // expiration
+                conn.buffer().skip(4);
+                let field_count = conn.buffer().read_u16(None) as usize;
+                let _ = conn.buffer().read_u16(None); // op count
+                // A malformed field section must not mask the server's result
+                // code; the caller drains the message by size either way.
+                let error_detail = StreamCommand::parse_key_and_version(conn, field_count)
+                    .await
+                    .ok()
+                    .and_then(|(_, _, _, detail)| detail);
                 return Err(Error::server_error(
                     result_code,
                     conn.conn.addr.clone(),
-                    None,
+                    error_detail,
                 ));
+            }
+
+            // Check for end of response
+            if info3 & buffer::INFO3_LAST == buffer::INFO3_LAST {
+                return Ok(false);
             }
 
             // Skip past remaining header fields
@@ -270,7 +286,9 @@ impl ServerCommand<'_> {
                 let name_size = conn.buffer().read_u8(None) as usize;
                 conn.read_buffer(name_size).await?;
                 conn.buffer().skip(name_size);
-                let particle_bytes_size = op_size - (4 + name_size);
+                let particle_bytes_size = op_size
+                    .checked_sub(4 + name_size)
+                    .ok_or_else(|| Error::bad_response("operation shorter than its header"))?;
                 if particle_bytes_size > 0 {
                     conn.read_buffer(particle_bytes_size).await?;
                     conn.buffer().skip(particle_bytes_size);

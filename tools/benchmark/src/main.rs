@@ -154,12 +154,10 @@ async fn connect(options: &Options) -> AerospikeResult<Client> {
         policy.use_buffer_pool = !matches!(v.trim(), "0" | "false" | "off");
     }
     if let Some(user) = &options.user {
-        policy
-            .set_auth_mode(AuthMode::Internal(
-                user.clone(),
-                options.password.clone().unwrap_or_default(),
-            ))
-            .expect("failed to configure authentication");
+        policy.set_auth_mode(AuthMode::Internal(
+            user.clone(),
+            options.password.clone().unwrap_or_default(),
+        ));
     }
     policy.cluster_name = options.cluster_name.clone();
     policy.conn_pools_per_node = options.conn_pools_per_node;

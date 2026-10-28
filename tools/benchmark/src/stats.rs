@@ -97,8 +97,16 @@ impl LatencyMode {
                 }
                 DEFAULT_HIST_BUCKETS - 1
             }
-            LatencyMode::Aerospike { cols, shift, micros }
-            | LatencyMode::Alternate { cols, shift, micros } => {
+            LatencyMode::Aerospike {
+                cols,
+                shift,
+                micros,
+            }
+            | LatencyMode::Alternate {
+                cols,
+                shift,
+                micros,
+            } => {
                 let value = if *micros {
                     latency.as_micros()
                 } else {
@@ -115,9 +123,7 @@ impl LatencyMode {
                 }
                 cols - 1
             }
-            LatencyMode::Ycsb { .. } => {
-                (latency.as_millis() as usize).min(YCSB_BUCKETS - 1)
-            }
+            LatencyMode::Ycsb { .. } => (latency.as_millis() as usize).min(YCSB_BUCKETS - 1),
         }
     }
 
@@ -132,8 +138,16 @@ impl LatencyMode {
                 "< 16 ms".into(),
                 ">= 16 ms".into(),
             ],
-            LatencyMode::Aerospike { cols, shift, micros }
-            | LatencyMode::Alternate { cols, shift, micros } => {
+            LatencyMode::Aerospike {
+                cols,
+                shift,
+                micros,
+            }
+            | LatencyMode::Alternate {
+                cols,
+                shift,
+                micros,
+            } => {
                 let unit = if *micros { "us" } else { "ms" };
                 let mut headers = vec![format!("<={}{}", 1, unit)];
                 let mut limit = 1u64;
@@ -197,9 +211,17 @@ fn parse_columns_shift(parts: &[&str], alternate: bool) -> Result<LatencyMode, S
         Some(other) => return Err(format!("Invalid latency unit `{other}` (us or ms)")),
     };
     Ok(if alternate {
-        LatencyMode::Alternate { cols, shift, micros }
+        LatencyMode::Alternate {
+            cols,
+            shift,
+            micros,
+        }
     } else {
-        LatencyMode::Aerospike { cols, shift, micros }
+        LatencyMode::Aerospike {
+            cols,
+            shift,
+            micros,
+        }
     })
 }
 
@@ -667,8 +689,7 @@ impl Histogram {
                 } else {
                     self.min as f64 / 1_000_000.0
                 };
-                let header_row: Vec<String> =
-                    headers.iter().map(|h| format!("{h:>13}")).collect();
+                let header_row: Vec<String> = headers.iter().map(|h| format!("{h:>13}")).collect();
                 println!(
                     "  Latency:     min      avg      max    | {}",
                     header_row.join(" ")
@@ -863,10 +884,7 @@ mod test {
         assert_eq!(mode.bucket_index(Duration::from_millis(64)), 2);
         assert_eq!(mode.bucket_index(Duration::from_millis(65)), 3);
         assert_eq!(mode.bucket_index(Duration::from_secs(100)), 3);
-        assert_eq!(
-            mode.headers(),
-            vec!["<=1ms", ">1ms", ">8ms", ">64ms"]
-        );
+        assert_eq!(mode.headers(), vec!["<=1ms", ">1ms", ">8ms", ">64ms"]);
     }
 
     #[test]

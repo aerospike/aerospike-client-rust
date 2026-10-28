@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -49,27 +49,18 @@ pub enum FloatValue {
     F64(u64),
 }
 
+// `f32 -> f64` is lossless and is what the wire already does for an F32 bin,
+// so the conversion widens rather than refusing: the public `From`, the
+// public `TryFrom<Value>`, and the particle writer all agree on `as_f64`.
 impl From<FloatValue> for f64 {
     fn from(val: FloatValue) -> f64 {
-        match val {
-            FloatValue::F32(_) => panic!(
-                "This library does not automatically convert f32 -> f64 to be used in keys \
-                 or bins."
-            ),
-            FloatValue::F64(val) => f64::from_bits(val),
-        }
+        val.as_f64()
     }
 }
 
 impl From<&FloatValue> for f64 {
     fn from(val: &FloatValue) -> f64 {
-        match *val {
-            FloatValue::F32(_) => panic!(
-                "This library does not automatically convert f32 -> f64 to be used in keys \
-                 or bins."
-            ),
-            FloatValue::F64(val) => f64::from_bits(val),
-        }
+        val.as_f64()
     }
 }
 
@@ -105,11 +96,14 @@ impl FloatValue {
     }
 }
 
+// Narrowing an F64 is a numeric cast of the value, not of its bit pattern:
+// `f32::from_bits(bits as u32)` kept the low 32 bits of the double's encoding
+// and reinterpreted them as a float, which is unrelated to the number stored.
 impl From<FloatValue> for f32 {
     fn from(val: FloatValue) -> f32 {
         match val {
-            FloatValue::F32(val) => f32::from_bits(val),
-            FloatValue::F64(val) => f32::from_bits(val as u32),
+            FloatValue::F32(bits) => f32::from_bits(bits),
+            FloatValue::F64(bits) => f64::from_bits(bits) as f32,
         }
     }
 }
@@ -117,8 +111,8 @@ impl From<FloatValue> for f32 {
 impl From<&FloatValue> for f32 {
     fn from(val: &FloatValue) -> f32 {
         match *val {
-            FloatValue::F32(val) => f32::from_bits(val),
-            FloatValue::F64(val) => f32::from_bits(val as u32),
+            FloatValue::F32(bits) => f32::from_bits(bits),
+            FloatValue::F64(bits) => f64::from_bits(bits) as f32,
         }
     }
 }
@@ -182,6 +176,7 @@ impl fmt::Display for FloatValue {
 /// [`MapLike`](crate::MapLike)), and maps returned by the server decode
 /// as `OrderedMap` preserving the exact pair order the server sent.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Value {
     /// Empty value.
     Nil,
@@ -269,14 +264,15 @@ pub enum Value {
     SortedMap(BTreeMap<Value, Value>),
 
     /// Result of any map operation in which the server returns a
-    /// map requested with [`MapReturnType::KeyValue`].
+    /// map in an order the caller asked to keep (see
+    /// [`MapReturnType`](crate::operations::maps::MapReturnType)).
     KeyValueList(Vec<(Value, Value)>),
 
     /// `GeoJSON` data type are JSON formatted strings to encode geo-spatial information.
-    GeoJSON(String),
+    GeoJson(String),
 
     /// HLL value
-    HLL(Vec<u8>),
+    Hll(Vec<u8>),
 
     /// A `VECTOR` particle; see [`Vector`](crate::Vector).
     Vector(Vector),
@@ -288,13 +284,19 @@ pub enum Value {
     Wildcard,
 
     /// Unknown Value signifies values whose wire particle type this client
-    /// does not interpret (e.g. legacy language-specific serializations
-    /// like Java/C#/Python blobs). Carries the raw particle-type code and
-    /// the raw payload bytes, uninterpreted.
+    /// does not interpret (e.g. the legacy language-specific serialization
+    /// blobs written by older clients). Carries the raw
+    /// particle-type code and the raw payload bytes, uninterpreted.
     ///
-    /// Strictly read-only: it is rejected on every path that would send it
-    /// to the server — as a bin value, inside lists/maps/CDT arguments, as
-    /// a record key ([`Key::new`](crate::Key::new) fails), in query
+    /// It can be written back **only as a whole bin value** (`put`, or a
+    /// bin-level `operate` write): the client sends the payload verbatim
+    /// under its original particle-type code, so a record copied through
+    /// this client round-trips foreign bins untouched. The server still
+    /// validates the code and rejects one it does not know.
+    ///
+    /// Everywhere else it is rejected, because the client cannot interpret
+    /// the bytes: inside lists/maps/CDT arguments (packing fails), as a
+    /// record key ([`Key::new`](crate::Key::new) fails), in query
     /// [`Filter`](crate::query::Filter)s (the filter-value conversion
     /// panics, like other non-indexable types), and in expression literals
     /// (packing the expression fails).
@@ -340,8 +342,8 @@ impl PartialEq for Value {
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::Float(a), Value::Float(b)) => a == b,
-            (Value::String(a), Value::String(b)) | (Value::GeoJSON(a), Value::GeoJSON(b)) => a == b,
-            (Value::Blob(a), Value::Blob(b)) | (Value::HLL(a), Value::HLL(b)) => a == b,
+            (Value::String(a), Value::String(b)) | (Value::GeoJson(a), Value::GeoJson(b)) => a == b,
+            (Value::Blob(a), Value::Blob(b)) | (Value::Hll(a), Value::Hll(b)) => a == b,
             (Value::List(a), Value::List(b)) | (Value::MultiResult(a), Value::MultiResult(b)) => {
                 a == b
             }
@@ -358,33 +360,83 @@ impl PartialEq for Value {
 
 impl Eq for Value {}
 
+/// Every value hashes, so any `Value` can sit in a `HashSet` or key a
+/// `HashMap` on the client; whether the server accepts it as a map key is
+/// checked when the map is encoded ([`Value::is_valid_map_key`]).
+///
+/// Consistent with [`PartialEq`]: the three map variants compare by content
+/// regardless of variant, so maps contribute only their length.
 #[allow(clippy::derived_hash_with_manual_eq)]
 impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match *self {
-            #[allow(clippy::collection_is_never_read)]
-            Value::Nil => {
-                let v: Option<u8> = None;
+            Value::Nil => 0u8.hash(state),
+            Value::Bool(v) => {
+                1u8.hash(state);
                 v.hash(state);
             }
-            Value::Bool(_) => panic!("Booleans cannot be used as map keys."),
-            Value::Int(ref val) => val.hash(state),
-            Value::Float(_) => panic!("Floats cannot be used as map keys."),
-            Value::String(ref val) => val.hash(state),
-            Value::GeoJSON(_) => panic!("GeoJson cannot be used as map keys."),
-            Value::Blob(ref val) => val.hash(state),
-            Value::HLL(_) => panic!("HLL cannot be used as map keys."),
-            Value::Vector(_) => panic!("Vectors cannot be used as map keys."),
-            Value::MultiResult(_) => panic!("MultiValues cannot be used as map keys."),
-            Value::List(_) => panic!("Lists cannot be used as map keys."),
-            Value::HashMap(_) => panic!("HashMaps cannot be used as map keys."),
-            Value::OrderedMap(_) => panic!("OrderedMaps cannot be used as map keys."),
-            Value::SortedMap(_) | Value::KeyValueList(_) => {
-                panic!("SortedMaps cannot be used as map keys.")
+            Value::Int(v) => {
+                2u8.hash(state);
+                v.hash(state);
             }
-            Value::Infinity => panic!("Infinity cannot be used as map keys."),
-            Value::Wildcard => panic!("Wildcard cannot be used as map keys."),
-            Value::Unknown(..) => panic!("Unknown values cannot be used as map keys."),
+            Value::Float(ref v) => {
+                3u8.hash(state);
+                match *v {
+                    FloatValue::F32(bits) => (0u8, u64::from(bits)).hash(state),
+                    FloatValue::F64(bits) => (1u8, bits).hash(state),
+                }
+            }
+            Value::String(ref v) => {
+                4u8.hash(state);
+                v.hash(state);
+            }
+            Value::GeoJson(ref v) => {
+                5u8.hash(state);
+                v.hash(state);
+            }
+            Value::Blob(ref v) => {
+                6u8.hash(state);
+                v.hash(state);
+            }
+            Value::Hll(ref v) => {
+                7u8.hash(state);
+                v.hash(state);
+            }
+            Value::List(ref v) => {
+                8u8.hash(state);
+                v.hash(state);
+            }
+            Value::MultiResult(ref v) => {
+                9u8.hash(state);
+                v.hash(state);
+            }
+            Value::HashMap(ref m) => {
+                10u8.hash(state);
+                m.len().hash(state);
+            }
+            Value::OrderedMap(ref m) => {
+                10u8.hash(state);
+                m.len().hash(state);
+            }
+            Value::SortedMap(ref m) => {
+                10u8.hash(state);
+                m.len().hash(state);
+            }
+            Value::KeyValueList(ref v) => {
+                11u8.hash(state);
+                v.len().hash(state);
+            }
+            Value::Vector(ref v) => {
+                15u8.hash(state);
+                v.dimensions().hash(state);
+            }
+            Value::Infinity => 12u8.hash(state),
+            Value::Wildcard => 13u8.hash(state),
+            Value::Unknown(code, ref bytes) => {
+                14u8.hash(state);
+                code.hash(state);
+                bytes.hash(state);
+            }
         }
     }
 }
@@ -395,6 +447,14 @@ impl Value {
         matches!(*self, Value::Nil)
     }
 
+    /// Whether the server accepts this value as a map key: integers, strings
+    /// and blobs. A map with any other key type is rejected with
+    /// `InvalidArgument` when it is encoded, before anything is sent.
+    #[must_use]
+    pub const fn is_valid_map_key(&self) -> bool {
+        matches!(*self, Value::Int(_) | Value::String(_) | Value::Blob(_))
+    }
+
     /// Return the wire particle-type code for the value. Returns the raw
     /// `u8` so that [`Value::Unknown`] can carry codes the client does not
     /// interpret. For internal use only.
@@ -403,27 +463,26 @@ impl Value {
     ///
     /// [`Infinity`](Value::Infinity) and [`Wildcard`](Value::Wildcard) have no
     /// particle type: they exist only inside msgpack payloads, as CDT and
-    /// expression bounds, where [`msgpack::encoder::pack_value`] writes them
+    /// expression bounds, where the msgpack encoder writes them
     /// directly and never asks for a particle code. Reaching here means one was
     /// handed to the client as an ordinary bin value or record key, which is a
-    /// caller mistake — Java reports the same case as `PARAMETER_ERROR` from
-    /// `Value.getType()`, and so does this.
-    pub fn particle_type(&self) -> Result<u8> {
+    /// caller mistake and is reported as `PARAMETER_ERROR`.
+    pub(crate) fn particle_type(&self) -> Result<u8> {
         let code = match *self {
-            Value::Nil => ParticleType::NULL as u8,
-            Value::Int(_) => ParticleType::INTEGER as u8,
-            Value::Float(_) => ParticleType::FLOAT as u8,
-            Value::String(_) => ParticleType::STRING as u8,
-            Value::Blob(_) => ParticleType::BLOB as u8,
-            Value::Bool(_) => ParticleType::BOOL as u8,
-            Value::MultiResult(_) | Value::List(_) => ParticleType::LIST as u8,
+            Value::Nil => ParticleType::Null as u8,
+            Value::Int(_) => ParticleType::Integer as u8,
+            Value::Float(_) => ParticleType::Float as u8,
+            Value::String(_) => ParticleType::String as u8,
+            Value::Blob(_) => ParticleType::Blob as u8,
+            Value::Bool(_) => ParticleType::Bool as u8,
+            Value::MultiResult(_) | Value::List(_) => ParticleType::List as u8,
             Value::HashMap(_)
             | Value::OrderedMap(_)
             | Value::SortedMap(_)
-            | Value::KeyValueList(_) => ParticleType::MAP as u8,
-            Value::GeoJSON(_) => ParticleType::GEOJSON as u8,
-            Value::HLL(_) => ParticleType::HLL as u8,
-            Value::Vector(_) => ParticleType::VECTOR as u8,
+            | Value::KeyValueList(_) => ParticleType::Map as u8,
+            Value::GeoJson(_) => ParticleType::GeoJson as u8,
+            Value::Hll(_) => ParticleType::Hll as u8,
+            Value::Vector(_) => ParticleType::Vector as u8,
             Value::Unknown(code, _) => code,
             Value::Infinity => {
                 return Err(Error::invalid_argument(
@@ -461,8 +520,8 @@ impl Value {
             Value::OrderedMap(_) => "ordered map".to_string(),
             Value::SortedMap(_) => "sorted map".to_string(),
             Value::KeyValueList(_) => "key-value list".to_string(),
-            Value::GeoJSON(_) => "geo-json".to_string(),
-            Value::HLL(_) => "hll".to_string(),
+            Value::GeoJson(_) => "geo-json".to_string(),
+            Value::Hll(_) => "hll".to_string(),
             Value::Vector(_) => "vector".to_string(),
             Value::Infinity => "INF".to_string(),
             Value::Wildcard => "wildcard".to_string(),
@@ -479,8 +538,8 @@ impl Value {
             Value::Int(ref val) => val.to_string(),
             Value::Bool(ref val) => val.to_string(),
             Value::Float(ref val) => val.to_string(),
-            Value::String(ref val) | Value::GeoJSON(ref val) => val.clone(),
-            Value::Blob(ref val) | Value::HLL(ref val) => format!("{val:?}"),
+            Value::String(ref val) | Value::GeoJson(ref val) => val.clone(),
+            Value::Blob(ref val) | Value::Hll(ref val) => format!("{val:?}"),
             Value::MultiResult(ref val) | Value::List(ref val) => format!("{val:?}"),
             Value::HashMap(ref val) => format!("{val:?}"),
             Value::OrderedMap(ref val) => format!("{val:?}"),
@@ -518,17 +577,13 @@ impl Value {
                     "The library never passes ordered maps to the server.",
                 ));
             }
-            Value::GeoJSON(ref s) => 1 + 2 + s.len(), // flags + ncells + jsonstr
-            Value::HLL(ref h) => h.len(),
+            Value::GeoJson(ref s) => 1 + 2 + s.len(), // flags + ncells + jsonstr
+            Value::Hll(ref h) => h.len(),
             Value::Vector(ref v) => v.wire_size(),
             Value::Nil | Value::Infinity | Value::Wildcard => 0,
-            Value::Unknown(code, _) => {
-                return Err(Error::invalid_argument(format!(
-                    "Unknown values (particle type {}({code})) hold data this client \
-                     cannot interpret and cannot be written back to the server.",
-                    ParticleType::name_of(code)
-                )));
-            }
+            // A whole-bin write of a foreign particle: the payload goes back
+            // exactly as it was read, under its own particle-type code.
+            Value::Unknown(_, ref bytes) => bytes.len(),
         };
 
         Ok(res)
@@ -543,7 +598,7 @@ impl Value {
             Value::Bool(ref val) => buf.write_bool(*val),
             Value::Float(ref val) => buf.write_f64(val.as_f64()),
             Value::String(ref val) => buf.write_str(val),
-            Value::Blob(ref val) | Value::HLL(ref val) => buf.write_bytes(val),
+            Value::Blob(ref val) | Value::Hll(ref val) => buf.write_bytes(val),
             Value::MultiResult(_) => {
                 return Err(Error::invalid_argument("MultiValues are only returned as results from the server and never from the client."));
             }
@@ -555,17 +610,12 @@ impl Value {
                     "The library never passes ordered maps to the server.",
                 ));
             }
-            Value::GeoJSON(ref val) => buf.write_geo(val),
+            Value::GeoJson(ref val) => buf.write_geo(val),
             Value::Vector(ref val) => val.write_to(buf),
             Value::Infinity => encoder::pack_infinity(&mut Some(buf)),
             Value::Wildcard => encoder::pack_wildcard(&mut Some(buf)),
-            Value::Unknown(code, _) => {
-                return Err(Error::invalid_argument(format!(
-                    "Unknown values (particle type {}({code})) hold data this client \
-                     cannot interpret and cannot be written back to the server.",
-                    ParticleType::name_of(code)
-                )));
-            }
+            // Verbatim payload; `particle_type()` supplies the original code.
+            Value::Unknown(_, ref bytes) => buf.write_bytes(bytes),
         };
 
         Ok(res)
@@ -613,9 +663,9 @@ impl Value {
             Value::List(_) => 4,
             Value::HashMap(_) | Value::OrderedMap(_) | Value::SortedMap(_) => 5,
             Value::Blob(_) => 6,
-            Value::HLL(_) => 7,
+            Value::Hll(_) => 7,
             Value::Float(_) => 8,
-            Value::GeoJSON(_) => 9,
+            Value::GeoJson(_) => 9,
             Value::Infinity => 10,
             Value::Wildcard => 11,
             Value::MultiResult(_) => 12,
@@ -667,8 +717,8 @@ impl Ord for Value {
                 match (self, other) {
                     (Value::Int(a_val), Value::Int(b_val)) => a_val.cmp(b_val),
                     (Value::String(a_val), Value::String(b_val))
-                    | (Value::GeoJSON(a_val), Value::GeoJSON(b_val)) => a_val.cmp(b_val),
-                    (Value::HLL(a_val), Value::HLL(b_val))
+                    | (Value::GeoJson(a_val), Value::GeoJson(b_val)) => a_val.cmp(b_val),
+                    (Value::Hll(a_val), Value::Hll(b_val))
                     | (Value::Blob(a_val), Value::Blob(b_val)) => a_val.cmp(b_val),
                     (Value::Bool(a_val), Value::Bool(b_val)) => a_val.cmp(b_val),
                     // Element-wise, like the server (Vec's lexicographic
@@ -873,7 +923,6 @@ impl From<u64> for Value {
         // refuse instead.
         assert!(
             val <= i64::MAX as u64,
-            "{}",
             "Aerospike does not support u64 natively on server-side. \
              Value {val} exceeds i64::MAX. Cast explicitly to i64 if \
              the truncation is intentional."
@@ -960,125 +1009,127 @@ impl<'a> From<&'a bool> for Value {
     }
 }
 
-impl From<Value> for i64 {
-    fn from(val: Value) -> i64 {
-        match val {
-            Value::Int(val) => val,
-            _ => panic!("Value is not an integer to convert."),
-        }
+impl TryFrom<Value> for i64 {
+    type Error = Error;
+    fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
+        i64::try_from(&val)
     }
 }
 
-impl<'a> From<&'a Value> for i64 {
-    fn from(val: &'a Value) -> i64 {
+impl TryFrom<&Value> for i64 {
+    type Error = Error;
+    fn try_from(val: &Value) -> std::result::Result<Self, Self::Error> {
         match *val {
-            Value::Int(val) => val,
-            _ => panic!("Value is not an integer to convert."),
+            Value::Int(v) => Ok(v),
+            _ => Err(Error::invalid_argument(format!(
+                "Invalid type conversion from Value::{} to i64",
+                val.type_label()
+            ))),
         }
     }
 }
 
 impl TryFrom<Value> for String {
-    type Error = String;
+    type Error = Error;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
-            Value::String(v) | Value::GeoJSON(v) => Ok(v),
-            _ => Err(format!(
+            Value::String(v) | Value::GeoJson(v) => Ok(v),
+            _ => Err(Error::invalid_argument(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.type_label(),
                 std::any::type_name::<Self>()
-            )),
+            ))),
         }
     }
 }
 
 impl TryFrom<Value> for Vec<u8> {
-    type Error = String;
+    type Error = Error;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
-            Value::Blob(v) | Value::HLL(v) => Ok(v),
-            _ => Err(format!(
+            Value::Blob(v) | Value::Hll(v) => Ok(v),
+            _ => Err(Error::invalid_argument(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.type_label(),
                 std::any::type_name::<Self>()
-            )),
+            ))),
         }
     }
 }
 
 impl TryFrom<Value> for Vec<Value> {
-    type Error = String;
+    type Error = Error;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::List(v) | Value::MultiResult(v) => Ok(v),
-            _ => Err(format!(
+            _ => Err(Error::invalid_argument(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.type_label(),
                 std::any::type_name::<Self>()
-            )),
+            ))),
         }
     }
 }
 
 #[allow(clippy::implicit_hasher)]
 impl TryFrom<Value> for HashMap<Value, Value> {
-    type Error = String;
+    type Error = Error;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::HashMap(v) => Ok(v),
             Value::OrderedMap(v) => Ok(v.into_iter().collect()),
             Value::SortedMap(v) => Ok(v.into_iter().collect()),
-            _ => Err(format!(
+            _ => Err(Error::invalid_argument(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.type_label(),
                 std::any::type_name::<Self>()
-            )),
+            ))),
         }
     }
 }
 
 impl TryFrom<Value> for BTreeMap<Value, Value> {
-    type Error = String;
+    type Error = Error;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::SortedMap(v) => Ok(v),
             Value::HashMap(v) => Ok(v.into_iter().collect()),
             Value::OrderedMap(v) => Ok(v.into_iter().collect()),
-            _ => Err(format!(
+            _ => Err(Error::invalid_argument(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.type_label(),
                 std::any::type_name::<Self>()
-            )),
+            ))),
         }
     }
 }
 
 impl TryFrom<Value> for IndexMap<Value, Value> {
-    type Error = String;
+    type Error = Error;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::OrderedMap(v) => Ok(v),
             Value::HashMap(v) => Ok(v.into_iter().collect()),
             Value::SortedMap(v) => Ok(v.into_iter().collect()),
-            _ => Err(format!(
+            _ => Err(Error::invalid_argument(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.type_label(),
                 std::any::type_name::<Self>()
-            )),
+            ))),
         }
     }
 }
 
 impl TryFrom<Value> for Vec<(Value, Value)> {
-    type Error = String;
+    type Error = Error;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::KeyValueList(v) => Ok(v),
-            _ => Err(format!(
+            _ => Err(Error::invalid_argument(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.type_label(),
                 std::any::type_name::<Self>()
-            )),
+            ))),
         }
     }
 }
@@ -1098,76 +1149,85 @@ impl TryFrom<Value> for Vector {
 }
 
 impl TryFrom<Value> for f64 {
-    type Error = String;
+    type Error = Error;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::Float(v) => Ok(v.as_f64()),
-            _ => Err(format!(
+            _ => Err(Error::invalid_argument(format!(
                 "Invalid type conversion from Value::{} to {}",
                 val.type_label(),
                 std::any::type_name::<Self>()
-            )),
+            ))),
         }
     }
 }
 
 impl TryFrom<Value> for bool {
-    type Error = String;
+    type Error = Error;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
         match val {
             Value::Bool(v) => Ok(v),
-            _ => Err("Invalid type bool".into()),
+            _ => Err(Error::invalid_argument(format!(
+                "Invalid type conversion from Value::{} to bool",
+                val.type_label()
+            ))),
         }
     }
 }
 
 pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Value> {
+    // `len` is the server's word; check it once here so every fixed-width
+    // read below stays inside the reply.
+    buf.ensure(len)?;
     let Some(particle_type) = ParticleType::try_from_u8(ptype) else {
         // A particle type this client does not interpret (legacy
         // language-specific serializations, unknown future types): return
         // the raw bytes tagged with their wire code instead of failing the
         // whole record. These values are read-only — they are rejected on
         // every write path.
-        return Ok(Value::Unknown(ptype, buf.read_blob(len)));
+        return Ok(Value::Unknown(ptype, buf.read_blob(len)?));
     };
     match particle_type {
-        ParticleType::NULL => Ok(Value::Nil),
-        ParticleType::INTEGER => {
+        ParticleType::Null => Ok(Value::Nil),
+        ParticleType::Integer => {
             let val = buf.read_i64(None);
             Ok(Value::Int(val))
         }
-        ParticleType::FLOAT => {
+        ParticleType::Float => {
             let val = buf.read_f64(None);
             Ok(Value::Float(FloatValue::from(val)))
         }
-        ParticleType::STRING => {
+        ParticleType::String => {
             let val = buf.read_str(len)?;
             Ok(Value::String(val))
         }
-        ParticleType::GEOJSON => {
+        ParticleType::GeoJson => {
             buf.skip(1);
-            let ncells = buf.read_i16(None) as usize;
-            let header_size: usize = ncells * 8;
-
+            let ncells = usize::try_from(buf.read_i16(None))
+                .map_err(|_| Error::bad_response("negative GeoJSON cell count"))?;
+            let header_size = ncells * 8;
+            let text_len = len
+                .checked_sub(header_size + 3)
+                .ok_or_else(|| Error::bad_response("GeoJSON particle shorter than its header"))?;
             buf.skip(header_size);
-            let val = buf.read_str(len - header_size - 3)?;
-            Ok(Value::GeoJSON(val))
+            let val = buf.read_str(text_len)?;
+            Ok(Value::GeoJson(val))
         }
-        ParticleType::BLOB => Ok(Value::Blob(buf.read_blob(len))),
-        ParticleType::LIST => {
+        ParticleType::Blob => Ok(Value::Blob(buf.read_blob(len)?)),
+        ParticleType::List => {
             let val = decoder::unpack_value_list(buf)?;
             Ok(val)
         }
-        ParticleType::MAP => {
+        ParticleType::Map => {
             let val = decoder::unpack_value_map(buf)?;
             Ok(val)
         }
-        ParticleType::HLL => Ok(Value::HLL(buf.read_blob(len))),
-        ParticleType::VECTOR => Ok(Value::Vector(Vector::from_bytes(buf, len)?)),
-        ParticleType::BOOL => Ok(Value::Bool(buf.read_bool(len))),
+        ParticleType::Hll => Ok(Value::Hll(buf.read_blob(len)?)),
+        ParticleType::Vector => Ok(Value::Vector(Vector::from_bytes(buf, len)?)),
+        ParticleType::Bool => Ok(Value::Bool(buf.read_bool(len))),
         // Retired server types the client does not interpret: same
         // treatment as unrecognized codes above.
-        ParticleType::DIGEST | ParticleType::LDT => Ok(Value::Unknown(ptype, buf.read_blob(len))),
+        ParticleType::Digest | ParticleType::Ldt => Ok(Value::Unknown(ptype, buf.read_blob(len)?)),
     }
 }
 
@@ -1183,7 +1243,7 @@ macro_rules! as_val {
 #[macro_export]
 macro_rules! as_geo {
     ($val:expr) => {{
-        $crate::Value::GeoJSON($val.to_owned())
+        $crate::Value::GeoJson($val.to_owned())
     }};
 }
 
@@ -1245,7 +1305,7 @@ macro_rules! as_list {
 /// let func = "myFunction";
 /// let args = as_values!("a", "b", "c");
 /// client.execute_udf(&WritePolicy::default(), &key,
-///     &module, &func, Some(&args)).await.unwrap();
+///     module, func, &args).await.unwrap();
 /// # }
 /// ```
 #[macro_export]
@@ -1283,6 +1343,7 @@ macro_rules! as_values {
 macro_rules! as_map {
     ( $( $k:expr => $v:expr),* ) => {
         {
+            #[allow(unused_mut)] // an empty invocation never inserts
             let mut temp_map = std::collections::HashMap::new();
             $(
                 temp_map.insert(as_val!($k), as_val!($v));
@@ -1315,6 +1376,7 @@ macro_rules! as_map {
 macro_rules! as_ord_map {
     ( $( $k:expr => $v:expr),* ) => {
         {
+            #[allow(unused_mut)] // an empty invocation never inserts
             let mut temp_map = $crate::IndexMap::new();
             $(
                 temp_map.insert(as_val!($k), as_val!($v));
@@ -1347,6 +1409,7 @@ macro_rules! as_ord_map {
 macro_rules! as_sorted_map {
     ( $( $k:expr => $v:expr),* ) => {
         {
+            #[allow(unused_mut)] // an empty invocation never inserts
             let mut temp_map = std::collections::BTreeMap::new();
             $(
                 temp_map.insert(as_val!($k), as_val!($v));
@@ -1373,8 +1436,12 @@ impl Serialize for Value {
                 FloatValue::F32(u) => serializer.serialize_f32(f32::from_bits(*u)),
                 FloatValue::F64(u) => serializer.serialize_f64(f64::from_bits(*u)),
             },
-            Value::String(s) | Value::GeoJSON(s) => serializer.serialize_str(s),
-            Value::Blob(b) | Value::HLL(b) => serializer.serialize_bytes(&b[..]),
+            Value::String(s) | Value::GeoJson(s) => serializer.serialize_str(s),
+            // An unknown particle serializes as its raw payload too: the type is
+            // not representable in most formats and the bytes are opaque anyway.
+            Value::Blob(b) | Value::Hll(b) | Value::Unknown(_, b) => {
+                serializer.serialize_bytes(&b[..])
+            }
             Value::List(l) => {
                 let mut seq = serializer.serialize_seq(Some(l.len()))?;
                 for elem in l {
@@ -1440,12 +1507,14 @@ impl Serialize for Value {
                     seq.end()
                 }
             },
-            Value::Infinity => panic!("Infinity cannot be serialized"),
-            Value::Wildcard => panic!("Wildcard cannot be serialized"),
-            Value::MultiResult(_) => panic!("MultiValue cannot be serialized"),
-            // Serialize the raw payload; the particle type is not
-            // representable in most formats and the bytes are opaque anyway.
-            Value::Unknown(_, b) => serializer.serialize_bytes(&b[..]),
+            // Server-only markers and a UDF's multi-value result have no
+            // representation in a data format: refuse, do not abort.
+            Value::Infinity | Value::Wildcard | Value::MultiResult(_) => {
+                Err(serde::ser::Error::custom(format!(
+                    "Value::{} cannot be serialized",
+                    self.type_label()
+                )))
+            }
         }
     }
 }
@@ -1464,9 +1533,17 @@ pub enum MapCollection<K: Eq, V> {
 
 /// Allows a `HashMap`, `IndexMap` or `BTreeMap` to be passed as the map
 /// argument to any map-taking method.
-pub trait MapLike<K: Eq, V> {
+pub trait MapLike<K: Eq, V>: map_like_sealed::Sealed {
     /// Convert into the map-collection sum type.
     fn into_map(self) -> MapCollection<K, V>;
+}
+
+/// `MapLike` is sealed: [`MapCollection`] has exactly three shapes.
+mod map_like_sealed {
+    pub trait Sealed {}
+    impl<K, V> Sealed for std::collections::HashMap<K, V> {}
+    impl<K, V> Sealed for indexmap::IndexMap<K, V> {}
+    impl<K, V> Sealed for std::collections::BTreeMap<K, V> {}
 }
 
 #[allow(clippy::implicit_hasher)]
@@ -1500,6 +1577,52 @@ impl From<MapCollection<Value, Value>> for Value {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::float_cmp)] // the literals under test are exactly representable
+
+    /// `f32 -> f64` is lossless, and an F32 bin is already written to the
+    /// server as a double, so every public conversion must widen the same
+    /// way. The `From` impls used to panic on F32 while `TryFrom<Value>` and
+    /// the wire path widened.
+    #[test]
+    fn f32_float_values_widen_to_f64_on_every_path() {
+        let f32_val = crate::value::FloatValue::from(1.5f32);
+        let f64_val = crate::value::FloatValue::from(2.25f64);
+
+        assert_eq!(f64::from(f32_val.clone()), 1.5);
+        assert_eq!(f64::from(&f32_val), 1.5);
+        assert_eq!(f64::from(f64_val.clone()), 2.25);
+        assert_eq!(f64::from(&f64_val), 2.25);
+
+        // ...and agree with the fallible Value conversion and the wire helper.
+        assert_eq!(f64::try_from(crate::Value::Float(f32_val.clone())).unwrap(), 1.5);
+        assert_eq!(f64::from(&f32_val), f32_val.as_f64());
+
+        // Widening is exact: the f32's value round-trips bit-for-bit through f64.
+        let x = 0.1f32;
+        assert_eq!(f64::from(crate::value::FloatValue::from(x)), f64::from(x));
+    }
+
+    /// Narrowing an F64 to f32 must cast the number, not its bit pattern. The
+    /// old `f32::from_bits(bits as u32)` kept the low 32 bits of the double's
+    /// encoding: for 2.25 (`0x4002_0000_0000_0000`) those are all zero, so it
+    /// returned 0.0 for a value that is exactly representable in f32.
+    #[test]
+    fn f64_float_values_narrow_to_f32_by_value_not_by_bits() {
+        let exact = crate::value::FloatValue::from(2.25f64);
+        assert_eq!(f32::from(exact.clone()), 2.25f32);
+        assert_eq!(f32::from(&exact), 2.25f32);
+        // The bit-truncation the old code performed, shown to be a different answer.
+        assert_eq!(f32::from_bits(2.25f64.to_bits() as u32), 0.0f32);
+
+        // A value that is not exact in f32 rounds the way `as f32` does.
+        let inexact = crate::value::FloatValue::from(0.1f64);
+        assert_eq!(f32::from(&inexact), 0.1f64 as f32);
+
+        // F32 -> f32 is untouched.
+        let single = crate::value::FloatValue::from(1.5f32);
+        assert_eq!(f32::from(single.clone()), 1.5f32);
+        assert_eq!(f32::from(&single), 1.5f32);
+    }
     use super::{bytes_to_particle, MapCollection, MapLike, Value};
     use crate::commands::buffer::Buffer;
     use crate::commands::ParticleType;
@@ -1518,7 +1641,7 @@ mod tests {
 
         let val = Value::from(m.clone());
         assert!(matches!(val, Value::OrderedMap(_)));
-        assert_eq!(val.particle_type().unwrap(), ParticleType::MAP as u8);
+        assert_eq!(val.particle_type().unwrap(), ParticleType::Map as u8);
 
         // Insertion order is preserved by the container.
         let back: IndexMap<Value, Value> = val.try_into().unwrap();
@@ -1547,19 +1670,19 @@ mod tests {
         // The guard must not have swallowed the ordinary cases.
         assert_eq!(
             Value::Nil.particle_type().unwrap(),
-            ParticleType::NULL as u8
+            ParticleType::Null as u8
         );
         assert_eq!(
             Value::from(1).particle_type().unwrap(),
-            ParticleType::INTEGER as u8
+            ParticleType::Integer as u8
         );
         assert_eq!(
             Value::from("s").particle_type().unwrap(),
-            ParticleType::STRING as u8
+            ParticleType::String as u8
         );
         assert_eq!(
             Value::from(vec![1_u8]).particle_type().unwrap(),
-            ParticleType::BLOB as u8
+            ParticleType::Blob as u8
         );
         // `Unknown` still carries its uninterpreted code through.
         assert_eq!(Value::Unknown(99, vec![]).particle_type().unwrap(), 99);
@@ -1574,10 +1697,8 @@ mod tests {
         assert_eq!(Value::Wildcard.type_label(), "wildcard");
         assert_eq!(Value::from(1).type_label(), "int");
 
-        let err = String::try_from(Value::Infinity)
-            .expect_err("INF is not a string")
-            .to_string();
-        assert!(err.contains("INF"), "message should name the type: {err}");
+        let err = String::try_from(Value::Infinity).expect_err("INF is not a string");
+        assert!(err.to_string().contains("INF"), "message should name the type: {err}");
     }
 
     #[test]
@@ -1595,7 +1716,7 @@ mod tests {
             as_map!("k" => 1),
             Value::Blob(vec![0]),
             Value::from(-1.5),
-            Value::GeoJSON("{}".into()),
+            Value::GeoJson("{}".into()),
         ];
         for pair in ranked.windows(2) {
             assert_eq!(
@@ -1661,7 +1782,7 @@ mod tests {
         let ordered = as_ord_map!("k" => 1);
         let as_hash: HashMap<Value, Value> = ordered.clone().try_into().unwrap();
         assert_eq!(as_hash.len(), 1);
-        let as_sorted: BTreeMap<Value, Value> = ordered.clone().try_into().unwrap();
+        let as_sorted: BTreeMap<Value, Value> = ordered.try_into().unwrap();
         assert_eq!(as_sorted.len(), 1);
         let as_index: IndexMap<Value, Value> = as_map!("k" => 1).try_into().unwrap();
         assert_eq!(as_index.len(), 1);
@@ -1709,11 +1830,11 @@ mod tests {
         let _: i64 = Value::Int(42).try_into().unwrap();
         let _: f64 = Value::from(42.1).try_into().unwrap();
         let _: String = Value::String("hello".into()).try_into().unwrap();
-        let _: String = Value::GeoJSON(r#"{"type":"Point"}"#.into())
+        let _: String = Value::GeoJson(r#"{"type":"Point"}"#.into())
             .try_into()
             .unwrap();
         let _: Vec<u8> = Value::Blob("hello!".into()).try_into().unwrap();
-        let _: Vec<u8> = Value::HLL("hello!".into()).try_into().unwrap();
+        let _: Vec<u8> = Value::Hll("hello!".into()).try_into().unwrap();
         let _: bool = Value::Bool(false).try_into().unwrap();
         let _: HashMap<Value, Value> = Value::HashMap(HashMap::new()).try_into().unwrap();
         let _: BTreeMap<Value, Value> = Value::SortedMap(BTreeMap::new()).try_into().unwrap();
@@ -1737,6 +1858,29 @@ mod tests {
         let string = String::from(r#"{"type":"Point"}"#);
         let str = r#"{"type":"Point"}"#;
         assert_eq!(as_geo!(string), as_geo!(str));
+    }
+
+    #[test]
+    fn i64_conversion_is_fallible_instead_of_panicking() {
+        use crate::Value;
+
+        assert_eq!(i64::try_from(as_val!(42)).unwrap(), 42);
+        assert_eq!(i64::try_from(&as_val!(7)).unwrap(), 7);
+        let err = i64::try_from(as_val!("x")).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("string") && msg.contains("i64"), "{err}");
+        assert!(i64::try_from(Value::Nil).is_err());
+    }
+
+    #[test]
+    #[cfg(feature = "serialization")]
+    fn unserializable_values_are_an_error_not_a_panic() {
+        use crate::Value;
+
+        for v in [Value::Infinity, Value::Wildcard, Value::MultiResult(vec![])] {
+            let err = serde_json::to_string(&v).unwrap_err().to_string();
+            assert!(err.contains("cannot be serialized"), "{err}");
+        }
     }
 
     #[test]
@@ -1803,7 +1947,7 @@ mod tests {
         use crate::Vector;
 
         let value = Value::Vector(Vector::float32(vec![0.5, -1.5, 2.0]));
-        assert_eq!(value.particle_type().unwrap(), ParticleType::VECTOR as u8);
+        assert_eq!(value.particle_type().unwrap(), ParticleType::Vector as u8);
 
         let size = value.estimate_size().unwrap();
         let mut buf = Buffer::new(usize::MAX);
@@ -1813,7 +1957,7 @@ mod tests {
         assert_eq!(written, size);
 
         buf.data_offset = 0;
-        let decoded = bytes_to_particle(ParticleType::VECTOR as u8, &mut buf, size).unwrap();
+        let decoded = bytes_to_particle(ParticleType::Vector as u8, &mut buf, size).unwrap();
         assert_eq!(decoded, value);
     }
 
@@ -1827,7 +1971,7 @@ mod tests {
         assert_eq!(written, size, "write_to must write exactly estimate_size bytes");
 
         buf.data_offset = 0;
-        bytes_to_particle(ParticleType::VECTOR as u8, &mut buf, size).unwrap()
+        bytes_to_particle(ParticleType::Vector as u8, &mut buf, size).unwrap()
     }
 
     // Nested CDT serde.
@@ -1857,7 +2001,7 @@ mod tests {
         let vectors = [
             Value::Vector(Vector::float16(vec![0x3c00, 0x4000, 0xbc00])),
             Value::Vector(Vector::int32(vec![-5, 0, 7, i32::MIN, i32::MAX])),
-            Value::Vector(Vector::float32(vec![0.1, -2.5, 3.14159])),
+            Value::Vector(Vector::float32(vec![0.1, -2.5, 3.5])),
             Value::Vector(Vector::float64(vec![0.1, -2.5, f64::MAX])),
         ];
 
@@ -1885,20 +2029,6 @@ mod tests {
             particle_round_trip(&value),
             Value::Vector(Vector::int32(vec![1]))
         );
-    }
-
-    // New vectors use zero reserved header bytes.
-    #[test]
-    fn vector_reserved_bits_round_trip_through_both_serde_paths() {
-        use crate::Vector;
-
-        let value = Value::Vector(Vector::float32(vec![1.0, 2.0]));
-
-        assert_eq!(particle_round_trip(&value), value);
-        assert_eq!(cdt_list_round_trip(value.clone()), value);
-        if let Value::Vector(v) = particle_round_trip(&value) {
-            assert_eq!(&v.wire_bytes()[6..8], &[0, 0]);
-        }
     }
 
     // Signed zeros and the finite extremes keep their bits through both paths.
@@ -1988,7 +2118,7 @@ mod tests {
 
         buf.data_offset = 0;
         let truncated = crate::vector::VECTOR_HEADER_SIZE + 2 * 4;
-        assert!(bytes_to_particle(ParticleType::VECTOR as u8, &mut buf, truncated).is_err());
+        assert!(bytes_to_particle(ParticleType::Vector as u8, &mut buf, truncated).is_err());
     }
 
     // A vector nested in a list round-trips through the msgpack (CDT) path.
@@ -2089,22 +2219,46 @@ mod tests {
         assert!(crate::Key::new("ns", "set", value).is_err());
     }
 
-    // Unknown values are read-only: every send path rejects them.
+    // A whole-bin write of an Unknown value sends the payload verbatim under
+    // its original particle-type code — the copy-through case.
     #[test]
-    fn unknown_values_cannot_be_sent() {
-        let value = Value::Unknown(9, vec![1, 2, 3]); // 9 = PYTHON_BLOB
+    fn unknown_values_write_verbatim_as_bin_values() {
+        let payload = vec![1u8, 2, 3];
+        let value = Value::Unknown(9, payload.clone()); // 9 = PYTHON_BLOB
 
-        assert!(value.estimate_size().is_err());
+        assert_eq!(value.particle_type().unwrap(), 9);
+        assert_eq!(value.estimate_size().unwrap(), payload.len());
 
         let mut buf = Buffer::new(0);
         buf.resize_buffer(64).unwrap();
         buf.data_offset = 0;
-        assert!(value.write_to(&mut buf).is_err());
+        assert_eq!(value.write_to(&mut buf).unwrap(), payload.len());
+        assert_eq!(&buf.data_buffer[..payload.len()], &payload[..]);
 
-        // Rejected inside CDT/list/map payloads too.
+        // An empty foreign payload is a legal zero-length bin value.
+        let empty = Value::Unknown(7, Vec::new()); // 7 = JBLOB
+        assert_eq!(empty.estimate_size().unwrap(), 0);
+        buf.data_offset = 0;
+        assert_eq!(empty.write_to(&mut buf).unwrap(), 0);
+    }
+
+    // Everywhere except a whole bin value, Unknown is still rejected: the
+    // client cannot interpret the bytes, so it cannot embed, hash or index
+    // them.
+    #[test]
+    fn unknown_values_rejected_outside_bin_values() {
+        let value = Value::Unknown(9, vec![1, 2, 3]);
+
+        // Inside CDT/list/map payloads.
         assert!(crate::msgpack::encoder::pack_value(&mut None, &value).is_err());
+        // Nested in a collection that is itself a bin value.
+        let list = Value::List(vec![value.clone()]);
+        assert!(list.estimate_size().is_err());
+        let mut map = HashMap::new();
+        map.insert(Value::from("k"), value.clone());
+        assert!(Value::HashMap(map).estimate_size().is_err());
 
-        // And as a key: digest computation fails, so Key::new errors.
+        // As a key: digest computation fails, so Key::new errors.
         let mut hasher = Ripemd160::new();
         assert!(value.write_key_bytes(&mut hasher).is_err());
         assert!(crate::Key::new("ns", "set", value).is_err());
@@ -2132,5 +2286,39 @@ mod tests {
     fn unknown_values_rejected_in_filters() {
         use crate::query::filter::EqFilterValue;
         let _ = Value::Unknown(9, vec![1, 2, 3]).into_filter_value();
+    }
+
+    #[test]
+    fn every_value_hashes() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        for v in [
+            Value::Nil,
+            Value::from(true),
+            Value::from(1),
+            Value::from(1.5),
+            Value::from("s"),
+            Value::GeoJson("{}".into()),
+            Value::from(vec![1u8]),
+            Value::Hll(vec![2u8]),
+            Value::from(vec![Value::from(1)]),
+            Value::MultiResult(vec![Value::from(1)]),
+            Value::HashMap(HashMap::new()),
+            Value::Infinity,
+            Value::Wildcard,
+            Value::Unknown(7, vec![0]),
+        ] {
+            set.insert(v);
+        }
+        assert_eq!(set.len(), 14);
+        // Equal maps hash equal whatever their variant.
+        let mut a = HashMap::new();
+        a.insert(Value::from(1), Value::from(2));
+        let b: IndexMap<Value, Value> = a.clone().into_iter().collect();
+        let (a, b) = (Value::HashMap(a), Value::OrderedMap(b));
+        assert_eq!(a, b);
+        let mut set = HashSet::new();
+        set.insert(a);
+        assert!(set.contains(&b));
     }
 }

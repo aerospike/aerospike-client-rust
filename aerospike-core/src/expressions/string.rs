@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! String filter expressions. Produce [`Expression`] nodes that read or
+//! String filter expressions.
+//!
+//! Produce [`Expression`] nodes that read or
 //! transform string values inside another expression. Mirrors the operations
 //! exposed by [`crate::operations::string`], but composes inside expressions
 //! instead of being sent as standalone operate ops.
@@ -43,7 +45,7 @@
 //! [`crate::expressions::lists::get_by_index`] or
 //! [`crate::expressions::maps::get_by_key`] to extract the leaf first.
 //!
-//! Requires Aerospike Server version 8.1.3 or later.
+//! Requires Aerospike Server version 8.2.0 or later.
 
 use crate::expressions::{ExpOp, ExpType, Expression, ExpressionArgument, MODIFY};
 use crate::operations::string::{StringPolicy, StringRegexFlags};
@@ -100,28 +102,33 @@ use crate::operations::string::StringNumericType;
 
 /// Expression that returns the number of Unicode codepoints in `src` as an
 /// `i64`. For UTF-8 byte length, use [`byte_length`].
+#[must_use]
 pub fn strlen(src: Expression) -> Expression {
-    add_read(src, ExpType::INT, vec![sub(STRLEN)])
+    add_read(src, ExpType::Int, vec![sub(STRLEN)])
 }
 
 /// Expression that returns the substring of `src` from codepoint `start` to
 /// the end. Negative `start` counts from the end of the string.
+#[must_use]
 pub fn substr(src: Expression, start: Expression) -> Expression {
     add_read(
         src,
-        ExpType::STRING,
+        ExpType::String,
         vec![sub(SUBSTR), ExpressionArgument::FilterExpression(start)],
     )
 }
 
 /// Expression that returns the substring of `src` in the half-open codepoint
-/// range `[start, end)` — `start` inclusive, `end` exclusive. Negative
+/// range `[start, end)` — `start` inclusive, `end` exclusive.
+///
+/// Negative
 /// indexes count from the end. If, after negative-index normalization,
 /// `start >= end`, the result is the empty string.
+#[must_use]
 pub fn substr_range(src: Expression, start: Expression, end: Expression) -> Expression {
     add_read(
         src,
-        ExpType::STRING,
+        ExpType::String,
         vec![
             sub(SUBSTR),
             ExpressionArgument::FilterExpression(start),
@@ -132,30 +139,33 @@ pub fn substr_range(src: Expression, start: Expression, end: Expression) -> Expr
 
 /// Expression that returns the codepoint at `index` of `src` as a
 /// one-codepoint string. Negative indexes count from the end.
+#[must_use]
 pub fn char_at(src: Expression, index: Expression) -> Expression {
     add_read(
         src,
-        ExpType::STRING,
+        ExpType::String,
         vec![sub(CHAR_AT), ExpressionArgument::FilterExpression(index)],
     )
 }
 
 /// Expression that returns the codepoint index of the first occurrence of
 /// `needle` in `src`, or -1 if not found.
+#[must_use]
 pub fn find(src: Expression, needle: Expression) -> Expression {
     add_read(
         src,
-        ExpType::INT,
+        ExpType::Int,
         vec![sub(FIND), ExpressionArgument::FilterExpression(needle)],
     )
 }
 
 /// Expression that returns the codepoint index of the `occurrence`-th match
 /// of `needle` (1 = first, -1 = last), or -1 if not found.
+#[must_use]
 pub fn find_nth(src: Expression, needle: Expression, occurrence: Expression) -> Expression {
     add_read(
         src,
-        ExpType::INT,
+        ExpType::Int,
         vec![
             sub(FIND),
             ExpressionArgument::FilterExpression(needle),
@@ -165,10 +175,11 @@ pub fn find_nth(src: Expression, needle: Expression, occurrence: Expression) -> 
 }
 
 /// Expression that tests whether `src` contains `needle` as a substring.
+#[must_use]
 pub fn contains(src: Expression, needle: Expression) -> Expression {
     add_read(
         src,
-        ExpType::BOOL,
+        ExpType::Bool,
         vec![sub(CONTAINS), ExpressionArgument::FilterExpression(needle)],
     )
 }
@@ -177,10 +188,11 @@ pub fn contains(src: Expression, needle: Expression) -> Expression {
 ///
 /// Matching is Unicode canonical, not byte-exact: a prefix in a different
 /// normalization form than the source still matches.
+#[must_use]
 pub fn starts_with(src: Expression, prefix: Expression) -> Expression {
     add_read(
         src,
-        ExpType::BOOL,
+        ExpType::Bool,
         vec![
             sub(STARTS_WITH),
             ExpressionArgument::FilterExpression(prefix),
@@ -192,43 +204,49 @@ pub fn starts_with(src: Expression, prefix: Expression) -> Expression {
 ///
 /// Matching is Unicode canonical, not byte-exact: a suffix in a different
 /// normalization form than the source still matches.
+#[must_use]
 pub fn ends_with(src: Expression, suffix: Expression) -> Expression {
     add_read(
         src,
-        ExpType::BOOL,
+        ExpType::Bool,
         vec![sub(ENDS_WITH), ExpressionArgument::FilterExpression(suffix)],
     )
 }
 
 /// Expression that parses `src` as an `i64`. Returns an error at evaluation
 /// time if the source cannot be parsed as an integer.
+#[must_use]
 pub fn to_integer(src: Expression) -> Expression {
-    add_read(src, ExpType::INT, vec![sub(TO_INTEGER)])
+    add_read(src, ExpType::Int, vec![sub(TO_INTEGER)])
 }
 
 /// Expression that parses `src` as a 64-bit float. Returns an error at
 /// evaluation time if the source cannot be parsed as a double.
+#[must_use]
 pub fn to_double(src: Expression) -> Expression {
-    add_read(src, ExpType::FLOAT, vec![sub(TO_DOUBLE)])
+    add_read(src, ExpType::Float, vec![sub(TO_DOUBLE)])
 }
 
 /// Expression that returns the UTF-8 byte length of `src` as an `i64`.
 /// Differs from [`strlen`] for non-ASCII content.
+#[must_use]
 pub fn byte_length(src: Expression) -> Expression {
-    add_read(src, ExpType::INT, vec![sub(BYTE_LENGTH)])
+    add_read(src, ExpType::Int, vec![sub(BYTE_LENGTH)])
 }
 
 /// Expression that tests whether `src` contains a valid integer or float.
+#[must_use]
 pub fn is_numeric(src: Expression) -> Expression {
-    add_read(src, ExpType::BOOL, vec![sub(IS_NUMERIC)])
+    add_read(src, ExpType::Bool, vec![sub(IS_NUMERIC)])
 }
 
 /// Expression that tests whether `src` parses as a number of the requested
 /// [`StringNumericType`].
+#[must_use]
 pub fn is_numeric_typed(src: Expression, numeric_type: StringNumericType) -> Expression {
     add_read(
         src,
-        ExpType::BOOL,
+        ExpType::Bool,
         vec![
             sub(IS_NUMERIC),
             ExpressionArgument::Value(Value::Int(numeric_type as i64)),
@@ -237,48 +255,55 @@ pub fn is_numeric_typed(src: Expression, numeric_type: StringNumericType) -> Exp
 }
 
 /// Expression that tests whether every cased codepoint in `src` is uppercase.
+#[must_use]
 pub fn is_upper(src: Expression) -> Expression {
-    add_read(src, ExpType::BOOL, vec![sub(IS_UPPER)])
+    add_read(src, ExpType::Bool, vec![sub(IS_UPPER)])
 }
 
 /// Expression that tests whether every cased codepoint in `src` is lowercase.
+#[must_use]
 pub fn is_lower(src: Expression) -> Expression {
-    add_read(src, ExpType::BOOL, vec![sub(IS_LOWER)])
+    add_read(src, ExpType::Bool, vec![sub(IS_LOWER)])
 }
 
 /// Expression that returns the UTF-8 bytes of `src` as a blob.
+#[must_use]
 pub fn to_blob(src: Expression) -> Expression {
-    add_read(src, ExpType::BLOB, vec![sub(TO_BLOB)])
+    add_read(src, ExpType::Blob, vec![sub(TO_BLOB)])
 }
 
 /// Expression that splits `src` by Unicode codepoint — each codepoint becomes
 /// its own list element.
+#[must_use]
 pub fn split(src: Expression) -> Expression {
-    add_read(src, ExpType::LIST, vec![sub(SPLIT)])
+    add_read(src, ExpType::List, vec![sub(SPLIT)])
 }
 
 /// Expression that splits `src` by the `separator` substring. If the
 /// separator is absent, the result is a singleton list containing the whole
 /// source.
+#[must_use]
 pub fn split_by_separator(src: Expression, separator: Expression) -> Expression {
     add_read(
         src,
-        ExpType::LIST,
+        ExpType::List,
         vec![sub(SPLIT), ExpressionArgument::FilterExpression(separator)],
     )
 }
 
 /// Expression that base64-decodes `src` and returns the decoded bytes as a
 /// blob.
+#[must_use]
 pub fn b64_decode(src: Expression) -> Expression {
-    add_read(src, ExpType::BLOB, vec![sub(B64_DECODE)])
+    add_read(src, ExpType::Blob, vec![sub(B64_DECODE)])
 }
 
 /// Expression that tests whether `pattern` (ICU regex syntax) matches `src`.
+#[must_use]
 pub fn regex_compare(src: Expression, pattern: Expression) -> Expression {
     add_read(
         src,
-        ExpType::BOOL,
+        ExpType::Bool,
         vec![
             sub(REGEX_COMPARE),
             ExpressionArgument::FilterExpression(pattern),
@@ -288,6 +313,7 @@ pub fn regex_compare(src: Expression, pattern: Expression) -> Expression {
 
 /// Expression that tests whether `pattern` matches `src` under the supplied
 /// [`StringRegexFlags`]. Flags can be combined with bitwise OR.
+#[must_use]
 pub fn regex_compare_with_flags(
     src: Expression,
     pattern: Expression,
@@ -295,11 +321,11 @@ pub fn regex_compare_with_flags(
 ) -> Expression {
     add_read(
         src,
-        ExpType::BOOL,
+        ExpType::Bool,
         vec![
             sub(REGEX_COMPARE),
             ExpressionArgument::FilterExpression(pattern),
-            ExpressionArgument::Value(Value::Int(regex_flags.0)),
+            ExpressionArgument::Value(Value::Int(regex_flags.bits())),
         ],
     )
 }
@@ -310,6 +336,7 @@ pub fn regex_compare_with_flags(
 
 /// Expression that splices `value` into `src` at codepoint `index` and
 /// returns the resulting string. Does not modify the underlying bin.
+#[must_use]
 pub fn insert(
     policy: &StringPolicy,
     src: Expression,
@@ -322,13 +349,14 @@ pub fn insert(
             sub(INSERT),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::FilterExpression(value),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
 
 /// Expression that overwrites codepoints in `src` starting at codepoint
 /// `index` with `value`, returning the resulting string.
+#[must_use]
 pub fn overwrite(
     policy: &StringPolicy,
     src: Expression,
@@ -341,20 +369,21 @@ pub fn overwrite(
             sub(OVERWRITE),
             ExpressionArgument::FilterExpression(index),
             ExpressionArgument::FilterExpression(value),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
 
 /// Expression that concatenates `values` (a list of strings) onto `src` in
 /// order, returning the resulting string.
+#[must_use]
 pub fn concat(policy: &StringPolicy, src: Expression, values: Expression) -> Expression {
     add_modify(
         src,
         vec![
             sub(CONCAT),
             ExpressionArgument::FilterExpression(values),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -362,13 +391,14 @@ pub fn concat(policy: &StringPolicy, src: Expression, values: Expression) -> Exp
 /// Expression that appends `value` to the end of `src` and returns the
 /// resulting string. Unicode/DBCS-aware counterpart to the legacy byte-level
 /// append; does not modify the underlying bin.
+#[must_use]
 pub fn append(policy: &StringPolicy, src: Expression, value: Expression) -> Expression {
     add_modify(
         src,
         vec![
             sub(APPEND),
             ExpressionArgument::FilterExpression(value),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -376,13 +406,14 @@ pub fn append(policy: &StringPolicy, src: Expression, value: Expression) -> Expr
 /// Expression that prepends `value` to the start of `src` and returns the
 /// resulting string. Unicode/DBCS-aware counterpart to the legacy byte-level
 /// prepend; does not modify the underlying bin.
+#[must_use]
 pub fn prepend(policy: &StringPolicy, src: Expression, value: Expression) -> Expression {
     add_modify(
         src,
         vec![
             sub(PREPEND),
             ExpressionArgument::FilterExpression(value),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -397,6 +428,7 @@ pub fn prepend(policy: &StringPolicy, src: Expression, value: Expression) -> Exp
 /// silently snip the empty range `[start, 0)`. `policy` is accepted for
 /// signature parity with the other modify expressions and is ignored; use
 /// [`snip`] when the write flags have to be honored.
+#[must_use]
 pub fn snip_from(_policy: &StringPolicy, src: Expression, start: Expression) -> Expression {
     add_modify(
         src,
@@ -406,6 +438,7 @@ pub fn snip_from(_policy: &StringPolicy, src: Expression, start: Expression) -> 
 
 /// Expression that removes the half-open codepoint range `[start, end)` from
 /// `src` and returns the resulting string.
+#[must_use]
 pub fn snip(
     policy: &StringPolicy,
     src: Expression,
@@ -418,13 +451,14 @@ pub fn snip(
             sub(SNIP),
             ExpressionArgument::FilterExpression(start),
             ExpressionArgument::FilterExpression(end),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
 
 /// Expression that replaces the first occurrence of `needle` in `src` with
 /// `replacement` and returns the resulting string.
+#[must_use]
 pub fn replace(
     policy: &StringPolicy,
     src: Expression,
@@ -436,13 +470,14 @@ pub fn replace(
         vec![
             sub(REPLACE),
             ExpressionArgument::QuotedExpressions(vec![needle, replacement]),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
 
 /// Expression that replaces every occurrence of `needle` in `src` with
 /// `replacement` and returns the resulting string.
+#[must_use]
 pub fn replace_all(
     policy: &StringPolicy,
     src: Expression,
@@ -454,90 +489,98 @@ pub fn replace_all(
         vec![
             sub(REPLACE_ALL),
             ExpressionArgument::QuotedExpressions(vec![needle, replacement]),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
 
 /// Expression that returns `src` uppercased.
+#[must_use]
 pub fn upper(policy: &StringPolicy, src: Expression) -> Expression {
     add_modify(
         src,
         vec![
             sub(UPPER),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
 
 /// Expression that returns `src` lowercased.
+#[must_use]
 pub fn lower(policy: &StringPolicy, src: Expression) -> Expression {
     add_modify(
         src,
         vec![
             sub(LOWER),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
 
 /// Expression that returns `src` case-folded (locale-independent lowercase).
+#[must_use]
 pub fn case_fold(policy: &StringPolicy, src: Expression) -> Expression {
     add_modify(
         src,
         vec![
             sub(CASE_FOLD),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
 
 /// Expression that returns `src` normalized to Unicode NFC form.
+#[must_use]
 pub fn normalize_nfc(policy: &StringPolicy, src: Expression) -> Expression {
     add_modify(
         src,
         vec![
             sub(NORMALIZE_NFC),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
 
 /// Expression that returns `src` with whitespace removed from the start.
+#[must_use]
 pub fn trim_start(policy: &StringPolicy, src: Expression) -> Expression {
     add_modify(
         src,
         vec![
             sub(TRIM_START),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
 
 /// Expression that returns `src` with whitespace removed from the end.
+#[must_use]
 pub fn trim_end(policy: &StringPolicy, src: Expression) -> Expression {
     add_modify(
         src,
         vec![
             sub(TRIM_END),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
 
 /// Expression that returns `src` with whitespace removed from both ends.
+#[must_use]
 pub fn trim(policy: &StringPolicy, src: Expression) -> Expression {
     add_modify(
         src,
         vec![
             sub(TRIM),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
 
 /// Expression that prepends `pad_string` to `src` repeatedly until the result
 /// reaches `target_length` codepoints.
+#[must_use]
 pub fn pad_start(
     policy: &StringPolicy,
     src: Expression,
@@ -550,13 +593,14 @@ pub fn pad_start(
             sub(PAD_START),
             ExpressionArgument::FilterExpression(target_length),
             ExpressionArgument::FilterExpression(pad_string),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
 
 /// Expression that appends `pad_string` to `src` repeatedly until the result
 /// reaches `target_length` codepoints.
+#[must_use]
 pub fn pad_end(
     policy: &StringPolicy,
     src: Expression,
@@ -569,19 +613,20 @@ pub fn pad_end(
             sub(PAD_END),
             ExpressionArgument::FilterExpression(target_length),
             ExpressionArgument::FilterExpression(pad_string),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
 
 /// Expression that returns `src` repeated `count` times.
+#[must_use]
 pub fn repeat(policy: &StringPolicy, src: Expression, count: Expression) -> Expression {
     add_modify(
         src,
         vec![
             sub(REPEAT),
             ExpressionArgument::FilterExpression(count),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -593,6 +638,7 @@ pub fn repeat(policy: &StringPolicy, src: Expression, count: Expression) -> Expr
 /// **Both flag arguments are positional, and the regex flags come first** — see
 /// [`crate::operations::string::regex_replace`] for why that matters and which
 /// write flags this op accepts.
+#[must_use]
 pub fn regex_replace(
     policy: &StringPolicy,
     src: Expression,
@@ -605,8 +651,8 @@ pub fn regex_replace(
         vec![
             sub(REGEX_REPLACE),
             ExpressionArgument::QuotedExpressions(vec![pattern, replacement]),
-            ExpressionArgument::Value(Value::Int(regex_flags.0)),
-            ExpressionArgument::Value(Value::Int(policy_flags(policy))),
+            ExpressionArgument::Value(Value::Int(regex_flags.bits())),
+            ExpressionArgument::Value(Value::Int(policy.flags())),
         ],
     )
 }
@@ -622,6 +668,7 @@ pub fn regex_replace(
 /// Unlike the other builders in this module, `to_string` is not a CALL
 /// sub-op — it is the dedicated unary `TO_STRING` expression (opcode 99),
 /// packed as `[99, src]` like the `to_int`/`to_float` conversions.
+#[must_use]
 pub fn to_string(src: Expression) -> Expression {
     Expression {
         cmd: Some(ExpOp::ToString),
@@ -639,12 +686,8 @@ pub fn to_string(src: Expression) -> Expression {
 // Helpers
 // -----------------------------------------------------------------
 
-fn sub(sub_op: i64) -> ExpressionArgument {
+const fn sub(sub_op: i64) -> ExpressionArgument {
     ExpressionArgument::Value(Value::Int(sub_op))
-}
-
-const fn policy_flags(policy: &StringPolicy) -> i64 {
-    policy.flags()
 }
 
 fn add_read(
@@ -670,7 +713,7 @@ fn add_modify(src: Expression, arguments: Vec<ExpressionArgument>) -> Expression
         val: None,
         bin: Some(Box::new(src)),
         flags: Some(MODULE | MODIFY),
-        module: Some(ExpType::STRING),
+        module: Some(ExpType::String),
         exps: None,
         arguments: Some(arguments),
         bytes: None,

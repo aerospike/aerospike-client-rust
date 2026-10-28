@@ -1,13 +1,29 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 //! CRUD operations using the **sync** (blocking) client.
 //!
-//! The sync client wraps the async client and must run on a thread where a Tokio runtime
-//! is current (the core client uses the runtime for cluster tending). So we run the
-//! example inside `runtime.block_on(...)`.
+//! The sync client wraps the async client and drives it to completion itself,
+//! so this is a plain `fn main` with no runtime of its own. The runtime it
+//! blocks on follows the `rt-tokio` / `rt-async-std` feature.
 //!
-//! Run with the sync feature enabled:
+//! Run with the sync feature and either runtime:
 //!
 //! ```bash
-//! cargo run --example crud_sync --no-default-features --features "rt-tokio,sync"
+//! cargo run --example crud_sync --no-default-features --features "sync,rt-tokio"
+//! cargo run --example crud_sync --no-default-features --features "sync,rt-async-std"
 //! ```
 
 #[macro_use]
@@ -19,8 +35,7 @@ use std::time::Instant;
 use aerospike::operations;
 use aerospike::{Bins, Client, ClientPolicy, ReadPolicy, WritePolicy};
 
-#[tokio::main]
-async fn main() {
+fn main() {
     run();
 }
 

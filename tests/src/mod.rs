@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -23,6 +23,7 @@ mod admin;
 mod backoff;
 mod batch;
 mod batch_in_doubt;
+mod batch_random;
 mod cdt_bitwise;
 mod cdt_list;
 mod cdt_map;
@@ -44,11 +45,11 @@ mod index;
 mod kv;
 mod metrics;
 mod path_expressions;
+mod perf_e2e;
 mod query;
-mod query_selection;
 #[cfg(feature = "lua")]
 mod query_aggregate;
-mod value_order;
+mod query_selection;
 mod scan;
 #[cfg(feature = "serialization")]
 mod serialization;
@@ -59,6 +60,7 @@ mod truncate;
 mod txn;
 mod udf;
 mod vector;
+mod value_order;
 
 pub(crate) async fn count_results(rs: Arc<Recordset>) -> usize {
     let mut count = 0;

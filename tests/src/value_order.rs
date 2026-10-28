@@ -39,7 +39,7 @@ fn corpus() -> Vec<Value> {
         as_map!("b" => 0),
         as_map!("a" => 1, "b" => 2),
         as_map!(),
-        Value::GeoJSON(r#"{"type":"Point","coordinates":[1.0,1.0]}"#.into()),
+        Value::GeoJson(r#"{"type":"Point","coordinates":[1.0,1.0]}"#.into()),
         Value::from(1000),
         Value::from(2),
         Value::from(2.0),
@@ -59,7 +59,7 @@ async fn value_ord_matches_server_sort_order() {
         .put(&wp, &key, &[as_bin!("l", Value::List(values.clone()))])
         .await
         .unwrap();
-    let op = lists::sort("l", ListSortFlags::Default);
+    let op = lists::sort("l", ListSortFlags::DEFAULT);
     client.operate(&wp, &key, &[op]).await.unwrap();
     let rec = client
         .get(&ReadPolicy::default(), &key, Bins::All)
@@ -133,7 +133,7 @@ async fn value_ord_matches_server_map_key_order() {
 #[aerospike_macro::test]
 async fn map_order_policy_selects_variant_not_order() {
     use aerospike::operations::{maps, MapOrder};
-    use aerospike::{MapPolicy, MapWriteMode};
+    use aerospike::{MapPolicy, MapWriteFlags};
 
     // Verified server behavior (8.1): the MapOrder in a MapPolicy
     // controls the wire representation of returns, not the pair order —
@@ -148,12 +148,12 @@ async fn map_order_policy_selects_variant_not_order() {
     for (label, policy, expect_sorted_variant) in [
         (
             "unordered",
-            MapPolicy::new(MapOrder::Unordered, MapWriteMode::Update),
+            MapPolicy::new(MapOrder::Unordered, MapWriteFlags::DEFAULT),
             false,
         ),
         (
             "key-ordered",
-            MapPolicy::new(MapOrder::KeyOrdered, MapWriteMode::Update),
+            MapPolicy::new(MapOrder::KeyOrdered, MapWriteFlags::DEFAULT),
             true,
         ),
     ] {

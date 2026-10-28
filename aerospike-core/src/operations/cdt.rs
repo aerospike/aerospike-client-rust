@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -24,7 +24,7 @@ use crate::Result;
 use crate::Value;
 
 /// Argument value for CDT (list/map) operations in the wire protocol.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CdtArgument {
     /// Single byte.
     Byte(u8),
@@ -64,15 +64,13 @@ pub struct CdtOperation {
 /// conservative check that can never produce a false positive.
 impl PartialEq for CdtOperation {
     fn eq(&self, other: &Self) -> bool {
-        self.op == other.op
-            && Arc::ptr_eq(&self.encoder, &other.encoder)
-            && self.args == other.args
+        self.op == other.op && Arc::ptr_eq(&self.encoder, &other.encoder) && self.args == other.args
     }
 }
 
 impl CdtOperation {
     pub const fn particle_type(&self) -> ParticleType {
-        ParticleType::BLOB
+        ParticleType::Blob
     }
 
     pub fn estimate_size(&self, ctx: &[CdtContext]) -> Result<usize> {

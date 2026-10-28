@@ -26,7 +26,7 @@ use aerospike::expressions::{bin_exists, vector_bin};
 use aerospike::operations::exp::{read_exp, ExpReadFlags};
 use aerospike::query::{Order, OrderByType, PartitionFilter};
 use aerospike::{
-    as_bin, as_key, BatchOperation, BatchPolicy, BatchReadPolicy, BatchUDFPolicy, Bins, Client,
+    as_bin, as_key, BatchOperation, BatchPolicy, BatchReadPolicy, BatchUdfPolicy, Bins, Client,
     QueryPolicy, ReadPolicy, Statement, Value, Vector, VectorElementType, WritePolicy,
 };
 
@@ -489,25 +489,28 @@ async fn vector_udf_arguments_are_checked_against_the_cluster() {
                 &key,
                 "vector_example",
                 "echo",
-                Some(&args),
+                &args,
             )
             .await
             .expect_err("a vector argument must be refused on an unsupported cluster");
         assert!(err.to_string().contains("not supported by all nodes"), "{err}");
     }
 
-    let ops = vec![BatchOperation::udf(
-        &BatchUDFPolicy::default(),
+    let mut ops = vec![BatchOperation::udf(
+        &BatchUdfPolicy::default(),
         key.clone(),
         "vector_example",
         "echo",
-        Some(vec![vector]),
+        vec![vector],
     )];
-    let err = client
-        .batch(&BatchPolicy::default(), &ops)
-        .await
-        .expect_err("a vector UDF argument in a batch must be refused on an unsupported cluster");
-    assert!(err.to_string().contains("not supported by all nodes"), "{err}");
+    let refused = match client.batch(&BatchPolicy::default(), &mut ops).await {
+        Err(err) => err.to_string(),
+        Ok(()) => ops[0]
+            .error()
+            .map(ToString::to_string)
+            .unwrap_or_default(),
+    };
+    assert!(refused.contains("not supported by all nodes"), "{refused}");
 
     client.close().await.unwrap();
 }
@@ -677,25 +680,21 @@ async fn batch_read_returns_records_with_vector_bins() {
         .unwrap();
 
     let bpr = BatchReadPolicy::default();
-    let batch = vec![
+    let mut batch = vec![
         BatchOperation::read(&bpr, key1.clone(), Bins::All),
         BatchOperation::read(&bpr, key2.clone(), Bins::All),
     ];
-    let mut results = client.batch(&BatchPolicy::default(), &batch).await.unwrap();
+    client
+        .batch(&BatchPolicy::default(), &mut batch)
+        .await
+        .unwrap();
 
-    let r1 = results.remove(0);
-    assert_eq!(r1.key, key1);
-    assert_eq!(
-        r1.record.unwrap().bins.get("embedding"),
-        Some(&Value::Vector(v1))
-    );
-
-    let r2 = results.remove(0);
-    assert_eq!(r2.key, key2);
-    assert_eq!(
-        r2.record.unwrap().bins.get("embedding"),
-        Some(&Value::Vector(v2))
-    );
+    for (op, vector) in batch.iter().zip([v1, v2]) {
+        assert_eq!(
+            op.record().expect("a batch read row").bins.get("embedding"),
+            Some(&Value::Vector(vector))
+        );
+    }
 
     client.close().await.unwrap();
 }
@@ -739,7 +738,7 @@ async fn euclidean_squared_distance_to_self_is_zero() {
     let ops = vec![read_exp(
         "dist",
         euclidean_squared_distance(&v, vector_bin("embedding".to_string())),
-        ExpReadFlags::Default,
+        ExpReadFlags::DEFAULT,
     )];
     let rec = client
         .operate(&WritePolicy::default(), &key, &ops)
@@ -771,7 +770,7 @@ async fn dot_product_matches_sum_of_squares_for_self() {
     let ops = vec![read_exp(
         "dist",
         dot_product(&v, vector_bin("embedding".to_string())),
-        ExpReadFlags::Default,
+        ExpReadFlags::DEFAULT,
     )];
     let rec = client
         .operate(&WritePolicy::default(), &key, &ops)
@@ -801,7 +800,7 @@ async fn cosine_similarity_to_self_is_one() {
     let ops = vec![read_exp(
         "dist",
         cosine_similarity(&v, vector_bin("embedding".to_string())),
-        ExpReadFlags::Default,
+        ExpReadFlags::DEFAULT,
     )];
     let rec = client
         .operate(&WritePolicy::default(), &key, &ops)
@@ -831,7 +830,7 @@ async fn euclidean_squared_distance_is_sum_of_squared_differences() {
     let ops = vec![read_exp(
         "dist",
         euclidean_squared_distance(&query, vector_bin("embedding".to_string())),
-        ExpReadFlags::Default,
+        ExpReadFlags::DEFAULT,
     )];
     let rec = client
         .operate(&WritePolicy::default(), &key, &ops)
@@ -880,7 +879,7 @@ async fn vector_distance_is_unknown_for_incomparable_values() {
                 &[read_exp(
                     "dist",
                     euclidean_squared_distance(&query, vector_bin("embedding".into())),
-                    ExpReadFlags::EvalNoFail,
+                    ExpReadFlags::EVAL_NO_FAIL,
                 )],
             )
             .await
@@ -926,7 +925,7 @@ async fn vector_distance_projection_supports_top_k_nearest_query() {
         read_exp(
             "dist",
             euclidean_squared_distance(&query, vector_bin("embedding".into())),
-            ExpReadFlags::Default,
+            ExpReadFlags::DEFAULT,
         ),
     ]);
     statement.set_order_by("dist", OrderByType::Double, Order::Asc);

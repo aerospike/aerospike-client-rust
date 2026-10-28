@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -18,7 +18,7 @@ use crate::Node;
 use std::sync::Arc;
 
 /// Representation of the status of a scan/query  for a specific partition.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PartitionStatus {
     /// Record's bval.
     pub bval: Option<u64>,
@@ -34,10 +34,31 @@ pub struct PartitionStatus {
 
     /// Partition map's corresponding sequence.
     pub sequence: Option<u64>,
+
+    /// Round marker for the delivery watermark below. Bumped when the
+    /// partition is assigned for a (re)query round, so entries a consumer
+    /// drains from an earlier round can no longer move the cursor.
+    pub(crate) epoch: u32,
+    /// Records of this partition handed to the record channel this round,
+    /// in digest order — the stamp source.
+    pub(crate) delivered: u32,
+    /// Longest contiguous prefix of `delivered` the consumers have taken
+    /// out. Only this prefix's tail digest is a safe resume point.
+    pub(crate) consumed: u32,
+    /// Consumed-out-of-order stamps waiting for the gap below them to close:
+    /// `(seq, digest, bval)`, sorted by `seq`. Empty whenever a single
+    /// consumer drains the stream in order.
+    pub(crate) pending: Vec<(u32, [u8; 20], Option<u64>)>,
 }
 
 impl PartitionStatus {
-    pub(crate) const fn new(partition_id: usize) -> Self {
+    /// A fresh status for one partition: retry pending, no cursor, and the
+    /// delivery accounting zeroed. The cursor fields (`retry`, `bval`,
+    /// `digest`, `node`, `sequence`) are public and may be assigned after
+    /// construction — a consumer rebuilding a persisted cursor relies on
+    /// this, and a (re)query round resets the private accounting before
+    /// first use regardless.
+    pub const fn new(partition_id: usize) -> Self {
         PartitionStatus {
             bval: None,
             id: partition_id as u16,
@@ -46,7 +67,21 @@ impl PartitionStatus {
 
             node: None,
             sequence: None,
+
+            epoch: 0,
+            delivered: 0,
+            consumed: 0,
+            pending: Vec::new(),
         }
+    }
+
+    /// Opens a new delivery round: entries stamped in earlier rounds become
+    /// stale and stop moving the cursor.
+    pub(crate) fn begin_delivery_round(&mut self) {
+        self.epoch = self.epoch.wrapping_add(1);
+        self.delivered = 0;
+        self.consumed = 0;
+        self.pending.clear();
     }
 
     pub(crate) const fn set_digest(&mut self, digest: Option<[u8; 20]>) {

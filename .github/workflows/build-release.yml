@@ -47,7 +47,7 @@ jobs:
 
   artifacts-cicd:
     needs: extract-version
-    uses: aerospike/shared-workflows/.github/workflows/reusable_artifacts-cicd.yaml@v3.5.0
+    uses: aerospike/shared-workflows/.github/workflows/reusable_artifacts-cicd.yaml@8ec712eafbec26c8db8d1183688a5fd806560a95 # v3.5.0
     with:
       gh-workflows-ref: v3.5.0
       jf-project: ${{ vars.JFROG_PROJECT }}
@@ -84,7 +84,7 @@ jobs:
 
   create-release-bundle:
     needs: [extract-version, artifacts-cicd]
-    uses: aerospike/shared-workflows/.github/workflows/reusable_create-release-bundle.yaml@v3.5.0
+    uses: aerospike/shared-workflows/.github/workflows/reusable_create-release-bundle.yaml@8ec712eafbec26c8db8d1183688a5fd806560a95 # v3.5.0
     with:
       jf-project: ${{ vars.JFROG_PROJECT }}
       jf-build-names: aerospike-client-rust:${{ needs.artifacts-cicd.outputs.jf-build-id }}

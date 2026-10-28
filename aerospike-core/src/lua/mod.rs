@@ -25,9 +25,8 @@
 //!
 //! For that to work, the client needs the *same* UDF source that was
 //! registered on the server. Point the client at your local `.lua` files
-//! with [`set_lua_path`] (analogous to `LuaConfig.SourceDirectory` in the
-//! Java client and `SetLuaPath` in the Go client), or register the source
-//! in memory with [`register_package`]:
+//! with [`set_lua_path`], or register the source in memory with
+//! [`register_package`]:
 //!
 //! ```rust,no_run
 //! aerospike::lua::set_lua_path("udf/");
@@ -46,6 +45,7 @@ mod bytes;
 mod stream;
 mod values;
 
+use crate::locks::{read, write};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, RwLock};
@@ -63,8 +63,7 @@ const STREAM_OPS_SOURCE: &str = include_str!("resources/stream_ops.lua");
 const AEROSPIKE_SOURCE: &str = include_str!("resources/aerospike.lua");
 
 /// Directory containing the client-side copies of the UDF packages.
-static SOURCE_DIR: LazyLock<RwLock<PathBuf>> =
-    LazyLock::new(|| RwLock::new(PathBuf::from("udf")));
+static SOURCE_DIR: LazyLock<RwLock<PathBuf>> = LazyLock::new(|| RwLock::new(PathBuf::from("udf")));
 
 /// In-memory UDF package sources registered via [`register_package`].
 /// Looked up before the filesystem.
@@ -74,22 +73,15 @@ static PACKAGES: LazyLock<RwLock<HashMap<String, String>>> =
 /// Set the directory where the client looks for `<package_name>.lua` files
 /// during aggregation queries.
 ///
-/// Defaults to `"udf"`. Process-wide, like the Java client's
-/// `LuaConfig.SourceDirectory` and the Go client's `SetLuaPath`.
-///
-/// # Panics
-/// Panics if the internal configuration lock is poisoned.
+/// Defaults to `"udf"`. Process-wide.
 pub fn set_lua_path<P: AsRef<Path>>(dir: P) {
-    *SOURCE_DIR.write().expect("lua path lock poisoned") = dir.as_ref().to_path_buf();
+    *write(&SOURCE_DIR) = dir.as_ref().to_path_buf();
 }
 
 /// The directory where the client looks for UDF packages.
-///
-/// # Panics
-/// Panics if the internal configuration lock is poisoned.
 #[must_use]
 pub fn lua_path() -> PathBuf {
-    SOURCE_DIR.read().expect("lua path lock poisoned").clone()
+    read(&SOURCE_DIR).clone()
 }
 
 /// Register a UDF package source in memory under `package_name`.
@@ -97,25 +89,13 @@ pub fn lua_path() -> PathBuf {
 /// Takes precedence over a `<package_name>.lua` file in the [`lua_path`]
 /// directory. Useful when the UDF source is embedded in the application
 /// rather than shipped as a file.
-///
-/// # Panics
-/// Panics if the internal configuration lock is poisoned.
 pub fn register_package(package_name: &str, source: &str) {
-    PACKAGES
-        .write()
-        .expect("lua package lock poisoned")
-        .insert(package_name.to_owned(), source.to_owned());
+    write(&PACKAGES).insert(package_name.to_owned(), source.to_owned());
 }
 
 /// Remove a package registered with [`register_package`].
-///
-/// # Panics
-/// Panics if the internal configuration lock is poisoned.
 pub fn unregister_package(package_name: &str) {
-    PACKAGES
-        .write()
-        .expect("lua package lock poisoned")
-        .remove(package_name);
+    write(&PACKAGES).remove(package_name);
 }
 
 fn lua_error(context: &str, err: &mlua::Error) -> Error {
@@ -144,11 +124,7 @@ fn new_instance() -> Result<Lua> {
 /// Load the user's UDF package into the interpreter: from the in-memory
 /// registry if present, otherwise from `<lua_path>/<package_name>.lua`.
 async fn load_user_package(lua: &Lua, package_name: &str) -> Result<()> {
-    let registered = PACKAGES
-        .read()
-        .expect("lua package lock poisoned")
-        .get(package_name)
-        .cloned();
+    let registered = read(&PACKAGES).get(package_name).cloned();
 
     let source = if let Some(source) = registered {
         source

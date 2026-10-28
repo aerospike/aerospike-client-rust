@@ -1,4 +1,4 @@
-// Copyright 2015-2020 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -93,8 +93,7 @@ async fn create_index_using_expression() {
     let client = common::client().await;
 
     if client
-        .cluster
-        .get_random_node()
+        .random_node()
         .is_ok_and(|node| node.version() < &Version::new(8, 1, 0, 0))
     {
         info!("create_index_using_expression test is only supported in server versions 8.1.0.0+. Skipping.");
@@ -154,7 +153,7 @@ async fn blob_index_serves_a_blob_equality_filter() {
     let ns = common::namespace();
     let apolicy = AdminPolicy::default();
 
-    let supported = match client.cluster.nodes().first() {
+    let supported = match client.nodes().first() {
         Some(node) => node.version().supports_blob_index(),
         None => false,
     };
@@ -193,7 +192,7 @@ async fn blob_index_serves_a_blob_equality_filter() {
     // Causation check: the same filter without an index has nothing to run on,
     // so success below is the index doing the work rather than a silent scan.
     let mut unindexed = Statement::new(ns, &set, Bins::All);
-    unindexed.add_filter(aerospike::query::Filter::equal(bin, needle.clone()));
+    unindexed.set_filter(aerospike::query::Filter::equal(bin, needle.clone()));
     let unindexed_result = client
         .query(&QueryPolicy::default(), PartitionFilter::all(), unindexed)
         .await;
@@ -235,7 +234,7 @@ async fn blob_index_serves_a_blob_equality_filter() {
     task.wait_till_complete(None).await.unwrap();
 
     let mut statement = Statement::new(ns, &set, Bins::All);
-    statement.add_filter(aerospike::query::Filter::equal(bin, needle.clone()));
+    statement.set_filter(aerospike::query::Filter::equal(bin, needle.clone()));
     let qpolicy = QueryPolicy::default();
     let rs = client
         .query(&qpolicy, PartitionFilter::all(), statement)
@@ -259,4 +258,150 @@ async fn blob_index_serves_a_blob_equality_filter() {
     let task = client.drop_index(&apolicy, ns, &set, &index).await.unwrap();
     task.wait_till_complete(None).await.unwrap();
     client.close().await.unwrap();
+}
+
+/// Port of the Go client's INTEGER index test (CLIENT-4390): from server
+/// 8.2.0 an index over integer bins is declared as `INTEGER`, and both a
+/// range and an equality filter are served by it.
+#[aerospike_macro::test]
+async fn integer_index_serves_range_and_equality_filters() {
+    let client = common::client().await;
+    let ns = common::namespace();
+    let apolicy = AdminPolicy::default();
+
+    let supported = match client.nodes().first() {
+        Some(node) => node.version().supports_integer_index(),
+        None => false,
+    };
+    if !supported {
+        eprintln!("skipping INTEGER index test: requires server 8.2.0+");
+        client.close().await.unwrap();
+        return;
+    }
+
+    let set = create_test_set(&client, EXPECTED).await;
+    let bin = "bin";
+    let index = format!("idx_int_{set}");
+
+    let _index_guard = common::lock_index_ops().await;
+    let task = client
+        .create_index_on_bin(
+            &apolicy,
+            ns,
+            &set,
+            bin,
+            &index,
+            IndexType::Integer,
+            CollectionIndexType::Default,
+            None,
+        )
+        .await
+        .expect("server 8.2.0+ must accept an INTEGER index");
+    task.wait_till_complete(None).await.unwrap();
+
+    use futures::StreamExt;
+    let qpolicy = QueryPolicy::default();
+
+    // Range filter: 10..=19 -> exactly ten records, all inside the range.
+    let mut statement = Statement::new(ns, &set, Bins::All);
+    statement.set_filter(aerospike::query::Filter::range(bin, 10_i64, 19_i64));
+    let rs = client
+        .query(&qpolicy, PartitionFilter::all(), statement)
+        .await
+        .unwrap();
+    let mut stream = rs.into_stream();
+    let mut count = 0;
+    while let Some(res) = stream.next().await {
+        let record = res.unwrap();
+        let v = match &record.bins[bin] {
+            Value::Int(v) => *v,
+            other => panic!("expected an integer bin, got {other:?}"),
+        };
+        assert!((10..=19).contains(&v), "range filter returned {v}");
+        count += 1;
+    }
+    assert_eq!(count, 10, "range filter over the INTEGER index");
+
+    // Equality filter: exactly one record.
+    let mut statement = Statement::new(ns, &set, Bins::All);
+    statement.set_filter(aerospike::query::Filter::equal(bin, 42_i64));
+    let rs = client
+        .query(&qpolicy, PartitionFilter::all(), statement)
+        .await
+        .unwrap();
+    let mut stream = rs.into_stream();
+    let mut matched = Vec::new();
+    while let Some(res) = stream.next().await {
+        matched.push(res.unwrap().bins[bin].clone());
+    }
+    assert_eq!(
+        matched,
+        vec![Value::Int(42)],
+        "equality filter over the INTEGER index"
+    );
+
+    let task = client.drop_index(&apolicy, ns, &set, &index).await.unwrap();
+    task.wait_till_complete(None).await.unwrap();
+    client.close().await.unwrap();
+}
+
+/// A set index is created through the sindex framework with nothing but the
+/// set and the name (`sindex-create:…;indextype=set`), which is what lets the
+/// `sindex-admin` role create it. Mirrors the Go client's test: create, drop,
+/// recreate, drop — the recreate proves the drop really removed it. A set
+/// index with no set, or asked for through a bin-based constructor, is
+/// rejected on the client before anything is sent.
+#[aerospike_macro::test]
+async fn set_index_create_drop_recreate() {
+    let client = common::client().await;
+    let supported = client
+        .random_node()
+        .is_ok_and(|node| node.version().supports_set_index());
+    if !supported {
+        eprintln!("skipped: set indexes need server 8.1.2+");
+        return;
+    }
+    let ns = common::namespace();
+    let set = common::rand_str(10);
+    let index = format!("{set}_setidx");
+    let apolicy = AdminPolicy::default();
+
+    let err = client
+        .create_set_index(&apolicy, ns, "", &index)
+        .await
+        .expect_err("a set index needs a set");
+    assert!(matches!(err.kind(), ErrorKind::InvalidArgument), "{err}");
+    let err = client
+        .create_index_on_bin(
+            &apolicy,
+            ns,
+            &set,
+            "bin",
+            &index,
+            IndexType::Numeric,
+            CollectionIndexType::Set,
+            None,
+        )
+        .await
+        .expect_err("a set index takes no bin");
+    assert!(matches!(err.kind(), ErrorKind::InvalidArgument), "{err}");
+
+    let _index_guard = common::lock_index_ops().await;
+    for round in 0..2 {
+        let task = client
+            .create_set_index(&apolicy, ns, &set, &index)
+            .await
+            .unwrap_or_else(|e| panic!("round {round}: create set index: {e}"));
+        task.wait_till_complete(None)
+            .await
+            .unwrap_or_else(|e| panic!("round {round}: set index build: {e}"));
+
+        let task = client
+            .drop_index(&apolicy, ns, &set, &index)
+            .await
+            .unwrap_or_else(|e| panic!("round {round}: drop set index: {e}"));
+        task.wait_till_complete(None)
+            .await
+            .unwrap_or_else(|e| panic!("round {round}: set index drop: {e}"));
+    }
 }

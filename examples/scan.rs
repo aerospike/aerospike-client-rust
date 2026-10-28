@@ -1,3 +1,18 @@
+// Copyright 2015-2026 Aerospike, Inc.
+//
+// Portions may be licensed to Aerospike, Inc. under one or more contributor
+// license agreements.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy of
+// the License at http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations under
+// the License.
+
 //! Scans: full-set reads without a secondary-index filter, including
 //! pagination and resume via partition filters, and parallel consumption.
 //!
@@ -40,7 +55,10 @@ pub async fn run() {
     let wpolicy = WritePolicy::default();
     for i in 0..RECORDS as i64 {
         let key = as_key!("test", SET, i);
-        client.put(&wpolicy, &key, &[as_bin!("n", i)]).await.unwrap();
+        client
+            .put(&wpolicy, &key, &[as_bin!("n", i)])
+            .await
+            .unwrap();
     }
 
     // ---- Full scan (Java AsyncScan): no filter on the statement ----
@@ -80,7 +98,7 @@ pub async fn run() {
         page += 1;
         total += n;
         println!("page {page}: {n} records");
-        pf = rs.partition_filter().await.unwrap();
+        pf = rs.partition_filter().unwrap();
     }
     println!("paged scan: {total} records over {page} pages");
 
@@ -107,7 +125,8 @@ pub async fn run() {
         }));
     }
     for w in workers {
-        w.await;
+        // A worker only counts records; a failure shows up as a short total below.
+        let _ = w.await;
     }
     println!(
         "parallel scan: {} records via 4 workers",

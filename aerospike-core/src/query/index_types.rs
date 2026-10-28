@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -19,7 +19,15 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IndexType {
     /// Numeric index.
+    ///
+    /// Use for servers older than 8.2.0. From 8.2.0 on, prefer
+    /// [`Integer`](Self::Integer); `Numeric` is still accepted there.
     Numeric,
+
+    /// Integer index. Requires server 8.2.0+, which a node reports through
+    /// `Version::supports_integer_index`; older servers reject it. Use
+    /// [`Numeric`](Self::Numeric) for servers older than 8.2.0.
+    Integer,
 
     /// String index.
     String,
@@ -38,7 +46,7 @@ pub enum IndexType {
 }
 
 /// Secondary index collection type.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CollectionIndexType {
     /// Normal, scalar index.
     Default = 0,
@@ -51,12 +59,20 @@ pub enum CollectionIndexType {
 
     /// Index map values.
     MapValues,
+
+    /// A set index: record presence per set, with no bin, type, context or
+    /// expression. Requires server 8.1.2+, which a node reports through
+    /// `Version::supports_set_index`. Created with
+    /// [`Client::create_set_index`](crate::Client::create_set_index); the
+    /// bin- and expression-based constructors reject it.
+    Set,
 }
 
 impl fmt::Display for IndexType {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match *self {
             IndexType::Numeric => "NUMERIC".fmt(f),
+            IndexType::Integer => "INTEGER".fmt(f),
             IndexType::String => "STRING".fmt(f),
             IndexType::Geo2DSphere => "GEO2DSPHERE".fmt(f),
             IndexType::Blob => "BLOB".fmt(f),
@@ -71,6 +87,7 @@ impl fmt::Display for CollectionIndexType {
             CollectionIndexType::List => "LIST".fmt(f),
             CollectionIndexType::MapKeys => "MAPKEYS".fmt(f),
             CollectionIndexType::MapValues => "MAPVALUES".fmt(f),
+            CollectionIndexType::Set => "SET".fmt(f),
         }
     }
 }
@@ -84,6 +101,7 @@ mod tests {
         // These strings go into the `sindex-create` info command verbatim, so
         // they are protocol, not cosmetics.
         assert_eq!(IndexType::Numeric.to_string(), "NUMERIC");
+        assert_eq!(IndexType::Integer.to_string(), "INTEGER");
         assert_eq!(IndexType::String.to_string(), "STRING");
         assert_eq!(IndexType::Geo2DSphere.to_string(), "GEO2DSPHERE");
         assert_eq!(IndexType::Blob.to_string(), "BLOB");
@@ -95,5 +113,6 @@ mod tests {
         assert_eq!(CollectionIndexType::List.to_string(), "LIST");
         assert_eq!(CollectionIndexType::MapKeys.to_string(), "MAPKEYS");
         assert_eq!(CollectionIndexType::MapValues.to_string(), "MAPVALUES");
+        assert_eq!(CollectionIndexType::Set.to_string(), "SET");
     }
 }

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Integration tests for CDT string operations.
-//! Requires Aerospike Server version >= 8.1.3.
+//! Requires Aerospike Server version >= 8.2.0.
 
 use std::collections::HashMap;
 
@@ -29,13 +29,13 @@ use aerospike::{
 };
 
 async fn server_supports_string_operations(client: &aerospike::Client) -> bool {
-    let supported = match client.cluster.get_random_node() {
+    let supported = match client.random_node() {
         Ok(node) => node.version().supports_string_operations(),
         Err(_) => false,
     };
 
     if !supported {
-        eprintln!("Skipping: server does not support string operations (requires >= 8.1.3)");
+        eprintln!("Skipping: server does not support string operations (requires >= 8.2.0)");
     }
 
     supported
@@ -289,7 +289,7 @@ async fn is_numeric_to_integer_to_double() {
         .unwrap();
     assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Int(12345));
 
-    put(&client, &wpolicy, &key, "3.14").await;
+    put(&client, &wpolicy, &key, "2.75").await;
     let rec = client
         .operate(&wpolicy, &key, &[str_op::to_double(BIN)])
         .await
@@ -297,7 +297,7 @@ async fn is_numeric_to_integer_to_double() {
     match rec.bins.get(BIN).unwrap() {
         Value::Float(f) => {
             let n = f64::from(f);
-            assert!((n - 3.14).abs() < 1e-3, "got {n}");
+            assert!((n - 2.75).abs() < 1e-3, "got {n}");
         }
         other => panic!("expected float, got {:?}", other),
     }
@@ -1112,7 +1112,11 @@ async fn modify_with_write_flags_on_string_nested_in_list() {
     if !server_supports_string_operations(&client).await {
         return;
     }
-    let key = as_key!(common::namespace(), &common::rand_str(10), "ctx-mod-flags-list");
+    let key = as_key!(
+        common::namespace(),
+        &common::rand_str(10),
+        "ctx-mod-flags-list"
+    );
     let wpolicy = WritePolicy::default();
     let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
     let _ = common::delete_durably(&client, &wpolicy, &key).await;
@@ -1145,7 +1149,11 @@ async fn modify_with_write_flags_on_string_nested_in_map() {
     if !server_supports_string_operations(&client).await {
         return;
     }
-    let key = as_key!(common::namespace(), &common::rand_str(10), "ctx-mod-flags-map");
+    let key = as_key!(
+        common::namespace(),
+        &common::rand_str(10),
+        "ctx-mod-flags-map"
+    );
     let wpolicy = WritePolicy::default();
     let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
     let _ = common::delete_durably(&client, &wpolicy, &key).await;
@@ -1232,7 +1240,7 @@ async fn to_string_from_integer_double_string_blob_and_bin_type_error() {
 
     let _ = common::delete_durably(&client, &wpolicy, &key).await;
     client
-        .put(&wpolicy, &key, &[as_bin!(BIN, 3.14_f64)])
+        .put(&wpolicy, &key, &[as_bin!(BIN, 2.75_f64)])
         .await
         .unwrap();
     let rec = client
@@ -1271,10 +1279,10 @@ async fn to_string_from_integer_double_string_blob_and_bin_type_error() {
         .operate(&wpolicy, &key, &[str_op::to_string(BIN)])
         .await
         .expect_err("to_string on list bin should fail");
-    let msg = format!("{}", err);
-    assert!(
-        msg.contains("BinTypeError") || msg.contains("BIN_TYPE_ERROR"),
-        "unexpected error: {msg}"
+    assert_eq!(
+        err.server_result_code(),
+        Some(ResultCode::BinTypeError),
+        "unexpected error: {err}"
     );
 }
 
@@ -1355,7 +1363,7 @@ async fn no_fail_does_not_change_missing_bin_noop() {
     assert_eq!(rec.bins.get("other").unwrap(), &Value::from("untouched"));
 }
 
-// All eight additive ops create a missing bin from empty in server 8.1.3.
+// All eight additive ops create a missing bin from empty in server 8.2.0.
 // Transform/subtractive ops still no-op.
 
 #[aerospike_macro::test]
@@ -1687,8 +1695,7 @@ async fn create_only_with_no_fail_on_a_live_bin_is_a_silent_noop() {
     }
     let key = as_key!(common::namespace(), &common::rand_str(10), "co-nofail");
     let wpolicy = WritePolicy::default();
-    let policy =
-        StringPolicy::new(StringWriteFlags::CREATE_ONLY | StringWriteFlags::NO_FAIL);
+    let policy = StringPolicy::new(StringWriteFlags::CREATE_ONLY | StringWriteFlags::NO_FAIL);
     put(&client, &wpolicy, &key, "hello").await;
 
     client
@@ -1735,8 +1742,7 @@ async fn no_fail_does_not_mask_the_create_only_rejection() {
     }
     let key = as_key!(common::namespace(), &common::rand_str(10), "co-nofail-mask");
     let wpolicy = WritePolicy::default();
-    let policy =
-        StringPolicy::new(StringWriteFlags::CREATE_ONLY | StringWriteFlags::NO_FAIL);
+    let policy = StringPolicy::new(StringWriteFlags::CREATE_ONLY | StringWriteFlags::NO_FAIL);
     put(&client, &wpolicy, &key, "hello").await;
 
     let err = client
@@ -1824,8 +1830,7 @@ async fn create_only_with_update_only_raises_parameter_error() {
     }
     let key = as_key!(common::namespace(), &common::rand_str(10), "co-uo");
     let wpolicy = WritePolicy::default();
-    let policy =
-        StringPolicy::new(StringWriteFlags::CREATE_ONLY | StringWriteFlags::UPDATE_ONLY);
+    let policy = StringPolicy::new(StringWriteFlags::CREATE_ONLY | StringWriteFlags::UPDATE_ONLY);
     put(&client, &wpolicy, &key, "hello").await;
 
     let err = client
@@ -1991,7 +1996,11 @@ async fn snip_from_with_a_non_default_policy_still_truncates() {
     if !server_supports_string_operations(&client).await {
         return;
     }
-    let key = as_key!(common::namespace(), &common::rand_str(10), "snip-from-flags");
+    let key = as_key!(
+        common::namespace(),
+        &common::rand_str(10),
+        "snip-from-flags"
+    );
     let wpolicy = WritePolicy::default();
     let policy = StringPolicy::new(StringWriteFlags::NO_FAIL);
     put(&client, &wpolicy, &key, "hello world").await;
@@ -2074,7 +2083,7 @@ const NFD: &str = "cafe\u{301}";
 /// **`#[ignore]`d because the server does not honour this for a needle that
 /// spans the whole bin.** A length precheck rejects the 5-codepoint NFD needle
 /// against the 4-codepoint NFC bin before the canonical search runs, so this
-/// fails on 8.1.3.0 exactly as the Java and Go reference tests do. It is kept,
+/// fails on 8.2.0.0 exactly as the Java and Go reference tests do. It is kept,
 /// runnable with `--ignored`, rather than deleted: the mid-string case below
 /// passes, so dropping this one would hide a guarantee that is not actually met.
 #[aerospike_macro::test]
@@ -2127,10 +2136,7 @@ async fn find_and_contains_match_across_normalization_forms_mid_string() {
     let key = as_key!(common::namespace(), &common::rand_str(10), "canon-mid");
     let wpolicy = WritePolicy::default();
 
-    for (haystack, needle) in [
-        (format!("x{NFC}y"), NFD),
-        (format!("x{NFD}y"), NFC),
-    ] {
+    for (haystack, needle) in [(format!("x{NFC}y"), NFD), (format!("x{NFD}y"), NFC)] {
         put(&client, &wpolicy, &key, &haystack).await;
 
         let rec = client
@@ -2194,7 +2200,11 @@ async fn starts_with_and_ends_with_match_across_normalization_forms() {
             .operate(&wpolicy, &key, &[str_op::starts_with(BIN, prefix)])
             .await
             .unwrap();
-        assert_eq!(rec.bins.get(BIN).unwrap(), &Value::Bool(true), "starts_with");
+        assert_eq!(
+            rec.bins.get(BIN).unwrap(),
+            &Value::Bool(true),
+            "starts_with"
+        );
     }
 
     for (stored, suffix) in [(NFC, NFD), (NFD, NFC)] {

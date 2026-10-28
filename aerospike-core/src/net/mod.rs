@@ -1,4 +1,4 @@
-// Copyright 2015-2018 Aerospike, Inc.
+// Copyright 2015-2026 Aerospike, Inc.
 //
 // Portions may be licensed to Aerospike, Inc. under one or more contributor
 // license agreements.
@@ -17,8 +17,8 @@ pub use self::connection::BufferedConn;
 pub use self::connection::Connection;
 pub use self::connection::ConnectionState;
 pub use self::connection_pool::ConnectionPool;
-pub(crate) use self::connection_pool::TailVerdict;
 pub use self::connection_pool::PooledConnection;
+pub use self::connection_pool::{LoginOnly, TailVerdict};
 pub use self::host::Host;
 pub use self::host::ToHosts;
 
