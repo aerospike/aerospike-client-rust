@@ -678,6 +678,18 @@ impl Error {
         self.0.source.as_deref()
     }
 
+    /// The bare text this error was built with: no result code, no node, no
+    /// cause chain, and none of the kind prefix (`Invalid argument: `,
+    /// `Bad Server Response: `, …) that [`base_message`](Self::base_message)
+    /// adds. `None` when the error carries no text of its own, such as a
+    /// server failure described by its result code alone. This is the text
+    /// to embed when wrapping the error in another message; `Display` is for
+    /// logging.
+    #[must_use]
+    pub fn message(&self) -> Option<&str> {
+        self.0.message.as_deref()
+    }
+
     /// The message without the metadata decoration that [`fmt::Display`]
     /// adds.
     #[must_use]
@@ -818,12 +830,6 @@ impl Error {
     pub fn sub_code(&self) -> u32 {
         self.server_error_detail()
             .map_or(crate::server_error::sub_code::NONE, |d| d.sub_code)
-    }
-
-    /// The client-side message attached to this error, if any. For internal
-    /// use (e.g. rebuilding per-row batch outcomes from command errors).
-    pub(crate) fn message(&self) -> Option<&str> {
-        self.0.message.as_deref()
     }
 
     /// Returns the formatted server-supplied error detail message, if any.

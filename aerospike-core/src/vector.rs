@@ -337,9 +337,14 @@ impl Vector {
     }
 
     /// Returns the complete little-endian vector wire value, including its
-    /// 6-byte header. This is the literal form consumed by vector-distance
-    /// expressions and handed to client-side Lua.
-    pub(crate) fn wire_bytes(&self) -> Vec<u8> {
+    /// 6-byte header: the form the server stores, vector-distance expressions
+    /// consume and client-side Lua receives. [`from_wire_bytes`](Self::from_wire_bytes)
+    /// is the inverse.
+    #[must_use]
+    // Resizing a fresh, unbounded buffer to a validated size cannot fail, so
+    // the `expect` below is not a panic the caller can reach.
+    #[allow(clippy::missing_panics_doc)]
+    pub fn wire_bytes(&self) -> Vec<u8> {
         let mut buf = Buffer::new(usize::MAX);
         buf.resize_buffer(self.wire_size())
             .expect("validated vector wire size must fit the buffer");
@@ -442,13 +447,15 @@ impl Vector {
     ///
     /// Rejects an unknown format version, an unknown element type, a zero or
     /// oversized dimension count, and a length that does not match the header
-    /// exactly.
+    /// exactly, each as [`ErrorKind::InvalidArgument`](crate::ErrorKind::InvalidArgument):
+    /// the bytes are the caller's, not a server reply.
     pub fn from_wire_bytes(bytes: &[u8]) -> Result<Self> {
         let mut buf = Buffer::new(usize::MAX);
         buf.resize_buffer(bytes.len())?;
         buf.data_buffer[..bytes.len()].copy_from_slice(bytes);
         buf.data_offset = 0;
         Self::from_bytes(&mut buf, bytes.len())
+            .map_err(|e| Error::invalid_argument(e.message().unwrap_or_default()))
     }
 }
 
@@ -846,6 +853,27 @@ mod tests {
         longer.push(0);
         assert!(Vector::from_wire_bytes(&longer).is_err());
         assert!(Vector::from_wire_bytes(&v.wire_bytes()[..5]).is_err());
+    }
+
+    // The bytes are the caller's, so a malformed value is an invalid
+    // argument, not a bad server response, and the text stays bare.
+    #[test]
+    fn from_wire_bytes_rejects_bad_input_as_an_invalid_argument() {
+        let mut bytes = Vector::float32(vec![1.0]).wire_bytes();
+        bytes[0] = VECTOR_VERSION + 1;
+        let err = Vector::from_wire_bytes(&bytes).unwrap_err();
+        assert!(
+            matches!(err.kind(), crate::ErrorKind::InvalidArgument),
+            "{err}"
+        );
+        assert_eq!(
+            err.message(),
+            Some("unsupported vector format version 2; this client reads version 1")
+        );
+        assert_eq!(
+            err.base_message(),
+            "Invalid argument: unsupported vector format version 2; this client reads version 1"
+        );
     }
 
     #[test]

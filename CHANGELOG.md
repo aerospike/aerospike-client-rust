@@ -7,7 +7,11 @@
     vector-distance expressions (`euclidean_squared_distance`, `dot_product`, `cosine_similarity`).
     Server 8.2.1. The client refuses an empty vector, a NaN or infinite element, and any vector on a
     cluster with a node that predates vectors; it decodes only format version 1 with an exact length.
-    `Vector::from_wire_bytes` decodes a vector a UDF handed back, which the server types as a BLOB.
+    `Vector::wire_bytes` and `Vector::from_wire_bytes` convert to and from the wire form; a malformed
+    input is an `ErrorKind::InvalidArgument`.
+  * `Error::message` returns the bare text an error was built with, without the result code, node,
+    cause chain and kind prefix that `base_message` and `Display` add, for embedding in another
+    message.
   * Top-K queries: `Statement::set_order_by`, `then_order_by` (a second key on another bin) and
     `set_top_k`. Every node ranks its own rows and the client merges them, keeping the later-updated
     copy of a record two nodes both returned. Server 8.2.1 on every node, or the query fails up front;
