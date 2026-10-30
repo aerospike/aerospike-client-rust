@@ -211,15 +211,13 @@ impl Client {
     /// # }
     /// ```
     pub async fn new(policy: &ClientPolicy, hosts: &(dyn ToHosts + Send + Sync)) -> Result<Self> {
-        let client = Self::connect(policy, hosts).await?;
-
         // Auto-enable dynamic configuration when AEROSPIKE_CLIENT_CONFIG_URL is set.
         #[cfg(feature = "dynamic-config")]
         if let Some(provider) = crate::config::provider_from_env() {
-            client.cluster.attach_dyn_config(provider).await;
+            return Self::connect_with_provider(policy, hosts, provider).await;
         }
 
-        Ok(client)
+        Self::connect(policy, hosts).await
     }
 
     /// Like [`new`](Self::new) but with dynamic configuration enabled from an
@@ -251,16 +249,17 @@ impl Client {
     ///
     /// Same as [`new`](Self::new): policy validation, connectivity, or cluster
     /// discovery failures. A provider that fails its initial load does not fail
-    /// construction — it is logged and retried on the next watch tick.
+    /// construction — it is logged and retried on the next watch tick. A file
+    /// whose `static.client.discovery` or `static.client.translation` block is
+    /// invalid is logged and ignored as a whole, and the client starts on the
+    /// policy set in code.
     #[cfg(feature = "dynamic-config")]
     pub async fn new_with_config(
         policy: &ClientPolicy,
         hosts: &(dyn ToHosts + Send + Sync),
         provider: std::sync::Arc<dyn crate::config::ConfigProvider>,
     ) -> Result<Self> {
-        let client = Self::connect(policy, hosts).await?;
-        client.cluster.attach_dyn_config(provider).await;
-        Ok(client)
+        Self::connect_with_provider(policy, hosts, provider).await
     }
 
     /// Validates the policy, resolves seed hosts, and brings up the cluster.
@@ -269,6 +268,42 @@ impl Client {
         policy.validate()?;
         let hosts = hosts.to_hosts()?;
         let cluster = Cluster::new(policy.clone(), &hosts).await?;
+
+        Ok(Client { cluster })
+    }
+
+    /// [`connect`](Self::connect) with a dynamic configuration provider.
+    ///
+    /// The file is read first and its `static.client` section merged into the
+    /// policy before the cluster is seeded: the seed candidate provider and
+    /// address translator a file selects decide which addresses the first
+    /// connection goes to, so they cannot be applied afterwards. The same
+    /// document is then handed to the config watcher, which applies its
+    /// dynamic section and keeps polling.
+    #[cfg(feature = "dynamic-config")]
+    async fn connect_with_provider(
+        policy: &ClientPolicy,
+        hosts: &(dyn ToHosts + Send + Sync),
+        provider: std::sync::Arc<dyn crate::config::ConfigProvider>,
+    ) -> Result<Self> {
+        let mut policy = policy.clone();
+        let mut initial_doc = None;
+        match provider.load().await {
+            Ok(Some(doc)) => match Cluster::merge_static_config(&mut policy, &doc) {
+                Ok(()) => initial_doc = Some(doc),
+                Err(err) => {
+                    warn!("Failed to parse {provider:?}: {err}. Ignoring the file");
+                }
+            },
+            Ok(None) => {}
+            Err(err) => {
+                log_error_chain!(err, "Error loading initial dynamic configuration");
+            }
+        }
+        policy.validate()?;
+        let hosts = hosts.to_hosts()?;
+        let cluster = Cluster::new(policy, &hosts).await?;
+        cluster.attach_dyn_config(provider, initial_doc).await;
 
         Ok(Client { cluster })
     }
@@ -420,6 +455,14 @@ impl Client {
         self.cluster.get_random_node()
     }
 
+    /// The seed list the client re-seeds from when no node is active: the
+    /// static seeds merged with the ones the seed candidate provider returned
+    /// (see [`ClientPolicy::discovery_merge_policy`]), plus the nodes found
+    /// after construction until a refresh replaces the whole list.
+    pub fn seeds(&self) -> Vec<crate::Host> {
+        self.cluster.seeds()
+    }
+
     #[doc(hidden)] // test support, not a stable API
     pub fn partition_map_ready(&self) -> bool {
         self.cluster.partition_map_ready()
@@ -458,6 +501,47 @@ impl Client {
     #[doc(hidden)] // test support, not a stable API
     pub fn partition_map_complete(&self) -> bool {
         self.cluster.partition_map_complete()
+    }
+
+    /// The master of every partition of `namespace` in the client's
+    /// partition map, `None` where no node claims the partition; `None` when
+    /// the namespace is not mapped.
+    #[doc(hidden)] // test support (the L2 discovery rows), not a stable API
+    pub fn partition_masters(&self, namespace: &str) -> Option<Vec<Option<Arc<Node>>>> {
+        self.cluster.partition_map.load().get(namespace).map(|partitions| {
+            partitions
+                .nodes
+                .iter()
+                .take(crate::cluster::node::PARTITIONS)
+                .map(|(_, node)| node.clone())
+                .collect()
+        })
+    }
+
+    /// The node a write of `key` with `replica` is sent to.
+    ///
+    /// # Errors
+    ///
+    /// No node owns the key's partition.
+    #[doc(hidden)] // test support (the L2 discovery rows), not a stable API
+    pub fn write_node(&self, key: &Key, replica: crate::policy::Replica) -> Result<Arc<Node>> {
+        crate::cluster::partition::Partition::for_write(key, replica).get_node(&self.cluster)
+    }
+
+    /// The node a read of `key` with `replica` is sent to.
+    ///
+    /// # Errors
+    ///
+    /// No node owns the key's partition.
+    #[doc(hidden)] // test support (the L2 discovery rows), not a stable API
+    pub fn read_node(&self, key: &Key, replica: crate::policy::Replica) -> Result<Arc<Node>> {
+        crate::cluster::partition::Partition::for_read(
+            &self.cluster,
+            key,
+            replica,
+            crate::policy::ReadModeSc::Session,
+        )
+        .get_node(&self.cluster)
     }
 
     /// The cluster name the connected servers report (`cluster-name` info),

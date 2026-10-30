@@ -1,0 +1,98 @@
+name: TLS certificate matching
+
+# tests/tls/run_tls_matching.sh: one Enterprise container per certificate
+# shape, the tls_matching test against each. Enterprise images come from
+# JFrog, so the job needs the OIDC login and the feature key.
+
+on:
+  workflow_call:
+    inputs:
+      server-container-repo:
+        description: Aerospike Enterprise image repository path
+        type: string
+        required: true
+      server-tag:
+        description: Aerospike Enterprise image tag
+        type: string
+        required: true
+
+permissions:
+  id-token: write  # JFrog OIDC login
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  tls-matching:
+    name: cases
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Install Rust 1.87 (MSRV)
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable branch, 2026-10
+        with:
+          toolchain: 1.87
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: tls-matching
+
+      - name: Require JFrog OIDC
+        env:
+          OIDC_PROVIDER: ${{ vars.OIDC_PROVIDER_NAME }}
+          OIDC_AUDIENCE: ${{ vars.OIDC_AUDIENCE }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${OIDC_PROVIDER}" || -z "${OIDC_AUDIENCE}" ]]; then
+            echo "::error::OIDC_PROVIDER_NAME and OIDC_AUDIENCE are required to pull the Aerospike image."
+            exit 1
+          fi
+
+      - name: Set up JFrog CLI
+        id: jf
+        uses: step-security/setup-jfrog-cli@a6b41f8338bea0983ddff6bd4ede7d2dcd81e1fa # v4.8.1
+        env:
+          JF_URL: https://aerospike.jfrog.io
+        with:
+          oidc-provider-name: ${{ vars.OIDC_PROVIDER_NAME }}
+          oidc-audience: ${{ vars.OIDC_AUDIENCE }}
+
+      - name: Docker login
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: aerospike.jfrog.io
+          username: ${{ steps.jf.outputs.oidc-user }}
+          password: ${{ steps.jf.outputs.oidc-token }}
+
+      - name: Run TLS certificate matching
+        env:
+          AEROSPIKE_IMAGE: aerospike.jfrog.io/${{ inputs.server-container-repo }}:${{ inputs.server-tag }}
+          AEROSPIKE_FEATURES_CONTENT: ${{ secrets.AEROSPIKE_SERVER_FEATURES_CONF }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${AEROSPIKE_FEATURES_CONTENT}" ]]; then
+            echo "::error::AEROSPIKE_SERVER_FEATURES_CONF is required to run TLS certificate matching."
+            exit 1
+          fi
+          docker pull "${AEROSPIKE_IMAGE}"
+          bash tests/tls/run_tls_matching.sh
+
+      - name: Upload the case logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tls-matching
+          path: target/tls-matching/**/*.log
+          if-no-files-found: warn
+          retention-days: 7

@@ -12,6 +12,60 @@
     `set_top_k`. Every node ranks its own rows and the client merges them, keeping the later-updated
     copy of a record two nodes both returned. Server 8.2.1 on every node, or the query fails up front;
     an order key without `k` is refused by the server. Example `query_vector_top_k`.
+  * [CLIENT-5737] Pluggable seed discovery: `ClientPolicy::seed_candidate_provider` takes a
+    `discovery::SeedCandidateProvider` whose hosts are merged with the static seeds per
+    `discovery_merge_policy` (`Merge`, `Replace`, `DiscoveryOnly`). Built in: `static` (the default),
+    `dns` (`discovery::dns::DnsSeedCandidateProvider`: A/AAAA or SRV records, bounded by its timeout)
+    and, with the new `discovery-aws` feature (on by default), `aws-tags`
+    (`discovery::aws::AwsEc2TagSeedCandidateProvider`: running EC2 instances by filter, SigV4 signed,
+    with the standard credential chain and a credentials hook). A provider that needs periodic refresh
+    runs on the tend task every `discovery_refresh_interval`, is cancelled at
+    `discovery_tend_refresh_deadline`, and is disabled after three consecutive overruns. A provider
+    that fails at construction with no seed left fails `Client::new` with
+    `ClientResultCode::SeedDiscoveryFailed` (-27). `Client::seeds` reports the current seed list.
+  * [CLIENT-5737] Pluggable address translation: `ClientPolicy::address_translator` takes a
+    `discovery::AddressTranslator` applied to every advertised address (`Endpoint`: node name, TLS
+    name, host, port and the standard or alternate source list). Built in: `static-map` (the default,
+    over `ip_map`), `port-map` (`host:port` or node name to `host:port`) and `pass-through`.
+    `translation_on_miss` decides a miss: `PassThrough` (the default) or `Strict`
+    (`ClientResultCode::TranslationMiss`, -25: the endpoint is not connected). Two nodes translated to
+    the same address collide (`ClientResultCode::TranslationCollision`, -26): neither is connected and
+    a live node is kept. The translator is told about cluster view changes.
+  * [CLIENT-5737] YAML configuration (`dynamic-config`): `static.client.ip_map`,
+    `static.client.use_services_alternate`, `static.client.discovery` (`provider`, `merge_policy`,
+    `refresh_interval_ms`, `tend_refresh_deadline_ms`, `dns`, `aws`) and `static.client.translation`
+    (`provider`, `on_miss`, `static_map`, `port_map`), schema version `1.2.0`. A custom provider or
+    translator is selected by a name registered with `ClientPolicy::register_seed_candidate_provider`
+    / `register_address_translator`; the factory receives the block's other keys. An invalid setting
+    makes the whole file invalid: nothing from it is applied. The file is now read before the cluster
+    is seeded, so these keys shape the first connection; the `static.client` section is merged into the
+    policy at the same point.
+  * [CLIENT-5737] Discovery test tiers and workflows, as in the Java client: `tests/conformance.rs`
+    runs the shared `aerospike-client-conformance` fixture set (translation, merge policy, the dns
+    and aws-tags providers against the set's fixture server, certificate name matching) against
+    `tests/conformance/rust-declared.yaml` (`discovery-conformance.yml`); `tests/discovery_l2.rs` runs
+    the L2 rows against a three node cluster behind Toxiproxy in nine profiles, built by the
+    conformance repository's `discovery-l2-topology` action in CI and by `tests/discovery/run_l2.sh`
+    locally (`discovery-integration.yml`, `discovery-l2.yml`); `tests/tls/run_tls_matching.sh` drives
+    `tests/tls_matching.rs` against one Enterprise container per certificate shape
+    (`tls-matching.yml`). Every tier skips itself without its environment. See
+    `tests/discovery/README.md`.
+* **Changes**
+  * `Client::new` with `fail_if_not_connected` now fails with `Peers not reachable: <host> <port>, ...`
+    when the seed pass left exactly one node and at least one host it tried could not be reached, as
+    the Java client does: a seed reached through an endpoint that does not front its peers is an
+    error naming the peers, not a one node cluster.
+  * `use_services_alternate` now requires every node to advertise an alternate address, as in the
+    Java client: a seed without one fails construction with `ErrorKind::AlternateAddressMissing`
+    (`Client::new` with `fail_if_not_connected`), and a peer without one, or missing from the
+    alternate peers list, is logged at error level and not connected.
+  * A seed name that resolves to several addresses now keeps the address that answered as the
+    node's primary host; before, the first resolved address was used even when it had refused the
+    connection.
+  * `ClientPolicy` gained `seed_candidate_provider`, `address_translator`, `translation_on_miss`,
+    `discovery_refresh_interval`, `discovery_tend_refresh_deadline`, `discovery_merge_policy` and,
+    under `dynamic-config`, `discovery_registry`; `config::StaticConfig` gained `client_discovery`.
+    Code that builds either with struct-update syntax from `Default` is unaffected.
 
 ## [3.0.0]
 

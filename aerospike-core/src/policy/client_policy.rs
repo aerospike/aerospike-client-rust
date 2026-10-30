@@ -13,15 +13,20 @@
 // limitations under the License.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::commands::admin_command::AdminCommand;
+#[cfg(feature = "dynamic-config")]
+use crate::config::{AddressTranslatorFactory, DiscoveryRegistry, SeedCandidateProviderFactory};
+use crate::discovery::{
+    AddressTranslator, SeedCandidateProvider, SeedMergePolicy, TranslationMissMode,
+    AWS_TAGS_PROVIDER, DNS_PROVIDER,
+};
 use crate::errors::{Error, Result};
 
 #[cfg(feature = "tls")]
 use tokio_rustls::rustls::ClientConfig;
-#[cfg(feature = "tls")]
-use std::sync::Arc;
 
 #[derive(Clone, PartialEq, Eq)]
 /// Determines authentication mode.
@@ -78,6 +83,18 @@ impl std::fmt::Debug for AuthMode {
 /// in the [`ClientConfig`] this wraps. The policy adds the one setting that
 /// is about *when* TLS is used rather than how:
 /// [`for_login_only`](Self::for_login_only).
+///
+/// # Certificate name matching
+///
+/// The server certificate is matched against the node's TLS name (the
+/// `tls_name` of the seed, or of the peer as the server advertised it; the
+/// address translator never changes it) as RFC 9525 prescribes, by `rustls`:
+/// an IPv4 or IPv6 literal matches only an `iPAddress` subject alternative
+/// name holding the same address; any other name matches only a `dNSName`
+/// subject alternative name, case-insensitively, where the only wildcard is a
+/// left-most label of exactly `*` matching one non-empty label. The subject
+/// CN is not an identifier, and there is no legacy fallback to it: a CN-only
+/// certificate, or an IP address present only as a `dNSName`, is rejected.
 ///
 /// # Examples
 ///
@@ -446,8 +463,124 @@ pub struct ClientPolicy {
     /// network. Default is no translation.
     /// The key is the IP address returned from friend info requests to other servers.
     /// The value is the real IP address used to connect to the server.
+    ///
+    /// This is the table of the default
+    /// [`StaticMapAddressTranslator`](crate::discovery::StaticMapAddressTranslator);
+    /// it is ignored when [`address_translator`](Self::address_translator) is
+    /// set. YAML key: `static.client.ip_map`.
     #[cfg_attr(feature = "dynamic-config", config(skip))]
     pub ip_map: Option<HashMap<String, String>>,
+
+    /// Source of the seed hosts used to discover the cluster. When set, its
+    /// hosts are combined with the seed hosts passed to the client
+    /// constructor according to
+    /// [`discovery_merge_policy`](Self::discovery_merge_policy). See the
+    /// [`discovery`](crate::discovery) module.
+    ///
+    /// Default: `None`, a
+    /// [`StaticSeedCandidateProvider`](crate::discovery::StaticSeedCandidateProvider)
+    /// over the seed hosts passed to the client constructor.
+    ///
+    /// YAML key: `static.client.discovery.provider` (`static`, `dns`,
+    /// `aws-tags` or a name registered with
+    /// [`register_seed_candidate_provider`](Self::register_seed_candidate_provider)).
+    /// A provider built from YAML is built once, at client construction, and
+    /// kept when the file is reloaded.
+    ///
+    /// [`SeedCandidateProvider::close`] is called on the provider once after
+    /// [`Client::close`](crate::Client::close).
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
+    pub seed_candidate_provider: Option<Arc<dyn SeedCandidateProvider>>,
+
+    /// Translator applied to every server-advertised address before the
+    /// client connects to it. When set, [`ip_map`](Self::ip_map) is ignored.
+    /// Built-in translators: `static-map`
+    /// ([`StaticMapAddressTranslator`](crate::discovery::StaticMapAddressTranslator)),
+    /// `port-map`
+    /// ([`PortMapAddressTranslator`](crate::discovery::PortMapAddressTranslator))
+    /// and `pass-through`
+    /// ([`PassThroughAddressTranslator`](crate::discovery::PassThroughAddressTranslator)).
+    ///
+    /// Default: `None`, a `StaticMapAddressTranslator` over
+    /// [`ip_map`](Self::ip_map).
+    ///
+    /// YAML keys: `static.client.translation.provider` with
+    /// `static.client.translation.static_map` or
+    /// `static.client.translation.port_map`.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
+    pub address_translator: Option<Arc<dyn AddressTranslator>>,
+
+    /// Action taken when the address translator has no mapping for a
+    /// server-advertised endpoint. Applies to every translator, including the
+    /// default built from [`ip_map`](Self::ip_map):
+    /// [`PassThrough`](TranslationMissMode::PassThrough) connects to the
+    /// advertised endpoint unchanged; [`Strict`](TranslationMissMode::Strict)
+    /// does not connect and does not create a node for it, failing the miss
+    /// with [`ErrorKind::TranslationMiss`](crate::ErrorKind::TranslationMiss)
+    /// (a missed peer is logged at warning level and retried on the next
+    /// tend).
+    ///
+    /// Default: [`TranslationMissMode::PassThrough`]. YAML key:
+    /// `static.client.translation.on_miss`.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
+    pub translation_on_miss: TranslationMissMode,
+
+    /// Interval in milliseconds between periodic
+    /// [`seed_candidate_provider`](Self::seed_candidate_provider) refreshes.
+    /// The client starts no task for discovery: when the provider's
+    /// [`needs_periodic_refresh`](SeedCandidateProvider::needs_periodic_refresh)
+    /// returns `true`, the provider is called on the cluster tend task every
+    /// `discovery_refresh_interval / tend_interval` tend iterations. Such a
+    /// provider must return `true` from
+    /// [`supports_deadline`](SeedCandidateProvider::supports_deadline), and
+    /// this value must be greater or equal to
+    /// [`tend_interval`](Self::tend_interval); otherwise client construction
+    /// fails. No periodic refresh is scheduled when the provider does not
+    /// need it.
+    ///
+    /// Default: 30000. YAML key: `static.client.discovery.refresh_interval_ms`.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
+    pub discovery_refresh_interval: u32,
+
+    /// Deadline in milliseconds for one periodic
+    /// [`seed_candidate_provider`](Self::seed_candidate_provider) refresh on
+    /// the tend task. The refresh future is cancelled at the deadline, its
+    /// result discarded, a warning logged, and the last good seed list kept.
+    /// After three consecutive overruns the provider is no longer called from
+    /// the tend for the life of the client instance and the seed list reverts
+    /// to the one established at client initialization. A new client
+    /// instance starts with no overruns.
+    ///
+    /// When the provider needs periodic refresh, this value must be greater
+    /// than zero and less or equal to [`tend_interval`](Self::tend_interval)
+    /// / 2; otherwise client construction fails.
+    ///
+    /// Default: 100. YAML key:
+    /// `static.client.discovery.tend_refresh_deadline_ms`.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
+    pub discovery_tend_refresh_deadline: u32,
+
+    /// How the seed hosts passed to the client constructor (static seeds) and
+    /// the hosts returned by
+    /// [`seed_candidate_provider`](Self::seed_candidate_provider) (discovered
+    /// seeds) are combined into the seed list. The seed list is used at
+    /// cluster initialization and whenever the client re-seeds because no
+    /// node is active; it is rebuilt only when the provider is called. See
+    /// [`SeedMergePolicy`].
+    ///
+    /// Default: [`SeedMergePolicy::Merge`]. YAML key:
+    /// `static.client.discovery.merge_policy`.
+    #[cfg_attr(feature = "dynamic-config", config(skip))]
+    pub discovery_merge_policy: SeedMergePolicy,
+
+    /// The seed candidate provider and address translator factories a YAML
+    /// configuration file can select by name; see
+    /// [`register_seed_candidate_provider`](Self::register_seed_candidate_provider)
+    /// and
+    /// [`register_address_translator`](Self::register_address_translator).
+    #[cfg(feature = "dynamic-config")]
+    #[config(skip)]
+    pub discovery_registry: DiscoveryRegistry,
 
     /// `UseServicesAlternate` determines if the client should use "services-alternate"
     /// instead of "services" in info request during cluster tending.
@@ -551,6 +684,14 @@ impl Default for ClientPolicy {
             tend_interval: 1000,
             config_interval: 1000,
             ip_map: None,
+            seed_candidate_provider: None,
+            address_translator: None,
+            translation_on_miss: TranslationMissMode::PassThrough,
+            discovery_refresh_interval: 30_000,
+            discovery_tend_refresh_deadline: 100,
+            discovery_merge_policy: SeedMergePolicy::Merge,
+            #[cfg(feature = "dynamic-config")]
+            discovery_registry: DiscoveryRegistry::default(),
             use_services_alternate: false,
             cluster_name: None,
             buffer_reclaim_threshold: 65536,
@@ -646,6 +787,8 @@ impl ClientPolicy {
             }
         }
 
+        self.validate_discovery()?;
+
         if self.use_buffer_pool {
             if !self.buffer_pool_min_size.is_power_of_two()
                 || !self.buffer_pool_max_size.is_power_of_two()
@@ -671,6 +814,103 @@ impl ClientPolicy {
         }
 
         Ok(())
+    }
+
+    /// The checks a seed candidate provider that needs periodic refresh
+    /// imposes: it must support a deadline, the refresh interval must not be
+    /// shorter than the tend interval, the deadline must fit in half a tend
+    /// interval, and the provider's own I/O timeout must fit in the deadline.
+    /// A provider that is called once, at construction, imposes none.
+    fn validate_discovery(&self) -> Result<()> {
+        let Some(provider) = &self.seed_candidate_provider else {
+            return Ok(());
+        };
+        if !provider.needs_periodic_refresh() {
+            return Ok(());
+        }
+        if !provider.supports_deadline() {
+            return Err(Error::client_error(
+                "A seed candidate provider that needs periodic refresh must support a deadline",
+            ));
+        }
+        if self.discovery_refresh_interval < self.tend_interval {
+            return Err(Error::client_error(format!(
+                "Discovery refresh interval {} must be greater or equal to the tend interval {}",
+                self.discovery_refresh_interval, self.tend_interval
+            )));
+        }
+        let half = self.tend_interval / 2;
+        if self.discovery_tend_refresh_deadline == 0 || self.discovery_tend_refresh_deadline > half
+        {
+            return Err(Error::client_error(format!(
+                "Invalid discovery tend refresh deadline: {}. Must be > 0 and <= tend interval / 2 ({half})",
+                self.discovery_tend_refresh_deadline
+            )));
+        }
+        if let Some(timeout) = provider.refresh_timeout() {
+            let timeout_ms = timeout.as_millis();
+            if timeout_ms > u128::from(self.discovery_tend_refresh_deadline) {
+                let name = provider.name();
+                let label = match name.as_str() {
+                    DNS_PROVIDER => "DNS seed provider".to_string(),
+                    AWS_TAGS_PROVIDER => "AWS EC2 seed provider".to_string(),
+                    other => format!("Seed candidate provider {other}"),
+                };
+                return Err(Error::client_error(format!(
+                    "{label} timeout {timeout_ms} must be less or equal to the discovery tend \
+                     refresh deadline {}",
+                    self.discovery_tend_refresh_deadline
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Registers a seed candidate provider factory under a name. When
+    /// `static.client.discovery.provider` in the YAML configuration file
+    /// names it, the client calls the factory with the other keys of the
+    /// `static.client.discovery` block as its options and sets
+    /// [`seed_candidate_provider`](Self::seed_candidate_provider) to the
+    /// result. A name that is neither built-in nor registered is an invalid
+    /// setting, which makes the whole file invalid.
+    ///
+    /// The factory is called once, at client construction. A reloaded file
+    /// never calls it again: the client keeps the provider it was constructed
+    /// with. Cloning the policy copies the registrations.
+    ///
+    /// # Errors
+    ///
+    /// An empty name, a built-in name (`static`, `dns`, `aws-tags`) or a name
+    /// already registered on this policy.
+    #[cfg(feature = "dynamic-config")]
+    pub fn register_seed_candidate_provider(
+        &mut self,
+        name: impl Into<String>,
+        factory: SeedCandidateProviderFactory,
+    ) -> Result<()> {
+        self.discovery_registry.register_provider(name.into(), factory)
+    }
+
+    /// Registers an address translator factory under a name. When
+    /// `static.client.translation.provider` in the YAML configuration file
+    /// names it, the client calls the factory with the other keys of the
+    /// `static.client.translation` block as its options and sets
+    /// [`address_translator`](Self::address_translator) to the result. The
+    /// same rules as
+    /// [`register_seed_candidate_provider`](Self::register_seed_candidate_provider)
+    /// apply.
+    ///
+    /// # Errors
+    ///
+    /// An empty name, a built-in name (`static-map`, `port-map`,
+    /// `pass-through`) or a name already registered on this policy.
+    #[cfg(feature = "dynamic-config")]
+    pub fn register_address_translator(
+        &mut self,
+        name: impl Into<String>,
+        factory: AddressTranslatorFactory,
+    ) -> Result<()> {
+        self.discovery_registry.register_translator(name.into(), factory)
     }
 
     /// Whether rack awareness is in effect: configured *and* carrying at least
@@ -773,6 +1013,17 @@ impl ClientPolicy {
         } else {
             "peers-clear-std"
         }
+    }
+
+    /// The standard peers command, whatever `use_services_alternate` says.
+    /// Under the alternate list, the standard list names the peers that have
+    /// no alternate address.
+    pub(crate) const fn standard_peers_string(&self) -> &'static str {
+        #[cfg(feature = "tls")]
+        if self.tls_policy.is_some() {
+            return "peers-tls-std";
+        }
+        "peers-clear-std"
     }
 
     #[cfg(feature = "tls")]

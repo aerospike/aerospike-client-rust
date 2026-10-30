@@ -56,13 +56,18 @@ indexmap = "2"
 # (no dedicated OS thread per aggregation); `send` because the pipeline
 # future must be Send to run on the multi-threaded runtimes.
 mlua = { version = "0.11", features = ["lua54", "vendored", "async", "send"], optional = true }
+# The AWS EC2 seed provider signs its requests (SigV4: SHA-256 + HMAC) with
+# the crypto provider rustls already brings in, and verifies the EC2 endpoint
+# against the Mozilla root store. Both come in only with `discovery-aws`.
+ring = { version = "0.17", optional = true }
+webpki-roots = { version = "1", optional = true }
 
 [features]
 serialization = ["serde", "indexmap/serde"]
 # Dynamic configuration: read policy overrides from a pluggable source (YAML
 # file out of the box) and apply them at runtime. Pulls serde for deserialization,
 # serde_norway for the file provider, and the Config derive macro.
-dynamic-config = ["serde", "serde_norway", "aerospike-macro"]
+dynamic-config = ["serde", "serde_norway", "aerospike-macro", "indexmap/serde"]
 # Client-side Lua for `Client::query_aggregate` (stream UDF aggregation).
 # Bundles a vendored Lua 5.4 interpreter via mlua; off by default so the
 # interpreter is only compiled in when explicitly requested.
@@ -72,6 +77,9 @@ rt-async-std = ["aerospike-rt/rt-async-std", "aerospike-macro?/rt-async-std"]
 # Forwarded to aerospike-rt so its guard turns `tls` + `rt-async-std` into one
 # clear compile error instead of trait-bound failures in the connection layer.
 tls = ["rustls", "tokio-rustls", "aerospike-rt/tls"]
+# The AWS EC2 tag seed candidate provider (`discovery::aws`). Needs TLS for
+# the EC2 endpoint, hence Tokio.
+discovery-aws = ["tls", "dep:ring", "dep:webpki-roots"]
 sync = []
 
 [package.metadata.docs.rs]

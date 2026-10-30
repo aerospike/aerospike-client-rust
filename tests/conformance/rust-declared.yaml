@@ -1,0 +1,6 @@
+# Expected Rust result per conformance row of aerospike-client-conformance, read
+# by tests/conformance.rs. A row not listed here is declared pass (blocked when
+# the fixture row is blocked). The conformance test fails when any row's actual
+# result differs from its declaration, so a row changing in either direction
+# forces a reviewed change here. Every non-pass declaration names the owning
+# ticket or decision.

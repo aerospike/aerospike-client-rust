@@ -235,6 +235,7 @@ pub(crate) mod commands;
 mod common;
 #[cfg(feature = "dynamic-config")]
 pub mod config;
+pub mod discovery;
 pub mod expressions;
 mod flags;
 mod locks;

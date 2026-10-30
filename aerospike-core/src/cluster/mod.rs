@@ -19,13 +19,14 @@ pub mod partition;
 pub mod partition_tokenizer;
 pub mod peers;
 pub mod peers_parser;
+pub mod seed_refresher;
 pub mod version_parser;
 
 use crate::locks::lock;
 use aerospike_rt::time::{Duration, Instant};
 use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::vec::Vec;
 
@@ -35,11 +36,16 @@ pub use self::partition::Partition;
 use self::node_validator::NodeValidator;
 use self::partition_tokenizer::PartitionTokenizer;
 use self::peers::{Peer, Peers};
+use self::seed_refresher::{Refresh, SeedRefresher};
 
 use crate::commands::admin_command::AdminCommand;
 #[cfg(feature = "dynamic-config")]
 use crate::config::{ConfigDocument, ConfigProvider, DynConfig, DynamicConfig};
-use crate::errors::{Error, Result};
+use crate::discovery::{
+    AddressTranslator, Endpoint, StaticMapAddressTranslator, StaticSeedCandidateProvider,
+    TranslationMissMode,
+};
+use crate::errors::{Error, ErrorKind, Result};
 use crate::metrics::{Labels, MetricsPolicy, NodeMetrics, NodeMetricsSnapshot, PoolGauges};
 use crate::net::Host;
 use crate::policy::{
@@ -78,8 +84,25 @@ struct NodeSnapshot {
 // them.
 #[derive(Debug)]
 pub struct Cluster {
-    // Initial host nodes specified by user.
+    // The seed list: the static seeds merged with the discovered ones, plus
+    // the nodes found after construction. Replaced whole by a seed refresh.
     seeds: AtomicArc<Vec<Host>>,
+
+    // Seed candidate provider scheduling (initial call, periodic refresh).
+    seed_refresher: SeedRefresher,
+
+    // Advertised address translation, fixed at construction.
+    address_translator: Arc<dyn AddressTranslator>,
+
+    // What a translation miss does, fixed at construction.
+    translation_on_miss: TranslationMissMode,
+
+    // Cluster view change counter passed to the address translator.
+    view_change: AtomicU32,
+
+    // Set once the constructor's stabilization tends are done: the seed
+    // refresher and the view-change notifications start after that.
+    initialized: AtomicBool,
 
     // All aliases for all nodes in cluster.
     aliases: AtomicArc<HashMap<Host, Arc<Node>>>,
@@ -124,7 +147,7 @@ pub struct Cluster {
     // `clusterInitError` aggregated message when `fail_if_not_connected`
     // is set and no node validates. Only meaningful during init — cleared
     // at the start of each `seed_nodes` invocation.
-    last_seed_errors: std::sync::Mutex<Vec<(Host, String)>>,
+    last_seed_errors: std::sync::Mutex<Vec<(Host, Error)>>,
 
     // ---- Metrics ----
     // Whether periodic metrics collection is enabled.
@@ -168,6 +191,21 @@ fn node_address_is_loopback(node: &Node) -> bool {
     matches!(name.as_str(), "localhost" | "::1")
 }
 
+/// A peer that connected during one tend: the node it reached, kept aside
+/// until the collision checks say it may join the cluster.
+struct Validated {
+    peer_name: String,
+    sources: Vec<String>,
+    host: Host,
+    replace_node: Option<Arc<Node>>,
+    node: Arc<Node>,
+}
+
+/// Host equality as Java's `Host.equals`: name and port, not the TLS name.
+fn same_address(a: &Host, b: &Host) -> bool {
+    a.name == b.name && a.port == b.port
+}
+
 /// The parts of the cluster view that must stop changing for initial
 /// convergence to be considered finished.
 ///
@@ -190,11 +228,34 @@ struct ConvergenceState {
 impl Cluster {
     pub async fn new(policy: ClientPolicy, hosts: &[Host]) -> Result<Arc<Self>> {
         let (tx, rx) = mpsc::channel(100);
-        let cluster = Self::assemble(policy, hosts, tx)?;
+
+        // The seed list: the provider's answer merged with the static seeds.
+        // The provider is called once here, before anything is connected,
+        // with no deadline (it bounds its own I/O).
+        let provider = policy
+            .seed_candidate_provider
+            .clone()
+            .unwrap_or_else(|| Arc::new(StaticSeedCandidateProvider::new(hosts.to_vec())));
+        let refresher = SeedRefresher::new(provider, &policy, hosts.to_vec());
+        let (discovered, discovery_error) = refresher.initial().await;
+        let mut seeds = refresher.merge(&discovered, true);
+        if let Some(error) = discovery_error {
+            if seeds.is_empty() {
+                return Err(Error::seed_discovery_failed(format!(
+                    "Seed candidate provider {} failed and no seed host is left: {error}",
+                    refresher.provider_name()
+                )));
+            }
+        }
+        Self::default_tls_names(&policy, &mut seeds);
+        refresher.start(seeds.clone());
+
+        let cluster = Self::assemble(policy, seeds, refresher, tx)?;
         // Seed the cluster and tend until the partition table is fully
         // formed and stable, so the returned client can route its very
         // first command.
         Cluster::wait_till_stabilized(cluster.clone()).await?;
+        cluster.initialized.store(true, Ordering::Relaxed);
 
         // apply policy rules
         if cluster.client_policy.load().fail_if_not_connected {
@@ -203,7 +264,10 @@ impl Cluster {
                 // per-seed error from the most recent seed pass so callers
                 // know *why* each host failed, not just that "host(s)
                 // failed".
-                return Err(Error::connection(cluster.format_init_error()));
+                return Err(cluster.init_error());
+            }
+            if let Some(err) = cluster.peers_not_reachable() {
+                return Err(err);
             }
             if !cluster.partition_map_ready() {
                 // Nodes are reachable but the cluster never produced a
@@ -246,14 +310,47 @@ impl Cluster {
         Ok(cluster)
     }
 
-    fn assemble(policy: ClientPolicy, hosts: &[Host], tx: Sender<()>) -> Result<Arc<Self>> {
+    /// Gives every seed a TLS name when TLS is on: the cluster name when
+    /// one is configured, otherwise the host name (Java's `defaultTlsNames`).
+    #[cfg(feature = "tls")]
+    fn default_tls_names(policy: &ClientPolicy, seeds: &mut [Host]) {
+        if policy.tls_policy.is_some() {
+            let cluster_name = policy.cluster_name.as_deref().filter(|n| !n.is_empty());
+            for seed in seeds.iter_mut() {
+                if seed.tls_name.is_none() {
+                    seed.tls_name = Some(cluster_name.map_or_else(|| seed.name.clone(), str::to_string));
+                }
+            }
+        }
+    }
+
+    /// Without the `tls` feature there is no TLS name to default.
+    #[cfg(not(feature = "tls"))]
+    #[allow(clippy::needless_pass_by_ref_mut, clippy::missing_const_for_fn)]
+    fn default_tls_names(_policy: &ClientPolicy, _seeds: &mut [Host]) {}
+
+    fn assemble(
+        policy: ClientPolicy,
+        seeds: Vec<Host>,
+        seed_refresher: SeedRefresher,
+        tx: Sender<()>,
+    ) -> Result<Arc<Self>> {
         let buffer_pool = crate::net::buffer_pool::TieredBufferPool::from_policy(&policy);
+        let address_translator: Arc<dyn AddressTranslator> = policy
+            .address_translator
+            .clone()
+            .unwrap_or_else(|| Arc::new(StaticMapAddressTranslator::new(policy.ip_map.clone())));
         Ok(Arc::new(Cluster {
             hashed_pass: AtomicArc::from(policy.hashed_pass()?),
+            seed_refresher,
+            address_translator,
+            translation_on_miss: policy.translation_on_miss,
+            view_change: AtomicU32::new(0),
+            initialized: AtomicBool::new(false),
             client_policy: AtomicArc::from(policy),
             buffer_pool,
 
-            seeds: AtomicArc::from(hosts.to_vec()),
+            seeds: AtomicArc::from(seeds),
             aliases: AtomicArc::from(HashMap::new()),
             // Let disconnected clusters return the normal connection error.
             nodes: AtomicArc::from(NodeSnapshot {
@@ -292,7 +389,12 @@ impl Cluster {
     #[cfg(test)]
     pub(crate) fn new_unconnected(policy: ClientPolicy) -> Arc<Self> {
         let (tx, _rx) = mpsc::channel(1);
-        Self::assemble(policy, &[], tx).expect("default test policy assembles")
+        let refresher = SeedRefresher::new(
+            Arc::new(StaticSeedCandidateProvider::new(Vec::new())),
+            &policy,
+            Vec::new(),
+        );
+        Self::assemble(policy, Vec::new(), refresher, tx).expect("default test policy assembles")
     }
 
     async fn tend_thread(cluster: Arc<Cluster>, mut rx: Receiver<()>) {
@@ -334,6 +436,10 @@ impl Cluster {
             }
         }
 
+        // The provider is closed here, after the last refresh has returned
+        // and never concurrently with one.
+        cluster.seed_refresher.close().await;
+
         // Cleanup is performed here — as the last act of the tend thread —
         // rather than in `close()`, so the "all node additions/deletions are
         // performed in tend thread" invariant (see `tend()`) is preserved.
@@ -369,6 +475,7 @@ impl Cluster {
         peers.set_gen_changed(false);
 
         let nodes = self.nodes();
+        let names_before = Self::sorted_names(&nodes);
 
         // Mirror Java: clear per-tend node flags before refreshing.
         for node in &nodes {
@@ -442,7 +549,7 @@ impl Cluster {
                     let peer_fetches = nodes.iter().map(|node| {
                         let peers = &peers;
                         async move {
-                            if let Err(err) = node.refresh_peers(peers).await {
+                            if let Err(err) = node.refresh_peers(self, peers).await {
                                 warn!("Node `{node}` peer refresh failed: {err}");
                             }
                         }
@@ -474,13 +581,24 @@ impl Cluster {
                     let peer_fetches = drained.iter().map(|node| {
                         let peers = &peers;
                         async move {
-                            if let Err(err) = node.refresh_peers(peers).await {
+                            if let Err(err) = node.refresh_peers(self, peers).await {
                                 warn!("Node `{node}` peer refresh failed: {err}");
                             }
                         }
                     });
                     futures::future::join_all(peer_fetches).await;
                     self.materialize_peers(&peers).await;
+                }
+
+                // A node added or removed, or a node advertising new
+                // addresses, is a cluster view change the translator may
+                // want to know about. The view established by the
+                // constructor's tends is the starting view and is not
+                // notified.
+                if self.initialized.load(Ordering::Relaxed)
+                    && (peers.address_changed() || Self::sorted_names(&self.nodes()) != names_before)
+                {
+                    self.cluster_view_changed();
                 }
 
                 // Commit pending peers-generations: each parsing node's
@@ -618,6 +736,17 @@ impl Cluster {
             }
         }
 
+        // Periodic seed candidate refresh, after the constructor's tends.
+        if self.initialized.load(Ordering::Relaxed) {
+            if let Refresh::Publish(seeds) = self
+                .seed_refresher
+                .tend(tend_count as u64, policy.tend_interval)
+                .await
+            {
+                self.set_seeds(seeds);
+            }
+        }
+
         let aliases: Vec<String> = self
             .aliases
             .load()
@@ -630,6 +759,44 @@ impl Cluster {
         Ok(())
     }
 
+    fn sorted_names(nodes: &[Arc<Node>]) -> Vec<String> {
+        let mut names: Vec<String> = nodes.iter().map(|n| n.name().to_string()).collect();
+        names.sort_unstable();
+        names
+    }
+
+    fn cluster_view_changed(&self) {
+        let count = self.view_change.fetch_add(1, Ordering::Relaxed) + 1;
+        self.address_translator.on_cluster_view_changed(count);
+    }
+
+    /// The name the client logs for the address translator.
+    pub fn translator_name(&self) -> String {
+        self.address_translator.name()
+    }
+
+    /// Translates a server-advertised endpoint into the host to connect to,
+    /// applying the miss mode. The advertised TLS name is always kept.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::TranslationMiss`] on a strict miss.
+    pub fn translate_endpoint(&self, advertised: &Endpoint) -> Result<Host> {
+        crate::discovery::translate(&*self.address_translator, self.translation_on_miss, advertised)
+    }
+
+    /// The current seed list.
+    pub fn seeds(&self) -> Vec<Host> {
+        self.seeds.load().to_vec()
+    }
+
+    /// Replaces the seed list, giving each seed its default TLS name when
+    /// TLS is on.
+    pub(crate) fn set_seeds(&self, mut seeds: Vec<Host>) {
+        Self::default_tls_names(&self.client_policy.load(), &mut seeds);
+        self.seeds.store(Arc::new(seeds));
+    }
+
     /// Walks the discovered peer list and validates each peer host until one
     /// connects, creating a new `Node` for the first successful host. Split
     /// out from the parser so the network-bound validation step can stay
@@ -639,6 +806,11 @@ impl Cluster {
     /// commit each parsing node's `peers-generation`. If any peer parsed by
     /// node X is unreachable, X's pending generation is invalidated and the
     /// next tend will re-parse and retry.
+    ///
+    /// A peer without an alternate address (under `use_services_alternate`)
+    /// and a peer whose translated address collides with another peer's or
+    /// a live node's are logged and skipped the same way: no node, and the
+    /// parsing node's generation stays pending, so the next tend retries.
     async fn materialize_peers(&self, peers: &Peers) {
         let peers_list = peers.peers_list();
         // Reset the working set; we've taken a copy of what was in there.
@@ -666,6 +838,7 @@ impl Cluster {
                         rep.hosts.push(host);
                     }
                 }
+                rep.alternate_missing |= peer.alternate_missing;
             } else {
                 index_by_name.insert(peer.node_name.clone(), groups.len());
                 let sources = peer.from_node_name.clone().into_iter().collect();
@@ -673,16 +846,38 @@ impl Cluster {
             }
         }
 
+        let known: Vec<Arc<Node>> = self.nodes().into_iter().chain(peers.new_nodes()).collect();
+        let all_peers: Vec<Peer> = groups.iter().map(|(p, _)| p.clone()).collect();
+        let peer_names: Vec<String> = all_peers.iter().map(|p| p.node_name.clone()).collect();
+
         // Validate/connect the distinct peers concurrently (Go's `ParDo`
         // over `peers.peers()`). Tasks only append to the internally-synced
         // `peers` accumulator; actual cluster membership is still committed
         // afterwards by the tend task (add/remove stays single-flow).
+        let (all_peers, known) = (&all_peers, &known);
         let materialize_tasks = groups.into_iter().map(|(mut peer, sources)| async move {
             if self.peer_exists(peers, &mut peer).await {
-                return;
+                return None;
             }
 
-            let mut materialized = false;
+            // Before connecting: a peer with no alternate address, or one
+            // whose translated address another peer or a live node already
+            // answers at, never becomes a node.
+            if peer.alternate_missing {
+                error!("{}", Error::alternate_address_missing(&peer.node_name, None));
+                for source in &sources {
+                    peers.invalidate_pending_generation(source);
+                }
+                return None;
+            }
+            if let Some(collision) = self.collision_before_validation(&peer, all_peers, known) {
+                warn!("{collision}");
+                for source in &sources {
+                    peers.invalidate_pending_generation(source);
+                }
+                return None;
+            }
+
             for host in &peer.hosts {
                 if peers.has_failed(host) {
                     continue;
@@ -692,7 +887,11 @@ impl Cluster {
                 if let Err(err) = nv.validate_node(self, host).await {
                     peers.fail(host.clone());
                     self.incr_node_invalid();
-                    warn!("Add peer node `{host}` failed: `{err}`");
+                    if matches!(err.kind(), ErrorKind::AlternateAddressMissing) {
+                        error!("Add peer node `{host}` failed: {err}");
+                    } else {
+                        warn!("Add peer node `{host}` failed: `{err}`");
+                    }
                     continue;
                 }
 
@@ -703,29 +902,133 @@ impl Cluster {
                     );
                 }
 
-                let node_name = nv.name.clone();
                 let node = Arc::new(self.create_node(nv).await);
-                peers.add_node(node_name, node);
-
-                if let Some(ref replace_node) = peer.replace_node {
-                    if !peers.contains_node_to_remove(replace_node) {
-                        peers.add_node_to_remove(replace_node.clone());
-                    }
-                }
-                materialized = true;
-                break;
+                node.update_advertised(peer.advertised.clone());
+                return Some(Validated {
+                    peer_name: peer.node_name.clone(),
+                    sources,
+                    host: host.clone(),
+                    replace_node: peer.replace_node.clone(),
+                    node,
+                });
             }
 
             // If none of the peer's hosts validated, invalidate every
             // parsing node's pending generation so none of them commit at
             // the end of the tend. The peer will be re-parsed next tend.
-            if !materialized {
-                for source in &sources {
+            for source in &sources {
+                peers.invalidate_pending_generation(source);
+            }
+            None
+        });
+        let validated: Vec<Validated> = futures::future::join_all(materialize_tasks)
+            .await
+            .into_iter()
+            .flatten()
+            .collect();
+
+        // After connecting: two peers that validated as the same node, or a
+        // peer that validated as a node already in the cluster under another
+        // name, are collisions too. Neither becomes a node.
+        let known: Vec<Arc<Node>> = self.nodes().into_iter().chain(peers.new_nodes()).collect();
+        for v in &validated {
+            if let Some(other) = self.collision_after_validation(v, &validated, &known, &peer_names) {
+                warn!(
+                    "{}",
+                    Error::translation_collision(
+                        &v.peer_name,
+                        &other,
+                        &v.host,
+                        &self.translator_name()
+                    )
+                );
+                v.node.close();
+                for source in &v.sources {
                     peers.invalidate_pending_generation(source);
                 }
+            } else {
+                peers.add_node(v.node.name().to_string(), v.node.clone());
+                if let Some(ref replace_node) = v.replace_node {
+                    if !peers.contains_node_to_remove(replace_node) {
+                        peers.add_node_to_remove(replace_node.clone());
+                    }
+                }
             }
-        });
-        futures::future::join_all(materialize_tasks).await;
+        }
+    }
+
+    /// Java `findCollision(peers, peer)`: before `peer` is connected, one of
+    /// its translated hosts is also a host of another peer in this tend, or
+    /// the host of a live node with a different name.
+    fn collision_before_validation(
+        &self,
+        peer: &Peer,
+        all_peers: &[Peer],
+        known: &[Arc<Node>],
+    ) -> Option<Error> {
+        for host in &peer.hosts {
+            for other in all_peers {
+                if other.node_name != peer.node_name
+                    && other.hosts.iter().any(|h| same_address(h, host))
+                {
+                    return Some(Error::translation_collision(
+                        &peer.node_name,
+                        &other.node_name,
+                        host,
+                        &self.translator_name(),
+                    ));
+                }
+            }
+            for node in known {
+                if node.is_active()
+                    && node.failures() == 0
+                    && node.name() != peer.node_name
+                    && same_address(&node.host(), host)
+                {
+                    return Some(Error::translation_collision(
+                        &peer.node_name,
+                        node.name(),
+                        host,
+                        &self.translator_name(),
+                    ));
+                }
+            }
+        }
+        None
+    }
+
+    /// Java `findCollision(peers, peer, host, nv)`: after `v` connected, the
+    /// node it reached is already in the cluster under another peer's name,
+    /// another peer of this tend reached the same node, or the reply names
+    /// that node as a different peer. Returns the other node's name.
+    fn collision_after_validation(
+        &self,
+        v: &Validated,
+        validated: &[Validated],
+        known: &[Arc<Node>],
+        peer_names: &[String],
+    ) -> Option<String> {
+        let nv_name = v.node.name();
+        let nv_address = v.node.address();
+        for node in known {
+            if node.name() != v.peer_name
+                && (node.name() == nv_name
+                    || (node.is_active() && node.failures() == 0 && node.address() == nv_address))
+            {
+                return Some(node.name().to_string());
+            }
+        }
+        for other in validated {
+            if other.peer_name != v.peer_name
+                && (other.node.name() == nv_name || other.node.address() == nv_address)
+            {
+                return Some(other.peer_name.clone());
+            }
+        }
+        if v.peer_name != nv_name && peer_names.iter().any(|n| n == nv_name) {
+            return Some(nv_name.to_string());
+        }
+        None
     }
 
     /// Checks if a peer represents an already-known node.
@@ -1034,26 +1337,63 @@ impl Cluster {
 
     fn record_seed_error(&self, host: Host, err: &Error) {
         if let Ok(mut errs) = self.last_seed_errors.lock() {
-            errs.push((host, err.to_string()));
+            errs.push((host, err.clone()));
         }
     }
 
-    /// Format the per-seed errors recorded during the most recent
-    /// `seed_nodes` call into a single connection-error message. Falls back
-    /// to a generic message when nothing was recorded (e.g. seed list was
-    /// empty).
-    fn format_init_error(&self) -> String {
+    /// Java's `Peers.clusterInitError`: when the seed pass left exactly one
+    /// node and at least one host it tried could not be reached, the client
+    /// would start on a seed whose peers it has no route to (a seed reached
+    /// through an endpoint that does not front its peers). With
+    /// `fail_if_not_connected` that is an error naming every unreachable
+    /// host, not a one-node cluster.
+    fn peers_not_reachable(&self) -> Option<Error> {
+        if self.nodes().len() != 1 {
+            return None;
+        }
+        let errs = self
+            .last_seed_errors
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default();
+        if errs.is_empty() {
+            return None;
+        }
+        let hosts: Vec<String> = errs
+            .iter()
+            .map(|(host, _)| format!("{} {}", host.name, host.port))
+            .collect();
+        Some(Error::connection(format!(
+            "Peers not reachable: {}",
+            hosts.join(", ")
+        )))
+    }
+
+    /// The error `Cluster::new` fails with when no seed connected: the
+    /// per-seed errors recorded during the most recent `seed_nodes` call in
+    /// one connection error, or a generic message when nothing was recorded
+    /// (e.g. the seed list was empty). A seed with no alternate address is
+    /// reported as that error itself, as in Java.
+    fn init_error(&self) -> Error {
         let errs = self
             .last_seed_errors
             .lock()
             .map(|guard| guard.clone())
             .unwrap_or_default();
 
+        if let Some((_, err)) = errs
+            .iter()
+            .find(|(_, e)| matches!(e.kind(), ErrorKind::AlternateAddressMissing))
+        {
+            return err.clone();
+        }
+
         if errs.is_empty() {
-            return "Failed to connect to host(s). The network connection(s) \
+            return Error::connection(
+                "Failed to connect to host(s). The network connection(s) \
                  to cluster nodes may have timed out, or the cluster may \
-                 be in a state of flux."
-                .to_string();
+                 be in a state of flux.",
+            );
         }
 
         let mut sb = String::with_capacity(64 + errs.len() * 80);
@@ -1061,7 +1401,7 @@ impl Cluster {
         for (host, err) in &errs {
             let _ = writeln!(sb, "  {host} {err}");
         }
-        sb
+        Error::connection(sb)
     }
 
     pub async fn seed_nodes(&self) -> bool {
@@ -1095,7 +1435,11 @@ impl Cluster {
             let mut seed_node_validator = NodeValidator::new_for_seed(self.client_policy());
             if let Err(err) = seed_node_validator.validate_node(self, seed).await {
                 self.record_seed_error(seed.clone(), &err);
-                log_error_chain!(err, "Failed to validate seed host: {}", seed);
+                if matches!(err.kind(), ErrorKind::AlternateAddressMissing) {
+                    error!("Seed {seed} failed: {err}");
+                } else {
+                    log_error_chain!(err, "Failed to validate seed host: {}", seed);
+                }
                 continue;
             }
 
@@ -1125,7 +1469,7 @@ impl Cluster {
             let harvest = Peers::new(16, 16);
             harvest.set_gen_changed(false);
             harvest.reset_refresh_count();
-            if let Err(err) = seed_node.refresh_peers(&harvest).await {
+            if let Err(err) = seed_node.refresh_peers(self, &harvest).await {
                 self.record_seed_error(seed.clone(), &err);
                 log_error_chain!(err, "Seed peer fetch failed: {}", seed);
                 seed_node.close();
@@ -1162,8 +1506,28 @@ impl Cluster {
             // every `peer.hosts` entry until one connects — we do the same,
             // skipping hosts already proven unreachable in this seed pass
             // (Java's `peers.hasFailed(host)` short-circuit).
-            for peer in harvest.peers_list() {
+            let all_peers = harvest.peers_list();
+            let peer_names: Vec<String> = all_peers.iter().map(|p| p.node_name.clone()).collect();
+            // Peers that joined `list` in this seed pass, by node name: a
+            // later peer that reaches the same node knocks both out.
+            let mut peers_added: Vec<String> = Vec::new();
+            for peer in &all_peers {
                 if self.find_node_name(&list, &peer.node_name) {
+                    continue;
+                }
+
+                if peer.alternate_missing {
+                    error!("{}", Error::alternate_address_missing(&peer.node_name, None));
+                    if let Some(ref source) = peer.from_node_name {
+                        harvest.invalidate_pending_generation(source);
+                    }
+                    continue;
+                }
+                if let Some(collision) = self.collision_before_validation(peer, &all_peers, &list) {
+                    warn!("{collision}");
+                    if let Some(ref source) = peer.from_node_name {
+                        harvest.invalidate_pending_generation(source);
+                    }
                     continue;
                 }
 
@@ -1178,7 +1542,11 @@ impl Cluster {
                         self.record_seed_error(host.clone(), &err);
                         harvest.fail(host.clone());
                         self.incr_node_invalid();
-                        log_error_chain!(err, "Seeding peer host {} failed", host);
+                        if matches!(err.kind(), ErrorKind::AlternateAddressMissing) {
+                            error!("Add node {host} failed: {err}");
+                        } else {
+                            log_error_chain!(err, "Seeding peer host {} failed", host);
+                        }
                         continue;
                     }
 
@@ -1189,14 +1557,43 @@ impl Cluster {
                         );
                     }
 
-                    if self.find_node_name(&list, &peer_nv.name) {
-                        peer_validated = true;
+                    let node = Arc::new(self.create_node(peer_nv).await);
+                    node.update_advertised(peer.advertised.clone());
+                    let v = Validated {
+                        peer_name: peer.node_name.clone(),
+                        sources: peer.from_node_name.clone().into_iter().collect(),
+                        host: host.clone(),
+                        replace_node: None,
+                        node,
+                    };
+                    if let Some(other) = self.collision_after_validation(&v, &[], &list, &peer_names) {
+                        warn!(
+                            "{}",
+                            Error::translation_collision(
+                                &v.peer_name,
+                                &other,
+                                &v.host,
+                                &self.translator_name()
+                            )
+                        );
+                        v.node.close();
+                        // Neither peer becomes a node when both validate as
+                        // the same node in this pass.
+                        if peers_added.contains(&other) {
+                            if let Some(pos) = list.iter().position(|n| n.name() == other) {
+                                let dropped = list.remove(pos);
+                                for alias in dropped.aliases() {
+                                    self.remove_alias(&alias);
+                                }
+                                dropped.close();
+                            }
+                        }
                         break;
                     }
 
-                    let node = Arc::new(self.create_node(peer_nv).await);
-                    self.add_aliases(node.clone());
-                    list.push(node);
+                    self.add_aliases(v.node.clone());
+                    peers_added.push(v.node.name().to_string());
+                    list.push(v.node);
                     peer_validated = true;
                     break; // first reachable host wins
                 }
@@ -1583,18 +1980,58 @@ impl Cluster {
         }
     }
 
-    /// Creates a [`DynConfig`] from `provider`, performs the initial load + apply
-    /// (static section once, dynamic section), stores it, and spawns the watcher
-    /// task. Called during client construction, before the client is returned.
+    /// Merges the `static.client` section of `doc` into `policy`, the
+    /// discovery and translation keys included: the whole section is
+    /// validated first, so an invalid setting leaves the policy untouched.
+    /// Called before the cluster is built, so that the file's seed provider
+    /// and translator shape the first connection.
     #[cfg(feature = "dynamic-config")]
-    pub(crate) async fn attach_dyn_config(self: &Arc<Self>, provider: Arc<dyn ConfigProvider>) {
-        let dyn_config = Arc::new(DynConfig::new(provider));
-        match dyn_config.provider().load().await {
-            Ok(Some(doc)) => self.apply_config_doc(&dyn_config, doc),
-            Ok(None) => {}
-            Err(err) => {
-                log_error_chain!(err, "Error loading initial dynamic configuration");
+    pub(crate) fn merge_static_config(policy: &mut ClientPolicy, doc: &ConfigDocument) -> Result<()> {
+        let Some(static_config) = doc.static_config.as_ref() else {
+            return Ok(());
+        };
+        // Every key is checked before any factory runs, so a file with an
+        // invalid setting anywhere builds nothing.
+        let resolved = match static_config.client_discovery.as_ref() {
+            Some(discovery) => {
+                discovery.resolve(policy, false)?;
+                Some(discovery.resolve(policy, true)?)
             }
+            None => None,
+        };
+        if let Some(client_cfg) = static_config.client.clone() {
+            client_cfg.merge_static_into(policy);
+        }
+        if let Some(resolved) = resolved {
+            resolved.apply(policy);
+        }
+        Ok(())
+    }
+
+    /// Creates a [`DynConfig`] from `provider`, applies `initial` (the
+    /// document read before the cluster was built, whose static section is
+    /// already in the policy) or else performs the initial load + apply,
+    /// stores it, and spawns the watcher task. Called during client
+    /// construction, before the client is returned.
+    #[cfg(feature = "dynamic-config")]
+    pub(crate) async fn attach_dyn_config(
+        self: &Arc<Self>,
+        provider: Arc<dyn ConfigProvider>,
+        initial: Option<ConfigDocument>,
+    ) {
+        let dyn_config = Arc::new(DynConfig::new(provider));
+        match initial {
+            Some(doc) => {
+                dyn_config.mark_initialized();
+                self.apply_config_doc(&dyn_config, doc);
+            }
+            None => match dyn_config.provider().load().await {
+                Ok(Some(doc)) => self.apply_config_doc(&dyn_config, doc),
+                Ok(None) => {}
+                Err(err) => {
+                    log_error_chain!(err, "Error loading initial dynamic configuration");
+                }
+            },
         }
         // OnceLock: set once at construction; ignore the (impossible) re-set.
         let _ = self.dyn_config.set(dyn_config);
@@ -1607,8 +2044,28 @@ impl Cluster {
     /// first apply), the dynamic `client`/`metrics` sections every time, and stores
     /// the whole dynamic section for per-command [`resolve_read`](Self::resolve_read)
     /// & friends.
+    ///
+    /// The discovery and translation keys of `static.client` are validated
+    /// on every load, as the other clients do: an invalid setting makes the
+    /// whole document invalid, which is logged and the last good
+    /// configuration kept. They are applied only with the document read
+    /// before the cluster was built (see
+    /// [`merge_static_config`](Self::merge_static_config)); afterwards the
+    /// running cluster keeps the provider and translator it was constructed
+    /// with, and a change takes effect for a new client instance.
     #[cfg(feature = "dynamic-config")]
     fn apply_config_doc(&self, dyn_config: &DynConfig, doc: ConfigDocument) {
+        if let Some(discovery) = doc
+            .static_config
+            .as_ref()
+            .and_then(|s| s.client_discovery.as_ref())
+        {
+            if let Err(err) = discovery.resolve(&self.client_policy.load(), false) {
+                warn!("Dynamic configuration failed: {err}. Keeping the current configuration");
+                return;
+            }
+        }
+
         let first_apply = !dyn_config.mark_initialized();
 
         if first_apply {
@@ -1616,6 +2073,18 @@ impl Cluster {
                 let mut cp = (*self.client_policy.load().clone()).clone();
                 client_cfg.merge_static_into(&mut cp);
                 self.client_policy.store(Arc::new(cp));
+            }
+            if doc
+                .static_config
+                .as_ref()
+                .and_then(|s| s.client_discovery.as_ref())
+                .is_some_and(|d| d.discovery.is_some() || d.translation.is_some())
+            {
+                info!(
+                    "static.client.discovery and static.client.translation are applied at client \
+                     construction only; the running cluster keeps the seed provider and address \
+                     translator it was built with"
+                );
             }
         }
 
@@ -2191,6 +2660,12 @@ impl Cluster {
         // Mark closed first so any in-flight tend cycle bails early.
         if self.closed.swap(true, Ordering::SeqCst) {
             return Ok(());
+        }
+
+        // The tend task closes the seed provider as it exits; a cluster that
+        // never started one closes it here.
+        if lock(&self.tend_task).is_none() {
+            self.seed_refresher.close().await;
         }
 
         // Actually close the tend channel: locking the Mutex and dropping

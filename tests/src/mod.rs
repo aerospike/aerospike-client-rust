@@ -30,6 +30,7 @@ mod cdt_map;
 mod cluster;
 mod compression;
 mod connection_seed;
+mod discovery;
 #[cfg(feature = "dynamic-config")]
 mod dynamic_config;
 mod examples;

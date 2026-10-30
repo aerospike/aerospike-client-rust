@@ -19,6 +19,7 @@ The `crud_sync` example is the exception — it requires the `sync` feature, whi
 * `config_pigeon` — a `ConfigProvider` that fetches the dynamic configuration from a REST service (JSON), with a tiny service of its own to show a change reaching the running client; needs the `dynamic-config` feature (on by default)
 * `crud` — async client basics
 * `crud_sync` — sync (blocking) client; see [How to run sync example](#sync-example-crud_sync) below
+* `discovery` — pluggable seed discovery and address translation: a custom `SeedCandidateProvider` merged with the static seeds, a logging `AddressTranslator`, and a `port-map` keyed on node names
 * `error_handling` — reading an `Error`: `kind`, `result_code`, `matches`, `in_doubt`, client vs server timeouts, and the server's sub-code and message with `error_detail_verbosity` (server 8.2.0+)
 * `expression_operations` — `read_exp`/`write_exp` inside `operate`: computed values, conditional writes, list/bit/string expressions, path expressions on nested documents
 * `geo_query` — geospatial queries (geo2dsphere index, region/radius/contains)

@@ -57,7 +57,7 @@ aerospike-sync = { workspace = true, optional = true }
 aerospike-macro = { workspace = true, optional = true }
 
 [features]
-default = ["async", "serialization", "rt-tokio", "tls", "dynamic-config"]
+default = ["async", "serialization", "rt-tokio", "tls", "dynamic-config", "discovery-aws"]
 serialization = ["aerospike-core?/serialization", "aerospike-sync?/serialization"]
 # Weak refs: applies to whichever client (async core / sync wrapper) is enabled.
 dynamic-config = ["aerospike-core?/dynamic-config", "aerospike-sync?/dynamic-config"]
@@ -73,6 +73,8 @@ rt-async-std = ["aerospike-core?/rt-async-std", "aerospike-macro/rt-async-std", 
 # TLS is Tokio-only on either client: core's `tls` pulls in tokio-rustls and
 # forwards the flag to `aerospike-rt`, whose guard rejects `tls` + `rt-async-std`.
 tls = ["aerospike-core?/tls", "aerospike-sync?/tls"]
+# The AWS EC2 tag seed candidate provider; needs `tls` (Tokio only).
+discovery-aws = ["aerospike-core?/discovery-aws", "aerospike-sync?/discovery-aws"]
 
 [[bench]]
 name = "client_server"
@@ -91,6 +93,24 @@ required-features = ["async"]
 [[test]]
 name = "batch_leak"
 required-features = ["async"]
+
+# The shared L1 conformance fixtures (aerospike-client-conformance). Runs only
+# with CONFORMANCE_DIR set; see tests/conformance.rs.
+[[test]]
+name = "conformance"
+required-features = ["async", "rt-tokio", "discovery-aws"]
+
+# The L2 discovery topology rows. Every test skips itself without the
+# topology's environment; see tests/discovery/README.md.
+[[test]]
+name = "discovery_l2"
+required-features = ["async", "rt-tokio"]
+
+# Server certificate name matching, one case per run of
+# tests/tls/run_tls_matching.sh.
+[[test]]
+name = "tls_matching"
+required-features = ["async", "rt-tokio", "tls"]
 
 [workspace]
 members = ["tools/benchmark", "aerospike-core", "aerospike-rt", "aerospike-sync", "aerospike-macro"]
@@ -124,6 +144,10 @@ aerospike-rt = { workspace = true }
 futures = { version = "0.3.34" }
 # `examples/config_pigeon.rs` implements the async `ConfigProvider` trait.
 async-trait = "0.1"
+# The discovery integration tests encode partition bitmaps for their fake nodes.
+base64 = "0.23"
+# The conformance runner reads the fixture files; same crate as aerospike-core.
+serde_norway = "0.9"
 tokio = { version = "1.53.2", features = ["full"] }
 proptest = "1.11.0"
 # Same provider as aerospike-core: two providers in one build make
@@ -244,6 +268,10 @@ required-features = ["async", "serialization"]
 [[example]]
 name = "config_file"
 required-features = ["async", "dynamic-config"]
+
+[[example]]
+name = "discovery"
+required-features = ["async"]
 
 
 

@@ -28,8 +28,10 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use hazarc::AtomicArc;
 
 use crate::cluster::node_validator::{normalize_cluster_name, NodeValidator};
-use crate::cluster::peers::Peers;
+use crate::cluster::peers::{Peer, Peers};
 use crate::cluster::peers_parser::PeersParser;
+use crate::cluster::Cluster;
+use crate::discovery::{Endpoint, SourceList};
 use crate::cluster::CLIENT_VERSION;
 use crate::commands::Message;
 use crate::errors::{Error, Result};
@@ -98,6 +100,10 @@ pub struct Node {
     /// `Cluster::peer_exists` on the first successful DNS-aware match, so
     /// subsequent tends can short-circuit the lookup.
     hostname: std::sync::OnceLock<String>,
+    /// The addresses this node's peers last advertised for it, before
+    /// translation. A change is reported to the address translator as a
+    /// cluster view change.
+    advertised_hosts: std::sync::Mutex<Option<Vec<Host>>>,
     /// Per-node metrics. Shared with the connection pool so connection
     /// lifecycle events are recorded against the same sink.
     metrics: Arc<NodeMetrics>,
@@ -195,7 +201,17 @@ impl Node {
             version: nv.version.clone(),
             rack_ids: AtomicArc::from(HashMap::new()),
             hostname: std::sync::OnceLock::new(),
+            advertised_hosts: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Records what peers advertise for this node. Returns `true` when an
+    /// earlier record exists and differs.
+    pub(crate) fn update_advertised(&self, hosts: Vec<Host>) -> bool {
+        let mut current = crate::locks::lock(&self.advertised_hosts);
+        let changed = current.as_ref().is_some_and(|c| *c != hosts);
+        *current = Some(hosts);
+        changed
     }
 
     /// Returns the Node address
@@ -365,7 +381,13 @@ impl Node {
     ///
     /// Only called when `peers.gen_changed` is true (i.e., when any node's
     /// peers generation changed during phase 1).
-    pub(crate) async fn refresh_peers(&self, peers: &Peers) -> Result<()> {
+    ///
+    /// Every advertised address goes through the cluster's address
+    /// translator; a strict miss is logged and the address dropped. Under
+    /// `use_services_alternate` the standard list is read too, so a peer with
+    /// no alternate address is named and reported rather than silently
+    /// missing.
+    pub(crate) async fn refresh_peers(&self, cluster: &Cluster, peers: &Peers) -> Result<()> {
         // Don't refresh peers when node connection has already failed during this tend.
         if self.failures() > 0 || !self.is_active() {
             return Ok(());
@@ -376,8 +398,15 @@ impl Node {
         };
 
         let peers_cmd = self.client_policy.peers_string();
+        let alternate = self.client_policy.use_services_alternate;
+        let std_cmd = self.client_policy.standard_peers_string();
+        let commands: Vec<&str> = if alternate {
+            vec![std_cmd, peers_cmd]
+        } else {
+            vec![peers_cmd]
+        };
         let info_map = self
-            .tend_info(&admin_policy, &[peers_cmd])
+            .tend_info(&admin_policy, &commands)
             .await
             .map_err(|e| {
                 self.refresh_failed();
@@ -394,25 +423,69 @@ impl Node {
         };
 
         let result = PeersParser::new(peer_string)
-            .with_ip_map(self.client_policy.ip_map.as_ref())
             .parse()
             .inspect_err(|_e| {
                 self.refresh_failed();
             })?;
+        let mut parsed = result.peers;
+
+        if alternate {
+            // The alternate list omits peers that have no alternate address.
+            if let Some(std_string) = info_map.get(std_cmd).filter(|s| !s.is_empty()) {
+                if let Ok(std_result) = PeersParser::new(std_string).parse() {
+                    for std_peer in std_result.peers {
+                        if !parsed.iter().any(|p| p.node_name == std_peer.node_name) {
+                            let mut peer = Peer::new(std_peer.node_name, Vec::new());
+                            peer.alternate_missing = true;
+                            parsed.push(peer);
+                        }
+                    }
+                }
+            }
+        }
+
+        let source_list = if alternate {
+            SourceList::Alternate
+        } else {
+            SourceList::Standard
+        };
 
         // Tag each peer with the node that parsed it so a later
         // materialization failure invalidates only that node's pending
         // peers-generation, not all of them. Each parsing node replaces
         // the working peer set; we materialize its peers immediately
         // afterward (Java-style per-node validation).
-        let tagged: Vec<crate::cluster::peers::Peer> = result
-            .peers
-            .into_iter()
-            .map(|mut p| {
-                p.from_node_name = Some(self.name.clone());
-                p
-            })
-            .collect();
+        let mut tagged: Vec<Peer> = Vec::with_capacity(parsed.len());
+        for mut peer in parsed {
+            peer.from_node_name = Some(self.name.clone());
+            if alternate && peer.hosts.is_empty() {
+                peer.alternate_missing = true;
+            }
+            peer.advertised.clone_from(&peer.hosts);
+
+            let mut translated = Vec::with_capacity(peer.hosts.len());
+            for host in &peer.hosts {
+                let endpoint = Endpoint::new(
+                    peer.node_name.clone(),
+                    host.tls_name.clone(),
+                    host.name.clone(),
+                    host.port,
+                    source_list,
+                );
+                match cluster.translate_endpoint(&endpoint) {
+                    Ok(host) => translated.push(host),
+                    Err(e) => warn!("{e}"),
+                }
+            }
+            peer.hosts = translated;
+
+            if let Ok(node) = cluster.get_node_by_name(&peer.node_name) {
+                if node.update_advertised(peer.advertised.clone()) {
+                    peers.set_address_changed();
+                }
+            }
+            tagged.push(peer);
+        }
 
         let parsed_count = tagged.len();
         peers.append_peers(tagged);

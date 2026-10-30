@@ -15,13 +15,14 @@
 use crate::cluster::peers::Peer;
 use crate::errors::{Error, Result};
 use crate::Host;
-use std::collections::HashMap;
 use std::iter::Peekable;
 use std::str::Chars;
 
+/// Parses a `peers-*` info response into the hosts as the server advertised
+/// them. Address translation is applied afterwards, by the node that fetched
+/// the list, so the advertised addresses stay available.
 pub struct PeersParser<'a> {
     s: Peekable<Chars<'a>>,
-    ip_map: Option<&'a HashMap<String, String>>,
 }
 
 /// Result of parsing a peers response: generation number and list of peers.
@@ -34,16 +35,7 @@ impl<'a> PeersParser<'a> {
     pub fn new(s: &'a str) -> Self {
         PeersParser {
             s: s.chars().peekable(),
-            ip_map: None,
         }
-    }
-
-    /// Apply the `client_policy.ip_map` substitution to every host parsed
-    /// out of the response — rewrites hosts at parse time (not later in
-    /// the validator).
-    pub const fn with_ip_map(mut self, ip_map: Option<&'a HashMap<String, String>>) -> Self {
-        self.ip_map = ip_map;
-        self
     }
 
     /// Parses the peers response string and returns generation + peer list.
@@ -119,12 +111,7 @@ impl<'a> PeersParser<'a> {
 
         self.expect("]")?;
 
-        Ok(Some(Peer {
-            node_name,
-            hosts,
-            replace_node: None,
-            from_node_name: None,
-        }))
+        Ok(Some(Peer::new(node_name, hosts)))
     }
 
     pub fn read_generation(&mut self) -> Result<u64> {
@@ -189,15 +176,6 @@ impl<'a> PeersParser<'a> {
 
         if addr.is_empty() {
             return Err(Error::parse_peers("Empty address string for peer"));
-        }
-
-        // Apply ip_map substitution at parse time, matching Java's
-        // PeerParser.parseHost. Done here so every host (regardless of how
-        // it's later consumed) sees a consistent address.
-        if let Some(map) = self.ip_map {
-            if let Some(mapped) = map.get(&addr) {
-                return Ok(mapped.clone());
-            }
         }
 
         Ok(addr)

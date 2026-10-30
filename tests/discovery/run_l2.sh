@@ -1,0 +1,673 @@
+#!/usr/bin/env bash
+#
+# L2 discovery topology (tests/discovery_l2.rs) built locally.
+#
+# Builds the topology .github/workflows/discovery-l2.yml builds: three Aerospike
+# nodes on a private network with no published ports, a Toxiproxy container on
+# that network and on a client network with one listener per node behind one
+# endpoint hostname, and the client in its own container on the client network
+# only, so the client has no route to the node addresses. Toxiproxy is set up by
+# shared-workflows setup-discovery-topology at the commit the conformance
+# repository's discovery-l2-topology action pins. The script sets the variables
+# the workflow sets, runs the rows as .github/discovery/run-l2-suite.sh does, and
+# removes every container and network it created on exit, including on failure.
+#
+# The action calls Toxiproxy's control API with curl on the node network
+# address. This script puts a curl on PATH that runs in a container on the node
+# network, so the action also works where the host cannot route to container
+# addresses (Docker Desktop, Podman machine).
+#
+# The test binary is built in a Rust container before the cluster starts (a
+# cargo build and three nodes do not fit a small VM at once), then run by a
+# container on the client network. L2_TEST_BINARY skips the build.
+#
+# Optional environment:
+#   CONTAINER_ENGINE          docker (default) or podman
+#   DISCOVERY_SUBSET          ce (default) or ee. ee enables server TLS and TLS listeners (N-6) and
+#                             needs FEATURES_CONF_PATH
+#   FEATURES_CONF_PATH        Enterprise feature-key file
+#   AEROSPIKE_IMAGE           server image (default aerospike/aerospike-server:latest on ce,
+#                             aerospike/aerospike-server-enterprise:latest on ee)
+#   SHARED_WORKFLOWS_DIR      local aerospike/shared-workflows clone to read the action from instead
+#                             of downloading it
+#   L2_CLIENT_IMAGE           image that builds and runs the tests (default rust:1.87-bookworm)
+#   L2_TEST_BINARY            a prebuilt Linux discovery_l2 test binary; skips the build
+#   L2_CARGO_VOLUME           named volume for the cargo registry cache (default discovery-l2-cargo)
+#   L2_TARGET_VOLUME          named volume for the build's target directory (default discovery-l2-target)
+#   L2_DISABLE_LISTENERS      set to 1 to disable every Toxiproxy listener before the suite starts and
+#                             skip the TCP check, to prove N-1's guard. Every L2 test then fails
+#   L2_NODE_CONTROL           set to 1 to let N-11 start a node. The script sets DISCOVERY_CONTROL_DIR
+#                             to a directory under the work directory, which the client container
+#                             shares, and serves each <id>.request written there with <id>.ack: "start"
+#                             starts one more node on the server network with the same config and mesh
+#                             seeds and acknowledges its container and address, "stop <container>"
+#                             removes that node. "start" takes optional arguments: alternate-port=<port>
+#                             renders the node's config with the pass-through-ports hostname and that
+#                             alternate-access-port, address=<ip> starts the node on that address
+#   L2_PROFILE                default, reachable, pass-through-names, pass-through-ports, port-map-range,
+#                             cn-only, low-mtu, port-range or idle-reset (default: default). Every
+#                             profile but default runs only the module of its rows; see
+#                             .github/discovery/run-l2-suite.sh for the profiles
+#   L2_SUBNET                 first three octets of the port-map-range server network (default 10.213.66)
+#   L2_PORT_MAP_PORT_BASE     port-map-range listener port base (default 31000)
+#   L2_CLIENT_NETWORK_MTU     low-mtu client network MTU (default 1200)
+#   L2_PROXY_PORT_RANGE       port-range Toxiproxy local port range, "<first> <last>" (default "40000 40009")
+#   L2_FILTER                 space-separated test name substrings to run instead of the profile's rows
+#   L2_CLIENT_MEMORY          memory limit for the client container (docker --memory), e.g. 2g
+#   L2_HOLD                   set to 1 to build the topology, print its environment and keep it up
+#                             while target/discovery-l2/hold exists, instead of running the rows; for
+#                             attaching a client or a debugger from the host
+#
+# Usage: tests/discovery/run_l2.sh
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+ENGINE="${CONTAINER_ENGINE:-docker}"
+
+die() {
+	echo "ERROR: $*" >&2
+	exit 2
+}
+
+SHARED_WORKFLOWS_COMMIT=308f37e0cd5c7a6386a99ea7afc379d5a4ea9256
+ACTION_PATH=.github/actions/setup-discovery-topology
+CLIENT_IMAGE="${L2_CLIENT_IMAGE:-rust:1.87-bookworm}"
+CURL_IMAGE=curlimages/curl:8.11.1
+CARGO_VOLUME="${L2_CARGO_VOLUME:-discovery-l2-cargo}"
+TARGET_VOLUME="${L2_TARGET_VOLUME:-discovery-l2-target}"
+SUBSET="${DISCOVERY_SUBSET:-ce}"
+PROFILE="${L2_PROFILE:-default}"
+REACHABLE_HOSTNAME=as-reachable.test
+PASS_THROUGH_HOSTNAME=as-pass-through.test
+PASS_THROUGH_DOMAIN=pass-through.test
+SUBNET="${L2_SUBNET:-10.213.66}"
+RANGE_FIRST=11
+RANGE_LAST=26
+PORT_MAP_PORT_BASE="${L2_PORT_MAP_PORT_BASE:-31000}"
+CLIENT_NETWORK_MTU=""
+PROXY_SYSCTLS=""
+IDLE_RESET=""
+PROXY_PORT_RANGE=""
+MAX_RECORD_SIZE=""
+NODE_CONTROL="${L2_NODE_CONTROL:-0}"
+CERT_SHAPE=""
+PREFIX="discovery-l2-$$"
+WORK_DIR="$ROOT_DIR/target/discovery-l2"
+AS_NETWORK="$PREFIX-aerospike-net"
+CLIENT_NETWORK="$PREFIX-client-net"
+PROXY="$PREFIX-toxiproxy"
+CLIENT="$PREFIX-client"
+CONTROL_DIR="$WORK_DIR/control"
+NODES=3
+FEATURES="async,serialization,rt-tokio,tls"
+
+case "$SUBSET" in
+	ce)
+		IMAGE="${AEROSPIKE_IMAGE:-aerospike/aerospike-server:latest}"
+		TLS_LISTEN_PORT_BASE=""
+		;;
+	ee)
+		IMAGE="${AEROSPIKE_IMAGE:-aerospike/aerospike-server-enterprise:latest}"
+		TLS_LISTEN_PORT_BASE=43331
+		[ -n "${FEATURES_CONF_PATH:-}" ] || die "DISCOVERY_SUBSET=ee needs FEATURES_CONF_PATH"
+		[ -r "$FEATURES_CONF_PATH" ] || die "FEATURES_CONF_PATH '$FEATURES_CONF_PATH' is not readable"
+		;;
+	*)
+		die "DISCOVERY_SUBSET must be ce or ee (got: $SUBSET)"
+		;;
+esac
+
+case "$PROFILE" in
+	default|reachable|pass-through-names) ;;
+	idle-reset) IDLE_RESET=1 ;;
+	pass-through-ports|port-map-range) NODE_CONTROL=1 ;;
+	cn-only) [ "$SUBSET" = "ee" ] || die "L2_PROFILE=cn-only needs DISCOVERY_SUBSET=ee" ;;
+	low-mtu)
+		CLIENT_NETWORK_MTU="${L2_CLIENT_NETWORK_MTU:-1200}"
+		MAX_RECORD_SIZE="max-record-size 8M"
+		[[ "$CLIENT_NETWORK_MTU" =~ ^[0-9]+$ ]] || die "L2_CLIENT_NETWORK_MTU must be a number (got: $CLIENT_NETWORK_MTU)"
+		;;
+	port-range)
+		PROXY_PORT_RANGE="${L2_PROXY_PORT_RANGE:-40000 40009}"
+		[[ "$PROXY_PORT_RANGE" =~ ^[0-9]+\ [0-9]+$ ]] || die "L2_PROXY_PORT_RANGE must be '<first> <last>' (got: $PROXY_PORT_RANGE)"
+		PROXY_SYSCTLS="net.ipv4.ip_local_port_range=$PROXY_PORT_RANGE"
+		;;
+	*) die "L2_PROFILE must be default, reachable, pass-through-names, pass-through-ports, port-map-range, cn-only, low-mtu, port-range or idle-reset (got: $PROFILE)" ;;
+esac
+[[ "$SUBNET" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "L2_SUBNET must be three octets (got: $SUBNET)"
+[[ "$PORT_MAP_PORT_BASE" =~ ^[0-9]+$ ]] || die "L2_PORT_MAP_PORT_BASE must be a port (got: $PORT_MAP_PORT_BASE)"
+
+command -v "$ENGINE" >/dev/null 2>&1 || die "$ENGINE CLI not found"
+"$ENGINE" info >/dev/null 2>&1 || die "$ENGINE daemon not reachable"
+((BASH_VERSINFO[0] >= 4)) || die "bash 4 or later is required by setup-discovery-topology"
+
+STARTED=()
+STARTED_NETWORKS=()
+CONTROL_PID=""
+
+# Nodes started on request carry the prefix but are not in STARTED.
+cleanup() {
+	if [ -n "$CONTROL_PID" ]; then
+		kill "$CONTROL_PID" >/dev/null 2>&1 || true
+		wait "$CONTROL_PID" 2>/dev/null || true
+	fi
+	for c in "${STARTED[@]+"${STARTED[@]}"}"; do
+		"$ENGINE" rm -f "$c" >/dev/null 2>&1 || true
+	done
+	for c in $("$ENGINE" ps -aq --filter "name=^$PREFIX-" 2>/dev/null); do
+		"$ENGINE" rm -f "$c" >/dev/null 2>&1 || true
+	done
+	for n in "${STARTED_NETWORKS[@]+"${STARTED_NETWORKS[@]}"}"; do
+		"$ENGINE" network rm "$n" >/dev/null 2>&1 || true
+	done
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+
+rm -rf "$WORK_DIR"
+mkdir -p "$WORK_DIR/conf" "$WORK_DIR/action" "$WORK_DIR/bin" "$CONTROL_DIR"
+chmod 777 "$CONTROL_DIR"
+
+# Build the test binary in the client image before the cluster takes the
+# memory. The workspace is mounted at its host path so the binary's paths
+# match when the suite container mounts it the same way.
+TEST_BINARY="${L2_TEST_BINARY:-}"
+if [ -z "$TEST_BINARY" ]; then
+	echo "Building the discovery_l2 test binary in $CLIENT_IMAGE"
+	for volume in "$CARGO_VOLUME" "$TARGET_VOLUME"; do
+		"$ENGINE" volume inspect "$volume" >/dev/null 2>&1 || "$ENGINE" volume create "$volume" >/dev/null
+	done
+	"$ENGINE" run --rm --name "$PREFIX-build" --workdir "$ROOT_DIR" \
+		-v "$ROOT_DIR:$ROOT_DIR" -v "$CARGO_VOLUME:/usr/local/cargo/registry" -v "$TARGET_VOLUME:/l2-target" \
+		-e CARGO_TARGET_DIR=/l2-target -e CARGO_TERM_COLOR=never \
+		"$CLIENT_IMAGE" bash -c '
+			set -euo pipefail
+			cargo test --test discovery_l2 --no-default-features --features "'"$FEATURES"'" --no-run --message-format=json \
+				| grep "\"target\":{\"[^}]*\"name\":\"discovery_l2\"" | grep -o "\"executable\":\"[^\"]*\"" | tail -1 | cut -d\" -f4 \
+				| xargs -I{} cp {} "'"$WORK_DIR"'/discovery_l2"
+			test -x "'"$WORK_DIR"'/discovery_l2"
+		' || die "test build failed"
+	TEST_BINARY="$WORK_DIR/discovery_l2"
+fi
+[ -x "$TEST_BINARY" ] || die "test binary '$TEST_BINARY' is not executable"
+
+for f in entrypoint.sh proxy_map.sh; do
+	if [ -n "${SHARED_WORKFLOWS_DIR:-}" ]; then
+		git -C "$SHARED_WORKFLOWS_DIR" show "$SHARED_WORKFLOWS_COMMIT:$ACTION_PATH/$f" > "$WORK_DIR/action/$f" ||
+			die "$f not found at $SHARED_WORKFLOWS_COMMIT in $SHARED_WORKFLOWS_DIR"
+	else
+		curl -sfL "https://raw.githubusercontent.com/aerospike/shared-workflows/$SHARED_WORKFLOWS_COMMIT/$ACTION_PATH/$f" \
+			-o "$WORK_DIR/action/$f" || die "failed to download $ACTION_PATH/$f at $SHARED_WORKFLOWS_COMMIT"
+	fi
+done
+
+# The action runs `docker ...` and `curl ...`: route both through the engine.
+cat > "$WORK_DIR/bin/curl" <<EOF
+#!/usr/bin/env bash
+exec "$ENGINE" run --rm --network "$AS_NETWORK" "$CURL_IMAGE" "\$@"
+EOF
+chmod +x "$WORK_DIR/bin/curl"
+if [ "$ENGINE" != "docker" ]; then
+	cat > "$WORK_DIR/bin/docker" <<EOF
+#!/usr/bin/env bash
+exec "$ENGINE" "\$@"
+EOF
+	chmod +x "$WORK_DIR/bin/docker"
+fi
+
+container_names=""
+mesh_seeds=""
+for i in $(seq 1 "$NODES"); do
+	container_names+="${container_names:+,}$PREFIX-$i"
+	mesh_seeds+="        mesh-seed-address-port $PREFIX-$i 3002"$'\n'
+done
+
+feature_key=""
+tls_config=""
+tls_service=""
+run_args=()
+
+if [ "$SUBSET" = "ee" ]; then
+	FEATURES_CONF="$(cd "$(dirname "$FEATURES_CONF_PATH")" && pwd)/$(basename "$FEATURES_CONF_PATH")"
+	feature_key="feature-key-file /etc/aerospike/features.conf"
+	run_args+=(-v "$FEATURES_CONF:/etc/aerospike/features.conf:ro")
+
+	# Certificates as setup-aerospike-server generates them, in the shapes its
+	# tls-cert-cn and include-tls-name-san inputs produce: san-only
+	# (aerospike-tls as a dNSName SAN, a CN that does not match it) or cn-only
+	# (aerospike-tls as the CN, no matching SAN).
+	if [ "$PROFILE" = "cn-only" ]; then
+		CERT_SHAPE=cn-only
+		cert_cn=aerospike-tls
+	else
+		CERT_SHAPE=san-only
+		cert_cn=not-the-tls-name
+	fi
+	TLS_DIR="$WORK_DIR/tls"
+	mkdir -p "$TLS_DIR"
+	{
+		echo "[v3_req]"
+		echo "subjectAltName = @alt_names"
+		echo "[alt_names]"
+		for i in $(seq 1 "$NODES"); do
+			echo "DNS.$i = $PREFIX-$i"
+		done
+		echo "DNS.$((NODES + 1)) = localhost"
+		echo "DNS.$((NODES + 2)) = docker"
+		[ "$CERT_SHAPE" = "san-only" ] && echo "DNS.$((NODES + 3)) = aerospike-tls"
+		echo "IP.1 = 127.0.0.1"
+	} > "$TLS_DIR/san.ext"
+	(
+		cd "$TLS_DIR"
+		openssl req -x509 -newkey rsa:4096 -nodes -keyout ca.key -out ca.crt -days 365 \
+			-subj "/CN=Aerospike-Server-Test-CA"
+		openssl req -newkey rsa:4096 -nodes -keyout server.key -out server.csr -subj "/CN=$cert_cn"
+		openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -days 365 \
+			-extensions v3_req -extfile san.ext
+		rm -f ./*.csr ./*.srl san.ext
+	) > "$WORK_DIR/openssl.log" 2>&1 || { cat "$WORK_DIR/openssl.log" >&2; die "certificate generation failed"; }
+	chmod 644 "$TLS_DIR"/*
+	echo "Server certificate ($CERT_SHAPE):"
+	openssl x509 -in "$TLS_DIR/server.crt" -noout -subject -ext subjectAltName
+	run_args+=(-v "$TLS_DIR:/etc/aerospike/tls:ro")
+
+	tls_config="    tls aerospike-tls {
+        cert-file /etc/aerospike/tls/server.crt
+        key-file  /etc/aerospike/tls/server.key
+        ca-file   /etc/aerospike/tls/ca.crt
+    }"
+	tls_service="        tls-port 4333
+        tls-authenticate-client false
+        tls-name aerospike-tls"
+fi
+
+# setup-aerospike-server templates/multi-node.conf with namespace-memory.conf.
+cat > "$WORK_DIR/conf/aerospike.conf" <<EOF
+service {
+    $feature_key
+    cluster-name docker
+}
+
+logging {
+    console {
+        context any info
+    }
+}
+
+network {
+$tls_config
+    service {
+        address any
+        port 3000
+$tls_service
+    }
+    heartbeat {
+        mode mesh
+        address any
+        port 3002
+        interval 150
+        timeout 10
+$mesh_seeds    }
+    fabric {
+        address any
+        port 3001
+    }
+}
+
+namespace test {
+    replication-factor 2
+    $MAX_RECORD_SIZE
+    storage-engine memory {
+        data-size 1G
+    }
+}
+EOF
+
+wait_cluster_size() {
+	local name="$1" size="$2"
+	local i
+
+	for i in $(seq 1 90); do
+		if [ "$("$ENGINE" inspect -f '{{.State.Running}}' "$name" 2>/dev/null)" != "true" ]; then
+			"$ENGINE" logs "$name" 2>&1 | tail -30 >&2
+			die "container $name exited"
+		fi
+		if "$ENGINE" logs "$name" 2>&1 | grep "CLUSTER-SIZE $size" >/dev/null; then
+			return 0
+		fi
+		sleep 1
+	done
+	"$ENGINE" logs "$name" 2>&1 | tail -30 >&2
+	die "container $name did not reach cluster size $size after 90s"
+}
+
+# start_node <container> <config file in conf/> [run options]
+start_node() {
+	local name="$1" conf="$2"
+	shift 2
+	"$ENGINE" run -d --name "$name" --network "$AS_NETWORK" --ulimit nofile=15000 "$@" \
+		-v "$WORK_DIR/conf:/etc/aerospike/conf:ro" "${run_args[@]+"${run_args[@]}"}" \
+		--entrypoint asd "$IMAGE" --foreground --config-file "/etc/aerospike/conf/$conf" >/dev/null
+}
+
+container_address() {
+	"$ENGINE" inspect -f "{{(index .NetworkSettings.Networks \"$2\").IPAddress}}" "$1"
+}
+
+# render_conf <config file in conf/> <lines added to the service context>
+render_conf() {
+	ACCESS="$2" awk '{print} $1 == "port" && $2 == "3000" {printf "%s", ENVIRON["ACCESS"]}' \
+		"$WORK_DIR/conf/aerospike.conf" > "$WORK_DIR/conf/$1"
+}
+
+alternate_access() {
+	printf '        alternate-access-address %s\n        alternate-access-port %s\n' "$1" "$2"
+}
+
+# Serve the requests the tests write to CONTROL_DIR until killed.
+control_loop() {
+	local extra="$NODES" request id action arg name ack conf option error
+	local options=()
+
+	while true; do
+		for request in "$CONTROL_DIR"/*.request; do
+			[ -e "$request" ] || continue
+			id="$(basename "$request" .request)"
+			action=""
+			arg=""
+			read -r action arg < "$request" || true
+			rm -f "$request"
+			ack="$CONTROL_DIR/$id.tmp"
+
+			case "$action" in
+				start)
+					extra=$((extra + 1))
+					name="$PREFIX-$extra"
+					conf=aerospike.conf
+					options=()
+					error=""
+					for option in $arg; do
+						case "$option" in
+							alternate-port=*)
+								if [ "$PROFILE" = "pass-through-ports" ] && [[ "${option#*=}" =~ ^[0-9]+$ ]]; then
+									conf="$name.conf"
+									render_conf "$conf" "$(alternate_access "$PASS_THROUGH_HOSTNAME" "${option#*=}")"$'\n'
+								else
+									error="$option needs a port and L2_PROFILE=pass-through-ports"
+								fi
+								;;
+							address=*)
+								if [[ "${option#*=}" =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then
+									options+=(--ip "${option#*=}")
+								else
+									error="$option is not an IPv4 address"
+								fi
+								;;
+							*)
+								error="unknown start option $option"
+								;;
+						esac
+					done
+					if [ -n "$error" ]; then
+						printf 'error=%s\n' "$error" > "$ack"
+					elif start_node "$name" "$conf" "${options[@]+"${options[@]}"}" "${node_hosts[@]+"${node_hosts[@]}"}" \
+						2> "$WORK_DIR/control.err"; then
+						printf 'container=%s\naddress=%s\n' "$name" "$(container_address "$name" "$AS_NETWORK")" > "$ack"
+						echo "Control: started $name $arg"
+					else
+						printf 'error=%s\n' "$(tr '\n' ' ' < "$WORK_DIR/control.err")" > "$ack"
+					fi
+					;;
+				stop)
+					if [[ "$arg" == "$PREFIX"-* ]] && "$ENGINE" rm -f "$arg" > /dev/null 2> "$WORK_DIR/control.err"; then
+						printf 'removed=%s\n' "$arg" > "$ack"
+						echo "Control: removed $arg"
+					else
+						printf 'error=cannot remove %s %s\n' "$arg" "$(tr '\n' ' ' < "$WORK_DIR/control.err" 2>/dev/null)" > "$ack"
+					fi
+					;;
+				*)
+					printf 'error=unknown request: %s %s\n' "$action" "$arg" > "$ack"
+					;;
+			esac
+			mv "$ack" "$CONTROL_DIR/$id.ack"
+		done
+		sleep 0.1
+	done
+}
+
+echo "Starting $NODES node $SUBSET cluster on $AS_NETWORK, no published ports ($IMAGE)"
+STARTED_NETWORKS+=("$CLIENT_NETWORK" "$AS_NETWORK")
+network_args=()
+[ "$PROFILE" = "port-map-range" ] && network_args=(--subnet "$SUBNET.0/24" --ip-range "$SUBNET.128/25")
+"$ENGINE" network create "${network_args[@]+"${network_args[@]}"}" "$AS_NETWORK" >/dev/null
+
+IFS=',' read -r -a containers <<< "$container_names"
+octet=$RANGE_FIRST
+for container in "${containers[@]}"; do
+	STARTED+=("$container")
+	if [ "$PROFILE" = "port-map-range" ]; then
+		start_node "$container" aerospike.conf --ip "$SUBNET.$octet"
+		octet=$((octet + 1))
+	else
+		start_node "$container" aerospike.conf
+	fi
+done
+for container in "${containers[@]}"; do
+	wait_cluster_size "$container" "$NODES"
+done
+
+echo "Setting up discovery topology (shared-workflows $SHARED_WORKFLOWS_COMMIT)"
+STARTED=("$CLIENT" "$PROXY" "${STARTED[@]}")
+: > "$WORK_DIR/topology.out"
+PATH="$WORK_DIR/bin:$PATH" \
+	CONTAINER_NAMES="$container_names" \
+	AEROSPIKE_NETWORK_NAME="$AS_NETWORK" \
+	CLIENT_NETWORK_NAME="$CLIENT_NETWORK" \
+	PROXY_CONTAINER_NAME="$PROXY" \
+	TLS_LISTEN_PORT_BASE="$TLS_LISTEN_PORT_BASE" \
+	CLIENT_NETWORK_MTU="$CLIENT_NETWORK_MTU" \
+	PROXY_SYSCTLS="$PROXY_SYSCTLS" \
+	GITHUB_OUTPUT="$WORK_DIR/topology.out" \
+	bash "$WORK_DIR/action/entrypoint.sh" || die "setup-discovery-topology failed"
+
+output() {
+	grep -E "^$1=" "$WORK_DIR/topology.out" | head -1 | cut -d= -f2-
+}
+
+export DISCOVERY_SUBSET="$SUBSET"
+export DISCOVERY_ENDPOINT_HOSTNAME="$(output endpoint-hostname)"
+export DISCOVERY_ENDPOINT_PORT_BASE="$(output listen-port-base)"
+export DISCOVERY_ENDPOINT_PORTS="$(output endpoint-ports)"
+export DISCOVERY_TLS_ENDPOINT_PORTS="$(output tls-endpoint-ports)"
+export DISCOVERY_PROXY_MAP="$(output proxy-name-port-map)"
+export TOXIPROXY_URL="$(output toxiproxy-url)"
+export TOXIPROXY_HOST="$(output toxiproxy-container-name)"
+export TOXIPROXY_CONTROL_PORT=8474
+export AEROSPIKE_CONTAINER_NAMES="$container_names"
+export L2_DISABLE_LISTENERS="${L2_DISABLE_LISTENERS:-0}"
+export L2_PROFILE="$PROFILE"
+export DISCOVERY_CONTROL_DIR=""
+export DISCOVERY_REACHABLE_NODE=""
+export DISCOVERY_PASS_THROUGH_BRANCH=""
+export DISCOVERY_PORT_MAP_RANGE=""
+export DISCOVERY_PORT_MAP_PORT_BASE=""
+export DISCOVERY_TLS_CERT_SHAPE="$CERT_SHAPE"
+export DISCOVERY_CLIENT_NETWORK_MTU="$CLIENT_NETWORK_MTU"
+export DISCOVERY_IDLE_RESET="$IDLE_RESET"
+export DISCOVERY_PROXY_PORT_RANGE="$PROXY_PORT_RANGE"
+
+client_args=(--rm --name "$CLIENT" --network "$CLIENT_NETWORK" --workdir "$ROOT_DIR" -v "$ROOT_DIR:$ROOT_DIR")
+[ -n "${L2_CLIENT_MEMORY:-}" ] && client_args+=(--memory "$L2_CLIENT_MEMORY")
+node_hosts=()
+
+case "$PROFILE" in
+	reachable|pass-through-names|pass-through-ports)
+		proxy_server_address="$(container_address "$PROXY" "$AS_NETWORK")"
+		proxy_client_address="$(container_address "$PROXY" "$CLIENT_NETWORK")"
+		[ -n "$proxy_server_address" ] && [ -n "$proxy_client_address" ] || die "no Toxiproxy address"
+		hostnames=()
+		case "$PROFILE" in
+			reachable)
+				DISCOVERY_REACHABLE_NODE="${containers[$((NODES - 1))]}"
+				hostnames=("$REACHABLE_HOSTNAME")
+				;;
+			pass-through-names)
+				DISCOVERY_PASS_THROUGH_BRANCH=A
+				;;
+			pass-through-ports)
+				DISCOVERY_PASS_THROUGH_BRANCH=B
+				hostnames=("$PASS_THROUGH_HOSTNAME")
+				;;
+		esac
+
+		# One rendered config per node, as setup-aerospike-server renders them.
+		index=0
+		for container in "${containers[@]}"; do
+			index=$((index + 1))
+			port=""
+			IFS=',' read -r -a proxies <<< "$DISCOVERY_PROXY_MAP"
+			for entry in "${proxies[@]}"; do
+				[ "${entry%:*}" = "$container" ] && port="${entry##*:}"
+			done
+			[ -n "$port" ] || die "no listener for $container in $DISCOVERY_PROXY_MAP"
+
+			case "$PROFILE" in
+				reachable)
+					if [ "$container" = "$DISCOVERY_REACHABLE_NODE" ]; then
+						access="        access-address $REACHABLE_HOSTNAME"$'\n'"        access-port $port"$'\n'
+					else
+						access="$(alternate_access "$REACHABLE_HOSTNAME" "$port")"$'\n'
+					fi
+					;;
+				pass-through-names)
+					hostnames+=("node-$index.$PASS_THROUGH_DOMAIN")
+					access="$(alternate_access "node-$index.$PASS_THROUGH_DOMAIN" "$port")"$'\n'
+					;;
+				pass-through-ports)
+					access="$(alternate_access "$PASS_THROUGH_HOSTNAME" "$port")"$'\n'
+					;;
+			esac
+			render_conf "$container.conf" "$access"
+			echo "Node $container listener $port:"
+			grep -E "access-(address|port)" "$WORK_DIR/conf/$container.conf"
+		done
+
+		# The server resolves access addresses at startup; any address will do.
+		for hostname in "${hostnames[@]}"; do
+			node_hosts+=(--add-host "$hostname:$proxy_server_address")
+			client_args+=(--add-host "$hostname:$proxy_client_address")
+		done
+
+		echo "Recreating the nodes with ${hostnames[*]} -> $proxy_server_address"
+		for container in "${containers[@]}"; do
+			"$ENGINE" rm -f "$container" >/dev/null
+		done
+		for container in "${containers[@]}"; do
+			start_node "$container" "$container.conf" "${node_hosts[@]}"
+		done
+		for container in "${containers[@]}"; do
+			wait_cluster_size "$container" "$NODES"
+		done
+		;;
+	port-map-range)
+		DISCOVERY_PORT_MAP_RANGE="$SUBNET.$RANGE_FIRST-$SUBNET.$RANGE_LAST"
+		DISCOVERY_PORT_MAP_PORT_BASE="$PORT_MAP_PORT_BASE"
+		echo "Adding a Toxiproxy listener on port $PORT_MAP_PORT_BASE + last octet for $DISCOVERY_PORT_MAP_RANGE"
+		for octet in $(seq "$RANGE_FIRST" "$RANGE_LAST"); do
+			"$WORK_DIR/bin/curl" -sf -X POST "$TOXIPROXY_URL/proxies" -H "Content-Type: application/json" \
+				-d "{\"name\":\"range-$SUBNET.$octet\",\"listen\":\"0.0.0.0:$((PORT_MAP_PORT_BASE + octet))\",\"upstream\":\"$SUBNET.$octet:3000\",\"enabled\":true}" \
+				> /dev/null || die "failed to add the listener for $SUBNET.$octet"
+		done
+		for container in "${containers[@]}"; do
+			echo "Node $container address $(container_address "$container" "$AS_NETWORK")"
+		done
+		;;
+	low-mtu)
+		echo "Client network $CLIENT_NETWORK options: $("$ENGINE" network inspect -f '{{json .Options}}' "$CLIENT_NETWORK")"
+		;;
+	port-range)
+		echo "Toxiproxy net.ipv4.ip_local_port_range: $("$ENGINE" run --rm --network "container:$PROXY" "$CURL_IMAGE" \
+			cat /proc/sys/net/ipv4/ip_local_port_range)"
+		;;
+esac
+
+if [ "$NODE_CONTROL" = "1" ]; then
+	DISCOVERY_CONTROL_DIR="$CONTROL_DIR"
+	control_loop &
+	CONTROL_PID=$!
+	echo "Serving node control requests in $CONTROL_DIR"
+fi
+
+if [ "$L2_DISABLE_LISTENERS" = "1" ]; then
+	IFS=',' read -r -a proxies <<< "$DISCOVERY_PROXY_MAP"
+	for entry in "${proxies[@]}"; do
+		echo "Disabling Toxiproxy listener ${entry%:*}"
+		"$WORK_DIR/bin/curl" -sf -X POST "$TOXIPROXY_URL/proxies/${entry%:*}" \
+			-H "Content-Type: application/json" -d '{"enabled":false}' || die "failed to disable ${entry%:*}"
+		echo
+	done
+fi
+
+if [ "$SUBSET" = "ee" ]; then
+	client_args+=(-v "$TLS_DIR:/aerospike-tls:ro" -e "AEROSPIKE_CA_CERT=/aerospike-tls/ca.crt")
+fi
+
+if [ "${L2_HOLD:-0}" = "1" ]; then
+	touch "$WORK_DIR/hold"
+	echo "Holding the $PROFILE topology while $WORK_DIR/hold exists"
+	env | grep -E "^(DISCOVERY_|TOXIPROXY_|AEROSPIKE_CONTAINER_NAMES|L2_PROFILE)" | sort
+	echo "Aerospike network: $AS_NETWORK  client network: $CLIENT_NETWORK  Toxiproxy: $PROXY"
+	while [ -e "$WORK_DIR/hold" ]; do
+		sleep 1
+	done
+	echo "RESULT HELD"
+	exit 0
+fi
+
+log="$WORK_DIR/suite.log"
+echo "Running the $PROFILE profile in $CLIENT on $CLIENT_NETWORK ($CLIENT_IMAGE)"
+set +e
+"$ENGINE" run "${client_args[@]}" \
+	-e DISCOVERY_SUBSET \
+	-e DISCOVERY_ENDPOINT_HOSTNAME \
+	-e DISCOVERY_ENDPOINT_PORT_BASE \
+	-e DISCOVERY_ENDPOINT_PORTS \
+	-e DISCOVERY_TLS_ENDPOINT_PORTS \
+	-e DISCOVERY_PROXY_MAP \
+	-e TOXIPROXY_URL \
+	-e TOXIPROXY_HOST \
+	-e TOXIPROXY_CONTROL_PORT \
+	-e AEROSPIKE_CONTAINER_NAMES \
+	-e L2_DISABLE_LISTENERS \
+	-e L2_PROFILE \
+	-e "L2_FILTER=${L2_FILTER:-}" \
+	-e "L2_TEST_BINARY=$TEST_BINARY" \
+	-e DISCOVERY_CONTROL_DIR \
+	-e DISCOVERY_REACHABLE_NODE \
+	-e DISCOVERY_PASS_THROUGH_BRANCH \
+	-e DISCOVERY_PORT_MAP_RANGE \
+	-e DISCOVERY_PORT_MAP_PORT_BASE \
+	-e DISCOVERY_TLS_CERT_SHAPE \
+	-e DISCOVERY_CLIENT_NETWORK_MTU \
+	-e DISCOVERY_IDLE_RESET \
+	-e DISCOVERY_PROXY_PORT_RANGE \
+	-e RUST_BACKTRACE=1 \
+	"$CLIENT_IMAGE" \
+	bash .github/discovery/run-l2-suite.sh > "$log" 2>&1
+rc=$?
+set -e
+
+grep -E "L2-|CLIENT-LOG (WARN|ERROR)" "$log" || true
+grep -E "^test .* (ok|FAILED)$" "$log" || true
+grep -E "panicked at|assertion" "$log" | head -20 || true
+grep -E "^test result:" "$log" | tail -1 || echo "no 'test result' line"
+echo "suite log: $log"
+
+if [ $rc -ne 0 ]; then
+	echo "RESULT FAIL (client container exit code $rc)"
+	exit 1
+fi
+echo "RESULT PASS"

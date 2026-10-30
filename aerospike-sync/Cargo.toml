@@ -30,12 +30,13 @@ tokio = { version = "1", default-features = false, features = ["rt-multi-thread"
 async-std = { version = "1.13", optional = true }
 
 [features]
-default = ["rt-tokio", "serialization", "tls", "dynamic-config"]
+default = ["rt-tokio", "serialization", "tls", "dynamic-config", "discovery-aws"]
 rt-tokio = ["aerospike-core/rt-tokio", "dep:tokio"]
 rt-async-std = ["aerospike-core/rt-async-std", "dep:async-std"]
 dynamic-config = ["aerospike-core/dynamic-config"]
 serialization = ["aerospike-core/serialization"]
 tls = ["aerospike-core/tls"]
+discovery-aws = ["aerospike-core/discovery-aws"]
 lua = ["aerospike-core/lua"]
 
 [package.metadata.docs.rs]

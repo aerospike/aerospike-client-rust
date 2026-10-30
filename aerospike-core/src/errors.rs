@@ -132,6 +132,23 @@ pub enum ErrorKind {
     },
     /// Untyped client-side error.
     Client,
+    /// The address translator has no mapping for a server-advertised
+    /// endpoint and
+    /// [`ClientPolicy::translation_on_miss`](crate::ClientPolicy::translation_on_miss)
+    /// is [`Strict`](crate::discovery::TranslationMissMode::Strict). Carries
+    /// [`ClientResultCode::TranslationMiss`].
+    TranslationMiss,
+    /// The address translator mapped two nodes to the same `host:port`.
+    /// Carries [`ClientResultCode::TranslationCollision`].
+    TranslationCollision,
+    /// The seed candidate provider failed at client construction and the
+    /// merge policy left no seed host to try. Carries
+    /// [`ClientResultCode::SeedDiscoveryFailed`].
+    SeedDiscoveryFailed,
+    /// A node has no alternate access address while
+    /// [`ClientPolicy::use_services_alternate`](crate::ClientPolicy::use_services_alternate)
+    /// is set. Carries [`ClientResultCode::ClientError`].
+    AlternateAddressMissing,
     /// Error interpreting a byte sequence as UTF-8.
     InvalidUtf8(::std::str::Utf8Error),
     /// Error during an I/O operation.
@@ -466,6 +483,76 @@ impl Error {
             ErrorKind::Client,
             ClientResultCode::ClientError.into(),
             Some(msg.into()),
+        )
+    }
+
+    /// The address translator has no mapping for `advertised` and the miss
+    /// mode is strict (`TRANSLATION_MISS`, -25).
+    #[must_use]
+    pub(crate) fn translation_miss(
+        advertised: &crate::discovery::Endpoint,
+        translator: &str,
+    ) -> Error {
+        let list = match advertised.source_list {
+            crate::discovery::SourceList::Alternate => "alternate",
+            crate::discovery::SourceList::Standard => "standard",
+        };
+        Error::new(
+            ErrorKind::TranslationMiss,
+            ClientResultCode::TranslationMiss.into(),
+            Some(format!(
+                "Address translator {translator} has no mapping for node {} advertised address \
+                 {}:{} in the {list} list. Add a mapping for that endpoint or node, or set \
+                 translation.on_miss to pass_through",
+                advertised.node_name, advertised.host, advertised.port
+            )),
+        )
+    }
+
+    /// Two nodes translated to the same address (`TRANSLATION_COLLISION`, -26).
+    #[must_use]
+    pub(crate) fn translation_collision(
+        node_name: &str,
+        other_node_name: &str,
+        host: &crate::Host,
+        translator: &str,
+    ) -> Error {
+        Error::new(
+            ErrorKind::TranslationCollision,
+            ClientResultCode::TranslationCollision.into(),
+            Some(format!(
+                "Address translator {translator} translated nodes {node_name} and \
+                 {other_node_name} to the same address {}:{}. Give each node its own \
+                 reachable address or mapping",
+                host.name, host.port
+            )),
+        )
+    }
+
+    /// The seed candidate provider failed at construction and no seed is
+    /// left (`SEED_DISCOVERY_FAILED`, -27).
+    #[must_use]
+    pub(crate) fn seed_discovery_failed(msg: impl Into<String>) -> Error {
+        Error::new(
+            ErrorKind::SeedDiscoveryFailed,
+            ClientResultCode::SeedDiscoveryFailed.into(),
+            Some(msg.into()),
+        )
+    }
+
+    /// A node advertises no alternate address while `use_services_alternate`
+    /// is set. A client error, like Java's `AlternateAddressMissing`.
+    #[must_use]
+    pub(crate) fn alternate_address_missing(node_name: &str, host: Option<&crate::Host>) -> Error {
+        let host = host.map(|h| format!(" {h}")).unwrap_or_default();
+        Error::new(
+            ErrorKind::AlternateAddressMissing,
+            ClientResultCode::ClientError.into(),
+            Some(format!(
+                "Node {node_name}{host} has no alternate-access-address and \
+                 use_services_alternate is true. Configure alternate-access-address on the \
+                 server or set use_services_alternate to false"
+            )),
         )
     }
 }
@@ -929,6 +1016,10 @@ impl Clone for Error {
             ErrorKind::UdfBadResponse => ErrorKind::UdfBadResponse,
             ErrorKind::StreamTerminated => ErrorKind::StreamTerminated,
             ErrorKind::Client => ErrorKind::Client,
+            ErrorKind::TranslationMiss => ErrorKind::TranslationMiss,
+            ErrorKind::TranslationCollision => ErrorKind::TranslationCollision,
+            ErrorKind::SeedDiscoveryFailed => ErrorKind::SeedDiscoveryFailed,
+            ErrorKind::AlternateAddressMissing => ErrorKind::AlternateAddressMissing,
             ErrorKind::InvalidUtf8(e) => ErrorKind::InvalidUtf8(*e),
             ErrorKind::Io(e) => ErrorKind::Io(std::io::Error::new(e.kind(), e.to_string())),
             ErrorKind::ParseAddr(e) => ErrorKind::ParseAddr(e.clone()),
@@ -968,6 +1059,10 @@ impl ErrorKind {
             ErrorKind::StreamTerminated => "StreamTerminated",
             ErrorKind::Commit { .. } => "Commit",
             ErrorKind::Client => "Client",
+            ErrorKind::TranslationMiss => "TranslationMiss",
+            ErrorKind::TranslationCollision => "TranslationCollision",
+            ErrorKind::SeedDiscoveryFailed => "SeedDiscoveryFailed",
+            ErrorKind::AlternateAddressMissing => "AlternateAddressMissing",
             ErrorKind::InvalidUtf8(_) => "InvalidUtf8",
             ErrorKind::Io(_) => "Io",
             ErrorKind::ParseAddr(_) => "ParseAddr",
