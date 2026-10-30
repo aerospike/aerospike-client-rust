@@ -59,10 +59,14 @@
     when the seed pass left exactly one node and at least one host it tried could not be reached, as
     the Java client does: a seed reached through an endpoint that does not front its peers is an
     error naming the peers, not a one node cluster.
-  * `use_services_alternate` now requires every node to advertise an alternate address, as in the
-    Java client: a seed without one fails construction with `ErrorKind::AlternateAddressMissing`
-    (`Client::new` with `fail_if_not_connected`), and a peer without one, or missing from the
-    alternate peers list, is logged at error level and not connected.
+  * `use_services_alternate` now expects every node to advertise an alternate address. A seed
+    without one that names peers in its standard peers list fails construction with
+    `ErrorKind::AlternateAddressMissing` (`Client::new` with `fail_if_not_connected`): the client
+    would otherwise see a one-node cluster that looks healthy. A seed without one and without peers
+    is connected with a warning, since nothing is lost on a lone node, and an error is logged once
+    if peers appear later. A peer without an alternate address, or missing from the alternate peers
+    list, is logged at error level and not connected. The Java client refuses every node without an
+    alternate address; this client admits the lone node.
   * A seed name that resolves to several addresses now keeps the address that answered as the
     node's primary host; before, the first resolved address was used even when it had refused the
     connection.

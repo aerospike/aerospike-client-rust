@@ -697,9 +697,12 @@ async fn translator_is_told_about_node_additions_and_address_changes() {
 // Alternate addresses
 // ---------------------------------------------------------------------------
 
+// A seed with no alternate address that names peers in its standard list
+// would leave a seed-only cluster that looks healthy: refused.
 #[aerospike_macro::test]
-async fn a_seed_without_an_alternate_address_fails_construction() {
+async fn a_seed_without_an_alternate_address_fails_construction_when_it_has_peers() {
     let a = FakeNode::start("BB9A").await;
+    a.peers("[[BB9B,,[127.0.0.1:1]]]");
     let p = ClientPolicy {
         use_services_alternate: true,
         fail_if_not_connected: true,
@@ -713,6 +716,7 @@ async fn a_seed_without_an_alternate_address_fails_construction() {
         assert!(msg.contains(part), "{msg} should contain {part}");
     }
     assert!(a.received("service-clear-alt"));
+    assert!(a.received("peers-clear-std"));
     assert!(!a.received("service-clear-std"));
 
     // Without fail_if_not_connected the client starts with no node.
@@ -722,6 +726,30 @@ async fn a_seed_without_an_alternate_address_fails_construction() {
     };
     let client = connect(&p, &[&a]).await;
     assert!(client.nodes().is_empty());
+    client.close().await.unwrap();
+}
+
+// A lone node with no alternate address loses nothing: the client reaches
+// it by its seed address and re-seeds when it is gone. It is connected, and
+// a peer that appears later with an alternate address is still added.
+#[aerospike_macro::test]
+async fn a_lone_seed_without_an_alternate_address_is_connected() {
+    let a = FakeNode::start("BB9A").await;
+    let p = ClientPolicy {
+        use_services_alternate: true,
+        fail_if_not_connected: true,
+        ..policy()
+    };
+    let client = Client::new(&p, &vec![a.host()]).await.expect("a lone node connects");
+    assert_eq!(node_names(&client), vec!["BB9A"]);
+    assert!(a.received("service-clear-alt"));
+    assert!(a.received("peers-clear-std"));
+
+    let b = FakeNode::start("BB9B").await;
+    b.with_alternate().claims_no_partitions();
+    a.peers_alt(&format!("[[BB9B,,[127.0.0.1:{}]]]", b.port()));
+    a.change_peers(&format!("[[BB9B,,[127.0.0.1:{}]]]", b.port()), 6);
+    wait_for("the new peer", || node_names(&client) == ["BB9A", "BB9B"]).await;
     client.close().await.unwrap();
 }
 
@@ -794,6 +822,48 @@ async fn a_peer_without_its_own_alternate_address_is_not_added() {
     let client = connect(&p, &[&a]).await;
     assert_eq!(node_names(&client), vec!["BB9A"]);
     assert!(b.accepted() > 0, "the peer is connected and then refused");
+    client.close().await.unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// The seed's primary host
+// ---------------------------------------------------------------------------
+
+// A seed missing from the node's own service list is a load balancer: the
+// node is built on the real backend the list names. The seed address that
+// answered validation must not be put back in front of it; it was, and the
+// node then dialled the load balancer (and, under `for_login_only`, the TLS
+// address instead of the cleartext one the same way).
+#[aerospike_macro::test]
+async fn a_load_balancer_seed_is_replaced_by_the_real_backend() {
+    let a = FakeNode::start("BB9A").await;
+    // Detection is off for a loopback seed; the IPv4-mapped form reaches the
+    // same listener and is not loopback to the check.
+    let lb = Host::new("::ffff:127.0.0.1", a.port());
+    let client = Client::new(&policy(), &vec![lb]).await.expect("client connects");
+    assert_eq!(node_names(&client), vec!["BB9A"]);
+    assert!(a.received("service-clear-std"));
+    let node = client.nodes().into_iter().next().unwrap();
+    assert_eq!(node.host(), a.host());
+    assert_eq!(node.address(), a.host().address());
+    assert_eq!(node.aliases(), vec![a.host()]);
+    client.close().await.unwrap();
+}
+
+// The reordering exists for a name that resolves to several addresses: the
+// one that answered leads, so the node never dials an unreachable one.
+#[aerospike_macro::test]
+async fn the_alias_that_answered_leads_a_name_with_several_addresses() {
+    let a = FakeNode::start("BB9A").await;
+    let client = Client::new(&policy(), &vec![Host::new("localhost", a.port())])
+        .await
+        .expect("client connects");
+    assert_eq!(node_names(&client), vec!["BB9A"]);
+    let node = client.nodes().into_iter().next().unwrap();
+    assert_eq!(node.host(), a.host());
+    let aliases = node.aliases();
+    assert_eq!(aliases[0], a.host());
+    assert!(aliases.iter().all(|h| h.port == a.port()));
     client.close().await.unwrap();
 }
 

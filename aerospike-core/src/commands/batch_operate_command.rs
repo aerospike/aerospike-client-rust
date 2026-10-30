@@ -1055,6 +1055,8 @@ mod tests {
             session: None,
             login_host: None,
             detect_load_balancer: false,
+            seed: false,
+            alternate_missing: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
             crate::metrics::MetricsPolicy::default(),

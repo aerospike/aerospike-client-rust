@@ -81,6 +81,12 @@ pub struct Node {
     refresh_count: AtomicUsize,
     responded: AtomicBool,
     active: AtomicBool,
+    /// Admitted under `use_services_alternate` without an alternate address
+    /// because it had no peers; see `NodeValidator::alternate_missing`.
+    admitted_without_alternate: bool,
+    /// The one-time error for `admitted_without_alternate` once peers appear
+    /// has been logged.
+    alternate_warned: AtomicBool,
     version: Version,
     /// Cluster name **as reported by the server** (`cluster-name` info),
     /// refreshed every tend. Distinct from `ClientPolicy::cluster_name`,
@@ -197,6 +203,8 @@ impl Node {
             reference_count: AtomicUsize::new(0),
             responded: AtomicBool::new(false),
             active: AtomicBool::new(true),
+            admitted_without_alternate: nv.alternate_missing,
+            alternate_warned: AtomicBool::new(false),
             server_cluster_name: RwLock::new(nv.cluster_name.clone()),
             version: nv.version.clone(),
             rack_ids: AtomicArc::from(HashMap::new()),
@@ -433,6 +441,20 @@ impl Node {
             // The alternate list omits peers that have no alternate address.
             if let Some(std_string) = info_map.get(std_cmd).filter(|s| !s.is_empty()) {
                 if let Ok(std_result) = PeersParser::new(std_string).parse() {
+                    // A lone node admitted without an alternate address has
+                    // grown peers: they will never name it in their
+                    // alternate lists, so a failure now loses it for good.
+                    if self.admitted_without_alternate
+                        && !std_result.peers.is_empty()
+                        && !self.alternate_warned.swap(true, Ordering::AcqRel)
+                    {
+                        error!(
+                            "Node {} has no alternate-access-address and now has peers; with \
+                             use_services_alternate it cannot be rediscovered through them \
+                             after a failure. Configure alternate-access-address on it",
+                            self.name
+                        );
+                    }
                     for std_peer in std_result.peers {
                         if !parsed.iter().any(|p| p.node_name == std_peer.node_name) {
                             let mut peer = Peer::new(std_peer.node_name, Vec::new());
@@ -1229,6 +1251,8 @@ pub fn test_node_with_version(version: crate::Version) -> Node {
         session: None,
         login_host: None,
         detect_load_balancer: false,
+        seed: false,
+        alternate_missing: false,
     });
     let metrics = Arc::new(crate::metrics::NodeMetrics::new(
         crate::metrics::MetricsPolicy::default(),
@@ -1351,6 +1375,8 @@ mod node_tests {
             session: None,
             login_host: None,
             detect_load_balancer: false,
+            seed: false,
+            alternate_missing: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
             crate::metrics::MetricsPolicy::default(),
@@ -1437,6 +1463,8 @@ mod node_tests {
             session: None,
             login_host: None,
             detect_load_balancer: false,
+            seed: false,
+            alternate_missing: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
             crate::metrics::MetricsPolicy::default(),
@@ -1481,6 +1509,8 @@ mod node_tests {
             session: None,
             login_host: None,
             detect_load_balancer: false,
+            seed: false,
+            alternate_missing: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
             crate::metrics::MetricsPolicy::default(),
@@ -1596,6 +1626,8 @@ mod pool_health_tests {
             session: None,
             login_host: None,
             detect_load_balancer: false,
+            seed: false,
+            alternate_missing: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
             crate::metrics::MetricsPolicy::default(),

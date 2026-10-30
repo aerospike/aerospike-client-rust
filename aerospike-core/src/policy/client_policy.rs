@@ -590,6 +590,16 @@ pub struct ClientPolicy {
     /// This feature is recommended instead of using the client-side `IpMap` above.
     ///
     /// "services-alternate" is available with Aerospike Server versions >= 3.7.1.
+    ///
+    /// Every node is expected to advertise an alternate address. A seed
+    /// without one whose standard peers list names other nodes fails
+    /// construction with [`ErrorKind::AlternateAddressMissing`](crate::ErrorKind::AlternateAddressMissing):
+    /// its peers could not be reached, and no peer would ever name it, so
+    /// the client would see a one-node cluster that looks healthy. A seed
+    /// without one and without peers is connected, with a warning, since it
+    /// is reached by its seed address and re-seeded when it is gone; an
+    /// error is logged once if peers appear later. A peer without an
+    /// alternate address is logged at error level and not connected.
     #[cfg_attr(feature = "dynamic-config", config(rename = "use_service_alternate"))]
     pub use_services_alternate: bool,
 

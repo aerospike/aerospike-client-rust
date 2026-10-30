@@ -812,9 +812,10 @@ fn n12_reseed_on_zero_active_nodes() {
 }
 
 /// N-14: use_services_alternate against a cluster with no alternate access
-/// address. The seed's service-clear-alt is empty and client initialization
-/// fails with an error that names the flag instead of presenting an empty
-/// cluster.
+/// address. The seed's service-clear-alt is empty while its standard peers
+/// list names the other nodes, so client initialization fails with an error
+/// that names the flag instead of presenting a one-node cluster. (A lone
+/// node with no peers is connected instead; that case is a fake-node test.)
 #[test]
 fn n14_use_services_alternate_without_alternate_fails_init() {
     run("N-14", || async {
