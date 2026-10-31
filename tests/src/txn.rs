@@ -1119,12 +1119,17 @@ async fn txn_read_only_operate_is_recorded_as_a_read() {
     let digest = key.digest();
     assert!(txn.get_reads().iter().any(|(k, _)| k.digest() == digest));
     assert!(!txn.get_writes().iter().any(|k| k.digest() == digest));
+    assert!(
+        !txn.monitor_exists(),
+        "a read-only operate must not create the transaction monitor"
+    );
 
     client
         .operate(&policy, &key, &[operations::add(&as_bin!("bin", 1i64))])
         .await
         .unwrap();
     assert!(txn.get_writes().iter().any(|k| k.digest() == digest));
+    assert!(txn.monitor_exists(), "a writing operate registers its key");
 
     client.abort(&txn).await.unwrap();
 }

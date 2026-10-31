@@ -1318,8 +1318,15 @@ impl Client {
         let policy = self.cluster.resolve_write(policy);
         let policy = policy.as_ref();
         if let Some(txn) = &policy.base_policy.txn {
-            crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
-                .await?;
+            // Only a write joins the transaction monitor; a read-only operate
+            // is prepared like a get, with no monitor round trip and no write
+            // intent recorded for a key that is not written. As in Java.
+            if ops.iter().any(Operation::is_write) {
+                crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
+                    .await?;
+            } else {
+                txn.prepare_read(&key.namespace)?;
+            }
         }
         let mut command = OperateCommand::new(policy, self.cluster.clone(), key, ops);
         command.execute().await?;
