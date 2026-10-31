@@ -74,6 +74,13 @@
     `discovery_refresh_interval`, `discovery_tend_refresh_deadline`, `discovery_merge_policy` and,
     under `dynamic-config`, `discovery_registry`; `config::StaticConfig` gained `client_discovery`.
     Code that builds either with struct-update syntax from `Default` is unaffected.
+* **Bug Fixes**
+  * `Client::execute_udf` with a transaction in the write policy ran outside the transaction: the key
+    was not added to the transaction monitor and the command carried no transaction fields, so the
+    UDF's write was neither rolled back by `abort` nor covered by `commit`. It is now a transactional
+    write like `put`, as in the Java client.
+  * `Client::execute_udf`, `query_operate` and `query_execute_udf` did not resolve their write policy
+    against the dynamic configuration, so file overrides did not apply to them.
 
 ## [3.0.0]
 

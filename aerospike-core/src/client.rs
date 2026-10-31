@@ -1586,6 +1586,14 @@ impl Client {
         function_name: &str,
         args: &[Value],
     ) -> Result<Option<Value>> {
+        let policy = self.cluster.resolve_write(policy);
+        let policy = policy.as_ref();
+        // A UDF call is a write: its key joins the transaction monitor before
+        // the call, as a put's does.
+        if let Some(txn) = &policy.base_policy.txn {
+            crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
+                .await?;
+        }
         let mut command = ExecuteUdfCommand::new(
             policy,
             self.cluster.clone(),
@@ -2126,6 +2134,8 @@ impl Client {
         }
         statement.validate()?;
         Self::reject_top_k_on_background_query(&statement)?;
+        let write_policy = self.cluster.resolve_write(write_policy);
+        let write_policy = write_policy.as_ref();
         let nodes = self.cluster.nodes();
         if nodes.is_empty() {
             return Err(Error::connection("No connections available".to_string()));
@@ -2200,6 +2210,8 @@ impl Client {
         Self::reject_top_k_on_background_query(&statement)?;
         statement.set_aggregate_function(package_name, function_name, args);
         statement.validate()?;
+        let write_policy = self.cluster.resolve_write(write_policy);
+        let write_policy = write_policy.as_ref();
         let nodes = self.cluster.nodes();
         if nodes.is_empty() {
             return Err(Error::connection("No connections available".to_string()));

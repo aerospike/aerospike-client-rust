@@ -1416,6 +1416,10 @@ impl Buffer {
         self.begin();
 
         let mut field_count = self.estimate_key_size(key, policy.send_key)?;
+        // A UDF call is a write: it carries the transaction fields a write
+        // carries, so the record it changes belongs to the transaction.
+        let (txn_field_count, version) = self.size_txn(key, policy.base_policy.txn.as_ref(), true);
+        field_count += txn_field_count;
         field_count += self.estimate_udf_size(package_name, function_name, args)? as u16;
         let filter_size = self.estimate_filter_size(policy.filter_expression())?;
         if filter_size > 0 {
@@ -1425,6 +1429,7 @@ impl Buffer {
 
         self.write_header_write(policy, 0, INFO2_WRITE, field_count, 0);
         self.write_key(key, policy.send_key)?;
+        self.write_txn(policy.base_policy.txn.as_ref(), version, true);
 
         if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size)?;
@@ -4173,6 +4178,37 @@ mod tests {
                 .unwrap();
             assert_eq!(buf.contains_vector(), expected);
         }
+    }
+
+    // A UDF call carries the transaction fields a write carries: the
+    // transaction id field joins the key fields when the policy names a
+    // transaction.
+    #[test]
+    fn set_udf_carries_the_transaction_id() {
+        let key = test_key();
+        let field_count = |buf: &Buffer| u16::from_be_bytes([buf.data_buffer[26], buf.data_buffer[27]]);
+
+        let mut plain = Buffer::new(0);
+        plain
+            .set_udf(&WritePolicy::default(), &key, "m", "f", &[Value::from(1)])
+            .unwrap();
+
+        let txn = Arc::new(crate::txn::Txn::new());
+        let mut policy = WritePolicy::default();
+        policy.base_policy.txn = Some(txn.clone());
+        let mut in_txn = Buffer::new(0);
+        in_txn
+            .set_udf(&policy, &key, "m", "f", &[Value::from(1)])
+            .unwrap();
+
+        assert_eq!(field_count(&in_txn), field_count(&plain) + 1);
+        // `end()` rewinds the offset to the proto header; scan the whole buffer.
+        let id = txn.id().to_le_bytes();
+        assert!(
+            in_txn.data_buffer.windows(8).any(|w| w == id),
+            "the transaction id must be on the wire"
+        );
+        assert!(!plain.data_buffer.windows(8).any(|w| w == id));
     }
 
     #[test]

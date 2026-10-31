@@ -19,8 +19,9 @@ use std::sync::Arc;
 
 use crate::common;
 use aerospike::{
-    as_bin, as_key, operations, AbortStatus, Bins, ClientResultCode, CommitErrorType, CommitStatus,
-    ReadPolicy, ResultCode, Txn, TxnState, Value, WritePolicy, COMMIT_FAILED_ABORT_MESSAGE,
+    as_bin, as_key, operations, AbortStatus, AdminPolicy, Bins, ClientResultCode, CommitErrorType,
+    CommitStatus, ReadPolicy, ResultCode, Task, Txn, TxnState, UdfLang, Value, WritePolicy,
+    COMMIT_FAILED_ABORT_MESSAGE,
 };
 
 /// Check if the server supports MRT (version >= 8.0).
@@ -107,6 +108,77 @@ async fn txn_write_and_commit() {
         .await
         .unwrap();
     assert_eq!(record.bins.get("bin"), Some(&Value::from("val2")));
+}
+
+// =============================================================================
+// A UDF call is a write in the transaction
+// =============================================================================
+
+// The key joins the transaction's write set before the call, the reply
+// records it, an abort rolls the UDF's write back and a commit keeps it.
+#[aerospike_macro::test]
+async fn txn_execute_udf_is_a_transactional_write() {
+    let client = common::client().await;
+    skip_if_no_mrt!(&client);
+
+    let module = r#"
+function set_bin(rec, val)
+  rec['bin'] = val
+  aerospike:update(rec)
+  return val
+end
+"#;
+    client
+        .register_udf(
+            &AdminPolicy::default(),
+            module.as_bytes(),
+            "txn_udf.lua",
+            UdfLang::Lua,
+        )
+        .await
+        .unwrap()
+        .wait_till_complete(None)
+        .await
+        .unwrap();
+
+    let ns = common::namespace();
+    let set = &common::rand_str(10);
+    let key = as_key!(ns, set, &common::rand_str(50));
+    client
+        .put(&WritePolicy::default(), &key, &[as_bin!("bin", "before")])
+        .await
+        .unwrap();
+
+    let txn = Arc::new(Txn::new());
+    let mut wp = WritePolicy::default();
+    wp.base_policy.txn = Some(txn.clone());
+    let returned = client
+        .execute_udf(&wp, &key, "txn_udf", "set_bin", &[Value::from("aborted")])
+        .await
+        .unwrap();
+    assert_eq!(returned, Some(Value::from("aborted")));
+    let digest = key.digest();
+    assert!(
+        txn.get_writes().iter().any(|k| k.digest() == digest),
+        "the UDF's key must be in the transaction's write set"
+    );
+    assert_eq!(client.abort(&txn).await.unwrap(), AbortStatus::Ok);
+    let record = client.get(&ReadPolicy::default(), &key, Bins::All).await.unwrap();
+    assert_eq!(record.bins.get("bin"), Some(&Value::from("before")), "abort must undo the UDF write");
+
+    let txn = Arc::new(Txn::new());
+    let mut wp = WritePolicy::default();
+    wp.base_policy.txn = Some(txn.clone());
+    client
+        .execute_udf(&wp, &key, "txn_udf", "set_bin", &[Value::from("committed")])
+        .await
+        .unwrap();
+    // Uncommitted inside the transaction, invisible outside it.
+    let record = client.get(&ReadPolicy::default(), &key, Bins::All).await.unwrap();
+    assert_eq!(record.bins.get("bin"), Some(&Value::from("before")));
+    assert_eq!(client.commit(&txn).await.unwrap(), CommitStatus::Ok);
+    let record = client.get(&ReadPolicy::default(), &key, Bins::All).await.unwrap();
+    assert_eq!(record.bins.get("bin"), Some(&Value::from("committed")));
 }
 
 // =============================================================================
