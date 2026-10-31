@@ -1781,6 +1781,10 @@ impl Client {
         let policy = self.cluster.resolve_query(policy);
         let policy = policy.as_ref();
         let nodes: Vec<Arc<Node>> = self.cluster.nodes();
+        // An order key without `k` is left for the server to refuse, but only
+        // a node that understands it refuses it; an older one runs the query
+        // unranked. The same check `query` makes.
+        Self::check_order_by_support(&statement, &nodes)?;
         let t_policy = policy.clone();
         let tracker = PartitionTracker::new(&t_policy, partition_filter, &nodes)?;
 
@@ -1983,6 +1987,7 @@ impl Client {
 
         statement.set_aggregate_function(package_name, function_name, function_args);
         statement.validate()?;
+        Self::reject_top_k_on_aggregation(&statement)?;
 
         // Disable retries: a retried partition would re-send partial
         // results that were already fed into the aggregation.
@@ -2455,6 +2460,22 @@ impl Client {
 
             sink.reset_task_id();
         }
+    }
+
+    /// Rejects Top-K options on an aggregation. The nodes stream partial
+    /// results of the stream UDF, not records, so ranking them client-side
+    /// means nothing; `query`, which the aggregation runs on, would accept
+    /// the statement and do exactly that.
+    #[cfg_attr(not(feature = "lua"), allow(dead_code))]
+    fn reject_top_k_on_aggregation(statement: &Statement) -> Result<()> {
+        if statement.has_order_by() || statement.has_top_k() {
+            return Err(Error::invalid_argument(
+                "Top-K is only valid on queries that return records; an aggregation returns the \
+                 stream UDF's result"
+                    .to_string(),
+            ));
+        }
+        Ok(())
     }
 
     /// Rejects Top-K options on background queries.
@@ -4021,6 +4042,20 @@ mod top_k_execution_tests {
         let mut order_only = Statement::new("ns", "set", Bins::All);
         order_only.set_order_by("score", OrderByType::Integer, Order::Desc);
         assert!(Client::reject_top_k_on_callback_query(&order_only).is_ok());
+    }
+
+    #[test]
+    fn aggregation_guard_rejects_top_k_and_an_order_key() {
+        let stmt = top_k_statement("score", Order::Desc, 5);
+        let err = Client::reject_top_k_on_aggregation(&stmt).unwrap_err();
+        assert!(err.to_string().contains("aggregation"), "{err}");
+
+        let mut order_only = Statement::new("ns", "set", Bins::All);
+        order_only.set_order_by("score", OrderByType::Integer, Order::Desc);
+        assert!(Client::reject_top_k_on_aggregation(&order_only).is_err());
+
+        let plain = Statement::new("ns", "set", Bins::All);
+        assert!(Client::reject_top_k_on_aggregation(&plain).is_ok());
     }
 
     #[test]
