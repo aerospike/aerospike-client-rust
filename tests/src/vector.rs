@@ -951,6 +951,109 @@ async fn vector_distance_projection_supports_top_k_nearest_query() {
     client.close().await.unwrap();
 }
 
+// The server-planned path (`query_explain` + `query_with_plan`) refuses the
+// same Top-K misuse `query` refuses, before anything is sent, and ranks a
+// valid Top-K statement the same way.
+#[aerospike_macro::test]
+async fn top_k_checks_apply_to_a_query_with_a_server_plan() {
+    let Some(client) = vector_client().await else {
+        return;
+    };
+    if !client
+        .nodes()
+        .iter()
+        .all(|node| node.version().supports_query_selection())
+    {
+        client.close().await.unwrap();
+        return;
+    }
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+    let write_policy = WritePolicy::default();
+
+    for id in 0..6_i64 {
+        let key = as_key!(namespace, &set_name, id);
+        client
+            .put(
+                &write_policy,
+                &key,
+                &[
+                    as_bin!("id", id),
+                    as_bin!("embedding", Vector::float32(vec![id as f32, 0.0])),
+                ],
+            )
+            .await
+            .unwrap();
+    }
+
+    let query = Vector::float32(vec![0.0, 0.0]);
+    let ranked = || {
+        let mut statement = Statement::new(namespace, &set_name, Bins::All);
+        statement.set_operations(vec![
+            aerospike::operations::get_bin("id"),
+            read_exp(
+                "dist",
+                euclidean_squared_distance(&query, vector_bin("embedding".into())),
+                ExpReadFlags::DEFAULT,
+            ),
+        ]);
+        statement.set_order_by("dist", OrderByType::Double, Order::Asc);
+        statement.set_top_k(3);
+        statement
+    };
+    let plan = || async {
+        client
+            .query_explain(&QueryPolicy::default(), namespace, Some(&set_name), "$.id >= 0", None, None)
+            .await
+            .expect("explain")
+    };
+
+    let max_records = QueryPolicy {
+        max_records: 2,
+        ..QueryPolicy::default()
+    };
+    let err = client
+        .query_with_plan(&max_records, PartitionFilter::all(), ranked(), plan().await)
+        .await
+        .expect_err("Top-K with max_records must be refused on the planned path");
+    assert!(err.to_string().contains("max_records"), "{err}");
+
+    let no_bins = QueryPolicy {
+        include_bin_data: false,
+        ..QueryPolicy::default()
+    };
+    let err = client
+        .query_with_plan(&no_bins, PartitionFilter::all(), ranked(), plan().await)
+        .await
+        .expect_err("Top-K without bin data must be refused on the planned path");
+    assert!(err.to_string().contains("bin data"), "{err}");
+
+    let resumed = PartitionFilter::by_key(&as_key!(namespace, &set_name, 0_i64));
+    let err = client
+        .query_with_plan(&QueryPolicy::default(), resumed, ranked(), plan().await)
+        .await
+        .expect_err("Top-K with a resumed filter must be refused on the planned path");
+    assert!(err.to_string().contains("resumed partition filter"), "{err}");
+
+    let recordset = client
+        .query_with_plan(&QueryPolicy::default(), PartitionFilter::all(), ranked(), plan().await)
+        .await
+        .unwrap();
+    let results = recordset
+        .into_stream()
+        .map(|result| {
+            let record = result.expect("planned Top-K query record");
+            (
+                record.bins["id"].clone().try_into().unwrap(),
+                float_bin(&record, "dist"),
+            )
+        })
+        .collect::<Vec<(i64, f64)>>()
+        .await;
+    assert_eq!(results, vec![(0, 0.0), (1, 1.0), (2, 4.0)]);
+    client.close().await.unwrap();
+}
+
 // A vector reaches the wire nested inside a CDT operation too. The client's
 // cluster check lets it through on a supporting cluster, and the server then
 // refuses it the way it refuses any vector element.

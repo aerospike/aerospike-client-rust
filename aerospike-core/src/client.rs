@@ -1703,12 +1703,8 @@ impl Client {
 
         let policy = self.cluster.resolve_query(policy);
         let policy = policy.as_ref();
-        Self::validate_top_k_policy(policy, &statement)?;
         let nodes: Vec<Arc<Node>> = self.cluster.nodes();
-        Self::check_order_by_support(&statement, &nodes)?;
-        if statement.has_top_k() {
-            Self::reject_resumed_top_k_filter(&partition_filter)?;
-        }
+        Self::check_top_k_query(policy, &statement, &nodes, &partition_filter)?;
         let t_policy = policy.clone();
         let tracker = PartitionTracker::new(&t_policy, partition_filter, &nodes)?;
 
@@ -1879,6 +1875,10 @@ impl Client {
         let policy = self.cluster.resolve_query(policy);
         let policy = policy.as_ref();
         let nodes: Vec<Arc<Node>> = self.cluster.nodes();
+        // The same Top-K checks as `query`: a server plan changes the filter,
+        // not what a ranked query needs from the policy, the nodes and the
+        // partition filter.
+        Self::check_top_k_query(policy, &statement, &nodes, &partition_filter)?;
         let t_policy = policy.clone();
         let tracker = PartitionTracker::new(&t_policy, partition_filter, &nodes)?;
 
@@ -2453,6 +2453,26 @@ impl Client {
                  (UPDATE-style) queries do not produce a result stream"
                     .to_string(),
             ));
+        }
+        Ok(())
+    }
+
+    /// The Top-K checks every record-returning query entry point runs on its
+    /// resolved policy, before the tracker is built: a Top-K statement needs
+    /// bin data and no `max_records`, an order key needs every node to
+    /// understand it, and a ranked query cannot continue from a cursor.
+    /// `query` and `query_with_plan` both call this; a check added here
+    /// covers the server-planned path too.
+    fn check_top_k_query(
+        policy: &QueryPolicy,
+        statement: &Statement,
+        nodes: &[Arc<Node>],
+        partition_filter: &PartitionFilter,
+    ) -> Result<()> {
+        Self::validate_top_k_policy(policy, statement)?;
+        Self::check_order_by_support(statement, nodes)?;
+        if statement.has_top_k() {
+            Self::reject_resumed_top_k_filter(partition_filter)?;
         }
         Ok(())
     }
@@ -4054,5 +4074,44 @@ mod top_k_execution_tests {
         let mut max_records = crate::policy::QueryPolicy::default();
         max_records.max_records = 1;
         assert!(Client::validate_top_k_policy(&max_records, &statement).is_err());
+    }
+
+    // The one helper both query entry points call runs all three checks, in
+    // the order a caller sees them.
+    #[test]
+    fn the_shared_top_k_check_runs_every_rule() {
+        let capable = Arc::new(crate::cluster::node::test_node_with_version(
+            crate::Version::new(8, 2, 1, 0),
+        ));
+        let older = Arc::new(crate::cluster::node::test_node_with_version(
+            crate::Version::new(8, 2, 0, 0),
+        ));
+        let nodes = [capable];
+        let policy = crate::policy::QueryPolicy::default();
+        let statement = top_k_statement("score", Order::Desc, 5);
+        let all = PartitionFilter::all();
+
+        assert!(Client::check_top_k_query(&policy, &statement, &nodes, &all).is_ok());
+
+        let max_records = crate::policy::QueryPolicy {
+            max_records: 1,
+            ..crate::policy::QueryPolicy::default()
+        };
+        let err = Client::check_top_k_query(&max_records, &statement, &nodes, &all).unwrap_err();
+        assert!(err.to_string().contains("max_records"), "{err}");
+
+        let err = Client::check_top_k_query(&policy, &statement, &[older], &all).unwrap_err();
+        assert!(err.to_string().contains("not supported by all nodes"), "{err}");
+
+        let key = Key::new("ns", "set", Value::from("k")).unwrap();
+        let err = Client::check_top_k_query(&policy, &statement, &nodes, &PartitionFilter::by_key(&key))
+            .unwrap_err();
+        assert!(err.to_string().contains("resumed partition filter"), "{err}");
+
+        // A plain statement passes every rule whatever the policy or filter.
+        let plain = Statement::new("ns", "set", Bins::All);
+        assert!(
+            Client::check_top_k_query(&max_records, &plain, &[], &PartitionFilter::by_key(&key)).is_ok()
+        );
     }
 }
