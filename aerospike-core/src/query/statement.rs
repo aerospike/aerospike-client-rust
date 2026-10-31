@@ -115,6 +115,11 @@ impl Statement {
     /// Foreground queries accept only read ops, and server versions before
     /// 8.1.2 only accept the basic `Read` op; background jobs accept only
     /// write ops.
+    ///
+    /// A foreground query with
+    /// [`QueryPolicy::include_bin_data`](crate::QueryPolicy::include_bin_data)
+    /// set to `false` returns every matching record with no bins at all, so
+    /// these operations produce nothing the caller can read.
     pub fn set_operations(&mut self, operations: impl Into<Vec<Operation>>) {
         self.operations = Some(operations.into());
     }

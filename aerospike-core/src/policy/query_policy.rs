@@ -68,6 +68,14 @@ pub struct QueryPolicy {
     /// Indicates if bin data is retrieved. If false, only record digests (and user keys
     /// if stored on the server) are retrieved.
     ///
+    /// `false` suppresses every bin the query would return, including the
+    /// results of operations attached with
+    /// [`Statement::set_operations`](crate::Statement::set_operations): the
+    /// operations are still sent, matching records are still returned, and
+    /// every one of them arrives with no bins. It is also incompatible with Top-K
+    /// ([`Statement::set_top_k`](crate::Statement::set_top_k)), which ranks
+    /// records by a returned bin and is refused up front.
+    ///
     /// Default: `true`
     pub include_bin_data: bool,
 }
