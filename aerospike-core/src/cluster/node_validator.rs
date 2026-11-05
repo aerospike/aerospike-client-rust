@@ -101,30 +101,31 @@ impl NodeValidator {
         nv
     }
 
-    #[allow(clippy::option_if_let_else)]
+    /// Validates `host` through every address it resolves to at once; the
+    /// first alias that validates wins and the others are dropped. Racing
+    /// bounds the validation at one timeout: an address that silently drops
+    /// connection attempts would otherwise hold back every address after it.
     pub async fn validate_node(&mut self, cluster: &Cluster, host: &Host) -> Result<()> {
         self.resolve_aliases(host)
             .await
             .map_err(|e| e.chain_error("Failed to resolve host aliases"))?;
 
-        let mut last_err = None;
-        for alias in &self.aliases() {
-            match self.validate_alias(cluster, alias).await {
-                Ok(()) => {
-                    promote_alias(&mut self.aliases, alias);
-                    return Ok(());
+        let attempts = self.aliases().into_iter().map(|alias| {
+            let mut nv = self.clone();
+            Box::pin(async move {
+                match nv.validate_alias(cluster, &alias).await {
+                    Ok(()) => Ok((nv, alias)),
+                    Err(err) => {
+                        debug!("Alias {alias} failed: {err:?}");
+                        Err(err)
+                    }
                 }
-                Err(err) => {
-                    debug!("Alias {alias} failed: {err:?}");
-                    last_err = Some(err);
-                }
-            }
-        }
-
-        match last_err {
-            Some(err) => Err(err),
-            None => unreachable!(),
-        }
+            })
+        });
+        let ((mut nv, alias), _losers) = futures::future::select_ok(attempts).await?;
+        promote_alias(&mut nv.aliases, &alias);
+        *self = nv;
+        Ok(())
     }
 
     pub fn aliases(&self) -> Vec<Host> {

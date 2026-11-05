@@ -17,6 +17,7 @@ pub mod node;
 pub mod node_validator;
 pub mod partition;
 pub mod partition_tokenizer;
+mod peer_retries;
 pub mod peers;
 pub mod peers_parser;
 pub mod seed_refresher;
@@ -35,6 +36,7 @@ pub use self::partition::Partition;
 
 use self::node_validator::NodeValidator;
 use self::partition_tokenizer::PartitionTokenizer;
+use self::peer_retries::{Attempt, Found, PeerRetries, Retry};
 use self::peers::{Peer, Peers};
 use self::seed_refresher::{Refresh, SeedRefresher};
 
@@ -133,7 +135,10 @@ pub struct Cluster {
     // `if (tendCount % errorRateWindow == 0) … resetErrorRate()`.
     tend_count: std::sync::atomic::AtomicUsize,
 
+    /// Closed by `close()`; a message wakes the tend thread for an early tend.
     tend_channel: Mutex<Sender<()>>,
+    /// Peers that failed validation, retried in the background.
+    peer_retries: PeerRetries,
     /// The tend task. `close()` awaits it so the node and alias cleanup the
     /// task performs as its last act is complete when `close()` returns.
     tend_task: std::sync::Mutex<Option<aerospike_rt::task::JoinHandle<()>>>,
@@ -318,7 +323,8 @@ impl Cluster {
             let cluster_name = policy.cluster_name.as_deref().filter(|n| !n.is_empty());
             for seed in seeds.iter_mut() {
                 if seed.tls_name.is_none() {
-                    seed.tls_name = Some(cluster_name.map_or_else(|| seed.name.clone(), str::to_string));
+                    seed.tls_name =
+                        Some(cluster_name.map_or_else(|| seed.name.clone(), str::to_string));
                 }
             }
         }
@@ -364,6 +370,7 @@ impl Cluster {
             tend_count: std::sync::atomic::AtomicUsize::new(0),
 
             tend_channel: Mutex::new(tx),
+            peer_retries: PeerRetries::default(),
             tend_task: std::sync::Mutex::new(None),
             #[cfg(feature = "dynamic-config")]
             config_watch_task: std::sync::Mutex::new(None),
@@ -404,9 +411,8 @@ impl Cluster {
 
         loop {
             match rx.try_recv() {
-                Ok(()) => unreachable!(),
                 Err(TryRecvError::Closed) => break,
-                Err(TryRecvError::Empty) => {
+                Ok(()) | Err(TryRecvError::Empty) => {
                     // A panic inside one tend cycle (a malformed partition
                     // map, say) must not end the tend task: that would freeze
                     // the cluster view silently for the life of the client.
@@ -419,17 +425,20 @@ impl Cluster {
                             log_error_chain!(err, "Error tending cluster");
                         }
                         Err(_) => {
-                            error!("Cluster tend cycle panicked; the cluster view was not refreshed");
+                            error!(
+                                "Cluster tend cycle panicked; the cluster view was not refreshed"
+                            );
                         }
                     }
                     // Sleep until the next cycle, but wake immediately when
                     // `close()` closes the channel — otherwise shutdown
                     // cleanup (clearing nodes/aliases below) would lag up to
-                    // a full tend interval behind close().
+                    // a full tend interval behind close() — or when a peer
+                    // validated in the background is waiting to be added.
                     let sleep =
                         aerospike_rt::sleep(Duration::from_millis(u64::from(tend_interval)));
                     futures::select! {
-                        _ = rx.next().fuse() => break,
+                        wake = rx.next().fuse() => if wake.is_none() { break },
                         () = sleep.fuse() => {}
                     }
                 }
@@ -439,6 +448,7 @@ impl Cluster {
         // The provider is closed here, after the last refresh has returned
         // and never concurrently with one.
         cluster.seed_refresher.close().await;
+        cluster.peer_retries.clear();
 
         // Cleanup is performed here — as the last act of the tend thread —
         // rather than in `close()`, so the "all node additions/deletions are
@@ -451,7 +461,7 @@ impl Cluster {
         cluster.seeds.store(Arc::new(vec![]));
     }
 
-    async fn tend(&self) -> Result<()> {
+    async fn tend(self: &Arc<Self>) -> Result<()> {
         // If close() has been called, bail before any work — otherwise an
         // in-flight cycle would repopulate nodes after close() cleared them.
         if self.closed.load(Ordering::Relaxed) {
@@ -590,13 +600,21 @@ impl Cluster {
                     self.materialize_peers(&peers).await;
                 }
 
+                // A pending peer keeps its parsing node's generation
+                // uncommitted, so it is materialized on every tend that reads
+                // peers; one this tend skipped is no longer pending.
+                if peers.gen_changed() {
+                    self.peer_retries.prune();
+                }
+
                 // A node added or removed, or a node advertising new
                 // addresses, is a cluster view change the translator may
                 // want to know about. The view established by the
                 // constructor's tends is the starting view and is not
                 // notified.
                 if self.initialized.load(Ordering::Relaxed)
-                    && (peers.address_changed() || Self::sorted_names(&self.nodes()) != names_before)
+                    && (peers.address_changed()
+                        || Self::sorted_names(&self.nodes()) != names_before)
                 {
                     self.cluster_view_changed();
                 }
@@ -677,8 +695,9 @@ impl Cluster {
                 if *partitions {
                     match PartitionTokenizer::from_node(node, admin_policy).await {
                         Ok(tokens) => {
-                            let shared = shared_map
-                                .expect("shared map initialized when any node refreshes partitions");
+                            let shared = shared_map.expect(
+                                "shared map initialized when any node refreshes partitions",
+                            );
                             // Merge into a scratch copy so a parse error part
                             // way through cannot leave the shared map half
                             // updated with this node's entries.
@@ -782,7 +801,11 @@ impl Cluster {
     ///
     /// [`ErrorKind::TranslationMiss`] on a strict miss.
     pub fn translate_endpoint(&self, advertised: &Endpoint) -> Result<Host> {
-        crate::discovery::translate(&*self.address_translator, self.translation_on_miss, advertised)
+        crate::discovery::translate(
+            &*self.address_translator,
+            self.translation_on_miss,
+            advertised,
+        )
     }
 
     /// The current seed list.
@@ -811,7 +834,11 @@ impl Cluster {
     /// and a peer whose translated address collides with another peer's or
     /// a live node's are logged and skipped the same way: no node, and the
     /// parsing node's generation stays pending, so the next tend retries.
-    async fn materialize_peers(&self, peers: &Peers) {
+    ///
+    /// Only a peer's first validation is awaited here. A peer that failed is
+    /// retried in the background, a fresh attempt each tend, and joins on the
+    /// tend after one validates.
+    async fn materialize_peers(self: &Arc<Self>, peers: &Peers) {
         let peers_list = peers.peers_list();
         // Reset the working set; we've taken a copy of what was in there.
         peers.clear_peers();
@@ -855,6 +882,7 @@ impl Cluster {
         // `peers` accumulator; actual cluster membership is still committed
         // afterwards by the tend task (add/remove stays single-flow).
         let (all_peers, known) = (&all_peers, &known);
+        let interval = Duration::from_millis(u64::from(self.client_policy.load().tend_interval));
         let materialize_tasks = groups.into_iter().map(|(mut peer, sources)| async move {
             if self.peer_exists(peers, &mut peer).await {
                 return None;
@@ -864,7 +892,10 @@ impl Cluster {
             // whose translated address another peer or a live node already
             // answers at, never becomes a node.
             if peer.alternate_missing {
-                error!("{}", Error::alternate_address_missing(&peer.node_name, None));
+                error!(
+                    "{}",
+                    Error::alternate_address_missing(&peer.node_name, None)
+                );
                 for source in &sources {
                     peers.invalidate_pending_generation(source);
                 }
@@ -878,48 +909,51 @@ impl Cluster {
                 return None;
             }
 
-            for host in &peer.hosts {
-                if peers.has_failed(host) {
-                    continue;
-                }
-
-                let mut nv = NodeValidator::new(self.client_policy());
-                if let Err(err) = nv.validate_node(self, host).await {
-                    peers.fail(host.clone());
-                    self.incr_node_invalid();
-                    if matches!(err.kind(), ErrorKind::AlternateAddressMissing) {
-                        error!("Add peer node `{host}` failed: {err}");
-                    } else {
-                        warn!("Add peer node `{host}` failed: `{err}`");
-                    }
-                    continue;
-                }
-
-                if peer.node_name != nv.name {
-                    warn!(
-                        "Peer node `{}` is different than actual node `{}` for host `{}`",
-                        peer.node_name, nv.name, host
-                    );
-                }
-
-                let node = Arc::new(self.create_node(nv).await);
-                node.update_advertised(peer.advertised.clone());
-                return Some(Validated {
-                    peer_name: peer.node_name.clone(),
-                    sources,
-                    host: host.clone(),
-                    replace_node: peer.replace_node.clone(),
-                    node,
+            let retry = self
+                .peer_retries
+                .next(&peer.node_name, interval, |attempt| {
+                    self.retry_peer(peer.hosts.clone(), attempt);
                 });
-            }
+            let found = match retry {
+                Retry::First => {
+                    let found = self.validate_peer(&peer.hosts, Some(peers)).await;
+                    if found.is_none() {
+                        self.peer_retries.failed(&peer.node_name);
+                    }
+                    found
+                }
+                // A result for an address the peer no longer advertises is
+                // dropped; the peer starts over on the next tend.
+                Retry::Found(found) => Some(*found).filter(|(host, _)| peer.hosts.contains(host)),
+                Retry::Pending => None,
+            };
 
             // If none of the peer's hosts validated, invalidate every
             // parsing node's pending generation so none of them commit at
             // the end of the tend. The peer will be re-parsed next tend.
-            for source in &sources {
-                peers.invalidate_pending_generation(source);
+            let Some((host, nv)) = found else {
+                for source in &sources {
+                    peers.invalidate_pending_generation(source);
+                }
+                return None;
+            };
+
+            if peer.node_name != nv.name {
+                warn!(
+                    "Peer node `{}` is different than actual node `{}` for host `{}`",
+                    peer.node_name, nv.name, host
+                );
             }
-            None
+
+            let node = Arc::new(self.create_node(nv).await);
+            node.update_advertised(peer.advertised.clone());
+            Some(Validated {
+                peer_name: peer.node_name.clone(),
+                sources,
+                host,
+                replace_node: peer.replace_node.clone(),
+                node,
+            })
         });
         let validated: Vec<Validated> = futures::future::join_all(materialize_tasks)
             .await
@@ -932,7 +966,8 @@ impl Cluster {
         // name, are collisions too. Neither becomes a node.
         let known: Vec<Arc<Node>> = self.nodes().into_iter().chain(peers.new_nodes()).collect();
         for v in &validated {
-            if let Some(other) = self.collision_after_validation(v, &validated, &known, &peer_names) {
+            if let Some(other) = self.collision_after_validation(v, &validated, &known, &peer_names)
+            {
                 warn!(
                     "{}",
                     Error::translation_collision(
@@ -955,6 +990,50 @@ impl Cluster {
                 }
             }
         }
+    }
+
+    /// Validates `hosts` in order until one answers. In the tend, `peers`
+    /// skips a host another peer already failed on this tend and records
+    /// each failure.
+    async fn validate_peer(&self, hosts: &[Host], peers: Option<&Peers>) -> Option<Found> {
+        for host in hosts {
+            if peers.is_some_and(|peers| peers.has_failed(host)) {
+                continue;
+            }
+            let mut nv = NodeValidator::new(self.client_policy());
+            match nv.validate_node(self, host).await {
+                Ok(()) => return Some((host.clone(), nv)),
+                Err(err) => {
+                    if let Some(peers) = peers {
+                        peers.fail(host.clone());
+                    }
+                    self.incr_node_invalid();
+                    if matches!(err.kind(), ErrorKind::AlternateAddressMissing) {
+                        error!("Add peer node `{host}` failed: {err}");
+                    } else {
+                        warn!("Add peer node `{host}` failed: `{err}`");
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Starts one background attempt at `hosts`, waking the tend thread when
+    /// it validates so the peer joins without waiting out the tend interval.
+    fn retry_peer(self: &Arc<Self>, hosts: Vec<Host>, attempt: Attempt) {
+        let cluster = self.clone();
+        drop(aerospike_rt::spawn(async move {
+            if attempt.run(cluster.validate_peer(&hosts, None)).await {
+                cluster.wake_tend().await;
+            }
+        }));
+    }
+
+    /// Asks the tend thread for an early tend. A full channel already holds
+    /// a wake, and a closed one means the cluster is closing.
+    async fn wake_tend(&self) {
+        let _ = self.tend_channel.lock().await.try_send(());
     }
 
     /// Java `findCollision(peers, peer)`: before `peer` is connected, one of
@@ -1517,7 +1596,10 @@ impl Cluster {
                 }
 
                 if peer.alternate_missing {
-                    error!("{}", Error::alternate_address_missing(&peer.node_name, None));
+                    error!(
+                        "{}",
+                        Error::alternate_address_missing(&peer.node_name, None)
+                    );
                     if let Some(ref source) = peer.from_node_name {
                         harvest.invalidate_pending_generation(source);
                     }
@@ -1566,7 +1648,9 @@ impl Cluster {
                         replace_node: None,
                         node,
                     };
-                    if let Some(other) = self.collision_after_validation(&v, &[], &list, &peer_names) {
+                    if let Some(other) =
+                        self.collision_after_validation(&v, &[], &list, &peer_names)
+                    {
                         warn!(
                             "{}",
                             Error::translation_collision(
@@ -1986,7 +2070,10 @@ impl Cluster {
     /// Called before the cluster is built, so that the file's seed provider
     /// and translator shape the first connection.
     #[cfg(feature = "dynamic-config")]
-    pub(crate) fn merge_static_config(policy: &mut ClientPolicy, doc: &ConfigDocument) -> Result<()> {
+    pub(crate) fn merge_static_config(
+        policy: &mut ClientPolicy,
+        doc: &ConfigDocument,
+    ) -> Result<()> {
         let Some(static_config) = doc.static_config.as_ref() else {
             return Ok(());
         };
@@ -2666,6 +2753,7 @@ impl Cluster {
         // never started one closes it here.
         if lock(&self.tend_task).is_none() {
             self.seed_refresher.close().await;
+            self.peer_retries.clear();
         }
 
         // Actually close the tend channel: locking the Mutex and dropping

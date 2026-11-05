@@ -51,7 +51,12 @@ fn bitmap(all: bool) -> String {
 
 impl FakeNode {
     async fn start(name: &str) -> FakeNode {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        FakeNode::start_at(name, 0).await
+    }
+
+    /// Start on `port`, to take over an address a peer already advertises.
+    async fn start_at(name: &str, port: u16) -> FakeNode {
+        let listener = TcpListener::bind(("127.0.0.1", port)).await.unwrap();
         let addr = listener.local_addr().unwrap();
         let mut table = HashMap::new();
         table.insert("node".to_string(), name.to_string());
@@ -180,6 +185,64 @@ impl FakeNode {
         self.requests()
             .iter()
             .any(|r| r.iter().any(|c| c == command))
+    }
+}
+
+/// A listener that accepts every connection and never answers, so each
+/// validation attempt against it runs out the client's timeout: a peer
+/// advertised before its listener serves, as seen through a load balancer.
+struct StuckListener {
+    addr: SocketAddr,
+    accepted: Arc<AtomicUsize>,
+    task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl StuckListener {
+    async fn start() -> StuckListener {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let acc = accepted.clone();
+        let task = tokio::spawn(async move {
+            let mut held = Vec::new();
+            loop {
+                let Ok((sock, _)) = listener.accept().await else {
+                    break;
+                };
+                acc.fetch_add(1, Ordering::SeqCst);
+                held.push(sock);
+            }
+        });
+        StuckListener {
+            addr,
+            accepted,
+            task: Some(task),
+        }
+    }
+
+    fn port(&self) -> u16 {
+        self.addr.port()
+    }
+
+    fn accepted(&self) -> usize {
+        self.accepted.load(Ordering::SeqCst)
+    }
+
+    /// Stop listening and drop the held connections; the port is free when
+    /// this returns.
+    async fn stop(mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+            let _ = task.await;
+        }
+    }
+}
+
+impl Drop for StuckListener {
+    fn drop(&mut self) {
+        if let Some(task) = &self.task {
+            task.abort();
+        }
     }
 }
 
@@ -690,6 +753,71 @@ async fn translator_is_told_about_node_additions_and_address_changes() {
     wait_for("second view change", || translator.changes.lock().unwrap().len() == 2).await;
     assert_eq!(translator.changes.lock().unwrap().clone(), vec![1, 2]);
     assert_eq!(node_names(&client), vec!["BB9A", "BB9B"]);
+    client.close().await.unwrap();
+}
+
+// A peer whose listener never answers is retried off the tend: another peer
+// advertised meanwhile joins without waiting out the stuck attempt's timeout.
+#[aerospike_macro::test]
+async fn a_peer_that_never_answers_does_not_hold_back_another_peer() {
+    let a = FakeNode::start("BB9A").await;
+    let stuck = StuckListener::start().await;
+    a.peers(&format!("[[BB9S,,[127.0.0.1:{}]]]", stuck.port()));
+    let client = connect(&policy(), &[&a]).await;
+    assert_eq!(node_names(&client), vec!["BB9A"]);
+    // The first attempt ran in the tend and failed; a second connection means
+    // the peer is now being retried in the background.
+    wait_for("the stuck peer retried", || stuck.accepted() >= 2).await;
+
+    let b = FakeNode::start("BB9B").await;
+    b.claims_no_partitions();
+    let since = std::time::Instant::now();
+    a.change_peers(
+        &format!(
+            "[[BB9S,,[127.0.0.1:{}]],[BB9B,,[127.0.0.1:{}]]]",
+            stuck.port(),
+            b.port()
+        ),
+        6,
+    );
+    wait_for("node B added", || {
+        node_names(&client) == vec!["BB9A", "BB9B"]
+    })
+    .await;
+    let waited = since.elapsed();
+    assert!(
+        waited < Duration::from_millis(1000),
+        "B waited {waited:?}, the stuck peer's timeout, to join"
+    );
+    client.close().await.unwrap();
+}
+
+// Once a node answers at a pending peer's address, the background attempt
+// that reaches it wakes the tend and the node joins without waiting for the
+// next tend interval or for the attempts still stuck.
+#[aerospike_macro::test]
+async fn a_pending_peer_joins_once_its_address_answers() {
+    let a = FakeNode::start("BB9A").await;
+    let stuck = StuckListener::start().await;
+    let port = stuck.port();
+    a.peers(&format!("[[BB9S,,[127.0.0.1:{port}]]]"));
+    let client = connect(&policy(), &[&a]).await;
+    assert_eq!(node_names(&client), vec!["BB9A"]);
+    wait_for("the stuck peer retried", || stuck.accepted() >= 2).await;
+
+    stuck.stop().await;
+    let s = FakeNode::start_at("BB9S", port).await;
+    s.claims_no_partitions();
+    let since = std::time::Instant::now();
+    wait_for("node S added", || {
+        node_names(&client) == vec!["BB9A", "BB9S"]
+    })
+    .await;
+    let waited = since.elapsed();
+    assert!(
+        waited < Duration::from_millis(1000),
+        "S waited {waited:?} to join after its address answered"
+    );
     client.close().await.unwrap();
 }
 
