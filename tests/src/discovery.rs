@@ -43,6 +43,15 @@ struct FakeNode {
     responses: Arc<Mutex<HashMap<String, String>>>,
     accepted: Arc<AtomicUsize>,
     requests: Arc<Mutex<Vec<Vec<String>>>>,
+    /// One accept task per listening address, with the tasks of the
+    /// connections it accepted, so an address can be cut on its own.
+    listeners: Mutex<Vec<Listener>>,
+}
+
+struct Listener {
+    ip: String,
+    accept: tokio::task::JoinHandle<()>,
+    connections: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
 fn bitmap(all: bool) -> String {
@@ -74,15 +83,59 @@ impl FakeNode {
         let accepted = Arc::new(AtomicUsize::new(0));
         let requests = Arc::new(Mutex::new(Vec::new()));
 
-        let (resp, acc, reqs) = (responses.clone(), accepted.clone(), requests.clone());
-        tokio::spawn(async move {
+        let node = FakeNode {
+            addr,
+            responses,
+            accepted,
+            requests,
+            listeners: Mutex::new(Vec::new()),
+        };
+        node.serve(listener);
+        node
+    }
+
+    /// Answer on another address too, at the same port. False when that
+    /// address cannot be bound here.
+    async fn also_listen(&self, ip: &str) -> bool {
+        match TcpListener::bind((ip, self.port())).await {
+            Ok(listener) => {
+                self.serve(listener);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Stop answering on `ip`: the listener closes and every connection it
+    /// accepted is dropped.
+    fn cut(&self, ip: &str) {
+        let mut listeners = self.listeners.lock().unwrap();
+        if let Some(pos) = listeners.iter().position(|l| l.ip == ip) {
+            let listener = listeners.remove(pos);
+            listener.accept.abort();
+            for connection in listener.connections.lock().unwrap().drain(..) {
+                connection.abort();
+            }
+        }
+    }
+
+    fn serve(&self, listener: TcpListener) {
+        let ip = listener.local_addr().unwrap().ip().to_string();
+        let connections = Arc::new(Mutex::new(Vec::new()));
+        let (resp, acc, reqs, conns) = (
+            self.responses.clone(),
+            self.accepted.clone(),
+            self.requests.clone(),
+            connections.clone(),
+        );
+        let accept = tokio::spawn(async move {
             loop {
                 let Ok((mut sock, _)) = listener.accept().await else {
                     break;
                 };
                 acc.fetch_add(1, Ordering::SeqCst);
                 let (resp, reqs) = (resp.clone(), reqs.clone());
-                tokio::spawn(async move {
+                let connection = tokio::spawn(async move {
                     loop {
                         let mut header = [0u8; 8];
                         if sock.read_exact(&mut header).await.is_err() {
@@ -119,14 +172,14 @@ impl FakeNode {
                         }
                     }
                 });
+                conns.lock().unwrap().push(connection);
             }
         });
-        FakeNode {
-            addr,
-            responses,
-            accepted,
-            requests,
-        }
+        self.listeners.lock().unwrap().push(Listener {
+            ip,
+            accept,
+            connections,
+        });
     }
 
     fn port(&self) -> u16 {
@@ -818,6 +871,43 @@ async fn a_pending_peer_joins_once_its_address_answers() {
         waited < Duration::from_millis(1000),
         "S waited {waited:?} to join after its address answered"
     );
+    client.close().await.unwrap();
+}
+
+// A node that keeps failing on the address it was pinned to, while the name
+// its peers advertise for it also resolves to an address that answers, is
+// validated afresh through that name and moves to the address that answers.
+#[aerospike_macro::test]
+async fn a_failing_node_moves_to_another_address_of_its_name() {
+    let a = FakeNode::start("BB9A").await;
+    let b = FakeNode::start("BB9B").await;
+    b.claims_no_partitions();
+    if !b.also_listen("::1").await {
+        eprintln!("skipped: no IPv6 loopback to give the name a second address");
+        return;
+    }
+    a.peers(&format!("[[BB9B,,[localhost:{}]]]", b.port()));
+    let client = connect(&policy(), &[&a]).await;
+    assert_eq!(node_names(&client), vec!["BB9A", "BB9B"]);
+    let node_b = || client.nodes().into_iter().find(|n| n.name() == "BB9B");
+    let pinned = node_b().unwrap().host();
+    assert_eq!(pinned.port, b.port());
+
+    // Cut the address the node is pinned to; the other keeps answering.
+    b.cut(&pinned.name);
+    wait_for("node B moved to the other address", || {
+        node_b().is_some_and(|n| n.is_active() && n.host().name != pinned.name)
+    })
+    .await;
+    let moved = node_b().unwrap();
+    assert_eq!(moved.host().port, b.port());
+    // The cut address dropped its connections, so requests that arrive now
+    // come over the other address: the node is tended where it moved.
+    let requests_at_move = b.requests().len();
+    wait_for("node B tended at its new address", || {
+        b.requests().len() > requests_at_move && node_b().is_some_and(|n| n.failures() == 0)
+    })
+    .await;
     client.close().await.unwrap();
 }
 
