@@ -60,6 +60,12 @@ use std::borrow::Cow;
 
 static CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Consecutive tend failures after which a node whose advertised name has
+/// other addresses is validated afresh through that name. The same count at
+/// which a node with no peers referencing it is removed, so a node moves only
+/// once it has failed for as long as it takes to be given up on.
+const FAILOVER_FAILURES: usize = 5;
+
 /// Per-namespace partition data.
 /// Contains replicated node arrays, SC mode flag, and regime tracking.
 #[derive(Debug, Default, Clone)]
@@ -318,7 +324,8 @@ impl Cluster {
             let cluster_name = policy.cluster_name.as_deref().filter(|n| !n.is_empty());
             for seed in seeds.iter_mut() {
                 if seed.tls_name.is_none() {
-                    seed.tls_name = Some(cluster_name.map_or_else(|| seed.name.clone(), str::to_string));
+                    seed.tls_name =
+                        Some(cluster_name.map_or_else(|| seed.name.clone(), str::to_string));
                 }
             }
         }
@@ -419,7 +426,9 @@ impl Cluster {
                             log_error_chain!(err, "Error tending cluster");
                         }
                         Err(_) => {
-                            error!("Cluster tend cycle panicked; the cluster view was not refreshed");
+                            error!(
+                                "Cluster tend cycle panicked; the cluster view was not refreshed"
+                            );
                         }
                     }
                     // Sleep until the next cycle, but wake immediately when
@@ -596,7 +605,8 @@ impl Cluster {
                 // constructor's tends is the starting view and is not
                 // notified.
                 if self.initialized.load(Ordering::Relaxed)
-                    && (peers.address_changed() || Self::sorted_names(&self.nodes()) != names_before)
+                    && (peers.address_changed()
+                        || Self::sorted_names(&self.nodes()) != names_before)
                 {
                     self.cluster_view_changed();
                 }
@@ -677,8 +687,9 @@ impl Cluster {
                 if *partitions {
                     match PartitionTokenizer::from_node(node, admin_policy).await {
                         Ok(tokens) => {
-                            let shared = shared_map
-                                .expect("shared map initialized when any node refreshes partitions");
+                            let shared = shared_map.expect(
+                                "shared map initialized when any node refreshes partitions",
+                            );
                             // Merge into a scratch copy so a parse error part
                             // way through cannot leave the shared map half
                             // updated with this node's entries.
@@ -782,7 +793,11 @@ impl Cluster {
     ///
     /// [`ErrorKind::TranslationMiss`] on a strict miss.
     pub fn translate_endpoint(&self, advertised: &Endpoint) -> Result<Host> {
-        crate::discovery::translate(&*self.address_translator, self.translation_on_miss, advertised)
+        crate::discovery::translate(
+            &*self.address_translator,
+            self.translation_on_miss,
+            advertised,
+        )
     }
 
     /// The current seed list.
@@ -864,7 +879,10 @@ impl Cluster {
             // whose translated address another peer or a live node already
             // answers at, never becomes a node.
             if peer.alternate_missing {
-                error!("{}", Error::alternate_address_missing(&peer.node_name, None));
+                error!(
+                    "{}",
+                    Error::alternate_address_missing(&peer.node_name, None)
+                );
                 for source in &sources {
                     peers.invalidate_pending_generation(source);
                 }
@@ -932,7 +950,8 @@ impl Cluster {
         // name, are collisions too. Neither becomes a node.
         let known: Vec<Arc<Node>> = self.nodes().into_iter().chain(peers.new_nodes()).collect();
         for v in &validated {
-            if let Some(other) = self.collision_after_validation(v, &validated, &known, &peer_names) {
+            if let Some(other) = self.collision_after_validation(v, &validated, &known, &peer_names)
+            {
                 warn!(
                     "{}",
                     Error::translation_collision(
@@ -1046,11 +1065,13 @@ impl Cluster {
         if let Ok(node) = self.get_node_by_name(&peer.node_name) {
             // Mirrors Java's `findPeerNode`:
             //   `node.failures <= 0 || node.address.isLoopbackAddress()`.
-            // A node bound to localhost is never going to be replaced by a
-            // peer reachable via a different address, so even when it has
-            // stale failures we treat it as "still us" and skip the
-            // host-match scan.
-            if node.failures() == 0 || node_address_is_loopback(&node) {
+            // A node bound to localhost is not replaced by a peer reachable
+            // via a different address over a stale failure or two, so we
+            // treat it as "still us" and skip the host-match scan. Once it
+            // has failed as many tends as any other node needs to move, it
+            // takes the scan below like any other node.
+            let failing_over = node.failures() >= FAILOVER_FAILURES;
+            if node.failures() == 0 || (node_address_is_loopback(&node) && !failing_over) {
                 // Node is healthy (or localhost) — no need to update IP.
                 node.increment_reference_count();
                 return true;
@@ -1060,36 +1081,73 @@ impl Cluster {
             // same address. Direct name match is cheap and covers the
             // common case; cached-hostname match handles the previous
             // tend's resolution; DNS resolution is the fallback.
+            //
+            // A node that keeps failing on the address it is pinned to,
+            // while a name a peer advertises for it also resolves to other
+            // addresses, is validated afresh through that name: the
+            // validation races every address, so the node moves to one
+            // that answers, and the validated peer replaces it.
             let node_host = node.host();
             for host in &peer.hosts {
                 if host.port != node_host.port {
                     continue;
                 }
 
-                if host.name == node_host.name
-                    || node
-                        .cached_hostname()
-                        .is_some_and(|cached| cached == host.name)
-                {
+                if host.name == node_host.name {
+                    // Advertised as the pinned address itself: nowhere else
+                    // to go.
                     node.increment_reference_count();
                     return true;
                 }
 
-                if let Ok(addrs) = aerospike_rt::lookup_host(host.name.as_str(), host.port).await {
-                    for addr in addrs {
-                        let ip_str = addr.ip().to_string();
-                        if ip_str == node_host.name || addr.ip().is_loopback() {
+                let cached = node
+                    .cached_hostname()
+                    .is_some_and(|cached| cached == host.name);
+                if cached && !failing_over {
+                    node.increment_reference_count();
+                    return true;
+                }
+
+                match aerospike_rt::lookup_host(host.name.as_str(), host.port).await {
+                    Ok(addrs) => {
+                        let mut pinned = false;
+                        let mut others = false;
+                        for addr in addrs {
+                            let same = addr.ip().to_string() == node_host.name;
+                            pinned |= same || addr.ip().is_loopback();
+                            others |= !same;
+                        }
+                        if pinned {
                             // Cache for next tend so we don't pay the
                             // resolution cost again.
                             node.cache_hostname(host.name.clone());
+                            if failing_over && others {
+                                warn!(
+                                    "Node `{}` at `{}` failed {} tends and `{}` resolves to \
+                                     other addresses: validating it afresh through that name",
+                                    node.name(),
+                                    node_host,
+                                    node.failures(),
+                                    host.name
+                                );
+                                break;
+                            }
                             node.increment_reference_count();
                             return true;
                         }
                     }
+                    // A name that matched before but cannot be resolved now
+                    // is not evidence the node moved: keep it.
+                    Err(_) if cached => {
+                        node.increment_reference_count();
+                        return true;
+                    }
+                    Err(_) => {}
                 }
             }
 
-            // Host mismatch on a failing node — this peer should replace it.
+            // Host mismatch on a failing node, or a failing node whose name
+            // has other addresses — this peer should replace it.
             peer.replace_node = Some(node);
         }
 
@@ -1517,7 +1575,10 @@ impl Cluster {
                 }
 
                 if peer.alternate_missing {
-                    error!("{}", Error::alternate_address_missing(&peer.node_name, None));
+                    error!(
+                        "{}",
+                        Error::alternate_address_missing(&peer.node_name, None)
+                    );
                     if let Some(ref source) = peer.from_node_name {
                         harvest.invalidate_pending_generation(source);
                     }
@@ -1566,7 +1627,9 @@ impl Cluster {
                         replace_node: None,
                         node,
                     };
-                    if let Some(other) = self.collision_after_validation(&v, &[], &list, &peer_names) {
+                    if let Some(other) =
+                        self.collision_after_validation(&v, &[], &list, &peer_names)
+                    {
                         warn!(
                             "{}",
                             Error::translation_collision(
@@ -1986,7 +2049,10 @@ impl Cluster {
     /// Called before the cluster is built, so that the file's seed provider
     /// and translator shape the first connection.
     #[cfg(feature = "dynamic-config")]
-    pub(crate) fn merge_static_config(policy: &mut ClientPolicy, doc: &ConfigDocument) -> Result<()> {
+    pub(crate) fn merge_static_config(
+        policy: &mut ClientPolicy,
+        doc: &ConfigDocument,
+    ) -> Result<()> {
         let Some(static_config) = doc.static_config.as_ref() else {
             return Ok(());
         };
