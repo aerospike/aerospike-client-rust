@@ -324,8 +324,7 @@ impl Cluster {
             let cluster_name = policy.cluster_name.as_deref().filter(|n| !n.is_empty());
             for seed in seeds.iter_mut() {
                 if seed.tls_name.is_none() {
-                    seed.tls_name =
-                        Some(cluster_name.map_or_else(|| seed.name.clone(), str::to_string));
+                    seed.tls_name = Some(cluster_name.map_or_else(|| seed.name.clone(), str::to_string));
                 }
             }
         }
@@ -426,9 +425,7 @@ impl Cluster {
                             log_error_chain!(err, "Error tending cluster");
                         }
                         Err(_) => {
-                            error!(
-                                "Cluster tend cycle panicked; the cluster view was not refreshed"
-                            );
+                            error!("Cluster tend cycle panicked; the cluster view was not refreshed");
                         }
                     }
                     // Sleep until the next cycle, but wake immediately when
@@ -605,8 +602,7 @@ impl Cluster {
                 // constructor's tends is the starting view and is not
                 // notified.
                 if self.initialized.load(Ordering::Relaxed)
-                    && (peers.address_changed()
-                        || Self::sorted_names(&self.nodes()) != names_before)
+                    && (peers.address_changed() || Self::sorted_names(&self.nodes()) != names_before)
                 {
                     self.cluster_view_changed();
                 }
@@ -687,9 +683,8 @@ impl Cluster {
                 if *partitions {
                     match PartitionTokenizer::from_node(node, admin_policy).await {
                         Ok(tokens) => {
-                            let shared = shared_map.expect(
-                                "shared map initialized when any node refreshes partitions",
-                            );
+                            let shared = shared_map
+                                .expect("shared map initialized when any node refreshes partitions");
                             // Merge into a scratch copy so a parse error part
                             // way through cannot leave the shared map half
                             // updated with this node's entries.
@@ -793,11 +788,7 @@ impl Cluster {
     ///
     /// [`ErrorKind::TranslationMiss`] on a strict miss.
     pub fn translate_endpoint(&self, advertised: &Endpoint) -> Result<Host> {
-        crate::discovery::translate(
-            &*self.address_translator,
-            self.translation_on_miss,
-            advertised,
-        )
+        crate::discovery::translate(&*self.address_translator, self.translation_on_miss, advertised)
     }
 
     /// The current seed list.
@@ -879,10 +870,7 @@ impl Cluster {
             // whose translated address another peer or a live node already
             // answers at, never becomes a node.
             if peer.alternate_missing {
-                error!(
-                    "{}",
-                    Error::alternate_address_missing(&peer.node_name, None)
-                );
+                error!("{}", Error::alternate_address_missing(&peer.node_name, None));
                 for source in &sources {
                     peers.invalidate_pending_generation(source);
                 }
@@ -950,8 +938,7 @@ impl Cluster {
         // name, are collisions too. Neither becomes a node.
         let known: Vec<Arc<Node>> = self.nodes().into_iter().chain(peers.new_nodes()).collect();
         for v in &validated {
-            if let Some(other) = self.collision_after_validation(v, &validated, &known, &peer_names)
-            {
+            if let Some(other) = self.collision_after_validation(v, &validated, &known, &peer_names) {
                 warn!(
                     "{}",
                     Error::translation_collision(
@@ -1575,10 +1562,7 @@ impl Cluster {
                 }
 
                 if peer.alternate_missing {
-                    error!(
-                        "{}",
-                        Error::alternate_address_missing(&peer.node_name, None)
-                    );
+                    error!("{}", Error::alternate_address_missing(&peer.node_name, None));
                     if let Some(ref source) = peer.from_node_name {
                         harvest.invalidate_pending_generation(source);
                     }
@@ -1627,9 +1611,7 @@ impl Cluster {
                         replace_node: None,
                         node,
                     };
-                    if let Some(other) =
-                        self.collision_after_validation(&v, &[], &list, &peer_names)
-                    {
+                    if let Some(other) = self.collision_after_validation(&v, &[], &list, &peer_names) {
                         warn!(
                             "{}",
                             Error::translation_collision(
@@ -2049,10 +2031,7 @@ impl Cluster {
     /// Called before the cluster is built, so that the file's seed provider
     /// and translator shape the first connection.
     #[cfg(feature = "dynamic-config")]
-    pub(crate) fn merge_static_config(
-        policy: &mut ClientPolicy,
-        doc: &ConfigDocument,
-    ) -> Result<()> {
+    pub(crate) fn merge_static_config(policy: &mut ClientPolicy, doc: &ConfigDocument) -> Result<()> {
         let Some(static_config) = doc.static_config.as_ref() else {
             return Ok(());
         };
