@@ -18,7 +18,7 @@ mod-wamr {
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `running-mode` | `aot` | Which tier runs a module: `aot` (compiled by `wamrc` at registration), `interp` (WAMR's bytecode interpreter), `jit` (LLVM ORC JIT, compiled on load; only in a build that linked LLVM), `fast-jit` (WAMR's own JIT; its code generator exists for x86-64 only, so it cannot be built on an arm64 host). An unavailable mode is reported at startup and falls back to the interpreter. |
+| `running-mode` | `aot` | Which tier runs a module: `aot` (compiled by `wamrc` at registration), `interp` (WAMR's bytecode interpreter), `jit` (LLVM ORC JIT, compiled on load; only in a build that linked LLVM), `fast-jit` (WAMR's own JIT; its code generator exists for x86-64 only, so it cannot be built on an arm64 host, and it has no SIMD, so a build with it refuses a `simd128` module at registration). An unavailable mode is reported at startup and falls back to the interpreter. |
 | `aot-compiler` | empty | The path to `wamrc`. **Empty means no ahead-of-time compilation**: every module runs interpreted. `wamrc` must match the server's WAMR version and architecture; a mismatch is detected when the compiled module is loaded and that module falls back to the interpreter. |
 | `aot-cache-dir` | `<udf dir>-aot` | Where compiled modules are kept, under a tag of the module's content hash. It must not be the UDF directory itself, which the server empties at startup (SMD is the source of truth for registered modules) and which would make every start recompile everything. |
 | `aot-compile-threads` | `2` | How many `wamrc` processes may run at once, 1 to 8. One keeps a burst of registrations from loading the node; more shortens how long a SIMD module's first call waits for its own build, since the interpreter cannot run SIMD and such a call waits for the compiled form. |
@@ -33,11 +33,15 @@ Enterprise feature key file (`feature-key-file`, or `FEATURE_KEY_FILE` in the co
 `asdb-xdr` and the others. Without it the server starts, runs UDFs, and refuses every event binding; see
 the event system chapter. For now the check is commented out, since no issued key carries it yet.
 
-Which tiers exist is decided when the server is built (`make WAMR_TIER=aot|jit|fastjit`); `aot` keeps
-LLVM out of the server binary, which is why it is the default: only `wamrc`, a separate executable, needs
-LLVM. Measured on the vector top-k, the LLVM JIT equals AoT, and the interpreter is Lua speed. The
-runtime is WAMR at upstream `main` (the 2.4 line); the AoT numbers were unchanged across the 2.4.3
-snapshot, the 2.4.5 release and main.
+Which tier a server has is decided when it is built, and for now it is fixed per architecture rather than
+read from the configuration: WAMR's own Fast JIT on x86-64, the interpreter on aarch64 (`make
+WAMR_TIER=aot|jit|fastjit|interp` overrides it). `aot` keeps LLVM out of the server binary, since only
+`wamrc`, a separate executable, needs LLVM; the Fast JIT needs no LLVM either, but has no SIMD, so a
+`simd128` module is refused on an x86-64 node. The Fast JIT compiles every function into one code cache,
+256 MB on this server (WAMR's own default is 10 MB, which a handful of Java modules fill, after which every
+compile fails until a restart). Measured on the vector top-k, the LLVM JIT equals AoT, and the interpreter
+is Lua speed. The runtime is WAMR at upstream `main` (the 2.4 line); the AoT numbers were unchanged across
+the 2.4.3 snapshot, the 2.4.5 release and main.
 
 ## What a running module costs
 

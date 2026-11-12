@@ -34,7 +34,8 @@ Freestanding C++20: no standard library, no exceptions, no RTTI, no entry point,
 The header brings its own `Result`, `Optional`, `StrView`, `Text<N>` and type traits, so a module needs
 no `operator new`; the C header provides the `memcpy` and `memset` the compiler emits calls to.
 `-fvisibility=hidden` keeps everything but the attributed exports out of the export table. Add
-`-msimd128` for a kernel that should vectorise. The one extension used is the statement expression behind
+`make SIMD=1` (that is, `-msimd128`) for a kernel that should vectorise; off by default, since a server whose
+WASM tier has no SIMD (Fast JIT, the x86-64 default) refuses a module built with it. The one extension used is the statement expression behind
 `UDF_TRY`, which clang and gcc provide. Register the `.wasm` with `UdfLang::Wasm`.
 
 ## The macros

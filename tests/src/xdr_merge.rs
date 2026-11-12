@@ -45,6 +45,8 @@ const LWWSET: &[u8] = include_bytes!("../fixtures/wasm/lwwset.wasm");
 const LWWSET_JAVA: &[u8] = include_bytes!("../fixtures/wasm/lwwset_java.wasm");
 const LWWSET_GO: &[u8] = include_bytes!("../fixtures/wasm/lwwset_go.wasm");
 const LWWSET_CPP: &[u8] = include_bytes!("../fixtures/wasm/lwwset_cpp.wasm");
+/// The guards: `aerospike-udf-sdk-wasm/examples/guard`, for its `before-ship` handler.
+const GUARD: &[u8] = include_bytes!("../fixtures/wasm/guard.wasm");
 
 const SHIP_LAG: Duration = Duration::from_secs(20);
 
@@ -603,5 +605,73 @@ async fn lwwset_converges_two_clusters() {
         converge_on(&c1, &c2, &key, package, &["art"], &format!("{lang}: second removal")).await;
 
         unbind_set(&c1, &c2, &key, package, set_name).await;
+    }
+}
+
+/// The record's bins, or None when it is not there.
+async fn bins(client: &Client, key: &Key) -> Option<HashMap<String, Value>> {
+    match client.get(&ReadPolicy::default(), key, Bins::All).await {
+        Ok(r) => Some(r.bins.into_iter().collect()),
+        Err(e) if e.matches(&[ResultCode::KeyNotFoundError]) => None,
+        Err(e) => panic!("{e:?}"),
+    }
+}
+
+/// `before-ship`: a handler on the shipping side strips a bin before the record leaves, so the far
+/// cluster never sees it, and lets a record without that bin ship as it is. The stored record keeps the
+/// bin.
+#[aerospike_macro::test]
+async fn before_ship_strips_a_bin() {
+    let Some((dc1, dc2)) = dcs() else {
+        eprintln!("skipped before_ship_strips_a_bin: set AEROSPIKE_XDR_DC1 and AEROSPIKE_XDR_DC2");
+        return;
+    };
+
+    let c1 = Client::new(&ClientPolicy::default(), &dc1).await.expect("dc1");
+    let c2 = Client::new(&ClientPolicy::default(), &dc2).await.expect("dc2");
+    let namespace = "test";
+    let set_name = &format!("ship_{}", crate::common::rand_str(6));
+    let package = &format!("guard_{}", crate::common::rand_str(6));
+    let write = WritePolicy::default();
+    let with_secret = as_key!(namespace, set_name, "with");
+    let without = as_key!(namespace, set_name, "without");
+
+    register_module(&c1, GUARD, package).await;
+    assert_eq!(
+        info(&c1, &format!("event-set:event=before-ship;namespace={namespace};set={set_name};module={package};function=strip_secret")).await,
+        "ok"
+    );
+
+    c1.put(&write, &with_secret, &[as_bin!("secret", "s3cret"), as_bin!("n", 1)]).await.unwrap();
+    c1.put(&write, &without, &[as_bin!("n", 2)]).await.unwrap();
+
+    let deadline = std::time::Instant::now() + SHIP_LAG;
+    let (shipped_with, shipped_without) = loop {
+        let a = bins(&c2, &with_secret).await;
+        let b = bins(&c2, &without).await;
+
+        if let (Some(a), Some(b)) = (a.clone(), b.clone()) {
+            break (a, b);
+        }
+
+        assert!(std::time::Instant::now() < deadline, "the records should reach dc2: {a:?} {b:?}");
+        aerospike_rt::sleep(Duration::from_millis(250)).await;
+    };
+
+    assert_eq!(shipped_with.get("n"), Some(&Value::from(1)));
+    assert!(!shipped_with.contains_key("secret"), "the handler stripped the bin: {shipped_with:?}");
+    assert_eq!(shipped_without.get("n"), Some(&Value::from(2)));
+    assert_eq!(bins(&c1, &with_secret).await.unwrap().get("secret"), Some(&Value::from("s3cret")), "the stored record is untouched");
+
+    assert!(counter(&c1, set_name, "record").await >= 1, "the rewritten shipment counts as a record");
+    assert!(counter(&c1, set_name, "policy").await >= 1, "the plain shipment counts as policy");
+    assert_eq!(counter(&c1, set_name, "fallback").await, 0);
+
+    assert_eq!(info(&c1, &format!("event-remove:event=before-ship;namespace={namespace};set={set_name}")).await, "ok");
+
+    for c in [&c1, &c2] {
+        for key in [&with_secret, &without] {
+            let _ = c.delete(&write, key).await;
+        }
     }
 }

@@ -43,7 +43,9 @@ failure the client sees.
 
 Register the `.wasm` with `UdfLang::Wasm`. `wasm-unknown.json` here inherits TinyGo's `wasm-unknown` target,
 which imports nothing but the server's natives and exports `_initialize` (the server runs it once per
-instance before any UDF), and adds `+simd128` so a kernel written as independent lanes vectorises. TinyGo
+instance before any UDF). `wasm-unknown-simd.json` is the same plus `+simd128`, so a kernel written as
+independent lanes vectorises; `make SIMD=1` builds with it. Off by default, since a server whose WASM tier has
+no SIMD (Fast JIT, the x86-64 default) refuses a module built with it, where the scalar build runs. TinyGo
 0.34 or later, for range-over-func; `go` itself only runs the generator.
 
 ## The directives

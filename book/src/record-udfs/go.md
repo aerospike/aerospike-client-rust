@@ -48,8 +48,9 @@ go generate . && tinygo build -o increment.wasm -target=<sdk dir>/wasm-unknown.j
     -opt=2 -no-debug -panic=trap -scheduler=none -gc=leaking .
 ```
 
-`wasm-unknown.json` in the SDK directory inherits TinyGo's `wasm-unknown` target and adds `+simd128`, so a
-kernel written as independent lanes vectorises. Register the `.wasm` with `UdfLang::Wasm`. TinyGo 0.34 or
+`wasm-unknown.json` in the SDK directory inherits TinyGo's `wasm-unknown` target; `wasm-unknown-simd.json`
+adds `+simd128`, so a kernel written as independent lanes vectorises, and `make SIMD=1` selects it (off by
+default: a Fast JIT server, the x86-64 default, refuses a SIMD module). Register the `.wasm` with `UdfLang::Wasm`. TinyGo 0.34 or
 later is needed, for range-over-func.
 
 ## Parameters and results

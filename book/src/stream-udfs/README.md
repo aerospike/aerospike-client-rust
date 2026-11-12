@@ -61,3 +61,8 @@ A stream UDF is where the server's SIMD support pays: the three vector kernels, 
 with a fixed fold order, measure level with a native plugin in C and within 1.3x in Rust and Go. A module
 that uses `simd128` cannot run in the interpreter, so its first call waits for its ahead-of-time build
 rather than running slow; `aot-compile-threads` is what bounds that wait.
+
+SIMD is opt-in in every SDK build: `make SIMD=1` for C, C++ and Go, `RUSTFLAGS="-C target-feature=+simd128"`
+for Rust. Off, the same source runs scalar on every server; on, the module is refused at registration by a
+server whose tier has no SIMD at all, which is Fast JIT, the x86-64 default. Build with it for aarch64 and
+aot nodes. The modules checked in under `tests/fixtures/wasm` are the scalar builds.

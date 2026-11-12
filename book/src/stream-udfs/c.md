@@ -48,7 +48,7 @@ partial. One instance sees every record a query thread reads, so statics are the
 
 ## The vector top-k
 
-`examples/vector/vector.c` is the full-size example, with `-msimd128` in its Makefile. Its stream half:
+`examples/vector/vector.c` is the full-size example; `make SIMD=1` builds it with `-msimd128`. Its stream half:
 
 ```c
 {{#include ../../../aerospike-udf-sdk-wasm-c/examples/vector/vector.c:335:384}}

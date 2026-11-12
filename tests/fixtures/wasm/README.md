@@ -48,7 +48,9 @@ afterwards.
 `aerospike-udf-sdk-wasm-go/examples/vector`. `tests/src/udf_vector.rs` asserts they agree with each other,
 with Lua and with a local computation, and times them. Rebuild the Rust one as above (crate
 `aerospike-udf-vector-wasm`), the C and C++ ones with `make` in their SDK directories (clang + wasm-ld), the
-Go one with `make` in its SDK directory (TinyGo).
+Go one with `make` in its SDK directory (TinyGo). The fixtures here are the scalar builds, so they register
+on every server tier; `make SIMD=1` (C, C++, Go) and `RUSTFLAGS="-C target-feature=+simd128"` (Rust) build
+the vectorised variants, which a Fast JIT server refuses.
 
 ## The Java modules
 

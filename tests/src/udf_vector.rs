@@ -85,7 +85,7 @@ fn pack(v: &[f32]) -> Vec<u8> {
 
 /// A sum of `f(i)` over the elements the way the three WASM modules sum: four `f64` accumulators, lane `k`
 /// holding the elements whose index is `k` mod 4, folded in one fixed order. The modules write their loops
-/// that way so the compiler can keep the sums in SIMD registers; this mirrors it so the expected scores are
+/// that way so a SIMD build can keep the sums in vector registers; this mirrors it so the expected scores are
 /// bit-identical to theirs.
 fn lane_sum(n: usize, f: impl Fn(usize) -> f64) -> f64 {
     let mut lanes = [0.0f64; 4];

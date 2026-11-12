@@ -31,7 +31,9 @@ clang --target=wasm32 -O3 -nostdlib -ffreestanding -Wl,--no-entry -Wl,--export-d
 
 `clang` with `wasm-ld` (lld) is all it takes; Apple's clang targets wasm32 but ships no `wasm-ld`, so on a
 Mac install `llvm` or `lld` from Homebrew, or build in a Linux container as this repository's tests do. Add
-`-msimd128` for a kernel that should vectorise; the server compiles it to NEON.
+`make SIMD=1` (that is, `-msimd128`) for a kernel that should vectorise; the server compiles it to NEON or
+SSE ahead of time. Off by default: a module built with it is refused by a server whose WASM tier has no SIMD
+(Fast JIT, the x86-64 default), where the same source without it runs scalar.
 
 ## What a UDF looks like
 

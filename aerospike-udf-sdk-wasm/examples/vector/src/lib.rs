@@ -187,7 +187,8 @@ fn sqrt(x: f64) -> f64 {
 ///
 /// **Four accumulators, lane `k` holding the elements whose index is `k` mod 4.** A single `f64` sum cannot
 /// be vectorised - floating-point addition does not reassociate - so the loop is written as four independent
-/// sums the compiler can keep in SIMD registers (`simd128`, enabled for every module's build), folded at the
+/// sums the compiler can keep in SIMD registers when built with `simd128` (`RUSTFLAGS="-C
+/// target-feature=+simd128"`; off by default, scalar then), folded at the
 /// end in one fixed order. The same order is in the C and Go modules and in the test's local computation,
 /// which is what keeps the four bit-identical.
 fn measure(metric: Metric, v: &[f32], q: &[f32], qnorm: f64) -> f64 {

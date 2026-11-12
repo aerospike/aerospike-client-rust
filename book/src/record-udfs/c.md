@@ -32,7 +32,8 @@ clang --target=wasm32 -O3 -nostdlib -ffreestanding -Wl,--no-entry -Wl,--export-d
 
 `clang` with `wasm-ld` (lld) is all it takes. Apple's clang targets wasm32 but ships no `wasm-ld`; on a
 Mac, install `llvm` or `lld` from Homebrew, or build in a Linux container as this repository's tests do.
-Add `-msimd128` for a kernel that should vectorise. The header defines weak `memcpy` and `memset`, which
+`make SIMD=1` adds `-msimd128` for a kernel that should vectorise (off by default: a Fast JIT server, the
+x86-64 default, refuses a SIMD module). The header defines weak `memcpy` and `memset`, which
 clang emits calls to even with `-nostdlib`; a module that brings its own wins.
 
 A UDF is `int32_t name(int32_t args, int32_t argc)` returning 0, declared with `AS_UDF_EXPORT(name)` so it

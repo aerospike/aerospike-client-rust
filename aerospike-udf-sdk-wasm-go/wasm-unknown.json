@@ -1,4 +1,4 @@
 {
   "inherits": ["wasm-unknown"],
-  "features": "+nontrapping-fptoint,+sign-ext,-bulk-memory,-multivalue,-reference-types,+simd128"
+  "features": "+nontrapping-fptoint,+sign-ext,-bulk-memory,-multivalue,-reference-types"
 }

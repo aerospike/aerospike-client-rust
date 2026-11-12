@@ -45,7 +45,7 @@ it yields the value or returns the error from the function, which the generated 
 failure the client sees. (`UDF_TRY` is a statement expression, a clang and gcc extension.)
 
 `clang` with `wasm-ld` (lld) is all it takes; Apple's clang ships no `wasm-ld`, so on a Mac install `llvm`
-or `lld` from Homebrew, or build in a Linux container as this repository's tests do. Add `-msimd128` for a
+or `lld` from Homebrew, or build in a Linux container as this repository's tests do. `make SIMD=1` adds `-msimd128` for a
 kernel that should vectorise. `-fvisibility=hidden` keeps everything but the attributed exports out of
 the module's export table.
 

@@ -980,6 +980,69 @@ async fn before_expire_keeps_marked_records() {
     remove_module(&client, package).await;
 }
 
+/// `before-evict`: a handler protects the records it wants from the eviction pass and lets the rest go.
+/// The pass is forced with `eviction-reset` and a TTL, which makes every record due within that many
+/// seconds a candidate (so, on a shared node, a sibling's short-lived records too), and run by the
+/// supervisor, lowered to a second for the duration and restored, as is the eviction cut-off.
+#[aerospike_macro::test]
+async fn before_evict_protects_marked_records() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("guard_{}", common::rand_str(6));
+
+    if !supported(&client).await {
+        skipped("before_evict_protects_marked_records", "no event commands on this server");
+        return;
+    }
+
+    if let Err(reason) = register(&client, GUARD, package).await {
+        skipped("before_evict_protects_marked_records", &reason);
+        return;
+    }
+
+    assert_eq!(info(&client, &set_command("before-evict", namespace, set_name, package, "protect_marked", "")).await, "ok");
+
+    let mut write = WritePolicy::default();
+    write.expiration = Expiration::Seconds(300);
+    let kept = as_key!(namespace, set_name, "kept");
+    let gone = as_key!(namespace, set_name, "gone");
+
+    client.put(&write, &kept, &[as_bin!("keep", true), as_bin!("n", 1)]).await.unwrap();
+    client.put(&write, &gone, &[as_bin!("keep", false), as_bin!("n", 2)]).await.unwrap();
+
+    let reset = info(&client, &format!("eviction-reset:namespace={namespace};ttl=3600")).await;
+    assert_eq!(reset, "ok", "{reset}");
+    let period = info(&client, &format!("set-config:context=namespace;id={namespace};nsup-period=1")).await;
+    assert_eq!(period, "ok", "{period}");
+
+    let mut visited = 0;
+
+    for _ in 0..60 {
+        aerospike_rt::sleep(std::time::Duration::from_millis(500)).await;
+        visited = counter(&row(&client, "before-evict", set_name, "protect_marked").await, "fired");
+
+        if visited >= 2 {
+            break;
+        }
+    }
+
+    let _ = info(&client, &format!("set-config:context=namespace;id={namespace};nsup-period=120")).await;
+    let _ = info(&client, &format!("eviction-reset:namespace={namespace}")).await;
+
+    assert!(visited >= 2, "the eviction pass offered both records to the handler: {visited}");
+    assert!(!exists(&client, &gone).await, "the unmarked record was evicted");
+    assert!(exists(&client, &kept).await, "the marked record was protected");
+
+    let r = row(&client, "before-evict", set_name, "protect_marked").await;
+    assert!(counter(&r, "policy") >= 1, "an evict answer counts as policy: {r}");
+    assert!(counter(&r, "rejected") >= 1, "a protect counts as a refused eviction: {r}");
+
+    assert_eq!(info(&client, &remove_command("before-evict", namespace, set_name)).await, "ok");
+    client.delete(&WritePolicy::default(), &kept).await.unwrap();
+    remove_module(&client, package).await;
+}
+
 /// `after-read`: a handler answers a read with a record of its own; the stored record is untouched.
 #[aerospike_macro::test]
 async fn after_read_rewrites_the_response() {

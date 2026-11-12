@@ -62,7 +62,8 @@ statics.
 `examples/vector/src/lib.rs` is the full-size example: a stream that reads a packed `f32` vector from each
 record, scores it against a query vector from the arguments with one of three SIMD kernels, keeps the
 best `k` in a bounded array with a digest tie-break, and returns `{hits, skipped_dim, skipped_none}` as its
-partial. It is built with `+simd128` (see its `.cargo/config.toml`) and `libm` for the square root.
+partial. Built with `RUSTFLAGS="-C target-feature=+simd128"` its kernels vectorise (scalar otherwise, which
+every server tier runs); `libm` gives the square root.
 `tests/src/udf_vector.rs` holds it exact against the Go and C modules, Lua, and a local computation.
 
 ## API reference
