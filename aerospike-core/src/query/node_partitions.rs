@@ -38,10 +38,18 @@ pub struct NodePartitions {
     pub(crate) record_max: u64,
     pub(crate) disallowed_count: u64,
     pub(crate) parts_unavailable: u64,
+    /// The id of `parts[0]`: a partition's id is its offset plus this, fixed
+    /// at construction, so the request builder reads it without a lock.
+    partition_begin: usize,
 }
 
 impl NodePartitions {
-    pub fn new(node: Arc<Node>, capacity: usize, parts: Arc<Vec<Mutex<PartitionStatus>>>) -> Self {
+    pub fn new(
+        node: Arc<Node>,
+        capacity: usize,
+        parts: Arc<Vec<Mutex<PartitionStatus>>>,
+        partition_begin: usize,
+    ) -> Self {
         NodePartitions {
             node,
             parts,
@@ -51,14 +59,15 @@ impl NodePartitions {
             record_max: 0,
             disallowed_count: 0,
             parts_unavailable: 0,
+            partition_begin,
         }
     }
 
     /// Files partition `index` under "full" or "partial" depending on whether a
-    /// resume digest was carried over from an earlier scan/query.
-    pub fn add_partition(&mut self, index: u16) {
-        let has_digest = self.parts[index as usize].lock().digest.is_some();
-
+    /// resume digest was carried over from an earlier scan/query. The caller
+    /// has the partition's status locked already and passes the answer, rather
+    /// than this taking the lock a second time.
+    pub fn add_partition(&mut self, index: u16, has_digest: bool) {
         if has_digest {
             self.parts_partial.push(index);
         } else {
@@ -69,5 +78,11 @@ impl NodePartitions {
     /// Locks and reads one of this node's partition statuses by index.
     pub(crate) fn status(&self, index: u16) -> MutexGuard<'_, PartitionStatus> {
         self.parts[index as usize].lock()
+    }
+
+    /// The partition id at `index`, which never changes after
+    /// `init_partitions`, so no lock.
+    pub(crate) const fn partition_id(&self, index: u16) -> u16 {
+        (self.partition_begin + index as usize) as u16
     }
 }

@@ -1759,7 +1759,7 @@ impl Buffer {
             if parts_full_size > 0 {
                 self.write_field_header(parts_full_size, FieldType::PIDArray);
                 for &index in &np.parts_full {
-                    let id = np.status(index).id;
+                    let id = np.partition_id(index);
                     self.write_u16_little_endian(id);
                 }
             }

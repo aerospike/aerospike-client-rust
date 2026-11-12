@@ -3969,6 +3969,7 @@ mod top_k_execution_tests {
             Arc::new(crate::cluster::node::test_node_with_version(version)),
             0,
             Arc::new(Vec::new()),
+            0,
         )
     }
 

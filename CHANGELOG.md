@@ -178,6 +178,15 @@ Upgrading from 2.x: see the [migration guide](https://github.com/aerospike/aeros
     transaction forward, so an abort could discard writes it is committing. Retry the commit.
 
 * **Improvements**
+  * Assigning a scan or query's partitions to nodes costs a fraction of what it did. The loop took
+    each partition's status lock four times and cloned and dropped the node twice, four atomics on a
+    counter every in-flight query shares; it now takes the lock once, looks the namespace up once per
+    round and selects each node borrowed from that table, so the per-partition cost is an index and a
+    push. A 10-record secondary-index query over all 4096 partitions went from 0.22 ms to 0.11 ms of
+    client CPU at one in flight and from 5.1 ms to 0.13 ms at sixteen. Two `Node` objects that share
+    a name during a map transition now keep separate `NodePartitions`, as the Java client does. The
+    point-operation selectors (`Sequence`, `Master`, `MasterProles`, `PreferRack`, `Random`) lose a
+    clone each, and `PreferRack` no longer copies the rack list per call.
   * `AuthMode` no longer prints the password in `{:?}`; `task::Status` compares with `==`; every
     expression and operation builder is `#[must_use]`, so a built-and-dropped expression warns.
   * The workspace builds clean under `clippy::pedantic` + `clippy::nursery` (core) and default clippy

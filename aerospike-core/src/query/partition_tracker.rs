@@ -15,6 +15,7 @@
 
 use crate::cluster::node;
 use crate::cluster::partition::Partition;
+use crate::cluster::Partitions;
 use crate::cluster::Cluster;
 use crate::errors::{Error, Result};
 use crate::policy::Replica;
@@ -383,48 +384,74 @@ impl PartitionTracker {
     ) -> Result<()> {
         let mut list = Vec::<NodePartitions>::with_capacity(self.node_capacity);
         let partitions = Arc::clone(&self.shared.partitions);
+        let partition_begin = self.shared.partition_begin;
 
         let retry =
             self.shared.partition_filter.retry.load(Ordering::Relaxed) && self.iteration == 1;
 
+        // One snapshot of the partition map for the whole round, and the
+        // namespace looked up once, on the first partition that needs a node:
+        // a round with nothing to (re)query still answers "No nodes were
+        // assigned" rather than a namespace error. Every partition then costs
+        // one lock on its own status and a borrowed lookup in the table; the
+        // node is cloned only when it gets a `NodePartitions`. Before this, a
+        // 4096-partition round took the status lock four times per partition
+        // and cloned and dropped the node twice, four atomics on a counter
+        // every in-flight query shares, which was most of a small query's CPU.
+        let pmap = cluster.partition_map.load();
+        let mut table: Option<&Partitions> = None;
+        let mut partition = Partition::new(namespace, 0);
+        partition.replica = self.replica;
+
         for (offset, part) in partitions.iter().enumerate() {
-            let (part_retry, part_id) = {
-                let part = part.lock();
-                (part.retry, part.id)
+            let mut status = part.lock();
+            if !(retry || status.retry) {
+                continue;
+            }
+
+            let table = if let Some(table) = table {
+                table
+            } else {
+                let found = partition.table(&pmap)?;
+                table = Some(found);
+                found
             };
-            if retry || part_retry {
-                let mut partition = Partition::new(namespace, part_id as usize);
-                partition.replica = self.replica;
-                let node = cluster.get_node(&mut partition)?;
 
-                // Use node name to check for single node equality because
-                // partition map may be in transitional state between
-                // the old and new node with the same name.
-                if let Some(node_filter) = self.node_filter.as_ref() {
-                    if node_filter.name() != node.name() {
-                        continue;
-                    }
+            partition.partition_id = status.id as usize;
+            partition.sequence = 0;
+            partition.prev_node = None;
+            let node = partition.get_node_in(cluster, table)?;
+
+            // Use node name to check for single node equality because
+            // partition map may be in transitional state between
+            // the old and new node with the same name.
+            if let Some(node_filter) = self.node_filter.as_ref() {
+                if node_filter.name() != node.as_arc().name() {
+                    continue;
                 }
+            }
 
-                // The partition is being (re)queried: open a new delivery
-                // round so stale entries stop moving its cursor.
-                part.lock().begin_delivery_round();
+            // The partition is being (re)queried: open a new delivery
+            // round so stale entries stop moving its cursor.
+            status.begin_delivery_round();
+            let has_digest = status.digest.is_some();
+            drop(status);
 
-                let index = offset as u16;
-                if let Some(np) = Self::find_node(&mut list, &node) {
-                    np.add_partition(index);
-                } else {
-                    // If the partition map is in a transitional state, multiple
-                    // nodePartitions instances (each with different partitions)
-                    // may be created for a single node.
-                    let mut np = NodePartitions::new(
-                        node.clone(),
-                        self.partitions_capacity,
-                        Arc::clone(&partitions),
-                    );
-                    np.add_partition(index);
-                    list.push(np);
-                }
+            let index = offset as u16;
+            if let Some(np) = Self::find_node(&mut list, node.as_arc()) {
+                np.add_partition(index, has_digest);
+            } else {
+                // If the partition map is in a transitional state, multiple
+                // nodePartitions instances (each with different partitions)
+                // may be created for a single node.
+                let mut np = NodePartitions::new(
+                    Arc::clone(node.as_arc()),
+                    self.partitions_capacity,
+                    Arc::clone(&partitions),
+                    partition_begin,
+                );
+                np.add_partition(index, has_digest);
+                list.push(np);
             }
         }
 
@@ -474,11 +501,16 @@ impl PartitionTracker {
         Ok(())
     }
 
+    /// By identity, not name (which is what `Node`'s `PartialEq` compares):
+    /// during a map transition two `Node` objects can carry the same name,
+    /// and each must keep its own `NodePartitions`, as the Java client's
+    /// `findNode` does. Identity is also a pointer compare where a name is a
+    /// string compare, once per partition.
     fn find_node<'a>(
         list: &'a mut [NodePartitions],
         node: &Arc<Node>,
     ) -> Option<&'a mut NodePartitions> {
-        list.iter_mut().find(|np| np.node == *node)
+        list.iter_mut().find(|np| Arc::ptr_eq(&np.node, node))
     }
 
     pub(crate) fn is_complete(
@@ -618,5 +650,39 @@ impl PartitionTracker {
         }
 
         Arc::new(parts_all)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_node_matches_by_identity_not_name() {
+        let a = Arc::new(Node::test_node("same-name"));
+        let b = Arc::new(Node::test_node("same-name"));
+        let parts = PartitionTracker::init_partitions(0, 4, None);
+        let mut list = vec![NodePartitions::new(Arc::clone(&a), 4, Arc::clone(&parts), 0)];
+
+        assert!(PartitionTracker::find_node(&mut list, &a).is_some());
+        assert!(
+            PartitionTracker::find_node(&mut list, &b).is_none(),
+            "another Node object with the same name is another node during a map transition"
+        );
+    }
+
+    #[test]
+    fn partition_id_is_the_offset_from_the_range_start() {
+        let node = Arc::new(Node::test_node("n"));
+        let parts = PartitionTracker::init_partitions(100, 8, Some([7; 20]));
+        let mut np = NodePartitions::new(node, 8, Arc::clone(&parts), 100);
+
+        np.add_partition(0, parts[0].lock().digest.is_some());
+        np.add_partition(3, parts[3].lock().digest.is_some());
+
+        assert_eq!(np.partition_id(0), 100);
+        assert_eq!(np.partition_id(3), 103);
+        assert_eq!(np.parts_partial, vec![0], "the digest carried over on the first partition");
+        assert_eq!(np.parts_full, vec![3]);
     }
 }

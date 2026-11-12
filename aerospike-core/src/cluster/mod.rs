@@ -31,7 +31,6 @@ use std::sync::Arc;
 use std::vec::Vec;
 
 pub use self::node::Node;
-pub use self::partition::Partition;
 
 use self::node_validator::NodeValidator;
 use self::partition_tokenizer::PartitionTokenizer;
@@ -2598,19 +2597,18 @@ impl Cluster {
         }));
     }
 
-    pub fn get_node(&self, partition: &mut Partition<'_>) -> Result<Arc<Node>> {
-        partition.get_node(self)
-    }
-
     pub fn get_random_node(&self) -> Result<Arc<Node>> {
-        let node_array = self.nodes();
+        // Borrowed, not `self.nodes()`: that clones the whole vector, and a
+        // `Replica::Random` scan asks once per partition.
+        let snapshot = self.nodes.load();
+        let node_array = &snapshot.nodes;
         let length = node_array.len() as isize;
 
         for _ in 0..length {
             let index = ((self.node_index.fetch_add(1, Ordering::Relaxed) + 1) % length).abs();
             if let Some(node) = node_array.get(index as usize) {
                 if node.is_active() {
-                    return Ok(node.clone());
+                    return Ok(Arc::clone(node));
                 }
             }
         }

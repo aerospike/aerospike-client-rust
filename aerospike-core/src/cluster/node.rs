@@ -1240,9 +1240,14 @@ impl fmt::Display for Node {
 /// wire-encode paths (e.g. `commands::buffer::tests`) without a live server.
 #[cfg(test)]
 pub fn test_node_with_version(version: crate::Version) -> Node {
+    test_node_named("test-node", version)
+}
+
+#[cfg(test)]
+fn test_node_named(name: &str, version: crate::Version) -> Node {
     let policy = ClientPolicy::default();
     let nv = Arc::new(NodeValidator {
-        name: "test-node".to_string(),
+        name: name.to_string(),
         aliases: vec![Host::new("127.0.0.1", 3000)],
         address: "127.0.0.1:3000".to_string(),
         client_policy: policy.clone(),
@@ -1261,6 +1266,15 @@ pub fn test_node_with_version(version: crate::Version) -> Node {
 }
 
 #[cfg(test)]
+impl Node {
+    /// A node with a name and no connection, for unit tests of code that
+    /// compares or files nodes without talking to one.
+    pub(crate) fn test_node(name: &str) -> Node {
+        test_node_named(name, crate::Version::default())
+    }
+}
+
+#[cfg(test)]
 mod node_tests {
     use std::sync::Arc;
 
@@ -1269,10 +1283,10 @@ mod node_tests {
     use crate::policy::ClientPolicy;
     use crate::Version;
 
-    use super::{test_node_with_version, Node};
+    use super::Node;
 
     fn test_node() -> Node {
-        test_node_with_version(Version::default())
+        Node::test_node("test-node")
     }
 
     /// One idle connection in the pool, using the test [`crate::net::Connection`] (no real socket).
