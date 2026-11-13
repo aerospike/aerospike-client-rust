@@ -561,10 +561,15 @@ impl BatchOperateCommand {
         // namespace in this request group; only worth building when this
         // command is being recorded.
         let namespaces: Vec<String> = if metrics_on {
-            let mut v: Vec<String> = batch_ops.iter().map(|op| op.0.key().namespace).collect();
-            v.sort();
-            v.dedup();
-            v
+            // Dedupe on borrowed names, then own only the distinct ones: a
+            // batch spans a handful of namespaces, not one per row.
+            let mut names: Vec<&str> = batch_ops
+                .iter()
+                .map(|op| op.0.key().namespace.as_str())
+                .collect();
+            names.sort_unstable();
+            names.dedup();
+            names.into_iter().map(str::to_owned).collect()
         } else {
             Vec::new()
         };
@@ -718,7 +723,7 @@ impl BatchOperateCommand {
 
                     // Update transaction state with version info
                     if let Some(txn) = txn {
-                        let key = &batch_op.0.key();
+                        let key = batch_op.0.key();
                         if batch_op.0.has_write() {
                             txn.on_write(key, batch_record.version, batch_record.result_code);
                         } else {

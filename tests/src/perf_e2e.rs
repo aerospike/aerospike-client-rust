@@ -52,14 +52,14 @@ async fn seed(client: &Client, namespace: &str, set_name: &str, n: usize) -> Vec
         as_bin!("b", "some value"),
         as_bin!("c", 42),
     ];
-    let wops: Vec<_> = bins.iter().map(operations::put).collect();
+    let wops: Arc<[_]> = bins.iter().map(operations::put).collect();
     let keys: Vec<Key> = (0..n as i64)
         .map(|i| as_key!(namespace, set_name, i))
         .collect();
     for chunk in keys.chunks(1000) {
         let mut writes: Vec<_> = chunk
             .iter()
-            .map(|k| BatchOperation::write(&bwp, k.clone(), wops.clone()))
+            .map(|k| BatchOperation::write(&bwp, k.clone(), Arc::clone(&wops)))
             .collect();
         client
             .batch(&BatchPolicy::default(), &mut writes)

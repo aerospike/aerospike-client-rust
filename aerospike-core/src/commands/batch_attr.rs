@@ -72,7 +72,7 @@ impl BatchAttr {
         self.send_key = false;
     }
 
-    pub(crate) fn adjust_read(&mut self, ops: &Vec<Operation>) {
+    pub(crate) fn adjust_read(&mut self, ops: &[Operation]) {
         for op in ops {
             if matches!(op.op, OperationType::Read) {
                 match op.bin {
@@ -150,7 +150,7 @@ impl BatchAttr {
         }
     }
 
-    pub(crate) fn adjust_write(&mut self, ops: &Vec<Operation>) {
+    pub(crate) fn adjust_write(&mut self, ops: &[Operation]) {
         let mut read_all_bins = false;
         let mut read_header = false;
         let mut has_read = false;

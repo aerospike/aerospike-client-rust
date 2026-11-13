@@ -777,7 +777,7 @@ impl Buffer {
     fn write_batch_operations(
         &mut self,
         key: &Key,
-        ops: &Vec<Operation>,
+        ops: &[Operation],
         attr: &BatchAttr,
         filter: &Option<Expression>,
         txn: Option<&Arc<Txn>>,
@@ -978,7 +978,7 @@ impl Buffer {
         let versions: Vec<Option<u64>> = if let Some(txn) = txn {
             batch_ops
                 .iter()
-                .map(|(batch_op, _)| txn.get_read_version(&batch_op.key()))
+                .map(|(batch_op, _)| txn.get_read_version(batch_op.key()))
                 .collect()
         } else {
             Vec::new()
@@ -1005,7 +1005,7 @@ impl Buffer {
                 self.data_offset += 1;
             } else {
                 // Must write full header and namespace/set/bin names.
-                let key = &batch_op.key();
+                let key = batch_op.key();
                 self.data_offset += 12; // header(4) + ttl(4) + field_count(2) + op_count(2) = 12
                 self.data_offset += key.namespace.len() + FIELD_HEADER_SIZE as usize;
                 self.data_offset += key.set_name.len() + FIELD_HEADER_SIZE as usize;
@@ -1040,7 +1040,7 @@ impl Buffer {
 
         let mut attr = BatchAttr::default();
         for (idx, (batch_op, _)) in batch_ops.iter().enumerate() {
-            let key = &batch_op.key();
+            let key = batch_op.key();
             let ver = versions.get(idx).copied().flatten();
             self.write_u32(idx as u32);
             self.write_bytes(&key.digest);

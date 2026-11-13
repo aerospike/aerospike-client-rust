@@ -56,6 +56,15 @@
     `tests/tls_matching.rs` against one Enterprise container per certificate shape
     (`tls-matching.yml`). Every tier skips itself without its environment. See
     `tests/discovery/README.md`.
+
+* **Improvements**
+  * [CLIENT-5919] A batch row shares its operation list instead of owning a copy:
+    `BatchOperation::write` and `read_ops` take `impl Into<Arc<[Operation]>>`, so one
+    `Arc<[Operation]>` serves every key that runs the same operations, and the wire encoder tells
+    the rows repeat by comparing pointers. A `Vec`, an array or a slice is still accepted, at the
+    cost of one copy per row. Applying one expression read holding a 3 KB query vector to 500 keys
+    used to copy and compare the expression 500 times per request.
+
 * **Changes**
   * `Client::new` with `fail_if_not_connected` now fails with `Peers not reachable: <host> <port>, ...`
     when the seed pass left exactly one node and at least one host it tried could not be reached, as

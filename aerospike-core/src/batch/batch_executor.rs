@@ -266,7 +266,8 @@ impl BatchExecutor {
         parent: &BatchPolicy,
         batch_op: &mut BatchOperation,
     ) -> Result<()> {
-        let key = batch_op.key();
+        // Owned: the commands below borrow the row's kind mutably.
+        let key = batch_op.key().clone();
 
         // Build the right command for the variant, run it, and
         // capture the resulting record (or per-key error).
@@ -282,8 +283,7 @@ impl BatchExecutor {
                     };
                     let mut wp = bw_policy_proxy.to_write_policy(parent);
                     wp.base_policy.read_touch_ttl = policy.read_touch_ttl;
-                    let mut cmd =
-                        OperateCommand::new(&wp, cluster.clone(), &key, op_list.as_slice());
+                    let mut cmd = OperateCommand::new(&wp, cluster.clone(), &key, op_list);
                     cmd.execute().await.map(|()| cmd.read_command.record.take())
                 } else {
                     let mut rp = policy.to_read_policy(parent);
@@ -295,7 +295,7 @@ impl BatchExecutor {
             BatchOp::Write { policy, ops } => {
                 let mut wp = policy.to_write_policy(parent);
                 cluster.apply_batch_write(&mut wp);
-                let mut cmd = OperateCommand::new(&wp, cluster.clone(), &key, ops.as_slice());
+                let mut cmd = OperateCommand::new(&wp, cluster.clone(), &key, ops);
                 cmd.execute().await.map(|()| cmd.read_command.record.take())
             }
             BatchOp::Delete { policy } => {

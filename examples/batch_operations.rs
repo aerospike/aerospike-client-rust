@@ -24,6 +24,7 @@ use aerospike_core::{
 use rand::distr::Alphanumeric;
 use rand::RngExt;
 use std::env;
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
@@ -101,12 +102,15 @@ end
     let bpd = BatchDeletePolicy::default();
     let bpu = BatchUdfPolicy::default();
 
-    // WRITE Operations
+    // WRITE Operations: the same operations at every key. Build the list
+    // once as an `Arc<[Operation]>` and share it; each row then holds a
+    // pointer, not a copy, and the request repeats the list on the wire.
     println!("\n--- Batch WRITE operations ---");
+    let wops: Arc<[_]> = wops.into();
     let mut batch = vec![
-        BatchOperation::write(&bpw, key1.clone(), wops.clone()),
-        BatchOperation::write(&bpw, key2.clone(), wops.clone()),
-        BatchOperation::write(&bpw, key3.clone(), wops.clone()),
+        BatchOperation::write(&bpw, key1.clone(), Arc::clone(&wops)),
+        BatchOperation::write(&bpw, key2.clone(), Arc::clone(&wops)),
+        BatchOperation::write(&bpw, key3.clone(), Arc::clone(&wops)),
     ];
     client.batch(&bpolicy_w, &mut batch).await.unwrap();
     let results: Vec<&BatchRecord> = batch.iter().map(BatchOperation::batch_record).collect();
