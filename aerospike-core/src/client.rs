@@ -2477,8 +2477,7 @@ impl Client {
     fn reject_top_k_on_aggregation(statement: &Statement) -> Result<()> {
         if statement.has_order_by() || statement.has_top_k() {
             return Err(Error::invalid_argument(
-                "Top-K is only valid on queries that return records; an aggregation returns the \
-                 stream UDF's result"
+                "order_by is incompatible with aggregate UDFs; use the UDF's own reduce stage"
                     .to_string(),
             ));
         }
@@ -2489,7 +2488,7 @@ impl Client {
     fn reject_top_k_on_background_query(statement: &Statement) -> Result<()> {
         if statement.has_order_by() || statement.has_top_k() {
             return Err(Error::invalid_argument(
-                "Top-K is only valid on foreground (SELECT-style) queries; background \
+                "order_by/top_k is only valid on foreground (SELECT-style) queries; background \
                  (UPDATE-style) queries do not produce a result stream"
                     .to_string(),
             ));
@@ -2523,7 +2522,7 @@ impl Client {
         }
         if !policy.include_bin_data || statement.bins.is_none() {
             return Err(Error::invalid_argument(
-                "Top-K is incompatible with queries that do not return bin data".to_string(),
+                "Top-K is incompatible with include_bin_data=false".to_string(),
             ));
         }
         if policy.max_records != 0 {
@@ -2535,7 +2534,9 @@ impl Client {
     }
 
     fn top_k_unsupported_error() -> Error {
-        Error::invalid_argument("Top-K is not supported by all nodes in the cluster".to_string())
+        Error::invalid_argument(
+            "order_by/top_k is not supported by all nodes in the cluster".to_string(),
+        )
     }
 
     /// An order key without `k` is left for the server to refuse, but a node
@@ -2558,7 +2559,7 @@ impl Client {
             });
         if resumed {
             return Err(Error::invalid_argument(
-                "Top-K is not supported with a resumed partition filter".to_string(),
+                "Top-K can't resume a partition filter from an earlier query".to_string(),
             ));
         }
         Ok(())
@@ -2574,9 +2575,7 @@ impl Client {
     fn reject_top_k_on_callback_query(statement: &Statement) -> Result<()> {
         if statement.has_top_k() {
             return Err(Error::invalid_argument(
-                "Top-K is only supported by Client::query; query_foreach delivers records as \
-                 they arrive"
-                    .to_string(),
+                "Top-K is only supported by Client::query".to_string(),
             ));
         }
         Ok(())
@@ -4045,7 +4044,7 @@ mod top_k_execution_tests {
     fn callback_query_guard_rejects_top_k_only() {
         let stmt = top_k_statement("score", Order::Desc, 5);
         let err = Client::reject_top_k_on_callback_query(&stmt).unwrap_err();
-        assert!(err.to_string().contains("query_foreach"), "{err}");
+        assert!(err.to_string().contains("only supported by Client::query"), "{err}");
 
         let mut order_only = Statement::new("ns", "set", Bins::All);
         order_only.set_order_by("score", OrderByType::Integer, Order::Desc);
@@ -4056,7 +4055,7 @@ mod top_k_execution_tests {
     fn aggregation_guard_rejects_top_k_and_an_order_key() {
         let stmt = top_k_statement("score", Order::Desc, 5);
         let err = Client::reject_top_k_on_aggregation(&stmt).unwrap_err();
-        assert!(err.to_string().contains("aggregation"), "{err}");
+        assert!(err.to_string().contains("aggregate UDFs"), "{err}");
 
         let mut order_only = Statement::new("ns", "set", Bins::All);
         order_only.set_order_by("score", OrderByType::Integer, Order::Desc);
@@ -4112,7 +4111,7 @@ mod top_k_execution_tests {
         let key = Key::new("ns", "set", Value::from("k")).unwrap();
         let by_key = PartitionFilter::by_key(&key);
         let err = Client::reject_resumed_top_k_filter(&by_key).unwrap_err();
-        assert!(err.to_string().contains("resumed partition filter"), "{err}");
+        assert!(err.to_string().contains("can't resume a partition filter"), "{err}");
 
         let mut resumed = PartitionFilter::all();
         resumed.partitions = Some(PartitionTracker::init_partitions(0, 4, Some([7; 20])));
@@ -4161,7 +4160,7 @@ mod top_k_execution_tests {
         let key = Key::new("ns", "set", Value::from("k")).unwrap();
         let err = Client::check_top_k_query(&policy, &statement, &nodes, &PartitionFilter::by_key(&key))
             .unwrap_err();
-        assert!(err.to_string().contains("resumed partition filter"), "{err}");
+        assert!(err.to_string().contains("can't resume a partition filter"), "{err}");
 
         // A plain statement passes every rule whatever the policy or filter.
         let plain = Statement::new("ns", "set", Bins::All);

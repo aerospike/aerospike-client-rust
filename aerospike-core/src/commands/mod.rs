@@ -117,9 +117,7 @@ pub const POOL_EMPTY_MAX_WAITS: usize = 5_000;
 pub fn check_vector_support(has_vector: bool, all_nodes_support_vector: bool) -> Result<()> {
     if has_vector && !all_nodes_support_vector {
         return Err(Error::invalid_argument(
-            "Vector is not supported by all nodes in the cluster: VECTOR values require every \
-             node to run Aerospike Server 8.2.1 or later"
-                .to_string(),
+            "Vector is not supported by all nodes in the cluster".to_string(),
         ));
     }
     Ok(())
@@ -301,7 +299,6 @@ mod tests_vector_gate {
         let err = check_vector_support(true, false).unwrap_err();
         assert!(matches!(err.kind(), ErrorKind::InvalidArgument));
         assert!(!should_retry(&err));
-        assert!(err.to_string().contains("not supported by all nodes"));
-        assert!(err.to_string().contains("8.2.1"));
+        assert!(err.to_string().contains("Vector is not supported by all nodes in the cluster"));
     }
 }

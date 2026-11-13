@@ -328,7 +328,8 @@ impl Vector {
             let half = f32_to_f16_bits(value);
             if half & FLOAT16_EXPONENT_MASK == FLOAT16_EXPONENT_MASK {
                 return Err(Error::invalid_argument(format!(
-                    "vector element {index} does not round to a finite float16: {value}"
+                    "Vector elements must be finite (no NaN or infinity): element {index} is \
+                     {value}"
                 )));
             }
             bits.push(half);
@@ -369,23 +370,23 @@ impl Vector {
         let dimensions = data.dimensions();
 
         if dimensions == 0 {
-            return Err(Error::invalid_argument(
-                "vector must have at least 1 dimension".to_string(),
-            ));
+            return Err(Error::invalid_argument(format!(
+                "Vector must have at least 1 dimension: {dimensions}"
+            )));
         }
 
         let max = data.element_type().max_dimensions();
 
         if dimensions > max {
             return Err(Error::invalid_argument(format!(
-                "vector dimensions {dimensions} exceeds max {max} for element type {}",
+                "Vector dimensions {dimensions} exceed the maximum of {max} for element type {}",
                 data.element_type()
             )));
         }
 
         if let Some((index, value)) = data.first_non_finite() {
             return Err(Error::invalid_argument(format!(
-                "vector element {index} is not finite: {value}"
+                "Vector elements must be finite (no NaN or infinity): element {index} is {value}"
             )));
         }
 
@@ -481,47 +482,44 @@ impl Vector {
     /// this client understands.
     pub(crate) fn from_bytes(buf: &mut Buffer, len: usize) -> Result<Self> {
         if len < VECTOR_HEADER_SIZE {
-            return Err(Error::bad_response(format!(
-                "invalid vector length: {len}, need at least {VECTOR_HEADER_SIZE}"
-            )));
+            return Err(Error::bad_response(format!("Invalid vector length: {len}")));
         }
 
         let version = buf.read_u8(None);
         if version != VECTOR_VERSION {
             return Err(Error::bad_response(format!(
-                "unsupported vector format version {version}; this client reads version \
-                 {VECTOR_VERSION}"
+                "Unsupported vector format version {version} (expected {VECTOR_VERSION})"
             )));
         }
         let type_code = buf.read_u8(None);
         let Some(element_type) = VectorElementType::try_from_code(type_code) else {
             return Err(Error::bad_response(format!(
-                "unknown vector element type code: {type_code}"
+                "Unknown vector element type code: {type_code}"
             )));
         };
         let dimensions = buf.read_u32_little_endian(None) as usize;
 
         if dimensions == 0 {
-            return Err(Error::bad_response(
-                "vector must have at least 1 dimension".to_string(),
-            ));
+            return Err(Error::bad_response(format!(
+                "Vector must have at least 1 dimension: {dimensions}"
+            )));
         }
 
         if dimensions > element_type.max_dimensions() {
             return Err(Error::bad_response(format!(
-                "vector dimensions {dimensions} exceeds maximum {}",
+                "Vector dimensions {dimensions} exceed the maximum of {} for element type \
+                 {element_type}",
                 element_type.max_dimensions()
             )));
         }
 
         let data_size = dimensions
             .checked_mul(element_type.byte_size())
-            .ok_or_else(|| Error::bad_response("vector dimensions overflow"))?;
+            .ok_or_else(|| Error::bad_response("Vector dimensions overflow"))?;
 
         if len != VECTOR_HEADER_SIZE + data_size {
             return Err(Error::bad_response(format!(
-                "invalid vector length: {len}, expected {} for {dimensions} {element_type} \
-                 elements",
+                "Invalid vector length: {len}, expected {}",
                 VECTOR_HEADER_SIZE + data_size
             )));
         }
@@ -809,11 +807,11 @@ mod tests {
             vec![0.0, 0.0, f32::NEG_INFINITY],
         ] {
             let err = Vector::try_float32(data).expect_err("non-finite f32 must be refused");
-            assert!(err.to_string().contains("not finite"), "{err}");
+            assert!(err.to_string().contains("must be finite"), "{err}");
         }
         for data in [vec![f64::NAN], vec![f64::INFINITY], vec![f64::NEG_INFINITY]] {
             let err = Vector::try_float64(data).expect_err("non-finite f64 must be refused");
-            assert!(err.to_string().contains("not finite"), "{err}");
+            assert!(err.to_string().contains("must be finite"), "{err}");
         }
         // +inf, -inf, quiet NaN and signalling NaN, as float16 bit patterns.
         for pattern in [0x7c00u16, 0xfc00, 0x7e00, 0x7c01] {
@@ -986,11 +984,11 @@ mod tests {
         );
         assert_eq!(
             err.message(),
-            Some("unsupported vector format version 2; this client reads version 1")
+            Some("Unsupported vector format version 2 (expected 1)")
         );
         assert_eq!(
             err.base_message(),
-            "Invalid argument: unsupported vector format version 2; this client reads version 1"
+            "Invalid argument: Unsupported vector format version 2 (expected 1)"
         );
     }
 
@@ -1079,7 +1077,7 @@ mod tests {
             let err = Vector::try_float16_from_f32(&bad).unwrap_err();
             assert!(matches!(err.kind(), crate::ErrorKind::InvalidArgument));
             assert!(
-                err.to_string().contains(&format!("element {index} does not round")),
+                err.to_string().contains(&format!("must be finite (no NaN or infinity): element {index} is")),
                 "{err}"
             );
         }

@@ -1026,14 +1026,14 @@ async fn top_k_checks_apply_to_a_query_with_a_server_plan() {
         .query_with_plan(&no_bins, PartitionFilter::all(), ranked(), plan().await)
         .await
         .expect_err("Top-K without bin data must be refused on the planned path");
-    assert!(err.to_string().contains("bin data"), "{err}");
+    assert!(err.to_string().contains("include_bin_data=false"), "{err}");
 
     let resumed = PartitionFilter::by_key(&as_key!(namespace, &set_name, 0_i64));
     let err = client
         .query_with_plan(&QueryPolicy::default(), resumed, ranked(), plan().await)
         .await
         .expect_err("Top-K with a resumed filter must be refused on the planned path");
-    assert!(err.to_string().contains("resumed partition filter"), "{err}");
+    assert!(err.to_string().contains("can't resume a partition filter"), "{err}");
 
     let recordset = client
         .query_with_plan(&QueryPolicy::default(), PartitionFilter::all(), ranked(), plan().await)

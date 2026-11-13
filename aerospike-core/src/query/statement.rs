@@ -228,7 +228,7 @@ impl Statement {
     pub(crate) fn validate(&self) -> Result<()> {
         if self.then_order_by_without_first {
             return Err(Error::invalid_argument(
-                "thenOrderBy requires a first order key; call setOrderBy() first".to_string(),
+                "then_order_by must follow set_order_by".to_string(),
             ));
         }
 
@@ -268,21 +268,20 @@ impl Statement {
         }
 
         if self.order_by.len() > MAX_ORDER_KEYS {
-            return Err(Error::invalid_argument(format!(
-                "Top-K takes at most {MAX_ORDER_KEYS} order keys"
-            )));
+            return Err(Error::invalid_argument(
+                "order_by supports at most two keys".to_string(),
+            ));
         }
 
         if !(TOP_K_MIN..=TOP_K_MAX).contains(&k) {
             return Err(Error::invalid_argument(format!(
-                "Top-K limit must be in [{TOP_K_MIN}, {TOP_K_MAX}]; got {k}"
+                "top_k must be in [{TOP_K_MIN}, {TOP_K_MAX}]; got {k}"
             )));
         }
 
         if self.aggregation.is_some() {
             return Err(Error::invalid_argument(
-                "Top-K is only valid for foreground queries; it cannot be combined with an \
-                 aggregation UDF"
+                "order_by is incompatible with aggregate UDFs; use the UDF's own reduce stage"
                     .to_string(),
             ));
         }
@@ -293,11 +292,18 @@ impl Statement {
 
         if self.order_by.len() > 1 && self.order_by[0].bin_name == self.order_by[1].bin_name {
             return Err(Error::invalid_argument(
-                "Top-K order keys must use different bins".to_string(),
+                "order_by keys must use different bins".to_string(),
             ));
         }
 
         Ok(())
+    }
+
+    fn not_in_projection(bin_name: &str) -> Error {
+        Error::invalid_argument(format!(
+            "order_by bin '{bin_name}' is not in projection; add it to the projection or remove \
+             the projection"
+        ))
     }
 
     fn validate_order_key(&self, key: &OrderBy) -> Result<()> {
@@ -319,14 +325,11 @@ impl Statement {
                 })
                 .count();
             if count == 0 {
-                return Err(Error::invalid_argument(format!(
-                    "Top-K order-by bin '{}' must be included in the operations projection",
-                    key.bin_name
-                )));
+                return Err(Self::not_in_projection(&key.bin_name));
             }
             if count > 1 {
                 return Err(Error::invalid_argument(format!(
-                    "Top-K order-by bin '{}' must be produced by only one projection operation",
+                    "order_by bin '{}' is produced by more than one operation",
                     key.bin_name
                 )));
             }
@@ -335,10 +338,7 @@ impl Statement {
 
         if let Bins::Some(ref bins) = self.bins {
             if !bins.iter().any(|b| b == &key.bin_name) {
-                return Err(Error::invalid_argument(format!(
-                    "Top-K order-by bin '{}' must be included in the bin projection",
-                    key.bin_name
-                )));
+                return Err(Self::not_in_projection(&key.bin_name));
             }
         }
 
@@ -408,14 +408,14 @@ mod tests {
 
         stmt.then_order_by("c", OrderByType::Integer, Order::Asc);
         let err = stmt.validate().unwrap_err();
-        assert!(err.to_string().contains("at most 2 order keys"), "{err}");
+        assert!(err.to_string().contains("at most two keys"), "{err}");
 
         let mut stmt = Statement::new("ns", "set", Bins::from(["a"]));
         stmt.set_order_by("a", OrderByType::Integer, Order::Desc);
         stmt.then_order_by("b", OrderByType::Bytes, Order::Asc);
         stmt.set_top_k(10);
         let err = stmt.validate().unwrap_err();
-        assert!(err.to_string().contains("bin projection"), "{err}");
+        assert!(err.to_string().contains("'b' is not in projection"), "{err}");
     }
 
     #[test]
@@ -425,7 +425,7 @@ mod tests {
         assert!(stmt.order_by.is_empty(), "the key is not taken as the first");
         let err = stmt.validate().unwrap_err();
         assert!(
-            err.to_string().contains("thenOrderBy requires a first order key"),
+            err.to_string().contains("then_order_by must follow set_order_by"),
             "{err}"
         );
 
@@ -459,7 +459,7 @@ mod tests {
         stmt.set_order_by("dist", OrderByType::Double, Order::Asc);
         stmt.set_top_k(10);
         let err = stmt.validate().unwrap_err();
-        assert!(err.to_string().contains("only one projection operation"), "{err}");
+        assert!(err.to_string().contains("'dist' is produced by more than one operation"), "{err}");
     }
 
     #[test]
@@ -495,7 +495,7 @@ mod tests {
         stmt.set_top_k(10);
         stmt.set_aggregate_function("pkg", "func", &[]);
         let err = stmt.validate().unwrap_err();
-        assert!(err.to_string().contains("aggregation UDF"));
+        assert!(err.to_string().contains("aggregate UDFs"));
     }
 
     #[test]
@@ -534,7 +534,7 @@ mod tests {
         stmt.set_order_by("c", OrderByType::Integer, Order::Desc);
         stmt.set_top_k(10);
         let err = stmt.validate().unwrap_err();
-        assert!(err.to_string().contains("bin projection"));
+        assert!(err.to_string().contains("'c' is not in projection"), "{err}");
     }
 
     #[test]
@@ -552,7 +552,7 @@ mod tests {
         stmt.set_order_by("dist", OrderByType::Double, Order::Asc);
         stmt.set_top_k(10);
         let err = stmt.validate().unwrap_err();
-        assert!(err.to_string().contains("operations projection"));
+        assert!(err.to_string().contains("'dist' is not in projection"), "{err}");
     }
 
     #[test]

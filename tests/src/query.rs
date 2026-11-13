@@ -2565,7 +2565,7 @@ async fn top_k_rejects_a_resumed_partition_filter() {
         .query(&QueryPolicy::default(), PartitionFilter::by_key(&key), statement)
         .await
         .expect_err("a filter with a resume digest must be refused");
-    assert!(err.to_string().contains("resumed partition filter"), "{err}");
+    assert!(err.to_string().contains("can't resume a partition filter"), "{err}");
 
     client.close().await.unwrap();
 }
@@ -2588,7 +2588,7 @@ async fn top_k_rejects_an_order_key_produced_by_two_projection_operations() {
         .query(&QueryPolicy::default(), PartitionFilter::all(), statement)
         .await
         .expect_err("a duplicate projection must be refused");
-    assert!(err.to_string().contains("only one projection operation"), "{err}");
+    assert!(err.to_string().contains("'score' is produced by more than one operation"), "{err}");
 
     let mut statement = Statement::new(namespace, "topk", Bins::All);
     statement.set_top_k(3);
