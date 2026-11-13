@@ -47,6 +47,80 @@ pub const VECTOR_HEADER_SIZE: usize = 6;
 /// A `float16` whose exponent bits are all set is an infinity or a NaN.
 const FLOAT16_EXPONENT_MASK: u16 = 0x7c00;
 
+/// Converts an `f32` to the nearest `float16` bit pattern, ties to even.
+/// A magnitude of 65520 or more rounds to an infinity, the largest finite
+/// `float16` being 65504; a NaN stays a NaN.
+const fn f32_to_f16_bits(value: f32) -> u16 {
+    let bits = value.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let exponent = ((bits >> 23) & 0xff) as i32;
+    let mantissa = bits & 0x007f_ffff;
+
+    if exponent == 0xff {
+        // An infinity keeps a zero mantissa; a NaN keeps a quiet bit.
+        return sign | FLOAT16_EXPONENT_MASK | if mantissa == 0 { 0 } else { 0x0200 };
+    }
+
+    // The float16 exponent, biased by 15; f32 is biased by 127.
+    let e = exponent - 127 + 15;
+
+    if e >= 0x1f {
+        return sign | FLOAT16_EXPONENT_MASK;
+    }
+
+    if e <= 0 {
+        // Below the smallest float16 normal: a subnormal or a zero. Anything
+        // under half the smallest subnormal rounds to zero.
+        if e < -10 {
+            return sign;
+        }
+        let m = mantissa | 0x0080_0000;
+        let shift = (14 - e) as u32;
+        let mut half = (m >> shift) as u16;
+        let remainder = m & ((1u32 << shift) - 1);
+        let halfway = 1u32 << (shift - 1);
+        if remainder > halfway || (remainder == halfway && half & 1 == 1) {
+            half += 1;
+        }
+        return sign | half;
+    }
+
+    let mut half = ((e as u32) << 10 | (mantissa >> 13)) as u16;
+    let remainder = mantissa & 0x1fff;
+    // A carry out of the mantissa moves to the next exponent, and past the
+    // largest finite value it lands on the infinity pattern, as intended.
+    if remainder > 0x1000 || (remainder == 0x1000 && half & 1 == 1) {
+        half += 1;
+    }
+    sign | half
+}
+
+/// Converts a `float16` bit pattern to the `f32` with the same value. Every
+/// `float16` has one, so the conversion is exact.
+const fn f16_bits_to_f32(half: u16) -> f32 {
+    let sign = ((half & 0x8000) as u32) << 16;
+    let exponent = ((half >> 10) & 0x1f) as u32;
+    let mantissa = (half & 0x03ff) as u32;
+
+    let bits = match exponent {
+        0 if mantissa == 0 => sign,
+        0 => {
+            // A subnormal: normalize it, borrowing from the exponent for
+            // every shift until the implicit bit is in place.
+            let mut m = mantissa;
+            let mut e: i32 = 1;
+            while m & 0x0400 == 0 {
+                m <<= 1;
+                e -= 1;
+            }
+            sign | (((e + 127 - 15) as u32) << 23) | ((m & 0x03ff) << 13)
+        }
+        0x1f => sign | 0x7f80_0000 | (mantissa << 13),
+        _ => sign | ((exponent + 127 - 15) << 23) | (mantissa << 13),
+    };
+    f32::from_bits(bits)
+}
+
 /// Maximum size in bytes of a vector's element array.
 pub const VECTOR_MAX_ELEMENTS_BYTES: usize = 1 << 18;
 
@@ -188,6 +262,17 @@ impl Vector {
         Self::try_float16(data).expect("invalid vector data")
     }
 
+    /// Creates a `float16` vector from `f32` elements, each rounded to the
+    /// nearest `float16`, ties to even.
+    ///
+    /// # Panics
+    ///
+    /// When the data is empty, too long, or holds an element that does not
+    /// round to a finite `float16`; see [`Self::try_float16_from_f32`].
+    pub fn float16_from_f32(data: &[f32]) -> Self {
+        Self::try_float16_from_f32(data).expect("invalid vector data")
+    }
+
     /// Creates an `int32` vector.
     ///
     /// # Panics
@@ -225,6 +310,30 @@ impl Vector {
     /// whose exponent bits are all set (an infinity or a NaN).
     pub fn try_float16(data: Vec<u16>) -> Result<Self> {
         Self::current(VectorData::Float16(data))
+    }
+
+    /// Creates a validated `float16` vector from `f32` elements, each rounded
+    /// to the nearest `float16`, ties to even. Read them back as `f32` with
+    /// [`Self::float16_as_f32`].
+    ///
+    /// # Errors
+    ///
+    /// An empty vector, more elements than the type allows, or an element
+    /// that does not round to a finite `float16`: a NaN, an infinity, or a
+    /// magnitude of 65520 or more, which rounds to an infinity. The largest
+    /// `float16` value is 65504.
+    pub fn try_float16_from_f32(data: &[f32]) -> Result<Self> {
+        let mut bits = Vec::with_capacity(data.len());
+        for (index, &value) in data.iter().enumerate() {
+            let half = f32_to_f16_bits(value);
+            if half & FLOAT16_EXPONENT_MASK == FLOAT16_EXPONENT_MASK {
+                return Err(Error::invalid_argument(format!(
+                    "vector element {index} does not round to a finite float16: {value}"
+                )));
+            }
+            bits.push(half);
+        }
+        Self::current(VectorData::Float16(bits))
     }
 
     /// Creates a validated `int32` vector.
@@ -296,6 +405,15 @@ impl Vector {
     /// Number of dimensions (elements) in this vector.
     pub const fn dimensions(&self) -> usize {
         self.data.dimensions()
+    }
+
+    /// The elements of a `float16` vector as `f32`, an exact conversion;
+    /// `None` for any other element type.
+    pub fn float16_as_f32(&self) -> Option<Vec<f32>> {
+        match &self.data {
+            VectorData::Float16(bits) => Some(bits.iter().map(|&h| f16_bits_to_f32(h)).collect()),
+            _ => None,
+        }
     }
 
     /// Wire size, including the header.
@@ -883,6 +1001,90 @@ mod tests {
         let buf = encode(&v, v.wire_size());
         assert_eq!(&buf.data_buffer[6..8], &0x7bffu16.to_le_bytes());
         assert_eq!(round_trip(&v), v);
+    }
+
+    #[test]
+    fn f32_to_float16_rounds_to_nearest_even() {
+        // Exact values keep their bit pattern.
+        assert_eq!(f32_to_f16_bits(1.0), 0x3c00);
+        assert_eq!(f32_to_f16_bits(-2.0), 0xc000);
+        assert_eq!(f32_to_f16_bits(65504.0), 0x7bff);
+        assert_eq!(f32_to_f16_bits(0.0), 0x0000);
+        assert_eq!(f32_to_f16_bits(-0.0), 0x8000);
+        // 1 + 2^-11 is halfway between 1.0 and the next float16; even wins.
+        assert_eq!(f32_to_f16_bits(1.0 + 2f32.powi(-11)), 0x3c00);
+        // 1 + 3 * 2^-11 is halfway between the next two; the even one wins.
+        assert_eq!(f32_to_f16_bits(1.0 + 3.0 * 2f32.powi(-11)), 0x3c02);
+        // Just above halfway rounds up.
+        assert_eq!(f32_to_f16_bits(1.0 + 2f32.powi(-11) + 2f32.powi(-20)), 0x3c01);
+        // Below the overflow threshold rounds to the largest finite value.
+        assert_eq!(f32_to_f16_bits(65519.0), 0x7bff);
+        // The threshold itself rounds to an infinity.
+        assert_eq!(f32_to_f16_bits(65520.0), 0x7c00);
+        assert_eq!(f32_to_f16_bits(-65520.0), 0xfc00);
+        assert_eq!(f32_to_f16_bits(f32::INFINITY), 0x7c00);
+        assert_eq!(f32_to_f16_bits(f32::NAN) & FLOAT16_EXPONENT_MASK, FLOAT16_EXPONENT_MASK);
+        // Subnormals: the smallest, and the largest subnormal.
+        assert_eq!(f32_to_f16_bits(2f32.powi(-24)), 0x0001);
+        assert_eq!(f32_to_f16_bits(1023.0 * 2f32.powi(-24)), 0x03ff);
+        // Half the smallest subnormal ties to even, which is zero.
+        assert_eq!(f32_to_f16_bits(2f32.powi(-25)), 0x0000);
+        // Anything smaller than that is zero too.
+        assert_eq!(f32_to_f16_bits(2f32.powi(-30)), 0x0000);
+        // The largest subnormal plus half a step rounds up to the smallest normal.
+        assert_eq!(f32_to_f16_bits(1023.5 * 2f32.powi(-24)), 0x0400);
+    }
+
+    #[test]
+    fn float16_to_f32_is_exact_and_round_trips() {
+        assert_eq!(f16_bits_to_f32(0x3c00), 1.0);
+        assert_eq!(f16_bits_to_f32(0xc000), -2.0);
+        assert_eq!(f16_bits_to_f32(0x7bff), 65504.0);
+        assert_eq!(f16_bits_to_f32(0x0001), 2f32.powi(-24));
+        assert_eq!(f16_bits_to_f32(0x03ff), 1023.0 * 2f32.powi(-24));
+        assert_eq!(f16_bits_to_f32(0x0400), 2f32.powi(-14));
+        assert_eq!(f16_bits_to_f32(0x8000).to_bits(), (-0.0f32).to_bits());
+        assert_eq!(f16_bits_to_f32(0x7c00), f32::INFINITY);
+        assert!(f16_bits_to_f32(0x7e00).is_nan());
+        // Every finite float16 survives a trip through f32.
+        for half in 0u16..=0xffff {
+            if half & FLOAT16_EXPONENT_MASK == FLOAT16_EXPONENT_MASK {
+                continue;
+            }
+            assert_eq!(f32_to_f16_bits(f16_bits_to_f32(half)), half, "{half:#06x}");
+        }
+    }
+
+    #[test]
+    fn float16_from_f32_builds_and_reads_back_as_f32() {
+        let v = Vector::float16_from_f32(&[1.0, -2.5, 65504.0, 0.1]);
+        assert_eq!(v.element_type(), VectorElementType::Float16);
+        assert_eq!(v.data(), &VectorData::Float16(vec![0x3c00, 0xc100, 0x7bff, 0x2e66]));
+        let back = v.float16_as_f32().unwrap();
+        assert_eq!(&back[..3], &[1.0, -2.5, 65504.0]);
+        assert!((back[3] - 0.1).abs() < 2f32.powi(-14), "{}", back[3]);
+        assert_eq!(round_trip(&v), v);
+
+        assert_eq!(Vector::float32(vec![1.0]).float16_as_f32(), None);
+    }
+
+    #[test]
+    fn float16_from_f32_rejects_what_does_not_round_finite() {
+        for (bad, index) in [
+            (vec![1.0, f32::NAN], 1),
+            (vec![f32::INFINITY], 0),
+            (vec![1.0, 2.0, 65520.0], 2),
+            (vec![-65520.0], 0),
+        ] {
+            let err = Vector::try_float16_from_f32(&bad).unwrap_err();
+            assert!(matches!(err.kind(), crate::ErrorKind::InvalidArgument));
+            assert!(
+                err.to_string().contains(&format!("element {index} does not round")),
+                "{err}"
+            );
+        }
+        assert!(Vector::try_float16_from_f32(&[65519.0]).is_ok());
+        assert!(Vector::try_float16_from_f32(&[]).is_err());
     }
 
     #[test]

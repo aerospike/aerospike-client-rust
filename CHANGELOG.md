@@ -8,7 +8,9 @@
     Server 8.2.1. The client refuses an empty vector, a NaN or infinite element, and any vector on a
     cluster with a node that predates vectors; it decodes only format version 1 with an exact length.
     `Vector::wire_bytes` and `Vector::from_wire_bytes` convert to and from the wire form; a malformed
-    input is an `ErrorKind::InvalidArgument`.
+    input is an `ErrorKind::InvalidArgument`. `Vector::float16_from_f32` builds a `float16` vector
+    from `f32` elements, rounded to nearest with ties to even, and `Vector::float16_as_f32` reads one
+    back exactly; an element that rounds to an infinity (a magnitude of 65520 or more) is refused.
   * `Error::message` returns the bare text an error was built with, without the result code, node,
     cause chain and kind prefix that `base_message` and `Display` add, for embedding in another
     message.

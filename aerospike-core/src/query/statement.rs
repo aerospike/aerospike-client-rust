@@ -75,6 +75,11 @@ pub struct Statement {
 
     /// Top-K limit (`k`), in `[1, 1000]`. Requires an order key.
     pub top_k: Option<u32>,
+
+    /// Set when [`Self::then_order_by`] ran before [`Self::set_order_by`];
+    /// the query then fails validation with the reason. Never cleared: the
+    /// mistake is in the calling code, not in the statement.
+    then_order_by_without_first: bool,
 }
 
 impl Statement {
@@ -101,6 +106,7 @@ impl Statement {
             operations: None,
             order_by: Vec::new(),
             top_k: None,
+            then_order_by_without_first: false,
         }
     }
 
@@ -178,13 +184,25 @@ impl Statement {
     /// server.
     pub fn set_order_by(&mut self, bin_name: &str, order_type: OrderByType, direction: Order) {
         self.order_by.clear();
-        self.then_order_by(bin_name, order_type, direction);
+        self.order_by.push(OrderBy {
+            bin_name: bin_name.to_owned(),
+            order_type,
+            direction,
+        });
     }
 
     /// Adds a second order key, consulted when the first compares equal. It
     /// must name a different bin from the first key; a Top-K query takes at
     /// most two keys.
+    ///
+    /// The first key comes from [`Self::set_order_by`], so this must follow
+    /// it. Called before it, the query fails validation, even if
+    /// `set_order_by` is called later.
     pub fn then_order_by(&mut self, bin_name: &str, order_type: OrderByType, direction: Order) {
+        if self.order_by.is_empty() {
+            self.then_order_by_without_first = true;
+            return;
+        }
         self.order_by.push(OrderBy {
             bin_name: bin_name.to_owned(),
             order_type,
@@ -208,6 +226,12 @@ impl Statement {
     }
 
     pub(crate) fn validate(&self) -> Result<()> {
+        if self.then_order_by_without_first {
+            return Err(Error::invalid_argument(
+                "thenOrderBy requires a first order key; call setOrderBy() first".to_string(),
+            ));
+        }
+
         if let Some(ref agg) = self.aggregation {
             if agg.package_name.is_empty() {
                 return Err(Error::invalid_argument(
@@ -392,6 +416,30 @@ mod tests {
         stmt.set_top_k(10);
         let err = stmt.validate().unwrap_err();
         assert!(err.to_string().contains("bin projection"), "{err}");
+    }
+
+    #[test]
+    fn then_order_by_before_set_order_by_fails_the_query() {
+        let mut stmt = base_statement();
+        stmt.then_order_by("b", OrderByType::Integer, Order::Asc);
+        assert!(stmt.order_by.is_empty(), "the key is not taken as the first");
+        let err = stmt.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("thenOrderBy requires a first order key"),
+            "{err}"
+        );
+
+        // A later set_order_by does not forgive the mistake, as in the Go
+        // client; a plain query is refused too, not only a Top-K one.
+        stmt.set_order_by("a", OrderByType::Integer, Order::Desc);
+        assert!(stmt.validate().is_err());
+
+        // The right order works.
+        let mut stmt = base_statement();
+        stmt.set_order_by("a", OrderByType::Integer, Order::Desc);
+        stmt.then_order_by("b", OrderByType::Integer, Order::Asc);
+        stmt.set_top_k(10);
+        assert!(stmt.validate().is_ok());
     }
 
     #[test]
