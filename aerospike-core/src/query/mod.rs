@@ -19,7 +19,7 @@
 pub use self::filter::{EqFilterValue, Filter, RangeFilterValue};
 pub use self::index_types::{CollectionIndexType, IndexType};
 pub(crate) use self::node_partitions::NodePartitions;
-pub use self::order_by::{Order, OrderBy, OrderByFlags, OrderByType};
+pub use self::order_by::{Order, OrderBy, OrderByType};
 pub use self::partition_filter::PartitionFilter;
 // Hidden: reachable for language bindings that rebuild cursors; not API.
 #[doc(hidden)]

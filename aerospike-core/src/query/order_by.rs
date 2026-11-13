@@ -27,9 +27,8 @@ pub enum OrderByType {
     Integer = 1,
     /// 64-bit float order key.
     Double = 2,
-    /// String order key.
-    String = 3,
-    /// Raw bytes order key, compared lexicographically.
+    /// Raw bytes order key, compared as unsigned bytes; a prefix ranks before
+    /// the longer value.
     Bytes = 4,
 }
 
@@ -43,27 +42,8 @@ pub enum Order {
     Desc = 1,
 }
 
-/// Optional per-type modifiers for `order_by`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum OrderByFlags {
-    /// No flags.
-    #[default]
-    None,
-    /// Case-insensitive string comparison. Only valid with `OrderByType::String`.
-    CaseInsensitive,
-}
-
-impl OrderByFlags {
-    pub(crate) const fn to_wire_bits(self) -> u8 {
-        match self {
-            OrderByFlags::None => 0,
-            OrderByFlags::CaseInsensitive => 1,
-        }
-    }
-}
-
 /// The order-by clause of a Top-K query: the order key's bin name, scalar
-/// type, sort direction, and optional flags.
+/// type and sort direction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OrderBy {
     /// Name of the returned bin to sort by.
@@ -72,6 +52,4 @@ pub struct OrderBy {
     pub order_type: OrderByType,
     /// Sort direction.
     pub direction: Order,
-    /// Optional modifiers (currently only `CaseInsensitive`, for `String`).
-    pub flags: OrderByFlags,
 }

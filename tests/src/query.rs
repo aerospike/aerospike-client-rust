@@ -2391,6 +2391,7 @@ async fn top_k_second_order_key_breaks_ties() {
 
     for (id, score, name) in [(0, 1, "c"), (1, 1, "a"), (2, 0, "b"), (3, 1, "b"), (4, 0, "a")] {
         let key = as_key!(namespace, &set_name, id);
+        let name = Value::Blob(name.as_bytes().to_vec());
         client
             .put(
                 &write_policy,
@@ -2403,14 +2404,14 @@ async fn top_k_second_order_key_breaks_ties() {
 
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
     statement.set_order_by("score", OrderByType::Integer, Order::Desc);
-    statement.then_order_by("name", OrderByType::String, Order::Asc);
+    statement.then_order_by("name", OrderByType::Bytes, Order::Asc);
     statement.set_top_k(3);
     assert_eq!(ranked_ids(&client, statement).await, vec![1, 3, 0]);
 
     // The second key's own direction.
     let mut statement = Statement::new(namespace, &set_name, Bins::All);
     statement.set_order_by("score", OrderByType::Integer, Order::Asc);
-    statement.then_order_by("name", OrderByType::String, Order::Desc);
+    statement.then_order_by("name", OrderByType::Bytes, Order::Desc);
     statement.set_top_k(2);
     assert_eq!(ranked_ids(&client, statement).await, vec![2, 4]);
 
@@ -2451,41 +2452,6 @@ async fn top_k_missing_order_key_ranks_last_with_an_operations_projection() {
     let mut tail = ids[3..].to_vec();
     tail.sort_unstable();
     assert_eq!(tail, vec![3, 4], "records without the key rank last");
-
-    client.close().await.unwrap();
-}
-
-#[aerospike_macro::test]
-async fn top_k_string_key_is_case_sensitive_unless_flagged() {
-    let Some(client) = top_k_client().await else {
-        return;
-    };
-    let namespace = common::namespace();
-    let set_name = common::rand_str(10);
-    let write_policy = WritePolicy::default();
-
-    for (id, name) in [(0, "apple"), (1, "Banana"), (2, "cherry")] {
-        let key = as_key!(namespace, &set_name, id);
-        client
-            .put(&write_policy, &key, &[as_bin!("id", id), as_bin!("name", name)])
-            .await
-            .unwrap();
-    }
-
-    let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.set_order_by("name", OrderByType::String, Order::Asc);
-    statement.set_top_k(3);
-    assert_eq!(ranked_ids(&client, statement).await, vec![1, 0, 2], "byte order: B < a");
-
-    let mut statement = Statement::new(namespace, &set_name, Bins::All);
-    statement.set_order_by_with_flags(
-        "name",
-        OrderByType::String,
-        Order::Asc,
-        OrderByFlags::CaseInsensitive,
-    );
-    statement.set_top_k(3);
-    assert_eq!(ranked_ids(&client, statement).await, vec![0, 1, 2], "folded: a < b < c");
 
     client.close().await.unwrap();
 }

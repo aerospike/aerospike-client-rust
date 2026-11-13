@@ -15,7 +15,7 @@
 
 use crate::errors::{Error, Result};
 use crate::operations::Operation;
-use crate::query::order_by::{Order, OrderBy, OrderByFlags, OrderByType};
+use crate::query::order_by::{Order, OrderBy, OrderByType};
 use crate::query::Filter;
 use crate::Bins;
 use crate::Value;
@@ -177,42 +177,18 @@ impl Statement {
     /// [`Self::set_top_k`]: an order key sent without `k` is refused by the
     /// server.
     pub fn set_order_by(&mut self, bin_name: &str, order_type: OrderByType, direction: Order) {
-        self.set_order_by_with_flags(bin_name, order_type, direction, OrderByFlags::None);
-    }
-
-    /// Like [`Self::set_order_by`], with optional modifiers (currently only
-    /// `OrderByFlags::CaseInsensitive`, valid only with `OrderByType::String`).
-    pub fn set_order_by_with_flags(
-        &mut self,
-        bin_name: &str,
-        order_type: OrderByType,
-        direction: Order,
-        flags: OrderByFlags,
-    ) {
         self.order_by.clear();
-        self.then_order_by_with_flags(bin_name, order_type, direction, flags);
+        self.then_order_by(bin_name, order_type, direction);
     }
 
     /// Adds a second order key, consulted when the first compares equal. It
     /// must name a different bin from the first key; a Top-K query takes at
     /// most two keys.
     pub fn then_order_by(&mut self, bin_name: &str, order_type: OrderByType, direction: Order) {
-        self.then_order_by_with_flags(bin_name, order_type, direction, OrderByFlags::None);
-    }
-
-    /// Like [`Self::then_order_by`], with optional modifiers.
-    pub fn then_order_by_with_flags(
-        &mut self,
-        bin_name: &str,
-        order_type: OrderByType,
-        direction: Order,
-        flags: OrderByFlags,
-    ) {
         self.order_by.push(OrderBy {
             bin_name: bin_name.to_owned(),
             order_type,
             direction,
-            flags,
         });
     }
 
@@ -309,13 +285,6 @@ impl Statement {
             )));
         }
 
-        if key.flags != OrderByFlags::None && key.order_type != OrderByType::String {
-            return Err(Error::invalid_argument(
-                "Top-K order-by flags are only valid for STRING (CASE_INSENSITIVE on another type)"
-                    .to_string(),
-            ));
-        }
-
         // The order-by bin must come back with the record: produced by exactly
         // one projection operation, or named in the bin projection.
         if let Some(ref operations) = self.operations {
@@ -396,7 +365,7 @@ mod tests {
     fn set_order_by_replaces_and_then_order_by_appends() {
         let mut stmt = base_statement();
         stmt.set_order_by("a", OrderByType::Integer, Order::Desc);
-        stmt.then_order_by("b", OrderByType::String, Order::Asc);
+        stmt.then_order_by("b", OrderByType::Bytes, Order::Asc);
         assert_eq!(stmt.order_by.len(), 2);
         assert_eq!(stmt.order_by[1].bin_name, "b");
 
@@ -409,22 +378,17 @@ mod tests {
     fn second_order_key_is_valid_and_checked_like_the_first() {
         let mut stmt = Statement::new("ns", "set", Bins::from(["a", "b"]));
         stmt.set_order_by("a", OrderByType::Integer, Order::Desc);
-        stmt.then_order_by("b", OrderByType::String, Order::Asc);
+        stmt.then_order_by("b", OrderByType::Bytes, Order::Asc);
         stmt.set_top_k(10);
         assert!(stmt.validate().is_ok());
 
-        stmt.then_order_by_with_flags(
-            "b",
-            OrderByType::Integer,
-            Order::Asc,
-            OrderByFlags::CaseInsensitive,
-        );
+        stmt.then_order_by("c", OrderByType::Integer, Order::Asc);
         let err = stmt.validate().unwrap_err();
         assert!(err.to_string().contains("at most 2 order keys"), "{err}");
 
         let mut stmt = Statement::new("ns", "set", Bins::from(["a"]));
         stmt.set_order_by("a", OrderByType::Integer, Order::Desc);
-        stmt.then_order_by("b", OrderByType::String, Order::Asc);
+        stmt.then_order_by("b", OrderByType::Bytes, Order::Asc);
         stmt.set_top_k(10);
         let err = stmt.validate().unwrap_err();
         assert!(err.to_string().contains("bin projection"), "{err}");
@@ -484,33 +448,6 @@ mod tests {
         stmt.set_aggregate_function("pkg", "func", &[]);
         let err = stmt.validate().unwrap_err();
         assert!(err.to_string().contains("aggregation UDF"));
-    }
-
-    #[test]
-    fn case_insensitive_flag_requires_string_type() {
-        let mut stmt = base_statement();
-        stmt.set_order_by_with_flags(
-            "score",
-            OrderByType::Integer,
-            Order::Desc,
-            OrderByFlags::CaseInsensitive,
-        );
-        stmt.set_top_k(10);
-        let err = stmt.validate().unwrap_err();
-        assert!(err.to_string().contains("CASE_INSENSITIVE"));
-    }
-
-    #[test]
-    fn case_insensitive_flag_with_string_type_is_valid() {
-        let mut stmt = base_statement();
-        stmt.set_order_by_with_flags(
-            "name",
-            OrderByType::String,
-            Order::Asc,
-            OrderByFlags::CaseInsensitive,
-        );
-        stmt.set_top_k(10);
-        assert!(stmt.validate().is_ok());
     }
 
     #[test]

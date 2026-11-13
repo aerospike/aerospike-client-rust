@@ -24,7 +24,7 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 
-use crate::query::order_by::{Order, OrderBy, OrderByFlags, OrderByType};
+use crate::query::order_by::{Order, OrderBy, OrderByType};
 use crate::Record;
 use crate::Value;
 
@@ -33,7 +33,6 @@ use crate::Value;
 enum RankValue {
     Integer(i64),
     Double(f64),
-    String(Vec<u8>),
     Bytes(Vec<u8>),
     Nil,
 }
@@ -47,18 +46,6 @@ impl RankValue {
         match (order_by.order_type, value) {
             (OrderByType::Integer, Value::Int(i)) => RankValue::Integer(*i),
             (OrderByType::Double, Value::Float(f)) => RankValue::Double(f64::from(f)),
-            (OrderByType::String, Value::String(s)) => {
-                if order_by.flags == OrderByFlags::CaseInsensitive {
-                    RankValue::String(
-                        s.as_bytes()
-                            .iter()
-                            .map(u8::to_ascii_lowercase)
-                            .collect(),
-                    )
-                } else {
-                    RankValue::String(s.as_bytes().to_vec())
-                }
-            }
             (OrderByType::Bytes, Value::Blob(b)) => RankValue::Bytes(b.clone()),
             // Missing or mismatched values rank as NIL.
             _ => RankValue::Nil,
@@ -85,8 +72,7 @@ impl RankValue {
                     }
                 }
             },
-            (RankValue::String(a), RankValue::String(b))
-            | (RankValue::Bytes(a), RankValue::Bytes(b)) => a.cmp(b),
+            (RankValue::Bytes(a), RankValue::Bytes(b)) => a.cmp(b),
             _ => Ordering::Equal,
         }
     }
@@ -325,17 +311,16 @@ mod tests {
         record(digest_byte, &[("score", Value::Int(score))])
     }
 
-    fn key(bin: &str, order_type: OrderByType, direction: Order, flags: OrderByFlags) -> OrderBy {
+    fn key(bin: &str, order_type: OrderByType, direction: Order) -> OrderBy {
         OrderBy {
             bin_name: bin.to_string(),
             order_type,
             direction,
-            flags,
         }
     }
 
     fn by_score(direction: Order) -> Vec<OrderBy> {
-        vec![key("score", OrderByType::Integer, direction, OrderByFlags::None)]
+        vec![key("score", OrderByType::Integer, direction)]
     }
 
     /// Merges records that all carry the same last-update time.
@@ -459,11 +444,11 @@ mod tests {
     #[test]
     fn second_key_breaks_ties_in_its_own_direction() {
         let keys = vec![
-            key("score", OrderByType::Integer, Order::Desc, OrderByFlags::None),
-            key("name", OrderByType::String, Order::Asc, OrderByFlags::None),
+            key("score", OrderByType::Integer, Order::Desc),
+            key("name", OrderByType::Bytes, Order::Asc),
         ];
         let rec = |d: u8, s: i64, n: &str| {
-            record(d, &[("score", Value::Int(s)), ("name", Value::String(n.into()))])
+            record(d, &[("score", Value::Int(s)), ("name", Value::Blob(n.as_bytes().to_vec()))])
         };
         let merged = merge(
             keys,
@@ -477,52 +462,23 @@ mod tests {
     #[test]
     fn second_key_nil_ranks_last_among_equal_first_keys() {
         let keys = vec![
-            key("score", OrderByType::Integer, Order::Asc, OrderByFlags::None),
-            key("name", OrderByType::String, Order::Desc, OrderByFlags::None),
+            key("score", OrderByType::Integer, Order::Asc),
+            key("name", OrderByType::Bytes, Order::Desc),
         ];
         let merged = merge(
             keys,
             10,
             vec![
                 score(1, 5),
-                record(2, &[("score", Value::Int(5)), ("name", Value::String("a".into()))]),
+                record(2, &[("score", Value::Int(5)), ("name", Value::Blob(b"a".to_vec()))]),
             ],
         );
         assert_eq!(digests(&merged), vec![2, 1]);
     }
 
     #[test]
-    fn case_insensitive_string_comparison() {
-        let keys = vec![key(
-            "name",
-            OrderByType::String,
-            Order::Asc,
-            OrderByFlags::CaseInsensitive,
-        )];
-        let upper = record(1, &[("name", Value::String("Banana".into()))]);
-        let lower = record(2, &[("name", Value::String("apple".into()))]);
-        let merged = merge(keys, 10, vec![upper, lower]);
-        assert_eq!(digests(&merged), vec![2, 1]);
-    }
-
-    #[test]
-    fn case_insensitive_string_comparison_folds_ascii_only() {
-        let keys = vec![key(
-            "name",
-            OrderByType::String,
-            Order::Asc,
-            OrderByFlags::CaseInsensitive,
-        )];
-        // ASCII-only folding retains UTF-8 byte ordering: "Ä" < "ä".
-        let upper = record(9, &[("name", Value::String("Ä".into()))]);
-        let lower = record(1, &[("name", Value::String("ä".into()))]);
-        let merged = merge(keys, 10, vec![lower, upper]);
-        assert_eq!(digests(&merged), vec![9, 1]);
-    }
-
-    #[test]
     fn nan_sorts_after_every_finite_double_in_natural_order() {
-        let keys = |direction| vec![key("score", OrderByType::Double, direction, OrderByFlags::None)];
+        let keys = |direction| vec![key("score", OrderByType::Double, direction)];
         let finite = || record(1, &[("score", Value::from(5.0))]);
         let negative_nan = || {
             record(
@@ -540,7 +496,7 @@ mod tests {
 
     #[test]
     fn negative_zero_equals_zero_and_the_digest_decides() {
-        let keys = vec![key("score", OrderByType::Double, Order::Asc, OrderByFlags::None)];
+        let keys = vec![key("score", OrderByType::Double, Order::Asc)];
         let positive = record(9, &[("score", Value::from(0.0))]);
         let negative = record(1, &[("score", Value::from(-0.0))]);
         let merged = merge(keys.clone(), 10, vec![positive, negative]);
@@ -554,7 +510,7 @@ mod tests {
 
     #[test]
     fn bytes_compare_lexicographically() {
-        let keys = vec![key("b", OrderByType::Bytes, Order::Asc, OrderByFlags::None)];
+        let keys = vec![key("b", OrderByType::Bytes, Order::Asc)];
         let a = record(1, &[("b", Value::Blob(vec![2, 0]))]);
         let b = record(2, &[("b", Value::Blob(vec![1, 0, 0]))]);
         let merged = merge(keys, 10, vec![a, b]);

@@ -13,7 +13,7 @@
 #[allow(unused_imports)]
 use aerospike::{as_bin, as_key};
 
-use aerospike::query::{Order, OrderByFlags, OrderByType, PartitionFilter};
+use aerospike::query::{Order, OrderByType, PartitionFilter};
 use aerospike::{Bins, Client, ClientPolicy, QueryPolicy, Statement, WritePolicy};
 use futures::stream::StreamExt;
 use std::env;
@@ -49,7 +49,6 @@ pub async fn run() {
     top_k_without_order_by_is_rejected(&client).await;
     top_k_out_of_range_is_rejected(&client).await;
     order_by_bin_not_in_projection_is_rejected(&client).await;
-    case_insensitive_flag_requires_string_type_is_rejected(&client).await;
 
     cleanup(&client).await;
     client.close().await.unwrap();
@@ -162,28 +161,6 @@ async fn order_by_bin_not_in_projection_is_rejected(client: &Client) {
         .await
     {
         Ok(_) => panic!("Expected validation error for order_by bin outside the projection"),
-        Err(err) => println!("Rejected as expected: {err}"),
-    }
-}
-
-/// `OrderByFlags::CaseInsensitive` only makes sense for `OrderByType::String`.
-async fn case_insensitive_flag_requires_string_type_is_rejected(client: &Client) {
-    println!("\n--- 5. CASE_INSENSITIVE flag on a non-STRING type is rejected ---");
-
-    let mut stmt = Statement::new(DEFAULT_NAMESPACE, DEFAULT_SET, Bins::All);
-    stmt.set_order_by_with_flags(
-        SCORE_BIN,
-        OrderByType::Integer,
-        Order::Desc,
-        OrderByFlags::CaseInsensitive,
-    );
-    stmt.set_top_k(3);
-
-    match client
-        .query(&QueryPolicy::default(), PartitionFilter::all(), stmt)
-        .await
-    {
-        Ok(_) => panic!("Expected validation error for CASE_INSENSITIVE with type Integer"),
         Err(err) => println!("Rejected as expected: {err}"),
     }
 }

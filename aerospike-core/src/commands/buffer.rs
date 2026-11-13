@@ -1697,7 +1697,7 @@ impl Buffer {
             for key in &statement.order_by {
                 self.write_u8(key.order_type as u8);
                 self.write_u8(key.direction as u8);
-                self.write_u8(key.flags.to_wire_bits());
+                self.write_u8(0); // Flags: none apply to the supported order-by types.
                 self.write_u8(key.bin_name.len() as u8);
                 self.write_bytes(key.bin_name.as_bytes());
             }
@@ -3877,16 +3877,11 @@ mod tests {
 
     #[test]
     fn order_by_and_top_k_encode_to_the_documented_wire_format() {
-        use crate::query::order_by::{Order, OrderByFlags, OrderByType};
+        use crate::query::order_by::{Order, OrderByType};
         use crate::{Bins, QueryPolicy, Statement};
 
         let mut stmt = Statement::new("test", "test", Bins::All);
-        stmt.set_order_by_with_flags(
-            "score",
-            OrderByType::String,
-            Order::Desc,
-            OrderByFlags::CaseInsensitive,
-        );
+        stmt.set_order_by("score", OrderByType::Bytes, Order::Desc);
         stmt.set_top_k(5);
 
         let fields = read_wire_fields(&query_buffer(&stmt, &QueryPolicy::default()));
@@ -3894,9 +3889,9 @@ mod tests {
         assert_eq!(
             field_payload(&fields, FieldType::OrderBy),
             Some(&vec![
-                OrderByType::String as u8,
+                OrderByType::Bytes as u8,
                 Order::Desc as u8,
-                OrderByFlags::CaseInsensitive.to_wire_bits(),
+                0,
                 5,
                 b's',
                 b'c',
@@ -3913,17 +3908,12 @@ mod tests {
 
     #[test]
     fn two_order_keys_encode_back_to_back_in_one_field() {
-        use crate::query::order_by::{Order, OrderByFlags, OrderByType};
+        use crate::query::order_by::{Order, OrderByType};
         use crate::{Bins, QueryPolicy, Statement};
 
         let mut stmt = Statement::new("test", "test", Bins::All);
         stmt.set_order_by("score", OrderByType::Double, Order::Desc);
-        stmt.then_order_by_with_flags(
-            "nm",
-            OrderByType::String,
-            Order::Asc,
-            OrderByFlags::CaseInsensitive,
-        );
+        stmt.then_order_by("nm", OrderByType::Bytes, Order::Asc);
         stmt.set_top_k(7);
 
         let fields = read_wire_fields(&query_buffer(&stmt, &QueryPolicy::default()));
@@ -3939,9 +3929,9 @@ mod tests {
                 b'o',
                 b'r',
                 b'e',
-                OrderByType::String as u8,
+                OrderByType::Bytes as u8,
                 Order::Asc as u8,
-                1,
+                0,
                 2,
                 b'n',
                 b'm',

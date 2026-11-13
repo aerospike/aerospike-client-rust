@@ -191,7 +191,7 @@ pub use policy::{
 };
 pub use privilege::{Privilege, PrivilegeCode};
 pub use query::{
-    CollectionIndexType, EqFilterValue, IndexType, Order, OrderBy, OrderByFlags, OrderByType,
+    CollectionIndexType, EqFilterValue, IndexType, Order, OrderBy, OrderByType,
     PartitionFilter, QueryHandle, RangeFilterValue, Recordset, Statement, UdfLang,
 };
 // Query-plan wire types: reachable for tooling and the integration tests,
