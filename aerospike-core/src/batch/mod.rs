@@ -949,6 +949,50 @@ mod repeat_tests {
         assert!(!w3.match_header(Some(&w2), None, None));
     }
 
+    // Not a test: an isolated timing of what a batch pays per row before any
+    // byte is sent, for one operation list cloned per key, the list holding
+    // an expression read with a 768-element query vector. Run with
+    // `-- --ignored --nocapture` in release.
+    #[test]
+    #[ignore = "timing probe, prints numbers"]
+    fn clone_and_repeat_cost_of_a_cloned_expression_list() {
+        use crate::expressions::vector::euclidean_squared_distance;
+        use crate::expressions::vector_bin;
+        use crate::operations::exp::{read_exp, ExpReadFlags};
+        use crate::Vector;
+        use std::time::Instant;
+
+        const KEYS: usize = 500;
+        const ROUNDS: usize = 200;
+        let query = Vector::float32((0..768).map(|i| i as f32 * 0.001).collect());
+        let ops = vec![read_exp(
+            "d",
+            euclidean_squared_distance(&query, vector_bin("vec".to_string())),
+            ExpReadFlags::DEFAULT,
+        )];
+        let policy = BatchReadPolicy::default();
+        let keys: Vec<Key> = (0..KEYS as i64).map(key).collect();
+
+        let t0 = Instant::now();
+        let mut repeats = 0usize;
+        for _ in 0..ROUNDS {
+            let rows: Vec<BatchOperation> = keys
+                .iter()
+                .map(|k| BatchOperation::read_ops(&policy, k.clone(), ops.clone()))
+                .collect();
+            let mut prev: Option<&BatchOperation> = None;
+            for row in &rows {
+                if row.match_header(prev, None, None) {
+                    repeats += 1;
+                }
+                prev = Some(row);
+            }
+        }
+        let per_request = t0.elapsed().as_secs_f64() * 1e6 / ROUNDS as f64;
+        assert_eq!(repeats, ROUNDS * (KEYS - 1));
+        println!("clone + repeat check, {KEYS} keys: {per_request:.0} us per request");
+    }
+
     // Reads with op lists (not just bins) now repeat too.
     #[test]
     fn read_ops_repeat_for_shared_op_list() {

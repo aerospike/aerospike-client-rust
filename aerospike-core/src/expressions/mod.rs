@@ -404,10 +404,20 @@ impl Expression {
             | ExpOp::VectorDotProduct
             | ExpOp::VectorCosineSimilarity => {
                 // Layout: array[3] = [VECTOR_*_DIST, vector-bin, full-vector BLOB].
+                // The builders keep the query as a `Value::Vector`, whose data
+                // is shared between clones, and it is written here in the BLOB
+                // form the server expects; a `Value::Blob` of the wire bytes,
+                // which an older or hand-built expression may carry, packs to
+                // the same bytes.
                 size += pack_array_begin(buf, 3);
                 size += pack_integer(buf, cmd as i64);
-                size += self.bin.clone().unwrap().pack(buf)?;
-                size += pack_value(buf, self.val.as_ref().unwrap())?;
+                size += self.bin.as_ref().unwrap().pack(buf)?;
+                size += match self.val.as_ref().unwrap() {
+                    Value::Vector(query) => {
+                        crate::msgpack::encoder::pack_vector_as_blob(buf, query)
+                    }
+                    other => pack_value(buf, other)?,
+                };
             }
             ExpOp::BinType | ExpOp::Var => {
                 // BinType/Var encoder

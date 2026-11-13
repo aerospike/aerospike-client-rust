@@ -533,6 +533,21 @@ pub fn pack_vector(buf: &mut Option<&mut Buffer>, value: &Vector) -> usize {
     size
 }
 
+/// Packs a vector as a BLOB-typed literal holding its complete wire value,
+/// the form a vector-distance expression's query operand takes. The bytes
+/// are those of `pack_blob(vector.wire_bytes())`, without building them.
+pub fn pack_vector_as_blob(buf: &mut Option<&mut Buffer>, value: &Vector) -> usize {
+    let mut size = value.wire_size() + 1;
+
+    size += pack_string_begin(buf, size);
+    if let Some(ref mut buf) = *buf {
+        buf.write_u8(ParticleType::Blob as u8);
+        value.write_to(buf);
+    }
+
+    size
+}
+
 pub fn pack_string(buf: &mut Option<&mut Buffer>, value: &str) -> usize {
     let mut size = value.len() + 1;
 

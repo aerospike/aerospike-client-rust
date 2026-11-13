@@ -46,10 +46,15 @@ pub fn cosine_similarity(query: &Vector, bin: Expression) -> Expression {
 }
 
 /// Builds the three-element vector-distance expression form.
+///
+/// The query travels as a `Value::Vector` sharing the caller's element data,
+/// so cloning the expression (a batch does it once per key) is a refcount
+/// and comparing two clones is a pointer test. The packer writes it in the
+/// BLOB form the server expects.
 fn build_distance(opcode: ExpOp, query: &Vector, bin: Expression) -> Expression {
     Expression::new(
         Some(opcode),
-        Some(Value::Blob(query.wire_bytes())),
+        Some(Value::Vector(query.clone())),
         Some(bin),
         None,
         None,
@@ -89,6 +94,36 @@ mod tests {
             int_bin("a".to_string()),
             int_val(7)
         )));
+    }
+
+    // A hand-built expression carrying the query as a BLOB of its wire bytes
+    // packs to the same bytes as the builder's shared `Value::Vector`.
+    #[test]
+    fn a_blob_query_operand_packs_like_a_vector_one() {
+        let query = Vector::float32(vec![1.0, -2.5]);
+        let built = euclidean_squared_distance(&query, vector_bin("v".to_string()));
+        let by_hand = Expression::new(
+            Some(ExpOp::VectorEuclideanDistance),
+            Some(Value::Blob(query.wire_bytes())),
+            Some(vector_bin("v".to_string())),
+            None,
+            None,
+            None,
+        );
+        let pack = |exp: &Expression| {
+            let size = exp.size().unwrap();
+            let mut buf = Buffer::new(usize::MAX);
+            buf.resize_buffer(size).unwrap();
+            buf.data_offset = 0;
+            exp.pack(&mut Some(&mut buf)).unwrap();
+            buf.data_buffer[..size].to_vec()
+        };
+        assert_eq!(pack(&built), pack(&by_hand));
+
+        // Clones of the builder's expression share the query and compare
+        // equal without reading it; the by-hand one compares by content.
+        assert_eq!(built, built.clone());
+        assert_ne!(built, by_hand);
     }
 
     #[test]

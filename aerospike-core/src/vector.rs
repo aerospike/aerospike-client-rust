@@ -33,6 +33,7 @@
 use std::cmp::Ordering;
 use std::convert::TryInto;
 use std::fmt;
+use std::sync::Arc;
 
 use crate::commands::buffer::Buffer;
 use crate::errors::{Error, Result};
@@ -248,7 +249,11 @@ impl VectorData {
 /// ```
 #[derive(Debug, Clone)]
 pub struct Vector {
-    data: VectorData,
+    // Shared, not owned: a vector is immutable once built, and it travels
+    // by clone into expressions, values and policies that are themselves
+    // cloned per key by a batch. A clone is a refcount, and two clones of
+    // one vector compare equal by pointer without reading the elements.
+    data: Arc<VectorData>,
 }
 
 impl Vector {
@@ -390,35 +395,40 @@ impl Vector {
             )));
         }
 
-        Ok(Vector { data })
+        Ok(Vector {
+            data: Arc::new(data),
+        })
     }
 
+    // Not `const`: reading through the shared pointer is not a const
+    // operation, and nothing evaluates these at compile time.
+
     /// The element data.
-    pub const fn data(&self) -> &VectorData {
+    pub fn data(&self) -> &VectorData {
         &self.data
     }
 
     /// The element type of this vector.
-    pub const fn element_type(&self) -> VectorElementType {
+    pub fn element_type(&self) -> VectorElementType {
         self.data.element_type()
     }
 
     /// Number of dimensions (elements) in this vector.
-    pub const fn dimensions(&self) -> usize {
+    pub fn dimensions(&self) -> usize {
         self.data.dimensions()
     }
 
     /// The elements of a `float16` vector as `f32`, an exact conversion;
     /// `None` for any other element type.
     pub fn float16_as_f32(&self) -> Option<Vec<f32>> {
-        match &self.data {
+        match &*self.data {
             VectorData::Float16(bits) => Some(bits.iter().map(|&h| f16_bits_to_f32(h)).collect()),
             _ => None,
         }
     }
 
     /// Wire size, including the header.
-    pub(crate) const fn wire_size(&self) -> usize {
+    pub(crate) fn wire_size(&self) -> usize {
         VECTOR_HEADER_SIZE + self.dimensions() * self.element_type().byte_size()
     }
 
@@ -429,7 +439,7 @@ impl Vector {
         buf.write_u8(self.element_type().code());
         buf.write_u32_little_endian(self.dimensions() as u32);
 
-        match &self.data {
+        match &*self.data {
             VectorData::Float16(d) => {
                 for &x in d {
                     buf.write_u16_little_endian(x);
@@ -552,7 +562,9 @@ impl Vector {
             ),
         };
 
-        Ok(Vector { data })
+        Ok(Vector {
+            data: Arc::new(data),
+        })
     }
 
     /// Decodes a complete vector wire value: the 6-byte header followed by
@@ -630,10 +642,11 @@ impl PartialOrd for VectorData {
     }
 }
 
-/// Two vectors are equal when their element data match.
+/// Two vectors are equal when their element data match. Clones of one
+/// vector share their data and are equal by pointer, without a read.
 impl PartialEq for Vector {
     fn eq(&self, other: &Self) -> bool {
-        self.data == other.data
+        Arc::ptr_eq(&self.data, &other.data) || *self.data == *other.data
     }
 }
 
@@ -642,6 +655,9 @@ impl Eq for Vector {}
 /// Orders by element data.
 impl Ord for Vector {
     fn cmp(&self, other: &Self) -> Ordering {
+        if Arc::ptr_eq(&self.data, &other.data) {
+            return Ordering::Equal;
+        }
         self.data.cmp(&other.data)
     }
 }
@@ -655,7 +671,7 @@ impl PartialOrd for Vector {
 impl fmt::Display for Vector {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Vector::{}(", self.element_type())?;
-        match &self.data {
+        match &*self.data {
             VectorData::Float16(d) => write!(f, "{d:?}")?,
             VectorData::Int32(d) => write!(f, "{d:?}")?,
             VectorData::Float32(d) => write!(f, "{d:?}")?,
@@ -1100,6 +1116,20 @@ mod tests {
         let s = Vector::float32(vec![1.0, 2.0]).to_string();
         assert!(s.contains("float32"), "got: {s}");
         assert!(s.contains("1.0") && s.contains("2.0"), "got: {s}");
+    }
+
+    #[test]
+    fn clones_share_their_data_and_equal_vectors_built_apart_still_compare() {
+        let v = Vector::float32(vec![1.0, 2.0, 3.0]);
+        let c = v.clone();
+        assert!(Arc::ptr_eq(&v.data, &c.data), "a clone is a refcount");
+        assert_eq!(v, c);
+
+        let built_apart = Vector::float32(vec![1.0, 2.0, 3.0]);
+        assert!(!Arc::ptr_eq(&v.data, &built_apart.data));
+        assert_eq!(v, built_apart, "content equality still holds");
+        assert_eq!(v.cmp(&built_apart), Ordering::Equal);
+        assert_eq!(round_trip(&v), c);
     }
 
     #[test]
