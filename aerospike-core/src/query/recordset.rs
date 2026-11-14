@@ -65,8 +65,9 @@ pub struct RecordStream(
 /// the consumer has taken out, not what was fetched, so an early
 /// [`close`](Self::close) plus a resume from
 /// [`partition_filter`](Self::partition_filter) re-fetches every undelivered
-/// record. Duplicates can appear — bounded by the in-flight window — when a
-/// retry overlaps buffered records, or when several concurrent consumers
+/// record. A retry within one query resumes after the last record queued,
+/// so a round that fails with records still buffered does not deliver them
+/// twice. Duplicates can still appear when several concurrent consumers
 /// leave a gap that a resume re-fetches. Exactly-once delivery is the
 /// callback API's contract
 /// ([`Client::query_foreach`](crate::Client::query_foreach)).
@@ -382,7 +383,7 @@ mod tests {
             .map(|k| StreamEntry {
                 result: Ok(Record::new(Some(k.clone()), IndexMap::new(), None, 0, 0)),
                 bval: None,
-                stamp: shared.stamp_delivery(k.partition_id()),
+                stamp: shared.stamp_delivery(k.partition_id(), k.digest, None),
             })
             .collect();
         block_on(rs.push_batch(entries)).unwrap();
@@ -436,7 +437,7 @@ mod tests {
         let entry = |bval: u64| StreamEntry {
             result: Ok(Record::new(Some(key.clone()), IndexMap::new(), None, 0, 0)),
             bval: Some(bval),
-            stamp: shared.stamp_delivery(key.partition_id()),
+            stamp: shared.stamp_delivery(key.partition_id(), key.digest, None),
         };
         let (e1, e2, e3) = (entry(1), entry(2), entry(3));
 
@@ -472,7 +473,7 @@ mod tests {
         let stale = StreamEntry {
             result: Ok(Record::new(Some(key.clone()), IndexMap::new(), None, 0, 0)),
             bval: None,
-            stamp: shared.stamp_delivery(key.partition_id()),
+            stamp: shared.stamp_delivery(key.partition_id(), key.digest, None),
         };
 
         // A new round begins for this partition before the entry is consumed.
@@ -490,6 +491,63 @@ mod tests {
         );
     }
 
+    /// A retry round resumes after the last record *stamped for the queue*;
+    /// the cursor a caller gets back still points at the last record
+    /// *consumed*, with no trace of that position, so a new run re-fetches
+    /// the queued tail.
+    #[test]
+    fn a_retry_resumes_after_the_queued_tail_but_a_cursor_does_not() {
+        let tracker = PartitionTracker::new(&QueryPolicy::default(), PartitionFilter::all(), &[])
+            .expect("tracker");
+        let shared = tracker.shared();
+        let rs = Recordset::new(RECORD_BATCH, 0, 1, shared.clone());
+
+        let key = distinct_partition_keys(1).remove(0);
+        let pid = key.partition_id();
+        let mut queued = Vec::new();
+        for n in 1..=3u8 {
+            let mut k = key.clone();
+            k.digest[19] = n;
+            queued.push(StreamEntry {
+                result: Ok(Record::new(Some(k.clone()), IndexMap::new(), None, 0, 0)),
+                bval: Some(u64::from(n)),
+                stamp: shared.stamp_delivery(pid, k.digest, Some(u64::from(n))),
+            });
+        }
+
+        // Nothing consumed yet: the next round resumes after the third
+        // record, the cursor says nothing was seen.
+        let third = {
+            let mut d = key.digest;
+            d[19] = 3;
+            d
+        };
+        assert_eq!(
+            shared.partitions()[pid].lock().resume_position(),
+            (Some(third), Some(3))
+        );
+        assert_eq!(cursor_of(&shared, &key), (None, None));
+
+        // The caller's cursor carries the consumed position only.
+        let snapshot = shared.partition_filter();
+        let snap = snapshot.partitions.as_ref().unwrap()[pid].lock();
+        assert_eq!(snap.digest, None);
+        assert_eq!(snap.resume_position(), (None, None));
+        drop(snap);
+
+        // A new round keeps the pushed position until the first push of
+        // that round replaces it; consuming the stale entries moves nothing.
+        shared.partitions()[pid].lock().begin_delivery_round();
+        for entry in queued {
+            rs.deliver(entry).unwrap();
+        }
+        assert_eq!(cursor_of(&shared, &key), (None, None));
+        assert_eq!(
+            shared.partitions()[pid].lock().resume_position(),
+            (Some(third), Some(3))
+        );
+    }
+
     /// A query entry's bval reaches the cursor with its digest, and only on
     /// consumption — the secondary-index resume needs both.
     #[test]
@@ -504,7 +562,7 @@ mod tests {
         let entry = StreamEntry {
             result: Ok(rec),
             bval: Some(42),
-            stamp: shared.stamp_delivery(key.partition_id()),
+            stamp: shared.stamp_delivery(key.partition_id(), key.digest, None),
         };
         block_on(rs.push_batch(vec![entry])).unwrap();
         assert_eq!(cursor_of(&shared, &key), (None, None));

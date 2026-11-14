@@ -128,11 +128,14 @@ impl PartitionFilter {
 
     pub(crate) fn reset_partition_status(&self) {
         if let Some(ref partitions) = self.partitions {
-            // Reset replica sequence and last node used.
+            // Reset replica sequence, last node used, and the position an
+            // earlier run's rounds resumed from: this run starts from the
+            // consumed cursor.
             for part in partitions.iter() {
                 let mut part = part.lock();
                 part.reset_sequence();
                 part.reset_node();
+                part.clear_pushed();
             }
         }
     }
@@ -148,11 +151,18 @@ impl Default for PartitionFilter {
 /// so two queries resumed from a filter and its clone do not share state.
 impl Clone for PartitionFilter {
     fn clone(&self) -> Self {
+        // A clone is a cursor leaving its run: the position a run's next
+        // round resumes from is not part of it, so a query on the clone
+        // starts from the consumed cursor and re-fetches the queued tail.
         let partitions = self.partitions.as_ref().map(|parts| {
             Arc::new(
                 parts
                     .iter()
-                    .map(|part| Mutex::new(part.lock().clone()))
+                    .map(|part| {
+                        let mut status = part.lock().clone();
+                        status.clear_pushed();
+                        Mutex::new(status)
+                    })
                     .collect(),
             )
         });

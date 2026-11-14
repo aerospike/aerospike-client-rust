@@ -1763,10 +1763,12 @@ impl Buffer {
                     self.write_u16_little_endian(id);
                 }
             }
+            // A partial partition resumes after the last record this run
+            // queued, or from the consumed cursor on the first round.
             if parts_partial_size > 0 {
                 self.write_field_header(parts_partial_size, FieldType::DigestArray);
                 for &index in &np.parts_partial {
-                    let digest = np.status(index).digest;
+                    let (digest, _) = np.status(index).resume_position();
                     if let Some(digest) = digest {
                         self.write_bytes(&digest);
                     }
@@ -1775,7 +1777,7 @@ impl Buffer {
             if parts_partial_bval_size > 0 {
                 self.write_field_header(parts_partial_bval_size, FieldType::BValArray);
                 for &index in &np.parts_partial {
-                    let bval = np.status(index).bval;
+                    let (_, bval) = np.status(index).resume_position();
                     self.write_u64_little_endian(bval.unwrap_or(0));
                 }
             }

@@ -86,6 +86,11 @@
     under `dynamic-config`, `discovery_registry`; `config::StaticConfig` gained `client_discovery`.
     Code that builds either with struct-update syntax from `Default` is unaffected.
 * **Bug Fixes**
+  * A query or scan retry re-delivered the records still queued when the round failed: the retry
+    resumed from the last record the application had taken, so the queued tail was fetched and
+    delivered again, as many duplicates as the queue held. A retry now resumes after the last record
+    queued. The cursor from `Recordset::partition_filter` still points at the last record consumed,
+    so closing a stream early and resuming loses nothing, as before.
   * `Client::execute_udf` with a transaction in the write policy ran outside the transaction: the key
     was not added to the transaction monitor and the command carried no transaction fields, so the
     UDF's write was neither rolled back by `abort` nor covered by `commit`. It is now a transactional

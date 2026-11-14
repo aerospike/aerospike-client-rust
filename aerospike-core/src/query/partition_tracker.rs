@@ -132,11 +132,21 @@ impl TrackerShared {
     /// partition's records in digest order, so the sequence numbers order
     /// them; the consumer edge uses the stamp to advance the resume cursor
     /// only along the contiguously consumed prefix.
-    pub(crate) fn stamp_delivery(&self, partition_id: usize) -> Option<(u32, u32)> {
+    ///
+    /// The stamp also records the record as the partition's last queued one,
+    /// where a later round of this run resumes. The node stream flushes its
+    /// batch on every exit, so every stamped record reaches the channel.
+    pub(crate) fn stamp_delivery(
+        &self,
+        partition_id: usize,
+        digest: [u8; 20],
+        bval: Option<u64>,
+    ) -> Option<(u32, u32)> {
         let offset = partition_id.checked_sub(self.partition_begin)?;
         let ps = self.partitions.get(offset)?;
         let mut ps = ps.lock();
         ps.delivered += 1;
+        ps.pushed = Some((digest, bval));
         Some((ps.epoch, ps.delivered))
     }
 
@@ -232,6 +242,8 @@ impl TrackerShared {
         }
         // Snapshot after the retry marks: the clone is an independent copy of
         // the partition state, so anything written later would not reach it.
+        // The clone carries the consumed cursor only, not this run's pushed
+        // positions, so a resume re-fetches whatever was queued but not taken.
         let pf = (*self.partition_filter).clone();
         if lagging {
             pf.done.store(false, Ordering::Relaxed);
@@ -432,9 +444,10 @@ impl PartitionTracker {
             }
 
             // The partition is being (re)queried: open a new delivery
-            // round so stale entries stop moving its cursor.
+            // round so stale entries stop moving its cursor. The request
+            // resumes after the last record queued, when there is one.
             status.begin_delivery_round();
-            let has_digest = status.digest.is_some();
+            let has_digest = status.resume_position().0.is_some();
             drop(status);
 
             let index = offset as u16;

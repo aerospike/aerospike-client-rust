@@ -196,8 +196,10 @@ impl StreamCommand {
     /// touched: it is committed at the consumer edge, record by record, as
     /// the user takes them out — so a stream closed with records still
     /// buffered resumes from the last record the user saw, not the last one
-    /// parsed. A failed push counts nothing: those records are re-fetched by
-    /// the next round.
+    /// parsed. (A retry round of this same run resumes after the last record
+    /// stamped for the channel; that is why the batch is flushed on every
+    /// exit of `parse_stream`, failures included: a stamped record must reach
+    /// the queue, or the retry would skip it.)
     async fn flush_batch(
         recordset: &Recordset,
         node_partitions: &mut NodePartitions,
@@ -210,6 +212,20 @@ impl StreamCommand {
         recordset.push_batch(std::mem::take(batch)).await?;
         node_partitions.record_count += count;
         Ok(())
+    }
+
+    /// Queues what the batch holds before `parse_stream` returns `err`; a
+    /// push failure means the consumer is gone, and the original error is
+    /// the one worth reporting.
+    async fn flush_then_fail(
+        &mut self,
+        batch: &mut Vec<StreamEntry>,
+        err: Error,
+    ) -> Result<bool> {
+        if let QuerySink::Channel(rs) = &self.sink {
+            let _ = Self::flush_batch(rs, &mut self.node_partitions, batch).await;
+        }
+        Err(err)
     }
 
     async fn parse_stream(&mut self, conn: &mut BufferedConn<'_>, size: usize) -> Result<bool> {
@@ -225,7 +241,7 @@ impl StreamCommand {
                 .await
             {
                 debug!("Parse result error: {err}");
-                return Err(err);
+                return self.flush_then_fail(&mut batch, err).await;
             }
 
             let res = self.parse_record(conn, size).await;
@@ -253,7 +269,9 @@ impl StreamCommand {
                             // Stamp after the allow gate: rejected records
                             // are neither delivered nor sequenced.
                             let key = rec.key.as_ref().unwrap();
-                            let stamp = rs.tracker.stamp_delivery(key.partition_id());
+                            let stamp =
+                                rs.tracker
+                                    .stamp_delivery(key.partition_id(), key.digest, bval);
                             batch.push(StreamEntry {
                                 result: Ok(rec),
                                 bval,
@@ -292,10 +310,9 @@ impl StreamCommand {
                 }
                 Ok((None, _, _, true)) => {} // handle partition done
                 Err(err) => {
-                    // Not flushed: the un-pushed tail is dropped with its
-                    // progress uncommitted, so a retry round re-fetches it.
-                    // let _ = self.recordset.push(Err(err)).await;
-                    return Err(err);
+                    // The records parsed so far were stamped as queued, so
+                    // queue them: the retry round resumes after them.
+                    return self.flush_then_fail(&mut batch, err).await;
                 }
             }
         }

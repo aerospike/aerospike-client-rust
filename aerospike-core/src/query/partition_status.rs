@@ -49,6 +49,14 @@ pub struct PartitionStatus {
     /// `(seq, digest, bval)`, sorted by `seq`. Empty whenever a single
     /// consumer drains the stream in order.
     pub(crate) pending: Vec<(u32, [u8; 20], Option<u64>)>,
+    /// The last record of this partition stamped for the record channel,
+    /// with its bval: where a later round of the *same* run resumes.
+    /// Everything up to it is queued or consumed, so resuming after it
+    /// loses nothing and re-delivers nothing; resuming from the consumed
+    /// cursor instead would fetch the queued tail a second time. Never part
+    /// of a cursor handed out or reused: a new run starts from the consumed
+    /// cursor.
+    pub(crate) pushed: Option<([u8; 20], Option<u64>)>,
 }
 
 impl PartitionStatus {
@@ -72,16 +80,33 @@ impl PartitionStatus {
             delivered: 0,
             consumed: 0,
             pending: Vec::new(),
+            pushed: None,
         }
     }
 
     /// Opens a new delivery round: entries stamped in earlier rounds become
-    /// stale and stop moving the cursor.
+    /// stale and stop moving the cursor. The pushed position stays: the
+    /// round's request is built after this and resumes from it.
     pub(crate) fn begin_delivery_round(&mut self) {
         self.epoch = self.epoch.wrapping_add(1);
         self.delivered = 0;
         self.consumed = 0;
         self.pending.clear();
+    }
+
+    /// Where the next round of this run resumes: after the last record
+    /// queued, or, when nothing has been queued this run, from the consumed
+    /// cursor. `None` means the partition is queried from its start.
+    pub(crate) fn resume_position(&self) -> (Option<[u8; 20]>, Option<u64>) {
+        match self.pushed {
+            Some((digest, bval)) => (Some(digest), bval.or(self.bval)),
+            None => (self.digest, self.bval),
+        }
+    }
+
+    /// Forgets the pushed position, for a cursor that leaves this run.
+    pub(crate) const fn clear_pushed(&mut self) {
+        self.pushed = None;
     }
 
     pub(crate) const fn set_digest(&mut self, digest: Option<[u8; 20]>) {
