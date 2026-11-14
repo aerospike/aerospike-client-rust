@@ -269,6 +269,49 @@ async fn scan_retry_after_a_stalled_consumer_delivers_no_record_twice() {
     );
 }
 
+/// A query with `Replica::Random` is refused on the first call with a
+/// parameter error, as the Java and C clients do, instead of sending each
+/// partition to an arbitrary node and failing after the retry budget. Every
+/// query entry point builds the same tracker, so the stream, the callback
+/// and the planned paths all reject it.
+#[aerospike_macro::test]
+async fn scan_with_a_random_replica_is_refused_up_front() {
+    let client = common::singleton_client().await;
+    let namespace = common::namespace();
+
+    let mut qpolicy = QueryPolicy::default();
+    qpolicy.base_policy.replica = aerospike::policy::Replica::Random;
+
+    let started = Instant::now();
+    let stmt = Statement::new(namespace, "any", Bins::None);
+    let err = client
+        .query(&qpolicy, PartitionFilter::all(), stmt)
+        .await
+        .expect_err("a random replica must be refused");
+    assert!(matches!(err.kind(), ErrorKind::InvalidArgument), "{err:?}");
+    assert!(err.to_string().contains("Invalid replica: Random"), "{err}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "refused before any round trip, not after the retry budget"
+    );
+
+    let stmt = Statement::new(namespace, "any", Bins::None);
+    let seen = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&seen);
+    let err = client
+        .query_foreach(&qpolicy, PartitionFilter::all(), stmt, move |_| {
+            let counter = Arc::clone(&counter);
+            async move {
+                counter.fetch_add(1, Ordering::Relaxed);
+                true
+            }
+        })
+        .await
+        .expect_err("the callback path refuses it too");
+    assert!(err.to_string().contains("Invalid replica: Random"), "{err}");
+    assert_eq!(seen.load(Ordering::Relaxed), 0);
+}
+
 /// The multi-consumer flavour of the no-loss contract: two concurrent
 /// streams drain one recordset, so a partition's records are consumed out of
 /// order across them. The delivery-sequence watermark must keep the cursor on

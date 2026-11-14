@@ -295,6 +295,21 @@ impl PartitionTracker {
         mut partition_filter: PartitionFilter,
         nodes: &[Arc<Node>],
     ) -> Result<Self> {
+        // A random replica sends each partition to any node, whether it owns
+        // the partition or not. A single-record read gets away with that
+        // because the server proxies it to the owner; a partition request
+        // has no proxy, so most partitions come back unavailable, every
+        // round picks another random node, and the query ends in "Max
+        // retries exceeded" with nothing to say why. A node-filtered query
+        // is worse: it silently skips the partitions whose random node is
+        // not the filtered one. The Java and C trackers refuse the replica
+        // up front, with this message; so does this one.
+        if policy.replica() == Replica::Random {
+            return Err(Error::invalid_argument(
+                "Invalid replica: Random".to_string(),
+            ));
+        }
+
         // Validate here instead of initial PartitionFilter constructor because total number of
         // cluster partitions may change on the server and PartitionFilter will never have access
         // to Cluster instance. Use fixed number of partitions for now.
@@ -669,6 +684,43 @@ impl PartitionTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A random replica is refused before any partition is assigned, as the
+    /// Java and C trackers do; every other replica builds a tracker.
+    #[test]
+    fn a_random_replica_is_an_invalid_argument_up_front() {
+        use crate::policy::QueryPolicy;
+
+        let random = QueryPolicy {
+            base_policy: crate::policy::BasePolicy {
+                replica: Replica::Random,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let err = PartitionTracker::new(&random, PartitionFilter::all(), &[]).unwrap_err();
+        assert!(matches!(err.kind(), crate::ErrorKind::InvalidArgument));
+        assert!(err.to_string().contains("Invalid replica: Random"), "{err}");
+
+        for replica in [
+            Replica::Sequence,
+            Replica::Master,
+            Replica::MasterProles,
+            Replica::PreferRack,
+        ] {
+            let policy = QueryPolicy {
+                base_policy: crate::policy::BasePolicy {
+                    replica,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            assert!(
+                PartitionTracker::new(&policy, PartitionFilter::all(), &[]).is_ok(),
+                "{replica:?}"
+            );
+        }
+    }
 
     #[test]
     fn find_node_matches_by_identity_not_name() {

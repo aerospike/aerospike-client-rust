@@ -86,6 +86,11 @@
     under `dynamic-config`, `discovery_registry`; `config::StaticConfig` gained `client_discovery`.
     Code that builds either with struct-update syntax from `Default` is unaffected.
 * **Bug Fixes**
+  * [CLIENT-5861] A query or scan with `Replica::Random` sent each partition to an arbitrary node, which answered
+    with the partition unavailable, and failed after the retry budget with "Max retries exceeded". It
+    is refused on the first call with an invalid-argument error, "Invalid replica: Random", as the
+    Java and C clients do; a random replica only has meaning for single-record and batch reads, which
+    the server proxies to the owning node.
   * A query or scan retry re-delivered the records still queued when the round failed: the retry
     resumed from the last record the application had taken, so the queued tail was fetched and
     delivered again, as many duplicates as the queue held. A retry now resumes after the last record
