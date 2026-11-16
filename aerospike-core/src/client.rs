@@ -2555,7 +2555,10 @@ impl Client {
     fn reject_resumed_top_k_filter(filter: &PartitionFilter) -> Result<()> {
         let resumed = filter.digest.is_some()
             || filter.partitions.as_ref().is_some_and(|parts| {
-                parts.iter().any(|part| part.lock().digest.is_some())
+                parts
+                    .iter()
+                    .filter_map(crate::query::PartitionSlot::get)
+                    .any(|part| part.lock().digest.is_some())
             });
         if resumed {
             return Err(Error::invalid_argument(

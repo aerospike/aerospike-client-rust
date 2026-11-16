@@ -22,9 +22,8 @@ use crate::policy::Replica;
 use crate::policy::StreamPolicy;
 use crate::query::NodePartitions;
 use crate::query::PartitionFilter;
-use crate::query::PartitionStatus;
+use crate::query::PartitionSlot;
 use crate::Node;
-use parking_lot::Mutex as PartMutex;
 
 use aerospike_rt::time::{Duration, Instant};
 
@@ -44,7 +43,7 @@ pub struct TrackerShared {
     /// Status of every partition in the query's range, indexed by offset from
     /// `partition_begin`. The same allocation the `PartitionFilter` and each
     /// `NodePartitions` refer to.
-    partitions: Arc<Vec<PartMutex<PartitionStatus>>>,
+    partitions: Arc<Vec<PartitionSlot>>,
     /// The resume cursor, shared rather than handed over at the end: a
     /// consumer that cancels mid-scan asks for it the moment it closes the
     /// recordset, long before the coordinator has wound down. Everything
@@ -90,9 +89,11 @@ impl TrackerShared {
         node_partitions: &mut NodePartitions,
         partition_id: u16,
     ) {
+        // An empty slot already reads as retry pending with no sequence.
         if let Some(ps) = self
             .partitions
             .get(partition_id as usize - self.partition_begin)
+            .and_then(PartitionSlot::get)
         {
             let mut ps = ps.lock();
             ps.retry = true;
@@ -114,7 +115,7 @@ impl TrackerShared {
             return;
         };
         if let Some(ps) = self.partitions.get(offset) {
-            let mut ps = ps.lock();
+            let mut ps = ps.get_or_init(partition_id).lock();
             ps.digest = Some(digest);
             if bval.is_some() {
                 ps.bval = bval;
@@ -143,7 +144,7 @@ impl TrackerShared {
         bval: Option<u64>,
     ) -> Option<(u32, u32)> {
         let offset = partition_id.checked_sub(self.partition_begin)?;
-        let ps = self.partitions.get(offset)?;
+        let ps = self.partitions.get(offset)?.get_or_init(partition_id);
         let mut ps = ps.lock();
         ps.delivered += 1;
         ps.pushed = Some((digest, bval));
@@ -183,11 +184,15 @@ impl TrackerShared {
             debug_assert!(false, "record partition {partition_id} below tracker range");
             return;
         };
-        let Some(ps) = self.partitions.get(offset) else {
+        let Some(slot) = self.partitions.get(offset) else {
             debug_assert!(
                 false,
                 "record partition {partition_id} beyond tracker range"
             );
+            return;
+        };
+        // The stamp that made this entry filled the slot.
+        let Some(ps) = slot.get() else {
             return;
         };
 
@@ -233,7 +238,7 @@ impl TrackerShared {
     /// a buffered tail.
     pub(crate) fn partition_filter(&self) -> PartitionFilter {
         let mut lagging = false;
-        for ps in self.partitions.iter() {
+        for ps in self.partitions.iter().filter_map(PartitionSlot::get) {
             let mut ps = ps.lock();
             if ps.delivered > ps.consumed {
                 ps.retry = true;
@@ -254,7 +259,7 @@ impl TrackerShared {
     /// Test hook: the live per-partition state, which a cursor from
     /// [`partition_filter`](Self::partition_filter) no longer shares.
     #[cfg(test)]
-    pub(crate) fn partitions(&self) -> &[PartMutex<PartitionStatus>] {
+    pub(crate) fn partitions(&self) -> &[PartitionSlot] {
         &self.partitions
     }
 
@@ -430,9 +435,12 @@ impl PartitionTracker {
         let mut partition = Partition::new(namespace, 0);
         partition.replica = self.replica;
 
-        for (offset, part) in partitions.iter().enumerate() {
-            let mut status = part.lock();
-            if !(retry || status.retry) {
+        for (offset, slot) in partitions.iter().enumerate() {
+            // An empty slot is a fresh partition: retry pending, no cursor,
+            // nothing to lock. A query over all partitions that returns few
+            // records walks 4,096 of these and locks only the filled ones.
+            let mut status = slot.get().map(parking_lot::Mutex::lock);
+            if !retry && status.as_ref().is_some_and(|status| !status.retry) {
                 continue;
             }
 
@@ -444,7 +452,7 @@ impl PartitionTracker {
                 found
             };
 
-            partition.partition_id = status.id as usize;
+            partition.partition_id = partition_begin + offset;
             partition.sequence = 0;
             partition.prev_node = None;
             let node = partition.get_node_in(cluster, table)?;
@@ -460,9 +468,13 @@ impl PartitionTracker {
 
             // The partition is being (re)queried: open a new delivery
             // round so stale entries stop moving its cursor. The request
-            // resumes after the last record queued, when there is one.
-            status.begin_delivery_round();
-            let has_digest = status.resume_position().0.is_some();
+            // resumes after the last record queued, when there is one. An
+            // empty slot has had no round, so its epoch and cursor are
+            // already what a new round would set.
+            let has_digest = status.as_mut().is_some_and(|status| {
+                status.begin_delivery_round();
+                status.resume_position().0.is_some()
+            });
             drop(status);
 
             let index = offset as u16;
@@ -642,13 +654,15 @@ impl PartitionTracker {
     }
 
     fn mark_retry(node_partitions: &NodePartitions) {
-        // Mark retry for same replica.
-        for &index in &node_partitions.parts_full {
-            node_partitions.status(index).retry = true;
-        }
-
-        for &index in &node_partitions.parts_partial {
-            node_partitions.status(index).retry = true;
+        // Mark retry for same replica. An empty slot already reads as retry.
+        for &index in node_partitions
+            .parts_full
+            .iter()
+            .chain(&node_partitions.parts_partial)
+        {
+            if let Some(entry) = node_partitions.entry(index) {
+                entry.lock().retry = true;
+            }
         }
     }
 
@@ -660,21 +674,21 @@ impl PartitionTracker {
             .store(true, Ordering::Relaxed);
     }
 
-    /// Builds the partition status array: one allocation for the whole range,
-    /// shared by `Arc` and indexed by offset from `partition_begin`.
+    /// Builds the partition slot array: one allocation of empty slots for
+    /// the whole range, shared by `Arc` and indexed by offset from
+    /// `partition_begin`. Only a seed digest fills a slot here, the first.
     pub(crate) fn init_partitions(
         partition_begin: usize,
         partition_count: usize,
         digest: Option<[u8; 20]>,
-    ) -> Arc<Vec<PartMutex<PartitionStatus>>> {
-        let mut parts_all = Vec::with_capacity(partition_count);
+    ) -> Arc<Vec<PartitionSlot>> {
+        let parts_all: Vec<PartitionSlot> =
+            (0..partition_count).map(|_| PartitionSlot::new()).collect();
 
-        for i in 0..partition_count {
-            let mut part = PartitionStatus::new(partition_begin + i);
-            if i == 0 && digest.is_some() {
-                part.set_digest(digest);
+        if digest.is_some() {
+            if let Some(first) = parts_all.first() {
+                first.get_or_init(partition_begin).lock().set_digest(digest);
             }
-            parts_all.push(PartMutex::new(part));
         }
 
         Arc::new(parts_all)
@@ -742,12 +756,40 @@ mod tests {
         let parts = PartitionTracker::init_partitions(100, 8, Some([7; 20]));
         let mut np = NodePartitions::new(node, 8, Arc::clone(&parts), 100);
 
-        np.add_partition(0, parts[0].lock().digest.is_some());
-        np.add_partition(3, parts[3].lock().digest.is_some());
+        let has_digest = |i: usize| parts[i].get().is_some_and(|p| p.lock().digest.is_some());
+        np.add_partition(0, has_digest(0));
+        np.add_partition(3, has_digest(3));
+        assert!(parts[3].get().is_none(), "no seed digest, no status");
 
         assert_eq!(np.partition_id(0), 100);
         assert_eq!(np.partition_id(3), 103);
         assert_eq!(np.parts_partial, vec![0], "the digest carried over on the first partition");
         assert_eq!(np.parts_full, vec![3]);
+    }
+
+    // Not a test: the client-side fixed cost of a full-range query's
+    // partition state, with no cluster and no server. Builds the range,
+    // walks it as the assignment does for a fresh round, and frees it.
+    #[test]
+    #[ignore = "timing probe, prints numbers"]
+    fn setup_cost_of_a_full_range() {
+        use aerospike_rt::time::Instant;
+        const ROUNDS: usize = 2000;
+
+        let t0 = Instant::now();
+        for _ in 0..ROUNDS {
+            let parts = PartitionTracker::init_partitions(0, node::PARTITIONS, None);
+            let mut full: Vec<u16> = Vec::with_capacity(node::PARTITIONS);
+            for (offset, slot) in parts.iter().enumerate() {
+                let wanted = slot.get().is_none_or(|entry| entry.lock().retry);
+                if wanted {
+                    full.push(offset as u16);
+                }
+            }
+            std::hint::black_box(&full);
+            drop(parts);
+        }
+        let per_query = t0.elapsed().as_secs_f64() * 1e6 / ROUNDS as f64;
+        println!("build + walk + free of 4096 partitions: {per_query:.1} us per query");
     }
 }

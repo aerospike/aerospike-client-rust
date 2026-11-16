@@ -362,8 +362,11 @@ mod tests {
     fn cursor_of(tracker: &TrackerShared, key: &crate::Key) -> (Option<[u8; 20]>, Option<u64>) {
         let pf = tracker.partition_filter();
         let parts = pf.partitions.as_ref().unwrap();
-        let ps = parts[key.partition_id()].lock();
-        (ps.digest, ps.bval)
+        // An empty slot in the snapshot is a partition with no cursor.
+        parts[key.partition_id()].get().map_or((None, None), |ps| {
+            let ps = ps.lock();
+            (ps.digest, ps.bval)
+        })
     }
 
     /// The no-loss contract: the resume cursor moves only when the consumer
@@ -480,6 +483,7 @@ mod tests {
         // (On the tracker's own state: a cursor from `partition_filter()` is
         // an independent copy.)
         shared.partitions()[key.partition_id()]
+            .get_or_init(key.partition_id())
             .lock()
             .begin_delivery_round();
 
@@ -523,27 +527,30 @@ mod tests {
             d
         };
         assert_eq!(
-            shared.partitions()[pid].lock().resume_position(),
+            shared.partitions()[pid].get_or_init(pid).lock().resume_position(),
             (Some(third), Some(3))
         );
         assert_eq!(cursor_of(&shared, &key), (None, None));
 
         // The caller's cursor carries the consumed position only.
         let snapshot = shared.partition_filter();
-        let snap = snapshot.partitions.as_ref().unwrap()[pid].lock();
+        let snap = snapshot.partitions.as_ref().unwrap()[pid]
+            .get()
+            .expect("the stamps filled this partition's slot")
+            .lock();
         assert_eq!(snap.digest, None);
         assert_eq!(snap.resume_position(), (None, None));
         drop(snap);
 
         // A new round keeps the pushed position until the first push of
         // that round replaces it; consuming the stale entries moves nothing.
-        shared.partitions()[pid].lock().begin_delivery_round();
+        shared.partitions()[pid].get_or_init(pid).lock().begin_delivery_round();
         for entry in queued {
             rs.deliver(entry).unwrap();
         }
         assert_eq!(cursor_of(&shared, &key), (None, None));
         assert_eq!(
-            shared.partitions()[pid].lock().resume_position(),
+            shared.partitions()[pid].get_or_init(pid).lock().resume_position(),
             (Some(third), Some(3))
         );
     }

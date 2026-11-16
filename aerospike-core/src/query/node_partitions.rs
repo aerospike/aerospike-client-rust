@@ -13,7 +13,7 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-use crate::query::PartitionStatus;
+use crate::query::{PartitionSlot, PartitionStatus};
 use crate::Node;
 
 use parking_lot::{Mutex, MutexGuard};
@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 /// The partitions of one node's share of a scan/query.
 ///
-/// `parts_full` and `parts_partial` hold *indices* into `parts`, the status
+/// `parts_full` and `parts_partial` hold *indices* into `parts`, the slot
 /// array shared with the owning
 /// [`PartitionFilter`](crate::query::PartitionFilter). Holding an
 /// `Arc<Mutex<PartitionStatus>>` per entry instead meant one heap allocation
@@ -31,7 +31,7 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub struct NodePartitions {
     pub(crate) node: Arc<Node>,
-    pub(crate) parts: Arc<Vec<Mutex<PartitionStatus>>>,
+    pub(crate) parts: Arc<Vec<PartitionSlot>>,
     pub(crate) parts_full: Vec<u16>,
     pub(crate) parts_partial: Vec<u16>,
     pub(crate) record_count: u64,
@@ -47,7 +47,7 @@ impl NodePartitions {
     pub fn new(
         node: Arc<Node>,
         capacity: usize,
-        parts: Arc<Vec<Mutex<PartitionStatus>>>,
+        parts: Arc<Vec<PartitionSlot>>,
         partition_begin: usize,
     ) -> Self {
         NodePartitions {
@@ -76,8 +76,16 @@ impl NodePartitions {
     }
 
     /// Locks and reads one of this node's partition statuses by index.
+    /// The partition's status, created on first use.
     pub(crate) fn status(&self, index: u16) -> MutexGuard<'_, PartitionStatus> {
-        self.parts[index as usize].lock()
+        self.parts[index as usize]
+            .get_or_init(self.partition_begin + index as usize)
+            .lock()
+    }
+
+    /// The partition's status if it has one; an empty slot reads as fresh.
+    pub(crate) fn entry(&self, index: u16) -> Option<&Mutex<PartitionStatus>> {
+        self.parts[index as usize].get()
     }
 
     /// The partition id at `index`, which never changes after

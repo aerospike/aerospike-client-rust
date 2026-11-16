@@ -23,7 +23,7 @@ pub use self::order_by::{Order, OrderBy, OrderByType};
 pub use self::partition_filter::PartitionFilter;
 // Hidden: reachable for language bindings that rebuild cursors; not API.
 #[doc(hidden)]
-pub use self::partition_status::PartitionStatus;
+pub use self::partition_status::{PartitionSlot, PartitionStatus};
 pub(crate) use self::partition_tracker::{PartitionTracker, TrackerShared};
 #[doc(hidden)] // wire-level query-plan types, see the crate root
 pub use self::plan::{

@@ -58,6 +58,11 @@
     `tests/discovery/README.md`.
 
 * **Improvements**
+  * [CLIENT-5922] A scan or query no longer builds, walks and frees a status entry for every partition in its
+    range before it reads a record. A partition's status is created when the partition first needs
+    one, so a query over all 4,096 partitions that returns few records sets up 4,096 empty slots
+    instead of 600 KB of entries. The hidden `PartitionFilter::partitions` field now holds
+    `PartitionSlot`s, each `get()`-able when filled; the serialized cursor is unchanged.
   * [CLIENT-5919] A batch row shares its operation list instead of owning a copy:
     `BatchOperation::write` and `read_ops` take `impl Into<Arc<[Operation]>>`, so one
     `Arc<[Operation]>` serves every key that runs the same operations, and the wire encoder tells

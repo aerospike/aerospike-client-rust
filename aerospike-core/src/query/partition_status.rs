@@ -15,7 +15,44 @@
 
 use crate::Node;
 
-use std::sync::Arc;
+use parking_lot::Mutex;
+
+use std::sync::{Arc, OnceLock};
+
+/// One partition's slot in a filter's range: empty until the partition first
+/// needs state, which is a record delivered, a cursor committed, or an entry
+/// loaded from a saved cursor. An empty slot reads as a fresh status: retry
+/// pending, no cursor, epoch zero. A query over all partitions that returns
+/// few records therefore never builds, walks or frees the status of the
+/// partitions it got nothing from; it zeroes 4,096 pointers instead.
+///
+/// Hidden: reachable for language bindings that rebuild cursors; not API.
+#[doc(hidden)]
+#[derive(Debug, Default)]
+pub struct PartitionSlot(OnceLock<Box<Mutex<PartitionStatus>>>);
+
+impl PartitionSlot {
+    /// An empty slot.
+    pub const fn new() -> Self {
+        Self(OnceLock::new())
+    }
+
+    /// The partition's status, if the partition has any.
+    pub fn get(&self) -> Option<&Mutex<PartitionStatus>> {
+        self.0.get().map(|boxed| &**boxed)
+    }
+
+    /// The partition's status, created fresh for `partition_id` on first use.
+    pub fn get_or_init(&self, partition_id: usize) -> &Mutex<PartitionStatus> {
+        self.0
+            .get_or_init(|| Box::new(Mutex::new(PartitionStatus::new(partition_id))))
+    }
+
+    /// Fills an empty slot; a slot already filled keeps what it has.
+    pub(crate) fn fill(&self, status: PartitionStatus) {
+        let _ = self.0.set(Box::new(Mutex::new(status)));
+    }
+}
 
 /// Representation of the status of a scan/query  for a specific partition.
 #[derive(Debug, Clone)]

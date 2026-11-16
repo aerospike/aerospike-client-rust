@@ -14,10 +14,8 @@
 // the License.
 
 use crate::cluster::node;
-use crate::query::PartitionStatus;
+use crate::query::{PartitionSlot, PartitionStatus};
 use crate::Key;
-
-use parking_lot::Mutex;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -40,24 +38,20 @@ pub struct PartitionFilter {
     /// Digest of a Key to scan/query
     pub digest: Option<[u8; 20]>,
 
-    /// Status of each partition in `[begin, begin + count)`, indexed by
-    /// offset from `begin`.
+    /// One slot per partition in `[begin, begin + count)`, indexed by offset
+    /// from `begin`, shared by `Arc` with the tracker and the per-node
+    /// groupings, which refer to slots by index.
     ///
-    /// One heap allocation for the whole range, shared by `Arc`. The per-node
-    /// groupings refer to entries by index rather than holding an `Arc` each,
-    /// because a
-    /// full-partition scan otherwise allocated 4096 separate
-    /// `Arc<Mutex<PartitionStatus>>` blocks — about 819 KB and 4096
-    /// allocations per query, before a single record was read.
-    ///
-    /// The lock is a `parking_lot::Mutex`: every critical section is a few
-    /// field assignments with no `.await` inside, so an async mutex bought
-    /// nothing, and unlike `std::sync::Mutex` this one neither allocates on
-    /// first lock nor costs more than a byte per partition.
+    /// A slot is empty until its partition first needs state, so a query
+    /// over all partitions pays for the partitions it gets records from,
+    /// not for 4,096 status entries up front: the range costs 4,096
+    /// pointers to set up and to free. The status behind a filled slot is
+    /// under a `parking_lot::Mutex`: every critical section is a few field
+    /// assignments with no `.await` inside.
     ///
     /// Hidden: reachable for language bindings that rebuild cursors; not API.
     #[doc(hidden)]
-    pub partitions: Option<Arc<Vec<Mutex<PartitionStatus>>>>,
+    pub partitions: Option<Arc<Vec<PartitionSlot>>>,
 
     /// Is partition completely scanned/queried.
     pub(crate) done: AtomicBool,
@@ -122,7 +116,7 @@ impl PartitionFilter {
         self.done.load(Ordering::Relaxed)
     }
 
-    pub(crate) fn set_partitions(&mut self, partitions: Arc<Vec<Mutex<PartitionStatus>>>) {
+    pub(crate) fn set_partitions(&mut self, partitions: Arc<Vec<PartitionSlot>>) {
         self.partitions = Some(partitions);
     }
 
@@ -130,8 +124,8 @@ impl PartitionFilter {
         if let Some(ref partitions) = self.partitions {
             // Reset replica sequence, last node used, and the position an
             // earlier run's rounds resumed from: this run starts from the
-            // consumed cursor.
-            for part in partitions.iter() {
+            // consumed cursor. An empty slot has none of these.
+            for part in partitions.iter().filter_map(PartitionSlot::get) {
                 let mut part = part.lock();
                 part.reset_sequence();
                 part.reset_node();
@@ -159,9 +153,13 @@ impl Clone for PartitionFilter {
                 parts
                     .iter()
                     .map(|part| {
-                        let mut status = part.lock().clone();
-                        status.clear_pushed();
-                        Mutex::new(status)
+                        let slot = PartitionSlot::new();
+                        if let Some(entry) = part.get() {
+                            let mut status = entry.lock().clone();
+                            status.clear_pushed();
+                            slot.fill(status);
+                        }
+                        slot
                     })
                     .collect(),
             )
@@ -211,17 +209,28 @@ struct PartitionRepr {
 #[cfg(feature = "serialization")]
 impl Serialize for PartitionFilter {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        // An empty slot is written as the fresh status it reads as, so the
+        // form has one entry per partition whatever the slots hold.
         let partitions = self.partitions.as_ref().map_or_else(Vec::new, |parts| {
             parts
                 .iter()
-                .map(|part| {
-                    let part = part.lock();
-                    PartitionRepr {
-                        id: part.id,
-                        retry: part.retry,
-                        bval: part.bval,
-                        digest: part.digest,
+                .enumerate()
+                .map(|(i, part)| match part.get() {
+                    Some(entry) => {
+                        let part = entry.lock();
+                        PartitionRepr {
+                            id: part.id,
+                            retry: part.retry,
+                            bval: part.bval,
+                            digest: part.digest,
+                        }
                     }
+                    None => PartitionRepr {
+                        id: (self.begin + i) as u16,
+                        retry: true,
+                        bval: None,
+                        digest: None,
+                    },
                 })
                 .collect()
         });
@@ -280,15 +289,20 @@ impl<'de> Deserialize<'de> for PartitionFilter {
         let partitions = if partitions.is_empty() {
             None
         } else {
+            // An entry that reads as a fresh status stays an empty slot.
             Some(Arc::new(
                 partitions
                     .into_iter()
                     .map(|entry| {
-                        let mut status = PartitionStatus::new(usize::from(entry.id));
-                        status.retry = entry.retry;
-                        status.bval = entry.bval;
-                        status.digest = entry.digest;
-                        Mutex::new(status)
+                        let slot = PartitionSlot::new();
+                        if !entry.retry || entry.bval.is_some() || entry.digest.is_some() {
+                            let mut status = PartitionStatus::new(usize::from(entry.id));
+                            status.retry = entry.retry;
+                            status.bval = entry.bval;
+                            status.digest = entry.digest;
+                            slot.fill(status);
+                        }
+                        slot
                     })
                     .collect(),
             ))
@@ -315,6 +329,106 @@ mod tests {
     fn round_trip(filter: &PartitionFilter) -> PartitionFilter {
         let json = serde_json::to_string(filter).expect("serialize");
         serde_json::from_str(&json).expect("deserialize")
+    }
+
+    /// Cursors written by real queries against a live node over partitions
+    /// 0..64, captured on 2026-11-16. The `eager` three come from the build
+    /// before a partition's status was created on first use (every entry
+    /// was a status then); the `lazy` one from the build after. Each was
+    /// loaded by the *other* build and written back byte for byte, so the
+    /// two builds read each other's cursors. The tests below keep this
+    /// build on that contract.
+    const CURSORS: [(&str, &str); 4] = [
+        (
+            "scan cancelled after 50 records, eager build",
+            include_str!("fixtures/cursor_scan_3.1_eager.json"),
+        ),
+        (
+            "secondary-index query cancelled after 50 records, eager build",
+            include_str!("fixtures/cursor_si_query_3.1_eager.json"),
+        ),
+        (
+            "scan run to the end, eager build",
+            include_str!("fixtures/cursor_done_3.1_eager.json"),
+        ),
+        (
+            "scan cancelled after 50 records, lazy build",
+            include_str!("fixtures/cursor_scan_3.1_lazy.json"),
+        ),
+    ];
+
+    /// A cursor from either build loads, and writes back the same bytes: the
+    /// form has one entry per partition whatever the slots hold, so a reader
+    /// that expects a status per partition gets one.
+    #[test]
+    fn real_cursors_from_both_builds_load_and_write_back_identically() {
+        for (name, text) in CURSORS {
+            let filter: PartitionFilter =
+                serde_json::from_str(text).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(serde_json::to_string(&filter).unwrap(), text, "{name}");
+            assert_eq!((filter.begin, filter.count), (0, 64), "{name}");
+            assert!(filter.partitions.as_ref().is_some_and(|p| p.len() == 64), "{name}");
+        }
+    }
+
+    /// Loading fills a slot only for an entry that carries state, a digest, a
+    /// bval or a cleared retry flag, and leaves the rest empty: the entries
+    /// a real cursor holds for the partitions nothing was read from cost
+    /// nothing once loaded, and read as the fresh status they were written as.
+    #[test]
+    fn real_cursors_fill_only_the_slots_that_carry_state() {
+        for (name, text) in CURSORS {
+            let filter: PartitionFilter = serde_json::from_str(text).unwrap();
+            let parts = filter.partitions.as_ref().unwrap();
+            let json: serde_json::Value = serde_json::from_str(text).unwrap();
+            let entries = json["partitions"].as_array().unwrap();
+            assert_eq!(entries.len(), parts.len(), "{name}");
+
+            let mut filled = 0;
+            for (i, (slot, entry)) in parts.iter().zip(entries).enumerate() {
+                let carries_state = !entry["retry"].as_bool().unwrap()
+                    || !entry["bval"].is_null()
+                    || !entry["digest"].is_null();
+                match slot.get() {
+                    Some(status) => {
+                        assert!(carries_state, "{name}: entry {i} filled a slot with nothing");
+                        let status = status.lock();
+                        assert_eq!(usize::from(status.id), i, "{name}");
+                        assert_eq!(status.digest.is_some(), !entry["digest"].is_null(), "{name}");
+                        assert_eq!(status.bval.is_some(), !entry["bval"].is_null(), "{name}");
+                        assert_eq!(status.retry, entry["retry"].as_bool().unwrap(), "{name}");
+                        filled += 1;
+                    }
+                    None => assert!(!carries_state, "{name}: entry {i} with state left its slot empty"),
+                }
+            }
+            assert!(filled > 0 && filled < parts.len(), "{name}: {filled} of {} filled", parts.len());
+        }
+    }
+
+    /// A cursor from the eager build resumes a query the same way after a
+    /// trip through this build: the per-partition resume positions the
+    /// request builder reads are the digests and bvals the cursor carried.
+    #[test]
+    fn a_cursor_from_the_eager_build_keeps_its_resume_positions() {
+        let (_, text) = CURSORS[1];
+        let filter: PartitionFilter = serde_json::from_str(text).unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        let parts = filter.partitions.as_ref().unwrap();
+        for (slot, entry) in parts.iter().zip(json["partitions"].as_array().unwrap()) {
+            let (digest, bval) = slot
+                .get()
+                .map_or((None, None), |s| s.lock().resume_position());
+            let expected_digest = entry["digest"].as_array().map(|d| {
+                let mut out = [0u8; 20];
+                for (b, v) in out.iter_mut().zip(d) {
+                    *b = v.as_u64().unwrap() as u8;
+                }
+                out
+            });
+            assert_eq!(digest, expected_digest);
+            assert_eq!(bval, entry["bval"].as_u64());
+        }
     }
 
     #[test]
@@ -345,7 +459,7 @@ mod tests {
         filter.set_partitions(PartitionTracker::init_partitions(0, 4, None));
         {
             let parts = filter.partitions.as_ref().unwrap();
-            let mut finished = parts[2].lock();
+            let mut finished = parts[2].get_or_init(2).lock();
             finished.retry = false;
             finished.digest = Some([7; 20]);
             finished.bval = Some(9);
@@ -364,8 +478,8 @@ mod tests {
                 .as_ref()
                 .expect("entries were carried over");
             assert_eq!(parts.len(), 4);
-            assert!(parts[0].lock().retry);
-            let finished = parts[2].lock();
+            assert!(parts[0].get().is_none(), "a fresh entry stays an empty slot");
+            let finished = parts[2].get().expect("a cursor fills its slot").lock();
             assert_eq!(
                 (finished.id, finished.retry, finished.bval, finished.digest),
                 (2, false, Some(9), Some([7; 20]))
@@ -399,7 +513,7 @@ mod tests {
         {
             let parts = filter.partitions.as_ref().unwrap();
             let set = |i: usize, retry: bool, bval: Option<u64>, digest: Option<[u8; 20]>| {
-                let mut part = parts[i].lock();
+                let mut part = parts[i].get_or_init(3 + i).lock();
                 part.retry = retry;
                 part.bval = bval;
                 part.digest = digest;
@@ -436,9 +550,13 @@ mod tests {
         let parts = loaded.partitions.as_ref().expect("four entries");
         let snapshot: Vec<Entry> = parts
             .iter()
-            .map(|p| {
-                let p = p.lock();
-                (p.id, p.retry, p.bval, p.digest)
+            .enumerate()
+            .map(|(i, slot)| match slot.get() {
+                Some(entry) => {
+                    let p = entry.lock();
+                    (p.id, p.retry, p.bval, p.digest)
+                }
+                None => (3 + i as u16, true, None, None),
             })
             .collect();
         assert_eq!(
