@@ -45,7 +45,10 @@ use crate::policy::{
 use crate::query::plan::{QueryPlan, QueryWhereWire, FLAG_EXPLAIN, FLAG_HARD_HINT};
 #[cfg(feature = "lua")]
 use crate::query::ResultSet;
-use crate::query::{CallbackCtx, PartitionFilter, PartitionTracker, QueryHandle, QuerySink};
+use crate::query::{
+    CallbackCtx, NodePartitions, PartitionFilter, PartitionTracker, QueryHandle, QuerySink,
+    StreamEntry, TopKAccumulator,
+};
 use crate::task::{DropIndexTask, ExecuteTask, IndexTask, RegisterTask, UdfRemoveTask};
 use crate::txn::{AbortStatus, CommitStatus, Txn, TxnState};
 use crate::txn_roll::TxnRoll;
@@ -208,15 +211,13 @@ impl Client {
     /// # }
     /// ```
     pub async fn new(policy: &ClientPolicy, hosts: &(dyn ToHosts + Send + Sync)) -> Result<Self> {
-        let client = Self::connect(policy, hosts).await?;
-
         // Auto-enable dynamic configuration when AEROSPIKE_CLIENT_CONFIG_URL is set.
         #[cfg(feature = "dynamic-config")]
         if let Some(provider) = crate::config::provider_from_env() {
-            client.cluster.attach_dyn_config(provider).await;
+            return Self::connect_with_provider(policy, hosts, provider).await;
         }
 
-        Ok(client)
+        Self::connect(policy, hosts).await
     }
 
     /// Like [`new`](Self::new) but with dynamic configuration enabled from an
@@ -248,16 +249,17 @@ impl Client {
     ///
     /// Same as [`new`](Self::new): policy validation, connectivity, or cluster
     /// discovery failures. A provider that fails its initial load does not fail
-    /// construction — it is logged and retried on the next watch tick.
+    /// construction — it is logged and retried on the next watch tick. A file
+    /// whose `static.client.discovery` or `static.client.translation` block is
+    /// invalid is logged and ignored as a whole, and the client starts on the
+    /// policy set in code.
     #[cfg(feature = "dynamic-config")]
     pub async fn new_with_config(
         policy: &ClientPolicy,
         hosts: &(dyn ToHosts + Send + Sync),
         provider: std::sync::Arc<dyn crate::config::ConfigProvider>,
     ) -> Result<Self> {
-        let client = Self::connect(policy, hosts).await?;
-        client.cluster.attach_dyn_config(provider).await;
-        Ok(client)
+        Self::connect_with_provider(policy, hosts, provider).await
     }
 
     /// Validates the policy, resolves seed hosts, and brings up the cluster.
@@ -266,6 +268,42 @@ impl Client {
         policy.validate()?;
         let hosts = hosts.to_hosts()?;
         let cluster = Cluster::new(policy.clone(), &hosts).await?;
+
+        Ok(Client { cluster })
+    }
+
+    /// [`connect`](Self::connect) with a dynamic configuration provider.
+    ///
+    /// The file is read first and its `static.client` section merged into the
+    /// policy before the cluster is seeded: the seed candidate provider and
+    /// address translator a file selects decide which addresses the first
+    /// connection goes to, so they cannot be applied afterwards. The same
+    /// document is then handed to the config watcher, which applies its
+    /// dynamic section and keeps polling.
+    #[cfg(feature = "dynamic-config")]
+    async fn connect_with_provider(
+        policy: &ClientPolicy,
+        hosts: &(dyn ToHosts + Send + Sync),
+        provider: std::sync::Arc<dyn crate::config::ConfigProvider>,
+    ) -> Result<Self> {
+        let mut policy = policy.clone();
+        let mut initial_doc = None;
+        match provider.load().await {
+            Ok(Some(doc)) => match Cluster::merge_static_config(&mut policy, &doc) {
+                Ok(()) => initial_doc = Some(doc),
+                Err(err) => {
+                    warn!("Failed to parse {provider:?}: {err}. Ignoring the file");
+                }
+            },
+            Ok(None) => {}
+            Err(err) => {
+                log_error_chain!(err, "Error loading initial dynamic configuration");
+            }
+        }
+        policy.validate()?;
+        let hosts = hosts.to_hosts()?;
+        let cluster = Cluster::new(policy, &hosts).await?;
+        cluster.attach_dyn_config(provider, initial_doc).await;
 
         Ok(Client { cluster })
     }
@@ -417,6 +455,14 @@ impl Client {
         self.cluster.get_random_node()
     }
 
+    /// The seed list the client re-seeds from when no node is active: the
+    /// static seeds merged with the ones the seed candidate provider returned
+    /// (see [`ClientPolicy::discovery_merge_policy`]), plus the nodes found
+    /// after construction until a refresh replaces the whole list.
+    pub fn seeds(&self) -> Vec<crate::Host> {
+        self.cluster.seeds()
+    }
+
     #[doc(hidden)] // test support, not a stable API
     pub fn partition_map_ready(&self) -> bool {
         self.cluster.partition_map_ready()
@@ -455,6 +501,47 @@ impl Client {
     #[doc(hidden)] // test support, not a stable API
     pub fn partition_map_complete(&self) -> bool {
         self.cluster.partition_map_complete()
+    }
+
+    /// The master of every partition of `namespace` in the client's
+    /// partition map, `None` where no node claims the partition; `None` when
+    /// the namespace is not mapped.
+    #[doc(hidden)] // test support (the L2 discovery rows), not a stable API
+    pub fn partition_masters(&self, namespace: &str) -> Option<Vec<Option<Arc<Node>>>> {
+        self.cluster.partition_map.load().get(namespace).map(|partitions| {
+            partitions
+                .nodes
+                .iter()
+                .take(crate::cluster::node::PARTITIONS)
+                .map(|(_, node)| node.clone())
+                .collect()
+        })
+    }
+
+    /// The node a write of `key` with `replica` is sent to.
+    ///
+    /// # Errors
+    ///
+    /// No node owns the key's partition.
+    #[doc(hidden)] // test support (the L2 discovery rows), not a stable API
+    pub fn write_node(&self, key: &Key, replica: crate::policy::Replica) -> Result<Arc<Node>> {
+        crate::cluster::partition::Partition::for_write(key, replica).get_node(&self.cluster)
+    }
+
+    /// The node a read of `key` with `replica` is sent to.
+    ///
+    /// # Errors
+    ///
+    /// No node owns the key's partition.
+    #[doc(hidden)] // test support (the L2 discovery rows), not a stable API
+    pub fn read_node(&self, key: &Key, replica: crate::policy::Replica) -> Result<Arc<Node>> {
+        crate::cluster::partition::Partition::for_read(
+            &self.cluster,
+            key,
+            replica,
+            crate::policy::ReadModeSc::Session,
+        )
+        .get_node(&self.cluster)
     }
 
     /// The cluster name the connected servers report (`cluster-name` info),
@@ -1231,8 +1318,15 @@ impl Client {
         let policy = self.cluster.resolve_write(policy);
         let policy = policy.as_ref();
         if let Some(txn) = &policy.base_policy.txn {
-            crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
-                .await?;
+            // Only a write joins the transaction monitor; a read-only operate
+            // is prepared like a get, with no monitor round trip and no write
+            // intent recorded for a key that is not written. As in Java.
+            if ops.iter().any(Operation::is_write) {
+                crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
+                    .await?;
+            } else {
+                txn.prepare_read(&key.namespace)?;
+            }
         }
         let mut command = OperateCommand::new(policy, self.cluster.clone(), key, ops);
         command.execute().await?;
@@ -1503,6 +1597,14 @@ impl Client {
         function_name: &str,
         args: &[Value],
     ) -> Result<Option<Value>> {
+        let policy = self.cluster.resolve_write(policy);
+        let policy = policy.as_ref();
+        // A UDF call is a write: its key joins the transaction monitor before
+        // the call, as a put's does.
+        if let Some(txn) = &policy.base_policy.txn {
+            crate::txn_monitor::add_key(self.cluster.clone(), &policy.base_policy, txn, key)
+                .await?;
+        }
         let mut command = ExecuteUdfCommand::new(
             policy,
             self.cluster.clone(),
@@ -1621,6 +1723,7 @@ impl Client {
         let policy = self.cluster.resolve_query(policy);
         let policy = policy.as_ref();
         let nodes: Vec<Arc<Node>> = self.cluster.nodes();
+        Self::check_top_k_query(policy, &statement, &nodes, &partition_filter)?;
         let t_policy = policy.clone();
         let tracker = PartitionTracker::new(&t_policy, partition_filter, &nodes)?;
 
@@ -1634,8 +1737,13 @@ impl Client {
         let sink = QuerySink::Channel(recordset.clone());
         let close_on_exit = CloseSinkOnExit(sink.clone());
         let cluster = self.cluster.clone();
+        // A Top-K statement is ranked on every node and merged in the client
+        // by one shared accumulator. An order key without `k` runs as a plain
+        // query, which the server refuses when it sees the order-by field.
+        let top_k = Self::top_k_accumulator(&statement);
         aerospike_rt::spawn(async move {
-            Self::execute_query_timeout(cluster, &t_policy, tracker, statement, sink, None).await;
+            Self::execute_query_timeout(cluster, &t_policy, tracker, statement, sink, None, top_k)
+                .await;
             drop(close_on_exit);
         });
 
@@ -1678,11 +1786,16 @@ impl Client {
         Fut: std::future::Future<Output = bool> + Send + 'static,
     {
         statement.validate()?;
+        Self::reject_top_k_on_callback_query(&statement)?;
         let statement = Arc::new(statement);
 
         let policy = self.cluster.resolve_query(policy);
         let policy = policy.as_ref();
         let nodes: Vec<Arc<Node>> = self.cluster.nodes();
+        // An order key without `k` is left for the server to refuse, but only
+        // a node that understands it refuses it; an older one runs the query
+        // unranked. The same check `query` makes.
+        Self::check_order_by_support(&statement, &nodes)?;
         let t_policy = policy.clone();
         let tracker = PartitionTracker::new(&t_policy, partition_filter, &nodes)?;
 
@@ -1694,7 +1807,8 @@ impl Client {
         let close_on_exit = CloseSinkOnExit(sink.clone());
         let cluster = self.cluster.clone();
         let task = aerospike_rt::spawn(async move {
-            Self::execute_query_timeout(cluster, &t_policy, tracker, statement, sink, None).await;
+            Self::execute_query_timeout(cluster, &t_policy, tracker, statement, sink, None, None)
+                .await;
             drop(close_on_exit);
         });
 
@@ -1784,6 +1898,10 @@ impl Client {
         let policy = self.cluster.resolve_query(policy);
         let policy = policy.as_ref();
         let nodes: Vec<Arc<Node>> = self.cluster.nodes();
+        // The same Top-K checks as `query`: a server plan changes the filter,
+        // not what a ranked query needs from the policy, the nodes and the
+        // partition filter.
+        Self::check_top_k_query(policy, &statement, &nodes, &partition_filter)?;
         let t_policy = policy.clone();
         let tracker = PartitionTracker::new(&t_policy, partition_filter, &nodes)?;
 
@@ -1797,6 +1915,7 @@ impl Client {
         let sink = QuerySink::Channel(recordset.clone());
         let close_on_exit = CloseSinkOnExit(sink.clone());
         let cluster = self.cluster.clone();
+        let top_k = Self::top_k_accumulator(&statement);
         aerospike_rt::spawn(async move {
             Self::execute_query_timeout(
                 cluster,
@@ -1805,6 +1924,7 @@ impl Client {
                 statement,
                 sink,
                 execute_where,
+                top_k,
             )
             .await;
             drop(close_on_exit);
@@ -1878,6 +1998,7 @@ impl Client {
 
         statement.set_aggregate_function(package_name, function_name, function_args);
         statement.validate()?;
+        Self::reject_top_k_on_aggregation(&statement)?;
 
         // Disable retries: a retried partition would re-send partial
         // results that were already fed into the aggregation.
@@ -2028,7 +2149,9 @@ impl Client {
             ));
         }
         statement.validate()?;
-
+        Self::reject_top_k_on_background_query(&statement)?;
+        let write_policy = self.cluster.resolve_write(write_policy);
+        let write_policy = write_policy.as_ref();
         let nodes = self.cluster.nodes();
         if nodes.is_empty() {
             return Err(Error::connection("No connections available".to_string()));
@@ -2100,9 +2223,11 @@ impl Client {
         function_name: &str,
         args: &[Value],
     ) -> Result<ExecuteTask> {
+        Self::reject_top_k_on_background_query(&statement)?;
         statement.set_aggregate_function(package_name, function_name, args);
         statement.validate()?;
-
+        let write_policy = self.cluster.resolve_write(write_policy);
+        let write_policy = write_policy.as_ref();
         let nodes = self.cluster.nodes();
         if nodes.is_empty() {
             return Err(Error::connection("No connections available".to_string()));
@@ -2139,6 +2264,7 @@ impl Client {
         statement: Arc<Statement>,
         sink: QuerySink,
         execute_where: Option<Arc<[u8]>>,
+        top_k: Option<Arc<aerospike_rt::Mutex<TopKAccumulator>>>,
     ) {
         if policy.total_timeout() > 0 {
             let timed_sink = sink.clone();
@@ -2151,6 +2277,7 @@ impl Client {
                     statement,
                     sink,
                     execute_where.clone(),
+                    top_k,
                 ),
             )
             .await
@@ -2161,10 +2288,22 @@ impl Client {
                     .await;
             }
         } else {
-            Self::execute_query(cluster, policy, tracker, statement, sink, execute_where).await;
+            Self::execute_query(
+                cluster,
+                policy,
+                tracker,
+                statement,
+                sink,
+                execute_where,
+                top_k,
+            )
+            .await;
         }
     }
 
+    /// Runs the query rounds. With `top_k`, every node ranks its rows into the
+    /// shared accumulator and the merged result is delivered once the last
+    /// round completes; a node that lacks Top-K support fails the query.
     async fn execute_query(
         cluster: Arc<Cluster>,
         policy: &QueryPolicy,
@@ -2172,6 +2311,7 @@ impl Client {
         statement: Arc<Statement>,
         sink: QuerySink,
         execute_where: Option<Arc<[u8]>>,
+        top_k: Option<Arc<aerospike_rt::Mutex<TopKAccumulator>>>,
     ) {
         let namespace = statement.namespace.clone();
         // Exponential backoff between whole-cluster retry rounds: the sleep
@@ -2200,6 +2340,14 @@ impl Client {
                 // used for join errors
                 let err_sink = sink.clone();
 
+                // A node that joined since the query started may predate
+                // Top-K; it would run a plain query and return unranked rows.
+                if top_k.is_some() && !Self::nodes_support_top_k(&list) {
+                    tracker.restore_node_partitions(list);
+                    sink.fatal(Self::top_k_unsupported_error()).await;
+                    return;
+                }
+
                 if sink.is_active() {
                     let semaphore = Arc::new(Semaphore::new(if policy.max_concurrent_nodes == 0 {
                         MAX_PERMITS
@@ -2214,6 +2362,7 @@ impl Client {
                         let statement = statement.clone();
                         let cluster = cluster.clone();
                         let execute_where = execute_where.clone();
+                        let top_k = top_k.clone();
                         let handle = aerospike_rt::spawn(async move {
                             let permit = semaphore.acquire().await;
                             // QueryCommand handles both filtered queries
@@ -2225,6 +2374,7 @@ impl Client {
                                 sink,
                                 node_partition,
                                 cluster,
+                                top_k,
                                 execute_where,
                             );
                             let result = cmd.execute().await;
@@ -2295,7 +2445,14 @@ impl Client {
 
             let done = tracker.is_complete(policy, timed_out, faulted);
             match (done, sink.is_active()) {
-                (Ok(true), _) | (Ok(_), false) => return,
+                (Ok(true), true) => {
+                    if let Some(accumulator) = &top_k {
+                        let results = accumulator.lock().await.take_results();
+                        Self::push_top_k_results(results, &sink).await;
+                    }
+                    return;
+                }
+                (Ok(_), false) => return,
                 (Err(e), _) => {
                     tracker.partition_error();
                     sink.fatal(e).await;
@@ -2313,6 +2470,160 @@ impl Client {
             }
 
             sink.reset_task_id();
+        }
+    }
+
+    /// Rejects Top-K options on an aggregation. The nodes stream partial
+    /// results of the stream UDF, not records, so ranking them client-side
+    /// means nothing; `query`, which the aggregation runs on, would accept
+    /// the statement and do exactly that.
+    #[cfg_attr(not(feature = "lua"), allow(dead_code))]
+    fn reject_top_k_on_aggregation(statement: &Statement) -> Result<()> {
+        if statement.has_order_by() || statement.has_top_k() {
+            return Err(Error::invalid_argument(
+                "order_by is incompatible with aggregate UDFs; use the UDF's own reduce stage"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Rejects Top-K options on background queries.
+    fn reject_top_k_on_background_query(statement: &Statement) -> Result<()> {
+        if statement.has_order_by() || statement.has_top_k() {
+            return Err(Error::invalid_argument(
+                "order_by/top_k is only valid on foreground (SELECT-style) queries; background \
+                 (UPDATE-style) queries do not produce a result stream"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// The Top-K checks every record-returning query entry point runs on its
+    /// resolved policy, before the tracker is built: a Top-K statement needs
+    /// bin data and no `max_records`, an order key needs every node to
+    /// understand it, and a ranked query cannot continue from a cursor.
+    /// `query` and `query_with_plan` both call this; a check added here
+    /// covers the server-planned path too.
+    fn check_top_k_query(
+        policy: &QueryPolicy,
+        statement: &Statement,
+        nodes: &[Arc<Node>],
+        partition_filter: &PartitionFilter,
+    ) -> Result<()> {
+        Self::validate_top_k_policy(policy, statement)?;
+        Self::check_order_by_support(statement, nodes)?;
+        if statement.has_top_k() {
+            Self::reject_resumed_top_k_filter(partition_filter)?;
+        }
+        Ok(())
+    }
+
+    fn validate_top_k_policy(policy: &QueryPolicy, statement: &Statement) -> Result<()> {
+        if !statement.has_top_k() {
+            return Ok(());
+        }
+        if !policy.include_bin_data || statement.bins.is_none() {
+            return Err(Error::invalid_argument(
+                "Top-K is incompatible with include_bin_data=false".to_string(),
+            ));
+        }
+        if policy.max_records != 0 {
+            return Err(Error::invalid_argument(
+                "Top-K is incompatible with max_records".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn top_k_unsupported_error() -> Error {
+        Error::invalid_argument(
+            "order_by/top_k is not supported by all nodes in the cluster".to_string(),
+        )
+    }
+
+    /// An order key without `k` is left for the server to refuse, but a node
+    /// that predates Top-K skips the field and runs a plain query, so a
+    /// cluster with such a node fails up front.
+    fn check_order_by_support(statement: &Statement, nodes: &[Arc<Node>]) -> Result<()> {
+        if statement.has_order_by()
+            && (nodes.is_empty() || !nodes.iter().all(|node| node.version().supports_query_top_k()))
+        {
+            return Err(Self::top_k_unsupported_error());
+        }
+        Ok(())
+    }
+
+    /// A Top-K query ranks the whole set; it cannot continue from a cursor.
+    fn reject_resumed_top_k_filter(filter: &PartitionFilter) -> Result<()> {
+        let resumed = filter.digest.is_some()
+            || filter.partitions.as_ref().is_some_and(|parts| {
+                parts
+                    .iter()
+                    .filter_map(crate::query::PartitionSlot::get)
+                    .any(|part| part.lock().digest.is_some())
+            });
+        if resumed {
+            return Err(Error::invalid_argument(
+                "Top-K can't resume a partition filter from an earlier query".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn nodes_support_top_k(node_partitions: &[NodePartitions]) -> bool {
+        node_partitions
+            .iter()
+            .all(|np| np.node.version().supports_query_top_k())
+    }
+
+    /// Top-K ranks once every node has answered, so it cannot deliver inline.
+    fn reject_top_k_on_callback_query(statement: &Statement) -> Result<()> {
+        if statement.has_top_k() {
+            return Err(Error::invalid_argument(
+                "Top-K is only supported by Client::query".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// The accumulator a Top-K statement's node commands share; `None` for a
+    /// plain query.
+    fn top_k_accumulator(
+        statement: &Statement,
+    ) -> Option<Arc<aerospike_rt::Mutex<TopKAccumulator>>> {
+        statement.top_k.map(|k| {
+            Arc::new(aerospike_rt::Mutex::new(TopKAccumulator::new(
+                statement.order_by.clone(),
+                k as usize,
+            )))
+        })
+    }
+
+    /// Delivers the merged, best-first records. A Top-K result moves no resume
+    /// cursor, so the entries carry no delivery stamp.
+    async fn push_top_k_results(records: Vec<Record>, sink: &QuerySink) {
+        match sink {
+            QuerySink::Channel(rs) => {
+                let batch: Vec<StreamEntry> = records
+                    .into_iter()
+                    .map(|record| StreamEntry {
+                        result: Ok(record),
+                        bval: None,
+                        stamp: None,
+                    })
+                    .collect();
+                let _ = rs.push_batch(batch).await;
+            }
+            QuerySink::Callback(ctx) => {
+                for record in records {
+                    if !(ctx.callback)(Ok(record)).await {
+                        sink.close();
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -3586,5 +3897,282 @@ impl Client {
             )),
             TxnState::Aborted => Ok(AbortStatus::AlreadyAborted),
         }
+    }
+}
+
+#[cfg(test)]
+mod top_k_execution_tests {
+    //! Tests for the Top-K query's client-side checks and result delivery.
+    use super::Client;
+    use crate::query::{
+        NodePartitions, Order, OrderByType, PartitionFilter, PartitionTracker, QuerySink,
+        Recordset, TopKAccumulator,
+    };
+    use crate::{Bins, IndexMap, Key, Record, Result, Statement, Value};
+    use futures::executor::block_on;
+    use futures::StreamExt;
+    use std::sync::Arc;
+
+    fn top_k_statement(bin: &str, direction: Order, k: u32) -> Statement {
+        let mut stmt = Statement::new("ns", "set", Bins::All);
+        stmt.set_order_by(bin, OrderByType::Integer, direction);
+        stmt.set_top_k(k);
+        stmt
+    }
+
+    fn record(digest_byte: u8, score: i64) -> Record {
+        let mut bins = IndexMap::new();
+        bins.insert("score".to_string(), Value::Int(score));
+        Record::new(
+            Some(Key {
+                namespace: "ns".to_string(),
+                set_name: "set".to_string(),
+                user_key: None,
+                digest: [digest_byte; 20],
+            }),
+            bins,
+            None,
+            1,
+            0,
+        )
+    }
+
+    fn empty_recordset() -> Arc<Recordset> {
+        let tracker = PartitionTracker::new(
+            &crate::policy::QueryPolicy::default(),
+            PartitionFilter::all(),
+            &[],
+        )
+        .expect("tracker");
+        Arc::new(Recordset::new(8, 0, 1, tracker.shared()))
+    }
+
+    /// Closes and drains a recordset.
+    fn close_and_drain(rs: &Arc<Recordset>) -> Vec<Result<Record>> {
+        rs.close();
+        let mut stream = rs.clone().into_stream();
+        block_on(async {
+            let mut out = Vec::new();
+            while let Some(item) = stream.next().await {
+                out.push(item);
+            }
+            out
+        })
+    }
+
+    fn scores(results: Vec<Result<Record>>) -> Vec<i64> {
+        results
+            .into_iter()
+            .map(|r| match r.unwrap().bins["score"] {
+                Value::Int(i) => i,
+                _ => panic!("expected int"),
+            })
+            .collect()
+    }
+
+    fn node_partitions(version: crate::Version) -> NodePartitions {
+        NodePartitions::new(
+            Arc::new(crate::cluster::node::test_node_with_version(version)),
+            0,
+            Arc::new(Vec::new()),
+            0,
+        )
+    }
+
+    #[test]
+    fn the_shared_accumulator_bounds_and_orders_what_every_node_returned() {
+        let rs = empty_recordset();
+        let stmt = top_k_statement("score", Order::Desc, 2);
+        let mut accumulator = TopKAccumulator::new(stmt.order_by, 2);
+
+        // Three nodes' rows, arriving interleaved.
+        for (record, lut) in [
+            (record(1, 5), 10),
+            (record(3, 9), 10),
+            (record(2, 1), 10),
+            (record(4, 3), 10),
+        ] {
+            accumulator.accept(record, lut);
+        }
+        let sink = QuerySink::Channel(rs.clone());
+        block_on(Client::push_top_k_results(accumulator.take_results(), &sink));
+
+        assert_eq!(scores(close_and_drain(&rs)), vec![9, 5]);
+    }
+
+    #[test]
+    fn a_record_two_nodes_returned_keeps_its_later_updated_copy() {
+        let rs = empty_recordset();
+        let stmt = top_k_statement("score", Order::Desc, 10);
+        let mut accumulator = TopKAccumulator::new(stmt.order_by, 10);
+        accumulator.accept(record(1, 9), 100); // stale but better ranked
+        accumulator.accept(record(1, 1), 200); // later update
+        let sink = QuerySink::Channel(rs.clone());
+        block_on(Client::push_top_k_results(accumulator.take_results(), &sink));
+
+        assert_eq!(scores(close_and_drain(&rs)), vec![1]);
+    }
+
+    #[test]
+    fn empty_results_push_nothing() {
+        let rs = empty_recordset();
+        let sink = QuerySink::Channel(rs.clone());
+        block_on(Client::push_top_k_results(Vec::new(), &sink));
+        assert!(close_and_drain(&rs).is_empty());
+    }
+
+    #[test]
+    fn only_a_top_k_statement_gets_an_accumulator() {
+        assert!(Client::top_k_accumulator(&top_k_statement("score", Order::Desc, 5)).is_some());
+        let mut order_only = Statement::new("ns", "set", Bins::All);
+        order_only.set_order_by("score", OrderByType::Integer, Order::Desc);
+        assert!(Client::top_k_accumulator(&order_only).is_none());
+        assert!(Client::top_k_accumulator(&Statement::new("ns", "set", Bins::All)).is_none());
+    }
+
+    #[test]
+    fn background_query_guard_rejects_order_by_with_or_without_k() {
+        let stmt = top_k_statement("score", Order::Desc, 5);
+        let err = Client::reject_top_k_on_background_query(&stmt).unwrap_err();
+        assert!(err.to_string().contains("foreground"));
+
+        let mut order_only = Statement::new("ns", "set", Bins::All);
+        order_only.set_order_by("score", OrderByType::Integer, Order::Desc);
+        assert!(Client::reject_top_k_on_background_query(&order_only).is_err());
+    }
+
+    #[test]
+    fn background_query_guard_allows_plain_statement() {
+        let stmt = Statement::new("ns", "set", Bins::All);
+        assert!(Client::reject_top_k_on_background_query(&stmt).is_ok());
+    }
+
+    #[test]
+    fn callback_query_guard_rejects_top_k_only() {
+        let stmt = top_k_statement("score", Order::Desc, 5);
+        let err = Client::reject_top_k_on_callback_query(&stmt).unwrap_err();
+        assert!(err.to_string().contains("only supported by Client::query"), "{err}");
+
+        let mut order_only = Statement::new("ns", "set", Bins::All);
+        order_only.set_order_by("score", OrderByType::Integer, Order::Desc);
+        assert!(Client::reject_top_k_on_callback_query(&order_only).is_ok());
+    }
+
+    #[test]
+    fn aggregation_guard_rejects_top_k_and_an_order_key() {
+        let stmt = top_k_statement("score", Order::Desc, 5);
+        let err = Client::reject_top_k_on_aggregation(&stmt).unwrap_err();
+        assert!(err.to_string().contains("aggregate UDFs"), "{err}");
+
+        let mut order_only = Statement::new("ns", "set", Bins::All);
+        order_only.set_order_by("score", OrderByType::Integer, Order::Desc);
+        assert!(Client::reject_top_k_on_aggregation(&order_only).is_err());
+
+        let plain = Statement::new("ns", "set", Bins::All);
+        assert!(Client::reject_top_k_on_aggregation(&plain).is_ok());
+    }
+
+    #[test]
+    fn top_k_requires_every_target_node_to_support_it() {
+        let capable = vec![node_partitions(crate::Version::new(8, 2, 1, 0))];
+        assert!(Client::nodes_support_top_k(&capable));
+
+        let mixed = vec![
+            node_partitions(crate::Version::new(8, 2, 1, 0)),
+            node_partitions(crate::Version::new(8, 2, 0, 0)),
+        ];
+        assert!(!Client::nodes_support_top_k(&mixed));
+    }
+
+    #[test]
+    fn an_order_key_fails_up_front_on_a_cluster_with_an_older_node() {
+        let newer = Arc::new(crate::cluster::node::test_node_with_version(
+            crate::Version::new(8, 2, 1, 0),
+        ));
+        let older = Arc::new(crate::cluster::node::test_node_with_version(
+            crate::Version::new(8, 1, 3, 0),
+        ));
+
+        let stmt = top_k_statement("score", Order::Desc, 5);
+        assert!(Client::check_order_by_support(&stmt, &[newer.clone()]).is_ok());
+        let err = Client::check_order_by_support(&stmt, &[newer, older.clone()])
+            .unwrap_err();
+        assert!(err.to_string().contains("not supported by all nodes"), "{err}");
+        assert!(Client::check_order_by_support(&stmt, &[]).is_err());
+
+        // An order key alone is checked the same way: the older node would
+        // skip the field and run a plain query.
+        let mut order_only = Statement::new("ns", "set", Bins::All);
+        order_only.set_order_by("score", OrderByType::Integer, Order::Desc);
+        assert!(Client::check_order_by_support(&order_only, &[older]).is_err());
+
+        let plain = Statement::new("ns", "set", Bins::All);
+        assert!(Client::check_order_by_support(&plain, &[]).is_ok());
+    }
+
+    #[test]
+    fn top_k_rejects_a_resumed_partition_filter() {
+        assert!(Client::reject_resumed_top_k_filter(&PartitionFilter::all()).is_ok());
+        assert!(Client::reject_resumed_top_k_filter(&PartitionFilter::by_range(0, 8)).is_ok());
+
+        let key = Key::new("ns", "set", Value::from("k")).unwrap();
+        let by_key = PartitionFilter::by_key(&key);
+        let err = Client::reject_resumed_top_k_filter(&by_key).unwrap_err();
+        assert!(err.to_string().contains("can't resume a partition filter"), "{err}");
+
+        let mut resumed = PartitionFilter::all();
+        resumed.partitions = Some(PartitionTracker::init_partitions(0, 4, Some([7; 20])));
+        assert!(Client::reject_resumed_top_k_filter(&resumed).is_err());
+    }
+
+    #[test]
+    fn top_k_rejects_no_bin_data_and_max_records() {
+        let statement = top_k_statement("score", Order::Desc, 5);
+        let mut no_bin_data = crate::policy::QueryPolicy::default();
+        no_bin_data.include_bin_data = false;
+        assert!(Client::validate_top_k_policy(&no_bin_data, &statement).is_err());
+
+        let mut max_records = crate::policy::QueryPolicy::default();
+        max_records.max_records = 1;
+        assert!(Client::validate_top_k_policy(&max_records, &statement).is_err());
+    }
+
+    // The one helper both query entry points call runs all three checks, in
+    // the order a caller sees them.
+    #[test]
+    fn the_shared_top_k_check_runs_every_rule() {
+        let capable = Arc::new(crate::cluster::node::test_node_with_version(
+            crate::Version::new(8, 2, 1, 0),
+        ));
+        let older = Arc::new(crate::cluster::node::test_node_with_version(
+            crate::Version::new(8, 2, 0, 0),
+        ));
+        let nodes = [capable];
+        let policy = crate::policy::QueryPolicy::default();
+        let statement = top_k_statement("score", Order::Desc, 5);
+        let all = PartitionFilter::all();
+
+        assert!(Client::check_top_k_query(&policy, &statement, &nodes, &all).is_ok());
+
+        let max_records = crate::policy::QueryPolicy {
+            max_records: 1,
+            ..crate::policy::QueryPolicy::default()
+        };
+        let err = Client::check_top_k_query(&max_records, &statement, &nodes, &all).unwrap_err();
+        assert!(err.to_string().contains("max_records"), "{err}");
+
+        let err = Client::check_top_k_query(&policy, &statement, &[older], &all).unwrap_err();
+        assert!(err.to_string().contains("not supported by all nodes"), "{err}");
+
+        let key = Key::new("ns", "set", Value::from("k")).unwrap();
+        let err = Client::check_top_k_query(&policy, &statement, &nodes, &PartitionFilter::by_key(&key))
+            .unwrap_err();
+        assert!(err.to_string().contains("can't resume a partition filter"), "{err}");
+
+        // A plain statement passes every rule whatever the policy or filter.
+        let plain = Statement::new("ns", "set", Bins::All);
+        assert!(
+            Client::check_top_k_query(&max_records, &plain, &[], &PartitionFilter::by_key(&key)).is_ok()
+        );
     }
 }

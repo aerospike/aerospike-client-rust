@@ -15,7 +15,44 @@
 
 use crate::Node;
 
-use std::sync::Arc;
+use parking_lot::Mutex;
+
+use std::sync::{Arc, OnceLock};
+
+/// One partition's slot in a filter's range: empty until the partition first
+/// needs state, which is a record delivered, a cursor committed, or an entry
+/// loaded from a saved cursor. An empty slot reads as a fresh status: retry
+/// pending, no cursor, epoch zero. A query over all partitions that returns
+/// few records therefore never builds, walks or frees the status of the
+/// partitions it got nothing from; it zeroes 4,096 pointers instead.
+///
+/// Hidden: reachable for language bindings that rebuild cursors; not API.
+#[doc(hidden)]
+#[derive(Debug, Default)]
+pub struct PartitionSlot(OnceLock<Box<Mutex<PartitionStatus>>>);
+
+impl PartitionSlot {
+    /// An empty slot.
+    pub const fn new() -> Self {
+        Self(OnceLock::new())
+    }
+
+    /// The partition's status, if the partition has any.
+    pub fn get(&self) -> Option<&Mutex<PartitionStatus>> {
+        self.0.get().map(|boxed| &**boxed)
+    }
+
+    /// The partition's status, created fresh for `partition_id` on first use.
+    pub fn get_or_init(&self, partition_id: usize) -> &Mutex<PartitionStatus> {
+        self.0
+            .get_or_init(|| Box::new(Mutex::new(PartitionStatus::new(partition_id))))
+    }
+
+    /// Fills an empty slot; a slot already filled keeps what it has.
+    pub(crate) fn fill(&self, status: PartitionStatus) {
+        let _ = self.0.set(Box::new(Mutex::new(status)));
+    }
+}
 
 /// Representation of the status of a scan/query  for a specific partition.
 #[derive(Debug, Clone)]
@@ -49,6 +86,14 @@ pub struct PartitionStatus {
     /// `(seq, digest, bval)`, sorted by `seq`. Empty whenever a single
     /// consumer drains the stream in order.
     pub(crate) pending: Vec<(u32, [u8; 20], Option<u64>)>,
+    /// The last record of this partition stamped for the record channel,
+    /// with its bval: where a later round of the *same* run resumes.
+    /// Everything up to it is queued or consumed, so resuming after it
+    /// loses nothing and re-delivers nothing; resuming from the consumed
+    /// cursor instead would fetch the queued tail a second time. Never part
+    /// of a cursor handed out or reused: a new run starts from the consumed
+    /// cursor.
+    pub(crate) pushed: Option<([u8; 20], Option<u64>)>,
 }
 
 impl PartitionStatus {
@@ -72,16 +117,33 @@ impl PartitionStatus {
             delivered: 0,
             consumed: 0,
             pending: Vec::new(),
+            pushed: None,
         }
     }
 
     /// Opens a new delivery round: entries stamped in earlier rounds become
-    /// stale and stop moving the cursor.
+    /// stale and stop moving the cursor. The pushed position stays: the
+    /// round's request is built after this and resumes from it.
     pub(crate) fn begin_delivery_round(&mut self) {
         self.epoch = self.epoch.wrapping_add(1);
         self.delivered = 0;
         self.consumed = 0;
         self.pending.clear();
+    }
+
+    /// Where the next round of this run resumes: after the last record
+    /// queued, or, when nothing has been queued this run, from the consumed
+    /// cursor. `None` means the partition is queried from its start.
+    pub(crate) fn resume_position(&self) -> (Option<[u8; 20]>, Option<u64>) {
+        match self.pushed {
+            Some((digest, bval)) => (Some(digest), bval.or(self.bval)),
+            None => (self.digest, self.bval),
+        }
+    }
+
+    /// Forgets the pushed position, for a cursor that leaves this run.
+    pub(crate) const fn clear_pushed(&mut self) {
+        self.pushed = None;
     }
 
     pub(crate) const fn set_digest(&mut self, digest: Option<[u8; 20]>) {

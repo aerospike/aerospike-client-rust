@@ -20,8 +20,10 @@ use crate::commands::{Command, SingleCommand, StreamCommand};
 use crate::errors::Result;
 use crate::net::Connection;
 use crate::policy::QueryPolicy;
-use crate::query::{NodePartitions, QuerySink};
+use crate::query::{NodePartitions, QuerySink, TopKAccumulator};
 use crate::Statement;
+
+use aerospike_rt::Mutex;
 
 pub struct QueryCommand<'a> {
     stream_command: StreamCommand,
@@ -37,12 +39,13 @@ impl<'a> QueryCommand<'a> {
         sink: QuerySink,
         node_partitions: NodePartitions,
         cluster: Arc<Cluster>,
+        top_k_buffer: Option<Arc<Mutex<TopKAccumulator>>>,
         execute_where: Option<Arc<[u8]>>,
     ) -> Self {
         let node = node_partitions.node.clone();
 
         QueryCommand {
-            stream_command: StreamCommand::new(node, sink, node_partitions, cluster),
+            stream_command: StreamCommand::new(node, sink, node_partitions, cluster, top_k_buffer),
             policy,
             statement,
             execute_where,

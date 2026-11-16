@@ -210,6 +210,7 @@ impl BatchOperateCommand {
                     &mut sampled,
                     &mut self.commands_sent,
                     self.hook.as_deref(),
+                    &cluster,
                 )
                 .await
                 {
@@ -299,6 +300,7 @@ impl BatchOperateCommand {
                         &mut sampled,
                         &mut self.commands_sent,
                         self.hook.as_deref(),
+                        &cluster,
                     )
                     .await
                     {
@@ -534,6 +536,7 @@ impl BatchOperateCommand {
         sampled: &mut Option<bool>,
         commands_sent: &mut u32,
         hook: Option<&crate::batch::BatchHook>,
+        cluster: &Cluster,
     ) -> Result<Option<Error>> {
         // Per-node circuit breaker: don't even open a socket if the node
         // is currently outside its error-rate window. Mirrors Java's
@@ -558,10 +561,15 @@ impl BatchOperateCommand {
         // namespace in this request group; only worth building when this
         // command is being recorded.
         let namespaces: Vec<String> = if metrics_on {
-            let mut v: Vec<String> = batch_ops.iter().map(|op| op.0.key().namespace).collect();
-            v.sort();
-            v.dedup();
-            v
+            // Dedupe on borrowed names, then own only the distinct ones: a
+            // batch spans a handful of namespaces, not one per row.
+            let mut names: Vec<&str> = batch_ops
+                .iter()
+                .map(|op| op.0.key().namespace.as_str())
+                .collect();
+            names.sort_unstable();
+            names.dedup();
+            names.into_iter().map(str::to_owned).collect()
         } else {
             Vec::new()
         };
@@ -604,6 +612,11 @@ impl BatchOperateCommand {
                     e.chain_error("Failed to prepare send buffer")
                 }
             })?;
+
+        commands::check_vector_support(
+            conn.buffer.contains_vector(),
+            cluster.all_nodes_support_vector(),
+        )?;
 
         conn.buffer.write_timeout(policy.server_timeout());
 
@@ -710,7 +723,7 @@ impl BatchOperateCommand {
 
                     // Update transaction state with version info
                     if let Some(txn) = txn {
-                        let key = &batch_op.0.key();
+                        let key = batch_op.0.key();
                         if batch_op.0.has_write() {
                             txn.on_write(key, batch_record.version, batch_record.result_code);
                         } else {
@@ -1047,6 +1060,8 @@ mod tests {
             session: None,
             login_host: None,
             detect_load_balancer: false,
+            seed: false,
+            alternate_missing: false,
         });
         let metrics = Arc::new(crate::metrics::NodeMetrics::new(
             crate::metrics::MetricsPolicy::default(),

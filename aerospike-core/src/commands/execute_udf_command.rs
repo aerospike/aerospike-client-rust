@@ -41,14 +41,13 @@ impl<'a> ExecuteUdfCommand<'a> {
         args: &'a [Value],
     ) -> Self {
         let partition = crate::cluster::partition::Partition::for_write(key, policy.base_policy.replica);
+        let mut read_command =
+            ReadCommand::new_with_partition(&policy.base_policy, cluster, key, Bins::All, partition);
+        // The reply records the key as written in the transaction, as a
+        // write's reply does.
+        read_command.is_write = true;
         ExecuteUdfCommand {
-            read_command: ReadCommand::new_with_partition(
-                &policy.base_policy,
-                cluster,
-                key,
-                Bins::All,
-                partition,
-            ),
+            read_command,
             policy,
             package_name,
             function_name,

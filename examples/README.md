@@ -19,6 +19,7 @@ The `crud_sync` example is the exception — it requires the `sync` feature, whi
 * `config_pigeon` — a `ConfigProvider` that fetches the dynamic configuration from a REST service (JSON), with a tiny service of its own to show a change reaching the running client; needs the `dynamic-config` feature (on by default)
 * `crud` — async client basics
 * `crud_sync` — sync (blocking) client; see [How to run sync example](#sync-example-crud_sync) below
+* `discovery` — pluggable seed discovery and address translation: a custom `SeedCandidateProvider` merged with the static seeds, a logging `AddressTranslator`, and a `port-map` keyed on node names
 * `error_handling` — reading an `Error`: `kind`, `result_code`, `matches`, `in_doubt`, client vs server timeouts, and the server's sub-code and message with `error_detail_verbosity` (server 8.2.0+)
 * `expression_operations` — `read_exp`/`write_exp` inside `operate`: computed values, conditional writes, list/bit/string expressions, path expressions on nested documents
 * `geo_query` — geospatial queries (geo2dsphere index, region/radius/contains)
@@ -29,6 +30,8 @@ The `crud_sync` example is the exception — it requires the `sync` feature, whi
 * `path_expression` — JSONPath-style CDT path expressions (server 8.1.1+)
 * `query` — secondary-index queries, pagination, expression filters
 * `query_aggregate` — stream UDF aggregation (map/reduce in Lua); requires the `lua` feature, see below
+* `query_top_k` — ranked queries: the best `k` records by one or two order keys (server 8.2.1+)
+* `query_vector_top_k` — hybrid vector search: an index filter, ranked by vector distance, Top-K (server 8.2.1+)
 * `query_streaming` — `query_foreach` callbacks and `QueryHandle` (wait/cancel/resume cursor), `batch_foreach`, background `query_operate`, `query_explain` + `query_with_plan` (server 8.2.0+)
 * `read_policies` — `Replica` placement including rack-aware reads, AP and SC read modes, timeouts and retries
 * `record_operations` — single-record ops and write policies (add/append/TTL/generation/replace/send-key)

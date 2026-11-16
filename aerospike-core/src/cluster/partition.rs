@@ -19,7 +19,7 @@ use std::sync::Arc;
 use byteorder::{LittleEndian, ReadBytesExt};
 
 use crate::cluster::node;
-use crate::cluster::{Cluster, Node};
+use crate::cluster::{Cluster, Node, PartitionTable, Partitions};
 use crate::errors::{Error, Result};
 use crate::policy::{ReadModeSc, Replica};
 use crate::Key;
@@ -128,6 +128,45 @@ impl<'a> Partition<'a> {
         }
     }
 
+    /// The node for this partition, selected from an already looked-up
+    /// namespace table. For a scan or query that assigns all 4096 partitions
+    /// in one loop, this is what makes the loop cheap: the map is loaded and
+    /// the namespace hashed once by the caller, and the node comes back
+    /// borrowed from the table rather than cloned, so the per-partition cost
+    /// is an index and an `is_active` load, with no atomic on a counter every
+    /// in-flight query shares. `Replica::Random` has no table to borrow from
+    /// and returns an owned node.
+    pub(crate) fn get_node_in<'t>(
+        &mut self,
+        cluster: &Cluster,
+        table: &'t Partitions,
+    ) -> Result<NodeRef<'t>> {
+        let node = if self.is_write {
+            match self.replica {
+                Replica::Sequence | Replica::PreferRack => self.sequence_node_in(table)?,
+                Replica::Master | Replica::MasterProles | Replica::Random => {
+                    self.master_node_in(table)?
+                }
+            }
+        } else {
+            match self.replica {
+                Replica::Sequence => self.sequence_node_in(table)?,
+                Replica::PreferRack => self.rack_node_in(cluster, table)?,
+                Replica::Master => self.master_node_in(table)?,
+                Replica::MasterProles => self.master_proles_node_in(cluster, table)?,
+                Replica::Random => return cluster.get_random_node().map(NodeRef::Owned),
+            }
+        };
+
+        Ok(NodeRef::Borrowed(node))
+    }
+
+    /// This partition's namespace in a partition-map snapshot.
+    pub(crate) fn table<'p>(&self, pmap: &'p PartitionTable) -> Result<&'p Partitions> {
+        pmap.get(self.namespace)
+            .ok_or_else(|| invalid_namespace_error(self.namespace, pmap.len()))
+    }
+
     /// Prepare the partition for a retry attempt by advancing the sequence number.
     /// Dispatches to read or write retry logic based on `is_write`.
     pub const fn prepare_retry(&mut self, is_client_timeout: bool) {
@@ -165,10 +204,11 @@ impl<'a> Partition<'a> {
 
     fn get_sequence_node(&mut self, cluster: &Cluster) -> Result<Arc<Node>> {
         let pmap = cluster.partition_map.load();
-        let partitions = pmap
-            .get(self.namespace)
-            .ok_or_else(|| invalid_namespace_error(self.namespace, pmap.len()))?;
+        let table = self.table(&pmap)?;
+        self.sequence_node_in(table).map(Arc::clone)
+    }
 
+    fn sequence_node_in<'t>(&mut self, partitions: &'t Partitions) -> Result<&'t Arc<Node>> {
         let replica_count = partitions.replicas;
         if replica_count == 0 {
             return Err(invalid_node_error(self));
@@ -176,14 +216,12 @@ impl<'a> Partition<'a> {
 
         for _ in 0..replica_count {
             let index = self.sequence % replica_count;
-            let node = partitions
-                .nodes
-                .get(index * node::PARTITIONS + self.partition_id)
-                .and_then(|(_, n)| n.clone());
 
-            if let Some(ref node) = node {
+            if let Some((_, Some(node))) =
+                partitions.nodes.get(index * node::PARTITIONS + self.partition_id)
+            {
                 if node.is_active() {
-                    return Ok(node.clone());
+                    return Ok(node);
                 }
             }
             self.sequence += 1;
@@ -194,10 +232,15 @@ impl<'a> Partition<'a> {
 
     fn get_rack_node(&mut self, cluster: &Cluster) -> Result<Arc<Node>> {
         let pmap = cluster.partition_map.load();
-        let partitions = pmap
-            .get(self.namespace)
-            .ok_or_else(|| invalid_namespace_error(self.namespace, pmap.len()))?;
+        let table = self.table(&pmap)?;
+        self.rack_node_in(cluster, table).map(Arc::clone)
+    }
 
+    fn rack_node_in<'t>(
+        &mut self,
+        cluster: &Cluster,
+        partitions: &'t Partitions,
+    ) -> Result<&'t Arc<Node>> {
         let replica_count = partitions.replicas;
         if replica_count == 0 {
             return Err(invalid_node_error(self));
@@ -209,11 +252,12 @@ impl<'a> Partition<'a> {
         // reports as a timeout. `ClientPolicy::validate` refuses `Some([])`, so
         // this only catches a live policy that a dynamic-config reload emptied.
         let policy = cluster.client_policy.load();
-        let rack_ids = policy
-            .rack_aware()
-            .then(|| policy.rack_ids.clone())
-            .flatten();
-        let rack_ids = rack_ids.as_ref().ok_or_else(|| {
+        let rack_ids = if policy.rack_aware() {
+            policy.rack_ids.as_deref()
+        } else {
+            None
+        };
+        let rack_ids = rack_ids.ok_or_else(|| {
             Error::invalid_argument(
                 "Attempted to use Replica::PreferRack without configuring racks in client policy"
                     .to_string(),
@@ -225,29 +269,27 @@ impl<'a> Partition<'a> {
         // preferred-rack match first, then any other active node
         // (fallback1), and the previous node only as a last resort
         // (fallback2).
-        let mut fallback1: Option<(Arc<Node>, usize)> = None;
-        let mut fallback2: Option<(Arc<Node>, usize)> = None;
+        let mut fallback1: Option<(&'t Arc<Node>, usize)> = None;
+        let mut fallback2: Option<(&'t Arc<Node>, usize)> = None;
 
         for rack_id in rack_ids {
             for seq in self.sequence..self.sequence + replica_count {
                 let index = seq % replica_count;
-                let node = partitions
-                    .nodes
-                    .get(index * node::PARTITIONS + self.partition_id)
-                    .and_then(|(_, n)| n.clone());
 
-                if let Some(node) = node {
+                if let Some((_, Some(node))) =
+                    partitions.nodes.get(index * node::PARTITIONS + self.partition_id)
+                {
                     // Avoid retrying on the node where the command failed,
                     // even if it is the only one on the preferred rack.
                     let is_prev = self
                         .prev_node
                         .as_ref()
-                        .is_some_and(|prev| Arc::ptr_eq(prev, &node));
+                        .is_some_and(|prev| Arc::ptr_eq(prev, node));
 
                     if !is_prev {
                         if node.has_rack(self.namespace, *rack_id) {
                             if node.is_active() {
-                                self.prev_node = Some(node.clone());
+                                self.prev_node = Some(Arc::clone(node));
                                 self.sequence = seq;
                                 return Ok(node);
                             }
@@ -265,7 +307,7 @@ impl<'a> Partition<'a> {
 
         // Prefer a node on a different rack over the previously failed node.
         if let Some((node, seq)) = fallback1.or(fallback2) {
-            self.prev_node = Some(node.clone());
+            self.prev_node = Some(Arc::clone(node));
             self.sequence = seq;
             return Ok(node);
         }
@@ -275,10 +317,15 @@ impl<'a> Partition<'a> {
 
     fn get_master_proles_node(&self, cluster: &Cluster) -> Result<Arc<Node>> {
         let pmap = cluster.partition_map.load();
-        let partitions = pmap
-            .get(self.namespace)
-            .ok_or_else(|| invalid_namespace_error(self.namespace, pmap.len()))?;
+        let table = self.table(&pmap)?;
+        self.master_proles_node_in(cluster, table).map(Arc::clone)
+    }
 
+    fn master_proles_node_in<'t>(
+        &self,
+        cluster: &Cluster,
+        partitions: &'t Partitions,
+    ) -> Result<&'t Arc<Node>> {
         let replica_count = partitions.replicas;
         if replica_count == 0 {
             return Err(invalid_node_error(self));
@@ -291,14 +338,12 @@ impl<'a> Partition<'a> {
                 + 1)
             .unsigned_abs()
                 % replica_count;
-            let node = partitions
-                .nodes
-                .get(index * node::PARTITIONS + self.partition_id)
-                .and_then(|(_, n)| n.clone());
 
-            if let Some(ref node) = node {
+            if let Some((_, Some(node))) =
+                partitions.nodes.get(index * node::PARTITIONS + self.partition_id)
+            {
                 if node.is_active() {
-                    return Ok(node.clone());
+                    return Ok(node);
                 }
             }
         }
@@ -308,22 +353,34 @@ impl<'a> Partition<'a> {
 
     pub fn get_master_node(&self, cluster: &Cluster) -> Result<Arc<Node>> {
         let pmap = cluster.partition_map.load();
-        let partitions = pmap
-            .get(self.namespace)
-            .ok_or_else(|| invalid_namespace_error(self.namespace, pmap.len()))?;
+        let table = self.table(&pmap)?;
+        self.master_node_in(table).map(Arc::clone)
+    }
 
-        let node = partitions
-            .nodes
-            .get(self.partition_id)
-            .and_then(|(_, n)| n.clone());
-
-        if let Some(ref node) = node {
+    fn master_node_in<'t>(&self, partitions: &'t Partitions) -> Result<&'t Arc<Node>> {
+        if let Some((_, Some(node))) = partitions.nodes.get(self.partition_id) {
             if node.is_active() {
-                return Ok(node.clone());
+                return Ok(node);
             }
         }
 
         Err(invalid_node_error(self))
+    }
+}
+
+/// A selected node: borrowed from the partition table the caller holds, or
+/// owned where there is no table to borrow from (`Replica::Random`).
+pub enum NodeRef<'t> {
+    Borrowed(&'t Arc<Node>),
+    Owned(Arc<Node>),
+}
+
+impl NodeRef<'_> {
+    pub const fn as_arc(&self) -> &Arc<Node> {
+        match self {
+            NodeRef::Borrowed(node) => node,
+            NodeRef::Owned(node) => node,
+        }
     }
 }
 

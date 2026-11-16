@@ -30,6 +30,7 @@ mod cdt_map;
 mod cluster;
 mod compression;
 mod connection_seed;
+mod discovery;
 #[cfg(feature = "dynamic-config")]
 mod dynamic_config;
 mod events;
@@ -68,8 +69,9 @@ mod udf_native;
 mod udf_native_bench;
 mod udf_vector;
 mod udf_wasm;
-mod xdr_merge;
 mod value_order;
+mod vector;
+mod xdr_merge;
 
 pub(crate) async fn count_results(rs: Arc<Recordset>) -> usize {
     let mut count = 0;

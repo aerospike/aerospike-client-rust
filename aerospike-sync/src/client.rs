@@ -1073,4 +1073,10 @@ impl Client {
     pub fn server_cluster_name(&self) -> Option<String> {
         self.async_client.server_cluster_name()
     }
+
+    /// The seed list the client re-seeds from. See
+    /// [`aerospike_core::Client::seeds`].
+    pub fn seeds(&self) -> Vec<aerospike_core::Host> {
+        self.async_client.seeds()
+    }
 }

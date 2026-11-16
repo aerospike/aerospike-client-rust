@@ -195,6 +195,123 @@ async fn scan_cancel_midway_resumes_without_loss() {
     assert!(consumed >= seen.len());
 }
 
+/// A round that fails with records still queued must not deliver them
+/// twice. The trigger is the one QE used: the consumer stops reading past
+/// the server's query timeout, the server aborts the job with the client's
+/// queue full, and the client retries the round. The retry resumes after the
+/// last record queued, not the last one consumed, so the queued tail is
+/// delivered once. Before the fix the extras equalled the queue size.
+#[aerospike_macro::test]
+async fn scan_retry_after_a_stalled_consumer_delivers_no_record_twice() {
+    use std::collections::HashSet;
+    use std::time::Duration;
+
+    let client = common::singleton_client().await;
+    let namespace = common::namespace();
+    let set_name = common::rand_str(10);
+
+    // More data than the socket buffers hold, so the server cannot finish
+    // the scan while the consumer sleeps: 20,000 records of a kilobyte.
+    const RECORDS: i64 = 20_000;
+    let pad = as_bin!("pad", "x".repeat(1024));
+    let ops: Arc<[aerospike::operations::Operation]> = vec![operations::put(&pad)].into();
+    let bwp = BatchWritePolicy::default();
+    let ids: Vec<i64> = (0..RECORDS).collect();
+    for chunk in ids.chunks(1000) {
+        let mut rows: Vec<BatchOperation> = chunk
+            .iter()
+            .map(|i| BatchOperation::write(&bwp, as_key!(namespace, &set_name, *i), Arc::clone(&ops)))
+            .collect();
+        client
+            .batch(&BatchPolicy::write_default(), &mut rows)
+            .await
+            .unwrap();
+        assert!(rows.iter().all(|r| r.error().is_none()), "seed write failed");
+    }
+
+    let mut qpolicy = QueryPolicy::default();
+    qpolicy.record_queue_size = 256;
+    // The socket timeout is also the job timeout the server is told.
+    qpolicy.base_policy.total_timeout = 60_000;
+    qpolicy.base_policy.socket_timeout = 1_000;
+    qpolicy.base_policy.max_retries = 5;
+    qpolicy.base_policy.sleep_between_retries = 0;
+
+    let stmt = Statement::new(namespace, &set_name, Bins::All);
+    let rs = client
+        .query(&qpolicy, PartitionFilter::all(), stmt)
+        .await
+        .unwrap();
+    let mut stream = rs.into_stream();
+    let mut delivered = 0usize;
+    let mut seen = HashSet::new();
+    while let Some(item) = stream.next().await {
+        let rec = item.expect("scan record");
+        delivered += 1;
+        seen.insert(rec.key.as_ref().unwrap().digest());
+        if delivered == 1 {
+            // Stop reading past the server's timeout: the job is aborted
+            // while the queue is full, and the client retries the round.
+            aerospike_rt::sleep(Duration::from_millis(2_500)).await;
+        } else if delivered % 8 == 0 {
+            // Slower than the stream, so the queue is still full when the
+            // failed round's tail reaches the retry.
+            aerospike_rt::sleep(Duration::from_micros(200)).await;
+        }
+    }
+
+    assert_eq!(seen.len(), RECORDS as usize, "records lost");
+    assert_eq!(
+        delivered,
+        seen.len(),
+        "{} records delivered twice",
+        delivered - seen.len()
+    );
+}
+
+/// A query with `Replica::Random` is refused on the first call with a
+/// parameter error, as the Java and C clients do, instead of sending each
+/// partition to an arbitrary node and failing after the retry budget. Every
+/// query entry point builds the same tracker, so the stream, the callback
+/// and the planned paths all reject it.
+#[aerospike_macro::test]
+async fn scan_with_a_random_replica_is_refused_up_front() {
+    let client = common::singleton_client().await;
+    let namespace = common::namespace();
+
+    let mut qpolicy = QueryPolicy::default();
+    qpolicy.base_policy.replica = aerospike::policy::Replica::Random;
+
+    let started = Instant::now();
+    let stmt = Statement::new(namespace, "any", Bins::None);
+    let err = client
+        .query(&qpolicy, PartitionFilter::all(), stmt)
+        .await
+        .expect_err("a random replica must be refused");
+    assert!(matches!(err.kind(), ErrorKind::InvalidArgument), "{err:?}");
+    assert!(err.to_string().contains("Invalid replica: Random"), "{err}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "refused before any round trip, not after the retry budget"
+    );
+
+    let stmt = Statement::new(namespace, "any", Bins::None);
+    let seen = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&seen);
+    let err = client
+        .query_foreach(&qpolicy, PartitionFilter::all(), stmt, move |_| {
+            let counter = Arc::clone(&counter);
+            async move {
+                counter.fetch_add(1, Ordering::Relaxed);
+                true
+            }
+        })
+        .await
+        .expect_err("the callback path refuses it too");
+    assert!(err.to_string().contains("Invalid replica: Random"), "{err}");
+    assert_eq!(seen.load(Ordering::Relaxed), 0);
+}
+
 /// The multi-consumer flavour of the no-loss contract: two concurrent
 /// streams drain one recordset, so a partition's records are consumed out of
 /// order across them. The delivery-sequence watermark must keep the cursor on

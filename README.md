@@ -698,6 +698,63 @@ Many cloud providers experience performance issues when clients close sockets wh
 
 For a complete working example demonstrating timeout scenarios, see [`examples/timeout_configuration.rs`](https://github.com/aerospike/aerospike-client-rust/blob/v3/examples/timeout_configuration.rs).
 
+### Seed discovery and address translation
+
+Two plugin points on `ClientPolicy` decide which addresses the client connects to, in code or from the YAML configuration file (see the [`discovery`](https://docs.rs/aerospike/latest/aerospike/discovery/index.html) module and [`examples/discovery.rs`](https://github.com/aerospike/aerospike-client-rust/blob/v3/examples/discovery.rs)):
+
+- A `SeedCandidateProvider` returns the seed hosts the client tries when it initializes the cluster and when it re-seeds because no node is active. Built in: `static` (the hosts passed to `Client::new`, the default), `dns` (A/AAAA or SRV records, resolved on every refresh) and, with the `discovery-aws` feature, `aws-tags` (running EC2 instances matching a tag, through `DescribeInstances` with the standard credential chain). `discovery_merge_policy` combines the discovered seeds with the static ones: `Merge` (static first, the default), `Replace` (discovered only after initialization) or `DiscoveryOnly` (static only as a fallback).
+- An `AddressTranslator` rewrites each address a server advertises into the address the client connects to. Built in: `static-map` (host to host, the default, built from `ip_map`), `port-map` (`host:port` or node name to `host:port`, for one load balancer listener per node) and `pass-through` (unchanged, for servers that advertise a client-reachable alternate address per node). A miss follows `translation_on_miss`: `PassThrough` (connect to the advertised address) or `Strict` (do not connect; the miss fails with `ErrorKind::TranslationMiss`). Two nodes translated to the same address are a `TranslationCollision`: neither is connected.
+
+```rust
+use std::sync::Arc;
+use aerospike::discovery::dns::{DnsSeedCandidateProvider, RecordType};
+use aerospike::discovery::{PortMapAddressTranslator, SeedMergePolicy, TranslationMissMode};
+
+let mut policy = ClientPolicy::default();
+policy.seed_candidate_provider = Some(Arc::new(
+    DnsSeedCandidateProvider::builder()
+        .names(["_aerospike._tcp.example.com"])
+        .record_type(RecordType::Srv)
+        .timeout(50)
+        .build()?,
+));
+policy.discovery_merge_policy = SeedMergePolicy::DiscoveryOnly;
+policy.address_translator = Some(Arc::new(PortMapAddressTranslator::new([
+    ("10.0.0.1:3000", "lb.example.com:30001"),
+    ("BB9020011AC4202", "lb.example.com:30002"),
+])?));
+policy.translation_on_miss = TranslationMissMode::Strict;
+```
+
+The client starts no task for discovery. A provider whose seeds change (`needs_periodic_refresh`) is called on the tend task every `discovery_refresh_interval` (30 s) and cancelled at `discovery_tend_refresh_deadline` (100 ms); after three consecutive overruns it is disabled and the seed list of initialization restored. A translator runs on the tend task too, in memory only: no I/O, no name resolution. A custom provider or translator implements the trait, and can be selected from the YAML file by a name registered with `ClientPolicy::register_seed_candidate_provider` / `register_address_translator`; the factory receives the other keys of its block.
+
+The same settings in the configuration file, under `static.client` (applied at client construction):
+
+```yaml
+version: "1.2.0"
+static:
+  client:
+    use_services_alternate: true
+    discovery:
+      provider: dns                 # static | dns | aws-tags | a registered name
+      merge_policy: discovery_only  # merge | replace | discovery_only
+      refresh_interval_ms: 30000
+      tend_refresh_deadline_ms: 100
+      dns:
+        names: [_aerospike._tcp.example.com]
+        record_type: srv            # a | srv
+        timeout_ms: 50
+        servers: [10.20.0.2]
+    translation:
+      provider: port-map            # static-map | port-map | pass-through | a registered name
+      on_miss: strict               # pass_through | strict
+      port_map:
+        "10.0.0.1:3000": "lb.example.com:30001"
+        BB9020011AC4202: "lb.example.com:30002"
+```
+
+With `use_services_alternate`, every node must advertise an alternate address: a seed without one fails construction with `ErrorKind::AlternateAddressMissing`, and a peer without one is logged and not connected.
+
 ### Dynamic configuration
 
 The client can load policy overrides from a YAML file and apply them at runtime, so timeouts, retries, read modes, metrics, and more can be tuned without restarting your application. This is gated behind the `dynamic-config` cargo feature and uses the same cross-client config file format as the other Aerospike clients, so one file can be shared across languages.

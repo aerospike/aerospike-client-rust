@@ -1,0 +1,90 @@
+name: Discovery integration
+
+# CLIENT-5737. Own workflow so it runs parallel to the pull-request gate;
+# folding the L2 topology into build-test.yml would add its runtime to every
+# matrix cell.
+#
+# CE (community, 3 nodes, no feature key) runs on every pull request.
+# EE (enterprise, 3 nodes, the TLS rows N-6 and N-17) runs on same-repo pull
+# requests, on push to the target branches and on workflow_dispatch: fork
+# pull requests do not receive the feature key.
+#
+# TLS certificate matching is a separate EE-only job. Its driver starts one
+# Enterprise container per certificate, so it uses the same feature-key gate.
+
+permissions:
+  id-token: write  # required by setup-aerospike-server's JFrog OIDC login
+  contents: read
+
+on:
+  pull_request:
+    branches:
+      - main
+      - v3
+  push:
+    branches:
+      - main
+      - v3
+  workflow_dispatch:
+
+env:
+  # The same server version the pull-request workflow pins.
+  SERVER_VERSION: "8.2.0.0"
+
+jobs:
+  # A job `if` is evaluated before the matrix, so the fork gate cannot live on
+  # a matrix cell: community and enterprise stay two jobs.
+  l2-ce:
+    name: L2 discovery (ce${{ matrix.profile != 'default' && format(', {0}', matrix.profile) || '' }})
+    strategy:
+      fail-fast: false
+      matrix:
+        profile:
+          - default
+          - reachable
+          - pass-through-names
+          - pass-through-ports
+          - port-map-range
+          - low-mtu
+          - port-range
+          - idle-reset
+    uses: ./.github/workflows/discovery-l2.yml
+    with:
+      subset: ce
+      server-container-repo: database-docker-virtual/aerospike-server
+      server-tag: "8.2.0.0"
+      profile: ${{ matrix.profile }}
+    secrets: inherit
+
+  l2-ee:
+    name: L2 discovery (ee${{ matrix.profile != 'default' && format(', {0}', matrix.profile) || '' }})
+    if: >-
+      github.event_name == 'push'
+      || github.event_name == 'workflow_dispatch'
+      || github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        profile:
+          - default
+          - cn-only
+    uses: ./.github/workflows/discovery-l2.yml
+    with:
+      subset: ee
+      server-container-repo: database-docker-virtual/aerospike-server-enterprise
+      server-tag: "8.2.0.0"
+      tls-listen-port-base: "43331"
+      profile: ${{ matrix.profile }}
+    secrets: inherit
+
+  tls-matching:
+    name: TLS certificate matching
+    if: >-
+      github.event_name == 'push'
+      || github.event_name == 'workflow_dispatch'
+      || github.event.pull_request.head.repo.full_name == github.repository
+    uses: ./.github/workflows/tls-matching.yml
+    with:
+      server-container-repo: database-docker-virtual/aerospike-server-enterprise
+      server-tag: "8.2.0.0"
+    secrets: inherit

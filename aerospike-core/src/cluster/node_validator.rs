@@ -18,6 +18,7 @@ use std::vec::Vec;
 use crate::cluster::version_parser::{Version, VersionParser};
 use crate::cluster::Cluster;
 use crate::commands::Message;
+use crate::discovery::{Endpoint, SourceList};
 use crate::errors::{Error, Result};
 use crate::net::{Connection, Host};
 use crate::policy::{AdminPolicy, ClientPolicy};
@@ -50,6 +51,15 @@ pub struct NodeValidator {
     /// seed isn't listed in the response, treats the seed as a load
     /// balancer and rewrites `aliases` to the first reachable real backend.
     pub detect_load_balancer: bool,
+    /// Whether this validator was created for a seed host rather than a
+    /// discovered peer. A peer is never a lone node: the node that advertised
+    /// it is its peer, so the lone-node exemption below does not apply.
+    pub seed: bool,
+    /// The node was admitted under `use_services_alternate` without an
+    /// alternate address, because it had no peers. Its peers' alternate lists
+    /// will never name it, so once peers appear it cannot be rediscovered
+    /// after a failure; the node logs that when it happens.
+    pub alternate_missing: bool,
 }
 
 /// Normalizes a `cluster-name` info value: a server without a configured
@@ -73,6 +83,8 @@ impl NodeValidator {
             session: None,
             login_host: None,
             detect_load_balancer: false,
+            seed: false,
+            alternate_missing: false,
         }
     }
 
@@ -85,6 +97,7 @@ impl NodeValidator {
         let seed_only = client_policy.seed_only_cluster;
         let mut nv = Self::new(client_policy);
         nv.detect_load_balancer = !seed_only;
+        nv.seed = true;
         nv
     }
 
@@ -97,7 +110,10 @@ impl NodeValidator {
         let mut last_err = None;
         for alias in &self.aliases() {
             match self.validate_alias(cluster, alias).await {
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    promote_alias(&mut self.aliases, alias);
+                    return Ok(());
+                }
                 Err(err) => {
                     debug!("Alias {alias} failed: {err:?}");
                     last_err = Some(err);
@@ -173,12 +189,18 @@ impl NodeValidator {
         // the richer `peers-…` info command issued by `Node::refresh_peers`
         // after the seed Node is constructed (Java's `validatePeers →
         // Node.refreshPeers` flow).
-        let address_command: Option<&'static str> =
-            if self.detect_load_balancer && !host_is_loopback(alias) {
-                Some(cluster.client_policy.load().service_string())
-            } else {
-                None
-            };
+        //
+        // Under `use_services_alternate` the service command is always sent:
+        // the alternate address list must contain the node itself, or it has
+        // no alternate access address and cannot be used (Java's
+        // `validateAlternateAddress`).
+        let detect = self.detect_load_balancer && !host_is_loopback(alias);
+        let alternate = self.client_policy.use_services_alternate;
+        let address_command: Option<&'static str> = if detect || alternate {
+            Some(cluster.client_policy.load().service_string())
+        } else {
+            None
+        };
 
         // Under `for_login_only` the node's non-TLS address is fetched in the
         // same round trip that validates it.
@@ -188,11 +210,23 @@ impl NodeValidator {
             None
         };
 
+        // Under `use_services_alternate` the standard peers list is read in
+        // the same round trip: it decides whether a node with no alternate
+        // address is a harmless lone node or a seed hiding its peers.
+        let peers_command: Option<&'static str> = if alternate {
+            Some(self.client_policy.standard_peers_string())
+        } else {
+            None
+        };
+
         let mut commands: Vec<&str> = vec!["node", "cluster-name", "build", "partition-generation"];
         if let Some(cmd) = address_command {
             commands.push(cmd);
         }
         if let Some(cmd) = clear_command {
+            commands.push(cmd);
+        }
+        if let Some(cmd) = peers_command {
             commands.push(cmd);
         }
 
@@ -275,15 +309,45 @@ impl NodeValidator {
             self.version = version;
         }
 
+        let service_response = address_command
+            .and_then(|cmd| info_map.get(cmd))
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty());
+
+        if alternate && service_response.is_none() {
+            // A node with no alternate address is invisible to discovery:
+            // its peers' alternate lists omit it, so it is never re-added
+            // after a failure while they are alive, and the peers it names
+            // only in the standard list are never connected, which leaves a
+            // seed-only cluster that looks healthy. Both harms need peers.
+            // A seed with none is reached by its seed address and re-seeded
+            // when it is gone, so refusing it would cost a working
+            // connection for nothing; it is admitted and watched instead. A
+            // discovered peer always has a peer, the node that named it.
+            let names_peers = !self.seed
+                || peers_command
+                    .and_then(|cmd| info_map.get(cmd))
+                    .is_some_and(|s| standard_list_names_peers(s));
+            if names_peers {
+                return Err(Error::alternate_address_missing(&self.name, Some(alias)));
+            }
+            log::warn!(
+                "Node {} {alias} has no alternate-access-address and use_services_alternate is \
+                 true; connected because it has no peers. Configure alternate-access-address \
+                 before the cluster grows: a node without one cannot be rediscovered through \
+                 its peers",
+                self.name
+            );
+            self.alternate_missing = true;
+        }
+
         // Load-balancer detection: if this validator was created for a seed
         // and the seed isn't listed in the service response, the seed is
         // probably an LB. Replace `self.aliases` with the first reachable
         // real backend. Mirrors Java's `setAddress`.
-        if let Some(addr_cmd) = address_command {
-            if let Some(s) = info_map.get(addr_cmd) {
-                if !s.trim().is_empty() {
-                    self.maybe_swap_lb_address(cluster, alias, s).await;
-                }
+        if detect {
+            if let Some(s) = service_response {
+                self.maybe_swap_lb_address(cluster, alias, s).await;
             }
         }
 
@@ -291,7 +355,7 @@ impl NodeValidator {
         // closed. Move this node onto its cleartext address for good.
         if let Some(cmd) = clear_command {
             let raw = info_map.get(cmd).cloned().unwrap_or_default();
-            self.switch_to_clear_address(&raw).await?;
+            self.switch_to_clear_address(cluster, &raw).await?;
         }
 
         Ok(())
@@ -300,12 +364,12 @@ impl NodeValidator {
     /// Point this node at a non-TLS address (`for_login_only`).
     ///
     /// Mirrors Java's `SwitchClear`: walk the addresses the node reported,
-    /// apply `ip_map`, and keep the first one that accepts a cleartext
+    /// translate them, and keep the first one that accepts a cleartext
     /// connection authenticated with the session token. Proving the token
     /// works before committing is the point — a clear address that cannot
     /// authenticate is no use, and finding out now beats finding out on the
     /// first command.
-    async fn switch_to_clear_address(&mut self, raw: &str) -> Result<()> {
+    async fn switch_to_clear_address(&mut self, cluster: &Cluster, raw: &str) -> Result<()> {
         let session = self.session.clone();
         for entry in raw.split(';') {
             if entry.trim().is_empty() {
@@ -318,14 +382,22 @@ impl NodeValidator {
                     continue;
                 }
             };
-            for mut host in parsed {
+            for advertised in parsed {
                 // A cleartext endpoint has no TLS name to verify against.
-                host.tls_name = None;
-                if let Some(ref ip_map) = self.client_policy.ip_map {
-                    if let Some(mapped) = ip_map.get(&host.name) {
-                        host.name.clone_from(mapped);
+                let endpoint = Endpoint::new(
+                    self.name.clone(),
+                    None,
+                    advertised.name.clone(),
+                    advertised.port,
+                    self.source_list(),
+                );
+                let host = match cluster.translate_endpoint(&endpoint) {
+                    Ok(host) => host,
+                    Err(e) => {
+                        debug!("for_login_only: {e}");
+                        continue;
                     }
-                }
+                };
                 for resolved in aerospike_rt::lookup_host(host.name.as_str(), host.port)
                     .await
                     .unwrap_or_default()
@@ -362,10 +434,19 @@ impl NodeValidator {
         )))
     }
 
+    /// The list the node's addresses come from, for the translator.
+    const fn source_list(&self) -> SourceList {
+        if self.client_policy.use_services_alternate {
+            SourceList::Alternate
+        } else {
+            SourceList::Standard
+        }
+    }
+
     async fn maybe_swap_lb_address(&mut self, cluster: &Cluster, seed: &Host, raw: &str) {
-        // Parse the service response into Hosts, applying ip_map at the
-        // same time so seed comparison happens on post-substitution values
-        // (matches Java).
+        // Parse the service response into Hosts, translating each at the
+        // same time so seed comparison happens on post-translation values
+        // (matches Java). A strict miss drops the address.
         let mut real_hosts: Vec<Host> = Vec::new();
         for entry in raw.split(';') {
             if entry.trim().is_empty() {
@@ -378,14 +459,18 @@ impl NodeValidator {
                     continue;
                 }
             };
-            for mut h in parsed {
-                h.tls_name.clone_from(&seed.tls_name);
-                if let Some(ref ip_map) = self.client_policy.ip_map {
-                    if let Some(mapped) = ip_map.get(&h.name) {
-                        h.name.clone_from(mapped);
-                    }
+            for h in parsed {
+                let endpoint = Endpoint::new(
+                    self.name.clone(),
+                    seed.tls_name.clone(),
+                    h.name.clone(),
+                    h.port,
+                    self.source_list(),
+                );
+                match cluster.translate_endpoint(&endpoint) {
+                    Ok(host) => real_hosts.push(host),
+                    Err(e) => debug!("LB-detect: {e}"),
                 }
-                real_hosts.push(h);
             }
         }
 
@@ -439,6 +524,33 @@ impl NodeValidator {
 /// `true` when `host.name` resolves to (or already is) a loopback address.
 /// Used to skip load-balancer detection for loopback seeds since the LB
 /// would never live on localhost.
+/// Moves the alias that answered validation to the front of `aliases`, so it
+/// becomes the node's primary host (Java's `primaryHost`): a name resolving
+/// to several addresses must not leave an unreachable one in front.
+///
+/// Only when the alias is still in the list. Validation may have replaced
+/// the list outright, with the cleartext address under `for_login_only` or
+/// the real backend behind a load balancer; the answering alias is then the
+/// address the node must *not* be built on, and the list stays as the swap
+/// left it.
+fn promote_alias(aliases: &mut Vec<Host>, answered: &Host) {
+    if let Some(pos) = aliases.iter().position(|a| a == answered) {
+        if pos != 0 {
+            let alias = aliases.remove(pos);
+            aliases.insert(0, alias);
+        }
+    }
+}
+
+/// Whether a standard peers reply names at least one peer. A reply that
+/// does not parse counts as naming peers: it is not evidence of a lone node.
+fn standard_list_names_peers(reply: &str) -> bool {
+    match crate::cluster::peers_parser::PeersParser::new(reply).parse() {
+        Ok(result) => !result.peers.is_empty(),
+        Err(_) => true,
+    }
+}
+
 fn host_is_loopback(host: &Host) -> bool {
     if let Ok(ip) = host.name.parse::<std::net::IpAddr>() {
         return ip.is_loopback();
@@ -461,5 +573,39 @@ mod cluster_name_tests {
             normalize_cluster_name(Some(&" production ".to_string())),
             Some("production".to_string())
         );
+    }
+}
+
+#[cfg(test)]
+mod promote_alias_tests {
+    use super::promote_alias;
+    use crate::net::Host;
+
+    fn hosts(names: &[&str]) -> Vec<Host> {
+        names.iter().map(|n| Host::new(n, 3000)).collect()
+    }
+
+    #[test]
+    fn the_answering_alias_moves_to_the_front() {
+        let mut aliases = hosts(&["::1", "127.0.0.1", "10.0.0.1"]);
+        promote_alias(&mut aliases, &Host::new("127.0.0.1", 3000));
+        assert_eq!(aliases, hosts(&["127.0.0.1", "::1", "10.0.0.1"]));
+    }
+
+    #[test]
+    fn an_alias_already_in_front_leaves_the_list_alone() {
+        let mut aliases = hosts(&["127.0.0.1", "::1"]);
+        promote_alias(&mut aliases, &Host::new("127.0.0.1", 3000));
+        assert_eq!(aliases, hosts(&["127.0.0.1", "::1"]));
+    }
+
+    // The list validation replaced (the cleartext address under
+    // `for_login_only`, the real backend behind a load balancer) is kept:
+    // the alias that answered is exactly the address to leave behind.
+    #[test]
+    fn a_replaced_list_is_not_undone() {
+        let mut aliases = hosts(&["127.0.0.1"]);
+        promote_alias(&mut aliases, &Host::new_tls("::1", "tls-name", 3151));
+        assert_eq!(aliases, hosts(&["127.0.0.1"]));
     }
 }

@@ -24,8 +24,9 @@ use crate::commands::field_type::FieldType;
 use crate::commands::Command;
 use crate::errors::{Error, ErrorKind, Result};
 use crate::net::{BufferedConn, Connection};
-use crate::query::{NodePartitions, QuerySink, Recordset, StreamEntry, RECORD_BATCH};
+use crate::query::{NodePartitions, QuerySink, Recordset, StreamEntry, TopKAccumulator, RECORD_BATCH};
 use crate::value::bytes_to_particle;
+use aerospike_rt::Mutex;
 use crate::{Key, Record, ResultCode, Value};
 
 pub struct StreamCommand {
@@ -44,6 +45,9 @@ pub struct StreamCommand {
     /// command itself, which would forbid moving `node_partitions` back out
     /// at the end.
     _end: EndSignal,
+    /// Bounded accumulator of a Top-K query, shared by every node command;
+    /// `None` for a plain query.
+    top_k_buffer: Option<Arc<Mutex<TopKAccumulator>>>,
 }
 
 /// Signals end-of-stream to the sink on drop.
@@ -61,6 +65,7 @@ impl StreamCommand {
         sink: QuerySink,
         node_partitions: NodePartitions,
         cluster: Arc<Cluster>,
+        top_k_buffer: Option<Arc<Mutex<TopKAccumulator>>>,
     ) -> Self {
         StreamCommand {
             node,
@@ -68,6 +73,7 @@ impl StreamCommand {
             _end: EndSignal(sink.clone()),
             sink,
             node_partitions,
+            top_k_buffer,
         }
     }
 
@@ -83,16 +89,19 @@ impl StreamCommand {
         self.node_partitions
     }
 
+    /// Parses one response row into its record, the partition cursor value
+    /// (`bval`) and the row's last-update time (0 when the server sent none),
+    /// plus whether the stream continues.
     async fn parse_record(
         &mut self,
         conn: &mut BufferedConn<'_>,
         _size: usize,
-    ) -> Result<(Option<Record>, Option<u64>, bool)> {
+    ) -> Result<(Option<Record>, Option<u64>, u64, bool)> {
         let result_code = ResultCode::from(conn.buffer().read_u8(Some(5)));
         if result_code != ResultCode::Ok {
             match result_code {
                 ResultCode::KeyNotFoundError | ResultCode::FilteredOut => {
-                    return Ok((None, None, false))
+                    return Ok((None, None, 0, false))
                 }
                 ResultCode::PartitionUnavailable => (),
                 _ => {
@@ -124,7 +133,7 @@ impl StreamCommand {
         // if cmd is the end marker of the response, do not proceed further
         let info3 = conn.buffer().read_u8(Some(3));
         if info3 & buffer::INFO3_LAST == buffer::INFO3_LAST {
-            return Ok((None, None, false));
+            return Ok((None, None, 0, false));
         }
 
         conn.buffer().skip(6);
@@ -134,7 +143,8 @@ impl StreamCommand {
         let field_count = conn.buffer().read_u16(None) as usize; // almost certainly 0
         let op_count = conn.buffer().read_u16(None) as usize;
 
-        let (key, bval) = StreamCommand::parse_key(conn, field_count).await?;
+        let fields = Self::parse_key_fields(conn, field_count).await?;
+        let (key, bval, last_update_time) = (fields.key, fields.bval, fields.last_update_time);
 
         // Partition is done, don't go further
         if info3 & buffer::INFO3_PARTITION_DONE != 0 {
@@ -144,7 +154,7 @@ impl StreamCommand {
                     .tracker()
                     .partition_unavailable(&mut self.node_partitions, generation as u16);
             }
-            return Ok((None, None, true));
+            return Ok((None, None, 0, true));
         }
 
         let mut bins: IndexMap<String, Value> = IndexMap::with_capacity(op_count);
@@ -174,7 +184,7 @@ impl StreamCommand {
         }
 
         let record = Record::new(Some(key), bins, None, generation, expiration);
-        Ok((Some(record), bval, true))
+        Ok((Some(record), bval, last_update_time, true))
     }
 
     /// Hands the accumulated batch to the consumer and counts it against
@@ -186,8 +196,10 @@ impl StreamCommand {
     /// touched: it is committed at the consumer edge, record by record, as
     /// the user takes them out — so a stream closed with records still
     /// buffered resumes from the last record the user saw, not the last one
-    /// parsed. A failed push counts nothing: those records are re-fetched by
-    /// the next round.
+    /// parsed. (A retry round of this same run resumes after the last record
+    /// stamped for the channel; that is why the batch is flushed on every
+    /// exit of `parse_stream`, failures included: a stamped record must reach
+    /// the queue, or the retry would skip it.)
     async fn flush_batch(
         recordset: &Recordset,
         node_partitions: &mut NodePartitions,
@@ -200,6 +212,20 @@ impl StreamCommand {
         recordset.push_batch(std::mem::take(batch)).await?;
         node_partitions.record_count += count;
         Ok(())
+    }
+
+    /// Queues what the batch holds before `parse_stream` returns `err`; a
+    /// push failure means the consumer is gone, and the original error is
+    /// the one worth reporting.
+    async fn flush_then_fail(
+        &mut self,
+        batch: &mut Vec<StreamEntry>,
+        err: Error,
+    ) -> Result<bool> {
+        if let QuerySink::Channel(rs) = &self.sink {
+            let _ = Self::flush_batch(rs, &mut self.node_partitions, batch).await;
+        }
+        Err(err)
     }
 
     async fn parse_stream(&mut self, conn: &mut BufferedConn<'_>, size: usize) -> Result<bool> {
@@ -215,16 +241,26 @@ impl StreamCommand {
                 .await
             {
                 debug!("Parse result error: {err}");
-                return Err(err);
+                return self.flush_then_fail(&mut batch, err).await;
             }
 
             let res = self.parse_record(conn, size).await;
             match res {
-                Ok((Some(rec), bval, _)) => {
+                Ok((Some(rec), bval, last_update_time, _)) => {
                     // No lock on this path: the tracker's record-facing state
                     // is atomics, and the partition set has a single writer —
                     // this command.
                     if !self.sink.tracker().allow_record(&mut self.node_partitions) {
+                        continue 'outer;
+                    }
+
+                    if let Some(buffer) = &self.top_k_buffer {
+                        // A Top-K row is ranked, not delivered: it is counted
+                        // but leaves no resume cursor, so a retried partition
+                        // is ranked again from the start, and the accumulator
+                        // shared by every node deduplicates by digest.
+                        self.node_partitions.record_count += 1;
+                        buffer.lock().await.accept(rec, last_update_time);
                         continue 'outer;
                     }
 
@@ -233,7 +269,9 @@ impl StreamCommand {
                             // Stamp after the allow gate: rejected records
                             // are neither delivered nor sequenced.
                             let key = rec.key.as_ref().unwrap();
-                            let stamp = rs.tracker.stamp_delivery(key.partition_id());
+                            let stamp =
+                                rs.tracker
+                                    .stamp_delivery(key.partition_id(), key.digest, bval);
                             batch.push(StreamEntry {
                                 result: Ok(rec),
                                 bval,
@@ -264,18 +302,17 @@ impl StreamCommand {
                         }
                     }
                 }
-                Ok((None, _, false)) => {
+                Ok((None, _, _, false)) => {
                     if let QuerySink::Channel(rs) = &self.sink {
                         Self::flush_batch(rs, &mut self.node_partitions, &mut batch).await?;
                     }
                     return Ok(false);
                 }
-                Ok((None, _, true)) => {} // handle partition done
+                Ok((None, _, _, true)) => {} // handle partition done
                 Err(err) => {
-                    // Not flushed: the un-pushed tail is dropped with its
-                    // progress uncommitted, so a retry round re-fetches it.
-                    // let _ = self.recordset.push(Err(err)).await;
-                    return Err(err);
+                    // The records parsed so far were stamped as queued, so
+                    // queue them: the retry round resumes after them.
+                    return self.flush_then_fail(&mut batch, err).await;
                 }
             }
         }
@@ -284,15 +321,6 @@ impl StreamCommand {
             Self::flush_batch(rs, &mut self.node_partitions, &mut batch).await?;
         }
         Ok(true)
-    }
-
-    pub async fn parse_key(
-        conn: &mut BufferedConn<'_>,
-        field_count: usize,
-    ) -> Result<(Key, Option<u64>)> {
-        Self::parse_key_and_version(conn, field_count)
-            .await
-            .map(|(key, bval, _version, _detail)| (key, bval))
     }
 
     /// Parse key fields from batch/stream response, also extracting record version if present.
@@ -306,12 +334,23 @@ impl StreamCommand {
         Option<u64>,
         Option<Box<crate::ServerErrorDetail>>,
     )> {
+        Self::parse_key_fields(conn, field_count)
+            .await
+            .map(|fields| (fields.key, fields.bval, fields.version, fields.error_detail))
+    }
+
+    /// Parses the fields of a batch or stream response row.
+    pub async fn parse_key_fields(
+        conn: &mut BufferedConn<'_>,
+        field_count: usize,
+    ) -> Result<RowFields> {
         let mut digest: [u8; 20] = [0; 20];
         let mut namespace: String = String::new();
         let mut set_name: String = String::new();
         let mut orig_key: Option<Value> = None;
         let mut bval = None;
         let mut version = None;
+        let mut last_update_time = 0;
         // A failing row carries the server's explanation as a field; without
         // capturing it here the unknown-field arm below would skip it.
         let mut error_detail: Option<Box<crate::ServerErrorDetail>> = None;
@@ -345,6 +384,9 @@ impl StreamCommand {
                 x if x == FieldType::BValArray as u8 => {
                     bval = Some(conn.buffer().read_le_u64(None));
                 }
+                x if x == FieldType::Lut as u8 && data_size == 8 => {
+                    last_update_time = conn.buffer().read_u64(None);
+                }
                 x if x == FieldType::RecordVersion as u8 && data_size == 7 => {
                     let buf = conn.buffer();
                     version = Some(Buffer::version_bytes_to_u64(
@@ -368,8 +410,8 @@ impl StreamCommand {
             }
         }
 
-        Ok((
-            Key {
+        Ok(RowFields {
+            key: Key {
                 namespace,
                 set_name,
                 user_key: orig_key,
@@ -377,9 +419,23 @@ impl StreamCommand {
             },
             bval,
             version,
+            last_update_time,
             error_detail,
-        ))
+        })
     }
+}
+
+/// The fields of one batch or stream response row.
+pub struct RowFields {
+    pub key: Key,
+    /// The partition cursor value of a query row.
+    pub bval: Option<u64>,
+    /// The record version of a transaction read.
+    pub version: Option<u64>,
+    /// The row's last-update time (field 14), sent on Top-K query rows; 0
+    /// when absent.
+    pub last_update_time: u64,
+    pub error_detail: Option<Box<crate::ServerErrorDetail>>,
 }
 
 #[async_trait::async_trait]

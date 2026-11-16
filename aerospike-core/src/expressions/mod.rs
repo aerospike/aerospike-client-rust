@@ -25,6 +25,7 @@ pub mod maps;
 pub mod regex_flag;
 pub use regex_flag::RegexFlags;
 pub mod string;
+pub mod vector;
 
 pub use ael::from_ael;
 #[doc(hidden)]
@@ -66,6 +67,8 @@ pub enum ExpType {
     Geo = 8,
     /// `HyperLogLog` sketch.
     Hll = 9,
+    /// Vector.
+    Vector = 10,
 }
 
 #[allow(clippy::upper_case_acronyms)]
@@ -109,6 +112,12 @@ pub(crate) enum ExpOp {
     IntRscan = 41,
     Min = 50,
     Max = 51,
+    /// Squared Euclidean distance between two VECTOR operands.
+    VectorEuclideanDistance = 52,
+    /// Dot product between two VECTOR operands.
+    VectorDotProduct = 53,
+    /// Cosine similarity between two VECTOR operands.
+    VectorCosineSimilarity = 54,
     DigestModulo = 64,
     // 65 DEVICE_SIZE and 73 MEMORY_SIZE are the pre-7.0 size expressions;
     // the client builds RECORD_SIZE instead.
@@ -391,6 +400,25 @@ impl Expression {
                 // The name - Raw String is needed instead of the msgpack String that the pack_value method would use.
                 size += pack_raw_string(buf, &self.val.clone().unwrap().to_string());
             }
+            ExpOp::VectorEuclideanDistance
+            | ExpOp::VectorDotProduct
+            | ExpOp::VectorCosineSimilarity => {
+                // Layout: array[3] = [VECTOR_*_DIST, vector-bin, full-vector BLOB].
+                // The builders keep the query as a `Value::Vector`, whose data
+                // is shared between clones, and it is written here in the BLOB
+                // form the server expects; a `Value::Blob` of the wire bytes,
+                // which an older or hand-built expression may carry, packs to
+                // the same bytes.
+                size += pack_array_begin(buf, 3);
+                size += pack_integer(buf, cmd as i64);
+                size += self.bin.as_ref().unwrap().pack(buf)?;
+                size += match self.val.as_ref().unwrap() {
+                    Value::Vector(query) => {
+                        crate::msgpack::encoder::pack_vector_as_blob(buf, query)
+                    }
+                    other => pack_value(buf, other)?,
+                };
+            }
             ExpOp::BinType | ExpOp::Var => {
                 // BinType/Var encoder
                 size += pack_array_begin(buf, 2);
@@ -434,6 +462,21 @@ impl Expression {
 
     /// Packs the expression.
     pub(crate) fn pack(&self, buf: &mut Option<&mut Buffer>) -> Result<usize> {
+        // Vector expressions encode their query as a BLOB.
+        if let Some(buf) = buf.as_deref_mut() {
+            if self.module == Some(ExpType::Vector)
+                || matches!(
+                    self.cmd,
+                    Some(
+                        ExpOp::VectorEuclideanDistance
+                            | ExpOp::VectorDotProduct
+                            | ExpOp::VectorCosineSimilarity
+                    )
+                )
+            {
+                buf.mark_vector();
+            }
+        }
         if let Some(bytes) = &self.bytes {
             if let Some(buf) = buf {
                 return Ok(buf.write_bytes(bytes));
@@ -511,6 +554,11 @@ pub fn key(exp_type: ExpType) -> Expression {
 }
 
 /// Creates an expression from a base64-encoded expression string.
+///
+/// Packed bytes are opaque to the client, so an expression rebuilt this way
+/// skips the check that refuses a vector expression when not every node in
+/// the cluster supports vectors. A node without vector support then refuses
+/// the expression itself, as it does any expression it cannot parse.
 pub fn from_base64(b64: &str) -> Result<Expression> {
     let bytes = BASE64
         .decode(b64)
@@ -748,6 +796,21 @@ pub fn hll_bin(name: impl Into<String>) -> Expression {
         None,
         None,
         Some(ExpType::Hll),
+        None,
+    )
+}
+
+/// Creates a VECTOR-bin expression for vector-distance expressions.
+///
+/// The explicit vector result type is required: a BLOB declaration evaluates
+/// to unknown for a stored VECTOR particle.
+pub fn vector_bin(name: String) -> Expression {
+    Expression::new(
+        Some(ExpOp::Bin),
+        Some(Value::from(name)),
+        None,
+        None,
+        Some(ExpType::Vector),
         None,
     )
 }
@@ -1917,6 +1980,39 @@ pub const fn unknown() -> Expression {
         exps: None,
         arguments: None,
         bytes: None,
+    }
+}
+
+#[cfg(test)]
+mod vector_type_tests {
+    use super::*;
+
+    // VECTOR and BLOB bin expressions differ in their declared result type.
+    // The server uses this declaration to enforce the stored particle type.
+    #[test]
+    fn vector_bin_declares_vector_result_type() {
+        assert_ne!(
+            vector_bin("embedding".to_string()).base64().unwrap(),
+            blob_bin("embedding").base64().unwrap()
+        );
+    }
+
+    // The generic `bin(name, type)` accessor packs identically to the
+    // corresponding typed accessor (Java Exp.bin parity).
+    #[test]
+    fn generic_bin_matches_typed_accessors() {
+        assert_eq!(
+            bin("a", ExpType::Int).base64().unwrap(),
+            int_bin("a").base64().unwrap()
+        );
+        assert_eq!(
+            bin("a", ExpType::String).base64().unwrap(),
+            string_bin("a").base64().unwrap()
+        );
+        assert_ne!(
+            bin("a", ExpType::Float).base64().unwrap(),
+            int_bin("a").base64().unwrap()
+        );
     }
 }
 

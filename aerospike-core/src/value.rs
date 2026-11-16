@@ -33,6 +33,7 @@ use crate::commands::buffer::Buffer;
 use crate::commands::ParticleType;
 use crate::errors::{Error, Result};
 use crate::msgpack::{decoder, encoder};
+use crate::vector::Vector;
 
 #[cfg(feature = "serialization")]
 use serde::ser::{SerializeMap, SerializeSeq};
@@ -273,6 +274,9 @@ pub enum Value {
     /// HLL value
     Hll(Vec<u8>),
 
+    /// A `VECTOR` particle; see [`Vector`](crate::Vector).
+    Vector(Vector),
+
     /// Infinity Value
     Infinity,
 
@@ -344,6 +348,7 @@ impl PartialEq for Value {
                 a == b
             }
             (Value::KeyValueList(a), Value::KeyValueList(b)) => a == b,
+            (Value::Vector(a), Value::Vector(b)) => a == b,
             (Value::Unknown(t1, b1), Value::Unknown(t2, b2)) => t1 == t2 && b1 == b2,
             (Value::HashMap(a), b) => entries_eq(a.len(), a.iter(), b),
             (Value::OrderedMap(a), b) => entries_eq(a.len(), a.iter(), b),
@@ -421,6 +426,10 @@ impl Hash for Value {
                 11u8.hash(state);
                 v.len().hash(state);
             }
+            Value::Vector(ref v) => {
+                15u8.hash(state);
+                v.dimensions().hash(state);
+            }
             Value::Infinity => 12u8.hash(state),
             Value::Wildcard => 13u8.hash(state),
             Value::Unknown(code, ref bytes) => {
@@ -473,6 +482,7 @@ impl Value {
             | Value::KeyValueList(_) => ParticleType::Map as u8,
             Value::GeoJson(_) => ParticleType::GeoJson as u8,
             Value::Hll(_) => ParticleType::Hll as u8,
+            Value::Vector(_) => ParticleType::Vector as u8,
             Value::Unknown(code, _) => code,
             Value::Infinity => {
                 return Err(Error::invalid_argument(
@@ -512,6 +522,7 @@ impl Value {
             Value::KeyValueList(_) => "key-value list".to_string(),
             Value::GeoJson(_) => "geo-json".to_string(),
             Value::Hll(_) => "hll".to_string(),
+            Value::Vector(_) => "vector".to_string(),
             Value::Infinity => "INF".to_string(),
             Value::Wildcard => "wildcard".to_string(),
             Value::Unknown(code, _) => {
@@ -534,6 +545,7 @@ impl Value {
             Value::OrderedMap(ref val) => format!("{val:?}"),
             Value::SortedMap(ref val) => format!("{val:?}"),
             Value::KeyValueList(ref val) => format!("{val:?}"),
+            Value::Vector(ref val) => val.to_string(),
             Value::Infinity => "INF".into(),
             Value::Wildcard => "*".into(),
             Value::Unknown(code, ref bytes) => {
@@ -567,6 +579,7 @@ impl Value {
             }
             Value::GeoJson(ref s) => 1 + 2 + s.len(), // flags + ncells + jsonstr
             Value::Hll(ref h) => h.len(),
+            Value::Vector(ref v) => v.wire_size(),
             Value::Nil | Value::Infinity | Value::Wildcard => 0,
             // A whole-bin write of a foreign particle: the payload goes back
             // exactly as it was read, under its own particle-type code.
@@ -598,6 +611,7 @@ impl Value {
                 ));
             }
             Value::GeoJson(ref val) => buf.write_geo(val),
+            Value::Vector(ref val) => val.write_to(buf),
             Value::Infinity => encoder::pack_infinity(&mut Some(buf)),
             Value::Wildcard => encoder::pack_wildcard(&mut Some(buf)),
             // Verbatim payload; `particle_type()` supplies the original code.
@@ -657,6 +671,7 @@ impl Value {
             Value::MultiResult(_) => 12,
             Value::KeyValueList(_) => 13,
             Value::Unknown(..) => 14,
+            Value::Vector(_) => 15,
         }
     }
 }
@@ -711,6 +726,7 @@ impl Ord for Value {
                     (Value::List(a_val), Value::List(b_val))
                     | (Value::MultiResult(a_val), Value::MultiResult(b_val)) => a_val.cmp(b_val),
                     (Value::KeyValueList(a_val), Value::KeyValueList(b_val)) => a_val.cmp(b_val),
+                    (Value::Vector(a_val), Value::Vector(b_val)) => a_val.cmp(b_val),
                     // Numeric float ordering (total order over f64), like
                     // the server — NOT raw bit order, which would sort
                     // every negative float above the positives.
@@ -776,6 +792,12 @@ impl From<Vec<u8>> for Value {
 impl From<Vec<Value>> for Value {
     fn from(val: Vec<Value>) -> Value {
         Value::List(val)
+    }
+}
+
+impl From<Vector> for Value {
+    fn from(val: Vector) -> Value {
+        Value::Vector(val)
     }
 }
 
@@ -1112,6 +1134,20 @@ impl TryFrom<Value> for Vec<(Value, Value)> {
     }
 }
 
+impl TryFrom<Value> for Vector {
+    type Error = String;
+    fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
+        match val {
+            Value::Vector(v) => Ok(v),
+            _ => Err(format!(
+                "Invalid type conversion from Value::{} to {}",
+                val.type_label(),
+                std::any::type_name::<Self>()
+            )),
+        }
+    }
+}
+
 impl TryFrom<Value> for f64 {
     type Error = Error;
     fn try_from(val: Value) -> std::result::Result<Self, Self::Error> {
@@ -1187,6 +1223,7 @@ pub fn bytes_to_particle(ptype: u8, buf: &mut Buffer, len: usize) -> Result<Valu
             Ok(val)
         }
         ParticleType::Hll => Ok(Value::Hll(buf.read_blob(len)?)),
+        ParticleType::Vector => Ok(Value::Vector(Vector::from_bytes(buf, len)?)),
         ParticleType::Bool => Ok(Value::Bool(buf.read_bool(len))),
         // Retired server types the client does not interpret: same
         // treatment as unrecognized codes above.
@@ -1440,6 +1477,36 @@ impl Serialize for Value {
                 }
                 map.end()
             }
+            Value::Vector(v) => match v.data() {
+                crate::vector::VectorData::Float16(d) => {
+                    let mut seq = serializer.serialize_seq(Some(d.len()))?;
+                    for e in d {
+                        seq.serialize_element(e)?;
+                    }
+                    seq.end()
+                }
+                crate::vector::VectorData::Int32(d) => {
+                    let mut seq = serializer.serialize_seq(Some(d.len()))?;
+                    for e in d {
+                        seq.serialize_element(e)?;
+                    }
+                    seq.end()
+                }
+                crate::vector::VectorData::Float32(d) => {
+                    let mut seq = serializer.serialize_seq(Some(d.len()))?;
+                    for e in d {
+                        seq.serialize_element(e)?;
+                    }
+                    seq.end()
+                }
+                crate::vector::VectorData::Float64(d) => {
+                    let mut seq = serializer.serialize_seq(Some(d.len()))?;
+                    for e in d {
+                        seq.serialize_element(e)?;
+                    }
+                    seq.end()
+                }
+            },
             // Server-only markers and a UDF's multi-value result have no
             // representation in a data format: refuse, do not abort.
             Value::Infinity | Value::Wildcard | Value::MultiResult(_) => {
@@ -1872,6 +1939,284 @@ mod tests {
             assert_eq!(particle_code, code);
             assert_eq!(bytes, payload);
         }
+    }
+
+    // Bin-particle serde.
+    #[test]
+    fn vector_value_round_trips_through_particle() {
+        use crate::Vector;
+
+        let value = Value::Vector(Vector::float32(vec![0.5, -1.5, 2.0]));
+        assert_eq!(value.particle_type().unwrap(), ParticleType::Vector as u8);
+
+        let size = value.estimate_size().unwrap();
+        let mut buf = Buffer::new(usize::MAX);
+        buf.resize_buffer(size).unwrap();
+        buf.data_offset = 0;
+        let written = value.write_to(&mut buf).unwrap();
+        assert_eq!(written, size);
+
+        buf.data_offset = 0;
+        let decoded = bytes_to_particle(ParticleType::Vector as u8, &mut buf, size).unwrap();
+        assert_eq!(decoded, value);
+    }
+
+    // Bin-particle serde with exact-size verification.
+    fn particle_round_trip(value: &Value) -> Value {
+        let size = value.estimate_size().unwrap();
+        let mut buf = Buffer::new(usize::MAX);
+        buf.resize_buffer(size).unwrap();
+        buf.data_offset = 0;
+        let written = value.write_to(&mut buf).unwrap();
+        assert_eq!(written, size, "write_to must write exactly estimate_size bytes");
+
+        buf.data_offset = 0;
+        bytes_to_particle(ParticleType::Vector as u8, &mut buf, size).unwrap()
+    }
+
+    // Nested CDT serde.
+    fn cdt_list_round_trip(value: Value) -> Value {
+        use crate::msgpack::{decoder, encoder};
+
+        let list = Value::List(vec![value]);
+        let size = encoder::pack_value(&mut None, &list).unwrap();
+        let mut buf = Buffer::new(usize::MAX);
+        buf.resize_buffer(size).unwrap();
+        buf.data_offset = 0;
+        let written = encoder::pack_value(&mut Some(&mut buf), &list).unwrap();
+        assert_eq!(written, size, "pack_value must write exactly its estimated size");
+
+        buf.data_offset = 0;
+        let Value::List(mut decoded) = decoder::unpack_value_list(&mut buf).unwrap() else {
+            panic!("expected a list");
+        };
+        decoded.pop().unwrap()
+    }
+
+    // All element types.
+    #[test]
+    fn vector_particle_round_trips_every_element_type() {
+        use crate::Vector;
+
+        let vectors = [
+            Value::Vector(Vector::float16(vec![0x3c00, 0x4000, 0xbc00])),
+            Value::Vector(Vector::int32(vec![-5, 0, 7, i32::MIN, i32::MAX])),
+            Value::Vector(Vector::float32(vec![0.1, -2.5, 3.5])),
+            Value::Vector(Vector::float64(vec![0.1, -2.5, f64::MAX])),
+        ];
+
+        for value in vectors {
+            assert_eq!(particle_round_trip(&value), value, "particle round trip: {value}");
+            assert_eq!(cdt_list_round_trip(value.clone()), value, "cdt round trip: {value}");
+        }
+    }
+
+    // A single-element vector has just the header plus one element.
+    #[test]
+    fn single_element_vector_round_trips_through_both_serde_paths() {
+        use crate::Vector;
+
+        let value = Value::Vector(Vector::float32(vec![1.5]));
+        assert_eq!(
+            value.estimate_size().unwrap(),
+            crate::vector::VECTOR_HEADER_SIZE + 4
+        );
+
+        assert_eq!(particle_round_trip(&value), value);
+        assert_eq!(cdt_list_round_trip(value.clone()), value);
+
+        assert_ne!(
+            particle_round_trip(&value),
+            Value::Vector(Vector::int32(vec![1]))
+        );
+    }
+
+    // Signed zeros and the finite extremes keep their bits through both paths.
+    #[test]
+    fn float_extreme_vector_elements_round_trip_through_both_serde_paths() {
+        use crate::Vector;
+
+        for value in [
+            Value::Vector(Vector::float32(vec![f32::MAX, f32::MIN, f32::MIN_POSITIVE, -0.0, 0.0])),
+            Value::Vector(Vector::float64(vec![f64::MAX, f64::MIN, f64::MIN_POSITIVE, -0.0, 0.0])),
+            Value::Vector(Vector::float16(vec![0x7bff, 0xfbff, 0x0001, 0x8000, 0x0000])),
+        ] {
+            assert_eq!(particle_round_trip(&value), value, "particle: {value}");
+            assert_eq!(cdt_list_round_trip(value.clone()), value, "cdt: {value}");
+        }
+    }
+
+    // Guards against particle truncation.
+    #[test]
+    fn large_vector_round_trips_through_particle() {
+        use crate::Vector;
+
+        let data: Vec<f32> = (0..4096).map(|i| i as f32 * 0.5).collect();
+        let value = Value::Vector(Vector::float32(data));
+        assert_eq!(particle_round_trip(&value), value);
+    }
+
+    // Vectors nested in maps round-trip.
+    #[test]
+    fn vector_round_trips_nested_in_map() {
+        use crate::msgpack::{decoder, encoder};
+        use crate::Vector;
+
+        let mut map = HashMap::new();
+        map.insert(Value::from("one"), Value::Vector(Vector::float64(vec![1.5])));
+        map.insert(Value::from("full"), Value::Vector(Vector::int32(vec![7, 8])));
+        let value = Value::HashMap(map);
+
+        let size = encoder::pack_value(&mut None, &value).unwrap();
+        let mut buf = Buffer::new(usize::MAX);
+        buf.resize_buffer(size).unwrap();
+        buf.data_offset = 0;
+        encoder::pack_value(&mut Some(&mut buf), &value).unwrap();
+
+        buf.data_offset = 0;
+        let decoded = decoder::unpack_value_map(&mut buf).unwrap();
+        assert_eq!(decoded, value);
+    }
+
+    // Forces the msgpack length header past 16 bits; estimate/write must agree.
+    #[test]
+    fn large_nested_vector_crosses_16bit_length_boundary() {
+        use crate::msgpack::{decoder, encoder};
+        use crate::Vector;
+
+        let data: Vec<f64> = (0..16_384).map(|i| f64::from(i) * 0.25).collect();
+        let vector = Vector::float64(data);
+        assert!(
+            vector.wire_size() > 65_535,
+            "vector must exceed the 16-bit msgpack length boundary"
+        );
+        let value = Value::List(vec![Value::Vector(vector)]);
+
+        let size = encoder::pack_value(&mut None, &value).unwrap();
+        let mut buf = Buffer::new(usize::MAX);
+        buf.resize_buffer(size).unwrap();
+        buf.data_offset = 0;
+        let written = encoder::pack_value(&mut Some(&mut buf), &value).unwrap();
+        assert_eq!(written, size, "estimate and write passes must agree");
+
+        buf.data_offset = 0;
+        let decoded = decoder::unpack_value_list(&mut buf).unwrap();
+        assert_eq!(decoded, value);
+    }
+
+    // Rejects truncated vector bodies.
+    #[test]
+    fn vector_particle_decoder_rejects_truncated_body() {
+        use crate::Vector;
+
+        let value = Value::Vector(Vector::float32(vec![1.0, 2.0, 3.0, 4.0]));
+        let size = value.estimate_size().unwrap();
+        let mut buf = Buffer::new(usize::MAX);
+        buf.resize_buffer(size).unwrap();
+        buf.data_offset = 0;
+        value.write_to(&mut buf).unwrap();
+
+        buf.data_offset = 0;
+        let truncated = crate::vector::VECTOR_HEADER_SIZE + 2 * 4;
+        assert!(bytes_to_particle(ParticleType::Vector as u8, &mut buf, truncated).is_err());
+    }
+
+    // A vector nested in a list round-trips through the msgpack (CDT) path.
+    #[test]
+    fn vector_round_trips_nested_in_list() {
+        use crate::msgpack::{decoder, encoder};
+        use crate::Vector;
+
+        let list = Value::List(vec![
+            Value::from(1),
+            Value::Vector(Vector::int32(vec![1, 2, 3])),
+        ]);
+
+        let size = encoder::pack_value(&mut None, &list).unwrap();
+        let mut buf = Buffer::new(usize::MAX);
+        buf.resize_buffer(size).unwrap();
+        buf.data_offset = 0;
+        encoder::pack_value(&mut Some(&mut buf), &list).unwrap();
+
+        buf.data_offset = 0;
+        let decoded = decoder::unpack_value_list(&mut buf).unwrap();
+        assert_eq!(decoded, list);
+    }
+
+    // A vector nested as a map value round-trips through the msgpack path.
+    #[test]
+    fn vector_round_trips_as_map_value() {
+        use crate::msgpack::{decoder, encoder};
+        use crate::Vector;
+
+        let mut map = HashMap::new();
+        map.insert(
+            Value::from("k"),
+            Value::Vector(Vector::float32(vec![1.5, -2.5])),
+        );
+        let value = Value::HashMap(map);
+
+        let size = encoder::pack_value(&mut None, &value).unwrap();
+        let mut buf = Buffer::new(usize::MAX);
+        buf.resize_buffer(size).unwrap();
+        buf.data_offset = 0;
+        encoder::pack_value(&mut Some(&mut buf), &value).unwrap();
+
+        buf.data_offset = 0;
+        let decoded = decoder::unpack_value_map(&mut buf).unwrap();
+        assert_eq!(decoded, value);
+    }
+
+    // A vector buried in a list-of-map round-trips (deep CDT nesting).
+    #[test]
+    fn vector_round_trips_deeply_nested() {
+        use crate::msgpack::{decoder, encoder};
+        use crate::Vector;
+
+        let mut inner = HashMap::new();
+        inner.insert(
+            Value::from("v"),
+            Value::Vector(Vector::float64(vec![1.5, -2.5, 3.0])),
+        );
+        let list = Value::List(vec![Value::from(1), Value::HashMap(inner)]);
+
+        let size = encoder::pack_value(&mut None, &list).unwrap();
+        let mut buf = Buffer::new(usize::MAX);
+        buf.resize_buffer(size).unwrap();
+        buf.data_offset = 0;
+        encoder::pack_value(&mut Some(&mut buf), &list).unwrap();
+
+        buf.data_offset = 0;
+        let decoded = decoder::unpack_value_list(&mut buf).unwrap();
+        assert_eq!(decoded, list);
+    }
+
+    // Value wrapping: estimate_size mirrors the vector wire size, and `as_bin!`
+    // produces a Value::Vector bin.
+    #[test]
+    fn vector_value_size_and_bin_wrapping() {
+        use crate::Vector;
+
+        let v = Vector::float32(vec![1.0, 2.0, 3.0]);
+        let value = Value::Vector(v.clone());
+        assert_eq!(value.estimate_size().unwrap(), v.wire_size());
+
+        let bin = crate::as_bin!("embedding", v.clone());
+        assert_eq!(bin.name, "embedding");
+        assert_eq!(bin.value, Value::Vector(v));
+    }
+
+    // A vector may not be used as a record key (parity with Java's
+    // VectorValue.validateKeyType): both the digest path and Key::new reject it.
+    #[test]
+    fn vector_cannot_be_used_as_key() {
+        use crate::Vector;
+
+        let value = Value::Vector(Vector::int32(vec![1, 2, 3]));
+
+        let mut hasher = Ripemd160::new();
+        assert!(value.write_key_bytes(&mut hasher).is_err());
+        assert!(crate::Key::new("ns", "set", value).is_err());
     }
 
     // A whole-bin write of an Unknown value sends the payload verbatim under

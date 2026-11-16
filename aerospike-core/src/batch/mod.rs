@@ -353,11 +353,11 @@ pub enum BatchOp {
     Read {
         policy: BatchReadPolicy,
         bins: Bins,
-        ops: Option<Vec<Operation>>,
+        ops: Option<Arc<[Operation]>>,
     },
     Write {
         policy: BatchWritePolicy,
-        ops: Vec<Operation>,
+        ops: Arc<[Operation]>,
     },
     Delete {
         policy: BatchDeletePolicy,
@@ -395,10 +395,16 @@ impl BatchOperation {
     }
 
     /// Creates a batch read with multiple operations.
+    ///
+    /// The list is shared, not copied: build one `Arc<[Operation]>` and pass a
+    /// clone of it for every key that runs the same operations. The rows then
+    /// hold one list between them, and the wire encoder tells they repeat by
+    /// comparing pointers instead of contents. A `Vec`, an array or a slice is
+    /// accepted too, at the cost of one copy per row.
     pub fn read_ops(
         policy: &BatchReadPolicy,
         key: Key,
-        ops: impl Into<Vec<Operation>>,
+        ops: impl Into<Arc<[Operation]>>,
     ) -> Self {
         Self {
             br: BatchRecord::new(key, false),
@@ -411,10 +417,12 @@ impl BatchOperation {
     }
 
     /// Creates a batch write with multiple operations.
+    ///
+    /// The list is shared, not copied; see [`Self::read_ops`].
     pub fn write(
         policy: &BatchWritePolicy,
         key: Key,
-        ops: impl Into<Vec<Operation>>,
+        ops: impl Into<Arc<[Operation]>>,
     ) -> Self {
         Self {
             br: BatchRecord::new(key, true),
@@ -508,7 +516,7 @@ impl BatchOperation {
                 }
 
                 if let Some(ops) = ops {
-                    for op in ops {
+                    for op in ops.iter() {
                         if op.is_write() {
                             return Err(Error::client_error(
                                 "Write operations not allowed in batch read",
@@ -542,7 +550,7 @@ impl BatchOperation {
 
                 let mut has_write = false;
 
-                for op in ops {
+                for op in ops.iter() {
                     if op.is_write() {
                         has_write = true;
                     }
@@ -644,10 +652,10 @@ impl BatchOperation {
 
         // Variant-specific payload match. send_key=true forces non-repeat because
         // the user_key field in the per-record header differs across records.
-        // Operation lists compare by content, with opaque encoder closures
-        // compared by Arc identity — so cloned op lists (the natural
-        // "build once, apply to N keys" pattern) repeat, and anything not
-        // provably identical conservatively writes a full header.
+        // Operation lists shared between rows (the natural "build once, apply
+        // to N keys" pattern) compare by pointer; separate lists compare by
+        // content, with opaque encoder closures compared by Arc identity, and
+        // anything not provably identical conservatively writes a full header.
         match (&self.kind, &prev.kind) {
             (
                 BatchOp::Read {
@@ -660,7 +668,15 @@ impl BatchOperation {
                     bins: bp,
                     ops: op,
                 },
-            ) => p == pp && b == bp && o == op,
+            ) => {
+                p == pp
+                    && b == bp
+                    && match (o, op) {
+                        (Some(o), Some(op)) => same_ops(o, op),
+                        (None, None) => true,
+                        _ => false,
+                    }
+            }
             (BatchOp::Delete { policy: p }, BatchOp::Delete { policy: pp }) => {
                 !p.send_key && !pp.send_key && p == pp
             }
@@ -670,7 +686,7 @@ impl BatchOperation {
                     policy: pp,
                     ops: op,
                 },
-            ) => !p.send_key && !pp.send_key && p == pp && o == op,
+            ) => !p.send_key && !pp.send_key && p == pp && same_ops(o, op),
             (
                 BatchOp::Udf {
                     policy: p,
@@ -689,10 +705,23 @@ impl BatchOperation {
         }
     }
 
-    pub(crate) fn key(&self) -> Key {
-        self.br.key.clone()
+    /// The row's key, borrowed: the encoder asks for it once per row, and a
+    /// clone would allocate the namespace and set strings each time.
+    pub(crate) const fn key(&self) -> &Key {
+        &self.br.key
     }
+}
 
+/// Whether two rows run the same operations: one shared list, or two lists
+/// with equal contents. The pointer test answers the shared case without
+/// touching the operations, whose payloads can be large (an expression
+/// holding a query vector), so a batch of N keys over one list pays N
+/// pointer compares rather than N content compares.
+fn same_ops(a: &Arc<[Operation]>, b: &Arc<[Operation]>) -> bool {
+    Arc::ptr_eq(a, b) || **a == **b
+}
+
+impl BatchOperation {
     /// The parsed record for this operation, if the call found one.
     pub const fn record(&self) -> Option<&Record> {
         self.batch_record().record.as_ref()
@@ -880,6 +909,88 @@ mod repeat_tests {
             vec![crate::Value::from(2)],
         );
         assert!(!u3.match_header(Some(&u2), None, None));
+    }
+
+    // One list shared by every row is told apart by its pointer: rows over
+    // the same `Arc` repeat without their operations being compared, even
+    // when the operations are separately built CDT ops that would never
+    // compare equal by content.
+    #[test]
+    fn write_repeats_for_one_shared_arc_without_comparing_contents() {
+        let policy = BatchWritePolicy::default();
+        let shared: Arc<[Operation]> = vec![lists::append(
+            &lists::ListPolicy::default(),
+            "l",
+            crate::Value::from(1),
+        )]
+        .into();
+        let w1 = BatchOperation::write(&policy, key(1), Arc::clone(&shared));
+        let w2 = BatchOperation::write(&policy, key(2), Arc::clone(&shared));
+        assert!(w2.match_header(Some(&w1), None, None));
+
+        let r1 = BatchOperation::read_ops(
+            &BatchReadPolicy::default(),
+            key(1),
+            Arc::<[Operation]>::from(vec![operations::get_bin("a")]),
+        );
+        let r2 = r1.clone();
+        assert!(r2.match_header(Some(&r1), None, None));
+
+        // The same list rebuilt into a second `Arc` falls back to the content
+        // compare, which these CDT ops fail.
+        let rebuilt: Arc<[Operation]> = vec![lists::append(
+            &lists::ListPolicy::default(),
+            "l",
+            crate::Value::from(1),
+        )]
+        .into();
+        assert!(!same_ops(&shared, &rebuilt));
+        let w3 = BatchOperation::write(&policy, key(3), rebuilt);
+        assert!(!w3.match_header(Some(&w2), None, None));
+    }
+
+    // Not a test: an isolated timing of what a batch pays per row before any
+    // byte is sent, for one operation list cloned per key, the list holding
+    // an expression read with a 768-element query vector. Run with
+    // `-- --ignored --nocapture` in release.
+    #[test]
+    #[ignore = "timing probe, prints numbers"]
+    fn clone_and_repeat_cost_of_a_cloned_expression_list() {
+        use crate::expressions::vector::euclidean_squared_distance;
+        use crate::expressions::vector_bin;
+        use crate::operations::exp::{read_exp, ExpReadFlags};
+        use crate::Vector;
+        use std::time::Instant;
+
+        const KEYS: usize = 500;
+        const ROUNDS: usize = 200;
+        let query = Vector::float32((0..768).map(|i| i as f32 * 0.001).collect());
+        let ops = vec![read_exp(
+            "d",
+            euclidean_squared_distance(&query, vector_bin("vec".to_string())),
+            ExpReadFlags::DEFAULT,
+        )];
+        let policy = BatchReadPolicy::default();
+        let keys: Vec<Key> = (0..KEYS as i64).map(key).collect();
+
+        let t0 = Instant::now();
+        let mut repeats = 0usize;
+        for _ in 0..ROUNDS {
+            let rows: Vec<BatchOperation> = keys
+                .iter()
+                .map(|k| BatchOperation::read_ops(&policy, k.clone(), ops.clone()))
+                .collect();
+            let mut prev: Option<&BatchOperation> = None;
+            for row in &rows {
+                if row.match_header(prev, None, None) {
+                    repeats += 1;
+                }
+                prev = Some(row);
+            }
+        }
+        let per_request = t0.elapsed().as_secs_f64() * 1e6 / ROUNDS as f64;
+        assert_eq!(repeats, ROUNDS * (KEYS - 1));
+        println!("clone + repeat check, {KEYS} keys: {per_request:.0} us per request");
     }
 
     // Reads with op lists (not just bins) now repeat too.

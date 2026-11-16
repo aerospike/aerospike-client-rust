@@ -41,6 +41,14 @@ mod batch_operations_example;
 #[allow(dead_code)]
 mod query_example;
 
+#[path = "../../examples/query_top_k.rs"]
+#[allow(dead_code)]
+mod query_top_k_example;
+
+#[path = "../../examples/query_vector_top_k.rs"]
+#[allow(dead_code)]
+mod query_vector_top_k_example;
+
 #[path = "../../examples/timeout_configuration.rs"]
 #[allow(dead_code)]
 mod timeout_configuration_example;
@@ -136,6 +144,10 @@ mod object_mapping_example;
 #[allow(dead_code)]
 mod config_file_example;
 
+#[path = "../../examples/discovery.rs"]
+#[allow(dead_code)]
+mod discovery_example;
+
 #[aerospike_macro::test]
 async fn example_crud() {
     // The example opens its own client, so wait for the suite's one-time
@@ -161,6 +173,16 @@ async fn example_query() {
     // is creating at that moment.
     common::ensure_clean_namespace();
     query_example::run().await;
+}
+
+#[aerospike_macro::test]
+async fn example_query_top_k() {
+    query_top_k_example::run().await;
+}
+
+#[aerospike_macro::test]
+async fn example_query_vector_top_k() {
+    query_vector_top_k_example::run().await;
 }
 
 #[aerospike_macro::test]
@@ -360,4 +382,10 @@ async fn example_object_mapping() {
 async fn example_config_file() {
     common::ensure_clean_namespace();
     config_file_example::run().await;
+}
+
+#[aerospike_macro::test]
+async fn example_discovery() {
+    common::ensure_clean_namespace();
+    discovery_example::run().await;
 }

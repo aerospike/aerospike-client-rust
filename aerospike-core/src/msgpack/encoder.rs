@@ -22,6 +22,7 @@ use crate::operations::cdt::{CdtArgument, CdtOperation};
 use crate::operations::cdt_context::CdtContext;
 use crate::operations::maps::MapOrder;
 use crate::value::{FloatValue, Value};
+use crate::vector::Vector;
 use crate::{Error, Result};
 
 pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
@@ -36,6 +37,7 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
         },
         Value::Blob(ref val) => pack_blob(buf, val),
         Value::Hll(ref val) => pack_hll(buf, val),
+        Value::Vector(ref val) => pack_vector(buf, val),
         Value::List(ref val) => pack_array(buf, val)?,
         Value::HashMap(ref val) => pack_map(buf, val)?,
         Value::OrderedMap(ref val) => pack_index_map(buf, val)?,
@@ -513,6 +515,34 @@ pub fn pack_hll(buf: &mut Option<&mut Buffer>, value: &[u8]) -> usize {
     if let Some(ref mut buf) = *buf {
         buf.write_u8(ParticleType::Hll as u8);
         buf.write_bytes(value);
+    }
+
+    size
+}
+
+/// Packs a nested vector as a `VECTOR`-tagged msgpack byte string.
+pub fn pack_vector(buf: &mut Option<&mut Buffer>, value: &Vector) -> usize {
+    let mut size = value.wire_size() + 1;
+
+    size += pack_string_begin(buf, size);
+    if let Some(ref mut buf) = *buf {
+        buf.write_u8(ParticleType::Vector as u8);
+        value.write_to(buf);
+    }
+
+    size
+}
+
+/// Packs a vector as a BLOB-typed literal holding its complete wire value,
+/// the form a vector-distance expression's query operand takes. The bytes
+/// are those of `pack_blob(vector.wire_bytes())`, without building them.
+pub fn pack_vector_as_blob(buf: &mut Option<&mut Buffer>, value: &Vector) -> usize {
+    let mut size = value.wire_size() + 1;
+
+    size += pack_string_begin(buf, size);
+    if let Some(ref mut buf) = *buf {
+        buf.write_u8(ParticleType::Blob as u8);
+        value.write_to(buf);
     }
 
     size

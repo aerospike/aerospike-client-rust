@@ -226,6 +226,8 @@ pub struct Buffer {
     /// [`DEFAULT_COMPRESS_THRESHOLD`] but is configurable via
     /// `BasePolicy.compression_threshold`.
     compress_threshold: usize,
+    /// Whether the current command contains a vector.
+    has_vector: bool,
 }
 
 impl Drop for Buffer {
@@ -233,6 +235,15 @@ impl Drop for Buffer {
         // A dying connection donates its leased buffer back to the pool.
         self.release_to_pool();
     }
+}
+
+/// Whether an ops projection reads every bin, in which case the server
+/// refuses `RESPOND_ALL_OPS`.
+fn reads_all_bins(operations: Option<&[Operation]>) -> bool {
+    operations.is_some_and(|ops| {
+        ops.iter()
+            .any(|op| op.op == OperationType::Read && op.bin == OperationBin::All)
+    })
 }
 
 impl Buffer {
@@ -244,6 +255,7 @@ impl Buffer {
             pool: None,
             compress_offset: 0,
             compress_threshold: DEFAULT_COMPRESS_THRESHOLD,
+            has_vector: false,
         }
     }
 
@@ -279,6 +291,15 @@ impl Buffer {
 
     const fn begin(&mut self) {
         self.data_offset = self.compress_offset + MSG_TOTAL_HEADER_SIZE as usize;
+        self.has_vector = false;
+    }
+
+    pub(crate) const fn contains_vector(&self) -> bool {
+        self.has_vector
+    }
+
+    pub(crate) const fn mark_vector(&mut self) {
+        self.has_vector = true;
     }
 
     pub(crate) fn size_buffer(&mut self) -> Result<()> {
@@ -756,7 +777,7 @@ impl Buffer {
     fn write_batch_operations(
         &mut self,
         key: &Key,
-        ops: &Vec<Operation>,
+        ops: &[Operation],
         attr: &BatchAttr,
         filter: &Option<Expression>,
         txn: Option<&Arc<Txn>>,
@@ -957,7 +978,7 @@ impl Buffer {
         let versions: Vec<Option<u64>> = if let Some(txn) = txn {
             batch_ops
                 .iter()
-                .map(|(batch_op, _)| txn.get_read_version(&batch_op.key()))
+                .map(|(batch_op, _)| txn.get_read_version(batch_op.key()))
                 .collect()
         } else {
             Vec::new()
@@ -984,7 +1005,7 @@ impl Buffer {
                 self.data_offset += 1;
             } else {
                 // Must write full header and namespace/set/bin names.
-                let key = &batch_op.key();
+                let key = batch_op.key();
                 self.data_offset += 12; // header(4) + ttl(4) + field_count(2) + op_count(2) = 12
                 self.data_offset += key.namespace.len() + FIELD_HEADER_SIZE as usize;
                 self.data_offset += key.set_name.len() + FIELD_HEADER_SIZE as usize;
@@ -1019,7 +1040,7 @@ impl Buffer {
 
         let mut attr = BatchAttr::default();
         for (idx, (batch_op, _)) in batch_ops.iter().enumerate() {
-            let key = &batch_op.key();
+            let key = batch_op.key();
             let ver = versions.get(idx).copied().flatten();
             self.write_u32(idx as u32);
             self.write_bytes(&key.digest);
@@ -1395,6 +1416,10 @@ impl Buffer {
         self.begin();
 
         let mut field_count = self.estimate_key_size(key, policy.send_key)?;
+        // A UDF call is a write: it carries the transaction fields a write
+        // carries, so the record it changes belongs to the transaction.
+        let (txn_field_count, version) = self.size_txn(key, policy.base_policy.txn.as_ref(), true);
+        field_count += txn_field_count;
         field_count += self.estimate_udf_size(package_name, function_name, args)? as u16;
         let filter_size = self.estimate_filter_size(policy.filter_expression())?;
         if filter_size > 0 {
@@ -1404,6 +1429,7 @@ impl Buffer {
 
         self.write_header_write(policy, 0, INFO2_WRITE, field_count, 0);
         self.write_key(key, policy.send_key)?;
+        self.write_txn(policy.base_policy.txn.as_ref(), version, true);
 
         if let Some(filter) = policy.filter_expression() {
             self.write_filter_expression(filter, filter_size)?;
@@ -1424,6 +1450,10 @@ impl Buffer {
     /// servers, which carried query bin names in a dedicated
     /// `QUERY_BINLIST` field instead of as trailing READ ops, are
     /// not supported.
+    ///
+    /// A Top-K statement writes its order keys (field 46) and limit (field
+    /// 47) whatever the node's version: the caller has already failed the
+    /// query when a node lacks Top-K support.
     #[allow(clippy::cognitive_complexity)]
     pub(crate) fn set_query(
         &mut self,
@@ -1467,6 +1497,22 @@ impl Buffer {
         // TaskId.
         self.data_offset += 8 + FIELD_HEADER_SIZE as usize;
         field_count += 1;
+
+        // Top-K fields: the order keys back to back, then the limit. An order
+        // key without a limit is sent as it is, for the server to refuse.
+        let order_by_size: usize = statement
+            .order_by
+            .iter()
+            .map(|key| 4 + key.bin_name.len())
+            .sum();
+        if order_by_size > 0 {
+            self.data_offset += order_by_size + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
+        if statement.top_k.is_some() {
+            self.data_offset += 4 + FIELD_HEADER_SIZE as usize;
+            field_count += 1;
+        }
 
         // ---------- estimation: filter block ----------
         if let Some(filter) = filter {
@@ -1609,6 +1655,15 @@ impl Buffer {
                     QueryDuration::LongRelaxAp => info2 |= INFO2_RELAX_AP_LONG_QUERY,
                     QueryDuration::Long => (),
                 }
+                // A Top-K query that projects with operations asks for an
+                // answer to every op, so a record whose order-by bin is absent
+                // still comes back and ranks last instead of being dropped.
+                if statement.has_top_k()
+                    && operation_count > 0
+                    && !reads_all_bins(statement.operations.as_deref())
+                {
+                    info2 |= INFO2_RESPOND_ALL_OPS;
+                }
                 self.write_header_read(
                     direction.base_policy(),
                     info1,
@@ -1620,7 +1675,7 @@ impl Buffer {
             }
         }
 
-        // ---------- write phase, in Java's exact order ----------
+        // ---------- write phase ----------
         if !statement.namespace.is_empty() {
             self.write_field_string(&statement.namespace, FieldType::Namespace);
         }
@@ -1636,6 +1691,20 @@ impl Buffer {
 
         self.write_field_header(8, FieldType::QueryId);
         self.write_u64(task_id);
+
+        if order_by_size > 0 {
+            self.write_field_header(order_by_size, FieldType::OrderBy);
+            for key in &statement.order_by {
+                self.write_u8(key.order_type as u8);
+                self.write_u8(key.direction as u8);
+                self.write_u8(0); // Flags: none apply to the supported order-by types.
+                self.write_u8(key.bin_name.len() as u8);
+                self.write_bytes(key.bin_name.as_bytes());
+            }
+        }
+        if let Some(limit) = statement.top_k {
+            self.write_field_u32(limit, FieldType::TopK);
+        }
 
         if let Some(filter) = filter {
             let idx_type = filter.collection_index_type;
@@ -1690,14 +1759,16 @@ impl Buffer {
             if parts_full_size > 0 {
                 self.write_field_header(parts_full_size, FieldType::PIDArray);
                 for &index in &np.parts_full {
-                    let id = np.status(index).id;
+                    let id = np.partition_id(index);
                     self.write_u16_little_endian(id);
                 }
             }
+            // A partial partition resumes after the last record this run
+            // queued, or from the consumed cursor on the first round.
             if parts_partial_size > 0 {
                 self.write_field_header(parts_partial_size, FieldType::DigestArray);
                 for &index in &np.parts_partial {
-                    let digest = np.status(index).digest;
+                    let (digest, _) = np.status(index).resume_position();
                     if let Some(digest) = digest {
                         self.write_bytes(&digest);
                     }
@@ -1706,7 +1777,7 @@ impl Buffer {
             if parts_partial_bval_size > 0 {
                 self.write_field_header(parts_partial_bval_size, FieldType::BValArray);
                 for &index in &np.parts_partial {
-                    let bval = np.status(index).bval;
+                    let (_, bval) = np.status(index).resume_position();
                     self.write_u64_little_endian(bval.unwrap_or(0));
                 }
             }
@@ -3736,6 +3807,178 @@ mod tests {
         assert_eq!(write_attr & INFO2_RESPOND_ALL_OPS, 0);
     }
 
+    /// Scans the wire fields written after the message header, returning
+    /// `(FieldType as u8, payload bytes)` pairs in wire order. Only valid
+    /// for buffers with no trailing operations (e.g. `Bins::All`, which
+    /// emits zero ops), since fields and ops share no length-prefixed
+    /// framing that would let this stop at the field/op boundary otherwise.
+    fn read_wire_fields(buf: &Buffer) -> Vec<(u8, Vec<u8>)> {
+        let mut fields = Vec::new();
+        let mut offset = buf.compress_offset + MSG_TOTAL_HEADER_SIZE as usize;
+        while offset < buf.data_buffer.len() {
+            let size = NetworkEndian::read_u32(&buf.data_buffer[offset..offset + 4]) as usize;
+            let ftype = buf.data_buffer[offset + 4];
+            let payload = buf.data_buffer[offset + 5..offset + 4 + size].to_vec();
+            fields.push((ftype, payload));
+            offset += 4 + size;
+        }
+        fields
+    }
+
+    fn query_buffer(stmt: &Statement, policy: &QueryPolicy) -> Buffer {
+        let mut buf = Buffer::new(4096);
+        let node = crate::cluster::node::test_node_with_version(crate::Version::new(8, 2, 1, 0));
+        buf.set_query(
+            QueryDirection::Foreground(policy),
+            stmt,
+            1,
+            &node,
+            None,
+            None,
+        )
+        .unwrap();
+        buf
+    }
+
+    fn field_payload(fields: &[(u8, Vec<u8>)], field_type: FieldType) -> Option<&Vec<u8>> {
+        let code = field_type as u8;
+        fields
+            .iter()
+            .find(|(ftype, _)| *ftype == code)
+            .map(|(_, payload)| payload)
+    }
+
+    /// `info2` of the message header: proto header (8 bytes), header size,
+    /// info1, then info2.
+    fn info2_of(buf: &Buffer) -> u8 {
+        buf.data_buffer[buf.compress_offset + 10]
+    }
+
+    #[test]
+    fn a_plain_query_sends_neither_top_k_field() {
+        use crate::{Bins, QueryPolicy, Statement};
+
+        let stmt = Statement::new("test", "test", Bins::All);
+        let fields = read_wire_fields(&query_buffer(&stmt, &QueryPolicy::default()));
+        assert!(field_payload(&fields, FieldType::OrderBy).is_none());
+        assert!(field_payload(&fields, FieldType::TopK).is_none());
+    }
+
+    #[test]
+    fn an_order_key_without_k_is_sent_alone_for_the_server_to_refuse() {
+        use crate::query::{Order, OrderByType};
+        use crate::{Bins, QueryPolicy, Statement};
+
+        let mut stmt = Statement::new("test", "test", Bins::All);
+        stmt.set_order_by("score", OrderByType::Integer, Order::Desc);
+
+        let fields = read_wire_fields(&query_buffer(&stmt, &QueryPolicy::default()));
+        assert!(field_payload(&fields, FieldType::OrderBy).is_some());
+        assert!(field_payload(&fields, FieldType::TopK).is_none());
+    }
+
+    #[test]
+    fn order_by_and_top_k_encode_to_the_documented_wire_format() {
+        use crate::query::order_by::{Order, OrderByType};
+        use crate::{Bins, QueryPolicy, Statement};
+
+        let mut stmt = Statement::new("test", "test", Bins::All);
+        stmt.set_order_by("score", OrderByType::Bytes, Order::Desc);
+        stmt.set_top_k(5);
+
+        let fields = read_wire_fields(&query_buffer(&stmt, &QueryPolicy::default()));
+
+        assert_eq!(
+            field_payload(&fields, FieldType::OrderBy),
+            Some(&vec![
+                OrderByType::Bytes as u8,
+                Order::Desc as u8,
+                0,
+                5,
+                b's',
+                b'c',
+                b'o',
+                b'r',
+                b'e',
+            ])
+        );
+        assert_eq!(
+            field_payload(&fields, FieldType::TopK),
+            Some(&5u32.to_be_bytes().to_vec())
+        );
+    }
+
+    #[test]
+    fn two_order_keys_encode_back_to_back_in_one_field() {
+        use crate::query::order_by::{Order, OrderByType};
+        use crate::{Bins, QueryPolicy, Statement};
+
+        let mut stmt = Statement::new("test", "test", Bins::All);
+        stmt.set_order_by("score", OrderByType::Double, Order::Desc);
+        stmt.then_order_by("nm", OrderByType::Bytes, Order::Asc);
+        stmt.set_top_k(7);
+
+        let fields = read_wire_fields(&query_buffer(&stmt, &QueryPolicy::default()));
+        assert_eq!(
+            field_payload(&fields, FieldType::OrderBy),
+            Some(&vec![
+                OrderByType::Double as u8,
+                Order::Desc as u8,
+                0,
+                5,
+                b's',
+                b'c',
+                b'o',
+                b'r',
+                b'e',
+                OrderByType::Bytes as u8,
+                Order::Asc as u8,
+                0,
+                2,
+                b'n',
+                b'm',
+            ])
+        );
+        assert_eq!(
+            field_payload(&fields, FieldType::TopK),
+            Some(&7u32.to_be_bytes().to_vec())
+        );
+    }
+
+    #[test]
+    fn top_k_with_an_operations_projection_asks_for_every_op_answer() {
+        use crate::operations;
+        use crate::query::{Order, OrderByType};
+        use crate::{Bins, QueryPolicy, Statement};
+
+        let policy = QueryPolicy::default();
+
+        // Operations that read named bins: RESPOND_ALL_OPS set.
+        let mut projected = Statement::new("test", "test", Bins::All);
+        projected.set_operations(vec![operations::get_bin("id"), operations::get_bin("score")]);
+        projected.set_order_by("score", OrderByType::Integer, Order::Desc);
+        projected.set_top_k(3);
+        assert_ne!(info2_of(&query_buffer(&projected, &policy)) & INFO2_RESPOND_ALL_OPS, 0);
+
+        // An operation that reads all bins: the flag would be refused.
+        let mut whole = Statement::new("test", "test", Bins::All);
+        whole.set_operations(vec![operations::get()]);
+        whole.set_order_by("score", OrderByType::Integer, Order::Desc);
+        whole.set_top_k(3);
+        assert_eq!(info2_of(&query_buffer(&whole, &policy)) & INFO2_RESPOND_ALL_OPS, 0);
+
+        // No limit: not a Top-K query.
+        let mut unranked = Statement::new("test", "test", Bins::All);
+        unranked.set_operations(vec![operations::get_bin("score")]);
+        assert_eq!(info2_of(&query_buffer(&unranked, &policy)) & INFO2_RESPOND_ALL_OPS, 0);
+
+        // No operations at all.
+        let mut plain = Statement::new("test", "test", Bins::All);
+        plain.set_order_by("score", OrderByType::Integer, Order::Desc);
+        plain.set_top_k(3);
+        assert_eq!(info2_of(&query_buffer(&plain, &policy)) & INFO2_RESPOND_ALL_OPS, 0);
+    }
+
     /// Every `as_msg_field` declares a size that matches what follows it.
     ///
     /// A server walks fields by following each header to the next, so an
@@ -3810,5 +4053,287 @@ mod tests {
                 "walking the fields did not land on the end of the message, {described}"
             );
         }
+    }
+
+    // ---- encode-pass VECTOR detection (Buffer::contains_vector) ----
+    //
+    // The client-side vector safeguard keys off a single bit set while the
+    // write pass serializes a command. These tests drive real command
+    // builders and assert the bit tracks vectors anywhere in the payload:
+    // top-level bins, CDT-nested values, filter expressions, and vector
+    // distance expressions.
+
+    fn q_vector() -> crate::Vector {
+        crate::Vector::float32(vec![1.0, 2.0, 3.0])
+    }
+
+    fn vector_value() -> Value {
+        Value::Vector(q_vector())
+    }
+
+    fn vector_filter() -> crate::expressions::Expression {
+        crate::expressions::ge(
+            crate::expressions::vector::euclidean_squared_distance(
+                &q_vector(),
+                crate::expressions::vector_bin("embedding".to_string()),
+            ),
+            crate::expressions::float_val(0.0),
+        )
+    }
+
+    fn vector_distance_read_op() -> crate::operations::Operation {
+        crate::operations::exp::read_exp(
+            "dist",
+            crate::expressions::vector::euclidean_squared_distance(
+                &q_vector(),
+                crate::expressions::vector_bin("embedding".to_string()),
+            ),
+            crate::operations::exp::ExpReadFlags::DEFAULT,
+        )
+    }
+
+    fn write_policy_with_filter(filter: crate::expressions::Expression) -> WritePolicy {
+        let mut policy = WritePolicy::default();
+        policy.base_policy.filter_expression = Some(filter);
+        policy
+    }
+
+    #[test]
+    fn set_write_flags_vectors_anywhere_in_the_bins() {
+        let key = test_key();
+
+        let plain = [crate::Bin::new("b".to_string(), Value::from(1))];
+        let top_level = [crate::Bin::new("b".to_string(), vector_value())];
+        let in_list = [crate::Bin::new(
+            "b".to_string(),
+            Value::List(vec![Value::from(1), vector_value()]),
+        )];
+        let mut map = std::collections::HashMap::new();
+        map.insert(Value::from("k"), vector_value());
+        let in_map = [crate::Bin::new("b".to_string(), Value::HashMap(map))];
+
+        // (bins, expected)
+        let cases: [(&[crate::Bin], bool); 4] = [
+            (&plain, false),
+            (&top_level, true),
+            (&in_list, true),
+            (&in_map, true),
+        ];
+        for (bins, expected) in cases {
+            let mut buf = Buffer::new(0);
+            buf.set_write(&WritePolicy::default(), OperationType::Write, &key, bins)
+                .unwrap();
+            assert_eq!(buf.contains_vector(), expected);
+        }
+    }
+
+    #[test]
+    fn set_write_flags_a_vector_filter_expression() {
+        let key = test_key();
+        let bins = [crate::Bin::new("b".to_string(), Value::from(1))];
+        let mut buf = Buffer::new(0);
+        buf.set_write(
+            &write_policy_with_filter(vector_filter()),
+            OperationType::Write,
+            &key,
+            &bins,
+        )
+        .unwrap();
+        assert!(buf.contains_vector());
+    }
+
+    #[test]
+    fn set_operate_flags_cdt_nested_and_distance_vectors() {
+        use crate::operations::{lists, scalar};
+        let key = test_key();
+
+        let plain = vec![scalar::get_bin("b")];
+        let cdt_nested = vec![lists::append(&lists::ListPolicy::default(), "b", vector_value())];
+        let distance = vec![vector_distance_read_op()];
+
+        for (ops, expected) in [(plain, false), (cdt_nested, true), (distance, true)] {
+            let mut buf = Buffer::new(0);
+            buf.set_operate(&WritePolicy::default(), &key, &ops).unwrap();
+            assert_eq!(buf.contains_vector(), expected);
+        }
+    }
+
+    #[test]
+    fn set_udf_flags_a_vector_argument() {
+        let key = test_key();
+        for (args, expected) in [
+            (vec![Value::from(1)], false),
+            (vec![vector_value()], true),
+        ] {
+            let mut buf = Buffer::new(0);
+            buf.set_udf(&WritePolicy::default(), &key, "m", "f", &args)
+                .unwrap();
+            assert_eq!(buf.contains_vector(), expected);
+        }
+    }
+
+    // A UDF call carries the transaction fields a write carries: the
+    // transaction id field joins the key fields when the policy names a
+    // transaction.
+    #[test]
+    fn set_udf_carries_the_transaction_id() {
+        let key = test_key();
+        let field_count = |buf: &Buffer| u16::from_be_bytes([buf.data_buffer[26], buf.data_buffer[27]]);
+
+        let mut plain = Buffer::new(0);
+        plain
+            .set_udf(&WritePolicy::default(), &key, "m", "f", &[Value::from(1)])
+            .unwrap();
+
+        let txn = Arc::new(crate::txn::Txn::new());
+        let mut policy = WritePolicy::default();
+        policy.base_policy.txn = Some(txn.clone());
+        let mut in_txn = Buffer::new(0);
+        in_txn
+            .set_udf(&policy, &key, "m", "f", &[Value::from(1)])
+            .unwrap();
+
+        assert_eq!(field_count(&in_txn), field_count(&plain) + 1);
+        // `end()` rewinds the offset to the proto header; scan the whole buffer.
+        let id = txn.id().to_le_bytes();
+        assert!(
+            in_txn.data_buffer.windows(8).any(|w| w == id),
+            "the transaction id must be on the wire"
+        );
+        assert!(!plain.data_buffer.windows(8).any(|w| w == id));
+    }
+
+    #[test]
+    fn set_query_flags_projection_and_filter_vectors() {
+        let node = crate::cluster::node::test_node_with_version(crate::Version::new(8, 1, 3, 0));
+
+        let plain = Statement::new("ns", "set", Bins::All);
+
+        let mut projection = Statement::new("ns", "set", Bins::All);
+        projection.set_operations(vec![vector_distance_read_op()]);
+
+        for (stmt, filter, expected) in [
+            (&plain, None, false),
+            (&projection, None, true),
+            (&plain, Some(vector_filter()), true),
+        ] {
+            let mut policy = QueryPolicy::default();
+            policy.base_policy.filter_expression = filter;
+            let mut buf = Buffer::new(4096);
+            buf.set_query(
+                QueryDirection::Foreground(&policy),
+                stmt,
+                1,
+                &node,
+                None,
+                None,
+            )
+            .unwrap();
+            assert_eq!(buf.contains_vector(), expected);
+        }
+    }
+
+    #[test]
+    fn set_batch_operate_flags_vector_payload_and_filter() {
+        let key = crate::Key::new("ns", "set", Value::from(1)).unwrap();
+
+        let read_op = (
+            BatchOperation::read(&crate::BatchReadPolicy::default(), key.clone(), Bins::All),
+            0usize,
+        );
+        let write_op = (
+            BatchOperation::write(
+                &crate::BatchWritePolicy::default(),
+                key,
+                vec![crate::operations::put(&crate::Bin::new(
+                    "b".to_string(),
+                    vector_value(),
+                ))],
+            ),
+            0usize,
+        );
+
+        // Plain read: no vector.
+        let mut buf = Buffer::with_pool(64 * 1024, test_pool());
+        buf.set_batch_operate(&BatchPolicy::default(), std::slice::from_ref(&read_op))
+            .unwrap();
+        assert!(!buf.contains_vector());
+
+        // Vector in a batched write op.
+        let mut buf = Buffer::with_pool(64 * 1024, test_pool());
+        buf.set_batch_operate(&BatchPolicy::default(), std::slice::from_ref(&write_op))
+            .unwrap();
+        assert!(buf.contains_vector());
+
+        // Vector only in the shared batch filter expression.
+        let mut policy = BatchPolicy::default();
+        policy.base_policy.filter_expression = Some(vector_filter());
+        let mut buf = Buffer::with_pool(64 * 1024, test_pool());
+        buf.set_batch_operate(&policy, std::slice::from_ref(&read_op))
+            .unwrap();
+        assert!(buf.contains_vector());
+    }
+
+    #[test]
+    fn read_family_flags_a_vector_filter_expression() {
+        let key = test_key();
+        let read_policy = {
+            let mut p = ReadPolicy::default();
+            p.base_policy.filter_expression = Some(vector_filter());
+            p
+        };
+
+        let mut buf = Buffer::new(0);
+        buf.set_read(
+            &read_policy.base_policy,
+            &key,
+            &Bins::Some(vec!["b".to_string()]),
+        )
+        .unwrap();
+        assert!(buf.contains_vector(), "set_read");
+
+        let mut buf = Buffer::new(0);
+        buf.set_exists(&read_policy, &key).unwrap();
+        assert!(buf.contains_vector(), "set_exists");
+
+        let mut buf = Buffer::new(0);
+        buf.set_delete(&write_policy_with_filter(vector_filter()), &key)
+            .unwrap();
+        assert!(buf.contains_vector(), "set_delete");
+
+        let mut buf = Buffer::new(0);
+        buf.set_touch(&write_policy_with_filter(vector_filter()), &key)
+            .unwrap();
+        assert!(buf.contains_vector(), "set_touch");
+    }
+
+    // begin() clears the bit, so reusing a buffer across (re)sent commands —
+    // as batch retries do — never carries a stale vector flag either way.
+    #[test]
+    fn rebuilding_a_command_resets_the_vector_flag() {
+        let key = test_key();
+        let vector_bin = [crate::Bin::new("b".to_string(), vector_value())];
+        let plain_bin = [crate::Bin::new("b".to_string(), Value::from(1))];
+
+        let mut buf = Buffer::new(0);
+        buf.set_write(&WritePolicy::default(), OperationType::Write, &key, &vector_bin)
+            .unwrap();
+        assert!(buf.contains_vector());
+
+        buf.set_write(&WritePolicy::default(), OperationType::Write, &key, &plain_bin)
+            .unwrap();
+        assert!(!buf.contains_vector(), "a plain rebuild must clear the flag");
+
+        buf.set_operate(
+            &WritePolicy::default(),
+            &key,
+            &[crate::operations::lists::append(
+                &crate::operations::lists::ListPolicy::default(),
+                "b",
+                vector_value(),
+            )],
+        )
+        .unwrap();
+        assert!(buf.contains_vector(), "a vector rebuild must set the flag");
     }
 }

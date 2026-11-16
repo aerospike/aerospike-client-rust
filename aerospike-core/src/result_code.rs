@@ -593,6 +593,17 @@ impl fmt::Display for ResultCode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ClientResultCode {
+    /// The seed candidate provider failed at client construction and the
+    /// merge policy left no seed host to try.
+    SeedDiscoveryFailed,
+
+    /// The address translator mapped two nodes to the same `host:port`.
+    TranslationCollision,
+
+    /// The address translator has no mapping for an advertised endpoint and
+    /// `translation_on_miss` is `Strict`.
+    TranslationMiss,
+
     /// Transaction has already been aborted.
     TxnAlreadyAborted,
 
@@ -652,6 +663,9 @@ impl ClientResultCode {
     /// Convert a Java-compatible numeric client code into the enum.
     pub(crate) const fn from_i32(n: i32) -> ClientResultCode {
         match n {
+            -27 => ClientResultCode::SeedDiscoveryFailed,
+            -26 => ClientResultCode::TranslationCollision,
+            -25 => ClientResultCode::TranslationMiss,
             -19 => ClientResultCode::TxnAlreadyAborted,
             -18 => ClientResultCode::TxnAlreadyCommitted,
             -17 => ClientResultCode::TxnFailed,
@@ -675,6 +689,11 @@ impl ClientResultCode {
     /// Convert a client result code into a string.
     pub fn into_string(self) -> String {
         match self {
+            ClientResultCode::SeedDiscoveryFailed => String::from("Seed discovery failed"),
+            ClientResultCode::TranslationCollision => {
+                String::from("Address translation collision")
+            }
+            ClientResultCode::TranslationMiss => String::from("Address translation miss"),
             ClientResultCode::TxnAlreadyAborted => String::from("Transaction already aborted"),
             ClientResultCode::TxnAlreadyCommitted => String::from("Transaction already committed"),
             ClientResultCode::TxnFailed => String::from("Transaction failed"),
@@ -710,6 +729,9 @@ impl From<ClientResultCode> for i32 {
     /// Numeric value (inverse of `ClientResultCode::from(i32)`).
     fn from(rc: ClientResultCode) -> i32 {
         match rc {
+            ClientResultCode::SeedDiscoveryFailed => -27,
+            ClientResultCode::TranslationCollision => -26,
+            ClientResultCode::TranslationMiss => -25,
             ClientResultCode::TxnAlreadyAborted => -19,
             ClientResultCode::TxnAlreadyCommitted => -18,
             ClientResultCode::TxnFailed => -17,
@@ -751,10 +773,20 @@ mod tests {
     fn client_code_i32_round_trip() {
         // Every known negative code maps back to itself; gaps and positives
         // fall through to Unknown but still round-trip numerically.
-        for n in -25i32..=0 {
+        for n in -30i32..=0 {
             let rc = ClientResultCode::from(n);
             assert_eq!(i32::from(rc), n, "round trip failed for {n}");
         }
+        // The discovery codes share Java's numbering.
+        assert_eq!(ClientResultCode::from(-25), ClientResultCode::TranslationMiss);
+        assert_eq!(
+            ClientResultCode::from(-26),
+            ClientResultCode::TranslationCollision
+        );
+        assert_eq!(
+            ClientResultCode::from(-27),
+            ClientResultCode::SeedDiscoveryFailed
+        );
     }
 
     #[test]

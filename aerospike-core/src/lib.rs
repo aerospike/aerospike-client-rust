@@ -191,8 +191,8 @@ pub use policy::{
 };
 pub use privilege::{Privilege, PrivilegeCode};
 pub use query::{
-    CollectionIndexType, EqFilterValue, IndexType, PartitionFilter, QueryHandle, RangeFilterValue,
-    Recordset, Statement, UdfLang,
+    CollectionIndexType, EqFilterValue, IndexType, Order, OrderBy, OrderByType,
+    PartitionFilter, QueryHandle, RangeFilterValue, Recordset, Statement, UdfLang,
 };
 // Query-plan wire types: reachable for tooling and the integration tests,
 // not part of the documented API.
@@ -218,6 +218,7 @@ pub use txn::{
 };
 pub use user::User;
 pub use value::{FloatValue, MapCollection, MapLike, Value};
+pub use vector::{Vector, VectorData, VectorElementType};
 
 #[macro_use]
 pub mod errors;
@@ -234,6 +235,7 @@ pub(crate) mod commands;
 mod common;
 #[cfg(feature = "dynamic-config")]
 pub mod config;
+pub mod discovery;
 pub mod expressions;
 mod flags;
 mod locks;
@@ -257,6 +259,7 @@ pub mod txn;
 pub(crate) mod txn_monitor;
 pub(crate) mod txn_roll;
 mod user;
+mod vector;
 #[cfg(test)]
 pub(crate) mod xor_shift;
 

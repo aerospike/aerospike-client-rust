@@ -29,11 +29,16 @@
 //! single file can be shared across Aerospike clients. Sections or keys that
 //! this client does not (yet) support are ignored, not errors.
 
+mod discovery;
 mod dyn_config;
 mod provider;
 mod registry;
 mod yaml;
 
+pub use discovery::{
+    AddressTranslatorFactory, ClientDiscoveryConfig, ConfigMap, ConfigValue, DiscoveryRegistry,
+    Resolved as ResolvedDiscoveryConfig, SeedCandidateProviderFactory,
+};
 pub(crate) use dyn_config::DynConfig;
 pub use provider::ConfigProvider;
 pub(crate) use registry::provider_from_env;
@@ -75,10 +80,42 @@ pub struct ConfigDocument {
 }
 
 /// The `static` section. Only client-level fields can be static.
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone)]
 pub struct StaticConfig {
     /// Static client-policy overrides (connection pool sizing, config interval).
     pub client: Option<ClientPolicyConfig>,
+    /// The seed discovery and address translation keys of `static.client`
+    /// (`ip_map`, `use_services_alternate`, `discovery`, `translation`).
+    /// Honored at client construction only: a reloaded file is validated but
+    /// the running cluster keeps the provider and translator it was built
+    /// with.
+    pub client_discovery: Option<ClientDiscoveryConfig>,
+}
+
+/// `static.client` is one YAML map holding both the policy fields and the
+/// discovery keys; it is read once and split into the two structs.
+impl<'de> Deserialize<'de> for StaticConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct RawClient {
+            #[serde(flatten)]
+            policy: ClientPolicyConfig,
+            #[serde(flatten)]
+            discovery: ClientDiscoveryConfig,
+        }
+        #[derive(Deserialize)]
+        struct Raw {
+            client: Option<RawClient>,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        Ok(match raw.client {
+            Some(client) => StaticConfig {
+                client: Some(client.policy),
+                client_discovery: Some(client.discovery),
+            },
+            None => StaticConfig::default(),
+        })
+    }
 }
 
 /// The `dynamic` section: per-policy override groups, each re-applied on refresh.

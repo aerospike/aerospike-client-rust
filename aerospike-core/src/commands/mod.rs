@@ -113,6 +113,16 @@ pub const POOL_EMPTY_WAIT: std::time::Duration = std::time::Duration::from_milli
 /// like any other connection failure.
 pub const POOL_EMPTY_MAX_WAITS: usize = 5_000;
 
+/// Rejects VECTOR payloads when any cluster node lacks support.
+pub fn check_vector_support(has_vector: bool, all_nodes_support_vector: bool) -> Result<()> {
+    if has_vector && !all_nodes_support_vector {
+        return Err(Error::invalid_argument(
+            "Vector is not supported by all nodes in the cluster".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Whether the connection may be returned to the pool after this error.
 /// Client-side errors and the `SCAN_ABORT` / `QUERY_ABORTED` server codes
 /// require the socket to be discarded (it may still have stream bytes
@@ -258,5 +268,37 @@ mod tests_retry_predicates {
         for (err, expected, label) in cases {
             assert_eq!(keep_connection(err), *expected, "{label}: err={err:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_vector_gate {
+    use super::*;
+    use crate::errors::ErrorKind;
+
+    #[test]
+    fn only_a_vector_on_an_unsupporting_cluster_is_rejected() {
+        // (has_vector, all_nodes_support_vector, expect_err)
+        let cases = [
+            (false, false, false),
+            (false, true, false),
+            (true, true, false),
+            (true, false, true),
+        ];
+        for (has_vector, supported, expect_err) in cases {
+            assert_eq!(
+                check_vector_support(has_vector, supported).is_err(),
+                expect_err,
+                "has_vector={has_vector}, supported={supported}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejection_is_a_non_retriable_parameter_error() {
+        let err = check_vector_support(true, false).unwrap_err();
+        assert!(matches!(err.kind(), ErrorKind::InvalidArgument));
+        assert!(!should_retry(&err));
+        assert!(err.to_string().contains("Vector is not supported by all nodes in the cluster"));
     }
 }

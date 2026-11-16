@@ -21,10 +21,9 @@ use crate::common;
 
 use aerospike::query::QuerySelection;
 use aerospike::{
-    as_bin, as_key, AdminPolicy, Client, CollectionIndexType, IndexType, Task, WritePolicy,
-    FLAG_EXPLAIN, FLAG_HARD_HINT, FLAG_REQUIRE_INDEX,
+    as_bin, as_key, AdminPolicy, Client, CollectionIndexType, IndexType, QueryPolicy, ResultCode,
+    Task, WritePolicy, FLAG_EXPLAIN, FLAG_HARD_HINT, FLAG_REQUIRE_INDEX,
 };
-use aerospike_core::{QueryPolicy, ResultCode};
 
 struct HintFixture {
     set_name: String,

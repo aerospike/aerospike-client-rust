@@ -80,7 +80,10 @@ Environment variables the suites read: `AEROSPIKE_HOSTS`, `AEROSPIKE_NAMESPACE`
 (default `test`), `AEROSPIKE_CLEANUP` (drop the sets a run created),
 `AEROSPIKE_USE_SERVICES_ALTERNATE`, and the TLS variables in
 `tests/common/mod.rs`. Property-based tests live under `tests/proptests/` and
-run without `--skip proptest`.
+run without `--skip proptest`. The seed discovery and address translation tiers
+(the shared conformance fixtures, the L2 Toxiproxy topology and TLS certificate
+matching) have their own harnesses and workflows; `tests/discovery/README.md`
+describes how to run each.
 
 ## Changes
 

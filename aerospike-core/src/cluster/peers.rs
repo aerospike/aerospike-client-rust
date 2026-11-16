@@ -25,7 +25,16 @@ use crate::net::Host;
 #[derive(Debug, Clone)]
 pub struct Peer {
     pub node_name: String,
+    /// The hosts to connect to: the advertised ones after address
+    /// translation, minus any strict miss.
     pub hosts: Vec<Host>,
+    /// The hosts as the server advertised them, before translation. Compared
+    /// across tends to tell the address translator the view changed.
+    pub advertised: Vec<Host>,
+    /// The peer is listed in the standard peers list but not in the alternate
+    /// one, or with no hosts there: it has no alternate access address while
+    /// `use_services_alternate` is set. Logged, never connected.
+    pub alternate_missing: bool,
     /// If set, this peer should replace the given existing node
     /// (e.g. when a node's IP address has changed).
     pub replace_node: Option<Arc<Node>>,
@@ -33,6 +42,21 @@ pub struct Peer {
     /// advance only that node's `peers_generation` after every peer of
     /// its set has materialized.
     pub from_node_name: Option<String>,
+}
+
+impl Peer {
+    /// A peer with the given advertised hosts, not yet translated.
+    #[must_use]
+    pub fn new(node_name: impl Into<String>, hosts: Vec<Host>) -> Self {
+        Peer {
+            node_name: node_name.into(),
+            advertised: hosts.clone(),
+            hosts,
+            alternate_missing: false,
+            replace_node: None,
+            from_node_name: None,
+        }
+    }
 }
 
 /// Tracks peer state during a single cluster tend cycle.
@@ -66,6 +90,8 @@ pub struct Peers {
     refresh_count: AtomicUsize,
     /// Whether any node's peers generation changed during this tend cycle.
     gen_changed: AtomicBool,
+    /// Whether a known node advertised different addresses than last time.
+    address_changed: AtomicBool,
 }
 
 impl Peers {
@@ -80,7 +106,24 @@ impl Peers {
             pending_generations: Mutex::new(HashMap::with_capacity(add_capacity)),
             refresh_count: AtomicUsize::new(0),
             gen_changed: AtomicBool::new(true),
+            address_changed: AtomicBool::new(false),
         }
+    }
+
+    /// Records that a known node advertised different addresses than on the
+    /// previous tend.
+    pub fn set_address_changed(&self) {
+        self.address_changed.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether a known node's advertised addresses changed this tend.
+    pub fn address_changed(&self) -> bool {
+        self.address_changed.load(Ordering::Relaxed)
+    }
+
+    /// Snapshot of the nodes created so far this tend.
+    pub fn new_nodes(&self) -> Vec<Arc<Node>> {
+        lock(&self.nodes).values().cloned().collect()
     }
 
     /// Mark a host as already-failed for the rest of this tend cycle.

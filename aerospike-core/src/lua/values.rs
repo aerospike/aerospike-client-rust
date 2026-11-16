@@ -71,6 +71,11 @@ pub fn value_to_lua(lua: &Lua, value: Value) -> mlua::Result<LuaValue> {
         Value::Hll(b) => {
             LuaValue::UserData(lua.create_userdata(LuaBytes::new(b, ParticleType::Hll))?)
         }
+        // A vector reaches Lua as bytes of particle type 16 holding the
+        // stored wire value, as the Java client passes it.
+        Value::Vector(v) => LuaValue::UserData(
+            lua.create_userdata(LuaBytes::new(v.wire_bytes(), ParticleType::Vector))?,
+        ),
         Value::List(items) | Value::MultiResult(items) => {
             LuaValue::UserData(lua.create_userdata(LuaList(items))?)
         }
@@ -114,6 +119,11 @@ pub fn lua_to_value(value: &LuaValue) -> mlua::Result<Value> {
             } else if let Ok(bytes) = ud.borrow::<LuaBytes>() {
                 if bytes.particle_type == ParticleType::Hll as u8 {
                     Value::Hll(bytes.bytes.clone())
+                } else if bytes.particle_type == ParticleType::Vector as u8 {
+                    Value::Vector(
+                        crate::Vector::from_wire_bytes(&bytes.bytes)
+                            .map_err(|e| mlua::Error::runtime(e.to_string()))?,
+                    )
                 } else {
                     Value::Blob(bytes.bytes.clone())
                 }

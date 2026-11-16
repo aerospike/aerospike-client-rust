@@ -19,10 +19,11 @@
 pub use self::filter::{EqFilterValue, Filter, RangeFilterValue};
 pub use self::index_types::{CollectionIndexType, IndexType};
 pub(crate) use self::node_partitions::NodePartitions;
+pub use self::order_by::{Order, OrderBy, OrderByType};
 pub use self::partition_filter::PartitionFilter;
 // Hidden: reachable for language bindings that rebuild cursors; not API.
 #[doc(hidden)]
-pub use self::partition_status::PartitionStatus;
+pub use self::partition_status::{PartitionSlot, PartitionStatus};
 pub(crate) use self::partition_tracker::{PartitionTracker, TrackerShared};
 #[doc(hidden)] // wire-level query-plan types, see the crate root
 pub use self::plan::{
@@ -37,12 +38,15 @@ pub use self::result_set::{ResultSet, ResultStream};
 pub use self::sink::QueryHandle;
 pub(crate) use self::sink::{CallbackCtx, QuerySink};
 pub use self::statement::Statement;
+pub(crate) use self::top_k_merge::TopKAccumulator;
 pub use self::udf::UdfLang;
 
 /// Query filter definitions and filter value traits.
 pub mod filter;
 mod index_types;
 mod node_partitions;
+/// Types for `ORDER BY <bin> LIMIT k` ("Top-K") queries.
+pub mod order_by;
 mod partition_filter;
 mod partition_status;
 mod partition_tracker;
@@ -53,4 +57,5 @@ mod recordset;
 mod result_set;
 mod sink;
 mod statement;
+mod top_k_merge;
 mod udf;

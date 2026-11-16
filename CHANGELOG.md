@@ -1,5 +1,113 @@
 # Changelog
 
+## [3.1.0]
+
+* **New Features**
+  * `Vector`: the `VECTOR` particle (`float16`, `int32`, `float32`, `float64`), vector bins and
+    vector-distance expressions (`euclidean_squared_distance`, `dot_product`, `cosine_similarity`).
+    Server 8.2.1. The client refuses an empty vector, a NaN or infinite element, and any vector on a
+    cluster with a node that predates vectors; it decodes only format version 1 with an exact length.
+    `Vector::wire_bytes` and `Vector::from_wire_bytes` convert to and from the wire form; a malformed
+    input is an `ErrorKind::InvalidArgument`. `Vector::float16_from_f32` builds a `float16` vector
+    from `f32` elements, rounded to nearest with ties to even, and `Vector::float16_as_f32` reads one
+    back exactly; an element that rounds to an infinity (a magnitude of 65520 or more) is refused.
+  * `Error::message` returns the bare text an error was built with, without the result code, node,
+    cause chain and kind prefix that `base_message` and `Display` add, for embedding in another
+    message.
+  * Top-K queries: `Statement::set_order_by`, `then_order_by` (a second key on another bin) and
+    `set_top_k`. Every node ranks its own rows and the client merges them, keeping the later-updated
+    copy of a record two nodes both returned. Server 8.2.1 on every node, or the query fails up front;
+    an order key without `k` is refused by the server. Example `query_vector_top_k`.
+  * [CLIENT-5737] Pluggable seed discovery: `ClientPolicy::seed_candidate_provider` takes a
+    `discovery::SeedCandidateProvider` whose hosts are merged with the static seeds per
+    `discovery_merge_policy` (`Merge`, `Replace`, `DiscoveryOnly`). Built in: `static` (the default),
+    `dns` (`discovery::dns::DnsSeedCandidateProvider`: A/AAAA or SRV records, bounded by its timeout)
+    and, with the new `discovery-aws` feature (on by default), `aws-tags`
+    (`discovery::aws::AwsEc2TagSeedCandidateProvider`: running EC2 instances by filter, SigV4 signed,
+    with the standard credential chain and a credentials hook). A provider that needs periodic refresh
+    runs on the tend task every `discovery_refresh_interval`, is cancelled at
+    `discovery_tend_refresh_deadline`, and is disabled after three consecutive overruns. A provider
+    that fails at construction with no seed left fails `Client::new` with
+    `ClientResultCode::SeedDiscoveryFailed` (-27). `Client::seeds` reports the current seed list.
+  * [CLIENT-5737] Pluggable address translation: `ClientPolicy::address_translator` takes a
+    `discovery::AddressTranslator` applied to every advertised address (`Endpoint`: node name, TLS
+    name, host, port and the standard or alternate source list). Built in: `static-map` (the default,
+    over `ip_map`), `port-map` (`host:port` or node name to `host:port`) and `pass-through`.
+    `translation_on_miss` decides a miss: `PassThrough` (the default) or `Strict`
+    (`ClientResultCode::TranslationMiss`, -25: the endpoint is not connected). Two nodes translated to
+    the same address collide (`ClientResultCode::TranslationCollision`, -26): neither is connected and
+    a live node is kept. The translator is told about cluster view changes.
+  * [CLIENT-5737] YAML configuration (`dynamic-config`): `static.client.ip_map`,
+    `static.client.use_services_alternate`, `static.client.discovery` (`provider`, `merge_policy`,
+    `refresh_interval_ms`, `tend_refresh_deadline_ms`, `dns`, `aws`) and `static.client.translation`
+    (`provider`, `on_miss`, `static_map`, `port_map`), schema version `1.2.0`. A custom provider or
+    translator is selected by a name registered with `ClientPolicy::register_seed_candidate_provider`
+    / `register_address_translator`; the factory receives the block's other keys. An invalid setting
+    makes the whole file invalid: nothing from it is applied. The file is now read before the cluster
+    is seeded, so these keys shape the first connection; the `static.client` section is merged into the
+    policy at the same point.
+  * [CLIENT-5737] Discovery test tiers and workflows, as in the Java client: `tests/conformance.rs`
+    runs the shared `aerospike-client-conformance` fixture set (translation, merge policy, the dns
+    and aws-tags providers against the set's fixture server, certificate name matching) against
+    `tests/conformance/rust-declared.yaml` (`discovery-conformance.yml`); `tests/discovery_l2.rs` runs
+    the L2 rows against a three node cluster behind Toxiproxy in nine profiles, built by the
+    conformance repository's `discovery-l2-topology` action in CI and by `tests/discovery/run_l2.sh`
+    locally (`discovery-integration.yml`, `discovery-l2.yml`); `tests/tls/run_tls_matching.sh` drives
+    `tests/tls_matching.rs` against one Enterprise container per certificate shape
+    (`tls-matching.yml`). Every tier skips itself without its environment. See
+    `tests/discovery/README.md`.
+
+* **Improvements**
+  * [CLIENT-5922] A scan or query no longer builds, walks and frees a status entry for every partition in its
+    range before it reads a record. A partition's status is created when the partition first needs
+    one, so a query over all 4,096 partitions that returns few records sets up 4,096 empty slots
+    instead of 600 KB of entries. The hidden `PartitionFilter::partitions` field now holds
+    `PartitionSlot`s, each `get()`-able when filled; the serialized cursor is unchanged.
+  * [CLIENT-5919] A batch row shares its operation list instead of owning a copy:
+    `BatchOperation::write` and `read_ops` take `impl Into<Arc<[Operation]>>`, so one
+    `Arc<[Operation]>` serves every key that runs the same operations, and the wire encoder tells
+    the rows repeat by comparing pointers. A `Vec`, an array or a slice is still accepted, at the
+    cost of one copy per row. Applying one expression read holding a 3 KB query vector to 500 keys
+    used to copy and compare the expression 500 times per request.
+
+* **Changes**
+  * `Client::new` with `fail_if_not_connected` now fails with `Peers not reachable: <host> <port>, ...`
+    when the seed pass left exactly one node and at least one host it tried could not be reached, as
+    the Java client does: a seed reached through an endpoint that does not front its peers is an
+    error naming the peers, not a one node cluster.
+  * `use_services_alternate` now expects every node to advertise an alternate address. A seed
+    without one that names peers in its standard peers list fails construction with
+    `ErrorKind::AlternateAddressMissing` (`Client::new` with `fail_if_not_connected`): the client
+    would otherwise see a one-node cluster that looks healthy. A seed without one and without peers
+    is connected with a warning, since nothing is lost on a lone node, and an error is logged once
+    if peers appear later. A peer without an alternate address, or missing from the alternate peers
+    list, is logged at error level and not connected. The Java client refuses every node without an
+    alternate address; this client admits the lone node.
+  * A seed name that resolves to several addresses now keeps the address that answered as the
+    node's primary host; before, the first resolved address was used even when it had refused the
+    connection.
+  * `ClientPolicy` gained `seed_candidate_provider`, `address_translator`, `translation_on_miss`,
+    `discovery_refresh_interval`, `discovery_tend_refresh_deadline`, `discovery_merge_policy` and,
+    under `dynamic-config`, `discovery_registry`; `config::StaticConfig` gained `client_discovery`.
+    Code that builds either with struct-update syntax from `Default` is unaffected.
+* **Bug Fixes**
+  * [CLIENT-5861] A query or scan with `Replica::Random` sent each partition to an arbitrary node, which answered
+    with the partition unavailable, and failed after the retry budget with "Max retries exceeded". It
+    is refused on the first call with an invalid-argument error, "Invalid replica: Random", as the
+    Java and C clients do; a random replica only has meaning for single-record and batch reads, which
+    the server proxies to the owning node.
+  * A query or scan retry re-delivered the records still queued when the round failed: the retry
+    resumed from the last record the application had taken, so the queued tail was fetched and
+    delivered again, as many duplicates as the queue held. A retry now resumes after the last record
+    queued. The cursor from `Recordset::partition_filter` still points at the last record consumed,
+    so closing a stream early and resuming loses nothing, as before.
+  * `Client::execute_udf` with a transaction in the write policy ran outside the transaction: the key
+    was not added to the transaction monitor and the command carried no transaction fields, so the
+    UDF's write was neither rolled back by `abort` nor covered by `commit`. It is now a transactional
+    write like `put`, as in the Java client.
+  * `Client::execute_udf`, `query_operate` and `query_execute_udf` did not resolve their write policy
+    against the dynamic configuration, so file overrides did not apply to them.
+
 ## [3.0.0]
 
 Upgrading from 2.x: see the [migration guide](https://github.com/aerospike/aerospike-client-rust/blob/v3/MIGRATION.md).
@@ -98,6 +206,15 @@ Upgrading from 2.x: see the [migration guide](https://github.com/aerospike/aeros
     transaction forward, so an abort could discard writes it is committing. Retry the commit.
 
 * **Improvements**
+  * Assigning a scan or query's partitions to nodes costs a fraction of what it did. The loop took
+    each partition's status lock four times and cloned and dropped the node twice, four atomics on a
+    counter every in-flight query shares; it now takes the lock once, looks the namespace up once per
+    round and selects each node borrowed from that table, so the per-partition cost is an index and a
+    push. A 10-record secondary-index query over all 4096 partitions went from 0.22 ms to 0.11 ms of
+    client CPU at one in flight and from 5.1 ms to 0.13 ms at sixteen. Two `Node` objects that share
+    a name during a map transition now keep separate `NodePartitions`, as the Java client does. The
+    point-operation selectors (`Sequence`, `Master`, `MasterProles`, `PreferRack`, `Random`) lose a
+    clone each, and `PreferRack` no longer copies the rack list per call.
   * `AuthMode` no longer prints the password in `{:?}`; `task::Status` compares with `==`; every
     expression and operation builder is `#[must_use]`, so a built-and-dropped expression warns.
   * The workspace builds clean under `clippy::pedantic` + `clippy::nursery` (core) and default clippy
