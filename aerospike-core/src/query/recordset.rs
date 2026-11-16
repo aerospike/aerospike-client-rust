@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use async_channel::{Receiver, Sender};
+use futures::StreamExt;
 
 use crate::errors::Result;
 use crate::query::{PartitionFilter, TrackerShared};
@@ -299,6 +300,18 @@ impl AsRef<Recordset> for RecordStream {
 
 /// If the record stream is inactive, it will return the `PartitionFilter` cursor to use in a future scan/query.
 impl RecordStream {
+    /// Waits until the next record can be taken without waiting, or the
+    /// stream has ended. Nothing is handed out, so the resume cursor does
+    /// not move: a record counts as seen only when the stream yields it.
+    pub async fn ready(&mut self) {
+        while self.2.is_empty() {
+            match self.1.next().await {
+                Some(batch) => self.2.extend(batch),
+                None => return,
+            }
+        }
+    }
+
     /// Returns the partition filter from the recordset.
     pub fn partition_filter(&self) -> Option<PartitionFilter> {
         self.0.partition_filter()
@@ -422,6 +435,52 @@ mod tests {
                 "buffered record was committed by close()"
             );
         }
+    }
+
+    /// Waiting for a record is not taking it: the batch that arrives is held
+    /// by the stream, and a stream closed at that point leaves every record
+    /// in front of the cursor.
+    #[test]
+    fn ready_buffers_without_moving_the_cursor() {
+        let tracker = PartitionTracker::new(&QueryPolicy::default(), PartitionFilter::all(), &[])
+            .expect("tracker");
+        let shared = tracker.shared();
+        let rs = Arc::new(Recordset::new(RECORD_BATCH, 0, 1, shared.clone()));
+
+        let keys = distinct_partition_keys(3);
+        let entries: Vec<StreamEntry> = keys
+            .iter()
+            .map(|k| StreamEntry {
+                result: Ok(Record::new(Some(k.clone()), IndexMap::new(), None, 0, 0)),
+                bval: None,
+                stamp: shared.stamp_delivery(k.partition_id(), k.digest, None),
+            })
+            .collect();
+        block_on(rs.push_batch(entries)).unwrap();
+
+        let mut stream = rs.clone().into_stream();
+        block_on(stream.ready());
+        // A second wait has nothing to wait for.
+        block_on(stream.ready());
+        for k in &keys {
+            assert_eq!(cursor_of(&shared, k).0, None, "cursor moved by ready()");
+        }
+
+        // The records are still there to take, in order.
+        let first = block_on(stream.next()).unwrap().unwrap();
+        assert_eq!(first.key.as_ref().unwrap().digest, keys[0].digest);
+        assert_eq!(cursor_of(&shared, &keys[0]).0, Some(keys[0].digest));
+    }
+
+    /// A stream that ends with nothing to deliver must not leave the waiter
+    /// parked.
+    #[test]
+    fn ready_returns_when_the_stream_ends_empty() {
+        let rs = recordset(1);
+        let mut stream = rs.clone().into_stream();
+        rs.close();
+        block_on(stream.ready());
+        assert!(block_on(stream.next()).is_none());
     }
 
     /// The multi-consumer contract: out-of-order consumption parks until the
