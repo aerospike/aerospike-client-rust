@@ -23,16 +23,35 @@ import (
 // the way the Rust SDK's Value::int() does; the kind tests are for a switch.
 //
 
-func (v Value) IsNull() bool    { return v.Kind == KindNil || v.Kind == KindAbsent }
-func (v Value) IsNil() bool     { return v.Kind == KindNil }
-func (v Value) IsAbsent() bool  { return v.Kind == KindAbsent }
-func (v Value) IsInt() bool     { return v.Kind == KindInt }
+// IsNull reports whether the value is nil or absent.
+func (v Value) IsNull() bool { return v.Kind == KindNil || v.Kind == KindAbsent }
+
+// IsNil reports whether the value is a nil, as distinct from absent.
+func (v Value) IsNil() bool { return v.Kind == KindNil }
+
+// IsAbsent reports whether there is no value at all: a missing bin, map entry or argument.
+func (v Value) IsAbsent() bool { return v.Kind == KindAbsent }
+
+// IsInt reports whether the value is an integer.
+func (v Value) IsInt() bool { return v.Kind == KindInt }
+
+// IsFloat64 reports whether the value is a double. An integer is not one, though Float64 widens it.
 func (v Value) IsFloat64() bool { return v.Kind == KindDouble }
-func (v Value) IsBool() bool    { return v.Kind == KindBool }
-func (v Value) IsStr() bool     { return v.Kind == KindStr }
-func (v Value) IsBlob() bool    { return v.Kind == KindBlob }
-func (v Value) IsList() bool    { return v.Kind == KindList }
-func (v Value) IsMap() bool     { return v.Kind == KindMap }
+
+// IsBool reports whether the value is a boolean.
+func (v Value) IsBool() bool { return v.Kind == KindBool }
+
+// IsStr reports whether the value is a string the host holds.
+func (v Value) IsStr() bool { return v.Kind == KindStr }
+
+// IsBlob reports whether the value is a plain blob the host holds; GeoJSON and HLL are kinds of their own.
+func (v Value) IsBlob() bool { return v.Kind == KindBlob }
+
+// IsList reports whether the value is a list the host holds.
+func (v Value) IsList() bool { return v.Kind == KindList }
+
+// IsMap reports whether the value is a map the host holds.
+func (v Value) IsMap() bool { return v.Kind == KindMap }
 
 // IsStored reports whether the value is a string, blob, GeoJSON, HLL, list or map the host holds.
 func (v Value) IsStored() bool {
@@ -66,6 +85,7 @@ func (v Value) Float64() (float64, error) {
 	return 0, v.kindError("a double")
 }
 
+// Bool is the value as a boolean.
 func (v Value) Bool() (bool, error) {
 	if v.Kind != KindBool {
 		return false, v.kindError("a bool")
@@ -200,7 +220,7 @@ func GeoJSONValue(doc string) Value {
 	return Value{Kind: KindGuestGeoJSON, Len: uint32(len(doc)), Payload: int64(uintptr(strptr(doc)))}
 }
 
-// BoolValue and NilValue, for a batch.
+// BoolValue is a boolean as a value of the guest's, for a batch.
 func BoolValue(b bool) Value {
 	if b {
 		return Value{Kind: KindBool, Payload: 1}
@@ -208,4 +228,5 @@ func BoolValue(b bool) Value {
 	return Value{Kind: KindBool}
 }
 
+// NilValue is a nil value, for a batch.
 func NilValue() Value { return Value{Kind: KindNil} }

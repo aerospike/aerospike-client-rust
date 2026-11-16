@@ -78,11 +78,15 @@ Udf.commit();
 public static Bin of(String name)
 ```
 
+A bin by name. The name is encoded here, once; nothing is read.
+
 #### `Bin.name`
 
 ```java
 public String name()
 ```
+
+The bin's name.
 
 #### `Bin.exists`
 
@@ -114,11 +118,15 @@ The bin into a reused value; false when absent.
 public long getLong()
 ```
 
+The bin as an integer; throws `UdfException` when it is absent or of another kind.
+
 #### `Bin.getLong`
 
 ```java
 public long getLong(long dflt)
 ```
+
+The bin as an integer, or `dflt` when it is absent or nil; throws when it is of another kind.
 
 #### `Bin.getDouble`
 
@@ -126,11 +134,16 @@ public long getLong(long dflt)
 public double getDouble()
 ```
 
+The bin as a double; throws `UdfException` when it is absent or of another kind. An integer bin is
+not widened.
+
 #### `Bin.getDouble`
 
 ```java
 public double getDouble(double dflt)
 ```
+
+The bin as a double, or `dflt` when it is absent or nil; throws when it is of another kind.
 
 #### `Bin.getBoolean`
 
@@ -138,11 +151,15 @@ public double getDouble(double dflt)
 public boolean getBoolean()
 ```
 
+The bin as a boolean; throws `UdfException` when it is absent or of another kind.
+
 #### `Bin.getBoolean`
 
 ```java
 public boolean getBoolean(boolean dflt)
 ```
+
+The bin as a boolean, or `dflt` when it is absent or nil; throws when it is of another kind.
 
 #### `Bin.getString`
 
@@ -150,11 +167,15 @@ public boolean getBoolean(boolean dflt)
 public String getString()
 ```
 
+The text of a string bin, copied out; throws `UdfException` when it is absent or of another kind.
+
 #### `Bin.getString`
 
 ```java
 public String getString(String dflt)
 ```
+
+The text of a string bin, or `dflt` when it is absent or nil; throws when it is of another kind.
 
 #### `Bin.getBytes`
 
@@ -194,11 +215,15 @@ A walk over the entries of the map in this bin.
 public void set(long value)
 ```
 
+An integer.
+
 #### `Bin.set`
 
 ```java
 public void set(double value)
 ```
+
+A double.
 
 #### `Bin.set`
 
@@ -206,11 +231,15 @@ public void set(double value)
 public void set(boolean value)
 ```
 
+A boolean.
+
 #### `Bin.set`
 
 ```java
 public void set(String value)
 ```
+
+A string, written as UTF-8.
 
 #### `Bin.set`
 
@@ -234,11 +263,15 @@ A value read from the record, by position, keeping its kind; or a scalar, guest 
 public void set(UdfMap value)
 ```
 
+A built map.
+
 #### `Bin.set`
 
 ```java
 public void set(UdfList value)
 ```
+
+A built list.
 
 #### `Bin.setGeoJson`
 
@@ -270,11 +303,15 @@ A list of integers from the array, in one import, no value built per element.
 public void setDoubles(double[] values)
 ```
 
+A list of doubles from the array, in one import, no value built per element.
+
 #### `Bin.remove`
 
 ```java
 public void remove()
 ```
+
+Removes the bin from the record, staged like a write; throws `UdfException` when the host refuses.
 
 #### `Value`
 
@@ -293,11 +330,15 @@ host holds, `source << 32 | offset`. A `Value` is reused: `read` refills it from
 public static final int ABSENT = -1
 ```
 
+No value at all: a `Value` never filled, or a map entry that is not there. Distinct from nil.
+
 #### `Value.NIL`
 
 ```java
 public static final int NIL = 0
 ```
+
+Nil.
 
 #### `Value.BOOL`
 
@@ -305,11 +346,15 @@ public static final int NIL = 0
 public static final int BOOL = 1
 ```
 
+A boolean; the payload is non-zero for true.
+
 #### `Value.INT`
 
 ```java
 public static final int INT = 2
 ```
+
+A 64-bit integer; the payload is the integer.
 
 #### `Value.DOUBLE`
 
@@ -317,11 +362,15 @@ public static final int INT = 2
 public static final int DOUBLE = 3
 ```
 
+A double; the payload is its bits, read with `asDouble`.
+
 #### `Value.STR`
 
 ```java
 public static final int STR = 4
 ```
+
+A string the host holds, read by position; the length is in bytes.
 
 #### `Value.BLOB`
 
@@ -329,11 +378,15 @@ public static final int STR = 4
 public static final int BLOB = 5
 ```
 
+A blob the host holds, read by position; the length is in bytes.
+
 #### `Value.LIST`
 
 ```java
 public static final int LIST = 6
 ```
+
+A list the host holds, walked by position; the length is in elements.
 
 #### `Value.MAP`
 
@@ -341,11 +394,15 @@ public static final int LIST = 6
 public static final int MAP = 7
 ```
 
+A map the host holds, walked or looked up by position; the length is in entries.
+
 #### `Value.OTHER`
 
 ```java
 public static final int OTHER = 8
 ```
+
+A value of a kind the host has no other name for.
 
 #### `Value.GEOJSON`
 
@@ -353,11 +410,15 @@ public static final int OTHER = 8
 public static final int GEOJSON = 9
 ```
 
+A GeoJSON document the host holds; its bytes are read like a string's.
+
 #### `Value.HLL`
 
 ```java
 public static final int HLL = 10
 ```
+
+A HyperLogLog value the host holds; its bytes are read like a blob's.
 
 #### `Value.GUEST_STR`
 
@@ -365,11 +426,15 @@ public static final int HLL = 10
 public static final int GUEST_STR = 16
 ```
 
+A string of the guest's own, handed to the host by address.
+
 #### `Value.GUEST_BLOB`
 
 ```java
 public static final int GUEST_BLOB = 17
 ```
+
+A blob of the guest's own, handed to the host by address.
 
 #### `Value.GUEST_GEOJSON`
 
@@ -377,11 +442,15 @@ public static final int GUEST_BLOB = 17
 public static final int GUEST_GEOJSON = 18
 ```
 
+A GeoJSON document of the guest's own, handed to the host by address.
+
 #### `Value.HANDLE`
 
 ```java
 public static final int HANDLE = 19
 ```
+
+A value built on the host, handed back by its handle, which is the payload.
 
 #### `Value.kind`
 
@@ -389,17 +458,24 @@ public static final int HANDLE = 19
 public int kind = ABSENT
 ```
 
+The kind, one of the constants of this class; `ABSENT` until the value is filled.
+
 #### `Value.len`
 
 ```java
 public int len
 ```
 
+The length: bytes for a string or blob, elements for a list, entries for a map.
+
 #### `Value.payload`
 
 ```java
 public long payload
 ```
+
+The scalar itself (a double as its bits), a handle, or `source << 32 | offset` for a value the host
+holds.
 
 #### `Value.src`
 
@@ -431,6 +507,8 @@ The payload as a double.
 public boolean isAbsent()
 ```
 
+Whether there is no value at all, which is not the same as nil.
+
 #### `Value.isStored`
 
 ```java
@@ -453,11 +531,16 @@ Refill from the 16-byte slot at `off` in `buf`, as the host wrote it (little-end
 public Value set(int kind, int len, long payload)
 ```
 
+Sets the three fields and drops any guest bytes: the way to copy another value's fields, to keep one
+across cursor steps. Returns this.
+
 #### `Value.setInt`
 
 ```java
 public Value setInt(long i)
 ```
+
+Makes this an integer. Returns this, as every setter does.
 
 #### `Value.setDouble`
 
@@ -465,17 +548,23 @@ public Value setInt(long i)
 public Value setDouble(double d)
 ```
 
+Makes this a double.
+
 #### `Value.setBool`
 
 ```java
 public Value setBool(boolean b)
 ```
 
+Makes this a boolean.
+
 #### `Value.setNil`
 
 ```java
 public Value setNil()
 ```
+
+Makes this nil.
 
 #### `Value.setHandle`
 
@@ -499,11 +588,16 @@ A string of the guest's, as UTF-8 bytes the caller keeps alive until the batch i
 public Value setStrBytes(byte[] b)
 ```
 
+A string of the guest's from UTF-8 bytes, all of `b`. The array is kept, not copied.
+
 #### `Value.setStrBytes`
 
 ```java
 public Value setStrBytes(byte[] b, int len)
 ```
+
+A string of the guest's from the first `len` bytes of `b`, as UTF-8. The array is kept, not
+copied.
 
 #### `Value.setBlob`
 
@@ -511,11 +605,15 @@ public Value setStrBytes(byte[] b, int len)
 public Value setBlob(byte[] b)
 ```
 
+A blob of the guest's, all of `b`. The array is kept, not copied.
+
 #### `Value.setBlob`
 
 ```java
 public Value setBlob(byte[] b, int len)
 ```
+
+A blob of the guest's from the first `len` bytes of `b`. The array is kept, not copied.
 
 #### `Value.ofInt`
 
@@ -523,11 +621,15 @@ public Value setBlob(byte[] b, int len)
 public static Value ofInt(long i)
 ```
 
+A fresh integer value.
+
 #### `Value.ofDouble`
 
 ```java
 public static Value ofDouble(double d)
 ```
+
+A fresh double value.
 
 #### `Value.ofBool`
 
@@ -535,11 +637,15 @@ public static Value ofDouble(double d)
 public static Value ofBool(boolean b)
 ```
 
+A fresh boolean value.
+
 #### `Value.ofNil`
 
 ```java
 public static Value ofNil()
 ```
+
+A fresh nil value.
 
 #### `Value.ofHandle`
 
@@ -547,17 +653,23 @@ public static Value ofNil()
 public static Value ofHandle(int handle)
 ```
 
+A fresh value for a built collection, by handle.
+
 #### `Value.ofStr`
 
 ```java
 public static Value ofStr(String s)
 ```
 
+A fresh string of the guest's, encoded as UTF-8.
+
 #### `Value.ofBlob`
 
 ```java
 public static Value ofBlob(byte[] b)
 ```
+
+A fresh blob of the guest's over `b`, which is kept, not copied.
 
 #### `Value.setGeoJson`
 
@@ -573,11 +685,15 @@ A GeoJSON document of the guest's, kept as that kind when it is pushed, put or r
 public static Value ofGeoJson(String doc)
 ```
 
+A fresh GeoJSON document of the guest's, from its text.
+
 #### `Value.isNil`
 
 ```java
 public boolean isNil()
 ```
+
+Whether the value is nil. An absent value is not; see `isNull`.
 
 #### `Value.isNull`
 
@@ -593,11 +709,15 @@ Nil, or absent.
 public boolean isInt()
 ```
 
+Whether the value is an integer.
+
 #### `Value.isDouble`
 
 ```java
 public boolean isDouble()
 ```
+
+Whether the value is a double.
 
 #### `Value.isBoolean`
 
@@ -605,11 +725,15 @@ public boolean isDouble()
 public boolean isBoolean()
 ```
 
+Whether the value is a boolean.
+
 #### `Value.isString`
 
 ```java
 public boolean isString()
 ```
+
+Whether the value is a string the host holds; false for a string of the guest's.
 
 #### `Value.isList`
 
@@ -617,11 +741,15 @@ public boolean isString()
 public boolean isList()
 ```
 
+Whether the value is a list the host holds; false for a built one, which is a handle.
+
 #### `Value.isMap`
 
 ```java
 public boolean isMap()
 ```
+
+Whether the value is a map the host holds; false for a built one, which is a handle.
 
 #### `Value.asLong`
 
@@ -629,11 +757,15 @@ public boolean isMap()
 public long asLong()
 ```
 
+The integer; throws `UdfException` when the value is of another kind.
+
 #### `Value.asBoolean`
 
 ```java
 public boolean asBoolean()
 ```
+
+The boolean; throws `UdfException` when the value is of another kind.
 
 #### `Value.asString`
 
@@ -713,11 +845,15 @@ One entry of a stored map, as a map cursor's for-each yields it: a key and a val
 public final Value key
 ```
 
+The entry's key.
+
 #### `Entry.value`
 
 ```java
 public final Value value
 ```
+
+The entry's value.
 
 #### `Entry.getKey`
 
@@ -725,11 +861,15 @@ public final Value value
 public Value getKey()
 ```
 
+The key: the same object as `key`.
+
 #### `Entry.getValue`
 
 ```java
 public Value getValue()
 ```
+
+The value: the same object as `value`.
 
 #### `Entry.setValue`
 
@@ -807,6 +947,8 @@ A new map with room for `capacity` entries.
 public static UdfMap create()
 ```
 
+A new map with the default room, for 8 entries.
+
 #### `UdfMap.wrap`
 
 ```java
@@ -821,11 +963,15 @@ A map over a handle the low-level calls built.
 public int handle()
 ```
 
+The host's handle on the map, as the low-level `Udf.mapPut*` calls take it.
+
 #### `UdfMap.size`
 
 ```java
 public int size()
 ```
+
+How many entries the map holds.
 
 #### `UdfMap.asValue`
 
@@ -849,11 +995,15 @@ Whether the map holds `key`: it packs the map, so for the occasional check, not 
 public UdfMap put(String key, long value)
 ```
 
+An integer under a string key.
+
 #### `UdfMap.put`
 
 ```java
 public UdfMap put(String key, double value)
 ```
+
+A double under a string key.
 
 #### `UdfMap.put`
 
@@ -861,11 +1011,15 @@ public UdfMap put(String key, double value)
 public UdfMap put(String key, boolean value)
 ```
 
+A boolean under a string key.
+
 #### `UdfMap.put`
 
 ```java
 public UdfMap put(String key, String value)
 ```
+
+A string under a string key.
 
 #### `UdfMap.put`
 
@@ -889,11 +1043,15 @@ A value of any kind: a scalar, guest bytes, a stored value by position, a built 
 public UdfMap put(String key, UdfMap value)
 ```
 
+A built map, nested under a string key.
+
 #### `UdfMap.put`
 
 ```java
 public UdfMap put(String key, UdfList value)
 ```
+
+A built list, nested under a string key.
 
 #### `UdfMap.putNull`
 
@@ -909,11 +1067,15 @@ A nil entry: in a record answer, "no such bin".
 public UdfMap putGeoJson(String key, String doc)
 ```
 
+A GeoJSON document under a string key, kept as that kind rather than a string.
+
 #### `UdfMap.put`
 
 ```java
 public UdfMap put(long key, long value)
 ```
+
+An integer under an integer key.
 
 #### `UdfMap.put`
 
@@ -921,11 +1083,15 @@ public UdfMap put(long key, long value)
 public UdfMap put(long key, String value)
 ```
 
+A string under an integer key.
+
 #### `UdfMap.put`
 
 ```java
 public UdfMap put(long key, Value value)
 ```
+
+A value of any kind under an integer key, the kinds as `put(String, Value)` takes them.
 
 #### `UdfMap.put`
 
@@ -933,11 +1099,15 @@ public UdfMap put(long key, Value value)
 public UdfMap put(long key, UdfMap value)
 ```
 
+A built map, nested under an integer key.
+
 #### `UdfMap.put`
 
 ```java
 public UdfMap put(long key, UdfList value)
 ```
+
+A built list, nested under an integer key.
 
 #### `UdfMap.putAll`
 
@@ -970,11 +1140,16 @@ and throws `UdfException` when the host refuses it; they chain. See `UdfMap`.
 public static UdfList create(int capacity)
 ```
 
+A new list with room for `capacity` elements, which it grows past; throws `UdfException` when
+the host cannot build it.
+
 #### `UdfList.create`
 
 ```java
 public static UdfList create()
 ```
+
+A new list with the default room, for 8 elements.
 
 #### `UdfList.wrap`
 
@@ -990,11 +1165,15 @@ A list over a handle the low-level calls built.
 public int handle()
 ```
 
+The host's handle on the list, as the low-level `Udf.listPush*` calls take it.
+
 #### `UdfList.size`
 
 ```java
 public int size()
 ```
+
+How many elements the list holds.
 
 #### `UdfList.asValue`
 
@@ -1002,11 +1181,15 @@ public int size()
 public Value asValue()
 ```
 
+As a value, for a batch or a result.
+
 #### `UdfList.add`
 
 ```java
 public UdfList add(long value)
 ```
+
+Appends an integer.
 
 #### `UdfList.add`
 
@@ -1014,17 +1197,23 @@ public UdfList add(long value)
 public UdfList add(double value)
 ```
 
+Appends a double.
+
 #### `UdfList.add`
 
 ```java
 public UdfList add(boolean value)
 ```
 
+Appends a boolean.
+
 #### `UdfList.add`
 
 ```java
 public UdfList add(String value)
 ```
+
+Appends a string.
 
 #### `UdfList.add`
 
@@ -1048,11 +1237,15 @@ A value of any kind: a scalar, guest bytes, a stored value by position, a built 
 public UdfList add(UdfMap value)
 ```
 
+Appends a built map, nested.
+
 #### `UdfList.add`
 
 ```java
 public UdfList add(UdfList value)
 ```
+
+Appends a built list, nested.
 
 #### `UdfList.addNull`
 
@@ -1060,11 +1253,15 @@ public UdfList add(UdfList value)
 public UdfList addNull()
 ```
 
+Appends nil.
+
 #### `UdfList.addGeoJson`
 
 ```java
 public UdfList addGeoJson(String doc)
 ```
+
+Appends a GeoJSON document, kept as that kind rather than a string.
 
 #### `UdfList.addAll`
 
@@ -1106,11 +1303,16 @@ hands it to the host and never kept.
 public static final int OK = 0
 ```
 
+The call succeeded.
+
 #### `Udf.ERR`
 
 ```java
 public static final int ERR = -1
 ```
+
+The call failed on what it was given, such as a bin name that is empty or longer than 15 bytes, or a
+handle the host does not hold.
 
 #### `Udf.NOT_FOUND`
 
@@ -1118,11 +1320,15 @@ public static final int ERR = -1
 public static final int NOT_FOUND = -2
 ```
 
+There is no such bin, key or entry.
+
 #### `Udf.TYPE_MISMATCH`
 
 ```java
 public static final int TYPE_MISMATCH = -3
 ```
+
+The value is not of a kind the call takes.
 
 #### `Udf.REFUSED`
 
@@ -1130,11 +1336,16 @@ public static final int TYPE_MISMATCH = -3
 public static final int REFUSED = -4
 ```
 
+The host refused the operation: a write the record does not accept, or a call not allowed where it was
+made.
+
 #### `Udf.NEEDED_BASE`
 
 ```java
 public static final int NEEDED_BASE = -16
 ```
+
+The buffer was too small: a status at or below this carries the size needed, `-(rc) - 16`.
 
 #### `Udf.LOG_WARN`
 
@@ -1142,17 +1353,23 @@ public static final int NEEDED_BASE = -16
 public static final int LOG_WARN = 0
 ```
 
+A `log` level: a warning in the server log.
+
 #### `Udf.LOG_INFO`
 
 ```java
 public static final int LOG_INFO = 1
 ```
 
+A `log` level: an info line in the server log.
+
 #### `Udf.LOG_DEBUG`
 
 ```java
 public static final int LOG_DEBUG = 2
 ```
+
+A `log` level: a debug line in the server log.
 
 #### `Udf.BATCH`
 
@@ -1192,11 +1409,15 @@ Reads a bin of any kind in one import. The status is NOT_FOUND for no such bin.
 public static int bin(String name, Value out)
 ```
 
+As `bin(byte[], Value)`, encoding the name on each call.
+
 #### `Udf.binInt`
 
 ```java
 public static long binInt(String name)
 ```
+
+An integer bin; throws `UdfException` when it is absent or of another kind.
 
 #### `Udf.binDouble`
 
@@ -1204,17 +1425,24 @@ public static long binInt(String name)
 public static double binDouble(String name)
 ```
 
+A double bin; throws `UdfException` when it is absent or of another kind. An integer bin is not
+widened.
+
 #### `Udf.binBool`
 
 ```java
 public static boolean binBool(String name)
 ```
 
+A boolean bin; throws `UdfException` when it is absent or of another kind.
+
 #### `Udf.binStr`
 
 ```java
 public static String binStr(String name)
 ```
+
+The text of a string bin, copied out; throws `UdfException` when it is absent or of another kind.
 
 #### `Udf.binBytes`
 
@@ -1237,6 +1465,8 @@ A list bin, as a fresh value to walk or hand on by position.
 ```java
 public static Value binMap(String name)
 ```
+
+A map bin, as a fresh value to walk, look up in or hand on by position.
 
 #### `Udf.list`
 
@@ -1267,6 +1497,8 @@ A walk over a stored map's entries: `key` and `value` per step.
 ```java
 public static Cursor<Cursor.Entry> map(String name)
 ```
+
+A walk over the entries of the map in a bin.
 
 #### `Udf.bytes`
 
@@ -1352,6 +1584,8 @@ Looks a string key up in the map at a value's position, in one import.
 public static int get(Value m, String key, Value out)
 ```
 
+As `get(Value, byte[], Value)`, encoding the key on each call.
+
 #### `Udf.get`
 
 ```java
@@ -1414,13 +1648,15 @@ The record's time to live, in seconds.
 public static boolean exists()
 ```
 
+Whether the record exists.
+
 #### `Udf.now`
 
 ```java
 public static long now()
 ```
 
-The server's clock in ms since the epoch, or -1 inside an event handler, where it is refused.
+The server's clock in ms since the Unix epoch, or -1 inside an event handler, where it is refused.
 
 #### `Udf.lastUpdateTime`
 
@@ -1428,7 +1664,8 @@ The server's clock in ms since the epoch, or -1 inside an event handler, where i
 public static long lastUpdateTime()
 ```
 
-When the record was last written, in ms since the epoch.
+When the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC), which is how
+the server stores it. Not on the same scale as `now`, which counts from the Unix epoch.
 
 #### `Udf.recordSize`
 
@@ -1477,11 +1714,16 @@ Deletes the record.
 public static int setInt(byte[] name, long value)
 ```
 
+Writes an integer bin. Returns OK or a status. Like every write here, it is staged until the record is
+committed.
+
 #### `Udf.setInt`
 
 ```java
 public static int setInt(String name, long value)
 ```
+
+As `setInt(byte[], long)`, encoding the name on each call.
 
 #### `Udf.setDouble`
 
@@ -1489,11 +1731,15 @@ public static int setInt(String name, long value)
 public static int setDouble(byte[] name, double value)
 ```
 
+Writes a double bin. Returns OK or a status.
+
 #### `Udf.setDouble`
 
 ```java
 public static int setDouble(String name, double value)
 ```
+
+As `setDouble(byte[], double)`, encoding the name on each call.
 
 #### `Udf.setStr`
 
@@ -1501,11 +1747,16 @@ public static int setDouble(String name, double value)
 public static int setStr(byte[] name, byte[] value, int valueLen)
 ```
 
+Writes a string bin from the first `valueLen` bytes of `value`, which are UTF-8. Returns OK
+or a status.
+
 #### `Udf.setStr`
 
 ```java
 public static int setStr(String name, String value)
 ```
+
+Writes a string bin, encoding the name and the text on each call.
 
 #### `Udf.setBlob`
 
@@ -1513,11 +1764,15 @@ public static int setStr(String name, String value)
 public static int setBlob(byte[] name, byte[] value, int valueLen)
 ```
 
+Writes a blob bin from the first `valueLen` bytes of `value`. Returns OK or a status.
+
 #### `Udf.setBlob`
 
 ```java
 public static int setBlob(String name, byte[] value)
 ```
+
+Writes all of `value` as a blob bin, encoding the name on each call.
 
 #### `Udf.setHandle`
 
@@ -1533,6 +1788,8 @@ Writes a built list or map to a bin.
 public static int setHandle(String name, int handle)
 ```
 
+As `setHandle(byte[], int)`, encoding the name on each call.
+
 #### `Udf.setValue`
 
 ```java
@@ -1547,17 +1804,23 @@ Writes a value read from the record to a bin, by position.
 public static int setValue(String name, Value v)
 ```
 
+As `setValue(byte[], Value)`, encoding the name on each call.
+
 #### `Udf.setBool`
 
 ```java
 public static int setBool(byte[] name, boolean value)
 ```
 
+Writes a boolean bin. Returns OK or a status.
+
 #### `Udf.setBool`
 
 ```java
 public static int setBool(String name, boolean value)
 ```
+
+As `setBool(byte[], boolean)`, encoding the name on each call.
 
 #### `Udf.setNil`
 
@@ -1573,6 +1836,8 @@ Writes a nil bin.
 public static int setNil(String name)
 ```
 
+As `setNil(byte[])`, encoding the name on each call.
+
 #### `Udf.setGeoJson`
 
 ```java
@@ -1586,6 +1851,8 @@ Writes a GeoJSON document, kept as the geospatially indexable kind rather than a
 ```java
 public static int setGeoJson(String name, String doc)
 ```
+
+As `setGeoJson(byte[], byte[], int)`, encoding the name and the document on each call.
 
 #### `Udf.setListInts`
 
@@ -1601,11 +1868,15 @@ Writes a list of integers from the array, in one import, with no value built per
 public static int setListInts(String name, long[] values)
 ```
 
+As `setListInts(byte[], long[])`, encoding the name on each call.
+
 #### `Udf.setListDoubles`
 
 ```java
 public static int setListDoubles(byte[] name, double[] values)
 ```
+
+Writes a list of doubles from the array, in one import, with no value built per element.
 
 #### `Udf.setListDoubles`
 
@@ -1613,17 +1884,23 @@ public static int setListDoubles(byte[] name, double[] values)
 public static int setListDoubles(String name, double[] values)
 ```
 
+As `setListDoubles(byte[], double[])`, encoding the name on each call.
+
 #### `Udf.remove`
 
 ```java
 public static int remove(byte[] name)
 ```
 
+Removes a bin from the record, staged like a write. Returns OK or a status.
+
 #### `Udf.remove`
 
 ```java
 public static int remove(String name)
 ```
+
+As `remove(byte[])`, encoding the name on each call.
 
 #### `Udf.update`
 
@@ -1671,6 +1948,9 @@ Starts a list on the host; the handle is what the other builders take.
 public static int newMap(int capacity)
 ```
 
+Starts a map on the host, as `newList` starts a list. The map is ordered by key, whatever order
+its entries are put in.
+
 #### `Udf.nilHandle`
 
 ```java
@@ -1702,11 +1982,15 @@ Whether a built map holds `key`. It packs the map, so it is for the occasional c
 public static boolean mapHasKey(int m, String key)
 ```
 
+As `mapHasKey(int, byte[])`, encoding the key on each call.
+
 #### `Udf.listPushInt`
 
 ```java
 public static int listPushInt(int list, long value)
 ```
+
+Appends an integer to a built list. Returns OK or a status.
 
 #### `Udf.listPushStr`
 
@@ -1714,17 +1998,25 @@ public static int listPushInt(int list, long value)
 public static int listPushStr(int list, byte[] value, int valueLen)
 ```
 
+Appends a string from the first `valueLen` bytes of `value`, which are UTF-8. Returns OK or a
+status.
+
 #### `Udf.listPushStr`
 
 ```java
 public static int listPushStr(int list, String value)
 ```
 
+Appends a string, encoding it on each call.
+
 #### `Udf.listPushHandle`
 
 ```java
 public static int listPushHandle(int list, int value)
 ```
+
+Appends a built value by its handle: a nested list or map, or a value from `nilHandle`,
+`strHandle` or `intHandle`. Returns OK or a status.
 
 #### `Udf.listPushValue`
 
@@ -1749,11 +2041,15 @@ by position, built collections by handle. Returns how many went in.
 public static int mapPutInt(int m, byte[] key, long value)
 ```
 
+Puts an integer under a string key of a built map. Returns OK or a status.
+
 #### `Udf.mapPutInt`
 
 ```java
 public static int mapPutInt(int m, String key, long value)
 ```
+
+As `mapPutInt(int, byte[], long)`, encoding the key on each call.
 
 #### `Udf.mapPutStr`
 
@@ -1761,11 +2057,16 @@ public static int mapPutInt(int m, String key, long value)
 public static int mapPutStr(int m, byte[] key, byte[] value, int valueLen)
 ```
 
+Puts a string, the first `valueLen` bytes of `value` as UTF-8, under a string key. Returns OK
+or a status.
+
 #### `Udf.mapPutStr`
 
 ```java
 public static int mapPutStr(int m, String key, String value)
 ```
+
+Puts a string under a string key, encoding both on each call.
 
 #### `Udf.mapPutHandle`
 
@@ -1773,11 +2074,16 @@ public static int mapPutStr(int m, String key, String value)
 public static int mapPutHandle(int m, byte[] key, int value)
 ```
 
+Puts a built value, by its handle, under a string key: a nested list or map, or nil from
+`nilHandle`. Returns OK or a status.
+
 #### `Udf.mapPutHandle`
 
 ```java
 public static int mapPutHandle(int m, String key, int value)
 ```
+
+As `mapPutHandle(int, byte[], int)`, encoding the key on each call.
 
 #### `Udf.mapPutValue`
 
@@ -1794,11 +2100,15 @@ a built collection by handle.
 public static int mapPutValue(int m, String key, Value v)
 ```
 
+As `mapPutValue(int, byte[], Value)`, encoding the key on each call.
+
 #### `Udf.mapPutDouble`
 
 ```java
 public static int mapPutDouble(int m, String key, double value)
 ```
+
+Puts a double under a string key. Returns OK or a status.
 
 #### `Udf.mapPutBool`
 
@@ -1806,11 +2116,15 @@ public static int mapPutDouble(int m, String key, double value)
 public static int mapPutBool(int m, String key, boolean value)
 ```
 
+Puts a boolean under a string key. Returns OK or a status.
+
 #### `Udf.listPushDouble`
 
 ```java
 public static int listPushDouble(int list, double value)
 ```
+
+Appends a double to a built list. Returns OK or a status.
 
 #### `Udf.listPushBool`
 
@@ -1818,11 +2132,15 @@ public static int listPushDouble(int list, double value)
 public static int listPushBool(int list, boolean value)
 ```
 
+Appends a boolean to a built list. Returns OK or a status.
+
 #### `Udf.mapPutIInt`
 
 ```java
 public static int mapPutIInt(int m, long key, long value)
 ```
+
+Puts an integer under an integer key. Returns OK or a status.
 
 #### `Udf.mapPutIStr`
 
@@ -1830,11 +2148,15 @@ public static int mapPutIInt(int m, long key, long value)
 public static int mapPutIStr(int m, long key, String value)
 ```
 
+Puts a string under an integer key. Returns OK or a status.
+
 #### `Udf.mapPutIHandle`
 
 ```java
 public static int mapPutIHandle(int m, long key, int value)
 ```
+
+Puts a built value, by its handle, under an integer key. Returns OK or a status.
 
 #### `Udf.mapPutIValue`
 
@@ -1866,6 +2188,8 @@ A guest string as a handle, for `mapPut`.
 public static int intHandle(long i)
 ```
 
+An integer as a handle, for `mapPut`.
+
 #### `Udf.mapPutEntries`
 
 ```java
@@ -1889,11 +2213,15 @@ The size of a built collection.
 public static void resultNil()
 ```
 
+Sets nil as the result of the call. Of several results set in one call, the last is the one returned.
+
 #### `Udf.resultInt`
 
 ```java
 public static void resultInt(long v)
 ```
+
+Sets an integer as the result.
 
 #### `Udf.resultDouble`
 
@@ -1901,11 +2229,15 @@ public static void resultInt(long v)
 public static void resultDouble(double v)
 ```
 
+Sets a double as the result.
+
 #### `Udf.resultBool`
 
 ```java
 public static void resultBool(boolean v)
 ```
+
+Sets a boolean as the result.
 
 #### `Udf.resultStr`
 
@@ -1913,11 +2245,15 @@ public static void resultBool(boolean v)
 public static void resultStr(byte[] s, int len)
 ```
 
+Sets a string as the result: the first `len` bytes of `s`, which are UTF-8.
+
 #### `Udf.resultStr`
 
 ```java
 public static void resultStr(String s)
 ```
+
+Sets a string as the result, encoding it on each call.
 
 #### `Udf.resultBlob`
 
@@ -1925,11 +2261,15 @@ public static void resultStr(String s)
 public static void resultBlob(byte[] b, int len)
 ```
 
+Sets a blob as the result: the first `len` bytes of `b`.
+
 #### `Udf.resultBlob`
 
 ```java
 public static void resultBlob(byte[] b)
 ```
+
+Sets all of `b` as a blob result.
 
 #### `Udf.resultGeoJson`
 
@@ -1945,11 +2285,16 @@ A GeoJSON document as the result, kept as that kind.
 public static void resultGeoJson(String doc)
 ```
 
+As `resultGeoJson(byte[], int)`, from the text of the document.
+
 #### `Udf.resultHandle`
 
 ```java
 public static int resultHandle(int handle)
 ```
+
+Sets a built list or map as the result, by its handle. Returns OK, or ERR when the host has no value
+under the handle.
 
 #### `Udf.resultValue`
 
@@ -1972,6 +2317,8 @@ Fails the call with a message the client sees, and returns the non-zero status a
 ```java
 public static void log(int level, String message)
 ```
+
+Writes a line to the server's log at `LOG_WARN`, `LOG_INFO` or `LOG_DEBUG`.
 
 #### `Udf.signatureBytes`
 
@@ -2004,6 +2351,8 @@ Runs this set's timer handler on the record in hand `delayMs` from now, under `n
 public static int timerCancel(String name)
 ```
 
+Cancels the timer set on the record in hand under `name`. Returns OK, or REFUSED.
+
 #### `Udf.StrVisitor`
 
 ```java
@@ -2034,6 +2383,8 @@ Whether a stored list of strings holds `text`.
 public static boolean listHasStr(Value list, String text)
 ```
 
+As `listHasStr(Value, byte[])`, encoding the text on each call.
+
 #### `Udf.strIs`
 
 ```java
@@ -2047,6 +2398,8 @@ Whether a stored string value reads as `text`.
 ```java
 public static boolean strIs(Value v, String text)
 ```
+
+As `strIs(Value, byte[])`, encoding the text on each call.
 
 #### `Udf.str`
 
@@ -2078,17 +2431,25 @@ A map entry by string key: a value of ABSENT kind when there is none or `m` is n
 public static long mapInt(Value m, String key, long dflt)
 ```
 
+An integer map entry by string key, or `dflt` when there is none, it is not an integer, or
+`m` is not a map.
+
 #### `Udf.mapStr`
 
 ```java
 public static String mapStr(Value m, String key)
 ```
 
+A string map entry by string key, or "" when there is none, it is not a string, or `m` is not a
+map. A string over 256 bytes also reads as "".
+
 #### `Udf.mapBool`
 
 ```java
 public static boolean mapBool(Value m, String key)
 ```
+
+Whether a map entry by string key is the boolean true; false when there is none or it is of another kind.
 
 #### `Params`
 
@@ -2116,11 +2477,17 @@ Fails a call that passed more arguments than the function declares, unless it ta
 public static long int64(Value[] a, int n, int i, String fn, String p)
 ```
 
+Argument `i`, counted from 0, of the `n` in `a`, as an integer. Throws
+`UdfException` when it is missing or of another kind; `fn` and `p` are the function
+and parameter names its message gives. Every reader here takes the same five.
+
 #### `Params.int32`
 
 ```java
 public static int int32(Value[] a, int n, int i, String fn, String p)
 ```
+
+An integer argument that fits in 32 bits; one that does not is a mismatch.
 
 #### `Params.float64`
 
@@ -2136,11 +2503,15 @@ A double, or an int widened to one.
 public static boolean bool(Value[] a, int n, int i, String fn, String p)
 ```
 
+A boolean argument.
+
 #### `Params.str`
 
 ```java
 public static String str(Value[] a, int n, int i, String fn, String p)
 ```
+
+The text of a string argument, copied out.
 
 #### `Params.bytes`
 
@@ -2172,11 +2543,15 @@ Every argument from `i` on.
 public static Long optInt64(Value[] a, int n, int i, String fn, String p)
 ```
 
+As `int64`, or null when the argument is absent or nil.
+
 #### `Params.optInt32`
 
 ```java
 public static Integer optInt32(Value[] a, int n, int i, String fn, String p)
 ```
+
+As `int32`, or null when the argument is absent or nil.
 
 #### `Params.optFloat64`
 
@@ -2184,11 +2559,15 @@ public static Integer optInt32(Value[] a, int n, int i, String fn, String p)
 public static Double optFloat64(Value[] a, int n, int i, String fn, String p)
 ```
 
+As `float64`, or null when the argument is absent or nil.
+
 #### `Params.optBool`
 
 ```java
 public static Boolean optBool(Value[] a, int n, int i, String fn, String p)
 ```
+
+As `bool`, or null when the argument is absent or nil.
 
 #### `Params.optStr`
 
@@ -2196,17 +2575,23 @@ public static Boolean optBool(Value[] a, int n, int i, String fn, String p)
 public static String optStr(Value[] a, int n, int i, String fn, String p)
 ```
 
+As `str`, or null when the argument is absent or nil.
+
 #### `Params.optBytes`
 
 ```java
 public static byte[] optBytes(Value[] a, int n, int i, String fn, String p)
 ```
 
+As `bytes`, or null when the argument is absent or nil.
+
 #### `Params.optAny`
 
 ```java
 public static Value optAny(Value[] a, int n, int i, String fn, String p)
 ```
+
+The argument as it is, or null when it is absent or nil.
 
 #### `Params.result`
 
@@ -2223,11 +2608,15 @@ by handle, a stored value by position; null or absent is nil.
 public static void result(UdfMap m)
 ```
 
+Delivers a built map as the result; null is nil.
+
 #### `Params.result`
 
 ```java
 public static void result(UdfList l)
 ```
+
+Delivers a built list as the result; null is nil.
 
 #### `Params.resultStr`
 
@@ -2235,11 +2624,15 @@ public static void result(UdfList l)
 public static void resultStr(String s)
 ```
 
+Delivers a string as the result; null is nil.
+
 #### `Params.resultBytes`
 
 ```java
 public static void resultBytes(byte[] b)
 ```
+
+Delivers a byte array as a blob result; null is nil.
 
 #### `Params.uncaught`
 

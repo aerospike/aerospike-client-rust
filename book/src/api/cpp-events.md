@@ -30,11 +30,16 @@ Whether the side has the bin, nil included.
 Optional<int64_t> as_int(StrView name) const
 ```
 
+The bin as an integer; nothing when the side has no such bin, it is nil or it is of another kind.
+
 #### `EventRecord::as_double`
 
 ```cpp
 Optional<double> as_double(StrView name) const
 ```
+
+The bin as a double; nothing when the side has no such bin, it is nil or it is of another kind. An
+integer bin is not widened.
 
 #### `EventRecord::as_bool`
 
@@ -42,11 +47,16 @@ Optional<double> as_double(StrView name) const
 Optional<bool> as_bool(StrView name) const
 ```
 
+The bin as a boolean; nothing when the side has no such bin, it is nil or it is of another kind.
+
 #### `EventRecord::as_text`
 
 ```cpp
 template <size_t N> Optional<Text<N>> as_text(StrView name) const
 ```
+
+The bin's string as an inline Text&lt;N&gt;; nothing when the side has no such bin, it is nil, it is not a
+string or it does not fit in N bytes.
 
 #### `EventRecord::list`
 
@@ -54,11 +64,15 @@ template <size_t N> Optional<Text<N>> as_text(StrView name) const
 ListRange list(StrView name) const
 ```
 
+A walk over a list bin of this record; empty when the bin is missing or not a list.
+
 #### `EventRecord::map`
 
 ```cpp
 MapRange map(StrView name) const
 ```
+
+A walk over the entries of a map bin of this record; empty when the bin is missing or not a map.
 
 #### `EventRecord::names`
 
@@ -74,17 +88,25 @@ The record's bin names.
 int64_t bin_lut(StrView name) const
 ```
 
+When this side last wrote the bin: the bin's own LUT where the server keeps one, the record's LUT
+otherwise. The name is cut to 63 bytes.
+
 #### `EventRecord::bin_src`
 
 ```cpp
 int64_t bin_src(StrView name) const
 ```
 
+The source id of this side's last write of the bin: the bin's own where the server keeps one, the
+record's otherwise. The name is cut to 63 bytes.
+
 #### `EventRecord::deleted_any`
 
 ```cpp
 bool deleted_any() const
 ```
+
+Whether this side deleted any bin: its `deleted` list is present and not empty.
 
 #### `EventRecord::with_bins`
 
@@ -118,11 +140,17 @@ own bin convergence uses.
 Optional<T> newer() const
 ```
 
+The value of the side that wrote the bin later, or the other side's when that side has none; nothing
+when neither has one.
+
 #### `Both::older`
 
 ```cpp
 Optional<T> older() const
 ```
+
+The value of the side that wrote the bin earlier, or the other side's when that side has none;
+nothing when neither has one.
 
 #### `Both::local_or_remote`
 
@@ -130,11 +158,15 @@ Optional<T> older() const
 Optional<T> local_or_remote() const
 ```
 
+The local value when there is one, the remote otherwise. It prefers a side, so it is not symmetric.
+
 #### `Both::remote_or_local`
 
 ```cpp
 Optional<T> remote_or_local() const
 ```
+
+The remote value when there is one, the local otherwise. It prefers a side, so it is not symmetric.
 
 #### `Both::merge`
 
@@ -142,11 +174,16 @@ Optional<T> remote_or_local() const
 Optional<T> merge(F f) const
 ```
 
+`f(local, remote)` when both sides have a value; otherwise the one value there is, or nothing. The
+result is symmetric only when `f` is commutative.
+
 #### `Both::max`
 
 ```cpp
 Optional<T> max() const
 ```
+
+The larger of the two values, or the one there is; nothing when neither side has one.
 
 #### `Both::min`
 
@@ -154,11 +191,15 @@ Optional<T> max() const
 Optional<T> min() const
 ```
 
+The smaller of the two values, or the one there is; nothing when neither side has one.
+
 #### `Both::sum`
 
 ```cpp
 T sum() const
 ```
+
+The sum of both sides, a missing side counting as a value-initialised T (zero for a number).
 
 #### `Pair`
 
@@ -174,11 +215,16 @@ The two sides of a conflict, read bin by bin into a Both.
 Both<int64_t> as_int(StrView name) const
 ```
 
+An integer bin on both sides, with each side's LUT and source id for it. A side is empty where the
+bin is missing, nil or of another kind.
+
 #### `Pair::as_double`
 
 ```cpp
 Both<double> as_double(StrView name) const
 ```
+
+A double bin on both sides, likewise. An integer bin is not widened and reads as empty.
 
 #### `Pair::as_bool`
 
@@ -186,11 +232,15 @@ Both<double> as_double(StrView name) const
 Both<bool> as_bool(StrView name) const
 ```
 
+A boolean bin on both sides, likewise.
+
 #### `Pair::bin`
 
 ```cpp
 Both<Value> bin(StrView name) const
 ```
+
+A bin of any kind on both sides, as values. A side is empty where the bin is missing or nil.
 
 #### `Pair::list`
 
@@ -198,11 +248,15 @@ Both<Value> bin(StrView name) const
 Both<Value> list(StrView name) const
 ```
 
+A list bin on both sides, as values to walk. A side is empty where the bin is missing or not a list.
+
 #### `Pair::remote_newer`
 
 ```cpp
 bool remote_newer(StrView name) const
 ```
+
+Whether the remote side wrote the bin later: by the bin's LUT, then by source id.
 
 #### `Pair::with_newer`
 
@@ -226,11 +280,15 @@ What an xdr-merge is about; the C struct with the typed records and the pair.
 const EventRecord& current() const
 ```
 
+The record the cluster holds now: the local side.
+
 #### `Conflict::incoming`
 
 ```cpp
 const EventRecord& incoming() const
 ```
+
+The record the incoming XDR write carries: the remote side.
 
 #### `Conflict::pair`
 
@@ -238,17 +296,23 @@ const EventRecord& incoming() const
 Pair pair() const
 ```
 
+Both records as a Pair, the current one as local and the incoming one as remote.
+
 #### `Conflict::involves_delete`
 
 ```cpp
 bool involves_delete() const
 ```
 
+Whether either side deleted at least one bin.
+
 #### `Conflict::lost_bins`
 
 ```cpp
 Value lost_bins() const
 ```
+
+The names of the incoming bins that would lose, as a stored list to walk with list().
 
 #### `WriteInfo`
 
@@ -264,11 +328,17 @@ The kinds' own inputs: the C structs, with the strings as views.
 struct DeleteInfo : as_udf_delete_info { StrView source_view() const
 ```
 
+A delete's input: where it came from (`source`, as a view through source_view()) and whether it is
+durable.
+
 #### `TruncateInfo`
 
 ```cpp
 struct TruncateInfo : as_udf_truncate_info { StrView ns_view() const
 ```
+
+A truncate's input: the namespace, the set (empty for the whole namespace) and `lut`, the cutoff in
+ms since the epoch: records last updated before it go.
 
 #### `ExpireInfo`
 
@@ -276,11 +346,16 @@ struct TruncateInfo : as_udf_truncate_info { StrView ns_view() const
 struct ExpireInfo : as_udf_expire_info
 ```
 
+The input of before-expire and before-evict: the record's void time in seconds since the Aerospike
+epoch, the current time, and for an eviction the void time below which records are being evicted.
+
 #### `ReadInfo`
 
 ```cpp
 struct ReadInfo : as_udf_read_info { StrView source_view() const
 ```
+
+A read's input: where it came from and whether every bin was asked for (`all`), not named ones.
 
 #### `ShipInfo`
 
@@ -288,11 +363,16 @@ struct ReadInfo : as_udf_read_info { StrView source_view() const
 struct ShipInfo : as_udf_ship_info { StrView dc_view() const
 ```
 
+A ship's input: the name of the DC, as a view through dc_view().
+
 #### `LifecycleInfo`
 
 ```cpp
 struct LifecycleInfo : as_udf_lifecycle_info { StrView phase_view() const
 ```
+
+A node-lifecycle event's input: the phase (service-ready, shutdown, binding-deployed), this node's id
+in hex, and for binding-deployed the binding as a stored map (absent otherwise).
 
 #### `ClusterInfo`
 
@@ -300,17 +380,25 @@ struct LifecycleInfo : as_udf_lifecycle_info { StrView phase_view() const
 struct ClusterInfo : as_udf_cluster_info
 ```
 
+A cluster-change event's input: the cluster key, the cluster size, this node's id and the node ids
+as a stored list, in succession order.
+
 #### `TransferInfo`
 
 ```cpp
 struct TransferInfo : as_udf_transfer_info { StrView ns_view() const
 ```
 
+A partition-transfer event's input: the namespace, the partition id, the peer node and whether the
+partition arrived here (`arrived`) or departed.
+
 #### `TimerInfo`
 
 ```cpp
 struct TimerInfo : as_udf_timer_info { StrView name_view() const
 ```
+
+A timer handler's input, the timer that came due: its name, when it was due and the current time.
 
 #### `Answer`
 
@@ -334,11 +422,17 @@ An empty answer, for a Result that failed; never delivered.
 int32_t deliver() const
 ```
 
+Delivers the answer to the host and returns the status the export returns. Fails the call instead
+when the answer carries an error, as it does when a put on its bins map failed. The generated export
+calls it.
+
 #### `Decision`
 
 ```cpp
 struct Decision : Answer
 ```
+
+What a before-write handler returns.
 
 #### `Decision::accept`
 
@@ -346,11 +440,16 @@ struct Decision : Answer
 static Decision accept()
 ```
 
+Lets the write go ahead as it is.
+
 #### `Decision::reject`
 
 ```cpp
 static Decision reject(int32_t code, const char* message)
 ```
+
+Refuses the write with a code and a message. The message is not copied: it must stay alive until the
+export has delivered the answer.
 
 #### `Decision::record`
 
@@ -366,11 +465,15 @@ Writes these bins instead; a bin absent from the map, or nil, is deleted.
 struct Gate : Answer
 ```
 
+What a before-delete or before-truncate handler returns.
+
 #### `Gate::allow`
 
 ```cpp
 static Gate allow()
 ```
+
+Lets the delete or truncate go ahead.
 
 #### `Gate::refuse`
 
@@ -378,11 +481,16 @@ static Gate allow()
 static Gate refuse(int32_t code, const char* message)
 ```
 
+Refuses it with a code and a message. The message is not copied: it must stay alive until the export
+has delivered the answer.
+
 #### `Expiry`
 
 ```cpp
 struct Expiry : Answer
 ```
+
+What a before-expire handler returns.
 
 #### `Expiry::expire`
 
@@ -390,11 +498,15 @@ struct Expiry : Answer
 static Expiry expire()
 ```
 
+Lets the record expire.
+
 #### `Expiry::keep`
 
 ```cpp
 static Expiry keep(int64_t ttl)
 ```
+
+Keeps the record, with the time to live given.
 
 #### `Eviction`
 
@@ -402,11 +514,15 @@ static Expiry keep(int64_t ttl)
 struct Eviction : Answer
 ```
 
+What a before-evict handler returns.
+
 #### `Eviction::evict`
 
 ```cpp
 static Eviction evict()
 ```
+
+Lets the record be evicted.
 
 #### `Eviction::protect`
 
@@ -414,11 +530,15 @@ static Eviction evict()
 static Eviction protect()
 ```
 
+Keeps the record from being evicted.
+
 #### `ReadResult`
 
 ```cpp
 struct ReadResult : Answer
 ```
+
+What an after-read handler returns.
 
 #### `ReadResult::unchanged`
 
@@ -426,11 +546,15 @@ struct ReadResult : Answer
 static ReadResult unchanged()
 ```
 
+Leaves the record as it was read.
+
 #### `ReadResult::record`
 
 ```cpp
 static ReadResult record(const Map& bins)
 ```
+
+Answers the read with the bins of this map instead. A failure kept by the map fails the call.
 
 #### `ShipDecision`
 
@@ -438,11 +562,15 @@ static ReadResult record(const Map& bins)
 struct ShipDecision : Answer
 ```
 
+What a before-ship handler returns.
+
 #### `ShipDecision::ship`
 
 ```cpp
 static ShipDecision ship()
 ```
+
+Ships the record as it is.
 
 #### `ShipDecision::skip`
 
@@ -450,11 +578,15 @@ static ShipDecision ship()
 static ShipDecision skip()
 ```
 
+Does not ship the record.
+
 #### `ShipDecision::record`
 
 ```cpp
 static ShipDecision record(const Map& bins)
 ```
+
+Ships the bins of this map instead. A failure kept by the map fails the call.
 
 #### `Resolution`
 
@@ -470,17 +602,23 @@ What an xdr-merge handler returns.
 static Resolution keep_local()
 ```
 
+Keeps the current record; the incoming write is not applied.
+
 #### `Resolution::take_remote`
 
 ```cpp
 static Resolution take_remote()
 ```
 
+Takes the incoming write.
+
 #### `Resolution::policy`
 
 ```cpp
 static Resolution policy()
 ```
+
+Leaves the outcome to the policy the handler stands in for.
 
 #### `Resolution::record`
 
@@ -496,11 +634,17 @@ The final record: these bins, whole; a bin absent or nil is deleted. ttl -1 keep
 int32_t deliver() const
 ```
 
+Delivers the resolution and returns the status the export returns: the verdict word, or for record()
+the final bins and TTL. Fails the call instead when the bins map kept a failure. The generated export
+calls it.
+
 #### `deliver_answer`
 
 ```cpp
 template <class T> int32_t deliver_answer(const Result<T>& r)
 ```
+
+Not API, used by the UDF_ON_* exports: delivers a handler's answer and returns the export's status.
 
 #### `deliver_answer`
 
@@ -508,11 +652,16 @@ template <class T> int32_t deliver_answer(const Result<T>& r)
 inline int32_t deliver_answer(const Result<void>&)
 ```
 
+Not API, used by the UDF_ON_* exports: the acknowledgement of a handler that answers nothing.
+
 #### `UDF_ON_BEFORE_WRITE`
 
 ```cpp
 UDF_ON_BEFORE_WRITE(name)
 ```
+
+A before-write handler: `UDF_ON_BEFORE_WRITE(name) { ... }` defines
+`Result<Decision> name(const EventRecord& before, const EventRecord& after, const WriteInfo& write)`. The answer accepts the write, rejects it or replaces its bins.
 
 #### `UDF_ON_AFTER_WRITE`
 
@@ -520,11 +669,17 @@ UDF_ON_BEFORE_WRITE(name)
 UDF_ON_AFTER_WRITE(name)
 ```
 
+A after-write handler: `UDF_ON_AFTER_WRITE(name) { ... }` defines
+`Result<void> name(const EventRecord& before, const EventRecord& after, const WriteInfo& write)`. It answers nothing.
+
 #### `UDF_ON_BEFORE_DELETE`
 
 ```cpp
 UDF_ON_BEFORE_DELETE(name)
 ```
+
+A before-delete handler: `UDF_ON_BEFORE_DELETE(name) { ... }` defines
+`Result<Gate> name(const EventRecord& record, const DeleteInfo& del)`. The answer allows or refuses the delete.
 
 #### `UDF_ON_AFTER_DELETE`
 
@@ -532,11 +687,17 @@ UDF_ON_BEFORE_DELETE(name)
 UDF_ON_AFTER_DELETE(name)
 ```
 
+A after-delete handler: `UDF_ON_AFTER_DELETE(name) { ... }` defines
+`Result<void> name(const EventRecord& record, const DeleteInfo& del)`. It answers nothing.
+
 #### `UDF_ON_BEFORE_EXPIRE`
 
 ```cpp
 UDF_ON_BEFORE_EXPIRE(name)
 ```
+
+A before-expire handler: `UDF_ON_BEFORE_EXPIRE(name) { ... }` defines
+`Result<Expiry> name(const EventRecord& record, const ExpireInfo& expire)`. The answer lets the record expire or keeps it with a TTL.
 
 #### `UDF_ON_BEFORE_EVICT`
 
@@ -544,11 +705,17 @@ UDF_ON_BEFORE_EXPIRE(name)
 UDF_ON_BEFORE_EVICT(name)
 ```
 
+A before-evict handler: `UDF_ON_BEFORE_EVICT(name) { ... }` defines
+`Result<Eviction> name(const EventRecord& record, const ExpireInfo& evict)`. The answer evicts the record or protects it.
+
 #### `UDF_ON_AFTER_READ`
 
 ```cpp
 UDF_ON_AFTER_READ(name)
 ```
+
+A after-read handler: `UDF_ON_AFTER_READ(name) { ... }` defines
+`Result<ReadResult> name(const EventRecord& record, const ReadInfo& read)`. The answer leaves the record unchanged or gives other bins.
 
 #### `UDF_ON_BEFORE_TRUNCATE`
 
@@ -556,11 +723,17 @@ UDF_ON_AFTER_READ(name)
 UDF_ON_BEFORE_TRUNCATE(name)
 ```
 
+A before-truncate handler: `UDF_ON_BEFORE_TRUNCATE(name) { ... }` defines
+`Result<Gate> name(const TruncateInfo& truncate)`. The answer allows or refuses the truncate.
+
 #### `UDF_ON_AFTER_TRUNCATE`
 
 ```cpp
 UDF_ON_AFTER_TRUNCATE(name)
 ```
+
+A after-truncate handler: `UDF_ON_AFTER_TRUNCATE(name) { ... }` defines
+`Result<void> name(const TruncateInfo& truncate)`. It answers nothing.
 
 #### `UDF_ON_BEFORE_SHIP`
 
@@ -568,11 +741,17 @@ UDF_ON_AFTER_TRUNCATE(name)
 UDF_ON_BEFORE_SHIP(name)
 ```
 
+A before-ship handler: `UDF_ON_BEFORE_SHIP(name) { ... }` defines
+`Result<ShipDecision> name(const EventRecord& record, const ShipInfo& ship)`. The answer ships the record, skips it or ships other bins.
+
 #### `UDF_ON_PARTITION_TRANSFER`
 
 ```cpp
 UDF_ON_PARTITION_TRANSFER(name)
 ```
+
+A partition-transfer handler: `UDF_ON_PARTITION_TRANSFER(name) { ... }` defines
+`Result<void> name(const TransferInfo& transfer)`. It answers nothing.
 
 #### `UDF_ON_CLUSTER_CHANGE`
 
@@ -580,11 +759,17 @@ UDF_ON_PARTITION_TRANSFER(name)
 UDF_ON_CLUSTER_CHANGE(name)
 ```
 
+A cluster-change handler: `UDF_ON_CLUSTER_CHANGE(name) { ... }` defines
+`Result<void> name(const ClusterInfo& cluster)`. It answers nothing.
+
 #### `UDF_ON_NODE_LIFECYCLE`
 
 ```cpp
 UDF_ON_NODE_LIFECYCLE(name)
 ```
+
+A node-lifecycle handler: `UDF_ON_NODE_LIFECYCLE(name) { ... }` defines
+`Result<void> name(const LifecycleInfo& lifecycle)`. It answers nothing.
 
 #### `UDF_ON_TIMER`
 

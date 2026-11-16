@@ -26,8 +26,10 @@ type Bin struct {
 	name string
 }
 
+// NewBin names a bin of the record in hand. It reads nothing, so the bin need not exist.
 func NewBin(name string) Bin { return Bin{name: name} }
 
+// Name is the bin's name.
 func (b Bin) Name() string { return b.name }
 
 //==========================================================
@@ -81,6 +83,7 @@ func (b Bin) present(kind Kind, what string) (Value, bool, error) {
 	return v, true, nil
 }
 
+// Int is the bin as an integer; an error naming the bin when it is absent or of another kind.
 func (b Bin) Int() (int64, error) {
 	v, err := b.typed(KindInt, "an int")
 	return v.Payload, err
@@ -95,11 +98,15 @@ func (b Bin) IntOr(dflt int64) int64 {
 	return v.Payload
 }
 
+// Float64 is the bin as a double; an error naming the bin when it is absent or of another kind. An integer
+// bin is of another kind here: nothing is widened.
 func (b Bin) Float64() (float64, error) {
 	v, err := b.typed(KindDouble, "a double")
 	return v.Double(), err
 }
 
+// Float64Or is the bin as a double, or dflt when absent or nil; a bin of another kind, an integer
+// included, also answers dflt.
 func (b Bin) Float64Or(dflt float64) float64 {
 	v, ok, err := b.present(KindDouble, "a double")
 	if !ok || err != nil {
@@ -108,11 +115,13 @@ func (b Bin) Float64Or(dflt float64) float64 {
 	return v.Double()
 }
 
+// Bool is the bin as a boolean; an error naming the bin when it is absent or of another kind.
 func (b Bin) Bool() (bool, error) {
 	v, err := b.typed(KindBool, "a bool")
 	return v.Payload != 0, err
 }
 
+// BoolOr is the bin as a boolean, or dflt when absent or nil; a bin of another kind also answers dflt.
 func (b Bin) BoolOr(dflt bool) bool {
 	v, ok, err := b.present(KindBool, "a bool")
 	if !ok || err != nil {
@@ -121,6 +130,8 @@ func (b Bin) BoolOr(dflt bool) bool {
 	return v.Payload != 0
 }
 
+// Str is the text of a string bin, copied out; an error naming the bin when it is absent or of another
+// kind.
 func (b Bin) Str() (string, error) {
 	v, err := b.typed(KindStr, "a string")
 	if err != nil {
@@ -129,6 +140,8 @@ func (b Bin) Str() (string, error) {
 	return v.Str()
 }
 
+// StrOr is the text of a string bin, copied out, or dflt when absent or nil; a bin of another kind, or one
+// that could not be read, also answers dflt.
 func (b Bin) StrOr(dflt string) string {
 	v, ok, err := b.present(KindStr, "a string")
 	if !ok || err != nil {
@@ -183,10 +196,17 @@ func (b Bin) check(rc int32) error {
 	return statusError(rc, "could not write bin "+b.name)
 }
 
-func (b Bin) SetInt(value int64) error       { return b.check(SetInt(b.name, value)) }
+// SetInt writes an integer, staged until Commit.
+func (b Bin) SetInt(value int64) error { return b.check(SetInt(b.name, value)) }
+
+// SetFloat64 writes a double, staged until Commit.
 func (b Bin) SetFloat64(value float64) error { return b.check(SetDouble(b.name, value)) }
-func (b Bin) SetBool(value bool) error       { return b.check(SetBool(b.name, value)) }
-func (b Bin) SetStr(value string) error      { return b.check(SetStr(b.name, value)) }
+
+// SetBool writes a boolean, staged until Commit.
+func (b Bin) SetBool(value bool) error { return b.check(SetBool(b.name, value)) }
+
+// SetStr writes a string, staged until Commit.
+func (b Bin) SetStr(value string) error { return b.check(SetStr(b.name, value)) }
 
 // SetBytes writes a blob.
 func (b Bin) SetBytes(value []byte) error { return b.check(SetBlob(b.name, value)) }
@@ -200,6 +220,7 @@ func (b Bin) SetNull() error { return b.check(SetNull(b.name)) }
 // SetInts writes a list of integers from the slice in one import, no value built per element.
 func (b Bin) SetInts(values []int64) error { return b.check(SetInts(b.name, values)) }
 
+// SetFloat64s writes a list of doubles from the slice in one import, no value built per element.
 func (b Bin) SetFloat64s(values []float64) error { return b.check(SetFloat64s(b.name, values)) }
 
 // SetValue writes a value: one read from the record by position, keeping its kind; or a scalar, guest
@@ -228,6 +249,8 @@ func (b Bin) SetValue(v Value) error {
 	return b.check(SetValue(b.name, v))
 }
 
+// SetMap writes a built map. When the map kept a refusal while it was built, that error is returned and
+// nothing is written.
 func (b Bin) SetMap(m *Map) error {
 	if m.err != nil {
 		return m.err
@@ -235,6 +258,8 @@ func (b Bin) SetMap(m *Map) error {
 	return b.check(SetHandle(b.name, m.handle))
 }
 
+// SetList writes a built list. When the list kept a refusal while it was built, that error is returned and
+// nothing is written.
 func (b Bin) SetList(l *List) error {
 	if l.err != nil {
 		return l.err
@@ -242,4 +267,5 @@ func (b Bin) SetList(l *List) error {
 	return b.check(SetHandle(b.name, l.handle))
 }
 
+// Remove removes the bin from the record, staged until Commit.
 func (b Bin) Remove() error { return b.check(Remove(b.name)) }

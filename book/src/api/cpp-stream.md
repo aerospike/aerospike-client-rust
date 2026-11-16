@@ -16,9 +16,18 @@ static. UDF_STREAM_RAW(name, "(record params)", "(end params)") declares both ha
 UDF_STREAM_END(name, ret, ...)
 ```
 
+The end half of a stream UDF, declared after its UDF_STREAM_RECORD and exported as `<name>_end`: its
+return is delivered as the result, the partial. It also emits the stream's signature, built from the
+parameter lists of both halves, which is why it comes second.
+
 #### `UDF_STREAM_RAW`
 
 ```cpp
 UDF_STREAM_RAW(name, record_params, end_params)
 ```
+
+Both halves of a stream UDF in the raw form. Declares `int32_t name_record_udf_impl(int32_t args,
+int32_t argc)` and `name_end_udf_impl` likewise, exports them as `<name>_record` and `<name>_end`, and
+emits the signature from the two parameter strings. No body follows the macro: the module defines the
+two functions itself, each returning the status.
 

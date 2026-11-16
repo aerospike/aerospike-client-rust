@@ -42,6 +42,7 @@ public final class UdfMap {
         return new UdfMap(h);
     }
 
+    /** A new map with the default room, for 8 entries. */
     public static UdfMap create() {
         return create(8);
     }
@@ -51,10 +52,12 @@ public final class UdfMap {
         return new UdfMap(handle);
     }
 
+    /** The host's handle on the map, as the low-level {@code Udf.mapPut*} calls take it. */
     public int handle() {
         return handle;
     }
 
+    /** How many entries the map holds. */
     public int size() {
         return Natives.collSize(handle);
     }
@@ -83,21 +86,25 @@ public final class UdfMap {
 
     // String keys.
 
+    /** An integer under a string key. */
     public UdfMap put(String key, long value) {
         byte[] k = Udf.bytes(key);
         return check(Natives.mapPutStrInt(handle, key(k), k.length, value), key);
     }
 
+    /** A double under a string key. */
     public UdfMap put(String key, double value) {
         byte[] k = Udf.bytes(key);
         return check(Natives.mapPutStrHandle(handle, key(k), k.length, Natives.valDouble(value)), key);
     }
 
+    /** A boolean under a string key. */
     public UdfMap put(String key, boolean value) {
         byte[] k = Udf.bytes(key);
         return check(Natives.mapPutStrHandle(handle, key(k), k.length, Natives.valBool(value ? 1 : 0)), key);
     }
 
+    /** A string under a string key. */
     public UdfMap put(String key, String value) {
         byte[] k = Udf.bytes(key);
         byte[] v = Udf.bytes(value);
@@ -116,10 +123,12 @@ public final class UdfMap {
         return check(Udf.mapPutValue(handle, key, value), key);
     }
 
+    /** A built map, nested under a string key. */
     public UdfMap put(String key, UdfMap value) {
         return check(Udf.mapPutHandle(handle, key, value.handle), key);
     }
 
+    /** A built list, nested under a string key. */
     public UdfMap put(String key, UdfList value) {
         return check(Udf.mapPutHandle(handle, key, value.handle()), key);
     }
@@ -129,6 +138,7 @@ public final class UdfMap {
         return check(Udf.mapPutHandle(handle, key, Natives.valNil()), key);
     }
 
+    /** A GeoJSON document under a string key, kept as that kind rather than a string. */
     public UdfMap putGeoJson(String key, String doc) {
         byte[] k = Udf.bytes(key);
         byte[] d = Udf.bytes(doc);
@@ -138,22 +148,27 @@ public final class UdfMap {
 
     // Integer keys.
 
+    /** An integer under an integer key. */
     public UdfMap put(long key, long value) {
         return check(Udf.mapPutIInt(handle, key, value), Long.toString(key));
     }
 
+    /** A string under an integer key. */
     public UdfMap put(long key, String value) {
         return check(Udf.mapPutIStr(handle, key, value), Long.toString(key));
     }
 
+    /** A value of any kind under an integer key, the kinds as {@link #put(String, Value)} takes them. */
     public UdfMap put(long key, Value value) {
         return check(Udf.mapPutIValue(handle, key, value), Long.toString(key));
     }
 
+    /** A built map, nested under an integer key. */
     public UdfMap put(long key, UdfMap value) {
         return check(Udf.mapPutIHandle(handle, key, value.handle), Long.toString(key));
     }
 
+    /** A built list, nested under an integer key. */
     public UdfMap put(long key, UdfList value) {
         return check(Udf.mapPutIHandle(handle, key, value.handle()), Long.toString(key));
     }

@@ -18,6 +18,7 @@ public final class Decision extends Answer {
         super(verdict, code, message, bins, ttl);
     }
 
+    /** Lets the write through as it is. */
     public static Decision accept() {
         return new Decision("accept", 0, null, 0, -1);
     }

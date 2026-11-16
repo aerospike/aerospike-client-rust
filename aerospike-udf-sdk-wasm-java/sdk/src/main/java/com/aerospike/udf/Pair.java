@@ -18,7 +18,9 @@ package com.aerospike.udf;
  * holds nil, and throws {@link UdfException} for a bin of another kind.
  */
 public final class Pair {
+    /** The current record. */
     public final EventRecord local;
+    /** The incoming write. */
     public final EventRecord remote;
 
     Pair(EventRecord local, EventRecord remote) {
@@ -26,18 +28,22 @@ public final class Pair {
         this.remote = remote;
     }
 
+    /** An integer bin on each side. */
     public Both<Long> int64(String name) {
         return both(name, local.binInt(name), remote.binInt(name));
     }
 
+    /** A double bin on each side. */
     public Both<Double> float64(String name) {
         return both(name, local.binDouble(name), remote.binDouble(name));
     }
 
+    /** A boolean bin on each side. */
     public Both<Boolean> bool(String name) {
         return both(name, local.binBool(name), remote.binBool(name));
     }
 
+    /** A string bin on each side, its text copied out. */
     public Both<String> str(String name) {
         return both(name, local.binStr(name), remote.binStr(name));
     }
@@ -47,6 +53,7 @@ public final class Pair {
         return both(name, local.binList(name), remote.binList(name));
     }
 
+    /** A map bin on each side, as stored values read by position. */
     public Both<Value> map(String name) {
         return both(name, local.binMap(name), remote.binMap(name));
     }

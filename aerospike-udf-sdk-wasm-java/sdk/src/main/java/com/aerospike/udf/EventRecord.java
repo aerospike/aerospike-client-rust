@@ -20,10 +20,15 @@ import org.teavm.interop.Address;
  * record is read by: 0 for the first record the event hands over, 1 for the second.
  */
 public final class EventRecord {
+    /** The index the record is read by: 0 or 1. */
     public int which;
+    /** The record's generation; 0 on both sides of an {@code xdr-merge}. */
     public long gen;
+    /** When the record was last written; 0 on both sides of an {@code xdr-merge}. */
     public long lut;
+    /** The time to live, in seconds. */
     public long ttl;
+    /** The XDR source id of the DC that wrote this version. */
     public long srcId;
     /** The list of bin names. */
     public Value bins = new Value();
@@ -47,6 +52,7 @@ public final class EventRecord {
         return rc;
     }
 
+    /** As {@link #bin(byte[], Value)}, encoding the name on each call. */
     public int bin(String name, Value out) {
         return bin(Udf.bytes(name), out);
     }
@@ -93,24 +99,37 @@ public final class EventRecord {
         return v;
     }
 
+    /**
+     * An integer bin, or null when it is absent or nil; throws {@link UdfException} when it is of another kind.
+     */
     public Long binInt(String name) {
         Value v = typed(name, Value.INT, "an int");
 
         return v == null ? null : v.payload;
     }
 
+    /**
+     * A double bin, or null when it is absent or nil; throws {@link UdfException} when it is of another kind.
+     */
     public Double binDouble(String name) {
         Value v = typed(name, Value.DOUBLE, "a double");
 
         return v == null ? null : v.asDouble();
     }
 
+    /**
+     * A boolean bin, or null when it is absent or nil; throws {@link UdfException} when it is of another kind.
+     */
     public Boolean binBool(String name) {
         Value v = typed(name, Value.BOOL, "a bool");
 
         return v == null ? null : v.payload != 0;
     }
 
+    /**
+     * The text of a string bin, copied out, or null when it is absent or nil; throws {@link UdfException} when
+     * it is of another kind.
+     */
     public String binStr(String name) {
         Value v = typed(name, Value.STR, "a string");
 
@@ -127,10 +146,18 @@ public final class EventRecord {
         return Udf.string(b, b.length);
     }
 
+    /**
+     * A list bin as a fresh value to walk or hand on by position, or null when it is absent or nil; throws
+     * {@link UdfException} when it is of another kind.
+     */
     public Value binList(String name) {
         return typed(name, Value.LIST, "a list");
     }
 
+    /**
+     * A map bin as a fresh value to walk or hand on by position, or null when it is absent or nil; throws
+     * {@link UdfException} when it is of another kind.
+     */
     public Value binMap(String name) {
         return typed(name, Value.MAP, "a map");
     }

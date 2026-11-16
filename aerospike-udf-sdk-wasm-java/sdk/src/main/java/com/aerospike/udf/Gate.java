@@ -18,10 +18,12 @@ public final class Gate extends Answer {
         super(verdict, code, message, 0, -1);
     }
 
+    /** Lets the delete or the truncate go ahead. */
     public static Gate allow() {
         return new Gate("allow", 0, null);
     }
 
+    /** Refuses it with a result code the client sees and a message. */
     public static Gate refuse(long code, String message) {
         return new Gate("refuse", code, message);
     }

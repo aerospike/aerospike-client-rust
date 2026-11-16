@@ -37,15 +37,30 @@ public final class Udf {
 
     // Status codes a native returns. Anything at or below NEEDED_BASE means the buffer was too small, and
     // -(rc) - 16 is the size needed.
+    /** The call succeeded. */
     public static final int OK = 0;
+    /**
+     * The call failed on what it was given, such as a bin name that is empty or longer than 15 bytes, or a
+     * handle the host does not hold.
+     */
     public static final int ERR = -1;
+    /** There is no such bin, key or entry. */
     public static final int NOT_FOUND = -2;
+    /** The value is not of a kind the call takes. */
     public static final int TYPE_MISMATCH = -3;
+    /**
+     * The host refused the operation: a write the record does not accept, or a call not allowed where it was
+     * made.
+     */
     public static final int REFUSED = -4;
+    /** The buffer was too small: a status at or below this carries the size needed, {@code -(rc) - 16}. */
     public static final int NEEDED_BASE = -16;
 
+    /** A {@link #log} level: a warning in the server log. */
     public static final int LOG_WARN = 0;
+    /** A {@link #log} level: an info line in the server log. */
     public static final int LOG_INFO = 1;
+    /** A {@link #log} level: a debug line in the server log. */
     public static final int LOG_DEBUG = 2;
 
     /** Values cross the boundary at most this many per import. */
@@ -107,6 +122,7 @@ public final class Udf {
         return rc;
     }
 
+    /** As {@link #bin(byte[], Value)}, encoding the name on each call. */
     public static int bin(String name, Value out) {
         return bin(bytes(name), out);
     }
@@ -136,18 +152,27 @@ public final class Udf {
         return TYPED;
     }
 
+    /** An integer bin; throws {@link UdfException} when it is absent or of another kind. */
     public static long binInt(String name) {
         return typed(name, Value.INT, "an int").payload;
     }
 
+    /**
+     * A double bin; throws {@link UdfException} when it is absent or of another kind. An integer bin is not
+     * widened.
+     */
     public static double binDouble(String name) {
         return typed(name, Value.DOUBLE, "a double").asDouble();
     }
 
+    /** A boolean bin; throws {@link UdfException} when it is absent or of another kind. */
     public static boolean binBool(String name) {
         return typed(name, Value.BOOL, "a bool").payload != 0;
     }
 
+    /**
+     * The text of a string bin, copied out; throws {@link UdfException} when it is absent or of another kind.
+     */
     public static String binStr(String name) {
         Value v = typed(name, Value.STR, "a string");
         byte[] b = new byte[v.len];
@@ -187,6 +212,7 @@ public final class Udf {
         return new Value().set(v.kind, v.len, v.payload);
     }
 
+    /** A map bin, as a fresh value to walk, look up in or hand on by position. */
     public static Value binMap(String name) {
         Value v = typed(name, Value.MAP, "a map");
 
@@ -216,6 +242,7 @@ public final class Udf {
         return Cursor.map(v);
     }
 
+    /** A walk over the entries of the map in a bin. */
     public static Cursor<Cursor.Entry> map(String name) {
         return Cursor.map(binMap(name));
     }
@@ -317,6 +344,7 @@ public final class Udf {
         return rc;
     }
 
+    /** As {@link #get(Value, byte[], Value)}, encoding the key on each call. */
     public static int get(Value m, String key, Value out) {
         return get(m, bytes(key), out);
     }
@@ -362,16 +390,20 @@ public final class Udf {
         return Natives.ttl();
     }
 
+    /** Whether the record exists. */
     public static boolean exists() {
         return Natives.recExists() != 0;
     }
 
-    /** The server's clock in ms since the epoch, or -1 inside an event handler, where it is refused. */
+    /** The server's clock in ms since the Unix epoch, or -1 inside an event handler, where it is refused. */
     public static long now() {
         return Natives.currentTime();
     }
 
-    /** When the record was last written, in ms since the epoch. */
+    /**
+     * When the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC), which is how
+     * the server stores it. Not on the same scale as {@link #now}, which counts from the Unix epoch.
+     */
     public static long lastUpdateTime() {
         return Natives.lastUpdate();
     }
@@ -412,35 +444,49 @@ public final class Udf {
     // Writing the record.
     //
 
+    /**
+     * Writes an integer bin. Returns OK or a status. Like every write here, it is staged until the record is
+     * committed.
+     */
     public static int setInt(byte[] name, long value) {
         return Natives.setInt(Address.ofData(name), name.length, value);
     }
 
+    /** As {@link #setInt(byte[], long)}, encoding the name on each call. */
     public static int setInt(String name, long value) {
         return setInt(bytes(name), value);
     }
 
+    /** Writes a double bin. Returns OK or a status. */
     public static int setDouble(byte[] name, double value) {
         return Natives.setDouble(Address.ofData(name), name.length, value);
     }
 
+    /** As {@link #setDouble(byte[], double)}, encoding the name on each call. */
     public static int setDouble(String name, double value) {
         return setDouble(bytes(name), value);
     }
 
+    /**
+     * Writes a string bin from the first {@code valueLen} bytes of {@code value}, which are UTF-8. Returns OK
+     * or a status.
+     */
     public static int setStr(byte[] name, byte[] value, int valueLen) {
         return Natives.setStr(Address.ofData(name), name.length, Address.ofData(value), valueLen);
     }
 
+    /** Writes a string bin, encoding the name and the text on each call. */
     public static int setStr(String name, String value) {
         byte[] v = bytes(value);
         return setStr(bytes(name), v, v.length);
     }
 
+    /** Writes a blob bin from the first {@code valueLen} bytes of {@code value}. Returns OK or a status. */
     public static int setBlob(byte[] name, byte[] value, int valueLen) {
         return Natives.setBlob(Address.ofData(name), name.length, Address.ofData(value), valueLen);
     }
 
+    /** Writes all of {@code value} as a blob bin, encoding the name on each call. */
     public static int setBlob(String name, byte[] value) {
         return setBlob(bytes(name), value, value.length);
     }
@@ -450,6 +496,7 @@ public final class Udf {
         return Natives.setHandle(Address.ofData(name), name.length, handle);
     }
 
+    /** As {@link #setHandle(byte[], int)}, encoding the name on each call. */
     public static int setHandle(String name, int handle) {
         return setHandle(bytes(name), handle);
     }
@@ -459,14 +506,17 @@ public final class Udf {
         return Natives.setAt(Address.ofData(name), name.length, v.src(), v.at());
     }
 
+    /** As {@link #setValue(byte[], Value)}, encoding the name on each call. */
     public static int setValue(String name, Value v) {
         return setValue(bytes(name), v);
     }
 
+    /** Writes a boolean bin. Returns OK or a status. */
     public static int setBool(byte[] name, boolean value) {
         return Natives.setBool(Address.ofData(name), name.length, value ? 1 : 0);
     }
 
+    /** As {@link #setBool(byte[], boolean)}, encoding the name on each call. */
     public static int setBool(String name, boolean value) {
         return setBool(bytes(name), value);
     }
@@ -476,6 +526,7 @@ public final class Udf {
         return Natives.setNil(Address.ofData(name), name.length);
     }
 
+    /** As {@link #setNil(byte[])}, encoding the name on each call. */
     public static int setNil(String name) {
         return setNil(bytes(name));
     }
@@ -485,6 +536,7 @@ public final class Udf {
         return Natives.setGeoJson(Address.ofData(name), name.length, Address.ofData(doc), docLen);
     }
 
+    /** As {@link #setGeoJson(byte[], byte[], int)}, encoding the name and the document on each call. */
     public static int setGeoJson(String name, String doc) {
         byte[] d = bytes(doc);
         return setGeoJson(bytes(name), d, d.length);
@@ -495,22 +547,27 @@ public final class Udf {
         return Natives.setListInts(Address.ofData(name), name.length, Address.ofData(values), values.length * 8);
     }
 
+    /** As {@link #setListInts(byte[], long[])}, encoding the name on each call. */
     public static int setListInts(String name, long[] values) {
         return setListInts(bytes(name), values);
     }
 
+    /** Writes a list of doubles from the array, in one import, with no value built per element. */
     public static int setListDoubles(byte[] name, double[] values) {
         return Natives.setListDoubles(Address.ofData(name), name.length, Address.ofData(values), values.length * 8);
     }
 
+    /** As {@link #setListDoubles(byte[], double[])}, encoding the name on each call. */
     public static int setListDoubles(String name, double[] values) {
         return setListDoubles(bytes(name), values);
     }
 
+    /** Removes a bin from the record, staged like a write. Returns OK or a status. */
     public static int remove(byte[] name) {
         return Natives.binRemove(Address.ofData(name), name.length);
     }
 
+    /** As {@link #remove(byte[])}, encoding the name on each call. */
     public static int remove(String name) {
         return remove(bytes(name));
     }
@@ -552,6 +609,10 @@ public final class Udf {
         return Natives.listNew(capacity);
     }
 
+    /**
+     * Starts a map on the host, as {@link #newList} starts a list. The map is ordered by key, whatever order
+     * its entries are put in.
+     */
     public static int newMap(int capacity) {
         return Natives.mapNew(capacity);
     }
@@ -580,23 +641,34 @@ public final class Udf {
         return Natives.collGet(src, 0, Address.ofData(key), key.length, Address.ofData(SLOT), SLOT_SIZE) == OK;
     }
 
+    /** As {@link #mapHasKey(int, byte[])}, encoding the key on each call. */
     public static boolean mapHasKey(int m, String key) {
         return mapHasKey(m, bytes(key));
     }
 
+    /** Appends an integer to a built list. Returns OK or a status. */
     public static int listPushInt(int list, long value) {
         return Natives.listPushInt(list, value);
     }
 
+    /**
+     * Appends a string from the first {@code valueLen} bytes of {@code value}, which are UTF-8. Returns OK or a
+     * status.
+     */
     public static int listPushStr(int list, byte[] value, int valueLen) {
         return Natives.listPushStr(list, Address.ofData(value), valueLen);
     }
 
+    /** Appends a string, encoding it on each call. */
     public static int listPushStr(int list, String value) {
         byte[] v = bytes(value);
         return listPushStr(list, v, v.length);
     }
 
+    /**
+     * Appends a built value by its handle: a nested list or map, or a value from {@link #nilHandle},
+     * {@link #strHandle} or {@link #intHandle}. Returns OK or a status.
+     */
     public static int listPushHandle(int list, int value) {
         return Natives.listPush(list, value);
     }
@@ -621,27 +693,39 @@ public final class Udf {
         return Natives.listPushValues(list, Address.ofData(BATCHBUF), n * SLOT_SIZE);
     }
 
+    /** Puts an integer under a string key of a built map. Returns OK or a status. */
     public static int mapPutInt(int m, byte[] key, long value) {
         return Natives.mapPutStrInt(m, Address.ofData(key), key.length, value);
     }
 
+    /** As {@link #mapPutInt(int, byte[], long)}, encoding the key on each call. */
     public static int mapPutInt(int m, String key, long value) {
         return mapPutInt(m, bytes(key), value);
     }
 
+    /**
+     * Puts a string, the first {@code valueLen} bytes of {@code value} as UTF-8, under a string key. Returns OK
+     * or a status.
+     */
     public static int mapPutStr(int m, byte[] key, byte[] value, int valueLen) {
         return Natives.mapPutStrStr(m, Address.ofData(key), key.length, Address.ofData(value), valueLen);
     }
 
+    /** Puts a string under a string key, encoding both on each call. */
     public static int mapPutStr(int m, String key, String value) {
         byte[] v = bytes(value);
         return mapPutStr(m, bytes(key), v, v.length);
     }
 
+    /**
+     * Puts a built value, by its handle, under a string key: a nested list or map, or nil from
+     * {@link #nilHandle}. Returns OK or a status.
+     */
     public static int mapPutHandle(int m, byte[] key, int value) {
         return Natives.mapPutStrHandle(m, Address.ofData(key), key.length, value);
     }
 
+    /** As {@link #mapPutHandle(int, byte[], int)}, encoding the key on each call. */
     public static int mapPutHandle(int m, String key, int value) {
         return mapPutHandle(m, bytes(key), value);
     }
@@ -677,24 +761,29 @@ public final class Udf {
         }
     }
 
+    /** As {@link #mapPutValue(int, byte[], Value)}, encoding the key on each call. */
     public static int mapPutValue(int m, String key, Value v) {
         return mapPutValue(m, bytes(key), v);
     }
 
+    /** Puts a double under a string key. Returns OK or a status. */
     public static int mapPutDouble(int m, String key, double value) {
         byte[] k = bytes(key);
         return Natives.mapPutStrHandle(m, Address.ofData(k), k.length, Natives.valDouble(value));
     }
 
+    /** Puts a boolean under a string key. Returns OK or a status. */
     public static int mapPutBool(int m, String key, boolean value) {
         byte[] k = bytes(key);
         return Natives.mapPutStrHandle(m, Address.ofData(k), k.length, Natives.valBool(value ? 1 : 0));
     }
 
+    /** Appends a double to a built list. Returns OK or a status. */
     public static int listPushDouble(int list, double value) {
         return Natives.listPush(list, Natives.valDouble(value));
     }
 
+    /** Appends a boolean to a built list. Returns OK or a status. */
     public static int listPushBool(int list, boolean value) {
         return Natives.listPush(list, Natives.valBool(value ? 1 : 0));
     }
@@ -703,15 +792,18 @@ public final class Udf {
     // Map entries under an integer key: the Rust SDK's `Map::put_i`.
     //
 
+    /** Puts an integer under an integer key. Returns OK or a status. */
     public static int mapPutIInt(int m, long key, long value) {
         return Natives.mapPut(m, Natives.valInt(key), Natives.valInt(value));
     }
 
+    /** Puts a string under an integer key. Returns OK or a status. */
     public static int mapPutIStr(int m, long key, String value) {
         byte[] v = bytes(value);
         return Natives.mapPut(m, Natives.valInt(key), Natives.valStr(Address.ofData(v), v.length));
     }
 
+    /** Puts a built value, by its handle, under an integer key. Returns OK or a status. */
     public static int mapPutIHandle(int m, long key, int value) {
         return Natives.mapPut(m, Natives.valInt(key), value);
     }
@@ -753,6 +845,7 @@ public final class Udf {
         return Natives.valStr(Address.ofData(b), b.length);
     }
 
+    /** An integer as a handle, for {@link #mapPut}. */
     public static int intHandle(long i) {
         return Natives.valInt(i);
     }
@@ -801,35 +894,43 @@ public final class Udf {
     // Results and reporting.
     //
 
+    /** Sets nil as the result of the call. Of several results set in one call, the last is the one returned. */
     public static void resultNil() {
         Natives.resultNil();
     }
 
+    /** Sets an integer as the result. */
     public static void resultInt(long v) {
         Natives.resultInt(v);
     }
 
+    /** Sets a double as the result. */
     public static void resultDouble(double v) {
         Natives.resultDouble(v);
     }
 
+    /** Sets a boolean as the result. */
     public static void resultBool(boolean v) {
         Natives.resultBool(v ? 1 : 0);
     }
 
+    /** Sets a string as the result: the first {@code len} bytes of {@code s}, which are UTF-8. */
     public static void resultStr(byte[] s, int len) {
         Natives.resultStr(Address.ofData(s), len);
     }
 
+    /** Sets a string as the result, encoding it on each call. */
     public static void resultStr(String s) {
         byte[] b = bytes(s);
         resultStr(b, b.length);
     }
 
+    /** Sets a blob as the result: the first {@code len} bytes of {@code b}. */
     public static void resultBlob(byte[] b, int len) {
         Natives.resultBlob(Address.ofData(b), len);
     }
 
+    /** Sets all of {@code b} as a blob result. */
     public static void resultBlob(byte[] b) {
         resultBlob(b, b.length);
     }
@@ -839,11 +940,16 @@ public final class Udf {
         Natives.resultGeoJson(Address.ofData(doc), len);
     }
 
+    /** As {@link #resultGeoJson(byte[], int)}, from the text of the document. */
     public static void resultGeoJson(String doc) {
         byte[] d = bytes(doc);
         resultGeoJson(d, d.length);
     }
 
+    /**
+     * Sets a built list or map as the result, by its handle. Returns OK, or ERR when the host has no value
+     * under the handle.
+     */
     public static int resultHandle(int handle) {
         return Natives.resultHandle(handle);
     }
@@ -860,6 +966,7 @@ public final class Udf {
         return 1;
     }
 
+    /** Writes a line to the server's log at {@link #LOG_WARN}, {@link #LOG_INFO} or {@link #LOG_DEBUG}. */
     public static void log(int level, String message) {
         byte[] b = bytes(message);
         Natives.log(level, Address.ofData(b), b.length);
@@ -891,6 +998,7 @@ public final class Udf {
         return Natives.timerSet(Address.ofData(b), b.length, delayMs);
     }
 
+    /** Cancels the timer set on the record in hand under {@code name}. Returns OK, or REFUSED. */
     public static int timerCancel(String name) {
         byte[] b = bytes(name);
         return Natives.timerCancel(Address.ofData(b), b.length);
@@ -980,6 +1088,7 @@ public final class Udf {
         return found;
     }
 
+    /** As {@link #listHasStr(Value, byte[])}, encoding the text on each call. */
     public static boolean listHasStr(Value list, String text) {
         return listHasStr(list, bytes(text));
     }
@@ -995,6 +1104,7 @@ public final class Udf {
         return n == text.length && equalBytes(TEXT, text, n);
     }
 
+    /** As {@link #strIs(Value, byte[])}, encoding the text on each call. */
     public static boolean strIs(Value v, String text) {
         return strIs(v, bytes(text));
     }
@@ -1040,16 +1150,27 @@ public final class Udf {
         return v;
     }
 
+    /**
+     * An integer map entry by string key, or {@code dflt} when there is none, it is not an integer, or
+     * {@code m} is not a map.
+     */
     public static long mapInt(Value m, String key, long dflt) {
         Value v = mapGet(m, key);
 
         return v.kind == Value.INT ? v.payload : dflt;
     }
 
+    /**
+     * A string map entry by string key, or "" when there is none, it is not a string, or {@code m} is not a
+     * map. A string over 256 bytes also reads as "".
+     */
     public static String mapStr(Value m, String key) {
         return str(mapGet(m, key));
     }
 
+    /**
+     * Whether a map entry by string key is the boolean true; false when there is none or it is of another kind.
+     */
     public static boolean mapBool(Value m, String key) {
         Value v = mapGet(m, key);
 

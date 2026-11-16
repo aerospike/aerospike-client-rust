@@ -24,6 +24,7 @@ public final class Conflict {
     public Value description = new Value();
     /** The incoming bins that would lose under bin convergence, as a stored list. */
     public Value lost = new Value();
+    /** The call is a dry run of the merge, not a live one. */
     public boolean dryRun;
     /** Bound with {@code trigger=conflict}: a bin would lose under bin convergence. */
     public boolean conflictTrigger;
@@ -35,7 +36,9 @@ public final class Conflict {
     public boolean remoteDeletedRecord;
     /** The current record is a tombstone: exists, no bins. */
     public boolean localTombstone;
+    /** The current record, this node's, read by index 0. */
     public final EventRecord local = new EventRecord();
+    /** The incoming XDR write, as shipped, read by index 1. */
     public final EventRecord remote = new EventRecord();
 
     /** Reads an event call's arguments. False when they are not an xdr-merge. */
@@ -97,16 +100,24 @@ public final class Conflict {
 
     // The verdicts. Each returns the status the handler returns.
 
+    /**
+     * Answers {@code keep-local}: the current record stays and the incoming write is dropped. Returns 0, the
+     * status the handler returns.
+     */
     public static int keepLocal() {
         Udf.resultStr("keep-local");
         return 0;
     }
 
+    /** Answers {@code take-remote}: the incoming write is applied whole. Returns 0. */
     public static int takeRemote() {
         Udf.resultStr("take-remote");
         return 0;
     }
 
+    /**
+     * Answers {@code policy}: the namespace's policy decides, as it would have without the event. Returns 0.
+     */
     public static int policy() {
         Udf.resultStr("policy");
         return 0;

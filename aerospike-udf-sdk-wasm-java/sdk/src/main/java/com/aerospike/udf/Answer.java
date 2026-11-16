@@ -38,6 +38,7 @@ public abstract class Answer {
         return Events.answer(verdict, code, message, bins, ttl);
     }
 
+    /** The verdict word as the server reads it, such as {@code accept} or {@code keep-local}. */
     public String verdict() {
         return verdict;
     }

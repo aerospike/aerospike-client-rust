@@ -3,10 +3,13 @@
 [Introduction](introduction.md)
 
 - [Configuration](configuration.md)
+- [How the engine runs a module](engine.md)
+- [Security](security.md)
 
 # Record UDFs
 
 - [Record UDFs](record-udfs/README.md)
+  - [Tutorial: working with a record](record-udfs/tutorial.md)
   - [Rust](record-udfs/rust.md)
   - [Go](record-udfs/go.md)
   - [C](record-udfs/c.md)
@@ -25,6 +28,7 @@
 # Events
 
 - [The event system](events/README.md)
+  - [Tutorial: handling records in events](events/tutorial.md)
   - [Rust](events/rust.md)
   - [Go](events/go.md)
   - [C](events/c.md)

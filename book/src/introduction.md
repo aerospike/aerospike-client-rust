@@ -92,7 +92,10 @@ reference for that language, generated from the SDK's source.
 ## How to read this book
 
 [Configuration](configuration.md) is the server side: the `mod-wamr` stanza and what the events need.
-[Record UDFs](record-udfs/README.md) is where to start writing; its Rust chapter walks through a real
+[How the engine runs a module](engine.md) is what the server keeps between calls and builds for each
+one, next to the Lua engine, and what it measured. [Security](security.md) is what a module can
+reach, what stops it, and where the design is still weak. [Record UDFs](record-udfs/README.md) is where to
+start writing; its Rust chapter walks through a real
 module. [Stream UDFs](stream-udfs/README.md) is short, because a stream UDF is a record UDF with two
 entry points and one rule about state. [The event system](events/README.md) is the longest part: the
 binding model, every event kind with its payload and answers, timers, and then the four language

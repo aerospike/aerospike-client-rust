@@ -22,6 +22,7 @@ type Error struct {
 	Msg    string
 }
 
+// Error is the message, which makes *Error an error.
 func (e *Error) Error() string { return e.Msg }
 
 // Errorf-free message building, so that fmt stays out of the module.

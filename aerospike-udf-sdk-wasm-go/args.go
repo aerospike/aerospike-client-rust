@@ -43,6 +43,8 @@ func mismatch(fn string, i int, p, want string) error {
 	return errorf(TypeMismatch, fn, ": argument ", strconv.Itoa(i+1), " (", p, ") is not ", want)
 }
 
+// ArgInt64 is argument i as an integer. The error, which names the function fn and the parameter p, says
+// the argument is missing or is not an int.
 func ArgInt64(a []Value, n int32, i int, fn, p string) (int64, error) {
 	v, err := argAt(a, n, i, fn, p)
 	if err != nil {
@@ -54,6 +56,8 @@ func ArgInt64(a []Value, n int32, i int, fn, p string) (int64, error) {
 	return v.Payload, nil
 }
 
+// ArgInt32 is argument i as a 32-bit integer; an error when it is missing, not an int, or does not fit 32
+// bits.
 func ArgInt32(a []Value, n int32, i int, fn, p string) (int32, error) {
 	x, err := ArgInt64(a, n, i, fn, p)
 	if err != nil {
@@ -65,6 +69,7 @@ func ArgInt32(a []Value, n int32, i int, fn, p string) (int32, error) {
 	return int32(x), nil
 }
 
+// ArgInt is argument i as an int, with ArgInt64's errors. The conversion to int is not range checked.
 func ArgInt(a []Value, n int32, i int, fn, p string) (int, error) {
 	x, err := ArgInt64(a, n, i, fn, p)
 	return int(x), err
@@ -85,6 +90,7 @@ func ArgFloat64(a []Value, n int32, i int, fn, p string) (float64, error) {
 	return 0, mismatch(fn, i, p, "a double")
 }
 
+// ArgBool is argument i as a boolean; an error when it is missing or not a bool.
 func ArgBool(a []Value, n int32, i int, fn, p string) (bool, error) {
 	v, err := argAt(a, n, i, fn, p)
 	if err != nil {
@@ -96,6 +102,7 @@ func ArgBool(a []Value, n int32, i int, fn, p string) (bool, error) {
 	return v.Payload != 0, nil
 }
 
+// ArgString is argument i as a string, copied out; an error when it is missing or not a string.
 func ArgString(a []Value, n int32, i int, fn, p string) (string, error) {
 	v, err := argAt(a, n, i, fn, p)
 	if err != nil {
@@ -136,6 +143,7 @@ func ArgRest(a []Value, n int32, i int) []Value {
 
 // The optional forms: nil when the argument is absent or nil.
 
+// OptInt64 is argument i as an integer, nil when it is absent or nil; an error when it is of another kind.
 func OptInt64(a []Value, n int32, i int, fn, p string) (*int64, error) {
 	if argNone(a, n, i) {
 		return nil, nil
@@ -144,6 +152,8 @@ func OptInt64(a []Value, n int32, i int, fn, p string) (*int64, error) {
 	return &x, err
 }
 
+// OptFloat64 is argument i as a double, or an int widened to one; nil when it is absent or nil, an error
+// when it is of another kind.
 func OptFloat64(a []Value, n int32, i int, fn, p string) (*float64, error) {
 	if argNone(a, n, i) {
 		return nil, nil
@@ -152,6 +162,7 @@ func OptFloat64(a []Value, n int32, i int, fn, p string) (*float64, error) {
 	return &x, err
 }
 
+// OptBool is argument i as a boolean, nil when it is absent or nil; an error when it is of another kind.
 func OptBool(a []Value, n int32, i int, fn, p string) (*bool, error) {
 	if argNone(a, n, i) {
 		return nil, nil
@@ -160,6 +171,7 @@ func OptBool(a []Value, n int32, i int, fn, p string) (*bool, error) {
 	return &x, err
 }
 
+// OptString is argument i as a string, nil when it is absent or nil; an error when it is of another kind.
 func OptString(a []Value, n int32, i int, fn, p string) (*string, error) {
 	if argNone(a, n, i) {
 		return nil, nil
@@ -168,6 +180,8 @@ func OptString(a []Value, n int32, i int, fn, p string) (*string, error) {
 	return &x, err
 }
 
+// OptValue is argument i as a value of any kind, nil when it is absent or nil. The pointer is into a, and
+// the error is always nil.
 func OptValue(a []Value, n int32, i int, fn, p string) (*Value, error) {
 	if argNone(a, n, i) {
 		return nil, nil

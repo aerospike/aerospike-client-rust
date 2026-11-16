@@ -18,10 +18,12 @@ public final class Eviction extends Answer {
         super(verdict, 0, null, 0, -1);
     }
 
+    /** Lets the record be evicted. */
     public static Eviction evict() {
         return new Eviction("evict");
     }
 
+    /** Leaves the record alone. */
     public static Eviction protect() {
         return new Eviction("protect");
     }

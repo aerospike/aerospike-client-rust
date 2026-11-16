@@ -1,0 +1,21 @@
+[package]
+name = "aerospike-udf-tutorial"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+aerospike-udf-sdk-wasm = { path = "../../../aerospike-udf-sdk-wasm" }
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"
+strip = true
+
+# Its own workspace root, like the SDK's examples. The book's tutorial pages include their snippets from
+# src/lib.rs; check them with `cargo check --target wasm32-unknown-unknown`.
+[workspace]

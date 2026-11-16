@@ -44,6 +44,7 @@ func (a Answer) Deliver() int32 {
 	return answer(a.verdict, a.code, a.message, a.bins, a.ttl)
 }
 
+// Verdict is the answer's verdict word, such as "accept" or "reject".
 func (a Answer) Verdict() string { return a.verdict }
 
 func withBinsOf(verdict string, m *Map, ttl int64) Answer {
@@ -53,7 +54,10 @@ func withBinsOf(verdict string, m *Map, ttl int64) Answer {
 // Decision is what a before-write handler returns.
 type Decision struct{ Answer }
 
+// Accept lets the write proceed as it is.
 func Accept() Decision { return Decision{Answer{verdict: "accept", ttl: -1}} }
+
+// Reject fails the write with this result code (a server code 1..255; 22 is "forbidden") and message.
 func Reject(code int64, message string) Decision {
 	return Decision{Answer{verdict: "reject", code: code, message: message, ttl: -1}}
 }
@@ -67,7 +71,10 @@ func AcceptRecordTTL(bins *Map, ttl int64) Decision { return Decision{withBinsOf
 // Gate is what a before-delete or before-truncate handler returns.
 type Gate struct{ Answer }
 
+// Allow lets the delete or truncate proceed.
 func Allow() Gate { return Gate{Answer{verdict: "allow", ttl: -1}} }
+
+// Refuse refuses the delete or truncate with this result code and message.
 func Refuse(code int64, message string) Gate {
 	return Gate{Answer{verdict: "refuse", code: code, message: message, ttl: -1}}
 }
@@ -75,6 +82,7 @@ func Refuse(code int64, message string) Gate {
 // Expiry is what a before-expire handler returns.
 type Expiry struct{ Answer }
 
+// Expire lets the record expire.
 func Expire() Expiry { return Expiry{Answer{verdict: "expire", ttl: -1}} }
 
 // Keep keeps the record, with this many more seconds to live.
@@ -83,29 +91,45 @@ func Keep(ttl int64) Expiry { return Expiry{Answer{verdict: "keep", ttl: ttl}} }
 // Eviction is what a before-evict handler returns.
 type Eviction struct{ Answer }
 
-func Evict() Eviction   { return Eviction{Answer{verdict: "evict", ttl: -1}} }
+// Evict lets the record be evicted.
+func Evict() Eviction { return Eviction{Answer{verdict: "evict", ttl: -1}} }
+
+// Protect keeps the record from this eviction.
 func Protect() Eviction { return Eviction{Answer{verdict: "protect", ttl: -1}} }
 
 // ReadResult is what an after-read handler returns.
 type ReadResult struct{ Answer }
 
-func Unchanged() ReadResult           { return ReadResult{Answer{verdict: "unchanged", ttl: -1}} }
+// Unchanged answers the read with the record as it is.
+func Unchanged() ReadResult { return ReadResult{Answer{verdict: "unchanged", ttl: -1}} }
+
+// ReadRecord answers the read with these bins instead, whole; a nil leaves a bin out.
 func ReadRecord(bins *Map) ReadResult { return ReadResult{withBinsOf("record", bins, -1)} }
 
 // ShipDecision is what a before-ship handler returns.
 type ShipDecision struct{ Answer }
 
-func Ship() ShipDecision                { return ShipDecision{Answer{verdict: "ship", ttl: -1}} }
-func Skip() ShipDecision                { return ShipDecision{Answer{verdict: "skip", ttl: -1}} }
+// Ship ships the record as it is.
+func Ship() ShipDecision { return ShipDecision{Answer{verdict: "ship", ttl: -1}} }
+
+// Skip does not ship the record.
+func Skip() ShipDecision { return ShipDecision{Answer{verdict: "skip", ttl: -1}} }
+
+// ShipRecord ships these bins instead, whole; a nil leaves a bin out.
 func ShipRecord(bins *Map) ShipDecision { return ShipDecision{withBinsOf("record", bins, -1)} }
 
 // Resolution is what an xdr-merge handler returns: keep the current record, apply the incoming write
 // whole, let the namespace's policy decide, or the final record.
 type Resolution struct{ Answer }
 
-func KeepLocal() Resolution  { return Resolution{Answer{verdict: "keep-local", ttl: -1}} }
+// KeepLocal keeps the local record; the incoming write is dropped.
+func KeepLocal() Resolution { return Resolution{Answer{verdict: "keep-local", ttl: -1}} }
+
+// TakeRemote applies the incoming write whole, as if it had won every bin.
 func TakeRemote() Resolution { return Resolution{Answer{verdict: "take-remote", ttl: -1}} }
-func Policy() Resolution     { return Resolution{Answer{verdict: "policy", ttl: -1}} }
+
+// Policy lets the namespace's policy decide, as it would have without the event.
+func Policy() Resolution { return Resolution{Answer{verdict: "policy", ttl: -1}} }
 
 // Resolve is the final record: these bins, whole - a bin not in the map, or nil, is deleted - keeping
 // the TTL the incoming write asked for.
@@ -152,6 +176,7 @@ func (r *EventRecord) Int(name string) (int64, bool) {
 	return v.Payload, true
 }
 
+// Float64 is a double bin; false when absent, nil or of another kind. An integer bin is not widened.
 func (r *EventRecord) Float64(name string) (float64, bool) {
 	v, ok := r.Get(name)
 	if !ok || v.Kind != KindDouble {
@@ -160,6 +185,7 @@ func (r *EventRecord) Float64(name string) (float64, bool) {
 	return v.Double(), true
 }
 
+// Bool is a boolean bin; false when absent, nil or of another kind.
 func (r *EventRecord) Bool(name string) (bool, bool) {
 	v, ok := r.Get(name)
 	if !ok || v.Kind != KindBool {
@@ -168,6 +194,7 @@ func (r *EventRecord) Bool(name string) (bool, bool) {
 	return v.Payload != 0, true
 }
 
+// Str is the text of a string bin, copied out; false when absent, nil, of another kind, or unreadable.
 func (r *EventRecord) Str(name string) (string, bool) {
 	v, ok := r.Get(name)
 	if !ok || v.Kind != KindStr {
@@ -270,24 +297,30 @@ func both[T any](p Pair, name string, l T, hasL bool, r T, hasR bool) Both[T] {
 	}
 }
 
+// Int is an int bin on each side; a side where it is absent, nil or of another kind is missing.
 func (p Pair) Int(name string) Both[int64] {
 	l, hl := p.Local.Int(name)
 	r, hr := p.Remote.Int(name)
 	return both(p, name, l, hl, r, hr)
 }
 
+// Float64 is a double bin on each side; a side where it is absent, nil or of another kind, an integer
+// included, is missing.
 func (p Pair) Float64(name string) Both[float64] {
 	l, hl := p.Local.Float64(name)
 	r, hr := p.Remote.Float64(name)
 	return both(p, name, l, hl, r, hr)
 }
 
+// Bool is a boolean bin on each side; a side where it is absent, nil or of another kind is missing.
 func (p Pair) Bool(name string) Both[bool] {
 	l, hl := p.Local.Bool(name)
 	r, hr := p.Remote.Bool(name)
 	return both(p, name, l, hl, r, hr)
 }
 
+// Str is the text of a string bin on each side, copied out; a side where it is absent, nil or of another
+// kind is missing.
 func (p Pair) Str(name string) Both[string] {
 	l, hl := p.Local.Str(name)
 	r, hr := p.Remote.Str(name)
@@ -362,6 +395,7 @@ func (b Both[T]) Ordered() (older T, hasOlder bool, newer T, hasNewer bool) {
 	return b.Remote, b.HasRemote, b.Local, b.HasLocal
 }
 
+// LocalOrRemote is the local side when it exists, the remote side otherwise; false when neither exists.
 func (b Both[T]) LocalOrRemote() (T, bool) {
 	if b.HasLocal {
 		return b.Local, true
@@ -369,6 +403,7 @@ func (b Both[T]) LocalOrRemote() (T, bool) {
 	return b.Remote, b.HasRemote
 }
 
+// RemoteOrLocal is the remote side when it exists, the local side otherwise; false when neither exists.
 func (b Both[T]) RemoteOrLocal() (T, bool) {
 	if b.HasRemote {
 		return b.Remote, true

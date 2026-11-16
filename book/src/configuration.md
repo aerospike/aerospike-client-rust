@@ -49,9 +49,10 @@ the 2.4.3 snapshot, the 2.4.5 release and main.
   transaction times out.
 - A stream UDF has no deadline from the query, so a stream module that loops will hold a query thread.
 - Each call has a table of 256 handles for cursors and built collections, and takes at most 32 arguments.
-- Linear memory persists across calls in an instance (a module is instantiated once per registration, and
-  a stream instance lives for a query thread's whole run), so the Rust SDK's optional allocator is a real
-  one that frees, not an arena reset per call.
+- A record UDF gets a fresh instance per call and a stream UDF one instance per query thread, kept across
+  that thread's partition slices; linear memory persists across the calls of one instance, so the Rust
+  SDK's optional allocator is a real one that frees, not an arena reset per call. [How the engine runs a
+  module](engine.md) has the whole model and what it costs.
 
 ## Registering a module
 

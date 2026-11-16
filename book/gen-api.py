@@ -79,7 +79,7 @@ def parse_rust(path):
         if line.startswith('impl') and line.rstrip().endswith('{'):
             m = re.match(r'impl(?:<[^>]*>)?\s+(?:(\S+)\s+for\s+)?(\S+)', line)
             if m and m.group(1):
-                items.append((area_of(section), 'impl', f'impl {m.group(1)} for {m.group(2)}', line.rstrip(' {'), [], ''))
+                items.append((area_of(section), 'impl', f'impl {m.group(1)} for {m.group(2)}', line.rstrip(' {'), doc, ''))
                 impl_of = None
                 depth = 1
                 i += 1
@@ -184,6 +184,14 @@ def parse_go(path):
             i += 1
             continue
         m = re.match(r'^type ([A-Z]\w*)(?:\[[^\]]*\])? (struct|interface)', line)
+        if m and line.rstrip().endswith('}'):
+            # A struct or interface written on one line, `type Decision struct{ Answer }`: the
+            # declaration is its own body. Reading on for a closing brace would swallow every item
+            # up to the next multi-line declaration's.
+            items.append((area_of(section), 'type', m.group(1), line.strip(), doc, ''))
+            doc = []
+            i += 1
+            continue
         if m:
             k = i + 1
             body = [line]

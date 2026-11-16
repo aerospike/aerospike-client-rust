@@ -52,7 +52,9 @@ import java.util.NoSuchElementException;
 public final class Cursor<T> implements AutoCloseable, Iterable<T> {
     /** One entry of a stored map, as a map cursor's for-each yields it: a key and a value, both fresh. */
     public static final class Entry implements Map.Entry<Value, Value> {
+        /** The entry's key. */
         public final Value key;
+        /** The entry's value. */
         public final Value value;
 
         Entry(Value key, Value value) {
@@ -60,11 +62,13 @@ public final class Cursor<T> implements AutoCloseable, Iterable<T> {
             this.value = value;
         }
 
+        /** The key: the same object as {@link #key}. */
         @Override
         public Value getKey() {
             return key;
         }
 
+        /** The value: the same object as {@link #value}. */
         @Override
         public Value getValue() {
             return value;

@@ -25,6 +25,10 @@ public final class UdfList {
         this.handle = handle;
     }
 
+    /**
+     * A new list with room for {@code capacity} elements, which it grows past; throws {@link UdfException} when
+     * the host cannot build it.
+     */
     public static UdfList create(int capacity) {
         int h = Natives.listNew(capacity);
 
@@ -35,6 +39,7 @@ public final class UdfList {
         return new UdfList(h);
     }
 
+    /** A new list with the default room, for 8 elements. */
     public static UdfList create() {
         return create(8);
     }
@@ -44,14 +49,17 @@ public final class UdfList {
         return new UdfList(handle);
     }
 
+    /** The host's handle on the list, as the low-level {@code Udf.listPush*} calls take it. */
     public int handle() {
         return handle;
     }
 
+    /** How many elements the list holds. */
     public int size() {
         return Natives.collSize(handle);
     }
 
+    /** As a value, for a batch or a result. */
     public Value asValue() {
         return Value.ofHandle(handle);
     }
@@ -64,18 +72,22 @@ public final class UdfList {
         return this;
     }
 
+    /** Appends an integer. */
     public UdfList add(long value) {
         return check(Natives.listPushInt(handle, value));
     }
 
+    /** Appends a double. */
     public UdfList add(double value) {
         return check(Natives.listPush(handle, Natives.valDouble(value)));
     }
 
+    /** Appends a boolean. */
     public UdfList add(boolean value) {
         return check(Natives.listPush(handle, Natives.valBool(value ? 1 : 0)));
     }
 
+    /** Appends a string. */
     public UdfList add(String value) {
         byte[] v = Udf.bytes(value);
         return check(Natives.listPushStr(handle, Address.ofData(v), v.length));
@@ -112,18 +124,22 @@ public final class UdfList {
         }
     }
 
+    /** Appends a built map, nested. */
     public UdfList add(UdfMap value) {
         return check(Natives.listPush(handle, value.handle()));
     }
 
+    /** Appends a built list, nested. */
     public UdfList add(UdfList value) {
         return check(Natives.listPush(handle, value.handle));
     }
 
+    /** Appends nil. */
     public UdfList addNull() {
         return check(Natives.listPush(handle, Natives.valNil()));
     }
 
+    /** Appends a GeoJSON document, kept as that kind rather than a string. */
     public UdfList addGeoJson(String doc) {
         byte[] d = Udf.bytes(doc);
         return check(Natives.listPush(handle, Natives.valGeoJson(Address.ofData(d), d.length)));

@@ -209,6 +209,8 @@ const (
 // Kind is a value's kind, as the host hands it out.
 type Kind int32
 
+// The kinds of a Value. KindAbsent stands for no value at all (a missing bin, map entry or argument), as
+// distinct from a stored nil (KindNil). KindOther is a value a UDF cannot interpret.
 const (
 	KindAbsent  Kind = -1
 	KindNil     Kind = 0
@@ -231,6 +233,7 @@ const (
 	KindHandle       Kind = 19
 )
 
+// Log levels for Log, most severe first.
 const (
 	LogWarn  = 0
 	LogInfo  = 1
@@ -254,20 +257,30 @@ func (v Value) At() int32 { return int32(v.Payload & 0xffffffff) }
 // Double is the payload as a float64.
 func (v Value) Double() float64 { return math.Float64frombits(uint64(v.Payload)) }
 
-// Values of the guest's, for a batch.
+// IntValue is an integer as a value of the guest's, for a batch.
 func IntValue(i int64) Value { return Value{Kind: KindInt, Payload: i} }
+
+// DoubleValue is a double as a value of the guest's, for a batch.
 func DoubleValue(d float64) Value {
 	return Value{Kind: KindDouble, Payload: int64(math.Float64bits(d))}
 }
+
+// StrValue is a string of the guest's as a value, for a batch. It holds the address of s's bytes, not a
+// copy, so s must stay alive until the host has taken the value.
 func StrValue(s string) Value {
 	return Value{Kind: KindGuestStr, Len: uint32(len(s)), Payload: int64(uintptr(unsafe.Pointer(unsafe.StringData(s))))}
 }
+
+// BlobValue is a blob of the guest's as a value, for a batch. It holds the address of b's bytes, not a
+// copy, so b must stay alive until the host has taken the value.
 func BlobValue(b []byte) Value {
 	if len(b) == 0 {
 		return Value{Kind: KindGuestBlob}
 	}
 	return Value{Kind: KindGuestBlob, Len: uint32(len(b)), Payload: int64(uintptr(unsafe.Pointer(&b[0])))}
 }
+
+// HandleValue is a built list or map as a value, by its handle, for a batch.
 func HandleValue(h int32) Value { return Value{Kind: KindHandle, Payload: int64(h)} }
 
 // StrBytesValue is a string value over bytes the caller holds, without making a Go string of them.
@@ -368,18 +381,31 @@ func Exists() bool { return recExists() != 0 }
 // Writing, building, reporting.
 //
 
+// SetInt writes an integer to a bin.
+// Staged until the record is committed. The status is Err for a name that is empty or longer than 15
+// bytes, Refused when the record refuses the write.
 func SetInt(name string, value int64) int32 {
 	return setInt(strptr(name), int32(len(name)), value)
 }
 
+// SetDouble writes a double to a bin.
+// Staged until the record is committed. The status is Err for a name that is empty or longer than 15
+// bytes, Refused when the record refuses the write.
 func SetDouble(name string, value float64) int32 {
 	return setDouble(strptr(name), int32(len(name)), value)
 }
 
+// SetStr writes a string to a bin; the host copies the bytes.
+// Staged until the record is committed. The status is Err for a name that is empty or longer than 15
+// bytes, Refused when the record refuses the write.
 func SetStr(name, value string) int32 {
 	return setStr(strptr(name), int32(len(name)), strptr(value), int32(len(value)))
 }
 
+// SetBlob writes a blob to a bin; the host copies the bytes. Staged until the record is committed. The
+// status is TypeMismatch when the bin holds bytes of another subtype, such as an HLL, which a plain blob
+// would relabel; Err for a name that is empty or longer than 15 bytes; Refused when the record refuses
+// the write.
 func SetBlob(name string, value []byte) int32 {
 	return setBlob(strptr(name), int32(len(name)), ptr(value), int32(len(value)))
 }
@@ -394,16 +420,24 @@ func SetValue(name string, v Value) int32 {
 	return setAt(strptr(name), int32(len(name)), v.Src(), v.At())
 }
 
+// Remove removes a bin from the record, staged like a write. The status is Err for a name that is empty or
+// longer than 15 bytes, Refused when the record refuses.
 func Remove(name string) int32 { return binRemove(strptr(name), int32(len(name))) }
 
 // Update commits the staged writes to an existing record; Create to one that does not exist yet.
 func Update() int32 { return recUpdate() }
+
+// Create commits the staged writes as a new record. The status is Refused when the server does not
+// create it.
 func Create() int32 { return recCreate() }
 
 // NewListHandle and NewMapHandle start a collection on the host as a bare handle, for the low-level
 // calls; NewList and NewMap are the typed builders.
 func NewListHandle(capacity int) int32 { return listNew(int32(capacity)) }
-func NewMapHandle(capacity int) int32  { return mapNew(int32(capacity)) }
+
+// NewMapHandle starts a map on the host with room for capacity entries and returns its bare handle, 0
+// when it could not. A built map is ordered by key, not by insertion.
+func NewMapHandle(capacity int) int32 { return mapNew(int32(capacity)) }
 
 // NilHandle is a nil value as a handle, for a map entry that means "no such bin" in a record resolution.
 func NilHandle() int32 { return valNil() }
@@ -423,10 +457,18 @@ func MapHasKey(m int32, key string) bool {
 	return collGet(src, 0, strptr(key), int32(len(key)), unsafe.Pointer(&v), int32(unsafe.Sizeof(v))) == OK
 }
 
+// ListPushInt appends an integer to a built list. The status is Err when list is not a built list.
 func ListPushInt(list int32, value int64) int32 { return listPushInt(list, value) }
+
+// ListPushStr appends a string to a built list; the host copies the bytes. The status is Err when list is
+// not a built list.
 func ListPushStr(list int32, value string) int32 {
 	return listPushStr(list, strptr(value), int32(len(value)))
 }
+
+// ListPushHandle appends a value held by handle (a built collection, or one of NilHandle, IntHandle or
+// StrHandle) to a built list. The status is Err when list is not a built list or value is not a usable
+// handle.
 func ListPushHandle(list, value int32) int32 { return listPush(list, value) }
 
 // ListPushValue appends any value: a scalar by value, guest bytes by address, a stored value by position,
@@ -464,12 +506,21 @@ func ListPushValues(list int32, vals []Value) int32 {
 	return listPushValues(list, unsafe.Pointer(&vals[0]), int32(len(vals)*16))
 }
 
+// MapPutInt puts an integer under a string key in a built map. The status is Err when m is not a built
+// map.
 func MapPutInt(m int32, key string, value int64) int32 {
 	return mapPutStrInt(m, strptr(key), int32(len(key)), value)
 }
+
+// MapPutStr puts a string under a string key in a built map; the host copies the bytes. The status is Err
+// when m is not a built map.
 func MapPutStr(m int32, key, value string) int32 {
 	return mapPutStrStr(m, strptr(key), int32(len(key)), strptr(value), int32(len(value)))
 }
+
+// MapPutHandle puts a value held by handle (a built collection, or one of NilHandle, IntHandle or
+// StrHandle) under a string key in a built map. The status is Err when m is not a built map or value is
+// not a usable handle.
 func MapPutHandle(m int32, key string, value int32) int32 {
 	return mapPutStrHandle(m, strptr(key), int32(len(key)), value)
 }
@@ -509,11 +560,20 @@ func MapPutEntries(m int32, pairs []Value) int32 {
 	return mapPutEntries(m, unsafe.Pointer(&pairs[0]), int32(len(pairs)*16))
 }
 
+// Size is the number of elements of the list, or entries of the map, behind a handle: a built collection
+// or an open cursor. Err (-1) when the handle is neither.
 func Size(handle int32) int { return int(collSize(handle)) }
 
-func ResultNil()             { resultNil() }
-func ResultInt(v int64)      { resultInt(v) }
+// ResultNil sets nil as the call's result. Of several Result calls, the last one wins.
+func ResultNil() { resultNil() }
+
+// ResultInt sets an integer as the call's result.
+func ResultInt(v int64) { resultInt(v) }
+
+// ResultDouble sets a double as the call's result.
 func ResultDouble(v float64) { resultDouble(v) }
+
+// ResultBool sets a boolean as the call's result.
 func ResultBool(v bool) {
 	if v {
 		resultBool(1)
@@ -521,8 +581,15 @@ func ResultBool(v bool) {
 		resultBool(0)
 	}
 }
-func ResultStr(s string)         { resultStr(strptr(s), int32(len(s))) }
-func ResultBlob(b []byte)        { resultBlob(ptr(b), int32(len(b))) }
+
+// ResultStr sets a string as the call's result; the host copies the bytes.
+func ResultStr(s string) { resultStr(strptr(s), int32(len(s))) }
+
+// ResultBlob sets a blob as the call's result; the host copies the bytes.
+func ResultBlob(b []byte) { resultBlob(ptr(b), int32(len(b))) }
+
+// ResultHandle sets a built list or map as the call's result, by handle. The status is Err when the
+// handle is not usable.
 func ResultHandle(h int32) int32 { return resultHandle(h) }
 
 // ResultValue hands a value read from the record back as the result, built by the server from its bytes.
@@ -534,6 +601,8 @@ func Fail(message string) int32 {
 	return 1
 }
 
+// Log writes a message to the server log at a level: LogWarn, LogInfo or LogDebug, any other value
+// logging as debug. The host keeps the first 511 bytes of the message.
 func Log(level int32, message string) { log(level, strptr(message), int32(len(message))) }
 
 // Signature is the text behind a `__udf_sig_<name>` export: the address of a NUL-terminated string, which the
@@ -792,6 +861,8 @@ type WriteInfo struct {
 	DurableDelete bool
 }
 
+// EventWriteInfo reads the description's `write` entry into out. False when the description has none; a
+// field the entry lacks is left at its zero value.
 func EventWriteInfo(desc Value, out *WriteInfo) bool {
 	m := MapGet(desc, "write")
 	if m.Kind != KindMap {
@@ -805,11 +876,13 @@ func EventWriteInfo(desc Value, out *WriteInfo) bool {
 	return true
 }
 
+// DeleteInfo describes the delete a before-delete or after-delete handler is asked about.
 type DeleteInfo struct {
 	Source  string
 	Durable bool
 }
 
+// EventDeleteInfo reads the description's `delete` entry into out. False when the description has none.
 func EventDeleteInfo(desc Value, out *DeleteInfo) bool {
 	m := MapGet(desc, "delete")
 	if m.Kind != KindMap {
@@ -820,12 +893,15 @@ func EventDeleteInfo(desc Value, out *DeleteInfo) bool {
 	return true
 }
 
+// TruncateInfo describes the truncate a before-truncate or after-truncate handler is asked about.
 type TruncateInfo struct {
 	Namespace string
 	Set       string // "" for the whole namespace
 	LUT       int64  // records last updated before this (ms since the epoch) go
 }
 
+// EventTruncateInfo reads the description's `truncate` entry into out. False when the description has
+// none.
 func EventTruncateInfo(desc Value, out *TruncateInfo) bool {
 	m := MapGet(desc, "truncate")
 	if m.Kind != KindMap {
@@ -844,6 +920,8 @@ type ExpireInfo struct {
 	EvictVoidTime int64 // before-evict: records due before this are being evicted
 }
 
+// EventExpireInfo reads the description's `expire` entry, or its `evict` entry when there is no `expire`,
+// into out. False when the description has neither. EvictVoidTime is 0 when the entry carries none.
 func EventExpireInfo(desc Value, out *ExpireInfo) bool {
 	m := MapGet(desc, "expire")
 	if m.Kind != KindMap {
@@ -858,11 +936,13 @@ func EventExpireInfo(desc Value, out *ExpireInfo) bool {
 	return true
 }
 
+// ReadInfo describes the read an after-read handler is asked about.
 type ReadInfo struct {
 	Source string
 	All    bool // every bin was asked for, not named ones
 }
 
+// EventReadInfo reads the description's `read` entry into out. False when the description has none.
 func EventReadInfo(desc Value, out *ReadInfo) bool {
 	m := MapGet(desc, "read")
 	if m.Kind != KindMap {
@@ -873,10 +953,12 @@ func EventReadInfo(desc Value, out *ReadInfo) bool {
 	return true
 }
 
+// ShipInfo describes the shipment a before-ship handler is asked about: DC is the destination DC's name.
 type ShipInfo struct {
 	DC string
 }
 
+// EventShipInfo reads the description's `ship` entry into out. False when the description has none.
 func EventShipInfo(desc Value, out *ShipInfo) bool {
 	m := MapGet(desc, "ship")
 	if m.Kind != KindMap {
@@ -886,12 +968,15 @@ func EventShipInfo(desc Value, out *ShipInfo) bool {
 	return true
 }
 
+// LifecycleInfo describes the phase a node-lifecycle handler is told of.
 type LifecycleInfo struct {
 	Phase   string // service-ready, shutdown, binding-deployed
 	Node    string // this node's id, hex
 	Binding Value  // binding-deployed: a map of event, namespace, set, name, module, function; else Absent
 }
 
+// EventLifecycleInfo reads the description's `lifecycle` entry into out. False when the description has
+// none.
 func EventLifecycleInfo(desc Value, out *LifecycleInfo) bool {
 	m := MapGet(desc, "lifecycle")
 	if m.Kind != KindMap {
@@ -903,6 +988,8 @@ func EventLifecycleInfo(desc Value, out *LifecycleInfo) bool {
 	return true
 }
 
+// ClusterInfo describes the cluster a cluster-change handler is told of, after a rebalance: the cluster
+// key in hex, the cluster size, this node's id and the node ids.
 type ClusterInfo struct {
 	Key   string
 	Size  int64
@@ -910,6 +997,7 @@ type ClusterInfo struct {
 	Nodes Value // list of hex node ids in succession order
 }
 
+// EventClusterInfo reads the description's `cluster` entry into out. False when the description has none.
 func EventClusterInfo(desc Value, out *ClusterInfo) bool {
 	m := MapGet(desc, "cluster")
 	if m.Kind != KindMap {
@@ -922,6 +1010,8 @@ func EventClusterInfo(desc Value, out *ClusterInfo) bool {
 	return true
 }
 
+// TransferInfo describes the transfer a partition-transfer handler is told of: a partition that arrived
+// at this node or departed from it.
 type TransferInfo struct {
 	Namespace string
 	Partition int64
@@ -929,6 +1019,8 @@ type TransferInfo struct {
 	Peer      string
 }
 
+// EventTransferInfo reads the description's `transfer` entry into out. False when the description has
+// none. Arrived is true only for the direction `arrived`.
 func EventTransferInfo(desc Value, out *TransferInfo) bool {
 	m := MapGet(desc, "transfer")
 	if m.Kind != KindMap {
@@ -948,6 +1040,8 @@ type TimerInfo struct {
 	Now  int64
 }
 
+// EventTimerInfo reads a timer handler's arguments into out. False when the first argument is not the
+// timer's description map.
 func EventTimerInfo(handle, argc int32, out *TimerInfo) bool {
 	var a [1]Value
 	if Args(handle, argc, a[:]) < 1 || a[0].Kind != KindMap {

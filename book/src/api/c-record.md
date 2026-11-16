@@ -6,6 +6,9 @@
 #define AS_UDF_IMPORT(name) __attribute__((import_module("aerospike"), import_name(#name)))
 ```
 
+Declares a host import: the function that follows is resolved from the `aerospike` import module under
+`name`.
+
 #### `bin_value`
 
 ```c
@@ -20,7 +23,8 @@ Bins - reading. One import for any kind: the host writes a 16-byte value.
 int32_t as_udf_set_int(const char* name, int32_t name_len, int64_t value)
 ```
 
-Bins - writing. Staged until rec_update / rec_create.
+Stage an integer into a bin. Returns AS_UDF_OK, AS_UDF_ERR for a name that is empty or longer than 15
+bytes, or AS_UDF_REFUSED when the record does not take the write.
 
 #### `set_double`
 
@@ -28,11 +32,15 @@ Bins - writing. Staged until rec_update / rec_create.
 int32_t as_udf_set_double(const char* name, int32_t name_len, double value)
 ```
 
+Stage a double into a bin. Statuses as as_udf_set_int.
+
 #### `set_bool`
 
 ```c
 int32_t as_udf_set_bool(const char* name, int32_t name_len, int32_t value)
 ```
+
+Stage a boolean into a bin: any non-zero `value` is true. Statuses as as_udf_set_int.
 
 #### `set_str`
 
@@ -40,11 +48,17 @@ int32_t as_udf_set_bool(const char* name, int32_t name_len, int32_t value)
 int32_t as_udf_set_str(const char* name, int32_t name_len, const char* value, int32_t value_len)
 ```
 
+Stage a string into a bin: `value_len` bytes, no terminator needed, copied by the host. Statuses as
+as_udf_set_int.
+
 #### `set_blob`
 
 ```c
 int32_t as_udf_set_blob(const char* name, int32_t name_len, const void* value, int32_t value_len)
 ```
+
+Stage a blob into a bin, copied by the host. Statuses as as_udf_set_int, and AS_UDF_TYPE_MISMATCH when the
+bin holds bytes of another subtype (an HLL, say), which a plain blob would silently relabel.
 
 #### `set_geojson`
 
@@ -52,11 +66,16 @@ int32_t as_udf_set_blob(const char* name, int32_t name_len, const void* value, i
 int32_t as_udf_set_geojson(const char* name, int32_t name_len, const char* value, int32_t value_len)
 ```
 
+Stage GeoJSON text into a bin as a geospatial value rather than a string. The text is copied by the host and
+not validated by this call. Statuses as as_udf_set_int.
+
 #### `set_nil`
 
 ```c
 int32_t as_udf_set_nil(const char* name, int32_t name_len)
 ```
+
+Stage nil into a bin. Statuses as as_udf_set_int.
 
 #### `set_handle`
 
@@ -64,11 +83,19 @@ int32_t as_udf_set_nil(const char* name, int32_t name_len)
 int32_t as_udf_set_handle(const char* name, int32_t name_len, int32_t handle)
 ```
 
+Stage a value built on the host (a list, a map or a val_* value) into a bin, which takes it over. Returns
+AS_UDF_OK, AS_UDF_ERR for an unusable handle or a bad name, AS_UDF_TYPE_MISMATCH when the handle holds bytes
+and the bin holds bytes of another subtype, or AS_UDF_REFUSED.
+
 #### `set_at`
 
 ```c
 int32_t as_udf_set_at(const char* name, int32_t name_len, int32_t src, int32_t at)
 ```
+
+Stage the stored value at offset `at` of source `src` into a bin, copied on the host without the guest
+decoding it. Returns AS_UDF_OK, AS_UDF_ERR for a bad source, offset or name, or AS_UDF_REFUSED when the record
+does not take the write or a plain blob would replace bytes of another subtype.
 
 #### `bin_remove`
 
@@ -76,11 +103,19 @@ int32_t as_udf_set_at(const char* name, int32_t name_len, int32_t src, int32_t a
 int32_t as_udf_bin_remove(const char* name, int32_t name_len)
 ```
 
+Remove a bin. Returns AS_UDF_OK, AS_UDF_ERR for a name that is empty or longer than 15 bytes, or
+AS_UDF_REFUSED when the record does not take the removal.
+
 #### `set_list_ints`
 
 ```c
 int32_t as_udf_set_list_ints(const char* name, int32_t name_len, const int64_t* vals, int32_t vals_len)
 ```
+
+Write an array of 64-bit integers to a bin as a list, with `vals_len` the size of the array in bytes. Applied
+at once, not staged: as_udf_rec_update is not needed. Returns AS_UDF_OK, AS_UDF_ERR for a bad name,
+AS_UDF_REFUSED where there is no writable record (a stream UDF), or another non-zero status when the server
+rejects the write.
 
 #### `set_list_doubles`
 
@@ -88,13 +123,18 @@ int32_t as_udf_set_list_ints(const char* name, int32_t name_len, const int64_t* 
 int32_t as_udf_set_list_doubles(const char* name, int32_t name_len, const double* vals, int32_t vals_len)
 ```
 
+Write an array of doubles to a bin as a list, with `vals_len` the size of the array in bytes. Applied at
+once and with the statuses of as_udf_set_list_ints.
+
 #### `cursor_values`
 
 ```c
 int32_t as_udf_cursor_values(int32_t cursor, void* out, int32_t cap)
 ```
 
-Collections, by position in a source.
+Read the next values of a cursor into `out`, as many 16-byte values as `cap` bytes hold, and step past them.
+Returns the count, 0 at the end, or AS_UDF_ERR. A map yields its keys and values in turn; a nested list or
+map comes out as one value, by position.
 
 #### `cursor_bytes_at`
 
@@ -102,11 +142,19 @@ Collections, by position in a source.
 int32_t as_udf_cursor_bytes_at(int32_t src, int32_t at, void* out, int32_t cap)
 ```
 
+Copy the bytes of the string, blob, GeoJSON or HLL value at offset `at` of source `src` into `out`. Returns
+the length, a needed-length status when `cap` is too small (nothing is written), AS_UDF_TYPE_MISMATCH when
+the value is of another kind, or AS_UDF_ERR for a bad source or offset.
+
 #### `coll_bytes_at`
 
 ```c
 int32_t as_udf_coll_bytes_at(int32_t src, int32_t at, void* out, int32_t cap)
 ```
+
+Copy the value at offset `at` of source `src` as the server stores it, msgpack header included, into `out`.
+Returns the length, a needed-length status when `cap` is too small (nothing is written), or AS_UDF_ERR for a
+bad source or offset.
 
 #### `coll_cmp_at`
 
@@ -114,11 +162,17 @@ int32_t as_udf_coll_bytes_at(int32_t src, int32_t at, void* out, int32_t cap)
 int32_t as_udf_coll_cmp_at(int32_t src1, int32_t at1, int32_t src2, int32_t at2)
 ```
 
+Compare the stored encodings of two values byte by byte, as memcmp would, a shorter one that is a prefix of
+the other first. Returns -1, 0 or 1, or AS_UDF_TYPE_MISMATCH when either is not a stored value.
+
 #### `cursor_enter_at`
 
 ```c
 int32_t as_udf_cursor_enter_at(int32_t src, int32_t at)
 ```
+
+Open a cursor over the list or map at offset `at` of source `src`, positioned at its first element. Returns
+the cursor's handle, or 0 when the value is not a list or map or no handle is free.
 
 #### `coll_get`
 
@@ -126,11 +180,17 @@ int32_t as_udf_cursor_enter_at(int32_t src, int32_t at)
 int32_t as_udf_coll_get(int32_t src, int32_t at, const char* key, int32_t key_len, void* out, int32_t cap)
 ```
 
+Look up a string key in the map at offset `at` of source `src` and write the entry's 16-byte value to `out`
+(`cap` at least 16). Returns AS_UDF_OK, AS_UDF_NOT_FOUND for no such key or not a map (`out` is then
+AS_UDF_ABSENT), or AS_UDF_ERR for a bad source, offset or `cap`. The search is linear in the map's entries.
+
 #### `coll_get_i`
 
 ```c
 int32_t as_udf_coll_get_i(int32_t src, int32_t at, int64_t key, void* out, int32_t cap)
 ```
+
+Look up an integer key in the map at offset `at` of source `src`. Output and statuses as as_udf_coll_get.
 
 #### `cursor_close`
 
@@ -138,11 +198,17 @@ int32_t as_udf_coll_get_i(int32_t src, int32_t at, int64_t key, void* out, int32
 void as_udf_cursor_close(int32_t cursor)
 ```
 
+Give a cursor's handle back. Only the most recently created handle is released; any other stays until the
+call ends, when the host releases them all.
+
 #### `pack_handle`
 
 ```c
 int32_t as_udf_pack_handle(int32_t handle)
 ```
+
+Make a list or map built on the host readable by position: returns a source handle over a packed copy of it,
+or 0 when `handle` is not a list or map or no handle is free.
 
 #### `args_values`
 
@@ -150,11 +216,17 @@ int32_t as_udf_pack_handle(int32_t handle)
 int32_t as_udf_args_values(int32_t handle, void* out, int32_t cap)
 ```
 
+Read the call's argument list into `out` as 16-byte values, as many as `cap` bytes hold. Returns the count
+written, or AS_UDF_ERR when `handle` is not a list's.
+
 #### `coll_size`
 
 ```c
 int32_t as_udf_coll_size(int32_t handle)
 ```
+
+The number of elements of a built list, of entries of a built map, or of the collection a cursor was opened
+over. AS_UDF_ERR for any other handle.
 
 #### `list_new`
 
@@ -162,7 +234,8 @@ int32_t as_udf_coll_size(int32_t handle)
 int32_t as_udf_list_new(int32_t capacity)
 ```
 
-Collections - building, on the host, as handles.
+Start an empty list on the host, sized for `capacity` elements; it grows past that. Returns its handle, or 0
+when none is free: a call holds at most 256 handles.
 
 #### `map_new`
 
@@ -170,11 +243,17 @@ Collections - building, on the host, as handles.
 int32_t as_udf_map_new(int32_t capacity)
 ```
 
+Start an empty map on the host, sized for `capacity` entries. The map is ordered by key, whatever order the
+entries are put in. Returns its handle, or 0 when none is free.
+
 #### `val_int`
 
 ```c
 int32_t as_udf_val_int(int64_t value)
 ```
+
+An integer as a value of its own, for as_udf_list_push, as_udf_map_put or as_udf_set_handle. Returns its
+handle, or 0 when none is free.
 
 #### `val_double`
 
@@ -182,11 +261,15 @@ int32_t as_udf_val_int(int64_t value)
 int32_t as_udf_val_double(double value)
 ```
 
+A double as a value of its own. Returns its handle, or 0 when none is free.
+
 #### `val_bool`
 
 ```c
 int32_t as_udf_val_bool(int32_t value)
 ```
+
+A boolean as a value of its own: any non-zero `value` is true. Returns its handle, or 0 when none is free.
 
 #### `val_nil`
 
@@ -194,11 +277,16 @@ int32_t as_udf_val_bool(int32_t value)
 int32_t as_udf_val_nil(void)
 ```
 
+Nil as a value of its own. Returns its handle, or 0 when none is free.
+
 #### `val_str`
 
 ```c
 int32_t as_udf_val_str(const char* value, int32_t value_len)
 ```
+
+A string as a value of its own: `value_len` bytes, copied by the host. Returns its handle, or 0 when none is
+free.
 
 #### `val_blob`
 
@@ -206,11 +294,16 @@ int32_t as_udf_val_str(const char* value, int32_t value_len)
 int32_t as_udf_val_blob(const void* value, int32_t value_len)
 ```
 
+A blob as a value of its own, copied by the host. Returns its handle, or 0 when none is free.
+
 #### `val_geojson`
 
 ```c
 int32_t as_udf_val_geojson(const char* value, int32_t value_len)
 ```
+
+GeoJSON text as a value of its own, so that it enters a built collection as GeoJSON rather than as a string.
+Copied by the host. Returns its handle, or 0 when none is free.
 
 #### `list_push`
 
@@ -218,11 +311,17 @@ int32_t as_udf_val_geojson(const char* value, int32_t value_len)
 int32_t as_udf_list_push(int32_t handle, int32_t value)
 ```
 
+Append the value behind handle `value` to a built list, which takes it over. Returns AS_UDF_OK, or AS_UDF_ERR
+when `handle` is not a built list or `value` is not usable.
+
 #### `list_push_int`
 
 ```c
 int32_t as_udf_list_push_int(int32_t handle, int64_t value)
 ```
+
+Append an integer to a built list without a value handle. Returns AS_UDF_OK, or AS_UDF_ERR when `handle` is
+not a built list.
 
 #### `list_push_str`
 
@@ -230,11 +329,17 @@ int32_t as_udf_list_push_int(int32_t handle, int64_t value)
 int32_t as_udf_list_push_str(int32_t handle, const char* value, int32_t value_len)
 ```
 
+Append a string to a built list without a value handle: `value_len` bytes, copied by the host. Returns
+AS_UDF_OK, or AS_UDF_ERR when `handle` is not a built list.
+
 #### `map_put`
 
 ```c
 int32_t as_udf_map_put(int32_t handle, int32_t key, int32_t value)
 ```
+
+Put an entry into a built map, key and value both by handle; the map takes them over. Returns AS_UDF_OK, or
+AS_UDF_ERR when `handle` is not a built map or either handle is not usable.
 
 #### `map_put_str_int`
 
@@ -242,11 +347,17 @@ int32_t as_udf_map_put(int32_t handle, int32_t key, int32_t value)
 int32_t as_udf_map_put_str_int(int32_t handle, const char* key, int32_t key_len, int64_t value)
 ```
 
+Put an integer under a string key of a built map. Returns AS_UDF_OK, or AS_UDF_ERR when `handle` is not a
+built map.
+
 #### `map_put_str_str`
 
 ```c
 int32_t as_udf_map_put_str_str(int32_t handle, const char* key, int32_t key_len, const char* value, int32_t value_len)
 ```
+
+Put a string under a string key of a built map; both are copied by the host. Returns AS_UDF_OK, or AS_UDF_ERR
+when `handle` is not a built map.
 
 #### `map_put_str_handle`
 
@@ -254,11 +365,17 @@ int32_t as_udf_map_put_str_str(int32_t handle, const char* key, int32_t key_len,
 int32_t as_udf_map_put_str_handle(int32_t handle, const char* key, int32_t key_len, int32_t value)
 ```
 
+Put the value behind handle `value` under a string key of a built map, which takes it over. Returns
+AS_UDF_OK, or AS_UDF_ERR when `handle` is not a built map or `value` is not usable.
+
 #### `list_push_at`
 
 ```c
 int32_t as_udf_list_push_at(int32_t handle, int32_t src, int32_t at)
 ```
+
+Append the stored value at offset `at` of source `src` to a built list, copied on the host without the guest
+decoding it. Returns AS_UDF_OK, or AS_UDF_ERR when `handle` is not a built list or the position is bad.
 
 #### `map_put_str_at`
 
@@ -266,11 +383,17 @@ int32_t as_udf_list_push_at(int32_t handle, int32_t src, int32_t at)
 int32_t as_udf_map_put_str_at(int32_t handle, const char* key, int32_t key_len, int32_t src, int32_t at)
 ```
 
+Put the stored value at offset `at` of source `src` under a string key of a built map. Returns AS_UDF_OK, or
+AS_UDF_ERR when `handle` is not a built map or the position is bad.
+
 #### `map_put_i_at`
 
 ```c
 int32_t as_udf_map_put_i_at(int32_t handle, int64_t key, int32_t src, int32_t at)
 ```
+
+Put the stored value at offset `at` of source `src` under an integer key of a built map. Returns AS_UDF_OK,
+or AS_UDF_ERR when `handle` is not a built map or the position is bad.
 
 #### `list_push_values`
 
@@ -278,7 +401,9 @@ int32_t as_udf_map_put_i_at(int32_t handle, int64_t key, int32_t src, int32_t at
 int32_t as_udf_list_push_values(int32_t handle, const void* vals, int32_t vals_len)
 ```
 
-A batch: 16-byte values appended to a list, 32-byte key-value pairs put into a map. Returns how many went in.
+Append a batch of values to a built list: `vals` is an array of 16-byte values and `vals_len` its size in
+bytes. Returns how many went in, fewer than were given when one could not be taken, or AS_UDF_ERR when
+`handle` is not a built list.
 
 #### `map_put_entries`
 
@@ -286,13 +411,17 @@ A batch: 16-byte values appended to a list, 32-byte key-value pairs put into a m
 int32_t as_udf_map_put_entries(int32_t handle, const void* pairs, int32_t pairs_len)
 ```
 
+Put a batch of entries into a built map: `pairs` is an array of 32-byte pairs, a 16-byte key then a 16-byte
+value, and `pairs_len` its size in bytes. Returns how many entries went in, fewer than were given when one
+could not be taken, or AS_UDF_ERR when `handle` is not a built map.
+
 #### `result_nil`
 
 ```c
 void as_udf_result_nil(void)
 ```
 
-Results and failure.
+Set the call's result to nil. Of several result calls, the last one wins.
 
 #### `result_int`
 
@@ -300,11 +429,15 @@ Results and failure.
 void as_udf_result_int(int64_t value)
 ```
 
+Set the call's result to an integer.
+
 #### `result_double`
 
 ```c
 void as_udf_result_double(double value)
 ```
+
+Set the call's result to a double.
 
 #### `result_bool`
 
@@ -312,11 +445,15 @@ void as_udf_result_double(double value)
 void as_udf_result_bool(int32_t value)
 ```
 
+Set the call's result to a boolean: any non-zero `value` is true.
+
 #### `result_str`
 
 ```c
 void as_udf_result_str(const char* value, int32_t value_len)
 ```
+
+Set the call's result to a string: `value_len` bytes, copied by the host.
 
 #### `result_blob`
 
@@ -324,11 +461,15 @@ void as_udf_result_str(const char* value, int32_t value_len)
 void as_udf_result_blob(const void* value, int32_t value_len)
 ```
 
+Set the call's result to a blob, copied by the host.
+
 #### `result_geojson`
 
 ```c
 void as_udf_result_geojson(const char* value, int32_t value_len)
 ```
+
+Set the call's result to GeoJSON text, copied by the host.
 
 #### `result_handle`
 
@@ -336,11 +477,17 @@ void as_udf_result_geojson(const char* value, int32_t value_len)
 int32_t as_udf_result_handle(int32_t handle)
 ```
 
+Set the call's result to a value built on the host, which leaves its handle. Returns AS_UDF_OK, or AS_UDF_ERR
+for an unusable handle.
+
 #### `result_at`
 
 ```c
 int32_t as_udf_result_at(int32_t src, int32_t at)
 ```
+
+Set the call's result to the stored value at offset `at` of source `src`. Returns AS_UDF_OK, or AS_UDF_ERR
+for a bad source or offset.
 
 #### `fail`
 
@@ -348,13 +495,16 @@ int32_t as_udf_result_at(int32_t src, int32_t at)
 void as_udf_fail(const char* message, int32_t message_len)
 ```
 
+Mark the call as failed with a message for the client: `message_len` bytes, of which the host keeps the first
+511. The UDF still has to return; as_udf_failf does both.
+
 #### `gen`
 
 ```c
 int64_t as_udf_gen(void)
 ```
 
-Metadata.
+The record's generation.
 
 #### `ttl`
 
@@ -362,11 +512,16 @@ Metadata.
 int64_t as_udf_ttl(void)
 ```
 
+The record's remaining lifetime in seconds; 0 for a record that does not expire.
+
 #### `last_update`
 
 ```c
 int64_t as_udf_last_update(void)
 ```
+
+When the record was last written, in milliseconds, as the server stores it: counted from the Aerospike epoch
+(2010-01-01 UTC), not the Unix one.
 
 #### `record_size`
 
@@ -374,11 +529,15 @@ int64_t as_udf_last_update(void)
 int64_t as_udf_record_size(void)
 ```
 
+The record's stored size in bytes.
+
 #### `numbins`
 
 ```c
 int64_t as_udf_numbins(void)
 ```
+
+How many bins the record has.
 
 #### `current_time`
 
@@ -386,11 +545,16 @@ int64_t as_udf_numbins(void)
 int64_t as_udf_current_time(void)
 ```
 
+The server's wall clock, in milliseconds since the Unix epoch. Returns -1 in an event handler, where the
+clock is refused: a decision that reads it cannot converge across clusters.
+
 #### `set_ttl`
 
 ```c
 int32_t as_udf_set_ttl(int32_t seconds)
 ```
+
+Set the TTL the record's write carries, in seconds, with a write's meaning. Returns AS_UDF_OK.
 
 #### `set_name`
 
@@ -398,11 +562,17 @@ int32_t as_udf_set_ttl(int32_t seconds)
 int32_t as_udf_set_name(void* out, int32_t cap)
 ```
 
+Copy the record's set name into `out`, without a terminator. Returns the length, a needed-length status when
+`cap` is too small, or AS_UDF_NOT_FOUND when the record is in no set.
+
 #### `key_type`
 
 ```c
 int32_t as_udf_key_type(void)
 ```
+
+The kind of the record's user key (AS_UDF_INT, AS_UDF_STR or AS_UDF_BLOB), or AS_UDF_ABSENT when the record
+was stored without one.
 
 #### `key_int`
 
@@ -410,11 +580,16 @@ int32_t as_udf_key_type(void)
 int64_t as_udf_key_int(void)
 ```
 
+The record's user key when it is an integer; 0 when it is not, so check as_udf_key_type first.
+
 #### `key_bytes`
 
 ```c
 int32_t as_udf_key_bytes(void* out, int32_t cap)
 ```
+
+Copy the record's string or blob user key into `out`. Returns the length, a needed-length status when `cap`
+is too small, AS_UDF_NOT_FOUND when the record was stored without a key, or AS_UDF_ERR for an integer key.
 
 #### `digest`
 
@@ -422,11 +597,17 @@ int32_t as_udf_key_bytes(void* out, int32_t cap)
 int32_t as_udf_digest(void* out, int32_t cap)
 ```
 
+Copy the record's digest into `out`: 20 bytes. Returns the length, or a needed-length status when `cap` is
+too small.
+
 #### `rec_create`
 
 ```c
 int32_t as_udf_rec_create(void)
 ```
+
+Create the record, committing the staged writes to it. Returns AS_UDF_OK, or AS_UDF_REFUSED when the server
+does not create it, as when the record already exists.
 
 #### `rec_update`
 
@@ -434,11 +615,16 @@ int32_t as_udf_rec_create(void)
 int32_t as_udf_rec_update(void)
 ```
 
+Commit the staged writes to the existing record. Returns AS_UDF_OK, or AS_UDF_REFUSED when the server does
+not apply them.
+
 #### `rec_remove`
 
 ```c
 int32_t as_udf_rec_remove(void)
 ```
+
+Delete the record. Returns AS_UDF_OK, or AS_UDF_REFUSED when the server does not delete it.
 
 #### `rec_exists`
 
@@ -446,11 +632,16 @@ int32_t as_udf_rec_remove(void)
 int32_t as_udf_rec_exists(void)
 ```
 
+Whether the record exists: 1 or 0, not a status.
+
 #### `log`
 
 ```c
 void as_udf_log(int32_t level, const char* message, int32_t message_len)
 ```
+
+Write a line to the server log at an AS_UDF_LOG_* level; any other level logs as debug. `message_len` bytes,
+of which the host keeps the first 511.
 
 #### `AS_UDF_OK`
 
@@ -458,7 +649,7 @@ void as_udf_log(int32_t level, const char* message, int32_t message_len)
 #define AS_UDF_OK 0
 ```
 
-Status codes. Anything at or below AS_UDF_NEEDED_BASE is "the buffer was too small": -(rc) - 16 bytes needed.
+Success.
 
 #### `AS_UDF_ERR`
 
@@ -466,11 +657,15 @@ Status codes. Anything at or below AS_UDF_NEEDED_BASE is "the buffer was too sma
 #define AS_UDF_ERR (-1)
 ```
 
+The call could not be carried out: a bad handle, position, name or buffer.
+
 #### `AS_UDF_NOT_FOUND`
 
 ```c
 #define AS_UDF_NOT_FOUND (-2)
 ```
+
+No such bin, map key or value.
 
 #### `AS_UDF_TYPE_MISMATCH`
 
@@ -478,11 +673,15 @@ Status codes. Anything at or below AS_UDF_NEEDED_BASE is "the buffer was too sma
 #define AS_UDF_TYPE_MISMATCH (-3)
 ```
 
+The value is not of the kind the call works on.
+
 #### `AS_UDF_REFUSED`
 
 ```c
 #define AS_UDF_REFUSED (-4)
 ```
+
+The server refused the operation.
 
 #### `AS_UDF_NEEDED_BASE`
 
@@ -490,13 +689,16 @@ Status codes. Anything at or below AS_UDF_NEEDED_BASE is "the buffer was too sma
 #define AS_UDF_NEEDED_BASE (-16)
 ```
 
+Where needed-length answers start. A status at or below this means only that the buffer was too small:
+`-(rc) - 16` bytes are needed.
+
 #### `AS_UDF_ABSENT`
 
 ```c
 #define AS_UDF_ABSENT (-1)
 ```
 
-Value kinds, as the host hands them out.
+No value: a bin, map entry or key that is not there.
 
 #### `AS_UDF_NIL`
 
@@ -504,11 +706,15 @@ Value kinds, as the host hands them out.
 #define AS_UDF_NIL 0
 ```
 
+Nil.
+
 #### `AS_UDF_BOOL`
 
 ```c
 #define AS_UDF_BOOL 1
 ```
+
+A boolean: the payload is 0 or 1.
 
 #### `AS_UDF_INT`
 
@@ -516,11 +722,15 @@ Value kinds, as the host hands them out.
 #define AS_UDF_INT 2
 ```
 
+A 64-bit integer, in the payload.
+
 #### `AS_UDF_DOUBLE`
 
 ```c
 #define AS_UDF_DOUBLE 3
 ```
+
+A double: its bits are in the payload, read with as_udf_value_double.
 
 #### `AS_UDF_STR`
 
@@ -528,11 +738,15 @@ Value kinds, as the host hands them out.
 #define AS_UDF_STR 4
 ```
 
+A string the host holds: `len` bytes, read by position with as_udf_bytes.
+
 #### `AS_UDF_BLOB`
 
 ```c
 #define AS_UDF_BLOB 5
 ```
+
+A blob the host holds: `len` bytes, read by position with as_udf_bytes.
 
 #### `AS_UDF_LIST`
 
@@ -540,11 +754,15 @@ Value kinds, as the host hands them out.
 #define AS_UDF_LIST 6
 ```
 
+A list the host holds: `len` elements, walked by position with a cursor.
+
 #### `AS_UDF_MAP`
 
 ```c
 #define AS_UDF_MAP 7
 ```
+
+A map the host holds: `len` entries, read by position with a cursor or as_udf_map_get.
 
 #### `AS_UDF_OTHER`
 
@@ -552,11 +770,15 @@ Value kinds, as the host hands them out.
 #define AS_UDF_OTHER 8
 ```
 
+A value a UDF cannot interpret. It carries no length and no payload.
+
 #### `AS_UDF_GEOJSON`
 
 ```c
 #define AS_UDF_GEOJSON 9
 ```
+
+GeoJSON the host holds: `len` bytes of text, read by position with as_udf_bytes.
 
 #### `AS_UDF_HLL`
 
@@ -564,13 +786,16 @@ Value kinds, as the host hands them out.
 #define AS_UDF_HLL 10
 ```
 
+A HyperLogLog the host holds: `len` bytes, read with as_udf_bytes. Write one back by position
+(as_udf_set_at), which keeps it an HLL.
+
 #### `AS_UDF_GUEST_STR`
 
 ```c
 #define AS_UDF_GUEST_STR 16
 ```
 
-Kinds a guest uses only in a batch it hands the host: bytes of its own by address, a built collection by handle.
+In a batch only: a string of the guest's, the payload its address in guest memory and `len` its length.
 
 #### `AS_UDF_GUEST_BLOB`
 
@@ -578,11 +803,16 @@ Kinds a guest uses only in a batch it hands the host: bytes of its own by addres
 #define AS_UDF_GUEST_BLOB 17
 ```
 
+In a batch only: a blob of the guest's, the payload its address in guest memory and `len` its length.
+
 #### `AS_UDF_GUEST_GEOJSON`
 
 ```c
 #define AS_UDF_GUEST_GEOJSON 18
 ```
+
+In a batch only: GeoJSON text of the guest's, the payload its address in guest memory and `len` its
+length.
 
 #### `AS_UDF_HANDLE`
 
@@ -590,11 +820,15 @@ Kinds a guest uses only in a batch it hands the host: bytes of its own by addres
 #define AS_UDF_HANDLE 19
 ```
 
+In a batch only: a value built on the host, the payload its handle.
+
 #### `AS_UDF_LOG_WARN`
 
 ```c
 #define AS_UDF_LOG_WARN 0
 ```
+
+Log level for as_udf_log: warning, the most severe.
 
 #### `AS_UDF_LOG_INFO`
 
@@ -602,11 +836,15 @@ Kinds a guest uses only in a batch it hands the host: bytes of its own by addres
 #define AS_UDF_LOG_INFO 1
 ```
 
+Log level for as_udf_log: info.
+
 #### `AS_UDF_LOG_DEBUG`
 
 ```c
 #define AS_UDF_LOG_DEBUG 2
 ```
+
+Log level for as_udf_log: debug.
 
 #### `as_udf_value`
 
@@ -634,17 +872,23 @@ Where a string, blob or collection sits: the source handle and the offset in it.
 int32_t as_udf_value_at(const as_udf_value* v) { return (int32_t)(v->payload & 0xffffffff); }
 ```
 
+The offset of a string, blob or collection value within its source.
+
 #### `as_udf_value_double`
 
 ```c
 double as_udf_value_double(const as_udf_value* v) { double d; __builtin_memcpy(&d, &v->payload, 8); return d; }
 ```
 
+The double an AS_UDF_DOUBLE value carries in its payload.
+
 #### `AS_UDF_EXPORT(name)`
 
 ```c
 #define AS_UDF_EXPORT(name) __attribute__((export_name(#name)))
 ```
+
+Exports the function that follows from the module under `name`, which is what makes it callable as a UDF.
 
 #### `AS_UDF_SIGNATURE(name, text)`
 
@@ -664,6 +908,8 @@ A signature export beside a UDF, as the Rust macros emit: `fn name(a: int, b: st
 ```c
 int32_t as_udf_strlen(const char* s)
 ```
+
+The length of a NUL-terminated string; a freestanding module has no libc strlen.
 
 #### `as_udf_bin`
 
@@ -721,11 +967,16 @@ A 16-byte value of the guest's, for a batch.
 as_udf_value as_udf_v_double(double d) { as_udf_value v = { AS_UDF_DOUBLE, 0, 0 }; __builtin_memcpy(&v.payload, &d, 8); return v; }
 ```
 
+A double as a 16-byte value, for a batch.
+
 #### `as_udf_v_str`
 
 ```c
 as_udf_value as_udf_v_str(const char* s, int32_t len) { as_udf_value v = { AS_UDF_GUEST_STR, (uint32_t)len, (int64_t)(uintptr_t)s }; return v; }
 ```
+
+A string of the guest's as a 16-byte value, for a batch. Only the address travels, so the bytes must stay
+valid until the batch call.
 
 #### `as_udf_v_blob`
 
@@ -733,11 +984,16 @@ as_udf_value as_udf_v_str(const char* s, int32_t len) { as_udf_value v = { AS_UD
 as_udf_value as_udf_v_blob(const void* b, int32_t len) { as_udf_value v = { AS_UDF_GUEST_BLOB, (uint32_t)len, (int64_t)(uintptr_t)b }; return v; }
 ```
 
+A blob of the guest's as a 16-byte value, for a batch. Only the address travels, so the bytes must stay
+valid until the batch call.
+
 #### `as_udf_v_handle`
 
 ```c
 as_udf_value as_udf_v_handle(int32_t h) { as_udf_value v = { AS_UDF_HANDLE, 0, h }; return v; }
 ```
+
+A value built on the host as a 16-byte value, for a batch: a list or map nested in another.
 
 #### `as_udf_failf`
 
@@ -752,4 +1008,6 @@ Fail the call with a NUL-terminated message, and return the non-zero status a UD
 ```c
 void as_udf_logf(int32_t level, const char* message)
 ```
+
+Log a NUL-terminated message at an AS_UDF_LOG_* level.
 

@@ -188,6 +188,9 @@ WriteInfo describes the write a before-write or after-write handler is asked abo
 func EventWriteInfo(desc Value, out *WriteInfo) bool
 ```
 
+EventWriteInfo reads the description's `write` entry into out. False when the description has none; a
+field the entry lacks is left at its zero value.
+
 #### `DeleteInfo`
 
 ```go
@@ -197,11 +200,15 @@ type DeleteInfo struct {
 }
 ```
 
+DeleteInfo describes the delete a before-delete or after-delete handler is asked about.
+
 #### `EventDeleteInfo`
 
 ```go
 func EventDeleteInfo(desc Value, out *DeleteInfo) bool
 ```
+
+EventDeleteInfo reads the description's `delete` entry into out. False when the description has none.
 
 #### `TruncateInfo`
 
@@ -213,11 +220,16 @@ type TruncateInfo struct {
 }
 ```
 
+TruncateInfo describes the truncate a before-truncate or after-truncate handler is asked about.
+
 #### `EventTruncateInfo`
 
 ```go
 func EventTruncateInfo(desc Value, out *TruncateInfo) bool
 ```
+
+EventTruncateInfo reads the description's `truncate` entry into out. False when the description has
+none.
 
 #### `ExpireInfo`
 
@@ -237,6 +249,9 @@ ExpireInfo describes an expiry (before-expire) or an eviction (before-evict).
 func EventExpireInfo(desc Value, out *ExpireInfo) bool
 ```
 
+EventExpireInfo reads the description's `expire` entry, or its `evict` entry when there is no `expire`,
+into out. False when the description has neither. EvictVoidTime is 0 when the entry carries none.
+
 #### `ReadInfo`
 
 ```go
@@ -246,11 +261,15 @@ type ReadInfo struct {
 }
 ```
 
+ReadInfo describes the read an after-read handler is asked about.
+
 #### `EventReadInfo`
 
 ```go
 func EventReadInfo(desc Value, out *ReadInfo) bool
 ```
+
+EventReadInfo reads the description's `read` entry into out. False when the description has none.
 
 #### `ShipInfo`
 
@@ -260,11 +279,15 @@ type ShipInfo struct {
 }
 ```
 
+ShipInfo describes the shipment a before-ship handler is asked about: DC is the destination DC's name.
+
 #### `EventShipInfo`
 
 ```go
 func EventShipInfo(desc Value, out *ShipInfo) bool
 ```
+
+EventShipInfo reads the description's `ship` entry into out. False when the description has none.
 
 #### `LifecycleInfo`
 
@@ -276,11 +299,16 @@ type LifecycleInfo struct {
 }
 ```
 
+LifecycleInfo describes the phase a node-lifecycle handler is told of.
+
 #### `EventLifecycleInfo`
 
 ```go
 func EventLifecycleInfo(desc Value, out *LifecycleInfo) bool
 ```
+
+EventLifecycleInfo reads the description's `lifecycle` entry into out. False when the description has
+none.
 
 #### `ClusterInfo`
 
@@ -293,11 +321,16 @@ type ClusterInfo struct {
 }
 ```
 
+ClusterInfo describes the cluster a cluster-change handler is told of, after a rebalance: the cluster
+key in hex, the cluster size, this node's id and the node ids.
+
 #### `EventClusterInfo`
 
 ```go
 func EventClusterInfo(desc Value, out *ClusterInfo) bool
 ```
+
+EventClusterInfo reads the description's `cluster` entry into out. False when the description has none.
 
 #### `TransferInfo`
 
@@ -310,11 +343,17 @@ type TransferInfo struct {
 }
 ```
 
+TransferInfo describes the transfer a partition-transfer handler is told of: a partition that arrived
+at this node or departed from it.
+
 #### `EventTransferInfo`
 
 ```go
 func EventTransferInfo(desc Value, out *TransferInfo) bool
 ```
+
+EventTransferInfo reads the description's `transfer` entry into out. False when the description has
+none. Arrived is true only for the direction `arrived`.
 
 #### `TimerInfo`
 
@@ -333,6 +372,9 @@ TimerInfo is a timer handler's argument: the timer that came due. The handler ru
 ```go
 func EventTimerInfo(handle, argc int32, out *TimerInfo) bool
 ```
+
+EventTimerInfo reads a timer handler's arguments into out. False when the first argument is not the
+timer's description map.
 
 #### `EventSignature`
 
@@ -406,18 +448,31 @@ generated export.
 func (a Answer) Verdict() string { return a.verdict }
 ```
 
+Verdict is the answer's verdict word, such as "accept" or "reject".
+
 #### `Decision`
 
 ```go
 type Decision struct{ Answer }
-
-func Accept() Decision { return Decision{Answer{verdict: "accept", ttl: -1}} }
-func Reject(code int64, message string) Decision {
-	return Decision{Answer{verdict: "reject", code: code, message: message, ttl: -1}}
-}
 ```
 
 Decision is what a before-write handler returns.
+
+#### `Accept`
+
+```go
+func Accept() Decision { return Decision{Answer{verdict: "accept", ttl: -1}} }
+```
+
+Accept lets the write proceed as it is.
+
+#### `Reject`
+
+```go
+func Reject(code int64, message string) Decision
+```
+
+Reject fails the write with this result code (a server code 1..255; 22 is "forbidden") and message.
 
 #### `AcceptRecord`
 
@@ -439,73 +494,187 @@ AcceptRecordTTL is AcceptRecord with a TTL in seconds (0 for the namespace defau
 
 ```go
 type Gate struct{ Answer }
-
-func Allow() Gate { return Gate{Answer{verdict: "allow", ttl: -1}} }
-func Refuse(code int64, message string) Gate {
-	return Gate{Answer{verdict: "refuse", code: code, message: message, ttl: -1}}
-}
 ```
 
 Gate is what a before-delete or before-truncate handler returns.
+
+#### `Allow`
+
+```go
+func Allow() Gate { return Gate{Answer{verdict: "allow", ttl: -1}} }
+```
+
+Allow lets the delete or truncate proceed.
+
+#### `Refuse`
+
+```go
+func Refuse(code int64, message string) Gate
+```
+
+Refuse refuses the delete or truncate with this result code and message.
 
 #### `Expiry`
 
 ```go
 type Expiry struct{ Answer }
-
-func Expire() Expiry { return Expiry{Answer{verdict: "expire", ttl: -1}} }
-
-// Keep keeps the record, with this many more seconds to live.
-func Keep(ttl int64) Expiry { return Expiry{Answer{verdict: "keep", ttl: ttl}} }
-
-// Eviction is what a before-evict handler returns.
-type Eviction struct{ Answer }
-
-func Evict() Eviction   { return Eviction{Answer{verdict: "evict", ttl: -1}} }
-func Protect() Eviction { return Eviction{Answer{verdict: "protect", ttl: -1}} }
-
-// ReadResult is what an after-read handler returns.
-type ReadResult struct{ Answer }
-
-func Unchanged() ReadResult           { return ReadResult{Answer{verdict: "unchanged", ttl: -1}} }
-func ReadRecord(bins *Map) ReadResult { return ReadResult{withBinsOf("record", bins, -1)} }
-
-// ShipDecision is what a before-ship handler returns.
-type ShipDecision struct{ Answer }
-
-func Ship() ShipDecision                { return ShipDecision{Answer{verdict: "ship", ttl: -1}} }
-func Skip() ShipDecision                { return ShipDecision{Answer{verdict: "skip", ttl: -1}} }
-func ShipRecord(bins *Map) ShipDecision { return ShipDecision{withBinsOf("record", bins, -1)} }
-
-// Resolution is what an xdr-merge handler returns: keep the current record, apply the incoming write
-// whole, let the namespace's policy decide, or the final record.
-type Resolution struct{ Answer }
-
-func KeepLocal() Resolution  { return Resolution{Answer{verdict: "keep-local", ttl: -1}} }
-func TakeRemote() Resolution { return Resolution{Answer{verdict: "take-remote", ttl: -1}} }
-func Policy() Resolution     { return Resolution{Answer{verdict: "policy", ttl: -1}} }
-
-// Resolve is the final record: these bins, whole - a bin not in the map, or nil, is deleted - keeping
-// the TTL the incoming write asked for.
-func Resolve(bins *Map) Resolution { return Resolution{withBinsOf("record", bins, -1)} }
-
-// ResolveTTL is Resolve with a TTL in seconds: 0 for the namespace default.
-func ResolveTTL(bins *Map, ttl int64) Resolution { return Resolution{withBinsOf("record", bins, ttl)} }
-
-// Deliver sets a resolution as the result; the record form is the merge's own answer shape.
-func (r Resolution) Deliver() int32 {
-	if r.err != nil {
-		return FailErr(r.err)
-	}
-	if r.bins == 0 {
-		ResultStr(r.verdict)
-		return 0
-	}
-	return resolveRecord(r.bins, r.ttl)
-}
 ```
 
 Expiry is what a before-expire handler returns.
+
+#### `Expire`
+
+```go
+func Expire() Expiry { return Expiry{Answer{verdict: "expire", ttl: -1}} }
+```
+
+Expire lets the record expire.
+
+#### `Keep`
+
+```go
+func Keep(ttl int64) Expiry { return Expiry{Answer{verdict: "keep", ttl: ttl}} }
+```
+
+Keep keeps the record, with this many more seconds to live.
+
+#### `Eviction`
+
+```go
+type Eviction struct{ Answer }
+```
+
+Eviction is what a before-evict handler returns.
+
+#### `Evict`
+
+```go
+func Evict() Eviction { return Eviction{Answer{verdict: "evict", ttl: -1}} }
+```
+
+Evict lets the record be evicted.
+
+#### `Protect`
+
+```go
+func Protect() Eviction { return Eviction{Answer{verdict: "protect", ttl: -1}} }
+```
+
+Protect keeps the record from this eviction.
+
+#### `ReadResult`
+
+```go
+type ReadResult struct{ Answer }
+```
+
+ReadResult is what an after-read handler returns.
+
+#### `Unchanged`
+
+```go
+func Unchanged() ReadResult { return ReadResult{Answer{verdict: "unchanged", ttl: -1}} }
+```
+
+Unchanged answers the read with the record as it is.
+
+#### `ReadRecord`
+
+```go
+func ReadRecord(bins *Map) ReadResult { return ReadResult{withBinsOf("record", bins, -1)} }
+```
+
+ReadRecord answers the read with these bins instead, whole; a nil leaves a bin out.
+
+#### `ShipDecision`
+
+```go
+type ShipDecision struct{ Answer }
+```
+
+ShipDecision is what a before-ship handler returns.
+
+#### `Ship`
+
+```go
+func Ship() ShipDecision { return ShipDecision{Answer{verdict: "ship", ttl: -1}} }
+```
+
+Ship ships the record as it is.
+
+#### `Skip`
+
+```go
+func Skip() ShipDecision { return ShipDecision{Answer{verdict: "skip", ttl: -1}} }
+```
+
+Skip does not ship the record.
+
+#### `ShipRecord`
+
+```go
+func ShipRecord(bins *Map) ShipDecision { return ShipDecision{withBinsOf("record", bins, -1)} }
+```
+
+ShipRecord ships these bins instead, whole; a nil leaves a bin out.
+
+#### `Resolution`
+
+```go
+type Resolution struct{ Answer }
+```
+
+Resolution is what an xdr-merge handler returns: keep the current record, apply the incoming write
+whole, let the namespace's policy decide, or the final record.
+
+#### `KeepLocal`
+
+```go
+func KeepLocal() Resolution { return Resolution{Answer{verdict: "keep-local", ttl: -1}} }
+```
+
+KeepLocal keeps the local record; the incoming write is dropped.
+
+#### `TakeRemote`
+
+```go
+func TakeRemote() Resolution { return Resolution{Answer{verdict: "take-remote", ttl: -1}} }
+```
+
+TakeRemote applies the incoming write whole, as if it had won every bin.
+
+#### `Policy`
+
+```go
+func Policy() Resolution { return Resolution{Answer{verdict: "policy", ttl: -1}} }
+```
+
+Policy lets the namespace's policy decide, as it would have without the event.
+
+#### `Resolve`
+
+```go
+func Resolve(bins *Map) Resolution { return Resolution{withBinsOf("record", bins, -1)} }
+```
+
+Resolve is the final record: these bins, whole - a bin not in the map, or nil, is deleted - keeping
+the TTL the incoming write asked for.
+
+#### `ResolveTTL`
+
+```go
+func ResolveTTL(bins *Map, ttl int64) Resolution { return Resolution{withBinsOf("record", bins, ttl)} }
+```
+
+ResolveTTL is Resolve with a TTL in seconds: 0 for the namespace default.
+
+#### `Resolution.Deliver`
+
+```go
+func (r Resolution) Deliver() int32
+```
+
+Deliver sets a resolution as the result; the record form is the merge's own answer shape.
 
 #### `Done`
 
@@ -538,17 +707,23 @@ Int is an int bin; false when absent, nil or of another kind.
 func (r *EventRecord) Float64(name string) (float64, bool)
 ```
 
+Float64 is a double bin; false when absent, nil or of another kind. An integer bin is not widened.
+
 #### `EventRecord.Bool`
 
 ```go
 func (r *EventRecord) Bool(name string) (bool, bool)
 ```
 
+Bool is a boolean bin; false when absent, nil or of another kind.
+
 #### `EventRecord.Str`
 
 ```go
 func (r *EventRecord) Str(name string) (string, bool)
 ```
+
+Str is the text of a string bin, copied out; false when absent, nil, of another kind, or unreadable.
 
 #### `EventRecord.List`
 
@@ -662,11 +837,16 @@ reaches for. Max, Min and Sum are functions, since a method cannot add a constra
 func (p Pair) Int(name string) Both[int64]
 ```
 
+Int is an int bin on each side; a side where it is absent, nil or of another kind is missing.
+
 #### `Pair.Float64`
 
 ```go
 func (p Pair) Float64(name string) Both[float64]
 ```
+
+Float64 is a double bin on each side; a side where it is absent, nil or of another kind, an integer
+included, is missing.
 
 #### `Pair.Bool`
 
@@ -674,11 +854,16 @@ func (p Pair) Float64(name string) Both[float64]
 func (p Pair) Bool(name string) Both[bool]
 ```
 
+Bool is a boolean bin on each side; a side where it is absent, nil or of another kind is missing.
+
 #### `Pair.Str`
 
 ```go
 func (p Pair) Str(name string) Both[string]
 ```
+
+Str is the text of a string bin on each side, copied out; a side where it is absent, nil or of another
+kind is missing.
 
 #### `Pair.Bin`
 
@@ -754,11 +939,15 @@ Ordered is both sides as (older, newer), each with whether it exists: the order 
 func (b Both[T]) LocalOrRemote() (T, bool)
 ```
 
+LocalOrRemote is the local side when it exists, the remote side otherwise; false when neither exists.
+
 #### `Both.RemoteOrLocal`
 
 ```go
 func (b Both[T]) RemoteOrLocal() (T, bool)
 ```
+
+RemoteOrLocal is the remote side when it exists, the local side otherwise; false when neither exists.
 
 #### `Both.Merge`
 

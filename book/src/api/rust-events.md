@@ -71,11 +71,17 @@ The names of this record's bins, as a stored list to iterate.
 pub fn generation(&self) -> i64
 ```
 
+The record's generation. Zero on both sides of an `xdr-merge`: each cluster sets its own, and a merge
+must not read it.
+
 #### `Record::last_update_time`
 
 ```rust
 pub fn last_update_time(&self) -> i64
 ```
+
+When the record was last written. Zero on both sides of an `xdr-merge`, for the same reason as
+[`generation`](Record::generation).
 
 #### `Record::ttl`
 
@@ -162,6 +168,8 @@ What made the event fire.
 pub fn trigger(&self) -> Trigger
 ```
 
+What made the event fire: the binding's `trigger` setting.
+
 #### `Conflict::is_dry_run`
 
 ```rust
@@ -227,11 +235,15 @@ The names of bins the incoming write deletes; `remote().deleted()`.
 pub fn local(&self) -> Record
 ```
 
+The record this node holds.
+
 #### `Conflict::remote`
 
 ```rust
 pub fn remote(&self) -> Record
 ```
+
+The record XDR delivered: the incoming write.
 
 #### `Conflict::remote_is_partial`
 
@@ -264,11 +276,16 @@ The two sides of a conflict, read bin by bin into a [`Both`].
 pub fn int(&self, name: &str) -> Result<Both<i64>, Error>
 ```
 
+An integer bin on each side; a side where it is absent or nil is `None`. `Err(WrongType)` when either
+side holds another kind.
+
 #### `Pair::double`
 
 ```rust
 pub fn double(&self, name: &str) -> Result<Both<f64>, Error>
 ```
+
+A double bin on each side; a side where it is absent or nil is `None`.
 
 #### `Pair::text`
 
@@ -276,11 +293,15 @@ pub fn double(&self, name: &str) -> Result<Both<f64>, Error>
 pub fn text(&self, name: &str) -> Result<Both<Text<'static>>, Error>
 ```
 
+A string bin's text on each side; a side where it is absent or nil is `None`.
+
 #### `Pair::list`
 
 ```rust
 pub fn list(&self, name: &str) -> Result<Both<Coll>, Error>
 ```
+
+A list bin on each side; a side where it is absent or nil is `None`.
 
 #### `Pair::bin`
 
@@ -412,6 +433,8 @@ The sum, a missing side counting as zero.
 pub fn sum(self) -> f64
 ```
 
+The sum, a missing side counting as zero.
+
 #### `Resolution`
 
 ```rust
@@ -438,6 +461,9 @@ What an `xdr-merge` handler answers.
 impl From<Map> for Resolution
 ```
 
+A map of bins as the final record, with the TTL the incoming write asked for: [`Resolution::Record`]
+with `ttl: None`.
+
 #### `Source`
 
 ```rust
@@ -461,6 +487,8 @@ Where a write or delete came from.
 pub fn as_str(self) -> &'static str
 ```
 
+The source's name in lower case: `client`, `batch`, `udf`, `ops`, `xdr` or `other`.
+
 #### `Write`
 
 ```rust
@@ -474,6 +502,8 @@ The write a `before-write` handler is asked about.
 ```rust
 pub fn source(&self) -> Source
 ```
+
+Where the write came from.
 
 #### `Write::generation`
 
@@ -505,6 +535,8 @@ Whether the record did not exist before this write.
 pub fn is_durable_delete(&self) -> bool
 ```
 
+Whether the write carries the durable-delete flag.
+
 #### `Delete`
 
 ```rust
@@ -519,11 +551,15 @@ The delete a `before-delete` handler is asked about.
 pub fn source(&self) -> Source
 ```
 
+Where the delete came from.
+
 #### `Delete::is_durable`
 
 ```rust
 pub fn is_durable(&self) -> bool
 ```
+
+Whether this is a durable delete.
 
 #### `Truncate`
 
@@ -636,11 +672,15 @@ The eviction a `before-evict` handler is asked about.
 pub fn void_time(&self) -> i64
 ```
 
+When the record is due to expire, in seconds since the Aerospike epoch.
+
 #### `Evict::now`
 
 ```rust
 pub fn now(&self) -> i64
 ```
+
+The supervisor's clock, same units.
 
 #### `Evict::evict_void_time`
 
@@ -674,6 +714,8 @@ The read an `after-read` handler is asked about.
 ```rust
 pub fn source(&self) -> Source
 ```
+
+Where the read came from.
 
 #### `Read::is_all_bins`
 
@@ -758,6 +800,8 @@ The cluster key, in hex.
 pub fn size(&self) -> i64
 ```
 
+The cluster's size: how many nodes it has.
+
 #### `Cluster::nodes`
 
 ```rust
@@ -771,6 +815,8 @@ The node ids in succession order, as a stored list of hex strings.
 ```rust
 pub fn this_node<'b>(&'b self, buf: &'b mut [u8]) -> Result<&'b str, Error>
 ```
+
+This node's id, read into `buf`.
 
 #### `Transfer`
 
@@ -786,11 +832,15 @@ A `partition-transfer`: a partition arrived at or departed from this node.
 pub fn namespace<'b>(&'b self, buf: &'b mut [u8]) -> Result<&'b str, Error>
 ```
 
+The namespace of the partition, read into `buf`.
+
 #### `Transfer::partition`
 
 ```rust
 pub fn partition(&self) -> i64
 ```
+
+The partition's id.
 
 #### `Transfer::arrived`
 
@@ -823,6 +873,8 @@ function works, and [`timer_set`] re-arms it.
 pub fn name<'b>(&'b self, buf: &'b mut [u8]) -> Result<&'b str, Error>
 ```
 
+The name the timer was set under, read into `buf`.
+
 #### `Timer::is`
 
 ```rust
@@ -844,6 +896,8 @@ When it was due and when it fired, in ms since the epoch.
 ```rust
 pub fn now(&self) -> i64
 ```
+
+When it fired, in ms since the epoch.
 
 #### `timer_set`
 

@@ -7,7 +7,10 @@ does next. Handlers are WASM functions in ordinary modules, bound to events with
 SMD so the binding is cluster-wide and survives restarts.
 
 This chapter is the whole system: the binding model, every event kind with its payload and answers,
-timers, operations. The four chapters after it are the languages.
+timers, operations. The chapters after it are the languages.
+
+To learn the API by doing, start with the [tutorial](tutorial.md): six handlers on one set, each in all
+five languages side by side.
 
 ## Edition and feature key
 

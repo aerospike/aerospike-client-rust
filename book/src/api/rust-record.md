@@ -138,17 +138,23 @@ The bytes of an HLL.
 pub fn int(&self) -> Result<i64, Error>
 ```
 
+The integer, or `Err(WrongType)` for any other kind. A double is not converted.
+
 #### `Value<'a>::double`
 
 ```rust
 pub fn double(&self) -> Result<f64, Error>
 ```
 
+The double, or `Err(WrongType)` for any other kind. An integer is not converted.
+
 #### `Value<'a>::bool`
 
 ```rust
 pub fn bool(&self) -> Result<bool, Error>
 ```
+
+The boolean, or `Err(WrongType)` for any other kind.
 
 #### `Value<'a>::text`
 
@@ -164,17 +170,24 @@ The text of a string or a GeoJson document.
 pub fn blob(&self) -> Result<Blob<'a>, Error>
 ```
 
+The bytes of a blob, or `Err(WrongType)` for any other kind. An HLL is not a blob here: see
+[`Value::hll`].
+
 #### `Value<'a>::list`
 
 ```rust
 pub fn list(&self) -> Result<Coll, Error>
 ```
 
+The list, as a [`Coll`] to iterate, or `Err(WrongType)` when this is not a list.
+
 #### `Value<'a>::map`
 
 ```rust
 pub fn map(&self) -> Result<Coll, Error>
 ```
+
+The map, as a [`Coll`] to iterate or look up, or `Err(WrongType)` when this is not a map.
 
 #### `Value<'a>::as_str`
 
@@ -219,17 +232,23 @@ a UDF builds key-ordered, so this is the last tie-break of a deterministic merge
 impl From<i64> for Value<'_>
 ```
 
+An integer as a value: [`Value::Int`].
+
 #### `impl From<f64> for Value<'_>`
 
 ```rust
 impl From<f64> for Value<'_>
 ```
 
+A double as a value: [`Value::Double`].
+
 #### `impl From<bool> for Value<'_>`
 
 ```rust
 impl From<bool> for Value<'_>
 ```
+
+A boolean as a value: [`Value::Bool`].
 
 #### `Text<'_>::len`
 
@@ -244,6 +263,8 @@ How many bytes the text has.
 ```rust
 pub fn is_empty(&self) -> bool
 ```
+
+Whether the text has no bytes.
 
 #### `Text<'_>::as_str`
 
@@ -268,11 +289,15 @@ The text's bytes, without the UTF-8 check.
 pub fn len(&self) -> usize
 ```
 
+How many bytes the blob has.
+
 #### `Blob<'_>::is_empty`
 
 ```rust
 pub fn is_empty(&self) -> bool
 ```
+
+Whether the blob has no bytes.
 
 #### `Blob<'_>::bytes`
 
@@ -317,11 +342,15 @@ Copy a string in. `Err(TooSmall(len))` when it does not fit.
 pub fn as_str(&self) -> &str
 ```
 
+The string held: its own length, not the capacity.
+
 #### `impl core::ops::Deref for Str<N>`
 
 ```rust
 impl<const N: usize> core::ops::Deref for Str<N>
 ```
+
+Derefs to `str`, so every `&str` method works on a [`Str`].
 
 #### `impl AsRef<str> for Str<N>`
 
@@ -329,11 +358,15 @@ impl<const N: usize> core::ops::Deref for Str<N>
 impl<const N: usize> AsRef<str> for Str<N>
 ```
 
+The string held, for anything generic over `AsRef<str>`.
+
 #### `impl PartialEq for Str<N>`
 
 ```rust
 impl<const N: usize> PartialEq for Str<N>
 ```
+
+Two [`Str`]s are equal when the strings they hold are.
 
 #### `impl PartialEq<str> for Str<N>`
 
@@ -341,11 +374,15 @@ impl<const N: usize> PartialEq for Str<N>
 impl<const N: usize> PartialEq<str> for Str<N>
 ```
 
+Compares the string held with a `str`.
+
 #### `impl PartialEq<&str> for Str<N>`
 
 ```rust
 impl<const N: usize> PartialEq<&str> for Str<N>
 ```
+
+Compares the string held with a `&str`, so `name == "alice"` works.
 
 #### `impl core::fmt::Debug for Str<N>`
 
@@ -353,11 +390,15 @@ impl<const N: usize> PartialEq<&str> for Str<N>
 impl<const N: usize> core::fmt::Debug for Str<N>
 ```
 
+Formats as the `str` does: quoted and escaped.
+
 #### `impl core::fmt::Display for Str<N>`
 
 ```rust
 impl<const N: usize> core::fmt::Display for Str<N>
 ```
+
+Writes the string held, as it is.
 
 #### `Bytes`
 
@@ -373,6 +414,8 @@ Bytes in a buffer of their own, `N` at most: [`Str`] for a blob. Derefs to `[u8]
 pub const CAPACITY: usize = N
 ```
 
+The most bytes this holds.
+
 #### `Bytes<N>::new`
 
 ```rust
@@ -387,11 +430,15 @@ Copy bytes in. `Err(TooSmall(len))` when they do not fit.
 pub fn as_bytes(&self) -> &[u8]
 ```
 
+The bytes held: their own length, not the capacity.
+
 #### `impl core::ops::Deref for Bytes<N>`
 
 ```rust
 impl<const N: usize> core::ops::Deref for Bytes<N>
 ```
+
+Derefs to `[u8]`, so every slice method works on a [`Bytes`].
 
 #### `impl AsRef<[u8]> for Bytes<N>`
 
@@ -399,11 +446,15 @@ impl<const N: usize> core::ops::Deref for Bytes<N>
 impl<const N: usize> AsRef<[u8]> for Bytes<N>
 ```
 
+The bytes held, for anything generic over `AsRef<[u8]>`.
+
 #### `impl PartialEq for Bytes<N>`
 
 ```rust
 impl<const N: usize> PartialEq for Bytes<N>
 ```
+
+Two [`Bytes`] are equal when the bytes they hold are.
 
 #### `impl PartialEq<[u8]> for Bytes<N>`
 
@@ -411,11 +462,15 @@ impl<const N: usize> PartialEq for Bytes<N>
 impl<const N: usize> PartialEq<[u8]> for Bytes<N>
 ```
 
+Compares the bytes held with a slice.
+
 #### `impl core::fmt::Debug for Bytes<N>`
 
 ```rust
 impl<const N: usize> core::fmt::Debug for Bytes<N>
 ```
+
+Formats as the byte slice does.
 
 #### `Text<'_>::to_inline`
 
@@ -463,6 +518,8 @@ How many elements a list has, or entries a map has.
 ```rust
 pub fn is_empty(&self) -> bool
 ```
+
+Whether a list has no elements, or a map no entries.
 
 #### `Coll::iter`
 
@@ -533,11 +590,15 @@ The values of a collection, 128 per import call. See [`Coll::iter`].
 impl Iterator for Iter
 ```
 
+Yields each value as `Ok`. A failure is yielded once, as an `Err` item, and the iterator ends after it.
+
 #### `impl Drop for Iter`
 
 ```rust
 impl Drop for Iter
 ```
+
+Gives the iterator's cursor back to the host when the iterator is dropped.
 
 #### `Entries`
 
@@ -552,6 +613,9 @@ A map's entries, key and value together. See [`Coll::entries`].
 ```rust
 impl Iterator for Entries
 ```
+
+Yields each entry as `Ok((key, value))`. A key with no value after it is `Err(Malformed)`; a failure of
+the walk underneath is passed on as it is.
 
 #### `bin`
 
@@ -714,11 +778,15 @@ The finished map, as a value to return or store.
 impl From<List> for Value<'_>
 ```
 
+The finished list as a value, as [`List::into_value`] gives it.
+
 #### `impl From<Map> for Value<'_>`
 
 ```rust
 impl From<Map> for Value<'_>
 ```
+
+The finished map as a value, as [`Map::into_value`] gives it.
 
 #### `Pushable`
 
@@ -735,17 +803,23 @@ a [`Coll::iter`] yields.
 impl<'a> Pushable<'a> for Result<Value<'a>, Error>
 ```
 
+Lets an item of [`Coll::iter`] go straight into [`List::extend`]. An `Err` item stops the extend.
+
 #### `impl Pushable<'a> for &'a`
 
 ```rust
 impl<'a, const N: usize> Pushable<'a> for &'a Str<N>
 ```
 
+A [`Str`] by reference, pushed as a string that borrows its text.
+
 #### `impl Pushable<'a> for &'a`
 
 ```rust
 impl<'a, const N: usize> Pushable<'a> for &'a Bytes<N>
 ```
+
+A [`Bytes`] by reference, pushed as a blob that borrows its bytes.
 
 #### `PutEntry`
 
@@ -761,6 +835,8 @@ What [`Map::extend`] takes per item: a `(key, value)` pair of [`Pushable`]s, or 
 ```rust
 impl<'a> PutEntry<'a> for Result<(Value<'a>, Value<'a>), Error>
 ```
+
+Lets an item of [`Coll::entries`] go straight into [`Map::extend`]. An `Err` item stops the extend.
 
 #### `result`
 
@@ -802,13 +878,17 @@ The record's remaining lifetime in seconds, or `None` when it never expires.
 pub fn set_time_to_live(seconds: u32) -> Result<(), Error>
 ```
 
+Set the record's time to live, in seconds. It is the TTL of the write, so it takes effect when
+[`update`] or [`create`] commits the record.
+
 #### `last_update_time`
 
 ```rust
 pub fn last_update_time() -> i64
 ```
 
-When the record was last written, in milliseconds since the Unix epoch.
+When the record was last written, in milliseconds since the Aerospike epoch (2010-01-01 UTC), which
+is how the server stores it. It is not on the same scale as [`now`], which counts from the Unix epoch.
 
 #### `size`
 
@@ -816,11 +896,15 @@ When the record was last written, in milliseconds since the Unix epoch.
 pub fn size() -> i64
 ```
 
+The record's stored size, in bytes.
+
 #### `bin_count`
 
 ```rust
 pub fn bin_count() -> i64
 ```
+
+How many bins the record has.
 
 #### `now`
 
@@ -828,7 +912,7 @@ pub fn bin_count() -> i64
 pub fn now() -> Result<i64, Error>
 ```
 
-The server's clock, in milliseconds since the epoch. Refused in an event handler, where a decision
+The server's clock, in milliseconds since the Unix epoch. Refused in an event handler, where a decision
 that reads the clock cannot converge across clusters; a handler takes its times from the data.
 
 #### `set_name`
@@ -879,11 +963,17 @@ Commit the staged writes to an existing record.
 pub fn remove_record() -> Result<(), Error>
 ```
 
+Delete the record. Not staged: the delete is carried out by this call, with no [`update`] after it.
+`Err(Refused)` when the server could not do it.
+
 #### `exists`
 
 ```rust
 pub fn exists() -> bool
 ```
+
+Whether the record exists. A UDF can be called on a key that has no record yet, which is when a write
+is committed with [`create`] rather than [`update`].
 
 #### `log_at`
 
@@ -933,6 +1023,8 @@ How many arguments there are (from this view's start).
 ```rust
 pub fn is_empty(&self) -> bool
 ```
+
+Whether there are no arguments (from this view's start).
 
 #### `Args::get`
 
@@ -999,11 +1091,15 @@ there, the most bytes it takes when that is bounded, whether it may be absent, w
 impl<'a> FromArg<'a> for i64
 ```
 
+An `int` parameter. Takes an integer argument only: a double is not converted.
+
 #### `impl FromArg<'a> for f64`
 
 ```rust
 impl<'a> FromArg<'a> for f64
 ```
+
+A `double` parameter. Takes a double argument only: an integer is not converted.
 
 #### `impl FromArg<'a> for bool`
 
@@ -1011,11 +1107,16 @@ impl<'a> FromArg<'a> for f64
 impl<'a> FromArg<'a> for bool
 ```
 
+A `bool` parameter. Takes a boolean argument only.
+
 #### `impl FromArg<'a> for &'a`
 
 ```rust
 impl<'a> FromArg<'a> for &'a str
 ```
+
+A `str` parameter that borrows the buffer [`export!`] declares for it, [`ARG_BUF`] bytes. Takes a string
+argument; a longer one is rejected as [`ArgError::TooLong`].
 
 #### `impl FromArg<'a> for &'a`
 
@@ -1023,11 +1124,17 @@ impl<'a> FromArg<'a> for &'a str
 impl<'a> FromArg<'a> for &'a [u8]
 ```
 
+A `bytes` parameter that borrows the buffer [`export!`] declares for it, [`ARG_BUF`] bytes. Takes a blob
+argument, or a string for its bytes; a longer one is rejected as [`ArgError::TooLong`].
+
 #### `impl FromArg<'a> for Str<N>`
 
 ```rust
 impl<'a, const N: usize> FromArg<'a> for Str<N>
 ```
+
+A `str` parameter of at most `N` bytes, copied into the [`Str`]. A longer string argument is rejected
+as [`ArgError::TooLong`].
 
 #### `impl FromArg<'a> for Bytes<N>`
 
@@ -1035,11 +1142,16 @@ impl<'a, const N: usize> FromArg<'a> for Str<N>
 impl<'a, const N: usize> FromArg<'a> for Bytes<N>
 ```
 
+A `bytes` parameter of at most `N` bytes, copied into the [`Bytes`]. Takes a blob argument only; a
+longer one is rejected as [`ArgError::TooLong`].
+
 #### `impl FromArg<'a> for alloc::string::String`
 
 ```rust
 impl<'a> FromArg<'a> for alloc::string::String
 ```
+
+A `str` parameter of any length, copied into a `String`. Needs the `alloc` feature.
 
 #### `impl FromArg<'a> for alloc::vec::Vec<u8>`
 
@@ -1047,11 +1159,16 @@ impl<'a> FromArg<'a> for alloc::string::String
 impl<'a> FromArg<'a> for alloc::vec::Vec<u8>
 ```
 
+A `bytes` parameter of any length, copied into a `Vec<u8>`. Takes a blob argument only. Needs the
+`alloc` feature.
+
 #### `impl FromArg<'a> for Value<'a>`
 
 ```rust
 impl<'a> FromArg<'a> for Value<'a>
 ```
+
+An `any` parameter: the argument as it came, whatever its kind. Only a missing argument is an error.
 
 #### `impl FromArg<'a> for Coll`
 
@@ -1059,11 +1176,15 @@ impl<'a> FromArg<'a> for Value<'a>
 impl<'a> FromArg<'a> for Coll
 ```
 
+A `coll` parameter. Takes a list or a map argument.
+
 #### `impl FromArg<'a> for Args`
 
 ```rust
 impl<'a> FromArg<'a> for Args
 ```
+
+The rest parameter: every argument from this position on, which may be none. Never fails.
 
 #### `Message::new`
 
@@ -1071,11 +1192,15 @@ impl<'a> FromArg<'a> for Args
 pub fn new() -> Message
 ```
 
+An empty message.
+
 #### `Message::as_str`
 
 ```rust
 pub fn as_str(&self) -> &str
 ```
+
+The text written so far: 256 bytes at most, anything written past that having been dropped.
 
 #### `impl Default for Message`
 
@@ -1083,17 +1208,25 @@ pub fn as_str(&self) -> &str
 impl Default for Message
 ```
 
+An empty message, as [`Message::new`] gives one.
+
 #### `impl core::fmt::Write for Message`
 
 ```rust
 impl core::fmt::Write for Message
 ```
 
+Appends text, so `write!` works on a message. Never fails: what does not fit in the 256 bytes is
+dropped.
+
 #### `fn`
 
 ```rust
 pub const fn new() -> Signature
 ```
+
+An empty signature, `const` so that it can initialise a `static`. The text is written by the first
+call that asks for it.
 
 #### `Signature::function`
 
@@ -1125,11 +1258,16 @@ pub fn event(&mut self, kind: &str, name: &str) -> i32
 impl Default for Signature
 ```
 
+An empty signature, as [`Signature::new`] gives one.
+
 #### `impl core::fmt::Write for Signature`
 
 ```rust
 impl core::fmt::Write for Signature
 ```
+
+Appends text to the signature. Never fails: what does not fit in the 511 bytes the buffer has for
+text is dropped.
 
 #### `export!`
 

@@ -429,6 +429,7 @@ impl<'a> Value<'a> {
         }
     }
 
+    /// The integer, or `Err(WrongType)` for any other kind. A double is not converted.
     pub fn int(&self) -> Result<i64, Error> {
         match self {
             Value::Int(i) => Ok(*i),
@@ -436,6 +437,7 @@ impl<'a> Value<'a> {
         }
     }
 
+    /// The double, or `Err(WrongType)` for any other kind. An integer is not converted.
     pub fn double(&self) -> Result<f64, Error> {
         match self {
             Value::Double(d) => Ok(*d),
@@ -443,6 +445,7 @@ impl<'a> Value<'a> {
         }
     }
 
+    /// The boolean, or `Err(WrongType)` for any other kind.
     pub fn bool(&self) -> Result<bool, Error> {
         match self {
             Value::Bool(b) => Ok(*b),
@@ -458,6 +461,8 @@ impl<'a> Value<'a> {
         }
     }
 
+    /// The bytes of a blob, or `Err(WrongType)` for any other kind. An HLL is not a blob here: see
+    /// [`Value::hll`].
     pub fn blob(&self) -> Result<Blob<'a>, Error> {
         match self {
             Value::Blob(b) => Ok(*b),
@@ -465,6 +470,7 @@ impl<'a> Value<'a> {
         }
     }
 
+    /// The list, as a [`Coll`] to iterate, or `Err(WrongType)` when this is not a list.
     pub fn list(&self) -> Result<Coll, Error> {
         match self {
             Value::List(c) => Ok(*c),
@@ -472,6 +478,7 @@ impl<'a> Value<'a> {
         }
     }
 
+    /// The map, as a [`Coll`] to iterate or look up, or `Err(WrongType)` when this is not a map.
     pub fn map(&self) -> Result<Coll, Error> {
         match self {
             Value::Map(c) => Ok(*c),
@@ -522,18 +529,21 @@ impl Value<'_> {
     }
 }
 
+/// An integer as a value: [`Value::Int`].
 impl From<i64> for Value<'_> {
     fn from(value: i64) -> Self {
         Value::Int(value)
     }
 }
 
+/// A double as a value: [`Value::Double`].
 impl From<f64> for Value<'_> {
     fn from(value: f64) -> Self {
         Value::Double(value)
     }
 }
 
+/// A boolean as a value: [`Value::Bool`].
 impl From<bool> for Value<'_> {
     fn from(value: bool) -> Self {
         Value::Bool(value)
@@ -568,6 +578,7 @@ impl Text<'_> {
         }
     }
 
+    /// Whether the text has no bytes.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -600,6 +611,7 @@ impl Text<'_> {
 }
 
 impl Blob<'_> {
+    /// How many bytes the blob has.
     #[must_use]
     pub fn len(&self) -> usize {
         match self {
@@ -608,6 +620,7 @@ impl Blob<'_> {
         }
     }
 
+    /// Whether the blob has no bytes.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -659,6 +672,7 @@ impl<const N: usize> Str<N> {
         Ok(s)
     }
 
+    /// The string held: its own length, not the capacity.
     #[must_use]
     pub fn as_str(&self) -> &str {
         // Only ever filled from a `&str`, or from bytes that passed the UTF-8 check on the way in.
@@ -666,6 +680,7 @@ impl<const N: usize> Str<N> {
     }
 }
 
+/// Derefs to `str`, so every `&str` method works on a [`Str`].
 impl<const N: usize> core::ops::Deref for Str<N> {
     type Target = str;
 
@@ -674,36 +689,42 @@ impl<const N: usize> core::ops::Deref for Str<N> {
     }
 }
 
+/// The string held, for anything generic over `AsRef<str>`.
 impl<const N: usize> AsRef<str> for Str<N> {
     fn as_ref(&self) -> &str {
         self.as_str()
     }
 }
 
+/// Two [`Str`]s are equal when the strings they hold are.
 impl<const N: usize> PartialEq for Str<N> {
     fn eq(&self, other: &Self) -> bool {
         self.as_str() == other.as_str()
     }
 }
 
+/// Compares the string held with a `str`.
 impl<const N: usize> PartialEq<str> for Str<N> {
     fn eq(&self, other: &str) -> bool {
         self.as_str() == other
     }
 }
 
+/// Compares the string held with a `&str`, so `name == "alice"` works.
 impl<const N: usize> PartialEq<&str> for Str<N> {
     fn eq(&self, other: &&str) -> bool {
         self.as_str() == *other
     }
 }
 
+/// Formats as the `str` does: quoted and escaped.
 impl<const N: usize> core::fmt::Debug for Str<N> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Debug::fmt(self.as_str(), f)
     }
 }
 
+/// Writes the string held, as it is.
 impl<const N: usize> core::fmt::Display for Str<N> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(self.as_str())
@@ -724,6 +745,7 @@ pub struct Bytes<const N: usize> {
 }
 
 impl<const N: usize> Bytes<N> {
+    /// The most bytes this holds.
     pub const CAPACITY: usize = N;
 
     /// Copy bytes in. `Err(TooSmall(len))` when they do not fit.
@@ -739,12 +761,14 @@ impl<const N: usize> Bytes<N> {
         Ok(b)
     }
 
+    /// The bytes held: their own length, not the capacity.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.buf[..self.len]
     }
 }
 
+/// Derefs to `[u8]`, so every slice method works on a [`Bytes`].
 impl<const N: usize> core::ops::Deref for Bytes<N> {
     type Target = [u8];
 
@@ -753,24 +777,28 @@ impl<const N: usize> core::ops::Deref for Bytes<N> {
     }
 }
 
+/// The bytes held, for anything generic over `AsRef<[u8]>`.
 impl<const N: usize> AsRef<[u8]> for Bytes<N> {
     fn as_ref(&self) -> &[u8] {
         self.as_bytes()
     }
 }
 
+/// Two [`Bytes`] are equal when the bytes they hold are.
 impl<const N: usize> PartialEq for Bytes<N> {
     fn eq(&self, other: &Self) -> bool {
         self.as_bytes() == other.as_bytes()
     }
 }
 
+/// Compares the bytes held with a slice.
 impl<const N: usize> PartialEq<[u8]> for Bytes<N> {
     fn eq(&self, other: &[u8]) -> bool {
         self.as_bytes() == other
     }
 }
 
+/// Formats as the byte slice does.
 impl<const N: usize> core::fmt::Debug for Bytes<N> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Debug::fmt(self.as_bytes(), f)
@@ -880,6 +908,7 @@ impl Coll {
         }
     }
 
+    /// Whether a list has no elements, or a map no entries.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -1009,6 +1038,7 @@ pub struct Iter {
     failed: bool,
 }
 
+/// Yields each value as `Ok`. A failure is yielded once, as an `Err` item, and the iterator ends after it.
 impl Iterator for Iter {
     type Item = Result<Value<'static>, Error>;
 
@@ -1056,6 +1086,7 @@ impl Iterator for Iter {
     }
 }
 
+/// Gives the iterator's cursor back to the host when the iterator is dropped.
 impl Drop for Iter {
     fn drop(&mut self) {
         // Give the cursor's slot back. Iterators end last-in-first-out in practice, which is exactly when
@@ -1071,6 +1102,8 @@ pub struct Entries {
     values: Iter,
 }
 
+/// Yields each entry as `Ok((key, value))`. A key with no value after it is `Err(Malformed)`; a failure of
+/// the walk underneath is passed on as it is.
 impl Iterator for Entries {
     type Item = Result<(Value<'static>, Value<'static>), Error>;
 
@@ -1372,12 +1405,14 @@ impl Map {
     }
 }
 
+/// The finished list as a value, as [`List::into_value`] gives it.
 impl From<List> for Value<'_> {
     fn from(value: List) -> Self {
         value.into_value()
     }
 }
 
+/// The finished map as a value, as [`Map::into_value`] gives it.
 impl From<Map> for Value<'_> {
     fn from(value: Map) -> Self {
         value.into_value()
@@ -1391,6 +1426,7 @@ pub trait Pushable<'a> {
     fn pushable(self) -> Result<Value<'a>, Error>;
 }
 
+/// Lets an item of [`Coll::iter`] go straight into [`List::extend`]. An `Err` item stops the extend.
 impl<'a> Pushable<'a> for Result<Value<'a>, Error> {
     fn pushable(self) -> Result<Value<'a>, Error> {
         self
@@ -1413,12 +1449,14 @@ macro_rules! pushable {
 // so an owned string yielded by an iterator would be freed before the host read it.
 pushable!(Value<'a>, i64, f64, bool, &'a str, &'a [u8], List, Map);
 
+/// A [`Str`] by reference, pushed as a string that borrows its text.
 impl<'a, const N: usize> Pushable<'a> for &'a Str<N> {
     fn pushable(self) -> Result<Value<'a>, Error> {
         Ok(self.into())
     }
 }
 
+/// A [`Bytes`] by reference, pushed as a blob that borrows its bytes.
 impl<'a, const N: usize> Pushable<'a> for &'a Bytes<N> {
     fn pushable(self) -> Result<Value<'a>, Error> {
         Ok(self.into())
@@ -1438,6 +1476,7 @@ impl<'a, K: Pushable<'a>, V: Pushable<'a>> PutEntry<'a> for (K, V) {
     }
 }
 
+/// Lets an item of [`Coll::entries`] go straight into [`Map::extend`]. An `Err` item stops the extend.
 impl<'a> PutEntry<'a> for Result<(Value<'a>, Value<'a>), Error> {
     fn entry(self) -> Result<(Value<'a>, Value<'a>), Error> {
         self
@@ -1650,27 +1689,32 @@ pub fn time_to_live() -> Option<u32> {
     }
 }
 
+/// Set the record's time to live, in seconds. It is the TTL of the write, so it takes effect when
+/// [`update`] or [`create`] commits the record.
 pub fn set_time_to_live(seconds: u32) -> Result<(), Error> {
     status(unsafe { raw_set_ttl(seconds as i32) })
 }
 
-/// When the record was last written, in milliseconds since the Unix epoch.
+/// When the record was last written, in milliseconds since the Aerospike epoch (2010-01-01 UTC), which
+/// is how the server stores it. It is not on the same scale as [`now`], which counts from the Unix epoch.
 #[must_use]
 pub fn last_update_time() -> i64 {
     unsafe { last_update() }
 }
 
+/// The record's stored size, in bytes.
 #[must_use]
 pub fn size() -> i64 {
     unsafe { record_size() }
 }
 
+/// How many bins the record has.
 #[must_use]
 pub fn bin_count() -> i64 {
     unsafe { numbins() }
 }
 
-/// The server's clock, in milliseconds since the epoch. Refused in an event handler, where a decision
+/// The server's clock, in milliseconds since the Unix epoch. Refused in an event handler, where a decision
 /// that reads the clock cannot converge across clusters; a handler takes its times from the data.
 pub fn now() -> Result<i64, Error> {
     let t = unsafe { current_time() };
@@ -1727,10 +1771,14 @@ pub fn update() -> Result<(), Error> {
     status(unsafe { raw_rec_update() })
 }
 
+/// Delete the record. Not staged: the delete is carried out by this call, with no [`update`] after it.
+/// `Err(Refused)` when the server could not do it.
 pub fn remove_record() -> Result<(), Error> {
     status(unsafe { raw_rec_remove() })
 }
 
+/// Whether the record exists. A UDF can be called on a key that has no record yet, which is when a write
+/// is committed with [`create`] rather than [`update`].
 #[must_use]
 pub fn exists() -> bool {
     unsafe { raw_rec_exists() == 1 }
@@ -1792,6 +1840,7 @@ impl Args {
         self.len - self.start
     }
 
+    /// Whether there are no arguments (from this view's start).
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
@@ -1861,6 +1910,7 @@ pub trait FromArg<'a>: Sized {
     fn from_arg(args: &Args, index: usize, buf: &'a mut [u8]) -> Result<Self, ArgError>;
 }
 
+/// An `int` parameter. Takes an integer argument only: a double is not converted.
 impl<'a> FromArg<'a> for i64 {
     const NAME: &'static str = "int";
 
@@ -1873,6 +1923,7 @@ impl<'a> FromArg<'a> for i64 {
     }
 }
 
+/// A `double` parameter. Takes a double argument only: an integer is not converted.
 impl<'a> FromArg<'a> for f64 {
     const NAME: &'static str = "double";
 
@@ -1885,6 +1936,7 @@ impl<'a> FromArg<'a> for f64 {
     }
 }
 
+/// A `bool` parameter. Takes a boolean argument only.
 impl<'a> FromArg<'a> for bool {
     const NAME: &'static str = "bool";
 
@@ -1897,6 +1949,8 @@ impl<'a> FromArg<'a> for bool {
     }
 }
 
+/// A `str` parameter that borrows the buffer [`export!`] declares for it, [`ARG_BUF`] bytes. Takes a string
+/// argument; a longer one is rejected as [`ArgError::TooLong`].
 impl<'a> FromArg<'a> for &'a str {
     const NAME: &'static str = "str";
     const CAPACITY: usize = ARG_BUF;
@@ -1921,6 +1975,8 @@ impl<'a> FromArg<'a> for &'a str {
     }
 }
 
+/// A `bytes` parameter that borrows the buffer [`export!`] declares for it, [`ARG_BUF`] bytes. Takes a blob
+/// argument, or a string for its bytes; a longer one is rejected as [`ArgError::TooLong`].
 impl<'a> FromArg<'a> for &'a [u8] {
     const NAME: &'static str = "bytes";
     const CAPACITY: usize = ARG_BUF;
@@ -1954,6 +2010,8 @@ fn owned_arg_error(e: Error, max: usize, wanted: &'static str) -> ArgError {
     }
 }
 
+/// A `str` parameter of at most `N` bytes, copied into the [`Str`]. A longer string argument is rejected
+/// as [`ArgError::TooLong`].
 impl<'a, const N: usize> FromArg<'a> for Str<N> {
     const NAME: &'static str = "str";
     const CAPACITY: usize = N;
@@ -1967,6 +2025,8 @@ impl<'a, const N: usize> FromArg<'a> for Str<N> {
     }
 }
 
+/// A `bytes` parameter of at most `N` bytes, copied into the [`Bytes`]. Takes a blob argument only; a
+/// longer one is rejected as [`ArgError::TooLong`].
 impl<'a, const N: usize> FromArg<'a> for Bytes<N> {
     const NAME: &'static str = "bytes";
     const CAPACITY: usize = N;
@@ -1980,6 +2040,7 @@ impl<'a, const N: usize> FromArg<'a> for Bytes<N> {
     }
 }
 
+/// A `str` parameter of any length, copied into a `String`. Needs the `alloc` feature.
 #[cfg(feature = "alloc")]
 impl<'a> FromArg<'a> for alloc::string::String {
     const NAME: &'static str = "str";
@@ -1993,6 +2054,8 @@ impl<'a> FromArg<'a> for alloc::string::String {
     }
 }
 
+/// A `bytes` parameter of any length, copied into a `Vec<u8>`. Takes a blob argument only. Needs the
+/// `alloc` feature.
 #[cfg(feature = "alloc")]
 impl<'a> FromArg<'a> for alloc::vec::Vec<u8> {
     const NAME: &'static str = "bytes";
@@ -2006,6 +2069,7 @@ impl<'a> FromArg<'a> for alloc::vec::Vec<u8> {
     }
 }
 
+/// An `any` parameter: the argument as it came, whatever its kind. Only a missing argument is an error.
 impl<'a> FromArg<'a> for Value<'a> {
     const NAME: &'static str = "any";
 
@@ -2014,6 +2078,7 @@ impl<'a> FromArg<'a> for Value<'a> {
     }
 }
 
+/// A `coll` parameter. Takes a list or a map argument.
 impl<'a> FromArg<'a> for Coll {
     const NAME: &'static str = "coll";
 
@@ -2039,6 +2104,7 @@ impl<'a, T: FromArg<'a>> FromArg<'a> for Option<T> {
     }
 }
 
+/// The rest parameter: every argument from this position on, which may be none. Never fails.
 impl<'a> FromArg<'a> for Args {
     const NAME: &'static str = "any";
     const REST: bool = true;
@@ -2056,6 +2122,7 @@ pub struct Message {
 }
 
 impl Message {
+    /// An empty message.
     #[must_use]
     pub fn new() -> Message {
         Message {
@@ -2064,18 +2131,22 @@ impl Message {
         }
     }
 
+    /// The text written so far: 256 bytes at most, anything written past that having been dropped.
     #[must_use]
     pub fn as_str(&self) -> &str {
         core::str::from_utf8(&self.buf[..self.len]).unwrap_or("")
     }
 }
 
+/// An empty message, as [`Message::new`] gives one.
 impl Default for Message {
     fn default() -> Self {
         Message::new()
     }
 }
 
+/// Appends text, so `write!` works on a message. Never fails: what does not fit in the 256 bytes is
+/// dropped.
 impl core::fmt::Write for Message {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         let room = self.buf.len() - self.len;
@@ -2120,6 +2191,8 @@ pub struct Signature {
 }
 
 impl Signature {
+    /// An empty signature, `const` so that it can initialise a `static`. The text is written by the first
+    /// call that asks for it.
     #[must_use]
     pub const fn new() -> Signature {
         Signature { buf: [0; 512], len: 0 }
@@ -2205,12 +2278,15 @@ impl Signature {
     }
 }
 
+/// An empty signature, as [`Signature::new`] gives one.
 impl Default for Signature {
     fn default() -> Self {
         Signature::new()
     }
 }
 
+/// Appends text to the signature. Never fails: what does not fit in the 511 bytes the buffer has for
+/// text is dropped.
 impl core::fmt::Write for Signature {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         let room = self.buf.len() - 1 - self.len;
@@ -2348,11 +2424,15 @@ impl Record {
         self.bins
     }
 
+    /// The record's generation. Zero on both sides of an `xdr-merge`: each cluster sets its own, and a merge
+    /// must not read it.
     #[must_use]
     pub fn generation(&self) -> i64 {
         self.generation
     }
 
+    /// When the record was last written. Zero on both sides of an `xdr-merge`, for the same reason as
+    /// [`generation`](Record::generation).
     #[must_use]
     pub fn last_update_time(&self) -> i64 {
         self.last_update_time
@@ -2447,6 +2527,7 @@ pub enum Trigger {
 }
 
 impl Conflict {
+    /// What made the event fire: the binding's `trigger` setting.
     #[must_use]
     pub fn trigger(&self) -> Trigger {
         self.trigger
@@ -2497,11 +2578,13 @@ impl Conflict {
         self.remote.deleted
     }
 
+    /// The record this node holds.
     #[must_use]
     pub fn local(&self) -> Record {
         self.local
     }
 
+    /// The record XDR delivered: the incoming write.
     #[must_use]
     pub fn remote(&self) -> Record {
         self.remote
@@ -2529,18 +2612,23 @@ pub struct Pair {
 }
 
 impl Pair {
+    /// An integer bin on each side; a side where it is absent or nil is `None`. `Err(WrongType)` when either
+    /// side holds another kind.
     pub fn int(&self, name: &str) -> Result<Both<i64>, Error> {
         Ok(self.both(name, self.local.int(name)?, self.remote.int(name)?))
     }
 
+    /// A double bin on each side; a side where it is absent or nil is `None`.
     pub fn double(&self, name: &str) -> Result<Both<f64>, Error> {
         Ok(self.both(name, self.local.double(name)?, self.remote.double(name)?))
     }
 
+    /// A string bin's text on each side; a side where it is absent or nil is `None`.
     pub fn text(&self, name: &str) -> Result<Both<Text<'static>>, Error> {
         Ok(self.both(name, self.local.text(name)?, self.remote.text(name)?))
     }
 
+    /// A list bin on each side; a side where it is absent or nil is `None`.
     pub fn list(&self, name: &str) -> Result<Both<Coll>, Error> {
         Ok(self.both(name, self.local.list(name)?, self.remote.list(name)?))
     }
@@ -2690,6 +2778,7 @@ impl Both<i64> {
 }
 
 impl Both<f64> {
+    /// The sum, a missing side counting as zero.
     #[must_use]
     pub fn sum(self) -> f64 {
         self.local.unwrap_or(0.0) + self.remote.unwrap_or(0.0)
@@ -2711,6 +2800,8 @@ pub enum Resolution {
     Record { bins: Map, ttl: Option<u32> },
 }
 
+/// A map of bins as the final record, with the TTL the incoming write asked for: [`Resolution::Record`]
+/// with `ttl: None`.
 impl From<Map> for Resolution {
     fn from(bins: Map) -> Self {
         Resolution::Record { bins, ttl: None }
@@ -2827,6 +2918,7 @@ pub enum Source {
 }
 
 impl Source {
+    /// The source's name in lower case: `client`, `batch`, `udf`, `ops`, `xdr` or `other`.
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -2862,6 +2954,7 @@ pub struct Write {
 }
 
 impl Write {
+    /// Where the write came from.
     #[must_use]
     pub fn source(&self) -> Source {
         self.source
@@ -2885,6 +2978,7 @@ impl Write {
         self.create
     }
 
+    /// Whether the write carries the durable-delete flag.
     #[must_use]
     pub fn is_durable_delete(&self) -> bool {
         self.durable_delete
@@ -2899,11 +2993,13 @@ pub struct Delete {
 }
 
 impl Delete {
+    /// Where the delete came from.
     #[must_use]
     pub fn source(&self) -> Source {
         self.source
     }
 
+    /// Whether this is a durable delete.
     #[must_use]
     pub fn is_durable(&self) -> bool {
         self.durable
@@ -2992,11 +3088,13 @@ pub struct Evict {
 }
 
 impl Evict {
+    /// When the record is due to expire, in seconds since the Aerospike epoch.
     #[must_use]
     pub fn void_time(&self) -> i64 {
         self.void_time
     }
 
+    /// The supervisor's clock, same units.
     #[must_use]
     pub fn now(&self) -> i64 {
         self.now
@@ -3023,6 +3121,7 @@ pub struct Read {
 }
 
 impl Read {
+    /// Where the read came from.
     #[must_use]
     pub fn source(&self) -> Source {
         self.source
@@ -3157,6 +3256,7 @@ impl Cluster {
         self.key.as_str(buf)
     }
 
+    /// The cluster's size: how many nodes it has.
     #[must_use]
     pub fn size(&self) -> i64 {
         self.size
@@ -3168,6 +3268,7 @@ impl Cluster {
         self.nodes
     }
 
+    /// This node's id, read into `buf`.
     pub fn this_node<'b>(&'b self, buf: &'b mut [u8]) -> Result<&'b str, Error> {
         self.this_node.as_str(buf)
     }
@@ -3183,10 +3284,12 @@ pub struct Transfer {
 }
 
 impl Transfer {
+    /// The namespace of the partition, read into `buf`.
     pub fn namespace<'b>(&'b self, buf: &'b mut [u8]) -> Result<&'b str, Error> {
         self.namespace.as_str(buf)
     }
 
+    /// The partition's id.
     #[must_use]
     pub fn partition(&self) -> i64 {
         self.partition
@@ -3250,6 +3353,7 @@ pub struct Timer {
 }
 
 impl Timer {
+    /// The name the timer was set under, read into `buf`.
     pub fn name<'b>(&'b self, buf: &'b mut [u8]) -> Result<&'b str, Error> {
         self.name.as_str(buf)
     }
@@ -3268,6 +3372,7 @@ impl Timer {
         self.due
     }
 
+    /// When it fired, in ms since the epoch.
     #[must_use]
     pub fn now(&self) -> i64 {
         self.now

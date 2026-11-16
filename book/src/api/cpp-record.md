@@ -15,11 +15,16 @@ export delivers to the client. The message is a literal or the SDK's message buf
 constexpr bool failed() const
 ```
 
+Whether this is an error. Decided by the message alone: a status without a message does not count.
+
 #### `error`
 
 ```cpp
 inline Error error(Status status, const char* message)
 ```
+
+Builds an Error from a status and a message. The message is not copied, so it must outlive the error:
+a literal, or the SDK's message buffer.
 
 #### `Result`
 
@@ -35,17 +40,23 @@ A value or an error, the Rust SDK's Result: `if (!r) return r.error();` or UDF_T
 bool ok() const
 ```
 
+Whether the call succeeded and a value is held.
+
 #### `Result::take`
 
 ```cpp
 T take()
 ```
 
+Moves the value out. Meaningful only when ok(): a failed Result holds a value-initialised T.
+
 #### `Result::error`
 
 ```cpp
 Error error() const
 ```
+
+The error of a failed Result; on success, an Error whose failed() is false.
 
 #### `Optional`
 
@@ -61,11 +72,15 @@ A value that may be missing, for a bin that is absent or nil and a side of a mer
 bool has_value() const
 ```
 
+Whether a value is present.
+
 #### `Optional::value_or`
 
 ```cpp
 T value_or(T dflt) const
 ```
+
+The value, or `dflt` when there is none.
 
 #### `UDF_TRY`
 
@@ -90,6 +105,8 @@ A view of bytes the caller keeps alive: a literal, a Text, a buffer.
 constexpr bool starts_with(StrView p) const
 ```
 
+Whether the view begins with the bytes of `p`. An empty `p` always matches.
+
 #### `Text`
 
 ```cpp
@@ -105,17 +122,24 @@ argument of at most N bytes (`str[N]` in the signature).
 constexpr bool assign(StrView s)
 ```
 
+Copies `s` in and NUL-terminates it. Returns false, leaving the text unchanged, when `s` is longer
+than N bytes.
+
 #### `Text::view`
 
 ```cpp
 constexpr StrView view() const
 ```
 
+The text as a view into this object's buffer, valid while the Text is alive and unchanged.
+
 #### `Text::c_str`
 
 ```cpp
 constexpr const char* c_str() const
 ```
+
+The text as a NUL-terminated C string, valid while the Text is alive.
 
 #### `Bytes`
 
@@ -140,11 +164,15 @@ held by position, never copied until asked.
 constexpr Kind kind() const
 ```
 
+The kind of the value: what the host tagged a read with, or what the guest built.
+
 #### `Value::is_absent`
 
 ```cpp
 constexpr bool is_absent() const
 ```
+
+Whether there is no value: the kind of a default-constructed Value.
 
 #### `Value::is_nil`
 
@@ -152,11 +180,15 @@ constexpr bool is_absent() const
 constexpr bool is_nil() const
 ```
 
+Whether the value is an explicit nil.
+
 #### `Value::is_null`
 
 ```cpp
 constexpr bool is_null() const
 ```
+
+Whether the value is nil or absent.
 
 #### `Value::is_int`
 
@@ -164,11 +196,15 @@ constexpr bool is_null() const
 constexpr bool is_int() const
 ```
 
+Whether the value is an integer.
+
 #### `Value::is_double`
 
 ```cpp
 constexpr bool is_double() const
 ```
+
+Whether the value is a double. An integer is not one, though as_double() widens it.
 
 #### `Value::is_bool`
 
@@ -176,11 +212,15 @@ constexpr bool is_double() const
 constexpr bool is_bool() const
 ```
 
+Whether the value is a boolean.
+
 #### `Value::is_str`
 
 ```cpp
 constexpr bool is_str() const
 ```
+
+Whether the value is a stored string. A string built by Value::of is of kind GuestStr and is not one.
 
 #### `Value::is_blob`
 
@@ -188,11 +228,15 @@ constexpr bool is_str() const
 constexpr bool is_blob() const
 ```
 
+Whether the value is a stored blob. A blob built by Value::blob is of kind GuestBlob and is not one.
+
 #### `Value::is_list`
 
 ```cpp
 constexpr bool is_list() const
 ```
+
+Whether the value is a stored list.
 
 #### `Value::is_map`
 
@@ -200,11 +244,16 @@ constexpr bool is_list() const
 constexpr bool is_map() const
 ```
 
+Whether the value is a stored map.
+
 #### `Value::is_stored`
 
 ```cpp
 constexpr bool is_stored() const
 ```
+
+Whether the value is held by position in a source on the host, not in the value itself: a string,
+blob, GeoJSON, HLL, list or map.
 
 #### `Value::src`
 
@@ -212,17 +261,24 @@ constexpr bool is_stored() const
 int32_t src() const
 ```
 
+The handle of the source a stored value sits in. Meaningful only when is_stored().
+
 #### `Value::at`
 
 ```cpp
 int32_t at() const
 ```
 
+The offset of a stored value within its source. Meaningful only when is_stored().
+
 #### `Value::as_double_bits`
 
 ```cpp
 double as_double_bits() const
 ```
+
+The payload reinterpreted as a double, with no check of the kind. Use as_double() unless the kind is
+already known to be Double.
 
 #### `Value::as_int`
 
@@ -246,6 +302,8 @@ A double, or an int widened to one.
 Result<bool> as_bool() const
 ```
 
+The boolean, or a type-mismatch error when the value is not a bool.
+
 #### `Value::as_text`
 
 ```cpp
@@ -267,6 +325,9 @@ The bytes of a stored string, blob, GeoJSON or HLL into a buffer. Returns how ma
 ```cpp
 Result<Bytes<N>> as_bytes() const
 ```
+
+The bytes of a stored string, blob, GeoJSON or HLL into an inline Bytes&lt;N&gt;. An error when the value is
+of another kind or does not fit in N bytes.
 
 #### `Value::floats_into`
 
@@ -315,6 +376,8 @@ The entry under a string or integer key of a stored map; nothing when there is n
 Optional<Value> get(int64_t key) const
 ```
 
+The entry under an integer key of a stored map; nothing when there is none or the value is not a map.
+
 #### `Value::list`
 
 ```cpp
@@ -328,6 +391,9 @@ A walk over a stored list or map: `for (Value v : value.list())`, `for (auto [k,
 ```cpp
 inline MapRange map() const;
 ```
+
+A walk over the entries of a stored map, each an Entry of key and value. Empty when the value is not
+a map.
 
 #### `Value::of`
 
@@ -343,11 +409,16 @@ Values of the guest's, for a batch, a result or a collection entry.
 static constexpr Value of(int i)
 ```
 
+An integer value from an int, widened to 64 bits.
+
 #### `Value::of`
 
 ```cpp
 static Value of(const char* s)
 ```
+
+A string value viewing a NUL-terminated string. The bytes are not copied: they must stay alive until
+the value has been handed to the host.
 
 #### `Value::of`
 
@@ -355,11 +426,15 @@ static Value of(const char* s)
 static Value of(double d)
 ```
 
+A double value.
+
 #### `Value::of`
 
 ```cpp
 static constexpr Value of(bool b)
 ```
+
+A boolean value.
 
 #### `Value::of`
 
@@ -367,11 +442,16 @@ static constexpr Value of(bool b)
 static Value of(StrView s)
 ```
 
+A string value viewing the guest's bytes (kind GuestStr). The bytes are not copied: they must stay
+alive until the value has been handed to the host.
+
 #### `Value::blob`
 
 ```cpp
 static Value blob(const void* b, int32_t n)
 ```
+
+A blob value viewing `n` bytes at `b` (kind GuestBlob). Not copied, as for a string.
 
 #### `Value::geojson`
 
@@ -379,11 +459,15 @@ static Value blob(const void* b, int32_t n)
 static Value geojson(StrView doc)
 ```
 
+A GeoJSON value viewing the document's text (kind GuestGeoJson). Not copied, as for a string.
+
 #### `Value::nil`
 
 ```cpp
 static constexpr Value nil()
 ```
+
+A nil value.
 
 #### `Value::handle`
 
@@ -391,11 +475,16 @@ static constexpr Value nil()
 static constexpr Value handle(int32_t h)
 ```
 
+A value standing for a collection built on the host, by its handle: what Map::value() and
+List::value() return.
+
 #### `Entry`
 
 ```cpp
 struct Entry
 ```
+
+One entry of a stored map, as MapRange yields it: `for (auto [k, v] : value.map())`.
 
 #### `RangeEnd`
 
@@ -403,11 +492,16 @@ struct Entry
 struct RangeEnd
 ```
 
+The end of a ListRange or MapRange walk: an iterator compares unequal to it until the walk is done.
+
 #### `ListRange`
 
 ```cpp
 class ListRange
 ```
+
+The elements of a stored list, for a range-for. Made by Value::list(), Bin::list() and
+EventRecord::list(); empty when the value it was made from is not a list.
 
 #### `ListRange::begin`
 
@@ -415,11 +509,16 @@ class ListRange
 Iterator begin() const
 ```
 
+Opens a host cursor on the list and returns an iterator on its first element. Every call opens its
+own cursor, released when the iterator is destroyed.
+
 #### `ListRange::end`
 
 ```cpp
 RangeEnd end() const
 ```
+
+The end sentinel the iterator is compared with.
 
 #### `MapRange`
 
@@ -427,17 +526,25 @@ RangeEnd end() const
 class MapRange
 ```
 
+The entries of a stored map, for a range-for. Made by Value::map(), Bin::map() and
+EventRecord::map(); empty when the value it was made from is not a map.
+
 #### `MapRange::begin`
 
 ```cpp
 Iterator begin() const
 ```
 
+Opens a host cursor on the map and returns an iterator on its first entry. Every call opens its own
+cursor, released when the iterator is destroyed.
+
 #### `MapRange::end`
 
 ```cpp
 RangeEnd end() const
 ```
+
+The end sentinel the iterator is compared with.
 
 #### `contains`
 
@@ -453,6 +560,9 @@ Whether a stored list of strings holds text.
 class Map
 ```
 
+A map being built on the host, held by handle. A put the host refuses does not stop the chain: the
+first failure is kept and reported by error() and result().
+
 #### `Map::wrap`
 
 ```cpp
@@ -460,6 +570,7 @@ static Map wrap(int32_t handle)
 ```
 
 A null map, for a Result&lt;Map&gt; that failed; a real one takes a capacity.
+wrap() adopts a handle the host already issued, without building a new map.
 
 #### `Map::handle`
 
@@ -467,11 +578,15 @@ A null map, for a Result&lt;Map&gt; that failed; a real one takes a capacity.
 int32_t handle() const
 ```
 
+The host's handle of the map: 0 for a null map, not positive when the map could not be built.
+
 #### `Map::error`
 
 ```cpp
 Error error() const
 ```
+
+The first failure of building the map or of a put on it; failed() is false when there was none.
 
 #### `Map::result`
 
@@ -479,17 +594,24 @@ Error error() const
 Result<void> result() const
 ```
 
+error() as a Result&lt;void&gt;, for UDF_TRY or a return.
+
 #### `Map::size`
 
 ```cpp
 int32_t size() const
 ```
 
+The number of entries the map holds, asked of the host; negative when the handle is not a valid one.
+
 #### `Map::value`
 
 ```cpp
 Value value() const
 ```
+
+The map as a Value of kind Handle, to nest it in a batch (List::add_values, Map::put_entries) or to
+pass it to result_of.
 
 #### `Map::has`
 
@@ -505,11 +627,16 @@ Whether the map holds key: it packs the map, so for the occasional check, not a 
 Map& put(StrView key, int64_t v)
 ```
 
+Puts an integer under a string key. Like every put, returns the map for chaining and keeps the first
+failure for error().
+
 #### `Map::put`
 
 ```cpp
 Map& put(StrView key, int v)
 ```
+
+Puts an int under a string key, widened to 64 bits.
 
 #### `Map::put`
 
@@ -517,11 +644,15 @@ Map& put(StrView key, int v)
 Map& put(StrView key, double v)
 ```
 
+Puts a double under a string key.
+
 #### `Map::put`
 
 ```cpp
 Map& put(StrView key, bool v)
 ```
+
+Puts a boolean under a string key.
 
 #### `Map::put`
 
@@ -529,11 +660,15 @@ Map& put(StrView key, bool v)
 Map& put(StrView key, StrView v)
 ```
 
+Puts a string under a string key.
+
 #### `Map::put`
 
 ```cpp
 Map& put(StrView key, const char* v)
 ```
+
+Puts a NUL-terminated string under a string key.
 
 #### `Map::put`
 
@@ -541,11 +676,16 @@ Map& put(StrView key, const char* v)
 Map& put(StrView key, const Value& v)
 ```
 
+Puts a value of any kind under a string key: a scalar, guest bytes, a handle, or a stored value taken
+by position and keeping its kind. An absent value is refused. The key is cut to 63 bytes.
+
 #### `Map::put`
 
 ```cpp
 Map& put(StrView key, const Map& v)
 ```
+
+Nests a built map under a string key. A failure already kept by `v` carries over to this map.
 
 #### `Map::put`
 
@@ -553,17 +693,23 @@ Map& put(StrView key, const Map& v)
 inline Map& put(StrView key, const List& v);
 ```
 
+Nests a built list under a string key. A failure already kept by `v` carries over to this map.
+
 #### `Map::put_blob`
 
 ```cpp
 Map& put_blob(StrView key, const void* b, int32_t n)
 ```
 
+Puts `n` bytes at `b` as a blob under a string key.
+
 #### `Map::put_geojson`
 
 ```cpp
 Map& put_geojson(StrView key, StrView doc)
 ```
+
+Puts a GeoJSON document under a string key, as the GeoJSON kind, not as a string.
 
 #### `Map::put_null`
 
@@ -587,11 +733,15 @@ Integer keys.
 Map& put(int64_t key, int v)
 ```
 
+Puts an int under an integer key, widened to 64 bits.
+
 #### `Map::put`
 
 ```cpp
 Map& put(int64_t key, StrView v)
 ```
+
+Puts a string under an integer key.
 
 #### `Map::put`
 
@@ -599,11 +749,16 @@ Map& put(int64_t key, StrView v)
 Map& put(int64_t key, const char* v)
 ```
 
+Puts a NUL-terminated string under an integer key.
+
 #### `Map::put`
 
 ```cpp
 Map& put(int64_t key, const Value& v)
 ```
+
+Puts a value of any kind under an integer key: a scalar, guest bytes, a handle, or a stored value
+taken by position and keeping its kind. An absent value is refused.
 
 #### `Map::put`
 
@@ -611,11 +766,15 @@ Map& put(int64_t key, const Value& v)
 Map& put(int64_t key, const Map& v)
 ```
 
+Nests a built map under an integer key. A failure already kept by `v` carries over to this map.
+
 #### `Map::put`
 
 ```cpp
 inline Map& put(int64_t key, const List& v);
 ```
+
+Nests a built list under an integer key. A failure already kept by `v` carries over to this map.
 
 #### `Map::put_all`
 
@@ -639,11 +798,17 @@ Pairs (pairs[0], pairs[1] is the first) in one import.
 class List
 ```
 
+A list being built on the host, held by handle. An add the host refuses does not stop the chain: the
+first failure is kept and reported by error() and result().
+
 #### `List::wrap`
 
 ```cpp
 static List wrap(int32_t handle)
 ```
+
+A null list, for a Result&lt;List&gt; that failed; a real one takes a capacity.
+wrap() adopts a handle the host already issued, without building a new list.
 
 #### `List::handle`
 
@@ -651,11 +816,15 @@ static List wrap(int32_t handle)
 int32_t handle() const
 ```
 
+The host's handle of the list: 0 for a null list, not positive when the list could not be built.
+
 #### `List::error`
 
 ```cpp
 Error error() const
 ```
+
+The first failure of building the list or of an add to it; failed() is false when there was none.
 
 #### `List::result`
 
@@ -663,11 +832,15 @@ Error error() const
 Result<void> result() const
 ```
 
+error() as a Result&lt;void&gt;, for UDF_TRY or a return.
+
 #### `List::size`
 
 ```cpp
 int32_t size() const
 ```
+
+The number of elements the list holds, asked of the host; negative when the handle is not a valid one.
 
 #### `List::value`
 
@@ -675,11 +848,17 @@ int32_t size() const
 Value value() const
 ```
 
+The list as a Value of kind Handle, to nest it in a batch (List::add_values, Map::put_entries) or to
+pass it to result_of.
+
 #### `List::add`
 
 ```cpp
 List& add(int64_t v)
 ```
+
+Appends an integer. Like every add, returns the list for chaining and keeps the first failure for
+error().
 
 #### `List::add`
 
@@ -687,11 +866,15 @@ List& add(int64_t v)
 List& add(int v)
 ```
 
+Appends an int, widened to 64 bits.
+
 #### `List::add`
 
 ```cpp
 List& add(double v)
 ```
+
+Appends a double.
 
 #### `List::add`
 
@@ -699,11 +882,15 @@ List& add(double v)
 List& add(bool v)
 ```
 
+Appends a boolean.
+
 #### `List::add`
 
 ```cpp
 List& add(StrView v)
 ```
+
+Appends a string.
 
 #### `List::add`
 
@@ -711,11 +898,16 @@ List& add(StrView v)
 List& add(const char* v)
 ```
 
+Appends a NUL-terminated string.
+
 #### `List::add`
 
 ```cpp
 List& add(const Value& v)
 ```
+
+Appends a value of any kind: a scalar, guest bytes, a handle, or a stored value taken by position and
+keeping its kind. An absent value is refused.
 
 #### `List::add`
 
@@ -723,11 +915,15 @@ List& add(const Value& v)
 List& add(const Map& v)
 ```
 
+Appends a built map as one element. A failure already kept by `v` carries over to this list.
+
 #### `List::add`
 
 ```cpp
 List& add(const List& v)
 ```
+
+Appends a built list as one element, nested. A failure already kept by `v` carries over to this list.
 
 #### `List::add_blob`
 
@@ -735,17 +931,23 @@ List& add(const List& v)
 List& add_blob(const void* b, int32_t n)
 ```
 
+Appends `n` bytes at `b` as a blob.
+
 #### `List::add_geojson`
 
 ```cpp
 List& add_geojson(StrView doc)
 ```
 
+Appends a GeoJSON document, as the GeoJSON kind, not as a string.
+
 #### `List::add_null`
 
 ```cpp
 List& add_null()
 ```
+
+Appends a nil element.
 
 #### `List::add_all`
 
@@ -778,6 +980,8 @@ default, writes of every kind, staged until commit(), and the walk of a collecti
 constexpr StrView name() const
 ```
 
+The bin's name, as a view of the string the Bin was made from.
+
 #### `Bin::get`
 
 ```cpp
@@ -792,11 +996,15 @@ The bin as a value; nothing when the record has no such bin.
 bool exists() const
 ```
 
+Whether the record in hand has a bin of this name.
+
 #### `Bin::as_int`
 
 ```cpp
 Result<int64_t> as_int() const
 ```
+
+The bin as an integer. An error when the bin is absent, cannot be read or is not an int.
 
 #### `Bin::as_double`
 
@@ -804,11 +1012,15 @@ Result<int64_t> as_int() const
 Result<double> as_double() const
 ```
 
+The bin as a double, an integer bin widened to one. An error when the bin is absent or of another kind.
+
 #### `Bin::as_bool`
 
 ```cpp
 Result<bool> as_bool() const
 ```
+
+The bin as a boolean. An error when the bin is absent, cannot be read or is not a bool.
 
 #### `Bin::as_text`
 
@@ -816,17 +1028,26 @@ Result<bool> as_bool() const
 template <size_t N> Result<Text<N>> as_text() const
 ```
 
+The bin's string into an inline Text&lt;N&gt;. An error when the bin is absent, is not a string or does not
+fit in N bytes.
+
 #### `Bin::as_bytes`
 
 ```cpp
 template <size_t N> Result<Bytes<N>> as_bytes() const
 ```
 
+The bytes of a string, blob, GeoJSON or HLL bin into an inline Bytes&lt;N&gt;. An error when the bin is
+absent, of another kind or does not fit in N bytes.
+
 #### `Bin::floats_into`
 
 ```cpp
 Result<int32_t> floats_into(float* out, int32_t count) const
 ```
+
+A blob bin of 32-bit floats into an array of `count` elements. Returns how many were read; an error
+when the bin is absent, is not a blob or does not fit the array.
 
 #### `Bin::int_or`
 
@@ -842,11 +1063,16 @@ The Or forms: the default when the bin is absent or nil (or of another kind).
 double double_or(double dflt) const
 ```
 
+The bin's double, or `dflt` when the bin is absent, nil or of another kind. An integer bin is not
+widened here: it gives the default.
+
 #### `Bin::bool_or`
 
 ```cpp
 bool bool_or(bool dflt) const
 ```
+
+The bin's boolean, or `dflt` when the bin is absent, nil or of another kind.
 
 #### `Bin::list`
 
@@ -862,6 +1088,8 @@ A walk over a collection bin; nothing when absent or of another kind.
 MapRange map() const
 ```
 
+A walk over the entries of a map bin; nothing when absent or of another kind.
+
 #### `Bin::set`
 
 ```cpp
@@ -876,11 +1104,15 @@ Writes, staged until commit().
 Result<void> set(int v) const
 ```
 
+Stages an int, widened to 64 bits.
+
 #### `Bin::set`
 
 ```cpp
 Result<void> set(double v) const
 ```
+
+Stages a double.
 
 #### `Bin::set`
 
@@ -888,11 +1120,15 @@ Result<void> set(double v) const
 Result<void> set(bool v) const
 ```
 
+Stages a boolean.
+
 #### `Bin::set`
 
 ```cpp
 Result<void> set(StrView v) const
 ```
+
+Stages a string.
 
 #### `Bin::set`
 
@@ -900,11 +1136,15 @@ Result<void> set(StrView v) const
 Result<void> set(const char* v) const
 ```
 
+Stages a NUL-terminated string.
+
 #### `Bin::set`
 
 ```cpp
 Result<void> set(const Map& m) const
 ```
+
+Stages a built map as the bin's value. Fails with the map's own error when one of its puts failed.
 
 #### `Bin::set`
 
@@ -912,11 +1152,15 @@ Result<void> set(const Map& m) const
 Result<void> set(const List& l) const
 ```
 
+Stages a built list as the bin's value. Fails with the list's own error when one of its adds failed.
+
 #### `Bin::set_blob`
 
 ```cpp
 Result<void> set_blob(const void* b, int32_t n) const
 ```
+
+Stages `n` bytes at `b` as a blob.
 
 #### `Bin::set_geojson`
 
@@ -932,6 +1176,8 @@ A GeoJSON document, kept as the geospatially indexable kind rather than a string
 Result<void> set_null() const
 ```
 
+Stages a nil as the bin's value.
+
 #### `Bin::set_ints`
 
 ```cpp
@@ -945,6 +1191,8 @@ A list of integers or doubles from an array, in one import, no value built per e
 ```cpp
 Result<void> set_doubles(const double* vals, int32_t count) const
 ```
+
+A list of doubles from an array of `count` elements, in one import.
 
 #### `Bin::set`
 
@@ -960,6 +1208,8 @@ A value: one read from the record by position, keeping its kind; or a scalar, gu
 Result<void> remove() const
 ```
 
+Asks the host to remove the bin from the record in hand. An error when the host refuses.
+
 #### `commit`
 
 ```cpp
@@ -974,11 +1224,15 @@ Writes the staged bins, creating the record if it does not exist.
 inline Result<void> remove_record()
 ```
 
+Deletes the record in hand. An error when the server refuses.
+
 #### `exists`
 
 ```cpp
 inline bool exists()
 ```
+
+Whether the record in hand exists on the server.
 
 #### `generation`
 
@@ -986,11 +1240,15 @@ inline bool exists()
 inline int64_t generation()
 ```
 
+The record's generation, its modification count.
+
 #### `ttl`
 
 ```cpp
 inline int64_t ttl()
 ```
+
+The record's remaining time to live in seconds; 0 when it does not expire.
 
 #### `last_update_time`
 
@@ -998,11 +1256,16 @@ inline int64_t ttl()
 inline int64_t last_update_time()
 ```
 
+When the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC), which is how the
+server stores it. Not on the same scale as now(), which counts from the Unix epoch.
+
 #### `record_size`
 
 ```cpp
 inline int64_t record_size()
 ```
+
+The record's stored size in bytes.
 
 #### `bin_count`
 
@@ -1010,13 +1273,15 @@ inline int64_t record_size()
 inline int64_t bin_count()
 ```
 
+The number of bins the record has.
+
 #### `now`
 
 ```cpp
 inline int64_t now()
 ```
 
-The server's clock in ms since the epoch, or -1 inside an event handler, where it is refused.
+The server's clock in ms since the Unix epoch, or -1 inside an event handler, where it is refused.
 
 #### `set_name`
 
@@ -1040,11 +1305,17 @@ Sets the time to live the next commit carries, in seconds: 0 for the namespace d
 inline Kind key_type()
 ```
 
+The kind of the record's user key; Kind::Absent when the record stores none, which is the case unless
+it was written with send_key.
+
 #### `key_int`
 
 ```cpp
 inline int64_t key_int()
 ```
+
+The user key when it is an integer; 0 when the record stores no key or it is of another kind, so
+check key_type() first.
 
 #### `key_bytes`
 
@@ -1052,11 +1323,17 @@ inline int64_t key_int()
 inline int32_t key_bytes(void* out, int32_t cap)
 ```
 
+The bytes of a string or blob user key into `out`. Returns the length; AS_UDF_NOT_FOUND when the
+record stores no key, a status at or below AS_UDF_NEEDED_BASE when `cap` is too small.
+
 #### `digest`
 
 ```cpp
 inline int32_t digest(void* out, int32_t cap)
 ```
+
+The record's digest, 20 bytes, into `out`. Returns the length, or a negative status: at or below
+AS_UDF_NEEDED_BASE when `cap` is too small.
 
 #### `fail`
 
@@ -1072,11 +1349,17 @@ Fails the call with a message and returns the status an export returns.
 inline int32_t fail(Error e)
 ```
 
+Fails the call with the error's message, or "failed" when it has none, and returns the status an
+export returns.
+
 #### `log`
 
 ```cpp
 inline void log(int32_t level, StrView message)
 ```
+
+Writes a message to the server's log at AS_UDF_LOG_WARN, AS_UDF_LOG_INFO or AS_UDF_LOG_DEBUG; any
+other level logs as debug. The server keeps the first 511 bytes.
 
 #### `result_of`
 
@@ -1100,6 +1383,9 @@ Timers, from a record UDF or a timer handler.
 inline Result<void> timer_cancel(StrView name)
 ```
 
+Cancels the timer of that name on the record in hand. An error when the host refuses, as it does
+where there is no record in hand and for a name that is empty or 64 bytes or longer.
+
 #### `Args`
 
 ```cpp
@@ -1114,11 +1400,15 @@ Every remaining argument, for a last parameter of this type (`any...` in the sig
 const Value* begin() const
 ```
 
+The first argument, for a range-for over the arguments.
+
 #### `Args::end`
 
 ```cpp
 const Value* end() const
 ```
+
+One past the last argument.
 
 #### `UDF_FUNCTION`
 

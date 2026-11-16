@@ -61,6 +61,11 @@ public final class Params {
     // Required parameters.
     //
 
+    /**
+     * Argument {@code i}, counted from 0, of the {@code n} in {@code a}, as an integer. Throws
+     * {@link UdfException} when it is missing or of another kind; {@code fn} and {@code p} are the function
+     * and parameter names its message gives. Every reader here takes the same five.
+     */
     public static long int64(Value[] a, int n, int i, String fn, String p) {
         Value v = at(a, n, i, fn, p);
 
@@ -71,6 +76,7 @@ public final class Params {
         return v.payload;
     }
 
+    /** An integer argument that fits in 32 bits; one that does not is a mismatch. */
     public static int int32(Value[] a, int n, int i, String fn, String p) {
         long x = int64(a, n, i, fn, p);
 
@@ -96,6 +102,7 @@ public final class Params {
         throw mismatch(fn, i, p, "a double");
     }
 
+    /** A boolean argument. */
     public static boolean bool(Value[] a, int n, int i, String fn, String p) {
         Value v = at(a, n, i, fn, p);
 
@@ -106,6 +113,7 @@ public final class Params {
         return v.payload != 0;
     }
 
+    /** The text of a string argument, copied out. */
     public static String str(Value[] a, int n, int i, String fn, String p) {
         Value v = at(a, n, i, fn, p);
 
@@ -148,30 +156,37 @@ public final class Params {
     // Nullable parameters: null when the argument is absent or nil.
     //
 
+    /** As {@link #int64}, or null when the argument is absent or nil. */
     public static Long optInt64(Value[] a, int n, int i, String fn, String p) {
         return none(a, n, i) ? null : int64(a, n, i, fn, p);
     }
 
+    /** As {@link #int32}, or null when the argument is absent or nil. */
     public static Integer optInt32(Value[] a, int n, int i, String fn, String p) {
         return none(a, n, i) ? null : int32(a, n, i, fn, p);
     }
 
+    /** As {@link #float64}, or null when the argument is absent or nil. */
     public static Double optFloat64(Value[] a, int n, int i, String fn, String p) {
         return none(a, n, i) ? null : float64(a, n, i, fn, p);
     }
 
+    /** As {@link #bool}, or null when the argument is absent or nil. */
     public static Boolean optBool(Value[] a, int n, int i, String fn, String p) {
         return none(a, n, i) ? null : bool(a, n, i, fn, p);
     }
 
+    /** As {@link #str}, or null when the argument is absent or nil. */
     public static String optStr(Value[] a, int n, int i, String fn, String p) {
         return none(a, n, i) ? null : str(a, n, i, fn, p);
     }
 
+    /** As {@link #bytes}, or null when the argument is absent or nil. */
     public static byte[] optBytes(Value[] a, int n, int i, String fn, String p) {
         return none(a, n, i) ? null : bytes(a, n, i, fn, p);
     }
 
+    /** The argument as it is, or null when it is absent or nil. */
     public static Value optAny(Value[] a, int n, int i, String fn, String p) {
         return none(a, n, i) ? null : a[i];
     }
@@ -222,6 +237,7 @@ public final class Params {
         }
     }
 
+    /** Delivers a built map as the result; null is nil. */
     public static void result(UdfMap m) {
         if (m == null) {
             Udf.resultNil();
@@ -231,6 +247,7 @@ public final class Params {
         }
     }
 
+    /** Delivers a built list as the result; null is nil. */
     public static void result(UdfList l) {
         if (l == null) {
             Udf.resultNil();
@@ -240,6 +257,7 @@ public final class Params {
         }
     }
 
+    /** Delivers a string as the result; null is nil. */
     public static void resultStr(String s) {
         if (s == null) {
             Udf.resultNil();
@@ -249,6 +267,7 @@ public final class Params {
         }
     }
 
+    /** Delivers a byte array as a blob result; null is nil. */
     public static void resultBytes(byte[] b) {
         if (b == null) {
             Udf.resultNil();

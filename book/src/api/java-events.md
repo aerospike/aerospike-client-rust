@@ -162,6 +162,8 @@ What a `before-write` handler returns: let the write through, refuse it, or repl
 public static Decision accept()
 ```
 
+Lets the write through as it is.
+
 #### `Decision.reject`
 
 ```java
@@ -200,11 +202,15 @@ What a `before-delete` or `before-truncate` handler returns.
 public static Gate allow()
 ```
 
+Lets the delete or the truncate go ahead.
+
 #### `Gate.refuse`
 
 ```java
 public static Gate refuse(long code, String message)
 ```
+
+Refuses it with a result code the client sees and a message.
 
 #### `Expiry`
 
@@ -219,6 +225,8 @@ What a `before-expire` handler returns: let the record expire, or keep it for an
 ```java
 public static Expiry expire()
 ```
+
+Lets the record expire.
 
 #### `Expiry.keep`
 
@@ -242,11 +250,15 @@ What a `before-evict` handler returns.
 public static Eviction evict()
 ```
 
+Lets the record be evicted.
+
 #### `Eviction.protect`
 
 ```java
 public static Eviction protect()
 ```
+
+Leaves the record alone.
 
 #### `ReadResult`
 
@@ -262,11 +274,15 @@ What an `after-read` handler returns: the record as read, or these bins in the r
 public static ReadResult unchanged()
 ```
 
+Answers the read with the record as it was read.
+
 #### `ReadResult.record`
 
 ```java
 public static ReadResult record(UdfMap bins)
 ```
+
+Answers the read with these bins instead, as the whole response; the stored record is untouched.
 
 #### `ShipDecision`
 
@@ -282,17 +298,23 @@ What a `before-ship` handler returns: ship the record, skip it, or ship these bi
 public static ShipDecision ship()
 ```
 
+Ships the record as it is.
+
 #### `ShipDecision.skip`
 
 ```java
 public static ShipDecision skip()
 ```
 
+Does not ship the record.
+
 #### `ShipDecision.record`
 
 ```java
 public static ShipDecision record(UdfMap bins)
 ```
+
+Ships these bins instead of the record.
 
 #### `Resolution`
 
@@ -350,6 +372,8 @@ As `record(UdfMap)`, with a TTL in seconds: 0 for the namespace default.
 public int deliver()
 ```
 
+Sets the resolution as the result of the call. Called by the generated export; returns the status.
+
 #### `Answer`
 
 ```java
@@ -375,6 +399,8 @@ Sets the answer as the call's result. Called by the generated export; returns th
 public String verdict()
 ```
 
+The verdict word as the server reads it, such as `accept` or `keep-local`.
+
 #### `EventRecord`
 
 ```java
@@ -391,11 +417,15 @@ record is read by: 0 for the first record the event hands over, 1 for the second
 public int which
 ```
 
+The index the record is read by: 0 or 1.
+
 #### `EventRecord.gen`
 
 ```java
 public long gen
 ```
+
+The record's generation; 0 on both sides of an `xdr-merge`.
 
 #### `EventRecord.lut`
 
@@ -403,17 +433,23 @@ public long gen
 public long lut
 ```
 
+When the record was last written; 0 on both sides of an `xdr-merge`.
+
 #### `EventRecord.ttl`
 
 ```java
 public long ttl
 ```
 
+The time to live, in seconds.
+
 #### `EventRecord.srcId`
 
 ```java
 public long srcId
 ```
+
+The XDR source id of the DC that wrote this version.
 
 #### `EventRecord.bins`
 
@@ -461,6 +497,8 @@ Reads one of this side's bins. NOT_FOUND when the side has no such bin.
 public int bin(String name, Value out)
 ```
 
+As `bin(byte[], Value)`, encoding the name on each call.
+
 #### `EventRecord.binLut`
 
 ```java
@@ -491,11 +529,15 @@ The bin as a fresh value, or null when absent or nil.
 public Long binInt(String name)
 ```
 
+An integer bin, or null when it is absent or nil; throws `UdfException` when it is of another kind.
+
 #### `EventRecord.binDouble`
 
 ```java
 public Double binDouble(String name)
 ```
+
+A double bin, or null when it is absent or nil; throws `UdfException` when it is of another kind.
 
 #### `EventRecord.binBool`
 
@@ -503,11 +545,16 @@ public Double binDouble(String name)
 public Boolean binBool(String name)
 ```
 
+A boolean bin, or null when it is absent or nil; throws `UdfException` when it is of another kind.
+
 #### `EventRecord.binStr`
 
 ```java
 public String binStr(String name)
 ```
+
+The text of a string bin, copied out, or null when it is absent or nil; throws `UdfException` when
+it is of another kind.
 
 #### `EventRecord.binList`
 
@@ -515,11 +562,17 @@ public String binStr(String name)
 public Value binList(String name)
 ```
 
+A list bin as a fresh value to walk or hand on by position, or null when it is absent or nil; throws
+`UdfException` when it is of another kind.
+
 #### `EventRecord.binMap`
 
 ```java
 public Value binMap(String name)
 ```
+
+A map bin as a fresh value to walk or hand on by position, or null when it is absent or nil; throws
+`UdfException` when it is of another kind.
 
 #### `EventRecord.list`
 
@@ -598,6 +651,8 @@ The incoming bins that would lose under bin convergence, as a stored list.
 public boolean dryRun
 ```
 
+The call is a dry run of the merge, not a live one.
+
 #### `Conflict.conflictTrigger`
 
 ```java
@@ -644,11 +699,15 @@ The current record is a tombstone: exists, no bins.
 public final EventRecord local = new EventRecord()
 ```
 
+The current record, this node's, read by index 0.
+
 #### `Conflict.remote`
 
 ```java
 public final EventRecord remote = new EventRecord()
 ```
+
+The incoming XDR write, as shipped, read by index 1.
 
 #### `Conflict.decode`
 
@@ -699,17 +758,24 @@ The two records side by side, for bin-wise merging.
 public static int keepLocal()
 ```
 
+Answers `keep-local`: the current record stays and the incoming write is dropped. Returns 0, the
+status the handler returns.
+
 #### `Conflict.takeRemote`
 
 ```java
 public static int takeRemote()
 ```
 
+Answers `take-remote`: the incoming write is applied whole. Returns 0.
+
 #### `Conflict.policy`
 
 ```java
 public static int policy()
 ```
+
+Answers `policy`: the namespace's policy decides, as it would have without the event. Returns 0.
 
 #### `Conflict.record`
 
@@ -744,11 +810,15 @@ holds nil, and throws `UdfException` for a bin of another kind.
 public final EventRecord local
 ```
 
+The current record.
+
 #### `Pair.remote`
 
 ```java
 public final EventRecord remote
 ```
+
+The incoming write.
 
 #### `Pair.int64`
 
@@ -756,11 +826,15 @@ public final EventRecord remote
 public Both<Long> int64(String name)
 ```
 
+An integer bin on each side.
+
 #### `Pair.float64`
 
 ```java
 public Both<Double> float64(String name)
 ```
+
+A double bin on each side.
 
 #### `Pair.bool`
 
@@ -768,11 +842,15 @@ public Both<Double> float64(String name)
 public Both<Boolean> bool(String name)
 ```
 
+A boolean bin on each side.
+
 #### `Pair.str`
 
 ```java
 public Both<String> str(String name)
 ```
+
+A string bin on each side, its text copied out.
 
 #### `Pair.list`
 
@@ -787,6 +865,8 @@ A list bin on each side, as stored values read by position.
 ```java
 public Both<Value> map(String name)
 ```
+
+A map bin on each side, as stored values read by position.
 
 #### `Pair.bin`
 
@@ -1004,11 +1084,15 @@ The record did not exist.
 public boolean durableDelete
 ```
 
+The write asked for durable delete.
+
 #### `WriteInfo.decode`
 
 ```java
 public boolean decode(Value desc)
 ```
+
+Fills this from the description's `write` entry. False when it has none.
 
 #### `Events.DeleteInfo`
 
@@ -1016,11 +1100,15 @@ public boolean decode(Value desc)
 public static final class DeleteInfo
 ```
 
+What a before-delete or after-delete handler is asked about.
+
 #### `DeleteInfo.source`
 
 ```java
 public String source = ""
 ```
+
+Where the delete came from, named as `WriteInfo.source` names it.
 
 #### `DeleteInfo.durable`
 
@@ -1028,11 +1116,15 @@ public String source = ""
 public boolean durable
 ```
 
+The delete is a durable one.
+
 #### `DeleteInfo.decode`
 
 ```java
 public boolean decode(Value desc)
 ```
+
+Fills this from the description's `delete` entry. False when it has none.
 
 #### `Events.TruncateInfo`
 
@@ -1040,11 +1132,15 @@ public boolean decode(Value desc)
 public static final class TruncateInfo
 ```
 
+What a before-truncate or after-truncate handler is asked about.
+
 #### `TruncateInfo.namespace`
 
 ```java
 public String namespace = ""
 ```
+
+The namespace being truncated.
 
 #### `TruncateInfo.set`
 
@@ -1068,6 +1164,8 @@ Records last updated before this (ms since the epoch) go.
 public boolean decode(Value desc)
 ```
 
+Fills this from the description's `truncate` entry. False when it has none.
+
 #### `Events.ExpireInfo`
 
 ```java
@@ -1090,6 +1188,8 @@ When the record was due, seconds since the Aerospike epoch.
 public long now
 ```
 
+The supervisor's clock, in the same units.
+
 #### `ExpireInfo.evictVoidTime`
 
 ```java
@@ -1104,17 +1204,24 @@ before-evict: records due before this are being evicted.
 public boolean decode(Value desc)
 ```
 
+Fills this from the description's `expire` entry, or its `evict` entry. False when it has
+neither.
+
 #### `Events.ReadInfo`
 
 ```java
 public static final class ReadInfo
 ```
 
+What an after-read handler is asked about.
+
 #### `ReadInfo.source`
 
 ```java
 public String source = ""
 ```
+
+Where the read came from.
 
 #### `ReadInfo.all`
 
@@ -1130,11 +1237,15 @@ Every bin was asked for, not named ones.
 public boolean decode(Value desc)
 ```
 
+Fills this from the description's `read` entry. False when it has none.
+
 #### `Events.ShipInfo`
 
 ```java
 public static final class ShipInfo
 ```
+
+What a before-ship handler is asked about.
 
 #### `ShipInfo.dc`
 
@@ -1142,17 +1253,23 @@ public static final class ShipInfo
 public String dc = ""
 ```
 
+The destination DC's name.
+
 #### `ShipInfo.decode`
 
 ```java
 public boolean decode(Value desc)
 ```
 
+Fills this from the description's `ship` entry. False when it has none.
+
 #### `Events.LifecycleInfo`
 
 ```java
 public static final class LifecycleInfo
 ```
+
+What a node-lifecycle handler is told.
 
 #### `LifecycleInfo.phase`
 
@@ -1184,11 +1301,15 @@ binding-deployed: a map of event, namespace, set, name, module, function; else A
 public boolean decode(Value desc)
 ```
 
+Fills this from the description's `lifecycle` entry. False when it has none.
+
 #### `Events.ClusterInfo`
 
 ```java
 public static final class ClusterInfo
 ```
+
+What a cluster-change handler is told: the cluster after a rebalance.
 
 #### `ClusterInfo.key`
 
@@ -1196,17 +1317,23 @@ public static final class ClusterInfo
 public String key = ""
 ```
 
+The cluster key, in hex.
+
 #### `ClusterInfo.size`
 
 ```java
 public long size
 ```
 
+The cluster's size, in nodes.
+
 #### `ClusterInfo.self`
 
 ```java
 public String self = ""
 ```
+
+This node's id.
 
 #### `ClusterInfo.nodes`
 
@@ -1222,11 +1349,15 @@ The list of hex node ids in succession order.
 public boolean decode(Value desc)
 ```
 
+Fills this from the description's `cluster` entry. False when it has none.
+
 #### `Events.TransferInfo`
 
 ```java
 public static final class TransferInfo
 ```
+
+What a partition-transfer handler is told: a partition arrived at this node or departed from it.
 
 #### `TransferInfo.namespace`
 
@@ -1234,11 +1365,15 @@ public static final class TransferInfo
 public String namespace = ""
 ```
 
+The partition's namespace.
+
 #### `TransferInfo.partition`
 
 ```java
 public long partition
 ```
+
+The partition's id.
 
 #### `TransferInfo.arrived`
 
@@ -1254,11 +1389,15 @@ true: arrived here; false: departed.
 public String peer = ""
 ```
 
+The other node, in hex.
+
 #### `TransferInfo.decode`
 
 ```java
 public boolean decode(Value desc)
 ```
+
+Fills this from the description's `transfer` entry. False when it has none.
 
 #### `Events.TimerInfo`
 
@@ -1274,11 +1413,15 @@ A timer handler's argument: the timer that came due. The handler runs as a recor
 public String name = ""
 ```
 
+The name the timer was set under.
+
 #### `TimerInfo.due`
 
 ```java
 public long due
 ```
+
+When the timer was due, in ms since the epoch.
 
 #### `TimerInfo.now`
 
@@ -1286,11 +1429,15 @@ public long due
 public long now
 ```
 
+When the timer fired, in ms since the epoch.
+
 #### `TimerInfo.decode`
 
 ```java
 public boolean decode(int args, int argc)
 ```
+
+Reads a timer call's arguments. False when they are not a timer's.
 
 #### `Events.answer`
 
@@ -1307,11 +1454,17 @@ null, 0 and -1 for none). Returns the status the handler returns.
 public static int accept()
 ```
 
+Answers `accept` from a before-write handler: the write goes through as it is. Returns the status
+the handler returns.
+
 #### `Events.reject`
 
 ```java
 public static int reject(long code, String message)
 ```
+
+Answers `reject` from a before-write handler: the write fails with a server result code the client
+sees and a message, and nothing is written. Returns the status the handler returns.
 
 #### `Events.record`
 
@@ -1319,11 +1472,18 @@ public static int reject(long code, String message)
 public static int record(int bins, long ttl)
 ```
 
+Answers `record`: `bins` (a built map) is the whole record, a bin absent from it or nil being
+deleted, with a TTL in seconds that has a write's meaning, or a negative one to send none. Returns the
+status the handler returns.
+
 #### `Events.allow`
 
 ```java
 public static int allow()
 ```
+
+Answers `allow` from a before-delete or before-truncate handler: it goes ahead. Returns the status
+the handler returns.
 
 #### `Events.refuse`
 
@@ -1331,11 +1491,17 @@ public static int allow()
 public static int refuse(long code, String message)
 ```
 
+Answers `refuse` from a before-delete or before-truncate handler: it fails with a server result
+code the client sees and a message. Returns the status the handler returns.
+
 #### `Events.expire`
 
 ```java
 public static int expire()
 ```
+
+Answers `expire` from a before-expire handler: the record expires. Returns the status the handler
+returns.
 
 #### `Events.keep`
 
@@ -1343,11 +1509,17 @@ public static int expire()
 public static int keep(long ttl)
 ```
 
+Answers `keep` from a before-expire handler: the record is kept for `ttl` more seconds, or
+for the namespace's default TTL when `ttl` is negative. Returns the status the handler returns.
+
 #### `Events.evict`
 
 ```java
 public static int evict()
 ```
+
+Answers `evict` from a before-evict handler: the record is evicted. Returns the status the handler
+returns.
 
 #### `Events.protect`
 
@@ -1355,11 +1527,17 @@ public static int evict()
 public static int protect()
 ```
 
+Answers `protect` from a before-evict handler: the record is left alone. Returns the status the
+handler returns.
+
 #### `Events.unchanged`
 
 ```java
 public static int unchanged()
 ```
+
+Answers `unchanged` from a after-read handler: the read is answered with the record as it was read.
+Returns the status the handler returns.
 
 #### `Events.ship`
 
@@ -1367,17 +1545,26 @@ public static int unchanged()
 public static int ship()
 ```
 
+Answers `ship` from a before-ship handler: the record ships as it is. Returns the status the
+handler returns.
+
 #### `Events.skip`
 
 ```java
 public static int skip()
 ```
 
+Answers `skip` from a before-ship handler: the record is not shipped. Returns the status the
+handler returns.
+
 #### `Events.done`
 
 ```java
 public static int done()
 ```
+
+Answers `ok`, for the kinds that take no verdict: the after events, the once-per-node events and
+timers. Returns the status the handler returns.
 
 #### `Events.signature`
 
@@ -1395,11 +1582,15 @@ served by `Udf#signature`.
 public static final String PARAMS_BEFORE_WRITE = "(before: record, after: record, write: write) -> decision"
 ```
 
+The parameter text of a `before-write` handler, for `signature`.
+
 #### `Events.PARAMS_BEFORE_DELETE`
 
 ```java
 public static final String PARAMS_BEFORE_DELETE = "(record: record, delete: delete) -> gate"
 ```
+
+The parameter text of a `before-delete` handler, for `signature`.
 
 #### `Events.PARAMS_AFTER_WRITE`
 
@@ -1407,11 +1598,15 @@ public static final String PARAMS_BEFORE_DELETE = "(record: record, delete: dele
 public static final String PARAMS_AFTER_WRITE = "(before: record, after: record, write: write) -> ()"
 ```
 
+The parameter text of an `after-write` handler, for `signature`.
+
 #### `Events.PARAMS_AFTER_DELETE`
 
 ```java
 public static final String PARAMS_AFTER_DELETE = "(record: record, delete: delete) -> ()"
 ```
+
+The parameter text of an `after-delete` handler, for `signature`.
 
 #### `Events.PARAMS_BEFORE_EXPIRE`
 
@@ -1419,11 +1614,15 @@ public static final String PARAMS_AFTER_DELETE = "(record: record, delete: delet
 public static final String PARAMS_BEFORE_EXPIRE = "(record: record, expire: expire) -> expiry"
 ```
 
+The parameter text of a `before-expire` handler, for `signature`.
+
 #### `Events.PARAMS_BEFORE_EVICT`
 
 ```java
 public static final String PARAMS_BEFORE_EVICT = "(record: record, evict: evict) -> eviction"
 ```
+
+The parameter text of a `before-evict` handler, for `signature`.
 
 #### `Events.PARAMS_AFTER_READ`
 
@@ -1431,11 +1630,15 @@ public static final String PARAMS_BEFORE_EVICT = "(record: record, evict: evict)
 public static final String PARAMS_AFTER_READ = "(record: record, read: read) -> read-result"
 ```
 
+The parameter text of an `after-read` handler, for `signature`.
+
 #### `Events.PARAMS_BEFORE_TRUNCATE`
 
 ```java
 public static final String PARAMS_BEFORE_TRUNCATE = "(truncate: truncate) -> gate"
 ```
+
+The parameter text of a `before-truncate` handler, for `signature`.
 
 #### `Events.PARAMS_AFTER_TRUNCATE`
 
@@ -1443,11 +1646,15 @@ public static final String PARAMS_BEFORE_TRUNCATE = "(truncate: truncate) -> gat
 public static final String PARAMS_AFTER_TRUNCATE = "(truncate: truncate) -> ()"
 ```
 
+The parameter text of an `after-truncate` handler, for `signature`.
+
 #### `Events.PARAMS_BEFORE_SHIP`
 
 ```java
 public static final String PARAMS_BEFORE_SHIP = "(record: record, ship: ship) -> ship-decision"
 ```
+
+The parameter text of a `before-ship` handler, for `signature`.
 
 #### `Events.PARAMS_PARTITION_TRANSFER`
 
@@ -1455,11 +1662,15 @@ public static final String PARAMS_BEFORE_SHIP = "(record: record, ship: ship) ->
 public static final String PARAMS_PARTITION_TRANSFER = "(transfer: transfer) -> ()"
 ```
 
+The parameter text of a `partition-transfer` handler, for `signature`.
+
 #### `Events.PARAMS_CLUSTER_CHANGE`
 
 ```java
 public static final String PARAMS_CLUSTER_CHANGE = "(cluster: cluster) -> ()"
 ```
+
+The parameter text of a `cluster-change` handler, for `signature`.
 
 #### `Events.PARAMS_NODE_LIFECYCLE`
 
@@ -1467,9 +1678,13 @@ public static final String PARAMS_CLUSTER_CHANGE = "(cluster: cluster) -> ()"
 public static final String PARAMS_NODE_LIFECYCLE = "(lifecycle: lifecycle) -> ()"
 ```
 
+The parameter text of a `node-lifecycle` handler, for `signature`.
+
 #### `Events.PARAMS_TIMER`
 
 ```java
 public static final String PARAMS_TIMER = "(timer: timer) -> ()"
 ```
+
+The parameter text of a `timer` handler, for `signature`.
 

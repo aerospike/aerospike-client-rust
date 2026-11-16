@@ -18,6 +18,7 @@ public final class Expiry extends Answer {
         super(verdict, 0, null, 0, ttl);
     }
 
+    /** Lets the record expire. */
     public static Expiry expire() {
         return new Expiry("expire", -1);
     }

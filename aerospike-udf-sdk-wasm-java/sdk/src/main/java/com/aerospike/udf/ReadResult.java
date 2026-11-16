@@ -18,10 +18,12 @@ public final class ReadResult extends Answer {
         super(verdict, 0, null, bins, -1);
     }
 
+    /** Answers the read with the record as it was read. */
     public static ReadResult unchanged() {
         return new ReadResult("unchanged", 0);
     }
 
+    /** Answers the read with these bins instead, as the whole response; the stored record is untouched. */
     public static ReadResult record(UdfMap bins) {
         return new ReadResult("record", bins.handle());
     }

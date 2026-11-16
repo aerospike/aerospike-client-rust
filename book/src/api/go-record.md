@@ -50,6 +50,9 @@ const (
 )
 ```
 
+The kinds of a Value. KindAbsent stands for no value at all (a missing bin, map entry or argument), as
+distinct from a stored nil (KindNil). KindOther is a value a UDF cannot interpret.
+
 #### `constants: LogWarn, LogInfo, LogDebug`
 
 ```go
@@ -59,6 +62,8 @@ const (
 	LogDebug = 2
 )
 ```
+
+Log levels for Log, most severe first.
 
 #### `Value`
 
@@ -103,7 +108,7 @@ Double is the payload as a float64.
 func IntValue(i int64) Value { return Value{Kind: KindInt, Payload: i} }
 ```
 
-Values of the guest's, for a batch.
+IntValue is an integer as a value of the guest's, for a batch.
 
 #### `DoubleValue`
 
@@ -111,11 +116,16 @@ Values of the guest's, for a batch.
 func DoubleValue(d float64) Value
 ```
 
+DoubleValue is a double as a value of the guest's, for a batch.
+
 #### `StrValue`
 
 ```go
 func StrValue(s string) Value
 ```
+
+StrValue is a string of the guest's as a value, for a batch. It holds the address of s's bytes, not a
+copy, so s must stay alive until the host has taken the value.
 
 #### `BlobValue`
 
@@ -123,11 +133,16 @@ func StrValue(s string) Value
 func BlobValue(b []byte) Value
 ```
 
+BlobValue is a blob of the guest's as a value, for a batch. It holds the address of b's bytes, not a
+copy, so b must stay alive until the host has taken the value.
+
 #### `HandleValue`
 
 ```go
 func HandleValue(h int32) Value { return Value{Kind: KindHandle, Payload: int64(h)} }
 ```
+
+HandleValue is a built list or map as a value, by its handle, for a batch.
 
 #### `StrBytesValue`
 
@@ -267,11 +282,19 @@ Exists reports whether the record exists.
 func SetInt(name string, value int64) int32
 ```
 
+SetInt writes an integer to a bin.
+Staged until the record is committed. The status is Err for a name that is empty or longer than 15
+bytes, Refused when the record refuses the write.
+
 #### `SetDouble`
 
 ```go
 func SetDouble(name string, value float64) int32
 ```
+
+SetDouble writes a double to a bin.
+Staged until the record is committed. The status is Err for a name that is empty or longer than 15
+bytes, Refused when the record refuses the write.
 
 #### `SetStr`
 
@@ -279,11 +302,20 @@ func SetDouble(name string, value float64) int32
 func SetStr(name, value string) int32
 ```
 
+SetStr writes a string to a bin; the host copies the bytes.
+Staged until the record is committed. The status is Err for a name that is empty or longer than 15
+bytes, Refused when the record refuses the write.
+
 #### `SetBlob`
 
 ```go
 func SetBlob(name string, value []byte) int32
 ```
+
+SetBlob writes a blob to a bin; the host copies the bytes. Staged until the record is committed. The
+status is TypeMismatch when the bin holds bytes of another subtype, such as an HLL, which a plain blob
+would relabel; Err for a name that is empty or longer than 15 bytes; Refused when the record refuses
+the write.
 
 #### `SetHandle`
 
@@ -307,6 +339,9 @@ SetValue writes a value read from the record to a bin, by position.
 func Remove(name string) int32 { return binRemove(strptr(name), int32(len(name))) }
 ```
 
+Remove removes a bin from the record, staged like a write. The status is Err for a name that is empty or
+longer than 15 bytes, Refused when the record refuses.
+
 #### `Update`
 
 ```go
@@ -321,6 +356,9 @@ Update commits the staged writes to an existing record; Create to one that does 
 func Create() int32 { return recCreate() }
 ```
 
+Create commits the staged writes as a new record. The status is Refused when the server does not
+create it.
+
 #### `NewListHandle`
 
 ```go
@@ -333,8 +371,11 @@ calls; NewList and NewMap are the typed builders.
 #### `NewMapHandle`
 
 ```go
-func NewMapHandle(capacity int) int32  { return mapNew(int32(capacity)) }
+func NewMapHandle(capacity int) int32 { return mapNew(int32(capacity)) }
 ```
+
+NewMapHandle starts a map on the host with room for capacity entries and returns its bare handle, 0
+when it could not. A built map is ordered by key, not by insertion.
 
 #### `NilHandle`
 
@@ -368,17 +409,26 @@ not a loop.
 func ListPushInt(list int32, value int64) int32 { return listPushInt(list, value) }
 ```
 
+ListPushInt appends an integer to a built list. The status is Err when list is not a built list.
+
 #### `ListPushStr`
 
 ```go
 func ListPushStr(list int32, value string) int32
 ```
 
+ListPushStr appends a string to a built list; the host copies the bytes. The status is Err when list is
+not a built list.
+
 #### `ListPushHandle`
 
 ```go
 func ListPushHandle(list, value int32) int32 { return listPush(list, value) }
 ```
+
+ListPushHandle appends a value held by handle (a built collection, or one of NilHandle, IntHandle or
+StrHandle) to a built list. The status is Err when list is not a built list or value is not a usable
+handle.
 
 #### `ListPushValue`
 
@@ -404,17 +454,27 @@ position, built collections by handle. Returns how many went in.
 func MapPutInt(m int32, key string, value int64) int32
 ```
 
+MapPutInt puts an integer under a string key in a built map. The status is Err when m is not a built
+map.
+
 #### `MapPutStr`
 
 ```go
 func MapPutStr(m int32, key, value string) int32
 ```
 
+MapPutStr puts a string under a string key in a built map; the host copies the bytes. The status is Err
+when m is not a built map.
+
 #### `MapPutHandle`
 
 ```go
 func MapPutHandle(m int32, key string, value int32) int32
 ```
+
+MapPutHandle puts a value held by handle (a built collection, or one of NilHandle, IntHandle or
+StrHandle) under a string key in a built map. The status is Err when m is not a built map or value is
+not a usable handle.
 
 #### `MapPutValue`
 
@@ -440,17 +500,24 @@ many pairs went in.
 func Size(handle int32) int { return int(collSize(handle)) }
 ```
 
+Size is the number of elements of the list, or entries of the map, behind a handle: a built collection
+or an open cursor. Err (-1) when the handle is neither.
+
 #### `ResultNil`
 
 ```go
-func ResultNil()             { resultNil() }
+func ResultNil() { resultNil() }
 ```
+
+ResultNil sets nil as the call's result. Of several Result calls, the last one wins.
 
 #### `ResultInt`
 
 ```go
-func ResultInt(v int64)      { resultInt(v) }
+func ResultInt(v int64) { resultInt(v) }
 ```
+
+ResultInt sets an integer as the call's result.
 
 #### `ResultDouble`
 
@@ -458,29 +525,40 @@ func ResultInt(v int64)      { resultInt(v) }
 func ResultDouble(v float64) { resultDouble(v) }
 ```
 
+ResultDouble sets a double as the call's result.
+
 #### `ResultBool`
 
 ```go
 func ResultBool(v bool)
 ```
 
+ResultBool sets a boolean as the call's result.
+
 #### `ResultStr`
 
 ```go
-func ResultStr(s string)         { resultStr(strptr(s), int32(len(s))) }
+func ResultStr(s string) { resultStr(strptr(s), int32(len(s))) }
 ```
+
+ResultStr sets a string as the call's result; the host copies the bytes.
 
 #### `ResultBlob`
 
 ```go
-func ResultBlob(b []byte)        { resultBlob(ptr(b), int32(len(b))) }
+func ResultBlob(b []byte) { resultBlob(ptr(b), int32(len(b))) }
 ```
+
+ResultBlob sets a blob as the call's result; the host copies the bytes.
 
 #### `ResultHandle`
 
 ```go
 func ResultHandle(h int32) int32 { return resultHandle(h) }
 ```
+
+ResultHandle sets a built list or map as the call's result, by handle. The status is Err when the
+handle is not usable.
 
 #### `ResultValue`
 
@@ -503,6 +581,9 @@ Fail fails the call with a message the client sees, and returns the non-zero sta
 ```go
 func Log(level int32, message string) { log(level, strptr(message), int32(len(message))) }
 ```
+
+Log writes a message to the server log at a level: LogWarn, LogInfo or LogDebug, any other value
+logging as debug. The host keeps the first 511 bytes of the message.
 
 #### `Signature`
 
@@ -532,6 +613,8 @@ for: the native's status and a message naming what failed. A UDF returns it (or 
 func (e *Error) Error() string { return e.Msg }
 ```
 
+Error is the message, which makes *Error an error.
+
 #### `FailErr`
 
 ```go
@@ -559,26 +642,34 @@ Delete deletes the record.
 #### `Value.IsNull`
 
 ```go
-func (v Value) IsNull() bool    { return v.Kind == KindNil || v.Kind == KindAbsent }
+func (v Value) IsNull() bool { return v.Kind == KindNil || v.Kind == KindAbsent }
 ```
+
+IsNull reports whether the value is nil or absent.
 
 #### `Value.IsNil`
 
 ```go
-func (v Value) IsNil() bool     { return v.Kind == KindNil }
+func (v Value) IsNil() bool { return v.Kind == KindNil }
 ```
+
+IsNil reports whether the value is a nil, as distinct from absent.
 
 #### `Value.IsAbsent`
 
 ```go
-func (v Value) IsAbsent() bool  { return v.Kind == KindAbsent }
+func (v Value) IsAbsent() bool { return v.Kind == KindAbsent }
 ```
+
+IsAbsent reports whether there is no value at all: a missing bin, map entry or argument.
 
 #### `Value.IsInt`
 
 ```go
-func (v Value) IsInt() bool     { return v.Kind == KindInt }
+func (v Value) IsInt() bool { return v.Kind == KindInt }
 ```
+
+IsInt reports whether the value is an integer.
 
 #### `Value.IsFloat64`
 
@@ -586,35 +677,47 @@ func (v Value) IsInt() bool     { return v.Kind == KindInt }
 func (v Value) IsFloat64() bool { return v.Kind == KindDouble }
 ```
 
+IsFloat64 reports whether the value is a double. An integer is not one, though Float64 widens it.
+
 #### `Value.IsBool`
 
 ```go
-func (v Value) IsBool() bool    { return v.Kind == KindBool }
+func (v Value) IsBool() bool { return v.Kind == KindBool }
 ```
+
+IsBool reports whether the value is a boolean.
 
 #### `Value.IsStr`
 
 ```go
-func (v Value) IsStr() bool     { return v.Kind == KindStr }
+func (v Value) IsStr() bool { return v.Kind == KindStr }
 ```
+
+IsStr reports whether the value is a string the host holds.
 
 #### `Value.IsBlob`
 
 ```go
-func (v Value) IsBlob() bool    { return v.Kind == KindBlob }
+func (v Value) IsBlob() bool { return v.Kind == KindBlob }
 ```
+
+IsBlob reports whether the value is a plain blob the host holds; GeoJSON and HLL are kinds of their own.
 
 #### `Value.IsList`
 
 ```go
-func (v Value) IsList() bool    { return v.Kind == KindList }
+func (v Value) IsList() bool { return v.Kind == KindList }
 ```
+
+IsList reports whether the value is a list the host holds.
 
 #### `Value.IsMap`
 
 ```go
-func (v Value) IsMap() bool     { return v.Kind == KindMap }
+func (v Value) IsMap() bool { return v.Kind == KindMap }
 ```
+
+IsMap reports whether the value is a map the host holds.
 
 #### `Value.IsStored`
 
@@ -645,6 +748,8 @@ Float64 is the value as a double, or an integer widened.
 ```go
 func (v Value) Bool() (bool, error)
 ```
+
+Bool is the value as a boolean.
 
 #### `Value.Str`
 
@@ -719,13 +824,15 @@ GeoJSONValue is a GeoJSON document of the guest's, for a batch, a result or a co
 func BoolValue(b bool) Value
 ```
 
-BoolValue and NilValue, for a batch.
+BoolValue is a boolean as a value of the guest's, for a batch.
 
 #### `NilValue`
 
 ```go
 func NilValue() Value { return Value{Kind: KindNil} }
 ```
+
+NilValue is a nil value, for a batch.
 
 #### `Bin`
 
@@ -750,11 +857,15 @@ return udf.Commit()
 func NewBin(name string) Bin { return Bin{name: name} }
 ```
 
+NewBin names a bin of the record in hand. It reads nothing, so the bin need not exist.
+
 #### `Bin.Name`
 
 ```go
 func (b Bin) Name() string { return b.name }
 ```
+
+Name is the bin's name.
 
 #### `Bin.Get`
 
@@ -778,6 +889,8 @@ Exists reports whether the record has this bin.
 func (b Bin) Int() (int64, error)
 ```
 
+Int is the bin as an integer; an error naming the bin when it is absent or of another kind.
+
 #### `Bin.IntOr`
 
 ```go
@@ -792,11 +905,17 @@ IntOr is the bin as an integer, or dflt when absent or nil; a bin of another kin
 func (b Bin) Float64() (float64, error)
 ```
 
+Float64 is the bin as a double; an error naming the bin when it is absent or of another kind. An integer
+bin is of another kind here: nothing is widened.
+
 #### `Bin.Float64Or`
 
 ```go
 func (b Bin) Float64Or(dflt float64) float64
 ```
+
+Float64Or is the bin as a double, or dflt when absent or nil; a bin of another kind, an integer
+included, also answers dflt.
 
 #### `Bin.Bool`
 
@@ -804,11 +923,15 @@ func (b Bin) Float64Or(dflt float64) float64
 func (b Bin) Bool() (bool, error)
 ```
 
+Bool is the bin as a boolean; an error naming the bin when it is absent or of another kind.
+
 #### `Bin.BoolOr`
 
 ```go
 func (b Bin) BoolOr(dflt bool) bool
 ```
+
+BoolOr is the bin as a boolean, or dflt when absent or nil; a bin of another kind also answers dflt.
 
 #### `Bin.Str`
 
@@ -816,11 +939,17 @@ func (b Bin) BoolOr(dflt bool) bool
 func (b Bin) Str() (string, error)
 ```
 
+Str is the text of a string bin, copied out; an error naming the bin when it is absent or of another
+kind.
+
 #### `Bin.StrOr`
 
 ```go
 func (b Bin) StrOr(dflt string) string
 ```
+
+StrOr is the text of a string bin, copied out, or dflt when absent or nil; a bin of another kind, or one
+that could not be read, also answers dflt.
 
 #### `Bin.Bytes`
 
@@ -857,8 +986,10 @@ Map walks the entries of the map in this bin; nothing when the bin is absent or 
 #### `Bin.SetInt`
 
 ```go
-func (b Bin) SetInt(value int64) error       { return b.check(SetInt(b.name, value)) }
+func (b Bin) SetInt(value int64) error { return b.check(SetInt(b.name, value)) }
 ```
+
+SetInt writes an integer, staged until Commit.
 
 #### `Bin.SetFloat64`
 
@@ -866,17 +997,23 @@ func (b Bin) SetInt(value int64) error       { return b.check(SetInt(b.name, val
 func (b Bin) SetFloat64(value float64) error { return b.check(SetDouble(b.name, value)) }
 ```
 
+SetFloat64 writes a double, staged until Commit.
+
 #### `Bin.SetBool`
 
 ```go
-func (b Bin) SetBool(value bool) error       { return b.check(SetBool(b.name, value)) }
+func (b Bin) SetBool(value bool) error { return b.check(SetBool(b.name, value)) }
 ```
+
+SetBool writes a boolean, staged until Commit.
 
 #### `Bin.SetStr`
 
 ```go
-func (b Bin) SetStr(value string) error      { return b.check(SetStr(b.name, value)) }
+func (b Bin) SetStr(value string) error { return b.check(SetStr(b.name, value)) }
 ```
+
+SetStr writes a string, staged until Commit.
 
 #### `Bin.SetBytes`
 
@@ -916,6 +1053,8 @@ SetInts writes a list of integers from the slice in one import, no value built p
 func (b Bin) SetFloat64s(values []float64) error { return b.check(SetFloat64s(b.name, values)) }
 ```
 
+SetFloat64s writes a list of doubles from the slice in one import, no value built per element.
+
 #### `Bin.SetValue`
 
 ```go
@@ -931,17 +1070,25 @@ bytes or a built collection.
 func (b Bin) SetMap(m *Map) error
 ```
 
+SetMap writes a built map. When the map kept a refusal while it was built, that error is returned and
+nothing is written.
+
 #### `Bin.SetList`
 
 ```go
 func (b Bin) SetList(l *List) error
 ```
 
+SetList writes a built list. When the list kept a refusal while it was built, that error is returned and
+nothing is written.
+
 #### `Bin.Remove`
 
 ```go
 func (b Bin) Remove() error { return b.check(Remove(b.name)) }
 ```
+
+Remove removes the bin from the record, staged until Commit.
 
 #### `Map`
 
@@ -985,7 +1132,7 @@ NewList starts a list with room for capacity elements.
 #### `WrapMap`
 
 ```go
-func WrapMap(handle int32) *Map   { return &Map{handle: handle} }
+func WrapMap(handle int32) *Map { return &Map{handle: handle} }
 ```
 
 WrapMap and WrapList take a handle the low-level calls built.
@@ -996,10 +1143,12 @@ WrapMap and WrapList take a handle the low-level calls built.
 func WrapList(handle int32) *List { return &List{handle: handle} }
 ```
 
+WrapList takes a list handle the low-level calls built.
+
 #### `Map.Handle`
 
 ```go
-func (m *Map) Handle() int32  { return m.handle }
+func (m *Map) Handle() int32 { return m.handle }
 ```
 
 Handle is what the low-level calls take.
@@ -1010,10 +1159,12 @@ Handle is what the low-level calls take.
 func (l *List) Handle() int32 { return l.handle }
 ```
 
+Handle is the list's handle, as the low-level calls take it.
+
 #### `Map.Err`
 
 ```go
-func (m *Map) Err() error  { return m.err }
+func (m *Map) Err() error { return m.err }
 ```
 
 Err is the first refusal, nil when every put went in.
@@ -1024,11 +1175,16 @@ Err is the first refusal, nil when every put went in.
 func (l *List) Err() error { return l.err }
 ```
 
+Err is the first refusal, nil when every add went in.
+
 #### `Map.Size`
 
 ```go
-func (m *Map) Size() int  { return int(collSize(m.handle)) }
+func (m *Map) Size() int { return int(collSize(m.handle)) }
 ```
+
+Size is how many entries the map holds; -1 when its handle is not a collection's, as after a failed
+NewMap.
 
 #### `List.Size`
 
@@ -1036,10 +1192,13 @@ func (m *Map) Size() int  { return int(collSize(m.handle)) }
 func (l *List) Size() int { return int(collSize(l.handle)) }
 ```
 
+Size is how many elements the list holds; -1 when its handle is not a collection's, as after a failed
+NewList.
+
 #### `Map.Value`
 
 ```go
-func (m *Map) Value() Value  { return HandleValue(m.handle) }
+func (m *Map) Value() Value { return HandleValue(m.handle) }
 ```
 
 Value is the collection as a value, for a batch or a result.
@@ -1049,6 +1208,8 @@ Value is the collection as a value, for a batch or a result.
 ```go
 func (l *List) Value() Value { return HandleValue(l.handle) }
 ```
+
+Value is the list as a value, for a batch or a result.
 
 #### `Map.Has`
 
@@ -1158,14 +1319,20 @@ MapPut puts a built value under a built key, both by handle; IntHandle and StrHa
 #### `IntHandle`
 
 ```go
-func IntHandle(i int64) int32          { return valInt(i) }
+func IntHandle(i int64) int32 { return valInt(i) }
 ```
+
+IntHandle is an integer as a handle, for the calls that take a key or value by handle. 0 when the host
+could not make one.
 
 #### `StrHandle`
 
 ```go
-func StrHandle(s string) int32         { return valStr(strptr(s), int32(len(s))) }
+func StrHandle(s string) int32 { return valStr(strptr(s), int32(len(s))) }
 ```
+
+StrHandle is a string as a handle, copied by the host, for the calls that take a key or value by
+handle. 0 when the host could not make one.
 
 #### `GetI`
 
@@ -1180,6 +1347,10 @@ GetI looks an integer key up in the map at a value's position.
 ```go
 func SetBool(name string, value bool) int32
 ```
+
+SetBool writes a boolean to a bin.
+Staged until the record is committed. The status is Err for a name that is empty or longer than 15
+bytes, Refused when the record refuses the write.
 
 #### `SetNull`
 
@@ -1211,6 +1382,8 @@ SetInts writes a list of integers from the slice in one import, no value built p
 func SetFloat64s(name string, values []float64) int32
 ```
 
+SetFloat64s writes a list of doubles from the slice in one import, no value built per element.
+
 #### `ResultGeoJSON`
 
 ```go
@@ -1232,6 +1405,9 @@ ResultMap and ResultList set a built collection as the result.
 ```go
 func ResultList(l *List) error
 ```
+
+ResultList sets a built list as the result. When the list kept a refusal while it was built, that error
+is returned and no result is set.
 
 #### `ResultOf`
 
@@ -1256,7 +1432,7 @@ TTL is the record's time to live, in seconds.
 func Now() int64 { return currentTime() }
 ```
 
-Now is the server's clock in ms since the epoch, or -1 inside an event handler, where it is refused.
+Now is the server's clock in ms since the Unix epoch, or -1 inside an event handler, where it is refused.
 
 #### `LastUpdateTime`
 
@@ -1264,7 +1440,8 @@ Now is the server's clock in ms since the epoch, or -1 inside an event handler, 
 func LastUpdateTime() int64 { return lastUpdate() }
 ```
 
-LastUpdateTime is when the record was last written, in ms since the epoch.
+LastUpdateTime is when the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC),
+which is how the server stores it. It is not on the same scale as Now, which counts from the Unix epoch.
 
 #### `RecordSize`
 
@@ -1313,17 +1490,25 @@ Arity fails a call that passed more arguments than the function declares.
 func ArgInt64(a []Value, n int32, i int, fn, p string) (int64, error)
 ```
 
+ArgInt64 is argument i as an integer. The error, which names the function fn and the parameter p, says
+the argument is missing or is not an int.
+
 #### `ArgInt32`
 
 ```go
 func ArgInt32(a []Value, n int32, i int, fn, p string) (int32, error)
 ```
 
+ArgInt32 is argument i as a 32-bit integer; an error when it is missing, not an int, or does not fit 32
+bits.
+
 #### `ArgInt`
 
 ```go
 func ArgInt(a []Value, n int32, i int, fn, p string) (int, error)
 ```
+
+ArgInt is argument i as an int, with ArgInt64's errors. The conversion to int is not range checked.
 
 #### `ArgFloat64`
 
@@ -1339,11 +1524,15 @@ ArgFloat64 is a double, or an int widened to one.
 func ArgBool(a []Value, n int32, i int, fn, p string) (bool, error)
 ```
 
+ArgBool is argument i as a boolean; an error when it is missing or not a bool.
+
 #### `ArgString`
 
 ```go
 func ArgString(a []Value, n int32, i int, fn, p string) (string, error)
 ```
+
+ArgString is argument i as a string, copied out; an error when it is missing or not a string.
 
 #### `ArgBytes`
 
@@ -1375,11 +1564,16 @@ ArgRest is every argument from i on.
 func OptInt64(a []Value, n int32, i int, fn, p string) (*int64, error)
 ```
 
+OptInt64 is argument i as an integer, nil when it is absent or nil; an error when it is of another kind.
+
 #### `OptFloat64`
 
 ```go
 func OptFloat64(a []Value, n int32, i int, fn, p string) (*float64, error)
 ```
+
+OptFloat64 is argument i as a double, or an int widened to one; nil when it is absent or nil, an error
+when it is of another kind.
 
 #### `OptBool`
 
@@ -1387,15 +1581,22 @@ func OptFloat64(a []Value, n int32, i int, fn, p string) (*float64, error)
 func OptBool(a []Value, n int32, i int, fn, p string) (*bool, error)
 ```
 
+OptBool is argument i as a boolean, nil when it is absent or nil; an error when it is of another kind.
+
 #### `OptString`
 
 ```go
 func OptString(a []Value, n int32, i int, fn, p string) (*string, error)
 ```
 
+OptString is argument i as a string, nil when it is absent or nil; an error when it is of another kind.
+
 #### `OptValue`
 
 ```go
 func OptValue(a []Value, n int32, i int, fn, p string) (*Value, error)
 ```
+
+OptValue is argument i as a value of any kind, nil when it is absent or nil. The pointer is into a, and
+the error is always nil.
 

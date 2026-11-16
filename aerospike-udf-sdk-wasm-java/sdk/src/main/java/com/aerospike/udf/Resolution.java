@@ -49,6 +49,7 @@ public final class Resolution extends Answer {
         return new Resolution("record", bins.handle(), ttl);
     }
 
+    /** Sets the resolution as the result of the call. Called by the generated export; returns the status. */
     @Override
     public int deliver() {
         if (bins == 0) {

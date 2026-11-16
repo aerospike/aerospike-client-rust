@@ -18,14 +18,17 @@ public final class ShipDecision extends Answer {
         super(verdict, 0, null, bins, -1);
     }
 
+    /** Ships the record as it is. */
     public static ShipDecision ship() {
         return new ShipDecision("ship", 0);
     }
 
+    /** Does not ship the record. */
     public static ShipDecision skip() {
         return new ShipDecision("skip", 0);
     }
 
+    /** Ships these bins instead of the record. */
     public static ShipDecision record(UdfMap bins) {
         return new ShipDecision("record", bins.handle());
     }

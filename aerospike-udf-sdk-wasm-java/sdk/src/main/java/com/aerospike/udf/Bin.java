@@ -40,10 +40,12 @@ public final class Bin {
         this.name = Udf.bytes(text);
     }
 
+    /** A bin by name. The name is encoded here, once; nothing is read. */
     public static Bin of(String name) {
         return new Bin(name);
     }
 
+    /** The bin's name. */
     public String name() {
         return text;
     }
@@ -120,37 +122,52 @@ public final class Bin {
         return v;
     }
 
+    /** The bin as an integer; throws {@link UdfException} when it is absent or of another kind. */
     public long getLong() {
         return typed(Value.INT, "an int").payload;
     }
 
+    /** The bin as an integer, or {@code dflt} when it is absent or nil; throws when it is of another kind. */
     public long getLong(long dflt) {
         Value x = optional(Value.INT, "an int");
         return x == null ? dflt : x.payload;
     }
 
+    /**
+     * The bin as a double; throws {@link UdfException} when it is absent or of another kind. An integer bin is
+     * not widened.
+     */
     public double getDouble() {
         return typed(Value.DOUBLE, "a double").asDouble();
     }
 
+    /** The bin as a double, or {@code dflt} when it is absent or nil; throws when it is of another kind. */
     public double getDouble(double dflt) {
         Value x = optional(Value.DOUBLE, "a double");
         return x == null ? dflt : x.asDouble();
     }
 
+    /** The bin as a boolean; throws {@link UdfException} when it is absent or of another kind. */
     public boolean getBoolean() {
         return typed(Value.BOOL, "a bool").payload != 0;
     }
 
+    /** The bin as a boolean, or {@code dflt} when it is absent or nil; throws when it is of another kind. */
     public boolean getBoolean(boolean dflt) {
         Value x = optional(Value.BOOL, "a bool");
         return x == null ? dflt : x.payload != 0;
     }
 
+    /**
+     * The text of a string bin, copied out; throws {@link UdfException} when it is absent or of another kind.
+     */
     public String getString() {
         return typed(Value.STR, "a string").asString();
     }
 
+    /**
+     * The text of a string bin, or {@code dflt} when it is absent or nil; throws when it is of another kind.
+     */
     public String getString(String dflt) {
         Value x = optional(Value.STR, "a string");
         return x == null ? dflt : x.asString();
@@ -203,18 +220,22 @@ public final class Bin {
         }
     }
 
+    /** An integer. */
     public void set(long value) {
         check(Natives.setInt(Address.ofData(name), name.length, value));
     }
 
+    /** A double. */
     public void set(double value) {
         check(Natives.setDouble(Address.ofData(name), name.length, value));
     }
 
+    /** A boolean. */
     public void set(boolean value) {
         check(Natives.setBool(Address.ofData(name), name.length, value ? 1 : 0));
     }
 
+    /** A string, written as UTF-8. */
     public void set(String value) {
         byte[] b = Udf.bytes(value);
         check(Natives.setStr(Address.ofData(name), name.length, Address.ofData(b), b.length));
@@ -260,10 +281,12 @@ public final class Bin {
         }
     }
 
+    /** A built map. */
     public void set(UdfMap value) {
         check(Natives.setHandle(Address.ofData(name), name.length, value.handle()));
     }
 
+    /** A built list. */
     public void set(UdfList value) {
         check(Natives.setHandle(Address.ofData(name), name.length, value.handle()));
     }
@@ -284,10 +307,14 @@ public final class Bin {
         check(Natives.setListInts(Address.ofData(name), name.length, Address.ofData(values), values.length * 8));
     }
 
+    /** A list of doubles from the array, in one import, no value built per element. */
     public void setDoubles(double[] values) {
         check(Natives.setListDoubles(Address.ofData(name), name.length, Address.ofData(values), values.length * 8));
     }
 
+    /**
+     * Removes the bin from the record, staged like a write; throws {@link UdfException} when the host refuses.
+     */
     public void remove() {
         check(Natives.binRemove(Address.ofData(name), name.length));
     }

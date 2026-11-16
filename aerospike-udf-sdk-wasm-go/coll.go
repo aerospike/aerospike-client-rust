@@ -55,22 +55,35 @@ func NewList(capacity int) *List {
 }
 
 // WrapMap and WrapList take a handle the low-level calls built.
-func WrapMap(handle int32) *Map   { return &Map{handle: handle} }
+func WrapMap(handle int32) *Map { return &Map{handle: handle} }
+
+// WrapList takes a list handle the low-level calls built.
 func WrapList(handle int32) *List { return &List{handle: handle} }
 
 // Handle is what the low-level calls take.
-func (m *Map) Handle() int32  { return m.handle }
+func (m *Map) Handle() int32 { return m.handle }
+
+// Handle is the list's handle, as the low-level calls take it.
 func (l *List) Handle() int32 { return l.handle }
 
 // Err is the first refusal, nil when every put went in.
-func (m *Map) Err() error  { return m.err }
+func (m *Map) Err() error { return m.err }
+
+// Err is the first refusal, nil when every add went in.
 func (l *List) Err() error { return l.err }
 
-func (m *Map) Size() int  { return int(collSize(m.handle)) }
+// Size is how many entries the map holds; -1 when its handle is not a collection's, as after a failed
+// NewMap.
+func (m *Map) Size() int { return int(collSize(m.handle)) }
+
+// Size is how many elements the list holds; -1 when its handle is not a collection's, as after a failed
+// NewList.
 func (l *List) Size() int { return int(collSize(l.handle)) }
 
 // Value is the collection as a value, for a batch or a result.
-func (m *Map) Value() Value  { return HandleValue(m.handle) }
+func (m *Map) Value() Value { return HandleValue(m.handle) }
+
+// Value is the list as a value, for a batch or a result.
 func (l *List) Value() Value { return HandleValue(l.handle) }
 
 // Has reports whether the map holds key; it packs the map, so for the occasional check, not a loop.
@@ -263,8 +276,14 @@ func MapPutIValue(m int32, key int64, v Value) int32 {
 
 // MapPut puts a built value under a built key, both by handle; IntHandle and StrHandle make a key.
 func MapPut(m, key, value int32) int32 { return mapPut(m, key, value) }
-func IntHandle(i int64) int32          { return valInt(i) }
-func StrHandle(s string) int32         { return valStr(strptr(s), int32(len(s))) }
+
+// IntHandle is an integer as a handle, for the calls that take a key or value by handle. 0 when the host
+// could not make one.
+func IntHandle(i int64) int32 { return valInt(i) }
+
+// StrHandle is a string as a handle, copied by the host, for the calls that take a key or value by
+// handle. 0 when the host could not make one.
+func StrHandle(s string) int32 { return valStr(strptr(s), int32(len(s))) }
 
 // GetI looks an integer key up in the map at a value's position.
 func GetI(m Value, key int64, out *Value) int32 {

@@ -12,4 +12,5 @@ _temp/
 .claude/
 .DS_Store
 *.log
-book/
+book/build
+book/target

@@ -51,8 +51,10 @@ public final class Events {
         public long ttl;
         /** The record did not exist. */
         public boolean create;
+        /** The write asked for durable delete. */
         public boolean durableDelete;
 
+        /** Fills this from the description's {@code write} entry. False when it has none. */
         public boolean decode(Value desc) {
             Value m = Udf.mapGet(desc, "write");
 
@@ -70,10 +72,14 @@ public final class Events {
         }
     }
 
+    /** What a before-delete or after-delete handler is asked about. */
     public static final class DeleteInfo {
+        /** Where the delete came from, named as {@code WriteInfo.source} names it. */
         public String source = "";
+        /** The delete is a durable one. */
         public boolean durable;
 
+        /** Fills this from the description's {@code delete} entry. False when it has none. */
         public boolean decode(Value desc) {
             Value m = Udf.mapGet(desc, "delete");
 
@@ -88,13 +94,16 @@ public final class Events {
         }
     }
 
+    /** What a before-truncate or after-truncate handler is asked about. */
     public static final class TruncateInfo {
+        /** The namespace being truncated. */
         public String namespace = "";
         /** "" for the whole namespace. */
         public String set = "";
         /** Records last updated before this (ms since the epoch) go. */
         public long lut;
 
+        /** Fills this from the description's {@code truncate} entry. False when it has none. */
         public boolean decode(Value desc) {
             Value m = Udf.mapGet(desc, "truncate");
 
@@ -114,10 +123,15 @@ public final class Events {
     public static final class ExpireInfo {
         /** When the record was due, seconds since the Aerospike epoch. */
         public long voidTime;
+        /** The supervisor's clock, in the same units. */
         public long now;
         /** before-evict: records due before this are being evicted. */
         public long evictVoidTime;
 
+        /**
+         * Fills this from the description's {@code expire} entry, or its {@code evict} entry. False when it has
+         * neither.
+         */
         public boolean decode(Value desc) {
             Value m = Udf.mapGet(desc, "expire");
 
@@ -137,11 +151,14 @@ public final class Events {
         }
     }
 
+    /** What an after-read handler is asked about. */
     public static final class ReadInfo {
+        /** Where the read came from. */
         public String source = "";
         /** Every bin was asked for, not named ones. */
         public boolean all;
 
+        /** Fills this from the description's {@code read} entry. False when it has none. */
         public boolean decode(Value desc) {
             Value m = Udf.mapGet(desc, "read");
 
@@ -156,9 +173,12 @@ public final class Events {
         }
     }
 
+    /** What a before-ship handler is asked about. */
     public static final class ShipInfo {
+        /** The destination DC's name. */
         public String dc = "";
 
+        /** Fills this from the description's {@code ship} entry. False when it has none. */
         public boolean decode(Value desc) {
             Value m = Udf.mapGet(desc, "ship");
 
@@ -172,6 +192,7 @@ public final class Events {
         }
     }
 
+    /** What a node-lifecycle handler is told. */
     public static final class LifecycleInfo {
         /** service-ready, shutdown, binding-deployed. */
         public String phase = "";
@@ -180,6 +201,7 @@ public final class Events {
         /** binding-deployed: a map of event, namespace, set, name, module, function; else ABSENT. */
         public Value binding = new Value();
 
+        /** Fills this from the description's {@code lifecycle} entry. False when it has none. */
         public boolean decode(Value desc) {
             Value m = Udf.mapGet(desc, "lifecycle");
 
@@ -195,13 +217,18 @@ public final class Events {
         }
     }
 
+    /** What a cluster-change handler is told: the cluster after a rebalance. */
     public static final class ClusterInfo {
+        /** The cluster key, in hex. */
         public String key = "";
+        /** The cluster's size, in nodes. */
         public long size;
+        /** This node's id. */
         public String self = "";
         /** The list of hex node ids in succession order. */
         public Value nodes = new Value();
 
+        /** Fills this from the description's {@code cluster} entry. False when it has none. */
         public boolean decode(Value desc) {
             Value m = Udf.mapGet(desc, "cluster");
 
@@ -218,13 +245,18 @@ public final class Events {
         }
     }
 
+    /** What a partition-transfer handler is told: a partition arrived at this node or departed from it. */
     public static final class TransferInfo {
+        /** The partition's namespace. */
         public String namespace = "";
+        /** The partition's id. */
         public long partition;
         /** true: arrived here; false: departed. */
         public boolean arrived;
+        /** The other node, in hex. */
         public String peer = "";
 
+        /** Fills this from the description's {@code transfer} entry. False when it has none. */
         public boolean decode(Value desc) {
             Value m = Udf.mapGet(desc, "transfer");
 
@@ -243,10 +275,14 @@ public final class Events {
 
     /** A timer handler's argument: the timer that came due. The handler runs as a record UDF. */
     public static final class TimerInfo {
+        /** The name the timer was set under. */
         public String name = "";
+        /** When the timer was due, in ms since the epoch. */
         public long due;
+        /** When the timer fired, in ms since the epoch. */
         public long now;
 
+        /** Reads a timer call's arguments. False when they are not a timer's. */
         public boolean decode(int args, int argc) {
             Value[] a = new Value[1];
 
@@ -307,54 +343,107 @@ public final class Events {
     // allow / refuse; before-expire: expire / keep; before-evict: evict / protect; after-read: unchanged /
     // record; before-ship: ship / skip / record; the after- and once-per-node events and timers: done.
 
+    /**
+     * Answers {@code accept} from a before-write handler: the write goes through as it is. Returns the status
+     * the handler returns.
+     */
     public static int accept() {
         return answer("accept", 0, null, 0, -1);
     }
 
+    /**
+     * Answers {@code reject} from a before-write handler: the write fails with a server result code the client
+     * sees and a message, and nothing is written. Returns the status the handler returns.
+     */
     public static int reject(long code, String message) {
         return answer("reject", code, message, 0, -1);
     }
 
+    /**
+     * Answers {@code record}: {@code bins} (a built map) is the whole record, a bin absent from it or nil being
+     * deleted, with a TTL in seconds that has a write's meaning, or a negative one to send none. Returns the
+     * status the handler returns.
+     */
     public static int record(int bins, long ttl) {
         return answer("record", 0, null, bins, ttl);
     }
 
+    /**
+     * Answers {@code allow} from a before-delete or before-truncate handler: it goes ahead. Returns the status
+     * the handler returns.
+     */
     public static int allow() {
         return answer("allow", 0, null, 0, -1);
     }
 
+    /**
+     * Answers {@code refuse} from a before-delete or before-truncate handler: it fails with a server result
+     * code the client sees and a message. Returns the status the handler returns.
+     */
     public static int refuse(long code, String message) {
         return answer("refuse", code, message, 0, -1);
     }
 
+    /**
+     * Answers {@code expire} from a before-expire handler: the record expires. Returns the status the handler
+     * returns.
+     */
     public static int expire() {
         return answer("expire", 0, null, 0, -1);
     }
 
+    /**
+     * Answers {@code keep} from a before-expire handler: the record is kept for {@code ttl} more seconds, or
+     * for the namespace's default TTL when {@code ttl} is negative. Returns the status the handler returns.
+     */
     public static int keep(long ttl) {
         return answer("keep", 0, null, 0, ttl);
     }
 
+    /**
+     * Answers {@code evict} from a before-evict handler: the record is evicted. Returns the status the handler
+     * returns.
+     */
     public static int evict() {
         return answer("evict", 0, null, 0, -1);
     }
 
+    /**
+     * Answers {@code protect} from a before-evict handler: the record is left alone. Returns the status the
+     * handler returns.
+     */
     public static int protect() {
         return answer("protect", 0, null, 0, -1);
     }
 
+    /**
+     * Answers {@code unchanged} from a after-read handler: the read is answered with the record as it was read.
+     * Returns the status the handler returns.
+     */
     public static int unchanged() {
         return answer("unchanged", 0, null, 0, -1);
     }
 
+    /**
+     * Answers {@code ship} from a before-ship handler: the record ships as it is. Returns the status the
+     * handler returns.
+     */
     public static int ship() {
         return answer("ship", 0, null, 0, -1);
     }
 
+    /**
+     * Answers {@code skip} from a before-ship handler: the record is not shipped. Returns the status the
+     * handler returns.
+     */
     public static int skip() {
         return answer("skip", 0, null, 0, -1);
     }
 
+    /**
+     * Answers {@code ok}, for the kinds that take no verdict: the after events, the once-per-node events and
+     * timers. Returns the status the handler returns.
+     */
     public static int done() {
         return answer("ok", 0, null, 0, -1);
     }
@@ -369,18 +458,32 @@ public final class Events {
     }
 
     // The parameter text of each kind, for signature().
+    /** The parameter text of a {@code before-write} handler, for {@link #signature}. */
     public static final String PARAMS_BEFORE_WRITE = "(before: record, after: record, write: write) -> decision";
+    /** The parameter text of a {@code before-delete} handler, for {@link #signature}. */
     public static final String PARAMS_BEFORE_DELETE = "(record: record, delete: delete) -> gate";
+    /** The parameter text of an {@code after-write} handler, for {@link #signature}. */
     public static final String PARAMS_AFTER_WRITE = "(before: record, after: record, write: write) -> ()";
+    /** The parameter text of an {@code after-delete} handler, for {@link #signature}. */
     public static final String PARAMS_AFTER_DELETE = "(record: record, delete: delete) -> ()";
+    /** The parameter text of a {@code before-expire} handler, for {@link #signature}. */
     public static final String PARAMS_BEFORE_EXPIRE = "(record: record, expire: expire) -> expiry";
+    /** The parameter text of a {@code before-evict} handler, for {@link #signature}. */
     public static final String PARAMS_BEFORE_EVICT = "(record: record, evict: evict) -> eviction";
+    /** The parameter text of an {@code after-read} handler, for {@link #signature}. */
     public static final String PARAMS_AFTER_READ = "(record: record, read: read) -> read-result";
+    /** The parameter text of a {@code before-truncate} handler, for {@link #signature}. */
     public static final String PARAMS_BEFORE_TRUNCATE = "(truncate: truncate) -> gate";
+    /** The parameter text of an {@code after-truncate} handler, for {@link #signature}. */
     public static final String PARAMS_AFTER_TRUNCATE = "(truncate: truncate) -> ()";
+    /** The parameter text of a {@code before-ship} handler, for {@link #signature}. */
     public static final String PARAMS_BEFORE_SHIP = "(record: record, ship: ship) -> ship-decision";
+    /** The parameter text of a {@code partition-transfer} handler, for {@link #signature}. */
     public static final String PARAMS_PARTITION_TRANSFER = "(transfer: transfer) -> ()";
+    /** The parameter text of a {@code cluster-change} handler, for {@link #signature}. */
     public static final String PARAMS_CLUSTER_CHANGE = "(cluster: cluster) -> ()";
+    /** The parameter text of a {@code node-lifecycle} handler, for {@link #signature}. */
     public static final String PARAMS_NODE_LIFECYCLE = "(lifecycle: lifecycle) -> ()";
+    /** The parameter text of a {@code timer} handler, for {@link #signature}. */
     public static final String PARAMS_TIMER = "(timer: timer) -> ()";
 }

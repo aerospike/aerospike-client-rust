@@ -75,6 +75,9 @@ func mapPut(handle int32, key int32, value int32) int32
 //go:wasmimport aerospike map_put_i_at
 func mapPutIAt(handle int32, key int64, src int32, at int32) int32
 
+// SetBool writes a boolean to a bin.
+// Staged until the record is committed. The status is Err for a name that is empty or longer than 15
+// bytes, Refused when the record refuses the write.
 func SetBool(name string, value bool) int32 {
 	b := int32(0)
 	if value {
@@ -100,6 +103,7 @@ func SetInts(name string, values []int64) int32 {
 	return setListInts(strptr(name), int32(len(name)), p, int32(len(values)*8))
 }
 
+// SetFloat64s writes a list of doubles from the slice in one import, no value built per element.
 func SetFloat64s(name string, values []float64) int32 {
 	var p unsafe.Pointer
 	if len(values) > 0 {
@@ -119,6 +123,8 @@ func ResultMap(m *Map) error {
 	return statusError(resultHandle(m.handle), "could not return the map")
 }
 
+// ResultList sets a built list as the result. When the list kept a refusal while it was built, that error
+// is returned and no result is set.
 func ResultList(l *List) error {
 	if l.err != nil {
 		return l.err
@@ -155,10 +161,11 @@ func ResultOf(v Value) error {
 // TTL is the record's time to live, in seconds.
 func TTL() int64 { return ttl() }
 
-// Now is the server's clock in ms since the epoch, or -1 inside an event handler, where it is refused.
+// Now is the server's clock in ms since the Unix epoch, or -1 inside an event handler, where it is refused.
 func Now() int64 { return currentTime() }
 
-// LastUpdateTime is when the record was last written, in ms since the epoch.
+// LastUpdateTime is when the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC),
+// which is how the server stores it. It is not on the same scale as Now, which counts from the Unix epoch.
 func LastUpdateTime() int64 { return lastUpdate() }
 
 // RecordSize is the record's size on device, in bytes.

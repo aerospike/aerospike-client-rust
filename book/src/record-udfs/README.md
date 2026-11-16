@@ -5,11 +5,17 @@ record's lock. It reads the record's bins, may stage writes to them, and returns
 It is the kind of function Lua users have written for years; the WASM version does the same job with a
 typed signature, no serialisation, and native speed.
 
+To learn the API by doing, start with the [tutorial](tutorial.md): eleven tasks on one record, each in
+all five languages side by side. This chapter is the model behind it, and the language chapters are the
+reference.
+
 ## The shape of a call
 
-A client executes `module.function(args...)` on a key. The server opens the record, instantiates nothing
-(the module was instantiated at registration), creates an execution context for this call, and calls the
-exported function with the arguments. The function:
+A client executes `module.function(args...)` on a key. The server opens the record, instantiates the
+module for this call, a fresh linear memory with nothing of any earlier call in it, creates an execution
+context, runs the module's initializer if it has one, and calls the exported function with the
+arguments; the instance is torn down when the function returns (see [How the engine runs a
+module](../engine.md)). The function:
 
 1. **reads** bins, metadata and arguments through the natives, each read a sixteen-byte value;
 2. **stages** writes with `set_*` and `bin_remove`, which touch nothing until it commits them with

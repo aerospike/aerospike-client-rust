@@ -36,7 +36,7 @@
 <text class="lbl b" x="340" y="54" text-anchor="middle">build ready</text>
 <line class="tick" x1="540" y1="60" x2="540" y2="262"/>
 <text class="lbl b" x="540" y="54" text-anchor="middle">restart</text>
-<text class="time" x="128" y="80" text-anchor="start">validated and instantiated; the build is cached under the hash of the bytes</text>
+<text class="time" x="128" y="80" text-anchor="start">validated and loaded; the build is cached under the hash of the bytes</text>
 <rect class="bar" x="120" y="88.0" width="220" height="16" fill="#2fa66b" fill-opacity="0.45"/>
 <text class="barlbl" x="126" y="100">wamrc, on a background thread</text>
 <text class="time" x="348" y="100" text-anchor="start">aot-compile-threads bounds the wait</text>
