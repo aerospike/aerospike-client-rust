@@ -284,18 +284,22 @@ pub enum Value {
     /// blobs written by older clients). Carries the raw
     /// particle-type code and the raw payload bytes, uninterpreted.
     ///
-    /// It can be written back **only as a whole bin value** (`put`, or a
-    /// bin-level `operate` write): the client sends the payload verbatim
-    /// under its original particle-type code, so a record copied through
-    /// this client round-trips foreign bins untouched. The server still
-    /// validates the code and rejects one it does not know.
+    /// As a whole bin (`put`, or a bin-level `operate` write) the client sends
+    /// the payload verbatim under its original particle-type code, so a record
+    /// copied through this client round-trips foreign bins untouched. The
+    /// server still validates the code and rejects one it does not know.
     ///
-    /// Everywhere else it is rejected, because the client cannot interpret
-    /// the bytes: inside lists/maps/CDT arguments (packing fails), as a
-    /// record key ([`Key::new`](crate::Key::new) fails), in query
+    /// Inside a list, a map value, a CDT argument or an expression literal the
+    /// same bytes are packed like a blob, with the original particle-type code
+    /// as the element's type byte. A PHP-serialized object therefore stays
+    /// type 11 rather than becoming a plain blob (type 4). The client still
+    /// does not interpret the payload.
+    ///
+    /// It is rejected where the bytes would have to be interpreted: as a
+    /// record key ([`Key::new`](crate::Key::new) fails), as a map key
+    /// (only integers, strings and blobs are keys), and in query
     /// [`Filter`](crate::query::Filter)s (the filter-value conversion
-    /// panics, like other non-indexable types), and in expression literals
-    /// (packing the expression fails).
+    /// panics, like other non-indexable types).
     Unknown(u8, Vec<u8>),
 }
 
@@ -1897,41 +1901,74 @@ mod tests {
         assert_eq!(empty.write_to(&mut buf).unwrap(), 0);
     }
 
-    // Everywhere except a whole bin value, Unknown is still rejected: the
-    // client cannot interpret the bytes, so it cannot embed, hash or index
-    // them.
+    // A foreign particle inside a list or a map value keeps its type byte, so
+    // an older client can still tell a PHP blob (11) from a plain blob (4).
     #[test]
-    fn unknown_values_rejected_outside_bin_values() {
-        let value = Value::Unknown(9, vec![1, 2, 3]);
+    fn unknown_particles_round_trip_inside_lists_and_map_values() {
+        let php = Value::Unknown(11, b"O:8:\"stdClass\":0:{}".to_vec());
+        let list = Value::List(vec![Value::from(1), php.clone()]);
+        assert_eq!(pack_and_unpack(&list), list);
 
-        // Inside CDT/list/map payloads.
-        assert!(crate::msgpack::encoder::pack_value(&mut None, &value).is_err());
-        // Nested in a collection that is itself a bin value.
-        let list = Value::List(vec![value.clone()]);
-        assert!(list.estimate_size().is_err());
-        let mut map = HashMap::new();
-        map.insert(Value::from("k"), value.clone());
-        assert!(Value::HashMap(map).estimate_size().is_err());
+        let mut map = IndexMap::new();
+        map.insert(Value::from("obj"), php.clone());
+        let map_value = Value::OrderedMap(map);
+        assert_eq!(pack_and_unpack(&map_value), map_value);
 
-        // As a key: digest computation fails, so Key::new errors.
-        let mut hasher = Ripemd160::new();
-        assert!(value.write_key_bytes(&mut hasher).is_err());
-        assert!(crate::Key::new("ns", "set", value).is_err());
+        // The element's first payload byte is the particle type, then the
+        // original bytes. Type 4 would mean "plain blob".
+        let mut buf = Buffer::new(0);
+        buf.resize_buffer(64).unwrap();
+        assert!(crate::msgpack::encoder::pack_value(&mut Some(&mut buf), &php).is_ok());
+        assert_eq!(buf.data_buffer[1], 11);
+        assert_eq!(&buf.data_buffer[2..buf.data_offset], php_bytes(&php));
     }
 
-    // Unknown values cannot appear in expression literals: packing the
-    // expression fails, whether nested in a list or as a map value.
+    // A foreign particle is still not a key and not something this client can
+    // order or index. Map keys stay limited to integers, strings and blobs.
     #[test]
-    fn unknown_values_rejected_in_expressions() {
-        let unknown = Value::Unknown(9, vec![1, 2, 3]);
+    fn unknown_values_rejected_as_keys() {
+        let value = Value::Unknown(11, vec![1, 2, 3]);
 
-        let exp = crate::expressions::list_val(vec![unknown.clone()]);
-        assert!(exp.base64().is_err());
+        let mut hasher = Ripemd160::new();
+        assert!(value.write_key_bytes(&mut hasher).is_err());
+        assert!(crate::Key::new("ns", "set", value.clone()).is_err());
+
+        let mut map = IndexMap::new();
+        map.insert(value, Value::from(1));
+        let err = Value::OrderedMap(map).estimate_size().unwrap_err();
+        assert!(err.to_string().contains("cannot be a map key"), "{err}");
+    }
+
+    // Expression literals use the same packer, so a list or map value there
+    // carries the original particle type as well.
+    #[test]
+    fn unknown_particles_pack_inside_expression_literals() {
+        let unknown = Value::Unknown(11, b"N;".to_vec());
+
+        assert!(crate::expressions::list_val(vec![unknown.clone()])
+            .base64()
+            .is_ok());
 
         let mut map = HashMap::new();
         map.insert(Value::from("k"), unknown);
-        let exp = crate::expressions::map_val(map);
-        assert!(exp.base64().is_err());
+        assert!(crate::expressions::map_val(map).base64().is_ok());
+    }
+
+    fn pack_and_unpack(value: &Value) -> Value {
+        let size = value.estimate_size().expect("collection can be packed");
+        let mut buf = Buffer::new(0);
+        buf.resize_buffer(size).unwrap();
+        buf.data_offset = 0;
+        value.write_to(&mut buf).unwrap();
+        buf.data_offset = 0;
+        crate::msgpack::decoder::unpack_value(&mut buf).unwrap()
+    }
+
+    fn php_bytes(value: &Value) -> &[u8] {
+        match value {
+            Value::Unknown(_, bytes) => bytes,
+            _ => panic!("expected an unknown particle"),
+        }
     }
 
     // Unknown values are not indexable: the filter-value conversion
