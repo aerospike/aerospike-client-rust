@@ -50,13 +50,11 @@ pub fn pack_value(buf: &mut Option<&mut Buffer>, val: &Value) -> Result<usize> {
                 "KeyValue lists are not supported in this encoder.",
             ))
         }
-        Value::Unknown(particle_type, _) => {
-            return Err(Error::invalid_argument(format!(
-                "Unknown values (particle type {particle_type}) hold data this client \
-                 cannot interpret: they can be written only as a whole bin value, not \
-                 inside lists, maps, CDT arguments or expressions."
-            )))
-        }
+        // Same framing as a blob: a msgpack string whose first byte is the
+        // Aerospike type code. A legacy PHP object inside a list is type 11,
+        // not type 4, and that byte is what an older client uses to decide
+        // whether to unserialize. The bytes themselves stay uninterpreted.
+        Value::Unknown(particle_type, ref bytes) => pack_typed_bytes(buf, particle_type, bytes),
         Value::GeoJson(ref val) => pack_geo_json(buf, val),
         Value::Infinity => pack_infinity(buf),
         Value::Wildcard => pack_wildcard(buf),
@@ -495,23 +493,25 @@ pub fn pack_string_begin(buf: &mut Option<&mut Buffer>, length: usize) -> usize 
 }
 
 pub fn pack_blob(buf: &mut Option<&mut Buffer>, value: &[u8]) -> usize {
-    let mut size = value.len() + 1;
-
-    size += pack_string_begin(buf, size);
-    if let Some(ref mut buf) = *buf {
-        buf.write_u8(ParticleType::Blob as u8);
-        buf.write_bytes(value);
-    }
-
-    size
+    pack_typed_bytes(buf, ParticleType::Blob as u8, value)
 }
 
 pub fn pack_hll(buf: &mut Option<&mut Buffer>, value: &[u8]) -> usize {
+    pack_typed_bytes(buf, ParticleType::Hll as u8, value)
+}
+
+/// A msgpack string whose first byte is an Aerospike particle-type code and
+/// whose remaining bytes are an uninterpreted payload.
+///
+/// This is how a blob (type 4), an HLL (type 18) and a foreign particle such
+/// as a PHP blob (type 11) travel inside a list or a map. The type byte is
+/// part of the element, not a separate particle header.
+fn pack_typed_bytes(buf: &mut Option<&mut Buffer>, type_byte: u8, value: &[u8]) -> usize {
     let mut size = value.len() + 1;
 
     size += pack_string_begin(buf, size);
     if let Some(ref mut buf) = *buf {
-        buf.write_u8(ParticleType::Hll as u8);
+        buf.write_u8(type_byte);
         buf.write_bytes(value);
     }
 
