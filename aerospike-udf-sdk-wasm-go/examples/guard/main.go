@@ -27,8 +27,6 @@ import (
 	udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk-wasm-go"
 )
 
-var ticks = udf.NewBin("ticks")
-
 // Refuses a negative balance; otherwise stamps the write's source and counts it, keeping every other bin.
 //
 //udf:on before-write guard_account
@@ -63,17 +61,18 @@ func guardTruncate(t udf.TruncateInfo) (udf.Gate, error) {
 	return udf.Allow(), nil
 }
 
-// The timer handler runs as a record UDF: the record functions work.
+// The timer handler runs as a record UDF: it takes the record first, and may write and save it.
 //
 //udf:on timer tick
-func tick(_ udf.TimerInfo) error {
-	n := ticks.IntOr(0) + 1
+func tick(rec *udf.Record, _ udf.TimerInfo) error {
+	ticks, _ := rec.Int("ticks")
+	n := ticks + 1
 
-	if err := ticks.SetInt(n); err != nil {
+	if err := rec.Set("ticks", n); err != nil {
 		return err
 	}
 
-	if err := udf.Commit(); err != nil {
+	if err := rec.Save(); err != nil {
 		return err
 	}
 

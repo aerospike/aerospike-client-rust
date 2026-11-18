@@ -29,7 +29,7 @@ public final class ShipDecision extends Answer {
     }
 
     /** Ships these bins instead of the record. */
-    public static ShipDecision record(UdfMap bins) {
+    public static ShipDecision record(MapBuilder bins) {
         return new ShipDecision("record", bins.handle());
     }
 }

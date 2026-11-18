@@ -33,20 +33,15 @@ strip = true
 ```rust
 #![no_std]
 
-use aerospike_udf_sdk_wasm::{self as as_udf, export, Error, Value};
+use aerospike_udf_sdk_wasm::{export, Error, Record, Value};
 
 export! {
     /// Read a bin, write it back incremented, and return the new value.
-    fn increment() -> Result<Value, Error> {
-        let n = match as_udf::bin("n") {
-            Ok(v) => v.int()?,
-            Err(Error::Absent) => 0,
-            Err(e) => return Err(e),
-        };
+    fn increment(rec: &mut Record) -> Result<Value, Error> {
+        let n = rec.int("n")?.unwrap_or(0);
 
-        as_udf::set("n", n + 1)?;
-
-        if as_udf::exists() { as_udf::update()? } else { as_udf::create()? }
+        rec.set("n", n + 1)?;
+        rec.save()?;
 
         Ok(Value::Int(n + 1))
     }
@@ -68,9 +63,25 @@ cargo build --release --target wasm32-unknown-unknown
 
 Register the `.wasm` with `UdfLang::Wasm` and call `my_udfs.increment` on a key.
 
+## The record
+
+The record a function was called on is its first parameter: `rec: &Record` to read it, `rec: &mut Record`
+to write it too. A function that does neither leaves the parameter out. It is not one of the call's
+arguments: a client does not pass it, the arity check does not count it, and the signature the module
+exports does not list it. Write it exactly so, with `Record` imported under that name.
+
+Everything about the record is a method on it. What is left on the crate itself is what is not about the
+record: `now()`, `log_at`, `fail`, the `list` and `map` builders, timers.
+
+`Record` and the `EventRecord` an event handler is given both implement `ReadRecord`, so a helper that
+takes `&impl ReadRecord` reads a bin the same way in a UDF and in a handler.
+
 ## Reading
 
-`as_udf::bin("name")` returns a `Value` or `Err(Error::Absent)`. A `Value` is an enum over the kinds, with
+`rec.bin("name")` returns a `Value` or `Err(Error::Absent)`: the form for a bin that must be there. The
+typed readers are for one that may not be: `rec.int("name")`, `double`, `bool`, `text`, `blob`, `list`,
+`map` and the untyped `get` each return `Ok(None)` for an absent or nil bin and `Err(Error::WrongType)`
+for a bin of another kind. A `Value` is an enum over the kinds, with
 accessors that return `Err(Error::WrongType)` when asked for the wrong one: `int()`, `double()`, `bool()`,
 `text()`, `blob()`, `list()`, `map()`. A string is a `Text` that knows its length and where it sits;
 `as_str(&mut buf)` fetches it into a buffer you own, `Str<N>` is an owned string of a declared capacity,
@@ -78,17 +89,17 @@ and with the `alloc` feature `to_string()` gives a `String`. The same for blobs 
 and `Vec<u8>`.
 
 A list or map is a `Coll`: `iter()` yields every element (for a map, keys and values alternately),
-`entries()` yields pairs, `get("key")` and `get_i(7)` look up a map entry in one import, `len()` and
-`is_empty()` answer without a walk. Iteration crosses 128 values per import; a nested collection comes
+`entries()` yields pairs, `get("key")` and `get(7)` look up a map entry in one import, `at(3)` fetches one
+element of a list by its index in one import, `len()` and `is_empty()` answer without a walk. Iteration crosses 128 values per import; a nested collection comes
 out as a `Value::List` or `Value::Map` you can iterate in turn.
 
 ```rust
 export! {
     /// Sum a list bin.
-    fn sum_list() -> Result<Value, Error> {
+    fn sum_list(rec: &Record) -> Result<Value, Error> {
         let mut total = 0;
 
-        for item in as_udf::bin("l")?.list()?.iter() {
+        for item in rec.bin("l")?.list()?.iter() {
             total += item?.int()?;
         }
 
@@ -99,17 +110,32 @@ export! {
 
 ## Writing
 
-`as_udf::set("name", value)` stages a write of anything `Into<Value>`: an integer, a float, a bool, a
+`rec.set("name", value)` stages a write of anything `Into<Value>`: an integer, a float, a bool, a
 `&str`, a `&[u8]`, a `Str<N>`, a built `List` or `Map`, or a `Value` read from the record, which goes
-back by position without being decoded. `remove("name")` stages a delete. `update()` commits to an
-existing record and `create()` to a new one; `set_ttl(seconds)` changes the record's TTL with the commit.
-`set_list_ints(&[..])` and `set_list_doubles(&[..])` write a slice straight into a list particle.
+back by position without being decoded. `rec.remove("name")` stages the removal of a bin; writing
+`Value::Nil` does the same, since a bin cannot hold nil. `rec.set_ttl(seconds)` sets the TTL of the write.
+
+**Nothing staged reaches the server until `rec.save()`.** A function that returns without saving has
+changed nothing, however plausible its result. `save()` creates the record when the key has none, so
+there is one verb for both; a function that must not overwrite checks `rec.exists()` first, and since
+the record is locked for the whole call nothing comes between the check and the save. Two details:
+
+- A save with nothing staged is still a write. The server treats it as a touch: the generation and the
+  last-update time move.
+- A save with nothing staged on a key with no record makes nothing, since a record must have a bin, and
+  the client is told "key not found".
+
+`rec.delete()` deletes the record. It needs no save, and whatever was staged goes with the record. The
+server carries it out when the call returns, so `rec.exists()` keeps its answer for the rest of the call.
+
+`rec.set_ints("name", &[..])` and `rec.set_doubles("name", &[..])` write a slice straight into a list
+particle. They take effect at once, without a save.
 
 ## Building collections
 
 `as_udf::list(capacity)` and `as_udf::map(capacity)` start a collection on the host and return a handle
-you push or put into: `push(value)`, `put("key", value)`, `put_i(7, value)`, each taking anything `set`
-takes. `extend(iterator)` takes a whole iterator 128 values per import, including a stored collection's
+you push or insert into: `push(value)`, `insert("key", value)`, `insert(7, value)`, each taking anything
+`set` takes. `contains_key("key")` asks a map you are building whether it has a key. `extend(iterator)` takes a whole iterator 128 values per import, including a stored collection's
 own iterator, so `list.extend(stored.iter())` copies a list without the guest seeing an element. A built
 collection converts into a `Value` with `into_value()` and can be returned, written to a bin, or nested
 in another.
@@ -141,9 +167,10 @@ whole error handling.
 
 ## Metadata
 
-`generation()`, `ttl()`, `last_update()`, `set_name(&mut buf)`, `key()` (an `Option<Key>` of the user
-key when stored), `digest(&mut buf)`, `exists()`, `record_size()`, `current_time()`, and `log(level,
-message)`.
+On the record: `rec.exists()`, `rec.generation()`, `rec.ttl()` (`None` for a record that never expires),
+`rec.last_update_time()`, `rec.size()`, `rec.bin_count()`, `rec.set_name(&mut buf)`, `rec.key(&mut buf)`
+(the user key when the record was written with `send_key`, `Err(Absent)` otherwise) and
+`rec.digest(&mut buf)`. Not on the record: `as_udf::now()` and `as_udf::log_at(level, message)`.
 
 ## The allocator
 

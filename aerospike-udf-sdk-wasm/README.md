@@ -5,20 +5,20 @@ Write Aerospike user-defined functions in Rust and run them as WebAssembly on th
 ```rust
 #![no_std]
 
-use aerospike_udf_sdk_wasm::{self as as_udf, export, Error, Value};
+use aerospike_udf_sdk_wasm::{export, Error, Record, Value};
 
 export! {
     /// Move `amount` out of this record's balance, unless `dry_run`.
-    fn withdraw(amount: i64, dry_run: Option<bool>) -> Result<Value, Error> {
-        let balance = as_udf::bin("balance")?.int()?;
+    fn withdraw(rec: &mut Record, amount: i64, dry_run: Option<bool>) -> Result<Value, Error> {
+        let balance = rec.bin("balance")?.int()?;
 
         if balance < amount {
             return Err(Error::Custom("insufficient funds"));
         }
 
         if dry_run != Some(true) {
-            as_udf::set("balance", balance - amount)?;
-            as_udf::update()?;
+            rec.set("balance", balance - amount)?;
+            rec.save()?;
         }
 
         Ok(Value::Int(balance - amount))
@@ -31,13 +31,23 @@ Build it as a `cdylib` for `wasm32-unknown-unknown` and register the `.wasm` wit
 aggregation, written to be read. `examples/udf` exercises the whole surface and is the fixture
 `tests/fixtures/wasm` in this repository pins with tests.
 
-## Three ideas
+## The ideas
 
-**Every read is a `Value`**, the guest-side analogue of the client's: `bin("x")` returns one, a collection
+**The record is a `Record`**, the function's first parameter: `rec: &Record` to read it, `rec: &mut Record`
+to write it too, and left out by a function that does neither. Everything about the record is a method on it:
+`rec.bin("x")` and the typed readers (`rec.int("x")`, `rec.map("x")`, each an `Option`), `rec.set("x", v)`
+and `rec.remove("x")`, the metadata (`generation()`, `ttl()`, `key()`, `digest()`), and the two verbs that
+change the server's record, `rec.save()` and `rec.delete()`. **A bin write is staged until `save()`**, which
+creates the record when there is none. It is not an argument: a client does not pass it. A stream UDF's
+`record` takes `&Record`; an event handler takes `EventRecord`s, which read the same way (the `ReadRecord`
+trait is the common part).
+
+**Every read is a `Value`**, the guest-side analogue of the client's: `rec.bin("x")` returns one, a collection
 iterates them, a map lookup returns one, and a UDF returns one as its result. It is *borrowed*: a string is
 its length and where it sits, fetched on request into a buffer you own (`as_str(&mut buf)`), a `Str<N>` of a
 declared capacity, or — with the `alloc` feature — a `String`. A nested list or map is a `Coll` you iterate
-(`iter()`, `entries()`) or look up (`get`, `get_i`), 128 values per import call.
+(`iter()`, `entries()`), look up by key (`get("k")`, `get(7)`) or by index (`at(3)`), 128 values per import
+call. A list or map you build is a `List` (`push`, `extend`) or a `Map` (`insert`, `extend`, `contains_key`).
 
 **Every failure is an `Error`**, and a UDF is `fn name(params) -> Result<Value, Error>`: `Ok` is the result the
 client receives, `Err` fails the call with the error's message, `Error::Custom` carries your own.
@@ -90,16 +100,16 @@ namespace or set, and the handler decides the final record.
 ```rust
 event! {
     on xdr_merge
-    fn merge_account(local: Record, remote: Record, conflict: Conflict) -> Result<Resolution, Error> {
+    fn merge_account(local: EventRecord, remote: EventRecord, conflict: Conflict) -> Result<Resolution, Error> {
         let pair = conflict.pair();
         let out = as_udf::map(4)?;
-        if let Some(visits) = pair.int("visits")?.max() { out.put("visits", visits)?; }
+        if let Some(visits) = pair.int("visits")?.max() { out.insert("visits", visits)?; }
         Ok(Resolution::Record { bins: pair.with_newer(out)?, ttl: None })
     }
 }
 ```
 
-`Record` is a read-only record with its metadata (`ttl`, `source_id`, and per bin `bin_lut` and
+`EventRecord` is a read-only record with its metadata (`ttl`, `source_id`, and per bin `bin_lut` and
 `bin_source_id` where the server keeps them) and bins read as `Option`s, since on either side a bin may
 not exist. `Conflict` says what triggered the event (`Trigger::Always` or `Trigger::Conflict`), which
 policy the handler stands in for and which bins would lose under it, and `pair()` reads a bin from both
@@ -113,7 +123,7 @@ none). **Convergent**: DC A merges (A's record, B's write) while DC B merges (B'
 the answers must match, in any delivery order and however many times a write is delivered. There are two
 ways to keep it. The time-based way: `newer`/`older`/`ordered` order the sides by a bin's own LUT and then
 source id, the way the server's bin convergence does, which is symmetric where "mine first" is not, and
-is why `Record::with_bins` carries a warning and `Pair::with_newer` is the one to use; `examples/resolver`
+is why `EventRecord::with_bins` carries a warning and `Pair::with_newer` is the one to use; `examples/resolver`
 is this. The data-only way: versions and removal markers in the record itself, with
 `Value::cmp_stored` (the stored bytes of two values compared) as the tie-break, so the merge is a function
 of the data alone; `examples/counter` (a grow-only counter, the smallest possible), `examples/pncounter` (the same with a second

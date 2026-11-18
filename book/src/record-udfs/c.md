@@ -13,10 +13,12 @@ AS_UDF_EXPORT(increment) int32_t
 increment(int32_t args, int32_t argc)
 {
 	as_udf_value v;
-	int64_t n = as_udf_bin("n", &v) == AS_UDF_OK && v.kind == AS_UDF_INT ? v.payload : 0;
+	(void)args; (void)argc;
 
-	as_udf_set_int("n", 1, n + 1);
-	as_udf_rec_exists() ? as_udf_rec_update() : as_udf_rec_create();
+	int64_t n = as_udf_rec_bin("n", &v) == AS_UDF_OK && v.kind == AS_UDF_INT ? v.payload : 0;
+
+	as_udf_rec_set_int("n", 1, n + 1);
+	as_udf_rec_save();
 	as_udf_result_int(n + 1);
 
 	return 0;
@@ -41,6 +43,17 @@ is exported under that name; it sets its result with `as_udf_result_*` and fails
 `as_udf_failf("message")`, which returns the 1 to return. `AS_UDF_SIGNATURE(name, "text")` exports the
 signature a client reads by executing `__udf_sig_name`.
 
+## The record
+
+C has no objects, so the record of the call is a family of functions. Every function that acts on it
+starts with `as_udf_rec_`: reading a bin, staging a write, removing a bin, the metadata, saving and
+deleting. The records an event hands over have their own family, `as_udf_event_`. What carries neither
+prefix is not about a record: `as_udf_current_time`, `as_udf_log`, `as_udf_fail`, `as_udf_result_*`, the
+list and map builders, the timers.
+
+A function that does not touch the record calls none of them. The record is not one of the call's
+arguments: `args` and `argc` hold only what the client passed.
+
 ## Values
 
 Every read fills an `as_udf_value`: `kind`, `len`, `payload`, with `as_udf_value_src()` and
@@ -52,13 +65,18 @@ The kinds are `AS_UDF_NIL`, `AS_UDF_BOOL`, `AS_UDF_INT`, `AS_UDF_DOUBLE`, `AS_UD
 
 ## Reading
 
-- `as_udf_bin("name", &v)` reads a bin of any kind.
+- `as_udf_rec_bin("name", &v)` reads a bin of any kind. It returns `AS_UDF_NOT_FOUND` when the record has
+  no such bin.
 - `as_udf_bytes(&v, buf, cap)` copies the bytes of a string, blob, GeoJSON or HLL value; returns the length.
 - `as_udf_cursor_enter_at(src, at)` opens a cursor over a list or map at a value's position;
   `as_udf_cursor_values(cur, out, cap)` fills `out` with the next values, 128 per import;
   `as_udf_cursor_close(cur)` gives the slot back.
 - `as_udf_coll_get(src, at, key, key_len, &v, sizeof v)` looks a string key up in a map; `as_udf_coll_get_i`
-  an integer key.
+  an integer key. `as_udf_map_get(&map, "key")` is the same lookup on a value, with a NUL-terminated key.
+- `as_udf_list_at(&list, index)` returns one element of a stored list by its index, in one import and
+  without a cursor. Its kind is `AS_UDF_ABSENT` past the end or when the value is not a list.
+  `as_udf_list_get` is the import under it.
+- `v.len` is the size of a stored list or map, so no walk is needed to count.
 - `as_udf_args(args, argc, out, cap)` decodes the call's arguments in one import.
 
 ```c
@@ -68,7 +86,7 @@ sum_list(int32_t args, int32_t argc)
 	(void)args; (void)argc;
 
 	as_udf_value l;
-	if (as_udf_bin("l", &l) != AS_UDF_OK || l.kind != AS_UDF_LIST) return as_udf_failf("sum_list: no list bin l");
+	if (as_udf_rec_bin("l", &l) != AS_UDF_OK || l.kind != AS_UDF_LIST) return as_udf_failf("sum_list: no list bin l");
 
 	int32_t cur = as_udf_cursor_enter_at(as_udf_value_src(&l), as_udf_value_at(&l));
 	if (cur <= 0) return as_udf_failf("sum_list: could not open the list");
@@ -91,10 +109,63 @@ sum_list(int32_t args, int32_t argc)
 
 ## Writing
 
-`as_udf_set_int`, `set_double`, `set_bool`, `set_str`, `set_blob`, `set_geojson`, `set_nil`, `set_handle`
-(a built collection), `set_at` (a value read from the record, by position), `bin_remove`,
-`set_list_ints` and `set_list_doubles` (an array packed straight into a list particle); then
-`as_udf_rec_update()` or `as_udf_rec_create()`. Every name is passed with its length.
+`as_udf_rec_set_int`, `_set_double`, `_set_bool`, `_set_str`, `_set_blob`, `_set_geojson`, `_set_handle`
+(a built collection) and `_set_at` (a value read from a record, by position) each stage a write to a bin.
+`as_udf_rec_remove(name, len)` stages the removal of a bin. There is no call that sets a bin to nil: a
+bin cannot hold nil, and removing it is the same thing. `as_udf_rec_set_ttl(seconds)` sets the TTL of the
+write. Every name is passed with its length.
+
+**Nothing staged reaches the server until `as_udf_rec_save()`.** A function that returns without saving
+has changed nothing. `as_udf_rec_save()` creates the record when the key has none, so there is one call
+for both. A function that must not overwrite checks `as_udf_rec_exists()` first; the record is locked for
+the whole call, so nothing comes between the check and the save. Two details:
+
+- A save with nothing staged is still a write. The server treats it as a touch: the generation and the
+  last-update time move.
+- A save with nothing staged on a key with no record makes nothing, since a record must have a bin, and
+  the client is told "key not found".
+
+`as_udf_rec_delete()` deletes the record. It needs no save, and whatever was staged goes with the record.
+The server carries it out when the call returns, so `as_udf_rec_exists()` keeps its answer for the rest
+of the call.
+
+`as_udf_rec_set_list_ints` and `as_udf_rec_set_list_doubles` pack an array straight into a list particle.
+They take effect at once, without a save.
+
+```c
+AS_UDF_EXPORT(clear_note) int32_t
+clear_note(int32_t args, int32_t argc)
+{
+	(void)args; (void)argc;
+
+	as_udf_rec_remove("note", 4);                 /* staged, like a set */
+	if (as_udf_rec_save() != AS_UDF_OK) return as_udf_failf("clear_note: could not save");
+
+	as_udf_result_int(as_udf_rec_numbins());
+	return 0;
+}
+
+AS_UDF_EXPORT(close_account) int32_t
+close_account(int32_t args, int32_t argc)
+{
+	(void)args; (void)argc;
+
+	/* No save: the delete is the write. */
+	if (as_udf_rec_delete() != AS_UDF_OK) return as_udf_failf("close_account: could not delete");
+
+	as_udf_result_nil();
+	return 0;
+}
+```
+
+## Metadata
+
+On the record: `as_udf_rec_exists()`, `as_udf_rec_gen()`, `as_udf_rec_ttl()` (0 for a record that does
+not expire), `as_udf_rec_last_update()`, `as_udf_rec_size()`, `as_udf_rec_numbins()`,
+`as_udf_rec_set_name(buf, cap)`, which copies out the name of the record's set, `as_udf_rec_key_type()`
+with `as_udf_rec_key_int()` and `as_udf_rec_key_bytes(buf, cap)` for the user key of a record written
+with `send_key`, and `as_udf_rec_digest(buf, cap)`. Not on the record: `as_udf_current_time()` and
+`as_udf_log(level, message, len)`.
 
 ## Building collections
 
@@ -105,6 +176,11 @@ sum_list(int32_t args, int32_t argc)
 array of values in one import; build them with `as_udf_v_int`, `as_udf_v_double`, `as_udf_v_str`,
 `as_udf_v_blob`, `as_udf_v_handle`. `as_udf_result_handle(h)` returns a built collection;
 `as_udf_result_at(src, at)` returns a stored value by position.
+
+`as_udf_map_contains(handle, "key")` and `as_udf_map_contains_i(handle, key)` say whether a map the call
+is building has a key. The host answers for the map it holds, so nothing is packed to ask.
+`as_udf_map_has` and `as_udf_map_has_i` are the imports under them, with the key's length passed.
+`as_udf_coll_size(handle)` is the number of entries of a built map or elements of a built list.
 
 ## A module to read: the vector top-k
 

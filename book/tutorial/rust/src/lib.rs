@@ -16,66 +16,58 @@
 #![no_std]
 
 // ANCHOR: setup
-use aerospike_udf_sdk_wasm::{self as as_udf, event, export, Decision, Error, Expiry, Gate, ReadResult, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, event, export, Decision, Error, Expiry, Gate, ReadResult, Record, Value};
 // ANCHOR_END: setup
 
 export! {
     // ANCHOR: visit
-    fn visit(by: i64) -> Result<Value, Error> {
-        let visits = match as_udf::bin("visits") {
-            Ok(v) => v.int()?,            // WrongType when the bin holds something else
-            Err(Error::Absent) => 0,      // no such bin yet
-            Err(e) => return Err(e),
-        } + by;
+    fn visit(rec: &mut Record, by: i64) -> Result<Value, Error> {
+        // None when there is no such bin yet; WrongType when it holds something else.
+        let visits = rec.int("visits")?.unwrap_or(0) + by;
 
-        as_udf::set("visits", visits)?;   // staged, not yet written
-
-        if as_udf::exists() {
-            as_udf::update()?;
-        } else {
-            as_udf::create()?;
-        }
+        rec.set("visits", visits)?;       // staged, not yet written
+        rec.save()?;                      // written, and the record created if it was not there
 
         Ok(Value::Int(visits))
     }
     // ANCHOR_END: visit
 
     // ANCHOR: withdraw
-    fn withdraw(amount: i64) -> Result<Value, Error> {
-        let balance = as_udf::bin("balance")?.int()?;   // Absent or WrongType fails the call
+    fn withdraw(rec: &mut Record, amount: i64) -> Result<Value, Error> {
+        let balance = rec.bin("balance")?.int()?;       // Absent or WrongType fails the call
 
         if amount > balance {
             return Err(Error::Custom("insufficient funds"));
         }
 
-        as_udf::set("balance", balance - amount)?;
-        as_udf::update()?;
+        rec.set("balance", balance - amount)?;
+        rec.save()?;
 
         Ok(Value::Int(balance - amount))
     }
     // ANCHOR_END: withdraw
 
     // ANCHOR: rename
-    fn rename(name: &str) -> Result<Value, Error> {
+    fn rename(rec: &mut Record, name: &str) -> Result<Value, Error> {
         let mut buf = [0u8; 64];
-        let owner = as_udf::bin("owner")?.text()?;      // the string, still in the record
+        let owner = rec.bin("owner")?.text()?;          // the string, still in the record
 
         if owner.as_str(&mut buf)? == name {            // its bytes, copied into `buf`
             return Ok(Value::Bool(false));
         }
 
-        as_udf::set("owner", name)?;
-        as_udf::update()?;
+        rec.set("owner", name)?;
+        rec.save()?;
 
         Ok(Value::Bool(true))
     }
     // ANCHOR_END: rename
 
     // ANCHOR: total
-    fn total() -> Result<Value, Error> {
+    fn total(rec: &Record) -> Result<Value, Error> {
         let mut sum = 0;
 
-        for payment in as_udf::bin("history")?.list()?.iter() {
+        for payment in rec.bin("history")?.list()?.iter() {
             sum += payment?.int()?;
         }
 
@@ -84,8 +76,8 @@ export! {
     // ANCHOR_END: total
 
     // ANCHOR: limit_for
-    fn limit_for(kind: &str) -> Result<Value, Error> {
-        let limits = as_udf::bin("limits")?.map()?;
+    fn limit_for(rec: &Record, kind: &str) -> Result<Value, Error> {
+        let limits = rec.bin("limits")?.map()?;
 
         match limits.get(kind) {
             Ok(limit) => Ok(Value::Int(limit.int()?)),
@@ -96,10 +88,10 @@ export! {
     // ANCHOR_END: limit_for
 
     // ANCHOR: limits_total
-    fn limits_total() -> Result<Value, Error> {
+    fn limits_total(rec: &Record) -> Result<Value, Error> {
         let mut sum = 0;
 
-        for entry in as_udf::bin("limits")?.map()?.entries() {
+        for entry in rec.bin("limits")?.map()?.entries() {
             let (_kind, limit) = entry?;
             sum += limit.int()?;
         }
@@ -109,61 +101,58 @@ export! {
     // ANCHOR_END: limits_total
 
     // ANCHOR: log_payment
-    fn log_payment(amount: i64) -> Result<Value, Error> {
-        let history = as_udf::bin("history")?.list()?;
+    fn log_payment(rec: &mut Record, amount: i64) -> Result<Value, Error> {
+        let history = rec.bin("history")?.list()?;
         let count = history.len() + 1;
 
         let out = as_udf::list(count)?;
         out.extend(history.iter())?.push(amount)?;      // the stored elements, then the new one
 
-        as_udf::set("history", out)?;
-        as_udf::update()?;
+        rec.set("history", out)?;
+        rec.save()?;
 
         Ok(Value::Int(count as i64))
     }
     // ANCHOR_END: log_payment
 
     // ANCHOR: summary
-    fn summary() -> Result<Value, Error> {
+    fn summary(rec: &Record) -> Result<Value, Error> {
         let out = as_udf::map(5)?;
 
-        out.put("owner", as_udf::bin("owner")?)?        // a stored value goes in as it is
-            .put("balance", as_udf::bin("balance")?)?
-            .put("generation", as_udf::generation())?
-            .put("bins", as_udf::bin_count())?
-            .put("ttl", as_udf::time_to_live().map_or(-1, i64::from))?;
+        out.insert("owner", rec.bin("owner")?)?         // a stored value goes in as it is
+            .insert("balance", rec.bin("balance")?)?
+            .insert("generation", rec.generation())?
+            .insert("bins", rec.bin_count())?
+            .insert("ttl", rec.ttl().map_or(-1, i64::from))?;
 
         Ok(out.into_value())
     }
     // ANCHOR_END: summary
 
     // ANCHOR: renew
-    fn renew(seconds: i64) -> Result<Value, Error> {
-        let renewals = match as_udf::bin("renewals") {
-            Ok(v) => v.int()?,
-            Err(_) => 0,
-        } + 1;
+    fn renew(rec: &mut Record, seconds: i64) -> Result<Value, Error> {
+        let renewals = rec.int("renewals")?.unwrap_or(0) + 1;
 
-        as_udf::set("renewals", renewals)?;
-        as_udf::set_time_to_live(seconds as u32)?;      // takes effect with the commit
-        as_udf::update()?;
+        rec.set("renewals", renewals)?;
+        rec.set_ttl(seconds as u32)?;                   // takes effect with the save
+        rec.save()?;
 
         Ok(Value::Int(renewals))
     }
     // ANCHOR_END: renew
 
     // ANCHOR: clear_note
-    fn clear_note() -> Result<Value, Error> {
-        as_udf::set("note", Value::Nil)?;               // a nil write drops the bin
-        as_udf::update()?;
+    fn clear_note(rec: &mut Record) -> Result<Value, Error> {
+        rec.remove("note")?;                            // staged, like a set
+        rec.save()?;
 
         Ok(Value::Nil)
     }
     // ANCHOR_END: clear_note
 
     // ANCHOR: close
-    fn close() -> Result<Value, Error> {
-        as_udf::remove_record()?;                       // no commit: the delete is the write
+    fn close(rec: &mut Record) -> Result<Value, Error> {
+        rec.delete()?;                                  // no save: the delete is the write
 
         Ok(Value::Nil)
     }
@@ -173,7 +162,7 @@ export! {
 event! {
     // ANCHOR: no_overdraft
     on before_write
-    fn no_overdraft(_before: Record, after: Record, _write: Write) -> Result<Decision, Error> {
+    fn no_overdraft(_before: EventRecord, after: EventRecord, _write: Write) -> Result<Decision, Error> {
         match after.int("balance")? {                   // None when the bin is absent or nil
             Some(balance) if balance < 0 => {
                 Ok(Decision::Reject { code: 22, message: "balance may not go negative" })
@@ -185,11 +174,11 @@ event! {
 
     // ANCHOR: stamp
     on before_write
-    fn stamp(before: Record, after: Record, write: Write) -> Result<Decision, Error> {
+    fn stamp(before: EventRecord, after: EventRecord, write: Write) -> Result<Decision, Error> {
         let out = as_udf::map(2)?;
 
-        out.put("writes", before.int("writes")?.unwrap_or(0) + 1)?;
-        out.put("source", write.source().as_str())?;
+        out.insert("writes", before.int("writes")?.unwrap_or(0) + 1)?;
+        out.insert("source", write.source().as_str())?;
 
         // Every bin the write produced, with the two above on top.
         Ok(Decision::Record { bins: after.with_bins(out)?, ttl: None })
@@ -198,7 +187,7 @@ event! {
 
     // ANCHOR: keep_locked
     on before_delete
-    fn keep_locked(record: Record, _delete: Delete) -> Result<Gate, Error> {
+    fn keep_locked(record: EventRecord, _delete: Delete) -> Result<Gate, Error> {
         if matches!(record.bin("locked"), Ok(Value::Bool(true))) {
             return Ok(Gate::Refuse { code: 22, message: "record is locked" });
         }
@@ -209,13 +198,13 @@ event! {
 
     // ANCHOR: hide_secret
     on after_read
-    fn hide_secret(record: Record, _read: Read) -> Result<ReadResult, Error> {
+    fn hide_secret(record: EventRecord, _read: Read) -> Result<ReadResult, Error> {
         if record.bin("secret").is_err() {
             return Ok(ReadResult::Unchanged);
         }
 
         let out = as_udf::map(1)?;
-        out.put("secret", Value::Nil)?;                 // nil in an answer: no such bin
+        out.insert("secret", Value::Nil)?;                 // nil in an answer: no such bin
 
         Ok(ReadResult::Record { bins: record.with_bins(out)? })
     }
@@ -223,7 +212,7 @@ event! {
 
     // ANCHOR: keep_marked
     on before_expire
-    fn keep_marked(record: Record, _expire: Expire) -> Result<Expiry, Error> {
+    fn keep_marked(record: EventRecord, _expire: Expire) -> Result<Expiry, Error> {
         if matches!(record.bin("keep"), Ok(Value::Bool(true))) {
             return Ok(Expiry::Keep { ttl: Some(3600) });
         }
@@ -234,14 +223,11 @@ event! {
 
     // ANCHOR: tick
     on timer
-    fn tick(timer: Timer) -> Result<(), Error> {
-        let ticks = match as_udf::bin("ticks") {        // the record API works here
-            Ok(v) => v.int()?,
-            Err(_) => 0,
-        } + 1;
+    fn tick(rec: &mut Record, timer: Timer) -> Result<(), Error> {
+        let ticks = rec.int("ticks")?.unwrap_or(0) + 1; // a timer runs on a record, which it is handed
 
-        as_udf::set("ticks", ticks)?;
-        as_udf::update()?;
+        rec.set("ticks", ticks)?;
+        rec.save()?;
 
         if timer.is("tick") && ticks < 3 {
             as_udf::timer_set("tick", 200)?;            // run again in 200 ms

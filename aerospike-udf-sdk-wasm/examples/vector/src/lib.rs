@@ -37,7 +37,7 @@
 
 #![no_std]
 
-use aerospike_udf_sdk_wasm::{self as as_udf, Args, Blob, Error, Text, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, Args, Blob, Error, Record, Text, Value};
 
 const MAX_DIM: usize = 2048;
 /// Bounded by the per-call handle table: each hit of the partial is one built map.
@@ -289,10 +289,10 @@ fn score(metric: Metric, measured: f64) -> f64 {
 }
 
 /// The record's vector into `VEC`, or why not: `Ok(None)` for a missing or wrong-size bin, counted.
-fn read_vector(s: &mut State) -> Result<bool, Error> {
+fn read_vector(rec: &Record, s: &mut State) -> Result<bool, Error> {
     let bin = core::str::from_utf8(&s.bin[..s.bin_len]).unwrap_or("v");
 
-    let blob = match as_udf::bin(bin) {
+    let blob = match rec.bin(bin) {
         Ok(Value::Blob(b)) => b,
         Ok(_) | Err(Error::Absent) => {
             s.skipped_none += 1;
@@ -344,7 +344,7 @@ fn itoa(mut n: i64, out: &mut [u8; KEY_MAX]) -> usize {
 }
 
 /// Offer a candidate: kept if it beats the worst of the k, ties broken on the digest.
-fn offer(s: &mut State, score: f64) -> Result<(), Error> {
+fn offer(rec: &Record, s: &mut State, score: f64) -> Result<(), Error> {
     if s.n == s.k && score > s.hits[s.n - 1].score {
         return Ok(());
     }
@@ -352,7 +352,7 @@ fn offer(s: &mut State, score: f64) -> Result<(), Error> {
     let mut hit = NO_HIT;
 
     hit.score = score;
-    as_udf::digest(&mut hit.digest)?;
+    rec.digest(&mut hit.digest)?;
 
     if s.n == s.k && score == s.hits[s.n - 1].score && hit.digest >= s.hits[s.n - 1].digest {
         return Ok(());
@@ -360,7 +360,7 @@ fn offer(s: &mut State, score: f64) -> Result<(), Error> {
 
     let mut kbuf = [0u8; KEY_MAX];
 
-    hit.key_len = match as_udf::key(&mut kbuf) {
+    hit.key_len = match rec.key(&mut kbuf) {
         Ok(Value::Int(i)) => itoa(i, &mut hit.key),
         Ok(Value::Str(Text::Guest(t))) => {
             let n = t.len().min(KEY_MAX);
@@ -407,19 +407,21 @@ fn offer(s: &mut State, score: f64) -> Result<(), Error> {
 }
 
 fn record(args: i32, argc: i32) -> Result<(), Error> {
+    // These exports are written without the macros, which would pass the record in; so it is asked for.
+    let rec = Record::current();
     let s = state();
 
     if !s.configured {
         configure(s, &Args::from_handle(args, argc))?;
     }
 
-    if !read_vector(s)? {
+    if !read_vector(&rec, s)? {
         return Ok(());
     }
 
     let measured = measure(s.metric, vec_floats(s.dim), &s.query[..s.dim], s.qnorm);
 
-    offer(s, score(s.metric, measured))
+    offer(&rec, s, score(s.metric, measured))
 }
 
 fn end() -> Result<Value<'static>, Error> {
@@ -439,9 +441,9 @@ fn end() -> Result<Value<'static>, Error> {
         hits.push(entry)?;
     }
 
-    out.put("hits", hits)?
-        .put("skipped_dim", s.skipped_dim)?
-        .put("skipped_none", s.skipped_none)?;
+    out.insert("hits", hits)?
+        .insert("skipped_dim", s.skipped_dim)?
+        .insert("skipped_none", s.skipped_none)?;
 
     Ok(out.into_value())
 }
@@ -472,9 +474,10 @@ pub extern "C" fn topk_end(_args: i32, _argc: i32) -> i32 {
 /// vector of the query's size.
 #[no_mangle]
 pub extern "C" fn vec_distance(args: i32, argc: i32) -> i32 {
+    let rec = Record::current();
     let s = state();
     let r = configure(s, &Args::from_handle(args, argc)).and_then(|()| {
-        if !read_vector(s)? {
+        if !read_vector(&rec, s)? {
             return Ok(None);
         }
 

@@ -136,14 +136,6 @@ func BlobValue(b []byte) Value
 BlobValue is a blob of the guest's as a value, for a batch. It holds the address of b's bytes, not a
 copy, so b must stay alive until the host has taken the value.
 
-#### `HandleValue`
-
-```go
-func HandleValue(h int32) Value { return Value{Kind: KindHandle, Payload: int64(h)} }
-```
-
-HandleValue is a built list or map as a value, by its handle, for a batch.
-
 #### `StrBytesValue`
 
 ```go
@@ -151,15 +143,6 @@ func StrBytesValue(b []byte) Value
 ```
 
 StrBytesValue is a string value over bytes the caller holds, without making a Go string of them.
-
-#### `Bin_`
-
-```go
-func Bin_(name string, out *Value) int32
-```
-
-Bin_ reads a bin of any kind in one import. The status is NotFound for no such bin. (Bin is the typed
-form.)
 
 #### `Bytes`
 
@@ -195,313 +178,6 @@ func Args(handle, argc int32, out []Value) int32
 ```
 
 Args decodes the call's arguments into out, in one import. Returns how many there are, bounded by len(out).
-
-#### `Enter`
-
-```go
-func Enter(v Value) int32 { return cursorEnterAt(v.Src(), v.At()) }
-```
-
-Enter opens a cursor over the list or map at a value's position. 0 when it could not.
-
-#### `Next`
-
-```go
-func Next(cursor int32, out []Value) int32
-```
-
-Next fills out with the next values of a cursor, 128 at most per import. Returns how many, or a status.
-
-#### `Close`
-
-```go
-func Close(cursor int32) { cursorClose(cursor) }
-```
-
-Close gives a cursor's slot back.
-
-#### `Get`
-
-```go
-func Get(m Value, key string, out *Value) int32
-```
-
-Get looks a string key up in the map at a value's position, in one import.
-
-#### `Digest`
-
-```go
-func Digest(buf []byte) int32 { return digest(ptr(buf), int32(len(buf))) }
-```
-
-Digest copies the record's digest (20 bytes) into buf. Returns the length, or a status.
-
-#### `KeyType`
-
-```go
-func KeyType() Kind { return Kind(keyType()) }
-```
-
-KeyType reports the kind of the record's user key, or Absent when none was stored.
-
-#### `KeyInt`
-
-```go
-func KeyInt() int64 { return keyInt() }
-```
-
-KeyInt is the user key when it is an integer.
-
-#### `KeyBytes`
-
-```go
-func KeyBytes(buf []byte) int32 { return keyBytes(ptr(buf), int32(len(buf))) }
-```
-
-KeyBytes copies a string or blob user key into buf. Returns the length, or a status.
-
-#### `Generation`
-
-```go
-func Generation() int64 { return gen() }
-```
-
-Generation is the record's modification count.
-
-#### `Exists`
-
-```go
-func Exists() bool { return recExists() != 0 }
-```
-
-Exists reports whether the record exists.
-
-#### `SetInt`
-
-```go
-func SetInt(name string, value int64) int32
-```
-
-SetInt writes an integer to a bin.
-Staged until the record is committed. The status is Err for a name that is empty or longer than 15
-bytes, Refused when the record refuses the write.
-
-#### `SetDouble`
-
-```go
-func SetDouble(name string, value float64) int32
-```
-
-SetDouble writes a double to a bin.
-Staged until the record is committed. The status is Err for a name that is empty or longer than 15
-bytes, Refused when the record refuses the write.
-
-#### `SetStr`
-
-```go
-func SetStr(name, value string) int32
-```
-
-SetStr writes a string to a bin; the host copies the bytes.
-Staged until the record is committed. The status is Err for a name that is empty or longer than 15
-bytes, Refused when the record refuses the write.
-
-#### `SetBlob`
-
-```go
-func SetBlob(name string, value []byte) int32
-```
-
-SetBlob writes a blob to a bin; the host copies the bytes. Staged until the record is committed. The
-status is TypeMismatch when the bin holds bytes of another subtype, such as an HLL, which a plain blob
-would relabel; Err for a name that is empty or longer than 15 bytes; Refused when the record refuses
-the write.
-
-#### `SetHandle`
-
-```go
-func SetHandle(name string, handle int32) int32
-```
-
-SetHandle writes a built list or map to a bin.
-
-#### `SetValue`
-
-```go
-func SetValue(name string, v Value) int32
-```
-
-SetValue writes a value read from the record to a bin, by position.
-
-#### `Remove`
-
-```go
-func Remove(name string) int32 { return binRemove(strptr(name), int32(len(name))) }
-```
-
-Remove removes a bin from the record, staged like a write. The status is Err for a name that is empty or
-longer than 15 bytes, Refused when the record refuses.
-
-#### `Update`
-
-```go
-func Update() int32 { return recUpdate() }
-```
-
-Update commits the staged writes to an existing record; Create to one that does not exist yet.
-
-#### `Create`
-
-```go
-func Create() int32 { return recCreate() }
-```
-
-Create commits the staged writes as a new record. The status is Refused when the server does not
-create it.
-
-#### `NewListHandle`
-
-```go
-func NewListHandle(capacity int) int32 { return listNew(int32(capacity)) }
-```
-
-NewListHandle and NewMapHandle start a collection on the host as a bare handle, for the low-level
-calls; NewList and NewMap are the typed builders.
-
-#### `NewMapHandle`
-
-```go
-func NewMapHandle(capacity int) int32 { return mapNew(int32(capacity)) }
-```
-
-NewMapHandle starts a map on the host with room for capacity entries and returns its bare handle, 0
-when it could not. A built map is ordered by key, not by insertion.
-
-#### `NilHandle`
-
-```go
-func NilHandle() int32 { return valNil() }
-```
-
-NilHandle is a nil value as a handle, for a map entry that means "no such bin" in a record resolution.
-
-#### `PackHandle`
-
-```go
-func PackHandle(handle int32) int32 { return packHandle(handle) }
-```
-
-PackHandle packs a built collection into a source the host holds, for reading it back by position
-(Get, Enter); the source lives until the call ends.
-
-#### `MapHasKey`
-
-```go
-func MapHasKey(m int32, key string) bool
-```
-
-MapHasKey reports whether a built map holds key. It packs the map, so it is for the occasional check,
-not a loop.
-
-#### `ListPushInt`
-
-```go
-func ListPushInt(list int32, value int64) int32 { return listPushInt(list, value) }
-```
-
-ListPushInt appends an integer to a built list. The status is Err when list is not a built list.
-
-#### `ListPushStr`
-
-```go
-func ListPushStr(list int32, value string) int32
-```
-
-ListPushStr appends a string to a built list; the host copies the bytes. The status is Err when list is
-not a built list.
-
-#### `ListPushHandle`
-
-```go
-func ListPushHandle(list, value int32) int32 { return listPush(list, value) }
-```
-
-ListPushHandle appends a value held by handle (a built collection, or one of NilHandle, IntHandle or
-StrHandle) to a built list. The status is Err when list is not a built list or value is not a usable
-handle.
-
-#### `ListPushValue`
-
-```go
-func ListPushValue(list int32, v Value) int32
-```
-
-ListPushValue appends any value: a scalar by value, guest bytes by address, a stored value by position,
-a built collection by handle.
-
-#### `ListPushValues`
-
-```go
-func ListPushValues(list int32, vals []Value) int32
-```
-
-ListPushValues appends a batch of values in one import: scalars, guest bytes by address, stored values by
-position, built collections by handle. Returns how many went in.
-
-#### `MapPutInt`
-
-```go
-func MapPutInt(m int32, key string, value int64) int32
-```
-
-MapPutInt puts an integer under a string key in a built map. The status is Err when m is not a built
-map.
-
-#### `MapPutStr`
-
-```go
-func MapPutStr(m int32, key, value string) int32
-```
-
-MapPutStr puts a string under a string key in a built map; the host copies the bytes. The status is Err
-when m is not a built map.
-
-#### `MapPutHandle`
-
-```go
-func MapPutHandle(m int32, key string, value int32) int32
-```
-
-MapPutHandle puts a value held by handle (a built collection, or one of NilHandle, IntHandle or
-StrHandle) under a string key in a built map. The status is Err when m is not a built map or value is
-not a usable handle.
-
-#### `MapPutValue`
-
-```go
-func MapPutValue(m int32, key string, v Value) int32
-```
-
-MapPutValue puts any value under a string key: a scalar by value, guest bytes by address, a stored value
-by position, a built collection by handle.
-
-#### `MapPutEntries`
-
-```go
-func MapPutEntries(m int32, pairs []Value) int32
-```
-
-MapPutEntries puts a batch of key-value pairs (pairs[0], pairs[1] is the first) in one import. Returns how
-many pairs went in.
-
-#### `Size`
-
-```go
-func Size(handle int32) int { return int(collSize(handle)) }
-```
-
-Size is the number of elements of the list, or entries of the map, behind a handle: a built collection
-or an open cursor. Err (-1) when the handle is neither.
 
 #### `ResultNil`
 
@@ -550,23 +226,6 @@ func ResultBlob(b []byte) { resultBlob(ptr(b), int32(len(b))) }
 ```
 
 ResultBlob sets a blob as the call's result; the host copies the bytes.
-
-#### `ResultHandle`
-
-```go
-func ResultHandle(h int32) int32 { return resultHandle(h) }
-```
-
-ResultHandle sets a built list or map as the call's result, by handle. The status is Err when the
-handle is not usable.
-
-#### `ResultValue`
-
-```go
-func ResultValue(v Value) int32 { return resultAt(v.Src(), v.At()) }
-```
-
-ResultValue hands a value read from the record back as the result, built by the server from its bytes.
 
 #### `Fail`
 
@@ -623,21 +282,335 @@ func FailErr(err error) int32
 
 FailErr fails the call with the error's message and returns the status an export then returns.
 
-#### `Commit`
+#### `RecordReader`
 
 ```go
-func Commit() error
+type RecordReader interface {
+	// Bin is a bin, whatever it holds; an error naming the bin when the record has none by that name.
+	Bin(name string) (Value, error)
+	// Get is a bin that may be absent: false when it is absent or nil.
+	Get(name string) (Value, bool)
+	// Has reports whether the record has the bin.
+	Has(name string) bool
+	// Int is an integer bin; false when absent, nil or of another kind.
+	Int(name string) (int64, bool)
+	// Float64 is a double bin; false when absent, nil or of another kind. An integer is not widened.
+	Float64(name string) (float64, bool)
+	// Bool is a boolean bin; false when absent, nil or of another kind.
+	Bool(name string) (bool, bool)
+	// Str is the text of a string bin, copied out; false when absent, nil or of another kind.
+	Str(name string) (string, bool)
+	// Bytes is the bytes of a blob bin, copied out; false when absent, nil or of another kind.
+	Bytes(name string) ([]byte, bool)
+	// List walks a list bin; nothing when absent or not a list.
+	List(name string) iter.Seq[Value]
+	// Map walks a map bin's entries, key then value; nothing when absent or not a map.
+	Map(name string) iter.Seq2[Value, Value]
+	// Generation is the record's modification count.
+	Generation() int64
+	// LastUpdateTime is when the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC).
+	LastUpdateTime() int64
+}
 ```
 
-Commit writes the staged bins, creating the record if it does not exist.
+RecordReader is what any record can be asked: the one a record UDF is called on (*Record) and either
+side of an event (*EventRecord). A helper that takes a RecordReader reads a bin the same way from both.
 
-#### `Delete`
+Bin is the form for a bin that must be there: an error naming the bin when it is not. The others are
+for a bin that may not be: the typed readers answer false, and the walks yield nothing, when the bin is
+absent, nil or of another kind.
+
+#### `Record`
 
 ```go
-func Delete() error
+type Record struct {
+	// It holds nothing, because the host knows which record a call is on.
+	_ [0]byte
+}
 ```
 
-Delete deletes the record.
+Record is the record a UDF was called on.
+
+A record UDF, and the per-record method of a stream UDF, takes it as its first parameter, before the
+call's arguments. It is not one of them: a client does not pass it, it is not counted when the
+arguments are checked, and the function's signature export does not list it. A function that does not
+touch the record leaves the parameter out.
+
+//udf:function withdraw
+func withdraw(rec *udf.Record, amount int64) (int64, error) {
+balance, err := rec.Bin("balance")
+if err != nil {
+return 0, err
+}
+have, err := balance.Int()
+if err != nil {
+return 0, err
+}
+if err := rec.Set("balance", have-amount); err != nil {
+return 0, err
+}
+return have - amount, rec.Save()
+}
+
+A bin write is staged: Set and Remove change the record in hand, and nothing reaches the server's
+record until Save. Delete is the exception and needs no Save.
+
+There is one Record type, for the places that may write and the places that may only read. Where the
+host does not take a write - the record a stream UDF is shown - every writing method returns an error
+that says so, and nothing is changed.
+
+The reading methods are also on RecordReader, which *EventRecord implements too.
+
+#### `CurrentRecord`
+
+```go
+func CurrentRecord() *Record { return &current }
+```
+
+CurrentRecord is the record of the call in progress. The generated exports pass it as the first
+parameter of a function that declares one; it is for an export written without udfgen. Every call
+answers the same record.
+
+#### `Record.Bin`
+
+```go
+func (r *Record) Bin(name string) (Value, error)
+```
+
+Bin is a bin, whatever it holds, in one import. An error naming the bin when the record has none by
+that name; a nil bin is absent too, since a bin cannot hold nil.
+
+#### `Record.Get`
+
+```go
+func (r *Record) Get(name string) (Value, bool)
+```
+
+Get is a bin that may be absent: false when it is absent or nil. It allocates nothing, so it is the
+form for a stream's per-record path.
+
+#### `Record.Has`
+
+```go
+func (r *Record) Has(name string) bool
+```
+
+Has reports whether the record has the bin.
+
+#### `Record.Int`
+
+```go
+func (r *Record) Int(name string) (int64, bool) { return readInt(r, name) }
+```
+
+Int is an integer bin; false when absent, nil or of another kind.
+
+#### `Record.Float64`
+
+```go
+func (r *Record) Float64(name string) (float64, bool) { return readFloat64(r, name) }
+```
+
+Float64 is a double bin; false when absent, nil or of another kind. An integer bin is not widened.
+
+#### `Record.Bool`
+
+```go
+func (r *Record) Bool(name string) (bool, bool) { return readBool(r, name) }
+```
+
+Bool is a boolean bin; false when absent, nil or of another kind.
+
+#### `Record.Str`
+
+```go
+func (r *Record) Str(name string) (string, bool) { return readStr(r, name) }
+```
+
+Str is the text of a string bin, copied out; false when absent, nil or of another kind.
+
+#### `Record.Bytes`
+
+```go
+func (r *Record) Bytes(name string) ([]byte, bool) { return readBytes(r, name) }
+```
+
+Bytes is the bytes of a blob bin, copied out; false when absent, nil or of another kind. The bytes of
+a GeoJSON or HLL bin are read through Get and Value.Bytes.
+
+#### `Record.List`
+
+```go
+func (r *Record) List(name string) iter.Seq[Value]
+```
+
+List walks the list in a bin; nothing when the bin is absent or not a list.
+
+#### `Record.Map`
+
+```go
+func (r *Record) Map(name string) iter.Seq2[Value, Value]
+```
+
+Map walks the entries of the map in a bin, key then value; nothing when the bin is absent or not a map.
+
+#### `Record.BinCount`
+
+```go
+func (r *Record) BinCount() int64 { return numbins() }
+```
+
+BinCount is how many bins the record has.
+
+#### `Record.Set`
+
+```go
+func (r *Record) Set(name string, value any) error
+```
+
+Set writes a value to a bin, staged until Save: an int, int32, int64, float32, float64, bool, string,
+[]byte (a blob), Value, *Map or *List.
+
+A Value read from a record is written back from its stored bytes, without the guest decoding it, which
+is how a sub-document is copied from one bin to another and how a GeoJSON or HLL keeps its kind. A
+built *Map or *List is handed over whole; when it kept a refusal while it was built, that error is
+returned and nothing is written. A string or blob is copied by the host during the call.
+udf.GeoJSONValue(doc) writes a GeoJSON document as the geospatially indexable kind.
+
+Writing nil removes the bin, as Remove does: a bin cannot hold nil.
+
+The error says the name is empty or longer than 15 bytes, that a blob would relabel bytes of another
+subtype such as an HLL, or that the host refused the write.
+
+#### `Record.SetInts`
+
+```go
+func (r *Record) SetInts(name string, values []int64) error
+```
+
+SetInts writes a slice of integers to a bin as a list in one import, no value built per element. The
+host applies it at once rather than staging it: Save is not needed for it.
+
+#### `Record.SetFloat64s`
+
+```go
+func (r *Record) SetFloat64s(name string, values []float64) error
+```
+
+SetFloat64s is SetInts for doubles.
+
+#### `Record.Remove`
+
+```go
+func (r *Record) Remove(name string) error
+```
+
+Remove removes a bin, staged until Save like a write.
+
+#### `Record.Exists`
+
+```go
+func (r *Record) Exists() bool { return recExists() != 0 }
+```
+
+Exists reports whether the record exists. A UDF can be called on a key that has no record yet.
+
+#### `Record.Generation`
+
+```go
+func (r *Record) Generation() int64 { return gen() }
+```
+
+Generation is the record's modification count.
+
+#### `Record.TTL`
+
+```go
+func (r *Record) TTL() int64 { return ttl() }
+```
+
+TTL is the record's time to live, in seconds, as the host reports it.
+
+#### `Record.SetTTL`
+
+```go
+func (r *Record) SetTTL(seconds int32) error
+```
+
+SetTTL sets the record's time to live, in seconds: 0 for the namespace default, -1 for never expire,
+subject to the namespace's rule on TTL reductions. It is the TTL of the write, so it takes effect when
+Save writes the record.
+
+#### `Record.LastUpdateTime`
+
+```go
+func (r *Record) LastUpdateTime() int64 { return lastUpdate() }
+```
+
+LastUpdateTime is when the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC),
+which is how the server stores it. It is not on the same scale as Now, which counts from the Unix epoch.
+
+#### `Record.Size`
+
+```go
+func (r *Record) Size() int64 { return recordSize() }
+```
+
+Size is the record's size on device, in bytes.
+
+#### `Record.SetName`
+
+```go
+func (r *Record) SetName() string
+```
+
+SetName is the record's set name, "" when it is in no set.
+
+#### `Record.Key`
+
+```go
+func (r *Record) Key(buf []byte) (Value, bool)
+```
+
+Key is the record's user key, when it was written with the key stored: an integer, or a string or
+blob whose bytes go into buf, which the value then points at. False when the record carries none, or
+buf is too small for it.
+
+#### `Record.Digest`
+
+```go
+func (r *Record) Digest(buf []byte) ([]byte, error)
+```
+
+Digest copies the record's digest into buf and returns that part of it: 20 bytes, always present. It
+is what identifies a record a UDF wants to point at rather than ship - a top-k hit, say - since a
+client can fetch a record by its digest afterwards.
+
+#### `Record.Save`
+
+```go
+func (r *Record) Save() error
+```
+
+Save writes the staged bins to the server's record, creating the record when it does not exist yet.
+
+It is the one way a staged write takes effect: a UDF that returns without saving has changed nothing.
+A UDF that must not overwrite checks Exists first; the record is locked for the whole call, so nothing
+can come between the check and the save.
+
+With nothing staged it is still a write: the server treats it as a touch, and the record's generation
+and last-update time move. On a key with no record it makes nothing, since a record has to have a bin,
+and the client is answered "key not found".
+
+#### `Record.Delete`
+
+```go
+func (r *Record) Delete() error
+```
+
+Delete deletes the record. It is not staged: it needs no Save after it, and whatever was staged goes
+with the record. The server carries it out when the call returns, so for the rest of the call Exists
+answers as it did before.
 
 #### `Value.IsNull`
 
@@ -794,6 +767,15 @@ func (v Value) Map() iter.Seq2[Value, Value]
 
 Map walks a stored map's entries, key then value; nothing when the value is not a map.
 
+#### `Value.Index`
+
+```go
+func (v Value) Index(i int) (Value, bool)
+```
+
+Index is element i of a stored list, in one import: the host steps to it, nothing is walked from the
+guest. False past the end, for a negative index, or when the value is not a list.
+
 #### `Value.Lookup`
 
 ```go
@@ -834,262 +816,6 @@ func NilValue() Value { return Value{Kind: KindNil} }
 
 NilValue is a nil value, for a batch.
 
-#### `Bin`
-
-```go
-type Bin struct {
-	name string
-}
-```
-
-A Bin is a bin of the record in hand, by name: reads as the type expected, writes of every kind, and
-the walk of a collection bin. Keep one as a package-level variable (`var ticks = udf.NewBin("ticks")`).
-A getter answers an error naming the bin when it is absent or of another kind; the Or form answers the
-default for absent and nil. A setter stages a write until Commit.
-
-n := ticks.IntOr(0) + 1
-if err := ticks.SetInt(n); err != nil { return err }
-return udf.Commit()
-
-#### `NewBin`
-
-```go
-func NewBin(name string) Bin { return Bin{name: name} }
-```
-
-NewBin names a bin of the record in hand. It reads nothing, so the bin need not exist.
-
-#### `Bin.Name`
-
-```go
-func (b Bin) Name() string { return b.name }
-```
-
-Name is the bin's name.
-
-#### `Bin.Get`
-
-```go
-func (b Bin) Get() (Value, bool)
-```
-
-Get is the bin as a value; false when the record has no such bin.
-
-#### `Bin.Exists`
-
-```go
-func (b Bin) Exists() bool
-```
-
-Exists reports whether the record has this bin.
-
-#### `Bin.Int`
-
-```go
-func (b Bin) Int() (int64, error)
-```
-
-Int is the bin as an integer; an error naming the bin when it is absent or of another kind.
-
-#### `Bin.IntOr`
-
-```go
-func (b Bin) IntOr(dflt int64) int64
-```
-
-IntOr is the bin as an integer, or dflt when absent or nil; a bin of another kind also answers dflt.
-
-#### `Bin.Float64`
-
-```go
-func (b Bin) Float64() (float64, error)
-```
-
-Float64 is the bin as a double; an error naming the bin when it is absent or of another kind. An integer
-bin is of another kind here: nothing is widened.
-
-#### `Bin.Float64Or`
-
-```go
-func (b Bin) Float64Or(dflt float64) float64
-```
-
-Float64Or is the bin as a double, or dflt when absent or nil; a bin of another kind, an integer
-included, also answers dflt.
-
-#### `Bin.Bool`
-
-```go
-func (b Bin) Bool() (bool, error)
-```
-
-Bool is the bin as a boolean; an error naming the bin when it is absent or of another kind.
-
-#### `Bin.BoolOr`
-
-```go
-func (b Bin) BoolOr(dflt bool) bool
-```
-
-BoolOr is the bin as a boolean, or dflt when absent or nil; a bin of another kind also answers dflt.
-
-#### `Bin.Str`
-
-```go
-func (b Bin) Str() (string, error)
-```
-
-Str is the text of a string bin, copied out; an error naming the bin when it is absent or of another
-kind.
-
-#### `Bin.StrOr`
-
-```go
-func (b Bin) StrOr(dflt string) string
-```
-
-StrOr is the text of a string bin, copied out, or dflt when absent or nil; a bin of another kind, or one
-that could not be read, also answers dflt.
-
-#### `Bin.Bytes`
-
-```go
-func (b Bin) Bytes() ([]byte, error)
-```
-
-Bytes is the bytes of a string, blob, GeoJSON or HLL bin.
-
-#### `Bin.Floats`
-
-```go
-func (b Bin) Floats(dst []float32) (int, error)
-```
-
-Floats copies a blob of 32-bit floats straight into dst; how many elements were copied.
-
-#### `Bin.List`
-
-```go
-func (b Bin) List() iter.Seq[Value]
-```
-
-List walks the list in this bin; nothing when the bin is absent or not a list.
-
-#### `Bin.Map`
-
-```go
-func (b Bin) Map() iter.Seq2[Value, Value]
-```
-
-Map walks the entries of the map in this bin; nothing when the bin is absent or not a map.
-
-#### `Bin.SetInt`
-
-```go
-func (b Bin) SetInt(value int64) error { return b.check(SetInt(b.name, value)) }
-```
-
-SetInt writes an integer, staged until Commit.
-
-#### `Bin.SetFloat64`
-
-```go
-func (b Bin) SetFloat64(value float64) error { return b.check(SetDouble(b.name, value)) }
-```
-
-SetFloat64 writes a double, staged until Commit.
-
-#### `Bin.SetBool`
-
-```go
-func (b Bin) SetBool(value bool) error { return b.check(SetBool(b.name, value)) }
-```
-
-SetBool writes a boolean, staged until Commit.
-
-#### `Bin.SetStr`
-
-```go
-func (b Bin) SetStr(value string) error { return b.check(SetStr(b.name, value)) }
-```
-
-SetStr writes a string, staged until Commit.
-
-#### `Bin.SetBytes`
-
-```go
-func (b Bin) SetBytes(value []byte) error { return b.check(SetBlob(b.name, value)) }
-```
-
-SetBytes writes a blob.
-
-#### `Bin.SetGeoJSON`
-
-```go
-func (b Bin) SetGeoJSON(doc string) error { return b.check(SetGeoJSON(b.name, doc)) }
-```
-
-SetGeoJSON writes a GeoJSON document, kept as the geospatially indexable kind rather than a string.
-
-#### `Bin.SetNull`
-
-```go
-func (b Bin) SetNull() error { return b.check(SetNull(b.name)) }
-```
-
-SetNull writes a nil bin.
-
-#### `Bin.SetInts`
-
-```go
-func (b Bin) SetInts(values []int64) error { return b.check(SetInts(b.name, values)) }
-```
-
-SetInts writes a list of integers from the slice in one import, no value built per element.
-
-#### `Bin.SetFloat64s`
-
-```go
-func (b Bin) SetFloat64s(values []float64) error { return b.check(SetFloat64s(b.name, values)) }
-```
-
-SetFloat64s writes a list of doubles from the slice in one import, no value built per element.
-
-#### `Bin.SetValue`
-
-```go
-func (b Bin) SetValue(v Value) error
-```
-
-SetValue writes a value: one read from the record by position, keeping its kind; or a scalar, guest
-bytes or a built collection.
-
-#### `Bin.SetMap`
-
-```go
-func (b Bin) SetMap(m *Map) error
-```
-
-SetMap writes a built map. When the map kept a refusal while it was built, that error is returned and
-nothing is written.
-
-#### `Bin.SetList`
-
-```go
-func (b Bin) SetList(l *List) error
-```
-
-SetList writes a built list. When the list kept a refusal while it was built, that error is returned and
-nothing is written.
-
-#### `Bin.Remove`
-
-```go
-func (b Bin) Remove() error { return b.check(Remove(b.name)) }
-```
-
-Remove removes the bin from the record, staged until Commit.
-
 #### `Map`
 
 ```go
@@ -1129,38 +855,6 @@ func NewList(capacity int) *List
 
 NewList starts a list with room for capacity elements.
 
-#### `WrapMap`
-
-```go
-func WrapMap(handle int32) *Map { return &Map{handle: handle} }
-```
-
-WrapMap and WrapList take a handle the low-level calls built.
-
-#### `WrapList`
-
-```go
-func WrapList(handle int32) *List { return &List{handle: handle} }
-```
-
-WrapList takes a list handle the low-level calls built.
-
-#### `Map.Handle`
-
-```go
-func (m *Map) Handle() int32 { return m.handle }
-```
-
-Handle is what the low-level calls take.
-
-#### `List.Handle`
-
-```go
-func (l *List) Handle() int32 { return l.handle }
-```
-
-Handle is the list's handle, as the low-level calls take it.
-
 #### `Map.Err`
 
 ```go
@@ -1177,28 +871,10 @@ func (l *List) Err() error { return l.err }
 
 Err is the first refusal, nil when every add went in.
 
-#### `Map.Size`
-
-```go
-func (m *Map) Size() int { return int(collSize(m.handle)) }
-```
-
-Size is how many entries the map holds; -1 when its handle is not a collection's, as after a failed
-NewMap.
-
-#### `List.Size`
-
-```go
-func (l *List) Size() int { return int(collSize(l.handle)) }
-```
-
-Size is how many elements the list holds; -1 when its handle is not a collection's, as after a failed
-NewList.
-
 #### `Map.Value`
 
 ```go
-func (m *Map) Value() Value { return HandleValue(m.handle) }
+func (m *Map) Value() Value { return handleValue(m.handle) }
 ```
 
 Value is the collection as a value, for a batch or a result.
@@ -1206,43 +882,45 @@ Value is the collection as a value, for a batch or a result.
 #### `List.Value`
 
 ```go
-func (l *List) Value() Value { return HandleValue(l.handle) }
+func (l *List) Value() Value { return handleValue(l.handle) }
 ```
 
 Value is the list as a value, for a batch or a result.
 
-#### `Map.Has`
+#### `Map.Len`
 
 ```go
-func (m *Map) Has(key string) bool { return MapHasKey(m.handle, key) }
+func (m *Map) Len() int { return int(collSize(m.handle)) }
 ```
 
-Has reports whether the map holds key; it packs the map, so for the occasional check, not a loop.
+Len is how many entries the map holds; -1 when it could not be built, as after a failed NewMap.
+
+#### `List.Len`
+
+```go
+func (l *List) Len() int { return int(collSize(l.handle)) }
+```
+
+Len is how many elements the list holds; -1 when it could not be built, as after a failed NewList.
+
+#### `Map.Contains`
+
+```go
+func (m *Map) Contains(key any) bool
+```
+
+Contains reports whether the map holds key, a string or an integer, in one import: the host answers
+from the map as built, nothing is packed.
 
 #### `Map.Put`
 
 ```go
-func (m *Map) Put(key string, v any) *Map
+func (m *Map) Put(key any, v any) *Map
 ```
 
-Put puts a value under a string key: an int, int32, int64, float32, float64, bool, string, []byte (a
-blob), Value, *Map, *List, or nil for a nil entry (in a record answer, "no such bin").
-
-#### `Map.PutI`
-
-```go
-func (m *Map) PutI(key int64, v any) *Map
-```
-
-PutI puts a value under an integer key; the kinds as Put takes them.
-
-#### `Map.PutGeoJSON`
-
-```go
-func (m *Map) PutGeoJSON(key, doc string) *Map
-```
-
-PutGeoJSON puts a GeoJSON document, kept as that kind.
+Put puts a value under a key. The key is a string or an integer (int, int32, int64); the value an int,
+int32, int64, float32, float64, bool, string, []byte (a blob), Value, *Map, *List, or nil for a nil
+entry (in a record answer, "no such bin").
 
 #### `Map.PutAll`
 
@@ -1258,7 +936,24 @@ PutAll puts every entry of a stored map, by position.
 func (m *Map) PutEntries(pairs []Value) *Map
 ```
 
-PutEntries puts pairs (pairs[0], pairs[1] is the first) in one import.
+PutEntries puts pairs (pairs[0], pairs[1] is the first) in one import: scalars, guest bytes by address,
+stored values by position, built collections as their Value.
+
+#### `List.AddValues`
+
+```go
+func (l *List) AddValues(vals []Value) *List
+```
+
+AddValues appends values in one import, the kinds as PutEntries takes them.
+
+#### `Map.PutGeoJSON`
+
+```go
+func (m *Map) PutGeoJSON(key, doc string) *Map
+```
+
+PutGeoJSON puts a GeoJSON document, kept as that kind.
 
 #### `List.Add`
 
@@ -1284,14 +979,6 @@ func (l *List) AddAll(stored Value) *List
 
 AddAll appends every element of a stored list, by position.
 
-#### `List.AddValues`
-
-```go
-func (l *List) AddValues(vals []Value) *List
-```
-
-AddValues appends values in one import.
-
 #### `Contains`
 
 ```go
@@ -1299,90 +986,6 @@ func Contains(list Value, text string) bool
 ```
 
 Contains reports whether a stored list of strings holds text.
-
-#### `MapPutIValue`
-
-```go
-func MapPutIValue(m int32, key int64, v Value) int32
-```
-
-MapPutIValue puts any value under an integer key, the kinds as MapPutValue takes them.
-
-#### `MapPut`
-
-```go
-func MapPut(m, key, value int32) int32 { return mapPut(m, key, value) }
-```
-
-MapPut puts a built value under a built key, both by handle; IntHandle and StrHandle make a key.
-
-#### `IntHandle`
-
-```go
-func IntHandle(i int64) int32 { return valInt(i) }
-```
-
-IntHandle is an integer as a handle, for the calls that take a key or value by handle. 0 when the host
-could not make one.
-
-#### `StrHandle`
-
-```go
-func StrHandle(s string) int32 { return valStr(strptr(s), int32(len(s))) }
-```
-
-StrHandle is a string as a handle, copied by the host, for the calls that take a key or value by
-handle. 0 when the host could not make one.
-
-#### `GetI`
-
-```go
-func GetI(m Value, key int64, out *Value) int32
-```
-
-GetI looks an integer key up in the map at a value's position.
-
-#### `SetBool`
-
-```go
-func SetBool(name string, value bool) int32
-```
-
-SetBool writes a boolean to a bin.
-Staged until the record is committed. The status is Err for a name that is empty or longer than 15
-bytes, Refused when the record refuses the write.
-
-#### `SetNull`
-
-```go
-func SetNull(name string) int32 { return setNil(strptr(name), int32(len(name))) }
-```
-
-SetNull writes a nil bin.
-
-#### `SetGeoJSON`
-
-```go
-func SetGeoJSON(name, doc string) int32
-```
-
-SetGeoJSON writes a GeoJSON document, kept as the geospatially indexable kind.
-
-#### `SetInts`
-
-```go
-func SetInts(name string, values []int64) int32
-```
-
-SetInts writes a list of integers from the slice in one import, no value built per element.
-
-#### `SetFloat64s`
-
-```go
-func SetFloat64s(name string, values []float64) int32
-```
-
-SetFloat64s writes a list of doubles from the slice in one import, no value built per element.
 
 #### `ResultGeoJSON`
 
@@ -1398,7 +1001,8 @@ ResultGeoJSON sets a GeoJSON document as the result, kept as that kind.
 func ResultMap(m *Map) error
 ```
 
-ResultMap and ResultList set a built collection as the result.
+ResultMap sets a built map as the result. When the map kept a refusal while it was built, that error is
+returned and no result is set.
 
 #### `ResultList`
 
@@ -1418,14 +1022,6 @@ func ResultOf(v Value) error
 ResultOf sets a value of any kind as the result: a scalar by value, guest bytes, a built collection by
 handle, a stored value by position; nil or absent is nil.
 
-#### `TTL`
-
-```go
-func TTL() int64 { return ttl() }
-```
-
-TTL is the record's time to live, in seconds.
-
 #### `Now`
 
 ```go
@@ -1433,48 +1029,6 @@ func Now() int64 { return currentTime() }
 ```
 
 Now is the server's clock in ms since the Unix epoch, or -1 inside an event handler, where it is refused.
-
-#### `LastUpdateTime`
-
-```go
-func LastUpdateTime() int64 { return lastUpdate() }
-```
-
-LastUpdateTime is when the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC),
-which is how the server stores it. It is not on the same scale as Now, which counts from the Unix epoch.
-
-#### `RecordSize`
-
-```go
-func RecordSize() int64 { return recordSize() }
-```
-
-RecordSize is the record's size on device, in bytes.
-
-#### `BinCount`
-
-```go
-func BinCount() int64 { return numbins() }
-```
-
-BinCount is how many bins the record has.
-
-#### `SetName`
-
-```go
-func SetName() string
-```
-
-SetName is the record's set name, "" when it is in no set.
-
-#### `SetTTL`
-
-```go
-func SetTTL(seconds int32) error
-```
-
-SetTTL sets the record's time to live, in seconds, for the next commit: 0 for the namespace default,
--1 for never expire, subject to the namespace's rule on TTL reductions.
 
 #### `Arity`
 

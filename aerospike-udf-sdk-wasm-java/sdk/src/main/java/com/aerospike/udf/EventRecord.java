@@ -15,222 +15,316 @@ package com.aerospike.udf;
 import org.teavm.interop.Address;
 
 /**
- * One record an event hands over: read-only, with its metadata, its bins read through the event's own
- * import (never the record imports, which answer nothing in a handler). {@code which} is the index the
- * record is read by: 0 for the first record the event hands over, 1 for the second.
+ * One record an event hands over: the record before a write and after it, the record being deleted, each
+ * side of a merge. It is read-only, and it reads like the record of a call - the same readers, through
+ * {@link RecordReader} - with what an event adds: the names of its bins, the bins this side deleted, and,
+ * where the server keeps them, when and by whom each bin was last written.
+ *
+ * <p>A handler changes a record by answering with the bins it should have ({@link Decision#record},
+ * {@link Resolution#record}); {@link #withBins} fills such an answer with every bin of this record the
+ * handler did not decide.
  */
-public final class EventRecord {
-    /** The index the record is read by: 0 or 1. */
-    public int which;
+public final class EventRecord implements RecordReader {
+    /** The index the record is read by: 0 for the first record the event hands over, 1 for the second. */
+    private int which;
+    private long generation;
+    private long lastUpdateTime;
+    private long ttl;
+    private long sourceId;
+    private Value bins = Maps.NOTHING;
+    private Value deleted = Maps.NOTHING;
+    private Value binLuts = Maps.NOTHING;
+    private Value binSrcs = Maps.NOTHING;
+
+    /** What the typed readers read into, so that they allocate nothing. */
+    private final Value v = new Value();
+
+    EventRecord() {
+    }
+
+    //==========================================================
+    // What the event says about the record.
+    //
+
     /** The record's generation; 0 on both sides of an {@code xdr-merge}. */
-    public long gen;
+    @Override
+    public long generation() {
+        return generation;
+    }
+
     /** When the record was last written; 0 on both sides of an {@code xdr-merge}. */
-    public long lut;
-    /** The time to live, in seconds. */
-    public long ttl;
-    /** The XDR source id of the DC that wrote this version. */
-    public long srcId;
-    /** The list of bin names. */
-    public Value bins = new Value();
-    /** The bin names this side deleted (bin deletes, or tombstones); ABSENT when none. */
-    public Value deleted = new Value();
-    /** name -> LUT per bin, when the server keeps one; ABSENT otherwise. */
-    public Value binLuts = new Value();
-    /** name -> source id per bin, likewise. */
-    public Value binSrcs = new Value();
+    @Override
+    public long lastUpdateTime() {
+        return lastUpdateTime;
+    }
 
-    private static final byte[] SLOT = new byte[16];
+    @Override
+    public long ttl() {
+        return ttl;
+    }
 
-    /** Reads one of this side's bins. NOT_FOUND when the side has no such bin. */
-    public int bin(byte[] name, Value out) {
-        int rc = Natives.eventBinValue(which, Address.ofData(name), name.length, Address.ofData(SLOT), 16);
+    /** The XDR source id of the data centre that wrote this version. */
+    public long sourceId() {
+        return sourceId;
+    }
 
-        if (rc == Udf.OK) {
-            out.read(SLOT, 0);
+    /** The names of the record's bins, as a list of strings. */
+    public ListValue binNames() {
+        return new ListValue(bins);
+    }
+
+    /** The names of the bins this side deleted (bin deletes, or tombstones); empty when it deleted none. */
+    public ListValue deletedBins() {
+        return new ListValue(deleted);
+    }
+
+    /** Whether this side deleted any bin. */
+    public boolean deletedAny() {
+        return deleted.kind() == Value.LIST && deleted.length() > 0;
+    }
+
+    /** When this side last wrote the bin: per bin where the server keeps one, the record's otherwise. */
+    public long binLut(String name) {
+        return Maps.getLong(binLuts, name, lastUpdateTime);
+    }
+
+    /** The source id that wrote the bin: per bin where the server keeps one, the record's otherwise. */
+    public long binSrc(String name) {
+        return Maps.getLong(binSrcs, name, sourceId);
+    }
+
+    //==========================================================
+    // Reading bins: through the event's own import, never the record imports, which answer nothing in a
+    // handler.
+    //
+
+    /** One of this side's bins into {@code out}; the status. */
+    int read(byte[] name, Value out) {
+        int rc = Natives.eventBinValue(which, Address.ofData(name), name.length, Address.ofData(Slots.ONE),
+                Slots.SIZE);
+
+        if (rc == LowLevel.OK) {
+            out.fill(Slots.ONE, 0);
         }
 
         return rc;
     }
 
-    /** As {@link #bin(byte[], Value)}, encoding the name on each call. */
-    public int bin(String name, Value out) {
-        return bin(Udf.bytes(name), out);
+    private int read(String name) {
+        return read(Names.of(name), v);
     }
 
-    /** When this side last wrote the bin: per bin where the server keeps one, the record's otherwise. */
-    public long binLut(String name) {
-        return Udf.mapInt(binLuts, name, lut);
+    private Value required(String name, int kind, String what) {
+        int rc = read(name);
+
+        if (rc == LowLevel.OK && v.kind() == kind) {
+            return v;
+        }
+
+        throw Reads.problem(Reads.state(rc, v, kind), "bin ", name, what);
     }
 
-    /** The source id that wrote the bin, likewise. */
-    public long binSrc(String name) {
-        return Udf.mapInt(binSrcs, name, srcId);
+    private Value optional(String name, int kind, String what) {
+        int rc = read(name);
+
+        if (rc == LowLevel.OK && v.kind() == kind) {
+            return v;
+        }
+
+        int state = Reads.state(rc, v, kind);
+
+        if (state != Reads.NONE) {
+            throw Reads.problem(state, "bin ", name, what);
+        }
+
+        return null;
+    }
+
+    /** The bin as a value, or null when this side has no such bin or holds nil in it (a bin it deleted). */
+    @Override
+    public Value get(String name) {
+        int state = Reads.state(read(name), v, v.kind());
+
+        if (state == Reads.NONE) {
+            return null;
+        }
+
+        if (state != Reads.HIT) {
+            throw Reads.problem(state, "bin ", name, "readable");
+        }
+
+        return v.copy();
+    }
+
+    @Override
+    public boolean hasBin(String name) {
+        return Reads.state(read(name), v, v.kind()) == Reads.HIT;
+    }
+
+    @Override
+    public long getLong(String name) {
+        return required(name, Value.INT, "an int").payload();
+    }
+
+    @Override
+    public long getLong(String name, long dflt) {
+        Value x = optional(name, Value.INT, "an int");
+
+        return x == null ? dflt : x.payload();
+    }
+
+    @Override
+    public double getDouble(String name) {
+        return required(name, Value.DOUBLE, "a double").doubleBits();
+    }
+
+    @Override
+    public double getDouble(String name, double dflt) {
+        Value x = optional(name, Value.DOUBLE, "a double");
+
+        return x == null ? dflt : x.doubleBits();
+    }
+
+    @Override
+    public boolean getBoolean(String name) {
+        return required(name, Value.BOOL, "a bool").payload() != 0;
+    }
+
+    @Override
+    public boolean getBoolean(String name, boolean dflt) {
+        Value x = optional(name, Value.BOOL, "a bool");
+
+        return x == null ? dflt : x.payload() != 0;
+    }
+
+    @Override
+    public String getString(String name) {
+        return required(name, Value.STR, "a string").asString();
+    }
+
+    @Override
+    public String getString(String name, String dflt) {
+        Value x = optional(name, Value.STR, "a string");
+
+        return x == null ? dflt : x.asString();
+    }
+
+    @Override
+    public byte[] getBytes(String name) {
+        byte[] b = getBytes(name, null);
+
+        if (b == null) {
+            throw Reads.problem(Reads.NONE, "bin ", name, "a string or blob");
+        }
+
+        return b;
+    }
+
+    @Override
+    public byte[] getBytes(String name, byte[] dflt) {
+        int state = Reads.state(read(name), v, v.kind());
+
+        if (state == Reads.NONE) {
+            return dflt;
+        }
+
+        if (state != Reads.HIT || !v.isStored() || v.isList() || v.isMap()) {
+            throw Reads.problem(state == Reads.HIT ? Reads.WRONG : state, "bin ", name, "a string or blob");
+        }
+
+        return v.asBytes();
+    }
+
+    @Override
+    public ListValue getList(String name) {
+        return new ListValue(required(name, Value.LIST, "a list").copy());
+    }
+
+    @Override
+    public ListValue getList(String name, ListValue dflt) {
+        Value x = optional(name, Value.LIST, "a list");
+
+        return x == null ? dflt : new ListValue(x.copy());
+    }
+
+    @Override
+    public MapValue getMap(String name) {
+        return new MapValue(required(name, Value.MAP, "a map").copy());
+    }
+
+    @Override
+    public MapValue getMap(String name, MapValue dflt) {
+        Value x = optional(name, Value.MAP, "a map");
+
+        return x == null ? dflt : new MapValue(x.copy());
+    }
+
+    // The boxed readers Pair builds a Both from: null for a side without the bin.
+
+    Long boxedLong(String name) {
+        Value x = optional(name, Value.INT, "an int");
+
+        return x == null ? null : x.payload();
+    }
+
+    Double boxedDouble(String name) {
+        Value x = optional(name, Value.DOUBLE, "a double");
+
+        return x == null ? null : x.doubleBits();
+    }
+
+    Boolean boxedBoolean(String name) {
+        Value x = optional(name, Value.BOOL, "a bool");
+
+        return x == null ? null : x.payload() != 0;
     }
 
     //==========================================================
-    // Typed reads, the Rust SDK's `Record::int` and friends: null when the bin is absent or nil, an
-    // UdfException when it is of another kind.
+    // Answering with the record.
     //
 
-    private final Value typed = new Value();
+    /**
+     * Puts every bin of this record that {@code overrides} lacks into it, by position, and returns it: for
+     * a {@code record} answer that changes a few bins and keeps the rest. This prefers one side, so an
+     * {@code xdr-merge} handler that uses it on the current record is not symmetric;
+     * {@link Pair#withNewer} is the symmetric form.
+     */
+    public MapBuilder withBins(MapBuilder overrides) {
+        for (Value name : binNames()) {
+            String bin = name.asString();
 
-    /** The bin as a fresh value, or null when absent or nil. */
-    public Value binValue(String name) {
-        int rc = bin(name, typed);
+            if (overrides.containsKey(bin)) {
+                continue;
+            }
 
-        if (rc == Udf.NOT_FOUND || (rc == Udf.OK && typed.kind == Value.NIL)) {
-            return null;
+            Value val = get(bin);
+
+            if (val != null) {
+                overrides.put(bin, val);
+            }
         }
-
-        if (rc != Udf.OK) {
-            throw new UdfException("bin " + name + " could not be read");
-        }
-
-        return new Value().set(typed.kind, typed.len, typed.payload);
-    }
-
-    private Value typed(String name, int kind, String what) {
-        Value v = binValue(name);
-
-        if (v != null && v.kind != kind) {
-            throw new UdfException("bin " + name + " is not " + what);
-        }
-
-        return v;
-    }
-
-    /**
-     * An integer bin, or null when it is absent or nil; throws {@link UdfException} when it is of another kind.
-     */
-    public Long binInt(String name) {
-        Value v = typed(name, Value.INT, "an int");
-
-        return v == null ? null : v.payload;
-    }
-
-    /**
-     * A double bin, or null when it is absent or nil; throws {@link UdfException} when it is of another kind.
-     */
-    public Double binDouble(String name) {
-        Value v = typed(name, Value.DOUBLE, "a double");
-
-        return v == null ? null : v.asDouble();
-    }
-
-    /**
-     * A boolean bin, or null when it is absent or nil; throws {@link UdfException} when it is of another kind.
-     */
-    public Boolean binBool(String name) {
-        Value v = typed(name, Value.BOOL, "a bool");
-
-        return v == null ? null : v.payload != 0;
-    }
-
-    /**
-     * The text of a string bin, copied out, or null when it is absent or nil; throws {@link UdfException} when
-     * it is of another kind.
-     */
-    public String binStr(String name) {
-        Value v = typed(name, Value.STR, "a string");
-
-        if (v == null) {
-            return null;
-        }
-
-        byte[] b = new byte[v.len];
-
-        if (v.len > 0 && Udf.bytes(v, b) < 0) {
-            throw new UdfException("bin " + name + " could not be read");
-        }
-
-        return Udf.string(b, b.length);
-    }
-
-    /**
-     * A list bin as a fresh value to walk or hand on by position, or null when it is absent or nil; throws
-     * {@link UdfException} when it is of another kind.
-     */
-    public Value binList(String name) {
-        return typed(name, Value.LIST, "a list");
-    }
-
-    /**
-     * A map bin as a fresh value to walk or hand on by position, or null when it is absent or nil; throws
-     * {@link UdfException} when it is of another kind.
-     */
-    public Value binMap(String name) {
-        return typed(name, Value.MAP, "a map");
-    }
-
-    /** A walk over a list bin, or null when the bin is absent or nil. */
-    public Cursor<Value> list(String name) {
-        Value v = binList(name);
-
-        return v == null ? null : Cursor.list(v);
-    }
-
-    /** A walk over a map bin's entries, or null when the bin is absent or nil. */
-    public Cursor<Cursor.Entry> map(String name) {
-        Value v = binMap(name);
-
-        return v == null ? null : Cursor.map(v);
-    }
-
-    /** {@link #withBins(int)} over a built map. */
-    public UdfMap withBins(UdfMap overrides) {
-        withBins(overrides.handle());
 
         return overrides;
     }
 
-    /** Whether this side deleted any bin. */
-    public boolean deletedAny() {
-        return deleted.kind == Value.LIST && deleted.len > 0;
-    }
-
-    /**
-     * {@code overrides} (a built map) with every bin of this record it lacks put on top, by position: the
-     * Rust SDK's {@code Record::with_bins}, for a {@code record} answer that changes a few bins and keeps
-     * the rest. This prefers one side, so an {@code xdr-merge} handler that uses it on the current record
-     * is not symmetric; {@link Pair#withNewer} is the symmetric form. Returns {@code overrides}.
-     */
-    public int withBins(int overrides) {
-        Udf.eachStr(bins, (text, len, v) -> {
-            byte[] name = new byte[len];
-            System.arraycopy(text, 0, name, 0, len);
-
-            if (Udf.mapHasKey(overrides, name)) {
-                return;
-            }
-
-            Value val = new Value();
-
-            if (bin(name, val) == Udf.OK) {
-                Udf.mapPutValue(overrides, name, val);
-            }
-        });
-
-        return overrides;
-    }
-
-    /** Fills this from a description's entry (`before`, `after`, `record`, `current`, `incoming`). */
+    /** Fills this from a description's entry ({@code before}, {@code after}, {@code record}, {@code current}, {@code incoming}). */
     boolean decode(Value desc, String key, int which) {
-        Value m = Udf.mapGet(desc, key);
+        Value m = Maps.get(desc, key);
 
-        if (m.kind != Value.MAP) {
+        if (m.kind() != Value.MAP) {
             return false;
         }
 
         this.which = which;
-        gen = Udf.mapInt(m, "gen", 0);
-        lut = Udf.mapInt(m, "lut", 0);
-        ttl = Udf.mapInt(m, "ttl", 0);
-        srcId = Udf.mapInt(m, "src-id", 0);
-        bins = Udf.mapGet(m, "bins");
-        deleted = Udf.mapGet(m, "deleted");
-        binLuts = Udf.mapGet(m, "bin-luts");
-        binSrcs = Udf.mapGet(m, "bin-srcs");
+        generation = Maps.getLong(m, "gen", 0);
+        lastUpdateTime = Maps.getLong(m, "lut", 0);
+        ttl = Maps.getLong(m, "ttl", 0);
+        sourceId = Maps.getLong(m, "src-id", 0);
+        bins = Maps.get(m, "bins");
+        deleted = Maps.get(m, "deleted");
+        binLuts = Maps.get(m, "bin-luts");
+        binSrcs = Maps.get(m, "bin-srcs");
 
-        return bins.kind == Value.LIST;
+        return bins.kind() == Value.LIST;
     }
 }

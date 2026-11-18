@@ -12,17 +12,16 @@
 
 package com.aerospike.udf.examples;
 
-import com.aerospike.udf.Bin;
 import com.aerospike.udf.Conflict;
-import com.aerospike.udf.Cursor;
 import com.aerospike.udf.EventRecord;
 import com.aerospike.udf.Function;
+import com.aerospike.udf.MapBuilder;
+import com.aerospike.udf.MapValue;
 import com.aerospike.udf.On;
+import com.aerospike.udf.Record;
 import com.aerospike.udf.Resolution;
 import com.aerospike.udf.Udf;
 import com.aerospike.udf.UdfException;
-import com.aerospike.udf.UdfMap;
-import com.aerospike.udf.Value;
 
 /**
  * A counter that can go down, in Java: the PN-Counter, two grow-only counters glued together, merged
@@ -42,8 +41,8 @@ import com.aerospike.udf.Value;
 public final class PnCounter {
     private static final int MAX_SITES = 64;
     private static final int SITE_MAX = 32;
-    private static final Bin INC = Bin.of("inc");
-    private static final Bin DEC = Bin.of("dec");
+    private static final String INC = "inc";
+    private static final String DEC = "dec";
 
     /** The per-site amounts of one map, gathered from one or both sides. */
     private static final class Table {
@@ -80,13 +79,13 @@ public final class PnCounter {
         }
 
         /** Every entry of a stored map. */
-        void offerAll(Value map) {
+        void offerAll(MapValue map) {
             if (map == null) {
                 return;
             }
 
-            for (Cursor.Entry e : map.asMap()) {
-                offer(e.key.asString(), e.value.asLong());
+            for (MapValue.Entry e : map) {
+                offer(e.getKey().asString(), e.getValue().asLong());
             }
         }
 
@@ -113,8 +112,8 @@ public final class PnCounter {
         }
 
         /** The amounts as a built map, for a bin or a resolution. */
-        UdfMap toMap() {
-            UdfMap m = UdfMap.create(size);
+        MapBuilder toMap() {
+            MapBuilder m = Udf.map(size);
 
             for (int i = 0; i < size; i++) {
                 m.put(sites[i], counts[i]);
@@ -129,12 +128,12 @@ public final class PnCounter {
     /** The merge: for every site of each map, the larger amount. Every other bin is the incoming one's. */
     @On.XdrMerge("merge_pncounter")
     static Resolution mergePnCounter(EventRecord current, EventRecord incoming, Conflict conflict) {
-        UdfMap out = UdfMap.create(2);
+        MapBuilder out = Udf.map(2);
 
         for (String bin : new String[] {"inc", "dec"}) {
             TABLE.size = 0;
-            TABLE.offerAll(current.binMap(bin));
-            TABLE.offerAll(incoming.binMap(bin));
+            TABLE.offerAll(current.getMap(bin, null));
+            TABLE.offerAll(incoming.getMap(bin, null));
             out.put(bin, TABLE.toMap());
         }
 
@@ -142,22 +141,22 @@ public final class PnCounter {
     }
 
     /** One of the record's maps into the table. */
-    private static void load(Bin bin) {
+    private static void load(Record rec, String bin) {
         TABLE.size = 0;
-        TABLE.offerAll(bin.get());
+        TABLE.offerAll(rec.getMap(bin, null));
     }
 
     /** The counter's value: everything added minus everything taken. */
-    private static long valueOf() {
-        load(INC);
+    private static long valueOf(Record rec) {
+        load(rec, INC);
         long added = TABLE.total();
-        load(DEC);
+        load(rec, DEC);
 
         return added - TABLE.total();
     }
 
-    /** Adds n to this site's entry of one map and commits; answers the counter's value. */
-    private static long grow(Bin bin, String site, long n) {
+    /** Adds n to this site's entry of one map and saves; answers the counter's value. */
+    private static long grow(Record rec, String bin, String site, long n) {
         // The Rust module bounds the site name with a Str<32>; the same limit, as a check.
         if (site.length() > SITE_MAX) {
             throw new UdfException("the site name is too long");
@@ -167,29 +166,29 @@ public final class PnCounter {
             throw new UdfException("the amount must not be negative: an entry only grows");
         }
 
-        load(bin);
+        load(rec, bin);
         TABLE.add(site, n);
-        bin.set(TABLE.toMap());
-        Udf.commit();
+        rec.set(bin, TABLE.toMap());
+        rec.save();
 
-        return valueOf();
+        return valueOf(rec);
     }
 
     /** Adds n to this site's increments. Returns the counter's value. */
     @Function("increment")
-    static long increment(String site, long n) {
-        return grow(INC, site, n);
+    static long increment(Record rec, String site, long n) {
+        return grow(rec, INC, site, n);
     }
 
     /** Adds n to this site's decrements. Returns the counter's value. */
     @Function("decrement")
-    static long decrement(String site, long n) {
-        return grow(DEC, site, n);
+    static long decrement(Record rec, String site, long n) {
+        return grow(rec, DEC, site, n);
     }
 
     /** The counter's value: the sum of every site's increments minus the sum of every site's decrements. */
     @Function("value")
-    static long value() {
-        return valueOf();
+    static long value(Record rec) {
+        return valueOf(rec);
     }
 }

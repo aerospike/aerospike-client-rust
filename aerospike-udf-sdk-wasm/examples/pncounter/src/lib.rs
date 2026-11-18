@@ -19,7 +19,7 @@
 
 #![no_std]
 
-use aerospike_udf_sdk_wasm::{self as as_udf, event, export, Coll, Error, Map, Resolution, Str, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, event, export, Coll, Error, Map, Record, Resolution, Str, Value};
 
 const MAX_SITES: usize = 64;
 
@@ -93,7 +93,7 @@ impl Counts {
         let m = as_udf::map(self.n)?;
 
         for (site, count) in self.sites[..self.n].iter().flatten() {
-            m.put(site.as_str(), *count)?;
+            m.insert(site.as_str(), *count)?;
         }
 
         Ok(m)
@@ -103,7 +103,7 @@ impl Counts {
 event! {
     /// The merge: for every site of each map, the larger amount. Every other bin is the incoming one's.
     on xdr_merge
-    fn merge_pncounter(current: Record, incoming: Record, _conflict: Conflict) -> Result<Resolution, Error> {
+    fn merge_pncounter(current: EventRecord, incoming: EventRecord, _conflict: Conflict) -> Result<Resolution, Error> {
         let out = as_udf::map(2)?;
 
         for bin in ["inc", "dec"] {
@@ -111,7 +111,7 @@ event! {
 
             counts.offer_all(current.map(bin)?)?;
             counts.offer_all(incoming.map(bin)?)?;
-            out.put(bin, counts.into_map()?)?;
+            out.insert(bin, counts.into_map()?)?;
         }
 
         Ok(Resolution::Record { bins: incoming.with_bins(out)?, ttl: None })
@@ -119,58 +119,49 @@ event! {
 }
 
 /// One of the record's maps, or none.
-fn stored(bin: &str) -> Result<Counts, Error> {
+fn stored(rec: &Record, bin: &str) -> Result<Counts, Error> {
     let mut counts = Counts::new();
 
-    match as_udf::bin(bin) {
-        Ok(v) => counts.offer_all(Some(v.map()?))?,
-        Err(Error::Absent) => {}
-        Err(e) => return Err(e),
-    }
+    counts.offer_all(rec.map(bin)?)?;
 
     Ok(counts)
 }
 
 /// The counter's value: everything added minus everything taken.
-fn value_of() -> Result<i64, Error> {
-    Ok(stored("inc")?.total() - stored("dec")?.total())
+fn value_of(rec: &Record) -> Result<i64, Error> {
+    Ok(stored(rec, "inc")?.total() - stored(rec, "dec")?.total())
 }
 
-/// Adds `n` to this site's entry of one map and commits; answers the counter's value.
-fn grow(bin: &str, site: &str, n: i64) -> Result<i64, Error> {
+/// Adds `n` to this site's entry of one map and saves; answers the counter's value.
+fn grow(rec: &mut Record, bin: &str, site: &str, n: i64) -> Result<i64, Error> {
     if n < 0 {
         return Err(Error::Custom("the amount must not be negative: an entry only grows"));
     }
 
-    let mut counts = stored(bin)?;
+    let mut counts = stored(rec, bin)?;
 
     counts.add(Site::new(site)?, n)?;
-    as_udf::set(bin, counts.into_map()?)?;
+    rec.set(bin, counts.into_map()?)?;
 
-    if as_udf::exists() {
-        as_udf::update()?;
-    }
-    else {
-        as_udf::create()?;
-    }
+    rec.save()?;
 
-    value_of()
+    value_of(rec)
 }
 
 export! {
     /// Adds `n` to this site's increments. Returns the counter's value.
-    fn increment(site: &str, n: i64) -> Result<Value, Error> {
-        Ok(Value::Int(grow("inc", site, n)?))
+    fn increment(rec: &mut Record, site: &str, n: i64) -> Result<Value, Error> {
+        Ok(Value::Int(grow(rec, "inc", site, n)?))
     }
 
     /// Adds `n` to this site's decrements. Returns the counter's value.
-    fn decrement(site: &str, n: i64) -> Result<Value, Error> {
-        Ok(Value::Int(grow("dec", site, n)?))
+    fn decrement(rec: &mut Record, site: &str, n: i64) -> Result<Value, Error> {
+        Ok(Value::Int(grow(rec, "dec", site, n)?))
     }
 
     /// The counter's value: the sum of every site's increments minus the sum of every site's decrements.
-    fn value() -> Result<Value, Error> {
-        Ok(Value::Int(value_of()?))
+    fn value(rec: &Record) -> Result<Value, Error> {
+        Ok(Value::Int(value_of(rec)?))
     }
 }
 

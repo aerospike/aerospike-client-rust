@@ -26,15 +26,15 @@ static void with_bins(const as_udf_event_record* rec, int32_t out)
 	as_udf_value w[32];
 	int32_t cur = as_udf_cursor_enter_at(as_udf_value_src(&rec->bins), as_udf_value_at(&rec->bins));
 	if (cur <= 0) return;
-	int32_t packed = as_udf_pack_handle(out);
 	for (int32_t n; (n = as_udf_cursor_values(cur, w, (int32_t)sizeof(w))) > 0;) {
 		for (int32_t i = 0; i < n; i++) {
 			char name[32];
 			int32_t len = as_udf_bytes(&w[i], name, (int32_t)sizeof(name) - 1);
 			if (len < 0) continue;
 			name[len] = '\0';
-			as_udf_value have;
-			if (packed > 0 && as_udf_coll_get(packed, 0, name, len, &have, (int32_t)sizeof(have)) == AS_UDF_OK) continue;
+			/* What the handler put there wins. The host answers for the map it is building, so nothing
+			 * is packed to ask. */
+			if (as_udf_map_has(out, name, len) > 0) continue;
 			as_udf_value v;
 			if (as_udf_event_bin(rec, name, &v) == AS_UDF_OK) as_udf_map_put_value(out, name, &v);
 		}
@@ -98,16 +98,16 @@ AS_UDF_EVENT_BEFORE_TRUNCATE(guard_truncate)
 	return as_udf_answer_allow();
 }
 
-/* The timer handler runs as a record UDF: the record natives work. */
+/* The timer handler runs as a record UDF: the as_udf_rec_* functions work on the record the timer is on. */
 AS_UDF_EVENT_TIMER(tick)
 {
 	as_udf_timer_info t;
 	if (as_udf_event_timer_info(args, argc, &t) != AS_UDF_OK) return as_udf_failf("tick: not a timer");
 	as_udf_value ticks;
-	int64_t n = as_udf_bin("ticks", &ticks) == AS_UDF_OK && ticks.kind == AS_UDF_INT ? ticks.payload : 0;
+	int64_t n = as_udf_rec_bin("ticks", &ticks) == AS_UDF_OK && ticks.kind == AS_UDF_INT ? ticks.payload : 0;
 	n++;
-	as_udf_set_int("ticks", 5, n);
-	as_udf_rec_update();
+	as_udf_rec_set_int("ticks", 5, n);
+	as_udf_rec_save();
 	if (n < 3) as_udf_timer_set("tick", 4, 200);
 	return as_udf_answer_done();
 }

@@ -14,11 +14,22 @@ package com.aerospike.udf;
 
 import java.nio.charset.StandardCharsets;
 
+import org.teavm.interop.Address;
+
 /**
- * The 16-byte value the host hands out, and the one a guest hands back in a batch: a kind, a length (bytes,
- * elements or entries) and a payload, which is the scalar itself or, for a string, blob or collection the
- * host holds, {@code source << 32 | offset}. A {@code Value} is reused: {@link #read} refills it from a
- * 16-byte slot, so a hot loop allocates none.
+ * One value of the record, of an argument list or of a collection: an integer, a double, a boolean, nil,
+ * or a string, blob, GeoJSON, HLL, list or map that the server holds and this reads by position. A scalar
+ * is here whole; a string's text or a list's elements stay on the server until they are asked for
+ * ({@link #asString}, {@link #asList}), so handing a stored value on - into a bin, a builder, the result -
+ * copies nothing through the guest.
+ *
+ * <p>The {@code is*} tests say what the value is, {@link #kind} gives the same as one of the constants of
+ * this class, and each {@code as*} reader throws {@link UdfException} when the value is of another kind.
+ * A value read from the record, from an argument or from an iteration is never changed afterwards, so it
+ * can be kept for the rest of the call.
+ *
+ * <p>{@link #ofInt}, {@link #ofStr} and the other factories make a value of the guest's own, for a
+ * builder, a bin or a result.
  */
 public final class Value {
     // Kinds, as the host hands them out.
@@ -26,11 +37,11 @@ public final class Value {
     public static final int ABSENT = -1;
     /** Nil. */
     public static final int NIL = 0;
-    /** A boolean; the payload is non-zero for true. */
+    /** A boolean. */
     public static final int BOOL = 1;
-    /** A 64-bit integer; the payload is the integer. */
+    /** A 64-bit integer. */
     public static final int INT = 2;
-    /** A double; the payload is its bits, read with {@link #asDouble}. */
+    /** A double. */
     public static final int DOUBLE = 3;
     /** A string the host holds, read by position; the length is in bytes. */
     public static final int STR = 4;
@@ -47,194 +58,56 @@ public final class Value {
     /** A HyperLogLog value the host holds; its bytes are read like a blob's. */
     public static final int HLL = 10;
 
-    // Kinds a guest uses only in a batch it hands the host: bytes of its own by address, a built collection
-    // by handle.
+    // Kinds a guest uses only for a value it hands the host: bytes of its own by address, a built
+    // collection by handle.
     /** A string of the guest's own, handed to the host by address. */
     public static final int GUEST_STR = 16;
     /** A blob of the guest's own, handed to the host by address. */
     public static final int GUEST_BLOB = 17;
     /** A GeoJSON document of the guest's own, handed to the host by address. */
     public static final int GUEST_GEOJSON = 18;
-    /** A value built on the host, handed back by its handle, which is the payload. */
+    /** A value built on the host, handed back by its handle. */
     public static final int HANDLE = 19;
 
-    /** The kind, one of the constants of this class; {@link #ABSENT} until the value is filled. */
-    public int kind = ABSENT;
-    /** The length: bytes for a string or blob, elements for a list, entries for a map. */
-    public int len;
+    private int kind = ABSENT;
+    /** Bytes for a string or blob, elements for a list, entries for a map. */
+    private int len;
     /**
-     * The scalar itself (a double as its bits), a handle, or {@code source << 32 | offset} for a value the host
-     * holds.
+     * The scalar itself (a double as its bits), a handle, or {@code source << 32 | offset} for a value the
+     * host holds.
      */
-    public long payload;
+    private long payload;
+    /** For the guest kinds: the bytes handed over, whose address is taken at the moment they are. */
+    private byte[] bytes;
+    private int bytesLen;
 
-    /** For the guest kinds: the bytes the payload addresses, whose address is taken when the batch is sent. */
-    byte[] bytes;
-    int bytesLen;
-
+    /**
+     * An absent value. Only the low-level tier needs one, as the slot its calls fill ({@link LowLevel});
+     * everything else is handed its values.
+     */
     public Value() {
     }
 
-    /** The source handle a string, blob or collection sits in. */
-    public int src() {
-        return (int) (payload >>> 32);
+    //==========================================================
+    // What the value is.
+    //
+
+    /** The kind, one of the constants of this class. */
+    public int kind() {
+        return kind;
     }
 
-    /** The offset in that source. */
-    public int at() {
-        return (int) payload;
-    }
-
-    /** The payload as a double. */
-    public double asDouble() {
-        return Double.longBitsToDouble(payload);
+    /**
+     * The length: bytes for a string, blob, GeoJSON or HLL, elements for a list, entries for a map, and 0
+     * for a scalar.
+     */
+    public int length() {
+        return len;
     }
 
     /** Whether there is no value at all, which is not the same as nil. */
     public boolean isAbsent() {
         return kind == ABSENT;
-    }
-
-    /** Whether the value is a string, blob, GeoJSON, HLL, list or map the host holds (read by position). */
-    public boolean isStored() {
-        return kind == STR || kind == BLOB || kind == GEOJSON || kind == HLL || kind == LIST || kind == MAP;
-    }
-
-    /** Refill from the 16-byte slot at {@code off} in {@code buf}, as the host wrote it (little-endian). */
-    public Value read(byte[] buf, int off) {
-        kind = Udf.le32(buf, off);
-        len = Udf.le32(buf, off + 4);
-        payload = Udf.le64(buf, off + 8);
-        bytes = null;
-        return this;
-    }
-
-    /**
-     * Sets the three fields and drops any guest bytes: the way to copy another value's fields, to keep one
-     * across cursor steps. Returns this.
-     */
-    public Value set(int kind, int len, long payload) {
-        this.kind = kind;
-        this.len = len;
-        this.payload = payload;
-        this.bytes = null;
-        return this;
-    }
-
-    /** Makes this an integer. Returns this, as every setter does. */
-    public Value setInt(long i) {
-        return set(INT, 0, i);
-    }
-
-    /** Makes this a double. */
-    public Value setDouble(double d) {
-        return set(DOUBLE, 0, Double.doubleToRawLongBits(d));
-    }
-
-    /** Makes this a boolean. */
-    public Value setBool(boolean b) {
-        return set(BOOL, 0, b ? 1 : 0);
-    }
-
-    /** Makes this nil. */
-    public Value setNil() {
-        return set(NIL, 0, 0);
-    }
-
-    /** A built collection, by handle. */
-    public Value setHandle(int handle) {
-        return set(HANDLE, 0, handle);
-    }
-
-    /** A string of the guest's, as UTF-8 bytes the caller keeps alive until the batch is sent. */
-    public Value setStr(String s) {
-        return setStrBytes(s.getBytes(StandardCharsets.UTF_8));
-    }
-
-    /** A string of the guest's from UTF-8 bytes, all of {@code b}. The array is kept, not copied. */
-    public Value setStrBytes(byte[] b) {
-        return setStrBytes(b, b.length);
-    }
-
-    /**
-     * A string of the guest's from the first {@code len} bytes of {@code b}, as UTF-8. The array is kept, not
-     * copied.
-     */
-    public Value setStrBytes(byte[] b, int len) {
-        kind = GUEST_STR;
-        this.len = len;
-        payload = 0;
-        bytes = b;
-        bytesLen = len;
-        return this;
-    }
-
-    /** A blob of the guest's, all of {@code b}. The array is kept, not copied. */
-    public Value setBlob(byte[] b) {
-        return setBlob(b, b.length);
-    }
-
-    /** A blob of the guest's from the first {@code len} bytes of {@code b}. The array is kept, not copied. */
-    public Value setBlob(byte[] b, int len) {
-        kind = GUEST_BLOB;
-        this.len = len;
-        payload = 0;
-        bytes = b;
-        bytesLen = len;
-        return this;
-    }
-
-    // Fresh values, for the occasional one.
-
-    /** A fresh integer value. */
-    public static Value ofInt(long i) {
-        return new Value().setInt(i);
-    }
-
-    /** A fresh double value. */
-    public static Value ofDouble(double d) {
-        return new Value().setDouble(d);
-    }
-
-    /** A fresh boolean value. */
-    public static Value ofBool(boolean b) {
-        return new Value().setBool(b);
-    }
-
-    /** A fresh nil value. */
-    public static Value ofNil() {
-        return new Value().setNil();
-    }
-
-    /** A fresh value for a built collection, by handle. */
-    public static Value ofHandle(int handle) {
-        return new Value().setHandle(handle);
-    }
-
-    /** A fresh string of the guest's, encoded as UTF-8. */
-    public static Value ofStr(String s) {
-        return new Value().setStr(s);
-    }
-
-    /** A fresh blob of the guest's over {@code b}, which is kept, not copied. */
-    public static Value ofBlob(byte[] b) {
-        return new Value().setBlob(b);
-    }
-
-    /** A GeoJSON document of the guest's, kept as that kind when it is pushed, put or returned. */
-    public Value setGeoJson(byte[] doc, int len) {
-        kind = GUEST_GEOJSON;
-        this.len = len;
-        payload = 0;
-        bytes = doc;
-        bytesLen = len;
-        return this;
-    }
-
-    /** A fresh GeoJSON document of the guest's, from its text. */
-    public static Value ofGeoJson(String doc) {
-        byte[] d = doc.getBytes(StandardCharsets.UTF_8);
-        return new Value().setGeoJson(d, d.length);
     }
 
     /** Whether the value is nil. An absent value is not; see {@link #isNull}. */
@@ -262,9 +135,19 @@ public final class Value {
         return kind == BOOL;
     }
 
-    /** Whether the value is a string the host holds; false for a string of the guest's. */
+    /** Whether the value is a string. */
     public boolean isString() {
-        return kind == STR;
+        return kind == STR || kind == GUEST_STR;
+    }
+
+    /** Whether the value is a blob. */
+    public boolean isBlob() {
+        return kind == BLOB || kind == GUEST_BLOB;
+    }
+
+    /** Whether the value is a GeoJSON document. */
+    public boolean isGeoJson() {
+        return kind == GEOJSON || kind == GUEST_GEOJSON;
     }
 
     /** Whether the value is a list the host holds; false for a built one, which is a handle. */
@@ -275,6 +158,11 @@ public final class Value {
     /** Whether the value is a map the host holds; false for a built one, which is a handle. */
     public boolean isMap() {
         return kind == MAP;
+    }
+
+    /** Whether the value is a string, blob, GeoJSON, HLL, list or map the host holds (read by position). */
+    public boolean isStored() {
+        return kind == STR || kind == BLOB || kind == GEOJSON || kind == HLL || kind == LIST || kind == MAP;
     }
 
     //==========================================================
@@ -294,6 +182,17 @@ public final class Value {
         return payload;
     }
 
+    /**
+     * The double; throws {@link UdfException} when the value is of another kind. An integer is not widened.
+     */
+    public double asDouble() {
+        if (kind != DOUBLE) {
+            throw not("a double");
+        }
+
+        return Double.longBitsToDouble(payload);
+    }
+
     /** The boolean; throws {@link UdfException} when the value is of another kind. */
     public boolean asBoolean() {
         if (kind != BOOL) {
@@ -303,7 +202,7 @@ public final class Value {
         return payload != 0;
     }
 
-    /** The text of a stored string, copied out. */
+    /** The text of a string, copied out; throws {@link UdfException} when the value is of another kind. */
     public String asString() {
         if (kind == GUEST_STR) {
             return new String(bytes, 0, bytesLen, StandardCharsets.UTF_8);
@@ -313,10 +212,13 @@ public final class Value {
             throw not("a string");
         }
 
-        return Udf.string(asBytes(), len);
+        return new String(asBytes(), StandardCharsets.UTF_8);
     }
 
-    /** The bytes of a stored string, blob, GeoJSON or HLL, copied out. */
+    /**
+     * The bytes of a string, blob, GeoJSON or HLL, copied out; throws {@link UdfException} when the value
+     * is of another kind.
+     */
     public byte[] asBytes() {
         if (kind == GUEST_STR || kind == GUEST_BLOB || kind == GUEST_GEOJSON) {
             byte[] out = new byte[bytesLen];
@@ -330,20 +232,206 @@ public final class Value {
 
         byte[] out = new byte[len];
 
-        if (len > 0 && Udf.bytes(this, out) < 0) {
+        if (len > 0 && Natives.cursorBytesAt(src(), at(), Address.ofData(out), out.length) < 0) {
             throw new UdfException("the value could not be read");
         }
 
         return out;
     }
 
-    /** A walk over a stored list. */
-    public Cursor<Value> asList() {
-        return Udf.list(this);
+    /**
+     * Copies the bytes of a stored string, blob, GeoJSON or HLL into {@code into}, which the caller keeps
+     * and reuses, and returns how many there were. Throws {@link UdfException} when the value is of another
+     * kind or does not fit.
+     */
+    public int readBytes(byte[] into) {
+        if (!isStored() || kind == LIST || kind == MAP) {
+            throw not("a string or blob");
+        }
+
+        int n = Natives.cursorBytesAt(src(), at(), Address.ofData(into), into.length);
+
+        if (n < 0) {
+            throw new UdfException("the value's " + len + " bytes do not fit an array of " + into.length);
+        }
+
+        return n;
     }
 
-    /** A walk over a stored map's entries. */
-    public Cursor<Cursor.Entry> asMap() {
-        return Udf.map(this);
+    /**
+     * Copies a stored blob of little-endian 32-bit floats straight into {@code into}, element for element -
+     * the way a vector is read without converting it - and returns how many floats there were. Throws
+     * {@link UdfException} when the value is not a blob or does not fit.
+     */
+    public int readFloats(float[] into) {
+        if (kind != BLOB) {
+            throw not("a blob");
+        }
+
+        int n = Natives.cursorBytesAt(src(), at(), Address.ofData(into), into.length * 4);
+
+        if (n < 0) {
+            throw new UdfException("the value's " + len + " bytes do not fit an array of " + into.length + " floats");
+        }
+
+        return n / 4;
+    }
+
+    /** The list this value is, to index and iterate; throws {@link UdfException} when it is not a list. */
+    public ListValue asList() {
+        if (kind != LIST) {
+            throw not("a list");
+        }
+
+        return new ListValue(this);
+    }
+
+    /** The map this value is, to look up in and iterate; throws {@link UdfException} when it is not a map. */
+    public MapValue asMap() {
+        if (kind != MAP) {
+            throw not("a map");
+        }
+
+        return new MapValue(this);
+    }
+
+    /**
+     * The value as a plain Java object, copied out whole: {@code Long}, {@code Double}, {@code Boolean},
+     * {@code String} (a GeoJSON document as its text), {@code byte[]}, a {@code java.util.List} or a
+     * {@code java.util.Map} of the same, and {@code null} for nil or absent.
+     */
+    public Object toObject() {
+        return Convert.toObject(this);
+    }
+
+    /**
+     * Compares two stored values byte by byte, as memcmp would on their stored encodings, without copying
+     * either: negative, zero or positive. It is the last resort of a convergent merge, which needs some
+     * order that both sides compute alike. Throws {@link UdfException} when either is not a stored value.
+     */
+    public int compareStored(Value other) {
+        if (!isStored() || !other.isStored()) {
+            throw new UdfException("only stored values compare by their bytes");
+        }
+
+        return Natives.collCmpAt(src(), at(), other.src(), other.at());
+    }
+
+    //==========================================================
+    // Values of the guest's own.
+    //
+
+    /** An integer value. */
+    public static Value ofInt(long i) {
+        return new Value().assign(INT, 0, i);
+    }
+
+    /** A double value. */
+    public static Value ofDouble(double d) {
+        return new Value().assign(DOUBLE, 0, Double.doubleToRawLongBits(d));
+    }
+
+    /** A boolean value. */
+    public static Value ofBool(boolean b) {
+        return new Value().assign(BOOL, 0, b ? 1 : 0);
+    }
+
+    /** A nil value. */
+    public static Value ofNil() {
+        return new Value().assign(NIL, 0, 0);
+    }
+
+    /** A string of the guest's, encoded as UTF-8. */
+    public static Value ofStr(String s) {
+        byte[] b = s.getBytes(StandardCharsets.UTF_8);
+        return new Value().guest(GUEST_STR, b, b.length);
+    }
+
+    /** A blob of the guest's over {@code b}, which is kept, not copied. */
+    public static Value ofBlob(byte[] b) {
+        return new Value().guest(GUEST_BLOB, b, b.length);
+    }
+
+    /** A GeoJSON document of the guest's, from its text; kept as that kind when it is stored or returned. */
+    public static Value ofGeoJson(String doc) {
+        byte[] d = doc.getBytes(StandardCharsets.UTF_8);
+        return new Value().guest(GUEST_GEOJSON, d, d.length);
+    }
+
+    //==========================================================
+    // For the SDK itself. A value's fields are written only here, by the calls that fill one.
+    //
+
+    /** The scalar, the handle or the position, as the host wrote it. */
+    long payload() {
+        return payload;
+    }
+
+    /** The source handle a string, blob or collection sits in. */
+    int src() {
+        return (int) (payload >>> 32);
+    }
+
+    /** The offset in that source. */
+    int at() {
+        return (int) payload;
+    }
+
+    /** The double a DOUBLE value holds, unchecked. */
+    double doubleBits() {
+        return Double.longBitsToDouble(payload);
+    }
+
+    /** The bytes of a guest kind. */
+    byte[] guestBytes() {
+        return bytes;
+    }
+
+    /** How many of {@link #guestBytes} count. */
+    int guestLen() {
+        return bytesLen;
+    }
+
+    /** Refills from the 16-byte slot at {@code off} in {@code buf}, as the host wrote it (little-endian). */
+    Value fill(byte[] buf, int off) {
+        kind = Slots.le32(buf, off);
+        len = Slots.le32(buf, off + 4);
+        payload = Slots.le64(buf, off + 8);
+        bytes = null;
+        return this;
+    }
+
+    /** Sets the three fields and drops any guest bytes. */
+    Value assign(int kind, int len, long payload) {
+        this.kind = kind;
+        this.len = len;
+        this.payload = payload;
+        this.bytes = null;
+        return this;
+    }
+
+    /** Makes this a guest string, blob or GeoJSON over the first {@code len} bytes of {@code b}, kept. */
+    Value guest(int kind, byte[] b, int len) {
+        this.kind = kind;
+        this.len = len;
+        payload = 0;
+        bytes = b;
+        bytesLen = len;
+        return this;
+    }
+
+    /** Makes this what {@code o} is. */
+    Value assign(Value o) {
+        kind = o.kind;
+        len = o.len;
+        payload = o.payload;
+        bytes = o.bytes;
+        bytesLen = o.bytesLen;
+        return this;
+    }
+
+    /** A fresh value equal to this one: what a reader hands out of its scratch. */
+    Value copy() {
+        return new Value().assign(this);
     }
 }

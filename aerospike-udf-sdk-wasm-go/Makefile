@@ -33,9 +33,14 @@ all: $(WASM)
 generate:
 	$(GO) generate ./examples/...
 
-examples/%_go.wasm: examples/%/main.go $(SDK) cmd/udfgen/main.go
-	$(GO) generate ./examples/$*
-	$(TINYGO) build -o $@ $(TINYGO_FLAGS) ./examples/$*
+# One rule per example, written out by name: the module sits in a directory of its own name
+# (examples/udf/udf_go.wasm), which a single % cannot match on both sides.
+define EXAMPLE_RULE
+examples/$(1)/$(1)_go.wasm: examples/$(1)/main.go $$(SDK) cmd/udfgen/main.go
+	$$(GO) generate ./examples/$(1)
+	$$(TINYGO) build -o $$@ $$(TINYGO_FLAGS) ./examples/$(1)
+endef
+$(foreach e,$(EXAMPLES),$(eval $(call EXAMPLE_RULE,$(e))))
 
 fixtures: all
 	$(foreach e,$(EXAMPLES),cp -f examples/$(e)/$(e)_go.wasm $(FIXTURES)/$(e)_go.wasm;)

@@ -137,7 +137,7 @@ public final class On {
         String value() default "";
     }
 
-    /** {@code (Events.TimerInfo timer)}; runs as a record UDF and answers done. */
+    /** {@code (Record rec, Events.TimerInfo timer)}; runs as a record UDF, so it takes the record, and answers done. */
     @Target(ElementType.METHOD)
     @Retention(RetentionPolicy.SOURCE)
     public @interface Timer {

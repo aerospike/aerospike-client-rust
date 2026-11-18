@@ -70,7 +70,7 @@ func udfExport_tick(args, argc int32) int32 {
 	if !udf.EventTimerInfo(args, argc, &t) {
 		return udf.Fail("tick: not a timer event")
 	}
-	if err := tick(t); err != nil {
+	if err := tick(udf.CurrentRecord(), t); err != nil {
 		return udf.FailErr(err)
 	}
 	return udf.Done()

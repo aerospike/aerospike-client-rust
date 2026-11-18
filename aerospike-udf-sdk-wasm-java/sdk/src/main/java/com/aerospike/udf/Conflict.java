@@ -45,25 +45,25 @@ public final class Conflict {
     public boolean decode(int args, int argc) {
         Value[] a = new Value[1];
 
-        if (Udf.args(args, argc, a) < 1 || a[0].kind != Value.MAP) {
+        if (LowLevel.args(args, argc, a) < 1 || a[0].kind() != Value.MAP) {
             return false;
         }
 
         description = a[0];
-        lost = Udf.mapGet(a[0], "lost");
-        dryRun = Udf.strIs(Udf.mapGet(a[0], "mode"), "dry-run");
-        conflictTrigger = Udf.strIs(Udf.mapGet(a[0], "trigger"), "conflict");
-        binConvergence = Udf.strIs(Udf.mapGet(a[0], "policy"), "bin-lut");
+        lost = Maps.get(a[0], "lost");
+        dryRun = Maps.is(a[0], "mode", "dry-run");
+        conflictTrigger = Maps.is(a[0], "trigger", "conflict");
+        binConvergence = Maps.is(a[0], "policy", "bin-lut");
 
         if (!local.decode(a[0], "current", 0) || !remote.decode(a[0], "incoming", 1)) {
             return false;
         }
 
-        Value incoming = Udf.mapGet(a[0], "incoming");
+        Value incoming = Maps.get(a[0], "incoming");
 
-        remotePartial = Udf.mapBool(incoming, "partial");
-        remoteDeletedRecord = Udf.mapBool(incoming, "deleted-record");
-        localTombstone = Udf.mapBool(Udf.mapGet(a[0], "current"), "tombstone");
+        remotePartial = Maps.getBoolean(incoming, "partial");
+        remoteDeletedRecord = Maps.getBoolean(incoming, "deleted-record");
+        localTombstone = Maps.getBoolean(Maps.get(a[0], "current"), "tombstone");
 
         return true;
     }
@@ -88,9 +88,9 @@ public final class Conflict {
         return local.deletedAny() || remote.deletedAny();
     }
 
-    /** The names of the bins the incoming write deletes, as a stored list; {@code remote.deleted}. */
-    public Value remoteDeleted() {
-        return remote.deleted;
+    /** The names of the bins the incoming write deletes; {@code remote.deletedBins()}. */
+    public ListValue remoteDeleted() {
+        return remote.deletedBins();
     }
 
     /** The two records side by side, for bin-wise merging. */
@@ -128,20 +128,19 @@ public final class Conflict {
      * meaning, or -1 to keep the one the incoming write asked for.
      */
     public static int record(int bins, long ttl) {
-        int out = Udf.newMap(3);
+        int out = LowLevel.newMap(3);
 
         if (out <= 0) {
             return Udf.fail("resolve: could not build the resolution");
         }
 
-        Udf.mapPutStr(out, "verdict", "record");
-        Udf.mapPutHandle(out, "bins", bins);
+        MapBuilder answer = LowLevel.map(out).put("verdict", "record").put("bins", LowLevel.map(bins));
 
         if (ttl >= 0) {
-            Udf.mapPutInt(out, "ttl", ttl);
+            answer.put("ttl", ttl);
         }
 
-        if (Udf.resultHandle(out) != Udf.OK) {
+        if (LowLevel.resultHandle(out) != LowLevel.OK) {
             return Udf.fail("resolve: could not return the record");
         }
 
@@ -150,7 +149,7 @@ public final class Conflict {
 
     /** The signature text an xdr-merge handler exports under {@code __udf_sig_<name>}, NUL-terminated. */
     public static byte[] signature(String name) {
-        return Udf.signatureBytes("event xdr-merge/1 " + name
+        return Params.signatureBytes("event xdr-merge/1 " + name
                 + "(current: record, incoming: record, conflict: conflict) -> resolution");
     }
 }

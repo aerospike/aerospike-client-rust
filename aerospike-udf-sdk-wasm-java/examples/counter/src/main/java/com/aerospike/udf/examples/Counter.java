@@ -12,17 +12,16 @@
 
 package com.aerospike.udf.examples;
 
-import com.aerospike.udf.Bin;
 import com.aerospike.udf.Conflict;
-import com.aerospike.udf.Cursor;
 import com.aerospike.udf.EventRecord;
 import com.aerospike.udf.Function;
+import com.aerospike.udf.MapBuilder;
+import com.aerospike.udf.MapValue;
 import com.aerospike.udf.On;
+import com.aerospike.udf.Record;
 import com.aerospike.udf.Resolution;
 import com.aerospike.udf.Udf;
 import com.aerospike.udf.UdfException;
-import com.aerospike.udf.UdfMap;
-import com.aerospike.udf.Value;
 
 /**
  * The smallest CRDT in Java: a grow-only counter, merged across data centres by the xdr-merge event. The
@@ -42,7 +41,6 @@ import com.aerospike.udf.Value;
 public final class Counter {
     private static final int MAX_SITES = 64;
     private static final int SITE_MAX = 32;
-    private static final Bin COUNTS = Bin.of("counts");
 
     /** The per-site counts gathered from one or both sides. */
     private static final String[] sites = new String[MAX_SITES];
@@ -77,14 +75,14 @@ public final class Counter {
         size++;
     }
 
-    /** Every entry of a stored counts map. */
-    private static void offerAll(Value map) {
+    /** Every entry of a stored counts map; null is a record without one. */
+    private static void offerAll(MapValue map) {
         if (map == null) {
             return;
         }
 
-        for (Cursor.Entry e : map.asMap()) {
-            offer(e.key.asString(), e.value.asLong());
+        for (MapValue.Entry e : map) {
+            offer(e.getKey().asString(), e.getValue().asLong());
         }
     }
 
@@ -99,8 +97,8 @@ public final class Counter {
     }
 
     /** The counts as a built map, for a bin or a resolution. */
-    private static UdfMap toMap() {
-        UdfMap m = UdfMap.create(size);
+    private static MapBuilder toMap() {
+        MapBuilder m = Udf.map(size);
 
         for (int i = 0; i < size; i++) {
             m.put(sites[i], counts[i]);
@@ -113,27 +111,27 @@ public final class Counter {
     @On.XdrMerge("merge_counter")
     static Resolution mergeCounter(EventRecord current, EventRecord incoming, Conflict conflict) {
         size = 0;
-        offerAll(current.binMap("counts"));
-        offerAll(incoming.binMap("counts"));
+        offerAll(current.getMap("counts", null));
+        offerAll(incoming.getMap("counts", null));
 
-        return Resolution.record(incoming.withBins(UdfMap.create(2).put("counts", toMap())));
+        return Resolution.record(incoming.withBins(Udf.map(2).put("counts", toMap())));
     }
 
     /** The record's counts into the table. */
-    private static void stored() {
+    private static void stored(Record rec) {
         size = 0;
-        offerAll(COUNTS.get());
+        offerAll(rec.getMap("counts", null));
     }
 
     /** Adds n to this site's count. Returns the counter's value. */
     @Function("increment")
-    static long increment(String site, long n) {
+    static long increment(Record rec, String site, long n) {
         // The Rust module bounds the site name with a Str<32>; the same limit, as a check.
         if (site.length() > SITE_MAX) {
             throw new UdfException("increment: the site name is too long");
         }
 
-        stored();
+        stored(rec);
 
         int i = find(site);
 
@@ -144,16 +142,16 @@ public final class Counter {
             offer(site, n);
         }
 
-        COUNTS.set(toMap());
-        Udf.commit();
+        rec.set("counts", toMap());
+        rec.save();
 
         return total();
     }
 
     /** The counter's value: the sum of every site's count. */
     @Function("value")
-    static long value() {
-        stored();
+    static long value(Record rec) {
+        stored(rec);
 
         return total();
     }

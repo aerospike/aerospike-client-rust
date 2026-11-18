@@ -15,63 +15,55 @@
 
 // ANCHOR: setup
 #include "aerospike_udf.hpp"
-
-static constexpr udf::Bin VISITS{"visits"};
-static constexpr udf::Bin BALANCE{"balance"};
-static constexpr udf::Bin OWNER{"owner"};
-static constexpr udf::Bin HISTORY{"history"};
-static constexpr udf::Bin LIMITS{"limits"};
-static constexpr udf::Bin RENEWALS{"renewals"};
-static constexpr udf::Bin NOTE{"note"};
-static constexpr udf::Bin TICKS{"ticks"};
 // ANCHOR_END: setup
 
 // ANCHOR: visit
-UDF_FUNCTION(visit, udf::Result<int64_t>, int64_t by)
+UDF_FUNCTION(visit, udf::Result<int64_t>, udf::Record& rec, int64_t by)
 {
-	int64_t n = VISITS.int_or(0) + by;   // 0 when the bin is absent
+	int64_t n = rec.int_or("visits", 0) + by;   // 0 when the bin is absent
 
-	UDF_TRY(VISITS.set(n));              // staged, not yet written
-	UDF_TRY(udf::commit());              // creates the record when there is none
+	UDF_TRY(rec.set("visits", n));              // staged, not yet written
+	UDF_TRY(rec.save());                        // creates the record when there is none
 
 	return n;
 }
 // ANCHOR_END: visit
 
 // ANCHOR: withdraw
-UDF_FUNCTION(withdraw, udf::Result<int64_t>, int64_t amount)
+UDF_FUNCTION(withdraw, udf::Result<int64_t>, udf::Record& rec, int64_t amount)
 {
-	int64_t balance = UDF_TRY(BALANCE.as_int());   // an error when absent or not an integer
+	// An error when the bin is absent, and another when it is not an integer.
+	int64_t balance = UDF_TRY(UDF_TRY(rec.bin("balance")).as_int());
 
 	if (amount > balance) return udf::error(AS_UDF_REFUSED, "insufficient funds");
 
-	UDF_TRY(BALANCE.set(balance - amount));
-	UDF_TRY(udf::commit());
+	UDF_TRY(rec.set("balance", balance - amount));
+	UDF_TRY(rec.save());
 
 	return balance - amount;
 }
 // ANCHOR_END: withdraw
 
 // ANCHOR: rename
-UDF_FUNCTION(rename, udf::Result<bool>, udf::Text<64> name)
+UDF_FUNCTION(rename, udf::Result<bool>, udf::Record& rec, udf::Text<64> name)
 {
-	udf::Text<64> owner = UDF_TRY(OWNER.as_text<64>());   // copied out of the record
+	udf::Text<64> owner = UDF_TRY(UDF_TRY(rec.bin("owner")).as_text<64>());   // copied out of the record
 
 	if (owner == name.view()) return false;
 
-	UDF_TRY(OWNER.set(name.view()));
-	UDF_TRY(udf::commit());
+	UDF_TRY(rec.set("owner", name.view()));
+	UDF_TRY(rec.save());
 
 	return true;
 }
 // ANCHOR_END: rename
 
 // ANCHOR: total
-UDF_FUNCTION(total, udf::Result<int64_t>)
+UDF_FUNCTION(total, udf::Result<int64_t>, const udf::Record& rec)
 {
 	int64_t sum = 0;
 
-	for (udf::Value payment : HISTORY.list()) {
+	for (udf::Value payment : rec.list("history")) {
 		sum += UDF_TRY(payment.as_int());
 	}
 
@@ -80,13 +72,10 @@ UDF_FUNCTION(total, udf::Result<int64_t>)
 // ANCHOR_END: total
 
 // ANCHOR: limit_for
-UDF_FUNCTION(limit_for, udf::Result<int64_t>, udf::Text<64> kind)
+UDF_FUNCTION(limit_for, udf::Result<int64_t>, const udf::Record& rec, udf::Text<64> kind)
 {
-	udf::Optional<udf::Value> limits = LIMITS.get();
-
-	if (!limits) return udf::error(AS_UDF_NOT_FOUND, "bin limits is absent");
-
-	udf::Optional<udf::Value> limit = limits->get(kind.view());
+	udf::Value limits = UDF_TRY(rec.bin("limits"));
+	udf::Optional<udf::Value> limit = limits.get(kind.view());
 
 	if (!limit) return 0;   // no such key
 
@@ -95,11 +84,11 @@ UDF_FUNCTION(limit_for, udf::Result<int64_t>, udf::Text<64> kind)
 // ANCHOR_END: limit_for
 
 // ANCHOR: limits_total
-UDF_FUNCTION(limits_total, udf::Result<int64_t>)
+UDF_FUNCTION(limits_total, udf::Result<int64_t>, const udf::Record& rec)
 {
 	int64_t sum = 0;
 
-	for (udf::Entry e : LIMITS.map()) {
+	for (udf::Entry e : rec.map("limits")) {
 		sum += UDF_TRY(e.value.as_int());
 	}
 
@@ -108,34 +97,32 @@ UDF_FUNCTION(limits_total, udf::Result<int64_t>)
 // ANCHOR_END: limits_total
 
 // ANCHOR: log_payment
-UDF_FUNCTION(log_payment, udf::Result<int64_t>, int64_t amount)
+UDF_FUNCTION(log_payment, udf::Result<int64_t>, udf::Record& rec, int64_t amount)
 {
-	udf::Optional<udf::Value> stored = HISTORY.get();
+	udf::Value stored = UDF_TRY(rec.bin("history"));
 
-	if (!stored) return udf::error(AS_UDF_NOT_FOUND, "bin history is absent");
-
-	int64_t count = (int64_t)stored->len + 1;
+	int64_t count = (int64_t)stored.size() + 1;
 	udf::List out((int32_t)count);
 
-	out.add_all(*stored).add(amount);   // the stored elements, then the new one
+	out.add_all(stored).add(amount);   // the stored elements, then the new one
 
-	UDF_TRY(HISTORY.set(out));
-	UDF_TRY(udf::commit());
+	UDF_TRY(rec.set("history", out));
+	UDF_TRY(rec.save());
 
 	return count;
 }
 // ANCHOR_END: log_payment
 
 // ANCHOR: summary
-UDF_FUNCTION(summary, udf::Result<udf::Map>)
+UDF_FUNCTION(summary, udf::Result<udf::Map>, const udf::Record& rec)
 {
 	udf::Map out(5);
 
-	out.put("owner", OWNER.get().value_or(udf::Value()))   // a stored value goes in as it is
-	    .put("balance", BALANCE.int_or(0))
-	    .put("generation", udf::generation())
-	    .put("bins", udf::bin_count())
-	    .put("ttl", udf::ttl());
+	out.put("owner", rec.get("owner").value_or(udf::Value()))   // a stored value goes in as it is
+	    .put("balance", rec.int_or("balance", 0))
+	    .put("generation", rec.generation())
+	    .put("bins", rec.bin_count())
+	    .put("ttl", rec.ttl());
 
 	UDF_TRY(out.result());
 
@@ -144,32 +131,32 @@ UDF_FUNCTION(summary, udf::Result<udf::Map>)
 // ANCHOR_END: summary
 
 // ANCHOR: renew
-UDF_FUNCTION(renew, udf::Result<int64_t>, int64_t seconds)
+UDF_FUNCTION(renew, udf::Result<int64_t>, udf::Record& rec, int64_t seconds)
 {
-	int64_t n = RENEWALS.int_or(0) + 1;
+	int64_t n = rec.int_or("renewals", 0) + 1;
 
-	UDF_TRY(RENEWALS.set(n));
-	UDF_TRY(udf::set_ttl((int32_t)seconds));   // takes effect with the commit
-	UDF_TRY(udf::commit());
+	UDF_TRY(rec.set("renewals", n));
+	UDF_TRY(rec.set_ttl((int32_t)seconds));   // takes effect with the save
+	UDF_TRY(rec.save());
 
 	return n;
 }
 // ANCHOR_END: renew
 
 // ANCHOR: clear_note
-UDF_FUNCTION(clear_note, udf::Result<void>)
+UDF_FUNCTION(clear_note, udf::Result<void>, udf::Record& rec)
 {
-	UDF_TRY(NOTE.set_null());   // a nil write drops the bin
-	UDF_TRY(udf::commit());
+	UDF_TRY(rec.remove("note"));   // staged, like a set
+	UDF_TRY(rec.save());
 
 	return {};
 }
 // ANCHOR_END: clear_note
 
 // ANCHOR: close
-UDF_FUNCTION(close, udf::Result<void>)
+UDF_FUNCTION(close, udf::Result<void>, udf::Record& rec)
 {
-	UDF_TRY(udf::remove_record());   // no commit: the delete is the write
+	UDF_TRY(rec.delete_record());   // no save: the delete is the write
 
 	return {};
 }
@@ -249,10 +236,10 @@ UDF_ON_TIMER(tick)
 {
 	(void)timer;
 
-	int64_t n = TICKS.int_or(0) + 1;   // the record API works here
+	int64_t n = record.int_or("ticks", 0) + 1;   // a timer handler is handed the record, writable
 
-	UDF_TRY(TICKS.set(n));
-	UDF_TRY(udf::commit());
+	UDF_TRY(record.set("ticks", n));
+	UDF_TRY(record.save());
 
 	if (n < 3) {
 		udf::timer_set("tick", 200);   // run again in 200 ms

@@ -20,25 +20,20 @@ package main
 
 import (
 	"errors"
+	"math"
 
 	udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk-wasm-go"
 )
 
 const geo = `{"type":"Point","coordinates":[1.0,2.0]}`
 
-var (
-	l   = udf.NewBin("l")
-	m   = udf.NewBin("m")
-	doc = udf.NewBin("doc")
-)
-
 // The sum of the integers in list bin l, walked with range; any other element fails the call.
 //
 //udf:function sum_list
-func sumList() (int64, error) {
+func sumList(rec *udf.Record) (int64, error) {
 	var total int64
 
-	for v := range l.List() {
+	for v := range rec.List("l") {
 		n, err := v.Int()
 		if err != nil {
 			return 0, errors.New("bin `l` holds something that is not an integer")
@@ -52,15 +47,15 @@ func sumList() (int64, error) {
 // Everything the record knows about itself, as a map.
 //
 //udf:function describe
-func describe() (*udf.Map, error) {
+func describe(rec *udf.Record) (*udf.Map, error) {
 	out := udf.NewMap(8).
-		Put("generation", udf.Generation()).
-		Put("bins", udf.BinCount()).
-		Put("size", udf.RecordSize()).
-		Put("lut", udf.LastUpdateTime()).
-		Put("ttl", udf.TTL())
+		Put("generation", rec.Generation()).
+		Put("bins", rec.BinCount()).
+		Put("size", rec.Size()).
+		Put("lut", rec.LastUpdateTime()).
+		Put("ttl", rec.TTL())
 
-	if set := udf.SetName(); set != "" {
+	if set := rec.SetName(); set != "" {
 		out.Put("set", set)
 	} else {
 		out.Put("set", nil)
@@ -69,31 +64,41 @@ func describe() (*udf.Map, error) {
 	return out, out.Err()
 }
 
+// A scalar bin that must be there, through whichever record is in hand: Bin answers the error that
+// names a missing bin, and the value's own accessor the one for a bin of another kind.
+func mustInt(rec udf.RecordReader, name string) (int64, error) {
+	v, err := rec.Bin(name)
+	if err != nil {
+		return 0, err
+	}
+	return v.Int()
+}
+
 // The typed readers over scalar bins, and a map ranged over entry by entry.
 //
 //udf:function typed
-func typed() (*udf.Map, error) {
-	i, err := udf.NewBin("i").Int()
+func typed(rec *udf.Record) (*udf.Map, error) {
+	i, err := mustInt(rec, "i")
 	if err != nil {
 		return nil, err
 	}
-	d, err := udf.NewBin("d").Float64()
-	if err != nil {
-		return nil, err
+	d, ok := rec.Float64("d")
+	if !ok {
+		return nil, errors.New("bin `d` is not a double")
 	}
-	s, err := udf.NewBin("s").Str()
-	if err != nil {
-		return nil, err
+	s, ok := rec.Str("s")
+	if !ok {
+		return nil, errors.New("bin `s` is not a string")
 	}
-	b, err := udf.NewBin("b").Bool()
-	if err != nil {
-		return nil, err
+	b, ok := rec.Bool("b")
+	if !ok {
+		return nil, errors.New("bin `b` is not a bool")
 	}
 
 	var sum int64
 	keys := udf.NewList(4)
 
-	for k, v := range m.Map() {
+	for k, v := range rec.Map("m") {
 		if n, err := v.Int(); err == nil {
 			sum += n
 		}
@@ -105,26 +110,26 @@ func typed() (*udf.Map, error) {
 	return out, out.Err()
 }
 
-// The writes the typed natives do not cover: packed lists, a bool, a nil and a GeoJSON.
+// The writes beyond the plain scalars: packed lists, a bool, a nil and a GeoJSON.
 //
 //udf:function write_lists
-func writeLists() (int64, error) {
-	if err := udf.NewBin("w").SetInts([]int64{5, -1, 1 << 40}); err != nil {
+func writeLists(rec *udf.Record) (int64, error) {
+	if err := rec.SetInts("w", []int64{5, -1, 1 << 40}); err != nil {
 		return 0, err
 	}
-	if err := udf.NewBin("wd").SetFloat64s([]float64{0.5, -4.0}); err != nil {
+	if err := rec.SetFloat64s("wd", []float64{0.5, -4.0}); err != nil {
 		return 0, err
 	}
-	if err := udf.NewBin("flag").SetBool(true); err != nil {
+	if err := rec.Set("flag", true); err != nil {
 		return 0, err
 	}
-	if err := udf.NewBin("gone").SetNull(); err != nil {
+	if err := rec.Set("gone", nil); err != nil {
 		return 0, err
 	}
-	if err := udf.NewBin("geo").SetGeoJSON(geo); err != nil {
+	if err := rec.Set("geo", udf.GeoJSONValue(geo)); err != nil {
 		return 0, err
 	}
-	if err := udf.Commit(); err != nil {
+	if err := rec.Save(); err != nil {
 		return 0, err
 	}
 	return 1, nil
@@ -134,12 +139,12 @@ func writeLists() (int64, error) {
 // GeoJSON that stays a GeoJSON, and a map with an integer key.
 //
 //udf:function relist
-func relist(index int64) (*udf.List, error) {
+func relist(rec *udf.Record, index int64) (*udf.List, error) {
 	var first, picked udf.Value
 	found := false
 	i := int64(0)
 
-	for v := range doc.List() {
+	for v := range rec.List("doc") {
 		if i == 0 {
 			first = v
 		}
@@ -155,7 +160,7 @@ func relist(index int64) (*udf.List, error) {
 		return nil, errors.New("relist: doc has no such element")
 	}
 
-	inner := udf.NewMap(2).PutI(1, "one").Put("first", first)
+	inner := udf.NewMap(2).Put(1, "one").Put("first", first)
 	out := udf.NewList(3).Add(picked).AddGeoJSON(geo).Add(inner)
 
 	return out, out.Err()
@@ -164,18 +169,17 @@ func relist(index int64) (*udf.List, error) {
 // Writes a GeoJSON bin back as the kind it was read as, and reports the document's length.
 //
 //udf:function geo_roundtrip
-func geoRoundtrip(name string) (int64, error) {
-	bin := udf.NewBin(name)
-	v, ok := bin.Get()
+func geoRoundtrip(rec *udf.Record, name string) (int64, error) {
+	v, ok := rec.Get(name)
 
 	if !ok || v.Kind != udf.KindGeoJSON {
 		return 0, errors.New("that bin does not hold geojson")
 	}
 
-	if err := bin.SetValue(v); err != nil {
+	if err := rec.Set(name, v); err != nil {
 		return 0, err
 	}
-	if err := udf.Commit(); err != nil {
+	if err := rec.Save(); err != nil {
 		return 0, err
 	}
 	return int64(v.Len), nil
@@ -188,17 +192,17 @@ func geoResult() udf.Value {
 	return udf.GeoJSONValue(geo)
 }
 
-// Sets the record's TTL and commits.
+// Sets the record's TTL and saves.
 //
 //udf:function touch_ttl
-func touchTTL(seconds int64) (int64, error) {
-	if err := udf.SetTTL(int32(seconds)); err != nil {
+func touchTTL(rec *udf.Record, seconds int64) (int64, error) {
+	if err := rec.SetTTL(int32(seconds)); err != nil {
 		return 0, err
 	}
-	if err := udf.NewBin("touched").SetInt(1); err != nil {
+	if err := rec.Set("touched", 1); err != nil {
 		return 0, err
 	}
-	if err := udf.Commit(); err != nil {
+	if err := rec.Save(); err != nil {
 		return 0, err
 	}
 	return 1, nil
@@ -207,11 +211,96 @@ func touchTTL(seconds int64) (int64, error) {
 // Deletes the record.
 //
 //udf:function remove_me
-func removeMe() (int64, error) {
-	if err := udf.Delete(); err != nil {
+func removeMe(rec *udf.Record) (int64, error) {
+	if err := rec.Delete(); err != nil {
 		return 0, err
 	}
 	return 1, nil
+}
+
+// Saves with nothing staged, and reports what that did: whether the record exists afterwards.
+//
+// It is here so that a test can pin down what Save means when there is nothing to save, on a record that
+// is there and on one that is not.
+//
+//udf:function save_nothing
+func saveNothing(rec *udf.Record) (bool, error) {
+	if err := rec.Save(); err != nil {
+		return false, err
+	}
+	return rec.Exists(), nil
+}
+
+// Deletes the record, staged writes and all. Answers what Exists says straight afterwards.
+//
+//udf:function delete_it
+func deleteIt(rec *udf.Record) (bool, error) {
+	if err := rec.Set("n", 99); err != nil {
+		return false, err
+	}
+	if err := rec.Delete(); err != nil {
+		return false, err
+	}
+	return rec.Exists(), nil
+}
+
+// Removes a bin by name and saves. Answers how many bins are left.
+//
+//udf:function drop_bin
+func dropBin(rec *udf.Record, name string) (int64, error) {
+	if err := rec.Remove(name); err != nil {
+		return 0, err
+	}
+	if err := rec.Save(); err != nil {
+		return 0, err
+	}
+	return rec.BinCount(), nil
+}
+
+// Sets a bin to nil and saves, which removes it: a bin cannot hold nil.
+//
+//udf:function nil_bin
+func nilBin(rec *udf.Record, name string) (int64, error) {
+	if err := rec.Set(name, nil); err != nil {
+		return 0, err
+	}
+	if err := rec.Save(); err != nil {
+		return 0, err
+	}
+	return rec.BinCount(), nil
+}
+
+// One element of a list bin by its index, and whether a map the call builds knows its keys.
+//
+//udf:function index_probe
+func indexProbe(rec *udf.Record, name string, index int64) (*udf.Map, error) {
+	list, err := rec.Bin(name)
+	if err != nil {
+		return nil, err
+	}
+	if !list.IsList() {
+		return nil, errors.New("that bin does not hold a list")
+	}
+
+	out := udf.NewMap(4).Put("len", int64(list.Len))
+
+	// An index too large for this target's int is past the end of any list it could hold.
+	if index < 0 || index > math.MaxInt32 {
+		out.Put("at", "absent")
+	} else if v, ok := list.Index(int(index)); ok {
+		out.Put("at", v)
+	} else {
+		out.Put("at", "absent")
+	}
+
+	out.Put(7, "seven")
+
+	knows := out.Contains("len") && out.Contains(7)
+	invents := out.Contains("nope") || out.Contains(8)
+
+	out.Put("knows", knows).Put("invents", invents)
+
+	return out, out.Err()
 }
 
 func main() {}

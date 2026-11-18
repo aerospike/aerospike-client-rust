@@ -31,13 +31,13 @@ use aerospike_udf_sdk_native::{
 udfs! {
     /// Add `by` to bin "n" and return the new value. `by` defaults to 1.
     ///
-    /// The shape of every native record UDF: read, modify, stage, **commit**. `write` is what makes it real —
+    /// The shape of every native record UDF: read, modify, stage, **save**. `save` is what makes it real —
     /// without it this returns a plausible number and changes nothing.
     fn increment(rec: &Record, by: Option<i64>) -> Result<i64> {
         let next = rec.get_int("n")?.unwrap_or(0) + by.unwrap_or(1);
 
         rec.set_int("n", next)?;
-        rec.write()?;
+        rec.save()?;
 
         Ok(next)
     }
@@ -106,7 +106,7 @@ udfs! {
         let len = bytes.len() as i64;
 
         rec.set_blob(to, &bytes)?;
-        rec.write()?;
+        rec.save()?;
 
         Ok(len)
     }

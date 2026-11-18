@@ -12,10 +12,13 @@
 
 package udf
 
-import "unsafe"
+import (
+	"iter"
+	"unsafe"
+)
 
 //==========================================================
-// The rest of the record: the writes and metadata the Rust SDK has, as low-level calls.
+// The record: the Go face of the Rust SDK's Record and ReadRecord.
 //
 
 //go:wasmimport aerospike set_bool
@@ -32,9 +35,6 @@ func setListInts(name unsafe.Pointer, nameLen int32, vals unsafe.Pointer, valsLe
 
 //go:wasmimport aerospike set_list_doubles
 func setListDoubles(name unsafe.Pointer, nameLen int32, vals unsafe.Pointer, valsLen int32) int32
-
-//go:wasmimport aerospike result_geojson
-func resultGeoJSON(value unsafe.Pointer, valueLen int32)
 
 //go:wasmimport aerospike last_update
 func lastUpdate() int64
@@ -54,128 +54,313 @@ func setTTL(seconds int32) int32
 //go:wasmimport aerospike rec_remove
 func recRemove() int32
 
-//go:wasmimport aerospike current_time
-func currentTime() int64
+// RecordReader is what any record can be asked: the one a record UDF is called on (*Record) and either
+// side of an event (*EventRecord). A helper that takes a RecordReader reads a bin the same way from both.
+//
+// Bin is the form for a bin that must be there: an error naming the bin when it is not. The others are
+// for a bin that may not be: the typed readers answer false, and the walks yield nothing, when the bin is
+// absent, nil or of another kind.
+type RecordReader interface {
+	// Bin is a bin, whatever it holds; an error naming the bin when the record has none by that name.
+	Bin(name string) (Value, error)
+	// Get is a bin that may be absent: false when it is absent or nil.
+	Get(name string) (Value, bool)
+	// Has reports whether the record has the bin.
+	Has(name string) bool
+	// Int is an integer bin; false when absent, nil or of another kind.
+	Int(name string) (int64, bool)
+	// Float64 is a double bin; false when absent, nil or of another kind. An integer is not widened.
+	Float64(name string) (float64, bool)
+	// Bool is a boolean bin; false when absent, nil or of another kind.
+	Bool(name string) (bool, bool)
+	// Str is the text of a string bin, copied out; false when absent, nil or of another kind.
+	Str(name string) (string, bool)
+	// Bytes is the bytes of a blob bin, copied out; false when absent, nil or of another kind.
+	Bytes(name string) ([]byte, bool)
+	// List walks a list bin; nothing when absent or not a list.
+	List(name string) iter.Seq[Value]
+	// Map walks a map bin's entries, key then value; nothing when absent or not a map.
+	Map(name string) iter.Seq2[Value, Value]
+	// Generation is the record's modification count.
+	Generation() int64
+	// LastUpdateTime is when the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC).
+	LastUpdateTime() int64
+}
 
-//go:wasmimport aerospike val_int
-func valInt(value int64) int32
+// The typed readers, written once over Get for both kinds of record.
 
-//go:wasmimport aerospike val_str
-func valStr(value unsafe.Pointer, valueLen int32) int32
-
-//go:wasmimport aerospike val_blob
-func valBlob(value unsafe.Pointer, valueLen int32) int32
-
-//go:wasmimport aerospike val_geojson
-func valGeoJSON(value unsafe.Pointer, valueLen int32) int32
-
-//go:wasmimport aerospike map_put
-func mapPut(handle int32, key int32, value int32) int32
-
-//go:wasmimport aerospike map_put_i_at
-func mapPutIAt(handle int32, key int64, src int32, at int32) int32
-
-// SetBool writes a boolean to a bin.
-// Staged until the record is committed. The status is Err for a name that is empty or longer than 15
-// bytes, Refused when the record refuses the write.
-func SetBool(name string, value bool) int32 {
-	b := int32(0)
-	if value {
-		b = 1
+func readInt(r RecordReader, name string) (int64, bool) {
+	v, ok := r.Get(name)
+	if !ok || v.Kind != KindInt {
+		return 0, false
 	}
-	return setBool(strptr(name), int32(len(name)), b)
+	return v.Payload, true
 }
 
-// SetNull writes a nil bin.
-func SetNull(name string) int32 { return setNil(strptr(name), int32(len(name))) }
-
-// SetGeoJSON writes a GeoJSON document, kept as the geospatially indexable kind.
-func SetGeoJSON(name, doc string) int32 {
-	return setGeoJSON(strptr(name), int32(len(name)), strptr(doc), int32(len(doc)))
-}
-
-// SetInts writes a list of integers from the slice in one import, no value built per element.
-func SetInts(name string, values []int64) int32 {
-	var p unsafe.Pointer
-	if len(values) > 0 {
-		p = unsafe.Pointer(&values[0])
+func readFloat64(r RecordReader, name string) (float64, bool) {
+	v, ok := r.Get(name)
+	if !ok || v.Kind != KindDouble {
+		return 0, false
 	}
-	return setListInts(strptr(name), int32(len(name)), p, int32(len(values)*8))
+	return v.Double(), true
 }
 
-// SetFloat64s writes a list of doubles from the slice in one import, no value built per element.
-func SetFloat64s(name string, values []float64) int32 {
-	var p unsafe.Pointer
-	if len(values) > 0 {
-		p = unsafe.Pointer(&values[0])
+func readBool(r RecordReader, name string) (bool, bool) {
+	v, ok := r.Get(name)
+	if !ok || v.Kind != KindBool {
+		return false, false
 	}
-	return setListDoubles(strptr(name), int32(len(name)), p, int32(len(values)*8))
+	return v.Payload != 0, true
 }
 
-// ResultGeoJSON sets a GeoJSON document as the result, kept as that kind.
-func ResultGeoJSON(doc string) { resultGeoJSON(strptr(doc), int32(len(doc))) }
-
-// ResultMap and ResultList set a built collection as the result.
-func ResultMap(m *Map) error {
-	if m.err != nil {
-		return m.err
+func readStr(r RecordReader, name string) (string, bool) {
+	v, ok := r.Get(name)
+	if !ok || v.Kind != KindStr {
+		return "", false
 	}
-	return statusError(resultHandle(m.handle), "could not return the map")
+	s, err := v.Str()
+	return s, err == nil
 }
 
-// ResultList sets a built list as the result. When the list kept a refusal while it was built, that error
-// is returned and no result is set.
-func ResultList(l *List) error {
-	if l.err != nil {
-		return l.err
+func readBytes(r RecordReader, name string) ([]byte, bool) {
+	v, ok := r.Get(name)
+	if !ok || v.Kind != KindBlob {
+		return nil, false
 	}
-	return statusError(resultHandle(l.handle), "could not return the list")
+	b, err := v.Bytes()
+	return b, err == nil
 }
 
-// ResultOf sets a value of any kind as the result: a scalar by value, guest bytes, a built collection by
-// handle, a stored value by position; nil or absent is nil.
-func ResultOf(v Value) error {
+// Record is the record a UDF was called on.
+//
+// A record UDF, and the per-record method of a stream UDF, takes it as its first parameter, before the
+// call's arguments. It is not one of them: a client does not pass it, it is not counted when the
+// arguments are checked, and the function's signature export does not list it. A function that does not
+// touch the record leaves the parameter out.
+//
+//	//udf:function withdraw
+//	func withdraw(rec *udf.Record, amount int64) (int64, error) {
+//		balance, err := rec.Bin("balance")
+//		if err != nil {
+//			return 0, err
+//		}
+//		have, err := balance.Int()
+//		if err != nil {
+//			return 0, err
+//		}
+//		if err := rec.Set("balance", have-amount); err != nil {
+//			return 0, err
+//		}
+//		return have - amount, rec.Save()
+//	}
+//
+// A bin write is staged: Set and Remove change the record in hand, and nothing reaches the server's
+// record until Save. Delete is the exception and needs no Save.
+//
+// There is one Record type, for the places that may write and the places that may only read. Where the
+// host does not take a write - the record a stream UDF is shown - every writing method returns an error
+// that says so, and nothing is changed.
+//
+// The reading methods are also on RecordReader, which *EventRecord implements too.
+type Record struct {
+	// It holds nothing, because the host knows which record a call is on.
+	_ [0]byte
+}
+
+var current Record
+
+// CurrentRecord is the record of the call in progress. The generated exports pass it as the first
+// parameter of a function that declares one; it is for an export written without udfgen. Every call
+// answers the same record.
+func CurrentRecord() *Record { return &current }
+
+//----------------------------------------------------------
+// Reading bins.
+//
+
+// Bin is a bin, whatever it holds, in one import. An error naming the bin when the record has none by
+// that name; a nil bin is absent too, since a bin cannot hold nil.
+func (r *Record) Bin(name string) (Value, error) {
+	var v Value
+	rc := binValue(strptr(name), int32(len(name)), unsafe.Pointer(&v), 16)
+	if rc == NotFound {
+		return Value{Kind: KindAbsent}, errorf(rc, "bin ", name, " is absent")
+	}
+	if rc != OK {
+		return Value{Kind: KindAbsent}, statusError(rc, "bin "+name+" could not be read")
+	}
+	return v, nil
+}
+
+// Get is a bin that may be absent: false when it is absent or nil. It allocates nothing, so it is the
+// form for a stream's per-record path.
+func (r *Record) Get(name string) (Value, bool) {
+	var v Value
+	if binValue(strptr(name), int32(len(name)), unsafe.Pointer(&v), 16) != OK || v.Kind == KindNil {
+		return Value{Kind: KindAbsent}, false
+	}
+	return v, true
+}
+
+// Has reports whether the record has the bin.
+func (r *Record) Has(name string) bool {
+	_, ok := r.Get(name)
+	return ok
+}
+
+// Int is an integer bin; false when absent, nil or of another kind.
+func (r *Record) Int(name string) (int64, bool) { return readInt(r, name) }
+
+// Float64 is a double bin; false when absent, nil or of another kind. An integer bin is not widened.
+func (r *Record) Float64(name string) (float64, bool) { return readFloat64(r, name) }
+
+// Bool is a boolean bin; false when absent, nil or of another kind.
+func (r *Record) Bool(name string) (bool, bool) { return readBool(r, name) }
+
+// Str is the text of a string bin, copied out; false when absent, nil or of another kind.
+func (r *Record) Str(name string) (string, bool) { return readStr(r, name) }
+
+// Bytes is the bytes of a blob bin, copied out; false when absent, nil or of another kind. The bytes of
+// a GeoJSON or HLL bin are read through Get and Value.Bytes.
+func (r *Record) Bytes(name string) ([]byte, bool) { return readBytes(r, name) }
+
+// List walks the list in a bin; nothing when the bin is absent or not a list.
+func (r *Record) List(name string) iter.Seq[Value] {
+	v, _ := r.Get(name)
+	return v.List()
+}
+
+// Map walks the entries of the map in a bin, key then value; nothing when the bin is absent or not a map.
+func (r *Record) Map(name string) iter.Seq2[Value, Value] {
+	v, _ := r.Get(name)
+	return v.Map()
+}
+
+// BinCount is how many bins the record has.
+func (r *Record) BinCount() int64 { return numbins() }
+
+//----------------------------------------------------------
+// Writing bins.
+//
+
+// writeError is a write native's status as an error, nil for OK. A refusal is spelled out, since it is
+// what a write gets where the record may only be read.
+func writeError(rc int32, what string) error {
+	if rc == Refused {
+		return errorf(rc, what, ": the host refused the write; the record is read-only here, as in a stream, or the server would not take it")
+	}
+	return statusError(rc, what)
+}
+
+// Set writes a value to a bin, staged until Save: an int, int32, int64, float32, float64, bool, string,
+// []byte (a blob), Value, *Map or *List.
+//
+// A Value read from a record is written back from its stored bytes, without the guest decoding it, which
+// is how a sub-document is copied from one bin to another and how a GeoJSON or HLL keeps its kind. A
+// built *Map or *List is handed over whole; when it kept a refusal while it was built, that error is
+// returned and nothing is written. A string or blob is copied by the host during the call.
+// udf.GeoJSONValue(doc) writes a GeoJSON document as the geospatially indexable kind.
+//
+// Writing nil removes the bin, as Remove does: a bin cannot hold nil.
+//
+// The error says the name is empty or longer than 15 bytes, that a blob would relabel bytes of another
+// subtype such as an HLL, or that the host refused the write.
+func (r *Record) Set(name string, value any) error {
+	v, ok := valueOf(value)
+	if !ok {
+		return errorf(TypeMismatch, "could not write bin ", name, ": unsupported Go type")
+	}
+	if c, is := value.(*Map); is && c.err != nil {
+		return c.err
+	}
+	if c, is := value.(*List); is && c.err != nil {
+		return c.err
+	}
+
+	n, nl := strptr(name), int32(len(name))
+	var rc int32
+
 	switch v.Kind {
 	case KindInt:
-		resultInt(v.Payload)
+		rc = setInt(n, nl, v.Payload)
 	case KindDouble:
-		resultDouble(v.Double())
+		rc = setDouble(n, nl, v.Double())
 	case KindBool:
-		resultBool(int32(v.Payload))
-	case KindNil, KindAbsent:
-		resultNil()
+		rc = setBool(n, nl, int32(v.Payload))
+	case KindNil:
+		rc = setNil(n, nl)
 	case KindGuestStr:
-		resultStr(guestPtr(v), int32(v.Len))
+		rc = setStr(n, nl, guestPtr(v), int32(v.Len))
 	case KindGuestBlob:
-		resultBlob(guestPtr(v), int32(v.Len))
+		rc = setBlob(n, nl, guestPtr(v), int32(v.Len))
 	case KindGuestGeoJSON:
-		resultGeoJSON(guestPtr(v), int32(v.Len))
+		rc = setGeoJSON(n, nl, guestPtr(v), int32(v.Len))
 	case KindHandle:
-		return statusError(resultHandle(int32(v.Payload)), "could not return the collection")
+		rc = setHandle(n, nl, int32(v.Payload))
+	case KindAbsent:
+		return errorf(NotFound, "could not write an absent value to bin ", name)
+	case KindOther:
+		return errorf(TypeMismatch, "could not write bin ", name, ": the value is of a kind a UDF cannot write")
 	default:
-		return statusError(resultAt(v.Src(), v.At()), "could not return the value")
+		rc = setAt(n, nl, v.Src(), v.At())
 	}
-	return nil
+
+	return writeError(rc, "could not write bin "+name)
 }
 
-// TTL is the record's time to live, in seconds.
-func TTL() int64 { return ttl() }
+// SetInts writes a slice of integers to a bin as a list in one import, no value built per element. The
+// host applies it at once rather than staging it: Save is not needed for it.
+func (r *Record) SetInts(name string, values []int64) error {
+	var p unsafe.Pointer
+	if len(values) > 0 {
+		p = unsafe.Pointer(&values[0])
+	}
+	return writeError(setListInts(strptr(name), int32(len(name)), p, int32(len(values)*8)), "could not write bin "+name)
+}
 
-// Now is the server's clock in ms since the Unix epoch, or -1 inside an event handler, where it is refused.
-func Now() int64 { return currentTime() }
+// SetFloat64s is SetInts for doubles.
+func (r *Record) SetFloat64s(name string, values []float64) error {
+	var p unsafe.Pointer
+	if len(values) > 0 {
+		p = unsafe.Pointer(&values[0])
+	}
+	return writeError(setListDoubles(strptr(name), int32(len(name)), p, int32(len(values)*8)), "could not write bin "+name)
+}
+
+// Remove removes a bin, staged until Save like a write.
+func (r *Record) Remove(name string) error {
+	return writeError(binRemove(strptr(name), int32(len(name))), "could not remove bin "+name)
+}
+
+//----------------------------------------------------------
+// Metadata.
+//
+
+// Exists reports whether the record exists. A UDF can be called on a key that has no record yet.
+func (r *Record) Exists() bool { return recExists() != 0 }
+
+// Generation is the record's modification count.
+func (r *Record) Generation() int64 { return gen() }
+
+// TTL is the record's time to live, in seconds, as the host reports it.
+func (r *Record) TTL() int64 { return ttl() }
+
+// SetTTL sets the record's time to live, in seconds: 0 for the namespace default, -1 for never expire,
+// subject to the namespace's rule on TTL reductions. It is the TTL of the write, so it takes effect when
+// Save writes the record.
+func (r *Record) SetTTL(seconds int32) error {
+	return writeError(setTTL(seconds), "could not set the TTL")
+}
 
 // LastUpdateTime is when the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC),
 // which is how the server stores it. It is not on the same scale as Now, which counts from the Unix epoch.
-func LastUpdateTime() int64 { return lastUpdate() }
+func (r *Record) LastUpdateTime() int64 { return lastUpdate() }
 
-// RecordSize is the record's size on device, in bytes.
-func RecordSize() int64 { return recordSize() }
-
-// BinCount is how many bins the record has.
-func BinCount() int64 { return numbins() }
+// Size is the record's size on device, in bytes.
+func (r *Record) Size() int64 { return recordSize() }
 
 // SetName is the record's set name, "" when it is in no set.
-func SetName() string {
+func (r *Record) SetName() string {
 	var buf [64]byte
 	n := setName(unsafe.Pointer(&buf[0]), int32(len(buf)))
 	if n <= 0 {
@@ -184,8 +369,59 @@ func SetName() string {
 	return string(buf[:n])
 }
 
-// SetTTL sets the record's time to live, in seconds, for the next commit: 0 for the namespace default,
-// -1 for never expire, subject to the namespace's rule on TTL reductions.
-func SetTTL(seconds int32) error {
-	return statusError(setTTL(seconds), "could not set the TTL")
+// Key is the record's user key, when it was written with the key stored: an integer, or a string or
+// blob whose bytes go into buf, which the value then points at. False when the record carries none, or
+// buf is too small for it.
+func (r *Record) Key(buf []byte) (Value, bool) {
+	switch Kind(keyType()) {
+	case KindInt:
+		return IntValue(keyInt()), true
+	case KindStr:
+		if n := keyBytes(ptr(buf), int32(len(buf))); n >= 0 {
+			return StrBytesValue(buf[:n]), true
+		}
+	case KindBlob:
+		if n := keyBytes(ptr(buf), int32(len(buf))); n >= 0 {
+			return BlobValue(buf[:n]), true
+		}
+	}
+	return Value{Kind: KindAbsent}, false
+}
+
+// Digest copies the record's digest into buf and returns that part of it: 20 bytes, always present. It
+// is what identifies a record a UDF wants to point at rather than ship - a top-k hit, say - since a
+// client can fetch a record by its digest afterwards.
+func (r *Record) Digest(buf []byte) ([]byte, error) {
+	n := digest(ptr(buf), int32(len(buf)))
+	if n < 0 {
+		return nil, statusError(n, "could not read the digest")
+	}
+	return buf[:n], nil
+}
+
+//----------------------------------------------------------
+// Saving and deleting.
+//
+
+// Save writes the staged bins to the server's record, creating the record when it does not exist yet.
+//
+// It is the one way a staged write takes effect: a UDF that returns without saving has changed nothing.
+// A UDF that must not overwrite checks Exists first; the record is locked for the whole call, so nothing
+// can come between the check and the save.
+//
+// With nothing staged it is still a write: the server treats it as a touch, and the record's generation
+// and last-update time move. On a key with no record it makes nothing, since a record has to have a bin,
+// and the client is answered "key not found".
+func (r *Record) Save() error {
+	if recExists() != 0 {
+		return writeError(recUpdate(), "could not save the record")
+	}
+	return writeError(recCreate(), "could not create the record")
+}
+
+// Delete deletes the record. It is not staged: it needs no Save after it, and whatever was staged goes
+// with the record. The server carries it out when the call returns, so for the rest of the call Exists
+// answers as it did before.
+func (r *Record) Delete() error {
+	return writeError(recRemove(), "could not delete the record")
 }

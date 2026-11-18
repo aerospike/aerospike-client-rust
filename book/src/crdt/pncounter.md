@@ -40,7 +40,7 @@ In Rust, the counter's merge inside a loop over the two bins:
 ```rust
 event! {
     on xdr_merge
-    fn merge_pncounter(current: Record, incoming: Record, _conflict: Conflict) -> Result<Resolution, Error> {
+    fn merge_pncounter(current: EventRecord, incoming: EventRecord, _conflict: Conflict) -> Result<Resolution, Error> {
         let out = as_udf::map(2)?;
 
         for bin in ["inc", "dec"] {
@@ -48,7 +48,7 @@ event! {
 
             counts.offer_all(current.map(bin)?)?;
             counts.offer_all(incoming.map(bin)?)?;
-            out.put(bin, counts.into_map()?)?;
+            out.insert(bin, counts.into_map()?)?;
         }
 
         Ok(Resolution::Record { bins: incoming.with_bins(out)?, ttl: None })
@@ -65,12 +65,12 @@ The same in Java, where the table is a small class with one static instance reus
 ```java
 @On.XdrMerge("merge_pncounter")
 static Resolution mergePnCounter(EventRecord current, EventRecord incoming, Conflict conflict) {
-    UdfMap out = UdfMap.create(2);
+    MapBuilder out = Udf.map(2);
 
     for (String bin : new String[] {"inc", "dec"}) {
         TABLE.size = 0;
-        TABLE.offerAll(current.binMap(bin));
-        TABLE.offerAll(incoming.binMap(bin));
+        TABLE.offerAll(current.getMap(bin, null));
+        TABLE.offerAll(incoming.getMap(bin, null));
         out.put(bin, TABLE.toMap());
     }
 
@@ -133,7 +133,7 @@ UDF_ON_XDR_MERGE(merge_pncounter)
 
 Three exports instead of two. `increment(site, n)` adds `n` to the site's entry of `inc`,
 `decrement(site, n)` adds `n` to the site's entry of `dec`, and `value()` answers the difference of the
-two sums. Both writes go through one helper that loads the map, adds, stores it and commits, and both
+two sums. Both writes go through one helper that loads the map, adds, stores it and saves the record, and both
 answer the counter's new value.
 
 The helper refuses a negative `n`. That is the invariant of this CRDT: an entry only grows, and a caller

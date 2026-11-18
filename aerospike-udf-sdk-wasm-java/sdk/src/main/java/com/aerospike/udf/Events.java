@@ -26,7 +26,7 @@ public final class Events {
     public static Value desc(int args, int argc) {
         Value[] a = new Value[1];
 
-        if (Udf.args(args, argc, a) < 1 || a[0].kind != Value.MAP) {
+        if (LowLevel.args(args, argc, a) < 1 || a[0].kind() != Value.MAP) {
             return null;
         }
 
@@ -34,11 +34,13 @@ public final class Events {
     }
 
     /**
-     * Fills an {@link EventRecord} from the description's entry ({@code before}, {@code after}, {@code record});
-     * {@code which} is the index the record is read by.
+     * The record under the description's entry {@code key} ({@code before}, {@code after}, {@code record}),
+     * or null when the description has none; {@code which} is the index the record is read by.
      */
-    public static boolean side(Value desc, String key, int which, EventRecord out) {
-        return out.decode(desc, key, which);
+    public static EventRecord side(Value desc, String key, int which) {
+        EventRecord out = new EventRecord();
+
+        return desc != null && out.decode(desc, key, which) ? out : null;
     }
 
     /** What a before-write or after-write handler is asked about. */
@@ -56,17 +58,17 @@ public final class Events {
 
         /** Fills this from the description's {@code write} entry. False when it has none. */
         public boolean decode(Value desc) {
-            Value m = Udf.mapGet(desc, "write");
+            Value m = Maps.get(desc, "write");
 
-            if (m.kind != Value.MAP) {
+            if (m.kind() != Value.MAP) {
                 return false;
             }
 
-            source = Udf.mapStr(m, "source");
-            generation = Udf.mapInt(m, "generation", 0);
-            ttl = Udf.mapInt(m, "ttl", 0);
-            create = Udf.mapBool(m, "create");
-            durableDelete = Udf.mapBool(m, "durable-delete");
+            source = Maps.getString(m, "source");
+            generation = Maps.getLong(m, "generation", 0);
+            ttl = Maps.getLong(m, "ttl", 0);
+            create = Maps.getBoolean(m, "create");
+            durableDelete = Maps.getBoolean(m, "durable-delete");
 
             return true;
         }
@@ -81,14 +83,14 @@ public final class Events {
 
         /** Fills this from the description's {@code delete} entry. False when it has none. */
         public boolean decode(Value desc) {
-            Value m = Udf.mapGet(desc, "delete");
+            Value m = Maps.get(desc, "delete");
 
-            if (m.kind != Value.MAP) {
+            if (m.kind() != Value.MAP) {
                 return false;
             }
 
-            source = Udf.mapStr(m, "source");
-            durable = Udf.mapBool(m, "durable");
+            source = Maps.getString(m, "source");
+            durable = Maps.getBoolean(m, "durable");
 
             return true;
         }
@@ -105,15 +107,15 @@ public final class Events {
 
         /** Fills this from the description's {@code truncate} entry. False when it has none. */
         public boolean decode(Value desc) {
-            Value m = Udf.mapGet(desc, "truncate");
+            Value m = Maps.get(desc, "truncate");
 
-            if (m.kind != Value.MAP) {
+            if (m.kind() != Value.MAP) {
                 return false;
             }
 
-            namespace = Udf.mapStr(m, "namespace");
-            set = Udf.mapStr(m, "set");
-            lut = Udf.mapInt(m, "lut", 0);
+            namespace = Maps.getString(m, "namespace");
+            set = Maps.getString(m, "set");
+            lut = Maps.getLong(m, "lut", 0);
 
             return true;
         }
@@ -133,19 +135,19 @@ public final class Events {
          * neither.
          */
         public boolean decode(Value desc) {
-            Value m = Udf.mapGet(desc, "expire");
+            Value m = Maps.get(desc, "expire");
 
-            if (m.kind != Value.MAP) {
-                m = Udf.mapGet(desc, "evict");
+            if (m.kind() != Value.MAP) {
+                m = Maps.get(desc, "evict");
             }
 
-            if (m.kind != Value.MAP) {
+            if (m.kind() != Value.MAP) {
                 return false;
             }
 
-            voidTime = Udf.mapInt(m, "void-time", 0);
-            now = Udf.mapInt(m, "now", 0);
-            evictVoidTime = Udf.mapInt(m, "evict-void-time", 0);
+            voidTime = Maps.getLong(m, "void-time", 0);
+            now = Maps.getLong(m, "now", 0);
+            evictVoidTime = Maps.getLong(m, "evict-void-time", 0);
 
             return true;
         }
@@ -160,14 +162,14 @@ public final class Events {
 
         /** Fills this from the description's {@code read} entry. False when it has none. */
         public boolean decode(Value desc) {
-            Value m = Udf.mapGet(desc, "read");
+            Value m = Maps.get(desc, "read");
 
-            if (m.kind != Value.MAP) {
+            if (m.kind() != Value.MAP) {
                 return false;
             }
 
-            source = Udf.mapStr(m, "source");
-            all = Udf.mapBool(m, "all");
+            source = Maps.getString(m, "source");
+            all = Maps.getBoolean(m, "all");
 
             return true;
         }
@@ -180,13 +182,13 @@ public final class Events {
 
         /** Fills this from the description's {@code ship} entry. False when it has none. */
         public boolean decode(Value desc) {
-            Value m = Udf.mapGet(desc, "ship");
+            Value m = Maps.get(desc, "ship");
 
-            if (m.kind != Value.MAP) {
+            if (m.kind() != Value.MAP) {
                 return false;
             }
 
-            dc = Udf.mapStr(m, "dc");
+            dc = Maps.getString(m, "dc");
 
             return true;
         }
@@ -203,15 +205,15 @@ public final class Events {
 
         /** Fills this from the description's {@code lifecycle} entry. False when it has none. */
         public boolean decode(Value desc) {
-            Value m = Udf.mapGet(desc, "lifecycle");
+            Value m = Maps.get(desc, "lifecycle");
 
-            if (m.kind != Value.MAP) {
+            if (m.kind() != Value.MAP) {
                 return false;
             }
 
-            phase = Udf.mapStr(m, "phase");
-            node = Udf.mapStr(m, "node");
-            binding = Udf.mapGet(m, "binding");
+            phase = Maps.getString(m, "phase");
+            node = Maps.getString(m, "node");
+            binding = Maps.get(m, "binding");
 
             return true;
         }
@@ -230,16 +232,16 @@ public final class Events {
 
         /** Fills this from the description's {@code cluster} entry. False when it has none. */
         public boolean decode(Value desc) {
-            Value m = Udf.mapGet(desc, "cluster");
+            Value m = Maps.get(desc, "cluster");
 
-            if (m.kind != Value.MAP) {
+            if (m.kind() != Value.MAP) {
                 return false;
             }
 
-            key = Udf.mapStr(m, "key");
-            self = Udf.mapStr(m, "self");
-            size = Udf.mapInt(m, "size", 0);
-            nodes = Udf.mapGet(m, "nodes");
+            key = Maps.getString(m, "key");
+            self = Maps.getString(m, "self");
+            size = Maps.getLong(m, "size", 0);
+            nodes = Maps.get(m, "nodes");
 
             return true;
         }
@@ -258,16 +260,16 @@ public final class Events {
 
         /** Fills this from the description's {@code transfer} entry. False when it has none. */
         public boolean decode(Value desc) {
-            Value m = Udf.mapGet(desc, "transfer");
+            Value m = Maps.get(desc, "transfer");
 
-            if (m.kind != Value.MAP) {
+            if (m.kind() != Value.MAP) {
                 return false;
             }
 
-            namespace = Udf.mapStr(m, "namespace");
-            partition = Udf.mapInt(m, "partition", 0);
-            arrived = "arrived".equals(Udf.mapStr(m, "direction"));
-            peer = Udf.mapStr(m, "peer");
+            namespace = Maps.getString(m, "namespace");
+            partition = Maps.getLong(m, "partition", 0);
+            arrived = "arrived".equals(Maps.getString(m, "direction"));
+            peer = Maps.getString(m, "peer");
 
             return true;
         }
@@ -286,13 +288,13 @@ public final class Events {
         public boolean decode(int args, int argc) {
             Value[] a = new Value[1];
 
-            if (Udf.args(args, argc, a) < 1 || a[0].kind != Value.MAP) {
+            if (LowLevel.args(args, argc, a) < 1 || a[0].kind() != Value.MAP) {
                 return false;
             }
 
-            name = Udf.mapStr(a[0], "name");
-            due = Udf.mapInt(a[0], "due", 0);
-            now = Udf.mapInt(a[0], "now", 0);
+            name = Maps.getString(a[0], "name");
+            due = Maps.getLong(a[0], "due", 0);
+            now = Maps.getLong(a[0], "now", 0);
 
             return true;
         }
@@ -308,31 +310,31 @@ public final class Events {
             return 0;
         }
 
-        int out = Udf.newMap(5);
+        int out = LowLevel.newMap(5);
 
         if (out <= 0) {
             return Udf.fail("answer: could not build the answer");
         }
 
-        Udf.mapPutStr(out, "verdict", verdict);
+        MapBuilder answer = LowLevel.map(out).put("verdict", verdict);
 
         if (code != 0) {
-            Udf.mapPutInt(out, "code", code);
+            answer.put("code", code);
         }
 
         if (message != null && !message.isEmpty()) {
-            Udf.mapPutStr(out, "message", message);
+            answer.put("message", message);
         }
 
         if (bins != 0) {
-            Udf.mapPutHandle(out, "bins", bins);
+            answer.put("bins", LowLevel.map(bins));
         }
 
         if (ttl >= 0) {
-            Udf.mapPutInt(out, "ttl", ttl);
+            answer.put("ttl", ttl);
         }
 
-        if (Udf.resultHandle(out) != Udf.OK) {
+        if (LowLevel.resultHandle(out) != LowLevel.OK) {
             return Udf.fail("answer: could not return the answer");
         }
 
@@ -451,10 +453,10 @@ public final class Events {
     /**
      * The signature text for a handler of {@code kind} with the given parameter text, for example
      * {@code signature("before-write", "guard", PARAMS_BEFORE_WRITE)}; NUL-terminated, for a static field
-     * served by {@link Udf#signature}.
+     * served by {@link Params#signature}.
      */
     public static byte[] signature(String kind, String name, String params) {
-        return Udf.signatureBytes("event " + kind + "/1 " + name + params);
+        return Params.signatureBytes("event " + kind + "/1 " + name + params);
     }
 
     // The parameter text of each kind, for signature().

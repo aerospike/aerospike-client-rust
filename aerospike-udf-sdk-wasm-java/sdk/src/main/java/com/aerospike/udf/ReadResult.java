@@ -24,7 +24,7 @@ public final class ReadResult extends Answer {
     }
 
     /** Answers the read with these bins instead, as the whole response; the stored record is untouched. */
-    public static ReadResult record(UdfMap bins) {
+    public static ReadResult record(MapBuilder bins) {
         return new ReadResult("record", bins.handle());
     }
 }

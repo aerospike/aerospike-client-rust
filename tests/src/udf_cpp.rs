@@ -295,3 +295,136 @@ async fn cpp_sdk_covers_the_rust_surface() {
 
     let _ = client.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
 }
+
+/// The record's lifecycle as `udf::Record` has it: `save()` writes what was staged and creates the record
+/// when there is none, `remove(name)` takes a bin away, a nil written through `set` does the same, and
+/// `delete_record()` deletes the record without a save. The C++ counterpart of
+/// `a_wasm_udf_saves_removes_and_deletes` in `udf_wasm.rs`.
+#[aerospike_macro::test]
+async fn cpp_udf_saves_removes_and_deletes() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("cpp_verbs_{}", common::rand_str(6));
+
+    let write = WritePolicy::default();
+    let read = ReadPolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+    client
+        .put(&write, &key, &[as_bin!("a", 1), as_bin!("b", 2), as_bin!("c", 3)])
+        .await
+        .unwrap();
+
+    if let Err(reason) = register(&client, FIXTURE, package).await {
+        skipped("cpp_udf_saves_removes_and_deletes", &reason);
+        return;
+    }
+
+    // Nothing staged, on a record that exists.
+    let before = client.get(&read, &key, Bins::All).await.unwrap();
+    let result = client.execute_udf(&write, &key, package, "save_nothing", &[]).await.unwrap();
+    let after = client.get(&read, &key, Bins::All).await.unwrap();
+
+    assert_eq!(result, Some(Value::Bool(true)));
+    assert_eq!(after.bins, before.bins, "a save with nothing staged changes no bin");
+    assert_eq!(
+        after.generation,
+        before.generation + 1,
+        "but it is a write all the same: the server treats it as a touch"
+    );
+
+    // A bin removed by name, and one removed by writing nil to it.
+    let result = client
+        .execute_udf(&write, &key, package, "drop_bin", &[Value::from("a")])
+        .await
+        .unwrap();
+    assert_eq!(result, Some(Value::Int(2)), "remove takes the bin away");
+
+    let result = client
+        .execute_udf(&write, &key, package, "nil_bin", &[Value::from("b")])
+        .await
+        .unwrap();
+    assert_eq!(result, Some(Value::Int(1)), "a nil written to a bin removes it too");
+
+    let record = client.get(&read, &key, Bins::All).await.unwrap();
+    assert_eq!(record.bins.len(), 1);
+    assert_eq!(record.bins.get("c"), Some(&Value::Int(3)));
+
+    // Nothing staged, on a key with no record: a record with no bins cannot exist, so nothing is made
+    // and the call is answered as the server answers any operation on a key that is not there.
+    let missing = as_key!(namespace, set_name, 2);
+    let result = client.execute_udf(&write, &missing, package, "save_nothing", &[]).await;
+    assert!(
+        matches!(&result, Err(e) if e.matches(&[ResultCode::KeyNotFoundError])),
+        "a save of nothing to no record: {result:?}"
+    );
+    assert!(client.get(&read, &missing, Bins::All).await.is_err(), "and no record was made");
+
+    // Delete needs no save, and takes what was staged with it. Inside the call the record still answers
+    // that it exists: the server carries the delete out when the call returns.
+    let result = client.execute_udf(&write, &key, package, "delete_it", &[]).await.unwrap();
+    assert_eq!(result, Some(Value::Bool(true)), "exists() is unchanged for the rest of the call");
+    assert!(client.get(&read, &key, Bins::All).await.is_err(), "and the record is gone from the server");
+
+    let _ = client.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
+}
+
+/// `Value::at(index)` reads one element of a stored list without walking to it, and `Map::contains` asks
+/// the host whether a map the call is building has a key, string or integer. The C++ counterpart of
+/// `a_wasm_udf_indexes_a_list_and_asks_a_built_map` in `udf_wasm.rs`.
+#[aerospike_macro::test]
+async fn cpp_udf_indexes_a_list_and_asks_a_built_map() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("cpp_index_{}", common::rand_str(6));
+
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+    let list = as_list!(10, "twenty", as_list!(1, 2), 40);
+    client.put(&write, &key, &[as_bin!("l", list)]).await.unwrap();
+
+    if let Err(reason) = register(&client, FIXTURE, package).await {
+        skipped("cpp_udf_indexes_a_list_and_asks_a_built_map", &reason);
+        return;
+    }
+
+    let probe = |index: i64| {
+        let client = client.clone();
+        let key = key.clone();
+        let package = package.clone();
+        let write = write.clone();
+
+        async move {
+            let result = client
+                .execute_udf(&write, &key, &package, "index_probe", &[Value::from("l"), Value::Int(index)])
+                .await
+                .unwrap()
+                .expect("index_probe returns a map");
+            let pairs = map_entries(&result);
+
+            assert!(!pairs.is_empty(), "expected a map, got {result:?}");
+
+            move |name: &str| -> Option<Value> { entry(&pairs, name).cloned() }
+        }
+    };
+
+    let field = probe(0).await;
+    assert_eq!(field("len"), Some(Value::Int(4)));
+    assert_eq!(field("at"), Some(Value::Int(10)), "the first element");
+    assert_eq!(field("knows"), Some(Value::Bool(true)), "a built map has the keys it was given");
+    assert_eq!(field("invents"), Some(Value::Bool(false)), "and no others");
+
+    assert_eq!(probe(1).await("at"), Some(Value::String("twenty".into())), "past a scalar");
+    assert_eq!(probe(3).await("at"), Some(Value::Int(40)), "past a nested list, stepped over whole");
+    assert_eq!(
+        probe(2).await("at"),
+        Some(Value::List(vec![Value::Int(1), Value::Int(2)])),
+        "a nested list comes back as one"
+    );
+    assert_eq!(probe(4).await("at"), Some(Value::String("absent".into())), "one past the end");
+    assert_eq!(probe(1 << 40).await("at"), Some(Value::String("absent".into())), "far past the end");
+    assert_eq!(probe(-1).await("at"), Some(Value::String("absent".into())), "before the start");
+
+    let _ = client.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
+}

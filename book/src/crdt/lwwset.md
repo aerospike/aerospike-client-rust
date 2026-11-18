@@ -49,8 +49,9 @@ later of the clock and one past the tag's last stamp on either map. Two writes t
 therefore never tie, and never go backwards, whatever the clock does:
 
 ```rust
-fn stamp_for(tag: &str) -> Result<i64, Error> {
-    let last = stored("addedAt")?.get(tag).unwrap_or(0).max(stored("removedAt")?.get(tag).unwrap_or(0));
+fn stamp_for(rec: &Record, tag: &str) -> Result<i64, Error> {
+    let last =
+        stored(rec, "addedAt")?.get(tag).unwrap_or(0).max(stored(rec, "removedAt")?.get(tag).unwrap_or(0));
 
     Ok(as_udf::now()?.max(last + 1))
 }
@@ -72,7 +73,7 @@ larger value per key:
 ```rust
 event! {
     on xdr_merge
-    fn merge_lwwset(current: Record, incoming: Record, _conflict: Conflict) -> Result<Resolution, Error> {
+    fn merge_lwwset(current: EventRecord, incoming: EventRecord, _conflict: Conflict) -> Result<Resolution, Error> {
         let out = as_udf::map(2)?;
 
         for bin in ["addedAt", "removedAt"] {
@@ -80,7 +81,7 @@ event! {
 
             stamps.offer_all(current.map(bin)?)?;
             stamps.offer_all(incoming.map(bin)?)?;
-            out.put(bin, stamps.into_map()?)?;
+            out.insert(bin, stamps.into_map()?)?;
         }
 
         Ok(Resolution::Record { bins: incoming.with_bins(out)?, ttl: None })
@@ -93,12 +94,12 @@ The same in Java:
 ```java
 @On.XdrMerge("merge_lwwset")
 static Resolution mergeLwwSet(EventRecord current, EventRecord incoming, Conflict conflict) {
-    UdfMap out = UdfMap.create(2);
+    MapBuilder out = Udf.map(2);
 
     for (String bin : new String[] {"addedAt", "removedAt"}) {
         ADDED.size = 0;
-        ADDED.offerAll(current.binMap(bin));
-        ADDED.offerAll(incoming.binMap(bin));
+        ADDED.offerAll(current.getMap(bin, null));
+        ADDED.offerAll(incoming.getMap(bin, null));
         out.put(bin, ADDED.toMap());
     }
 

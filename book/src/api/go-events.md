@@ -69,14 +69,6 @@ func DecodeConflict(handle, argc int32, out *Conflict) bool
 
 DecodeConflict reads an event call's arguments into out. False when they are not a conflict.
 
-#### `EventRecord.Bin`
-
-```go
-func (r *EventRecord) Bin(name string, out *Value) int32
-```
-
-Bin reads one of this side's bins. NotFound when the side has no such bin.
-
 #### `EventRecord.BinLUT`
 
 ```go
@@ -109,14 +101,6 @@ func EachStr(list Value, buf []byte, fn func(name []byte, v Value))
 ```
 
 EachStr calls fn with every string of a stored list, as bytes into buf.
-
-#### `ListHasStr`
-
-```go
-func ListHasStr(list Value, text string) bool
-```
-
-ListHasStr reports whether a stored list of strings holds text.
 
 #### `TimerSet`
 
@@ -365,7 +349,8 @@ type TimerInfo struct {
 }
 ```
 
-TimerInfo is a timer handler's argument: the timer that came due. The handler runs as a record UDF.
+TimerInfo is a timer handler's argument: the timer that came due. The handler runs as a record UDF, so
+it takes the *Record first, which it may write and save, and then this.
 
 #### `EventTimerInfo`
 
@@ -685,6 +670,15 @@ func Done() int32 { return answer("ok", 0, "", 0, -1) }
 Done is the answer of the kinds that answer nothing; the generated export delivers it after a handler
 returning only an error.
 
+#### `EventRecord.Bin`
+
+```go
+func (r *EventRecord) Bin(name string) (Value, error)
+```
+
+Bin is one of this side's bins, whatever it holds, a nil included; an error naming the bin when the
+side has none by that name.
+
 #### `EventRecord.Get`
 
 ```go
@@ -693,10 +687,18 @@ func (r *EventRecord) Get(name string) (Value, bool)
 
 Get is the bin as a value; false when the side has no such bin or it is nil.
 
+#### `EventRecord.Has`
+
+```go
+func (r *EventRecord) Has(name string) bool
+```
+
+Has reports whether the side has the bin, nil included.
+
 #### `EventRecord.Int`
 
 ```go
-func (r *EventRecord) Int(name string) (int64, bool)
+func (r *EventRecord) Int(name string) (int64, bool) { return readInt(r, name) }
 ```
 
 Int is an int bin; false when absent, nil or of another kind.
@@ -704,7 +706,7 @@ Int is an int bin; false when absent, nil or of another kind.
 #### `EventRecord.Float64`
 
 ```go
-func (r *EventRecord) Float64(name string) (float64, bool)
+func (r *EventRecord) Float64(name string) (float64, bool) { return readFloat64(r, name) }
 ```
 
 Float64 is a double bin; false when absent, nil or of another kind. An integer bin is not widened.
@@ -712,7 +714,7 @@ Float64 is a double bin; false when absent, nil or of another kind. An integer b
 #### `EventRecord.Bool`
 
 ```go
-func (r *EventRecord) Bool(name string) (bool, bool)
+func (r *EventRecord) Bool(name string) (bool, bool) { return readBool(r, name) }
 ```
 
 Bool is a boolean bin; false when absent, nil or of another kind.
@@ -720,10 +722,34 @@ Bool is a boolean bin; false when absent, nil or of another kind.
 #### `EventRecord.Str`
 
 ```go
-func (r *EventRecord) Str(name string) (string, bool)
+func (r *EventRecord) Str(name string) (string, bool) { return readStr(r, name) }
 ```
 
 Str is the text of a string bin, copied out; false when absent, nil, of another kind, or unreadable.
+
+#### `EventRecord.Bytes`
+
+```go
+func (r *EventRecord) Bytes(name string) ([]byte, bool) { return readBytes(r, name) }
+```
+
+Bytes is the bytes of a blob bin, copied out; false when absent, nil or of another kind.
+
+#### `EventRecord.Generation`
+
+```go
+func (r *EventRecord) Generation() int64 { return r.Gen }
+```
+
+Generation is this side's modification count: the Gen field, as RecordReader asks for it.
+
+#### `EventRecord.LastUpdateTime`
+
+```go
+func (r *EventRecord) LastUpdateTime() int64 { return r.LUT }
+```
+
+LastUpdateTime is when this side was last written: the LUT field, as RecordReader asks for it.
 
 #### `EventRecord.List`
 
@@ -741,14 +767,6 @@ func (r *EventRecord) Map(name string) iter.Seq2[Value, Value]
 
 Map walks a map bin's entries; nothing when absent or not a map.
 
-#### `EventRecord.Has`
-
-```go
-func (r *EventRecord) Has(name string) bool
-```
-
-Has reports whether the side has the bin, nil included.
-
 #### `EventRecord.Names`
 
 ```go
@@ -756,14 +774,6 @@ func (r *EventRecord) Names() iter.Seq[string]
 ```
 
 Names walks the record's bin names.
-
-#### `EventRecord.DeletedAny`
-
-```go
-func (r *EventRecord) DeletedAny() bool
-```
-
-DeletedAny reports whether this side deleted any bin.
 
 #### `EventRecord.WithBins`
 
@@ -775,6 +785,14 @@ WithBins is overrides with every bin of this record it lacks put on top, by posi
 with_bins, for a record answer that changes a few bins and keeps the rest. It prefers one side, so an
 xdr-merge handler that uses it on the current record is not symmetric; Pair.WithNewer is the symmetric
 form. Returns overrides.
+
+#### `EventRecord.DeletedAny`
+
+```go
+func (r *EventRecord) DeletedAny() bool
+```
+
+DeletedAny reports whether this side deleted any bin.
 
 #### `Conflict.InvolvesDelete`
 

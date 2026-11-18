@@ -6,7 +6,7 @@ import udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk-wasm-go
 
 //export topk_record
 func udfRecord_topk(args, argc int32) int32 {
-	return topk.Record(args, argc)
+	return topk.Record(udf.CurrentRecord(), args, argc)
 }
 
 //export topk_end
@@ -16,7 +16,7 @@ func udfEnd_topk(args, argc int32) int32 {
 
 //export vec_distance
 func udfExport_vec_distance(args, argc int32) int32 {
-	return vecDistance(args, argc)
+	return vecDistance(udf.CurrentRecord(), args, argc)
 }
 
 var udfSig_vec_distance = []byte("fn vec_distance(bin: str, query: bytes, metric: str) -> value\x00")

@@ -9,7 +9,7 @@ func udfExport_sum_list(args, argc int32) int32 {
 	if err := udf.Arity("sum_list", 0, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := sumList()
+	r, err := sumList(udf.CurrentRecord())
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -27,7 +27,7 @@ func udfExport_describe(args, argc int32) int32 {
 	if err := udf.Arity("describe", 0, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := describe()
+	r, err := describe(udf.CurrentRecord())
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -47,7 +47,7 @@ func udfExport_typed(args, argc int32) int32 {
 	if err := udf.Arity("typed", 0, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := typed()
+	r, err := typed(udf.CurrentRecord())
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -67,7 +67,7 @@ func udfExport_write_lists(args, argc int32) int32 {
 	if err := udf.Arity("write_lists", 0, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := writeLists()
+	r, err := writeLists(udf.CurrentRecord())
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -91,7 +91,7 @@ func udfExport_relist(args, argc int32) int32 {
 	if err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := relist(p0)
+	r, err := relist(udf.CurrentRecord(), p0)
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -117,7 +117,7 @@ func udfExport_geo_roundtrip(args, argc int32) int32 {
 	if err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := geoRoundtrip(p0)
+	r, err := geoRoundtrip(udf.CurrentRecord(), p0)
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -158,7 +158,7 @@ func udfExport_touch_ttl(args, argc int32) int32 {
 	if err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := touchTTL(p0)
+	r, err := touchTTL(udf.CurrentRecord(), p0)
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -176,7 +176,7 @@ func udfExport_remove_me(args, argc int32) int32 {
 	if err := udf.Arity("remove_me", 0, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := removeMe()
+	r, err := removeMe(udf.CurrentRecord())
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -188,3 +188,117 @@ var udfSig_remove_me = []byte("fn remove_me() -> value\x00")
 
 //export __udf_sig_remove_me
 func udfSigFn_remove_me() int32 { return udf.Signature(&udfSig_remove_me) }
+
+//export save_nothing
+func udfExport_save_nothing(args, argc int32) int32 {
+	if err := udf.Arity("save_nothing", 0, argc); err != nil {
+		return udf.FailErr(err)
+	}
+	r, err := saveNothing(udf.CurrentRecord())
+	if err != nil {
+		return udf.FailErr(err)
+	}
+	udf.ResultBool(r)
+	return 0
+}
+
+var udfSig_save_nothing = []byte("fn save_nothing() -> value\x00")
+
+//export __udf_sig_save_nothing
+func udfSigFn_save_nothing() int32 { return udf.Signature(&udfSig_save_nothing) }
+
+//export delete_it
+func udfExport_delete_it(args, argc int32) int32 {
+	if err := udf.Arity("delete_it", 0, argc); err != nil {
+		return udf.FailErr(err)
+	}
+	r, err := deleteIt(udf.CurrentRecord())
+	if err != nil {
+		return udf.FailErr(err)
+	}
+	udf.ResultBool(r)
+	return 0
+}
+
+var udfSig_delete_it = []byte("fn delete_it() -> value\x00")
+
+//export __udf_sig_delete_it
+func udfSigFn_delete_it() int32 { return udf.Signature(&udfSig_delete_it) }
+
+//export drop_bin
+func udfExport_drop_bin(args, argc int32) int32 {
+	var a [1]udf.Value
+	n := udf.Args(args, argc, a[:])
+	if err := udf.Arity("drop_bin", 1, argc); err != nil {
+		return udf.FailErr(err)
+	}
+	p0, err := udf.ArgString(a[:], n, 0, "drop_bin", "name")
+	if err != nil {
+		return udf.FailErr(err)
+	}
+	r, err := dropBin(udf.CurrentRecord(), p0)
+	if err != nil {
+		return udf.FailErr(err)
+	}
+	udf.ResultInt(r)
+	return 0
+}
+
+var udfSig_drop_bin = []byte("fn drop_bin(name: str) -> value\x00")
+
+//export __udf_sig_drop_bin
+func udfSigFn_drop_bin() int32 { return udf.Signature(&udfSig_drop_bin) }
+
+//export nil_bin
+func udfExport_nil_bin(args, argc int32) int32 {
+	var a [1]udf.Value
+	n := udf.Args(args, argc, a[:])
+	if err := udf.Arity("nil_bin", 1, argc); err != nil {
+		return udf.FailErr(err)
+	}
+	p0, err := udf.ArgString(a[:], n, 0, "nil_bin", "name")
+	if err != nil {
+		return udf.FailErr(err)
+	}
+	r, err := nilBin(udf.CurrentRecord(), p0)
+	if err != nil {
+		return udf.FailErr(err)
+	}
+	udf.ResultInt(r)
+	return 0
+}
+
+var udfSig_nil_bin = []byte("fn nil_bin(name: str) -> value\x00")
+
+//export __udf_sig_nil_bin
+func udfSigFn_nil_bin() int32 { return udf.Signature(&udfSig_nil_bin) }
+
+//export index_probe
+func udfExport_index_probe(args, argc int32) int32 {
+	var a [2]udf.Value
+	n := udf.Args(args, argc, a[:])
+	if err := udf.Arity("index_probe", 2, argc); err != nil {
+		return udf.FailErr(err)
+	}
+	p0, err := udf.ArgString(a[:], n, 0, "index_probe", "name")
+	if err != nil {
+		return udf.FailErr(err)
+	}
+	p1, err := udf.ArgInt64(a[:], n, 1, "index_probe", "index")
+	if err != nil {
+		return udf.FailErr(err)
+	}
+	r, err := indexProbe(udf.CurrentRecord(), p0, p1)
+	if err != nil {
+		return udf.FailErr(err)
+	}
+	if err := udf.ResultMap(r); err != nil {
+		return udf.FailErr(err)
+	}
+	return 0
+}
+
+var udfSig_index_probe = []byte("fn index_probe(name: str, index: int) -> value\x00")
+
+//export __udf_sig_index_probe
+func udfSigFn_index_probe() int32 { return udf.Signature(&udfSig_index_probe) }

@@ -46,8 +46,9 @@ import javax.tools.JavaFileObject;
  * {@code @On.*} methods, or annotated {@code @Stream} itself, a class {@code <Class>Exports} in the same
  * package with one TeaVM {@code @Export} method per UDF or handler, which decodes the arguments into the
  * method's parameters and delivers its return, one {@code __udf_sig_<name>} export per name, and the
- * module's {@code main}. A class whose exported methods are instance methods gets one instance, built
- * once, in the generated class. The annotations are matched by name, so the processor depends on nothing
+ * module's {@code main}. A method whose first parameter is the SDK's {@code Record} is handed the record of
+ * the call there: it is not an argument, so it is left out of the arity check and of the signature. A class
+ * whose exported methods are instance methods gets one instance, built once, in the generated class. The annotations are matched by name, so the processor depends on nothing
  * but the JDK and never sees the SDK; the generated code refers to the SDK by qualified name.
  */
 public final class ExportsProcessor extends AbstractProcessor {
@@ -59,8 +60,10 @@ public final class ExportsProcessor extends AbstractProcessor {
 
     private static final String UDF = SDK + "Udf";
     private static final String VALUE = SDK + "Value";
-    private static final String UDF_MAP = SDK + "UdfMap";
-    private static final String UDF_LIST = SDK + "UdfList";
+    private static final String RECORD = SDK + "Record";
+    private static final String[] COLLECTIONS = {
+        SDK + "MapBuilder", SDK + "ListBuilder", SDK + "MapValue", SDK + "ListValue"
+    };
     private static final String PARAMS = SDK + "Params";
     private static final String EVENTS = SDK + "Events";
     private static final String CONFLICT = SDK + "Conflict";
@@ -147,6 +150,20 @@ public final class ExportsProcessor extends AbstractProcessor {
 
         boolean instance() {
             return !method.getModifiers().contains(Modifier.STATIC);
+        }
+
+        /** Whether the method's first parameter is the record of the call, which is not an argument. */
+        boolean takesRecord() {
+            List<? extends VariableElement> p = method.getParameters();
+
+            return !p.isEmpty() && typeName(p.get(0).asType()).equals(RECORD);
+        }
+
+        /** The parameters that are arguments: all of them, less a leading record. */
+        List<? extends VariableElement> arguments() {
+            List<? extends VariableElement> p = method.getParameters();
+
+            return takesRecord() ? p.subList(1, p.size()) : p;
         }
 
         String annotation() {
@@ -338,7 +355,11 @@ public final class ExportsProcessor extends AbstractProcessor {
             return;
         }
 
-        List<? extends VariableElement> params = method.getParameters();
+        if (e.role == Role.END && e.takesRecord()) {
+            error(method, "a stream's end method takes no Record: it runs after the last record, on none");
+        }
+
+        List<? extends VariableElement> params = e.arguments();
 
         for (int i = 0; i < params.size(); i++) {
             param(params.get(i), i, params.size(), "", "");
@@ -353,12 +374,15 @@ public final class ExportsProcessor extends AbstractProcessor {
         }
         else if (result(ret, "x") == null) {
             error(method, "an exported method returns void, long, int, double, boolean, String, byte[],"
-                    + " Value, UdfMap or UdfList (or int, in the raw form)");
+                    + " Value, MapBuilder, ListBuilder, MapValue, ListValue, java.util.Map or java.util.List"
+                    + " (or int, in the raw form)");
         }
     }
 
     private void checkHandler(Export e) {
-        List<? extends VariableElement> params = e.method.getParameters();
+        // A timer handler runs as a record UDF, so it is the one handler that takes the record of the call.
+        boolean timer = e.kind.event.equals("timer");
+        List<? extends VariableElement> params = timer ? e.arguments() : e.method.getParameters();
         boolean ok = params.size() == e.kind.params.length;
 
         for (int i = 0; ok && i < params.size(); i++) {
@@ -377,7 +401,7 @@ public final class ExportsProcessor extends AbstractProcessor {
         if (!ok) {
             StringBuilder want = new StringBuilder(e.kind.answer == null ? "void " : simple(e.kind.answer) + " ");
 
-            want.append(e.method.getSimpleName()).append('(');
+            want.append(e.method.getSimpleName()).append(timer ? "(Record, " : "(");
 
             for (int i = 0; i < e.kind.params.length; i++) {
                 want.append(i > 0 ? ", " : "").append(simple(e.kind.params[i]));
@@ -471,6 +495,11 @@ public final class ExportsProcessor extends AbstractProcessor {
             break;
         }
 
+        if (typeName(t).equals(RECORD)) {
+            error(p, "the Record is the first parameter: it is the record of the call, not an argument");
+            return null;
+        }
+
         error(p, "a parameter is long, int, double, boolean, String, byte[], Value, their @Nullable boxed"
                 + " forms, or Value[] last; " + t + " is none of these");
 
@@ -478,7 +507,7 @@ public final class ExportsProcessor extends AbstractProcessor {
     }
 
     /** The statement delivering a call's value as the result, or null when the type has no form. */
-    private static String result(TypeMirror ret, String call) {
+    private String result(TypeMirror ret, String call) {
         switch (ret.getKind()) {
         case VOID:
             return call + ";\n            " + UDF + ".resultNil();";
@@ -499,8 +528,23 @@ public final class ExportsProcessor extends AbstractProcessor {
                 return PARAMS + ".resultStr(" + call + ");";
             }
 
-            if (q.equals(VALUE) || q.equals(UDF_MAP) || q.equals(UDF_LIST)) {
+            if (q.equals(VALUE)) {
                 return PARAMS + ".result(" + call + ");";
+            }
+
+            for (String collection : COLLECTIONS) {
+                if (q.equals(collection)) {
+                    return PARAMS + ".result(" + call + ");";
+                }
+            }
+
+            // A java.util.List or Map, or any class that is one: the cast picks the overload.
+            if (isA(ret, "java.util.List")) {
+                return PARAMS + ".result((java.util.List<?>) " + call + ");";
+            }
+
+            if (isA(ret, "java.util.Map")) {
+                return PARAMS + ".result((java.util.Map<?, ?>) " + call + ");";
             }
 
             return null;
@@ -508,6 +552,14 @@ public final class ExportsProcessor extends AbstractProcessor {
         default:
             return null;
         }
+    }
+
+    /** Whether a declared type is the named interface or implements it. */
+    private boolean isA(TypeMirror t, String type) {
+        TypeElement element = processingEnv.getElementUtils().getTypeElement(type);
+
+        return element != null && processingEnv.getTypeUtils().isAssignable(processingEnv.getTypeUtils().erasure(t),
+                processingEnv.getTypeUtils().erasure(element.asType()));
     }
 
     //==========================================================
@@ -615,7 +667,7 @@ public final class ExportsProcessor extends AbstractProcessor {
             return e.params.isEmpty() ? "()" : e.params;
         }
 
-        List<? extends VariableElement> params = e.method.getParameters();
+        List<? extends VariableElement> params = e.arguments();
         List<Param> decoded = new ArrayList<>();
         boolean rest = false;
 
@@ -633,20 +685,21 @@ public final class ExportsProcessor extends AbstractProcessor {
         out.append("    @Export(name = \"").append(export).append("\")\n");
         out.append("    public static int ").append(prefix(e)).append(id).append("(int args, int argc) {\n");
         out.append("        try {\n");
-        out.append("            int n = ").append(UDF).append(".args(args, argc, ARGS_").append(prefix(e)).append(id)
+        out.append("            int n = ").append(PARAMS).append(".args(args, argc, ARGS_").append(prefix(e)).append(id)
                 .append(");\n");
 
-        // Udf.args fills at most the array's length, so the surplus shows only in argc.
+        // Params.args fills at most the array's length, so the surplus shows only in argc.
         if (!rest) {
             out.append("            ").append(PARAMS).append(".arity(\"").append(e.name).append("\", ")
                     .append(params.size()).append(", argc);\n");
         }
 
-        StringBuilder call = new StringBuilder(method + "(");
+        // The record of the call goes first when the method asks for it; it is no part of the signature.
+        StringBuilder call = new StringBuilder(method + "(" + (e.takesRecord() ? PARAMS + ".record()" : ""));
         StringBuilder sig = new StringBuilder("(");
 
         for (int i = 0; i < decoded.size(); i++) {
-            call.append(i > 0 ? ", " : "").append(decoded.get(i).expr);
+            call.append(i > 0 || e.takesRecord() ? ", " : "").append(decoded.get(i).expr);
             sig.append(i > 0 ? ", " : "").append(decoded.get(i).sig);
         }
 
@@ -698,14 +751,20 @@ public final class ExportsProcessor extends AbstractProcessor {
         else if (k.event.equals("timer")) {
             out.append("        ").append(EVENTS).append(".TimerInfo timer = new ").append(EVENTS).append(".TimerInfo();\n\n");
             out.append("        if (!timer.decode(args, argc)) {\n").append(fail).append("        }\n\n");
+
+            if (e.takesRecord()) {
+                actuals.add(PARAMS + ".record()");
+            }
+
             actuals.add("timer");
         }
         else {
             out.append("        ").append(VALUE).append(" desc = ").append(EVENTS).append(".desc(args, argc);\n");
 
             for (int i = 0; i < k.records.length; i++) {
-                out.append("        ").append(EVENT_RECORD).append(" record").append(i).append(" = new ")
-                        .append(EVENT_RECORD).append("();\n");
+                out.append("        ").append(EVENT_RECORD).append(" record").append(i).append(" = ")
+                        .append(EVENTS).append(".side(desc, \"").append(k.records[i]).append("\", ").append(i)
+                        .append(");\n");
                 actuals.add("record" + i);
             }
 
@@ -715,8 +774,7 @@ public final class ExportsProcessor extends AbstractProcessor {
             out.append("        if (desc == null");
 
             for (int i = 0; i < k.records.length; i++) {
-                out.append(" || !").append(EVENTS).append(".side(desc, \"").append(k.records[i]).append("\", ")
-                        .append(i).append(", record").append(i).append(")");
+                out.append(" || record").append(i).append(" == null");
             }
 
             out.append(" || !info.decode(desc)) {\n").append(fail).append("        }\n\n");
@@ -753,14 +811,14 @@ public final class ExportsProcessor extends AbstractProcessor {
 
     private static void signature(StringBuilder out, String name, String id, String text) {
         signatureBytes(out, name, id,
-                UDF + ".signatureBytes(\"" + text.replace("\\", "\\\\").replace("\"", "\\\"") + "\")");
+                PARAMS + ".signatureBytes(\"" + text.replace("\\", "\\\\").replace("\"", "\\\"") + "\")");
     }
 
     private static void signatureBytes(StringBuilder out, String name, String id, String expr) {
         out.append("\n    private static final byte[] SIG_").append(id).append(" = ").append(expr).append(";\n\n");
         out.append("    @Export(name = \"__udf_sig_").append(name).append("\")\n");
         out.append("    public static int sig_").append(id).append("() {\n");
-        out.append("        return ").append(UDF).append(".signature(SIG_").append(id).append(");\n");
+        out.append("        return ").append(PARAMS).append(".signature(SIG_").append(id).append(");\n");
         out.append("    }\n");
     }
 

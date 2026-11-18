@@ -37,7 +37,7 @@ func udfExport_increment(args, argc int32) int32 {
 	if err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := increment(p0, p1)
+	r, err := increment(udf.CurrentRecord(), p0, p1)
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -65,7 +65,7 @@ func udfExport_decrement(args, argc int32) int32 {
 	if err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := decrement(p0, p1)
+	r, err := decrement(udf.CurrentRecord(), p0, p1)
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -83,7 +83,7 @@ func udfExport_value(args, argc int32) int32 {
 	if err := udf.Arity("value", 0, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := value()
+	r, err := value(udf.CurrentRecord())
 	if err != nil {
 		return udf.FailErr(err)
 	}

@@ -12,10 +12,10 @@ AS_UDF_EXPORT(increment) int32_t
 increment(int32_t args, int32_t argc)
 {
     as_udf_value v;
-    int64_t n = as_udf_bin("n", &v) == AS_UDF_OK && v.kind == AS_UDF_INT ? v.payload : 0;
+    int64_t n = as_udf_rec_bin("n", &v) == AS_UDF_OK && v.kind == AS_UDF_INT ? v.payload : 0;
 
-    as_udf_set_int("n", 1, n + 1);
-    as_udf_rec_exists() ? as_udf_rec_update() : as_udf_rec_create();
+    as_udf_rec_set_int("n", 1, n + 1);
+    as_udf_rec_save();
     as_udf_result_int(n + 1);
 
     return 0;
@@ -40,11 +40,18 @@ SSE ahead of time. Off by default: a module built with it is refused by a server
 - A UDF is `int32_t name(int32_t args, int32_t argc)` returning 0; it sets its result with `as_udf_result_*`
   and fails with `as_udf_failf("message")`, which returns the 1 to return. A stream UDF exports
   `<name>_record` and `<name>_end`; the whole stream shares one instance, so state is plain statics.
-- Every read is an `as_udf_value`: `as_udf_bin("v", &v)` for a bin; `as_udf_args(args, argc, out, cap)` for
+- Every read is an `as_udf_value`: `as_udf_rec_bin("v", &v)` for a bin; `as_udf_args(args, argc, out, cap)` for
   the arguments in one import; `as_udf_bytes(&v, buf, cap)` for the bytes of a string or blob;
   `as_udf_cursor_enter_at` / `as_udf_cursor_values` to walk a collection 128 values per import.
+- Everything about the record of the call is `as_udf_rec_*`: `as_udf_rec_bin` reads a bin,
+  `as_udf_rec_set_int` and its family stage one, `as_udf_rec_remove(name, len)` removes one,
+  `as_udf_rec_gen`, `as_udf_rec_ttl`, `as_udf_rec_key_type` and the rest read its metadata.
+  `as_udf_rec_save()` writes what was staged, creating the record when it does not exist, and
+  `as_udf_rec_delete()` deletes the record. An event's records are read with `as_udf_event_*` instead.
 - Collections are built on the host: `as_udf_map_new`, `as_udf_list_new`, filled one value at a time or in a
   batch of guest values with `as_udf_map_put_entries` / `as_udf_list_push_values`.
+  `as_udf_map_contains(handle, "key")` asks the host whether a map being built has a key, and
+  `as_udf_list_at(&list, index)` reads one element of a stored list without a cursor.
 - `AS_UDF_SIGNATURE(name, "fn name(a: int) -> value")` exports the signature a client can read with an
   execute of `__udf_sig_name`, as the Rust macros do automatically.
 

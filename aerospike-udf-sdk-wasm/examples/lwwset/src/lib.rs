@@ -25,7 +25,7 @@
 
 #![no_std]
 
-use aerospike_udf_sdk_wasm::{self as as_udf, event, export, Coll, Error, List, Map, Resolution, Str, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, event, export, Coll, Error, List, Map, Record, Resolution, Str, Value};
 
 const MAX_TAGS: usize = 64;
 
@@ -86,7 +86,7 @@ impl Stamps {
         let m = as_udf::map(self.n.max(1))?;
 
         for (tag, at) in self.tags[..self.n].iter().flatten() {
-            m.put(tag.as_str(), *at)?;
+            m.insert(tag.as_str(), *at)?;
         }
 
         Ok(m)
@@ -96,7 +96,7 @@ impl Stamps {
 event! {
     /// The merge: for every tag of each map, the later stamp. Every other bin is the incoming one's.
     on xdr_merge
-    fn merge_lwwset(current: Record, incoming: Record, _conflict: Conflict) -> Result<Resolution, Error> {
+    fn merge_lwwset(current: EventRecord, incoming: EventRecord, _conflict: Conflict) -> Result<Resolution, Error> {
         let out = as_udf::map(2)?;
 
         for bin in ["addedAt", "removedAt"] {
@@ -104,7 +104,7 @@ event! {
 
             stamps.offer_all(current.map(bin)?)?;
             stamps.offer_all(incoming.map(bin)?)?;
-            out.put(bin, stamps.into_map()?)?;
+            out.insert(bin, stamps.into_map()?)?;
         }
 
         Ok(Resolution::Record { bins: incoming.with_bins(out)?, ttl: None })
@@ -112,14 +112,10 @@ event! {
 }
 
 /// One of the record's maps, or none.
-fn stored(bin: &str) -> Result<Stamps, Error> {
+fn stored(rec: &Record, bin: &str) -> Result<Stamps, Error> {
     let mut stamps = Stamps::new();
 
-    match as_udf::bin(bin) {
-        Ok(v) => stamps.offer_all(Some(v.map()?))?,
-        Err(Error::Absent) => {}
-        Err(e) => return Err(e),
-    }
+    stamps.offer_all(rec.map(bin)?)?;
 
     Ok(stamps)
 }
@@ -134,9 +130,9 @@ fn is_member(added: &Stamps, removed: &Stamps, tag: &str) -> bool {
 }
 
 /// The members, in order, as a built list.
-fn members_of() -> Result<Value<'static>, Error> {
-    let added = stored("addedAt")?;
-    let removed = stored("removedAt")?;
+fn members_of(rec: &Record) -> Result<Value<'static>, Error> {
+    let added = stored(rec, "addedAt")?;
+    let removed = stored(rec, "removedAt")?;
     let l: List = as_udf::list(added.n.max(1))?;
     let mut done = [false; MAX_TAGS];
 
@@ -167,50 +163,46 @@ fn members_of() -> Result<Value<'static>, Error> {
 
 /// The stamp for a write to `tag` now: the clock, or one past the tag's last stamp when the clock has
 /// not moved since.
-fn stamp_for(tag: &str) -> Result<i64, Error> {
-    let last = stored("addedAt")?.get(tag).unwrap_or(0).max(stored("removedAt")?.get(tag).unwrap_or(0));
+fn stamp_for(rec: &Record, tag: &str) -> Result<i64, Error> {
+    let last =
+        stored(rec, "addedAt")?.get(tag).unwrap_or(0).max(stored(rec, "removedAt")?.get(tag).unwrap_or(0));
 
     Ok(as_udf::now()?.max(last + 1))
 }
 
-/// Stamps `tag` in one of the maps and commits.
-fn stamp(bin: &str, tag: Tag) -> Result<(), Error> {
-    let at = stamp_for(tag.as_str())?;
-    let mut stamps = stored(bin)?;
+/// Stamps `tag` in one of the maps and saves.
+fn stamp(rec: &mut Record, bin: &str, tag: Tag) -> Result<(), Error> {
+    let at = stamp_for(rec, tag.as_str())?;
+    let mut stamps = stored(rec, bin)?;
 
     stamps.offer(tag, at)?;
-    as_udf::set(bin, stamps.into_map()?)?;
+    rec.set(bin, stamps.into_map()?)?;
 
-    if as_udf::exists() {
-        as_udf::update()?;
-    }
-    else {
-        as_udf::create()?;
-    }
+    rec.save()?;
 
     Ok(())
 }
 
 export! {
     /// Adds a tag, or adds it back. Returns the members.
-    fn add(tag: &str) -> Result<Value, Error> {
-        stamp("addedAt", Tag::new(tag)?)?;
-        members_of()
+    fn add(rec: &mut Record, tag: &str) -> Result<Value, Error> {
+        stamp(rec, "addedAt", Tag::new(tag)?)?;
+        members_of(rec)
     }
 
     /// Removes a tag that is a member. Returns the members.
-    fn remove(tag: &str) -> Result<Value, Error> {
-        if !is_member(&stored("addedAt")?, &stored("removedAt")?, tag) {
+    fn remove(rec: &mut Record, tag: &str) -> Result<Value, Error> {
+        if !is_member(&stored(rec, "addedAt")?, &stored(rec, "removedAt")?, tag) {
             return Err(Error::Custom("not a member"));
         }
 
-        stamp("removedAt", Tag::new(tag)?)?;
-        members_of()
+        stamp(rec, "removedAt", Tag::new(tag)?)?;
+        members_of(rec)
     }
 
     /// The members, in order.
-    fn members() -> Result<Value, Error> {
-        members_of()
+    fn members(rec: &Record) -> Result<Value, Error> {
+        members_of(rec)
     }
 }
 

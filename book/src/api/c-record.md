@@ -12,15 +12,15 @@ Declares a host import: the function that follows is resolved from the `aerospik
 #### `bin_value`
 
 ```c
-int32_t as_udf_bin_value(const char* name, int32_t name_len, void* out, int32_t cap)
+int32_t as_udf_rec_bin_value(const char* name, int32_t name_len, void* out, int32_t cap)
 ```
 
-Bins - reading. One import for any kind: the host writes a 16-byte value.
+The record's bins - reading. One import for any kind: the host writes a 16-byte value.
 
 #### `set_int`
 
 ```c
-int32_t as_udf_set_int(const char* name, int32_t name_len, int64_t value)
+int32_t as_udf_rec_set_int(const char* name, int32_t name_len, int64_t value)
 ```
 
 Stage an integer into a bin. Returns AS_UDF_OK, AS_UDF_ERR for a name that is empty or longer than 15
@@ -29,58 +29,50 @@ bytes, or AS_UDF_REFUSED when the record does not take the write.
 #### `set_double`
 
 ```c
-int32_t as_udf_set_double(const char* name, int32_t name_len, double value)
+int32_t as_udf_rec_set_double(const char* name, int32_t name_len, double value)
 ```
 
-Stage a double into a bin. Statuses as as_udf_set_int.
+Stage a double into a bin. Statuses as as_udf_rec_set_int.
 
 #### `set_bool`
 
 ```c
-int32_t as_udf_set_bool(const char* name, int32_t name_len, int32_t value)
+int32_t as_udf_rec_set_bool(const char* name, int32_t name_len, int32_t value)
 ```
 
-Stage a boolean into a bin: any non-zero `value` is true. Statuses as as_udf_set_int.
+Stage a boolean into a bin: any non-zero `value` is true. Statuses as as_udf_rec_set_int.
 
 #### `set_str`
 
 ```c
-int32_t as_udf_set_str(const char* name, int32_t name_len, const char* value, int32_t value_len)
+int32_t as_udf_rec_set_str(const char* name, int32_t name_len, const char* value, int32_t value_len)
 ```
 
 Stage a string into a bin: `value_len` bytes, no terminator needed, copied by the host. Statuses as
-as_udf_set_int.
+as_udf_rec_set_int.
 
 #### `set_blob`
 
 ```c
-int32_t as_udf_set_blob(const char* name, int32_t name_len, const void* value, int32_t value_len)
+int32_t as_udf_rec_set_blob(const char* name, int32_t name_len, const void* value, int32_t value_len)
 ```
 
-Stage a blob into a bin, copied by the host. Statuses as as_udf_set_int, and AS_UDF_TYPE_MISMATCH when the
+Stage a blob into a bin, copied by the host. Statuses as as_udf_rec_set_int, and AS_UDF_TYPE_MISMATCH when the
 bin holds bytes of another subtype (an HLL, say), which a plain blob would silently relabel.
 
 #### `set_geojson`
 
 ```c
-int32_t as_udf_set_geojson(const char* name, int32_t name_len, const char* value, int32_t value_len)
+int32_t as_udf_rec_set_geojson(const char* name, int32_t name_len, const char* value, int32_t value_len)
 ```
 
 Stage GeoJSON text into a bin as a geospatial value rather than a string. The text is copied by the host and
-not validated by this call. Statuses as as_udf_set_int.
-
-#### `set_nil`
-
-```c
-int32_t as_udf_set_nil(const char* name, int32_t name_len)
-```
-
-Stage nil into a bin. Statuses as as_udf_set_int.
+not validated by this call. Statuses as as_udf_rec_set_int.
 
 #### `set_handle`
 
 ```c
-int32_t as_udf_set_handle(const char* name, int32_t name_len, int32_t handle)
+int32_t as_udf_rec_set_handle(const char* name, int32_t name_len, int32_t handle)
 ```
 
 Stage a value built on the host (a list, a map or a val_* value) into a bin, which takes it over. Returns
@@ -90,7 +82,7 @@ and the bin holds bytes of another subtype, or AS_UDF_REFUSED.
 #### `set_at`
 
 ```c
-int32_t as_udf_set_at(const char* name, int32_t name_len, int32_t src, int32_t at)
+int32_t as_udf_rec_set_at(const char* name, int32_t name_len, int32_t src, int32_t at)
 ```
 
 Stage the stored value at offset `at` of source `src` into a bin, copied on the host without the guest
@@ -100,31 +92,32 @@ does not take the write or a plain blob would replace bytes of another subtype.
 #### `bin_remove`
 
 ```c
-int32_t as_udf_bin_remove(const char* name, int32_t name_len)
+int32_t as_udf_rec_remove(const char* name, int32_t name_len)
 ```
 
-Remove a bin. Returns AS_UDF_OK, AS_UDF_ERR for a name that is empty or longer than 15 bytes, or
-AS_UDF_REFUSED when the record does not take the removal.
+Remove a bin from the record: staged like a write, and applied by as_udf_rec_save. This is the one way to
+drop a bin; deleting the whole record is as_udf_rec_delete. Returns AS_UDF_OK, AS_UDF_ERR for a name that is
+empty or longer than 15 bytes, or AS_UDF_REFUSED when the record does not take the removal.
 
 #### `set_list_ints`
 
 ```c
-int32_t as_udf_set_list_ints(const char* name, int32_t name_len, const int64_t* vals, int32_t vals_len)
+int32_t as_udf_rec_set_list_ints(const char* name, int32_t name_len, const int64_t* vals, int32_t vals_len)
 ```
 
 Write an array of 64-bit integers to a bin as a list, with `vals_len` the size of the array in bytes. Applied
-at once, not staged: as_udf_rec_update is not needed. Returns AS_UDF_OK, AS_UDF_ERR for a bad name,
+at once, not staged: as_udf_rec_save is not needed. Returns AS_UDF_OK, AS_UDF_ERR for a bad name,
 AS_UDF_REFUSED where there is no writable record (a stream UDF), or another non-zero status when the server
 rejects the write.
 
 #### `set_list_doubles`
 
 ```c
-int32_t as_udf_set_list_doubles(const char* name, int32_t name_len, const double* vals, int32_t vals_len)
+int32_t as_udf_rec_set_list_doubles(const char* name, int32_t name_len, const double* vals, int32_t vals_len)
 ```
 
 Write an array of doubles to a bin as a list, with `vals_len` the size of the array in bytes. Applied at
-once and with the statuses of as_udf_set_list_ints.
+once and with the statuses of as_udf_rec_set_list_ints.
 
 #### `cursor_values`
 
@@ -192,6 +185,16 @@ int32_t as_udf_coll_get_i(int32_t src, int32_t at, int64_t key, void* out, int32
 
 Look up an integer key in the map at offset `at` of source `src`. Output and statuses as as_udf_coll_get.
 
+#### `list_get`
+
+```c
+int32_t as_udf_list_get(int32_t src, int32_t at, int32_t index, void* out, int32_t cap)
+```
+
+The element at `index` of the list at offset `at` of source `src`, written to `out` as a 16-byte value
+(`cap` at least 16), without opening a cursor. Returns AS_UDF_OK, AS_UDF_NOT_FOUND past the end or when the
+value is not a list (`out` is then AS_UDF_ABSENT), or AS_UDF_ERR for a bad source, offset or `cap`.
+
 #### `cursor_close`
 
 ```c
@@ -246,13 +249,30 @@ int32_t as_udf_map_new(int32_t capacity)
 Start an empty map on the host, sized for `capacity` entries. The map is ordered by key, whatever order the
 entries are put in. Returns its handle, or 0 when none is free.
 
+#### `map_has`
+
+```c
+int32_t as_udf_map_has(int32_t handle, const char* key, int32_t key_len)
+```
+
+Whether a map the call built (a handle from as_udf_map_new) has a string key: 1 or 0, or a negative status
+when `handle` is not a built map. Asks the host directly, so the map is not packed to answer it.
+
+#### `map_has_i`
+
+```c
+int32_t as_udf_map_has_i(int32_t handle, int64_t key)
+```
+
+Whether a map the call built has an integer key. Answers as as_udf_map_has.
+
 #### `val_int`
 
 ```c
 int32_t as_udf_val_int(int64_t value)
 ```
 
-An integer as a value of its own, for as_udf_list_push, as_udf_map_put or as_udf_set_handle. Returns its
+An integer as a value of its own, for as_udf_list_push, as_udf_map_put or as_udf_rec_set_handle. Returns its
 handle, or 0 when none is free.
 
 #### `val_double`
@@ -501,7 +521,7 @@ Mark the call as failed with a message for the client: `message_len` bytes, of w
 #### `gen`
 
 ```c
-int64_t as_udf_gen(void)
+int64_t as_udf_rec_gen(void)
 ```
 
 The record's generation.
@@ -509,7 +529,7 @@ The record's generation.
 #### `ttl`
 
 ```c
-int64_t as_udf_ttl(void)
+int64_t as_udf_rec_ttl(void)
 ```
 
 The record's remaining lifetime in seconds; 0 for a record that does not expire.
@@ -517,7 +537,7 @@ The record's remaining lifetime in seconds; 0 for a record that does not expire.
 #### `last_update`
 
 ```c
-int64_t as_udf_last_update(void)
+int64_t as_udf_rec_last_update(void)
 ```
 
 When the record was last written, in milliseconds, as the server stores it: counted from the Aerospike epoch
@@ -526,7 +546,7 @@ When the record was last written, in milliseconds, as the server stores it: coun
 #### `record_size`
 
 ```c
-int64_t as_udf_record_size(void)
+int64_t as_udf_rec_size(void)
 ```
 
 The record's stored size in bytes.
@@ -534,7 +554,7 @@ The record's stored size in bytes.
 #### `numbins`
 
 ```c
-int64_t as_udf_numbins(void)
+int64_t as_udf_rec_numbins(void)
 ```
 
 How many bins the record has.
@@ -551,7 +571,7 @@ clock is refused: a decision that reads it cannot converge across clusters.
 #### `set_ttl`
 
 ```c
-int32_t as_udf_set_ttl(int32_t seconds)
+int32_t as_udf_rec_set_ttl(int32_t seconds)
 ```
 
 Set the TTL the record's write carries, in seconds, with a write's meaning. Returns AS_UDF_OK.
@@ -559,7 +579,7 @@ Set the TTL the record's write carries, in seconds, with a write's meaning. Retu
 #### `set_name`
 
 ```c
-int32_t as_udf_set_name(void* out, int32_t cap)
+int32_t as_udf_rec_set_name(void* out, int32_t cap)
 ```
 
 Copy the record's set name into `out`, without a terminator. Returns the length, a needed-length status when
@@ -568,7 +588,7 @@ Copy the record's set name into `out`, without a terminator. Returns the length,
 #### `key_type`
 
 ```c
-int32_t as_udf_key_type(void)
+int32_t as_udf_rec_key_type(void)
 ```
 
 The kind of the record's user key (AS_UDF_INT, AS_UDF_STR or AS_UDF_BLOB), or AS_UDF_ABSENT when the record
@@ -577,15 +597,15 @@ was stored without one.
 #### `key_int`
 
 ```c
-int64_t as_udf_key_int(void)
+int64_t as_udf_rec_key_int(void)
 ```
 
-The record's user key when it is an integer; 0 when it is not, so check as_udf_key_type first.
+The record's user key when it is an integer; 0 when it is not, so check as_udf_rec_key_type first.
 
 #### `key_bytes`
 
 ```c
-int32_t as_udf_key_bytes(void* out, int32_t cap)
+int32_t as_udf_rec_key_bytes(void* out, int32_t cap)
 ```
 
 Copy the record's string or blob user key into `out`. Returns the length, a needed-length status when `cap`
@@ -594,7 +614,7 @@ is too small, AS_UDF_NOT_FOUND when the record was stored without a key, or AS_U
 #### `digest`
 
 ```c
-int32_t as_udf_digest(void* out, int32_t cap)
+int32_t as_udf_rec_digest(void* out, int32_t cap)
 ```
 
 Copy the record's digest into `out`: 20 bytes. Returns the length, or a needed-length status when `cap` is
@@ -603,28 +623,28 @@ too small.
 #### `rec_create`
 
 ```c
-int32_t as_udf_rec_create(void)
+int32_t as_udf_host_rec_create(void)
 ```
 
-Create the record, committing the staged writes to it. Returns AS_UDF_OK, or AS_UDF_REFUSED when the server
-does not create it, as when the record already exists.
+The two host calls as_udf_rec_save chooses between: the host has one for a record that is not there yet and
+one for a record that is, and refuses each on the other. Not for a UDF to call: as_udf_rec_save is the
+record's one write.
 
 #### `rec_update`
 
 ```c
-int32_t as_udf_rec_update(void)
+int32_t as_udf_host_rec_update(void)
 ```
-
-Commit the staged writes to the existing record. Returns AS_UDF_OK, or AS_UDF_REFUSED when the server does
-not apply them.
 
 #### `rec_remove`
 
 ```c
-int32_t as_udf_rec_remove(void)
+int32_t as_udf_rec_delete(void)
 ```
 
-Delete the record. Returns AS_UDF_OK, or AS_UDF_REFUSED when the server does not delete it.
+Delete the record; nothing has to be saved first. The delete is carried out when the call returns, so
+as_udf_rec_exists keeps answering what it did until then. Returns AS_UDF_OK, or AS_UDF_REFUSED when the
+server does not delete it.
 
 #### `rec_exists`
 
@@ -787,7 +807,7 @@ GeoJSON the host holds: `len` bytes of text, read by position with as_udf_bytes.
 ```
 
 A HyperLogLog the host holds: `len` bytes, read with as_udf_bytes. Write one back by position
-(as_udf_set_at), which keeps it an HLL.
+(as_udf_rec_set_at), which keeps it an HLL.
 
 #### `AS_UDF_GUEST_STR`
 
@@ -911,13 +931,49 @@ int32_t as_udf_strlen(const char* s)
 
 The length of a NUL-terminated string; a freestanding module has no libc strlen.
 
-#### `as_udf_bin`
+#### `as_udf_rec_bin`
 
 ```c
-int32_t as_udf_bin(const char* name, as_udf_value* out)
+int32_t as_udf_rec_bin(const char* name, as_udf_value* out)
 ```
 
 A bin by name, as a value. Returns the status; AS_UDF_NOT_FOUND for no such bin.
+
+#### `as_udf_rec_save`
+
+```c
+int32_t as_udf_rec_save(void)
+```
+
+Write the record: the staged bins and removals go to it, and it is created when it does not exist. With
+nothing staged it is still a write to a record that exists (the server treats it as a touch: the generation
+and the last-update time move); on a key with no record it creates nothing. Returns AS_UDF_OK, or
+AS_UDF_REFUSED when the server does not take the write, as in a stream UDF.
+
+#### `as_udf_list_at`
+
+```c
+as_udf_value as_udf_list_at(const as_udf_value* list, int32_t index)
+```
+
+The element at `index` of a stored list; AS_UDF_ABSENT kind past the end or when `list` is not a list.
+
+#### `as_udf_map_contains`
+
+```c
+bool as_udf_map_contains(int32_t handle, const char* key)
+```
+
+Whether a map the call built has the NUL-terminated string key. False for a handle that is not a built
+map.
+
+#### `as_udf_map_contains_i`
+
+```c
+bool as_udf_map_contains_i(int32_t handle, int64_t key)
+```
+
+Whether a map the call built has the integer key. False for a handle that is not a built map.
 
 #### `as_udf_stored_bytes`
 

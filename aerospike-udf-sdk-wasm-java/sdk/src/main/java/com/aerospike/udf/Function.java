@@ -26,9 +26,13 @@ import java.lang.annotation.Target;
  *
  * <pre>
  * {@literal @}Function("increment")
- * static long increment(String site, long n) { ... }
+ * static long increment(Record rec, String site, long n) { ... }
  * // exports increment and __udf_sig_increment = "fn increment(site: str, n: int) -> value"
  * </pre>
+ *
+ * <p>A first parameter of type {@link Record} is the record the call is about. It is handed to the method,
+ * not decoded from the arguments, so it is no part of the signature or of the argument count; a method
+ * that does not touch the record leaves it out.
  *
  * <p>Parameters: {@code long}, {@code int} ({@code int} in the signature), {@code double}, {@code boolean}
  * ({@code bool}), {@code String} ({@code str}), {@code byte[]} ({@code bytes}: a string or a blob),
@@ -39,8 +43,9 @@ import java.lang.annotation.Target;
  * argument, before the method runs.
  *
  * <p>Return: {@code void} (a nil result), {@code long} or {@code int}, {@code double}, {@code boolean},
- * {@code String}, {@code byte[]} (a blob), or {@link Value} (a scalar by value, guest bytes, a stored value
- * by position, or a built collection by handle). The method fails the call by throwing {@link UdfException}
+ * {@code String}, {@code byte[]} (a blob), {@link Value} (a scalar by value, guest bytes, a stored value
+ * by position), a {@link MapBuilder} or {@link ListBuilder}, a {@link MapValue} or {@link ListValue}, or a
+ * {@code java.util.Map} or {@code java.util.List} of plain Java values. The method fails the call by throwing {@link UdfException}
  * with the message; any other exception fails it with the exception's message.
  *
  * <p>A method declared {@code (int args, int argc)} returning {@code int} is exported as it is: it takes

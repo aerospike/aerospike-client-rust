@@ -16,19 +16,16 @@ spells this out.
 ```java
 package com.example;
 
-import com.aerospike.udf.Bin;
 import com.aerospike.udf.Function;
-import com.aerospike.udf.Udf;
+import com.aerospike.udf.Record;
 
 public final class Counter {
-    private static final Bin N = Bin.of("n");
-
     @Function("increment")
-    static long increment(long by) {
-        long n = N.getLong(0) + by;
+    static long increment(Record rec, long by) {
+        long n = rec.getLong("n", 0) + by;
 
-        N.set(n);
-        Udf.commit();
+        rec.set("n", n);
+        rec.save();
 
         return n;
     }
@@ -42,9 +39,8 @@ return as the result; the `__udf_sig_increment` export, whose text `fn increment
 derives from the parameter types; and the module's `main`, which TeaVM wants as an entry point. Nothing in
 the generated class is yours to edit, and nothing in yours refers to it except the build.
 
-`Bin` is a bin of the record by name, with typed getters (`getLong(0)` reads the bin as an integer, 0
-when it is absent) and setters of every kind; the name is encoded once, when the `Bin` is made, so a module
-keeps its bins as constants. `Udf.commit()` writes the staged bins, creating the record if it does not
+`rec` is the record the call is about. `getLong("n", 0)` reads bin `n` as an integer, 0 when it is
+absent. `set` stages a write and `save()` writes what is staged, creating the record if it does not
 exist. Every call that can fail throws `UdfException`, which the generated export turns into the failure
 the client sees.
 
@@ -67,8 +63,8 @@ Build with the TeaVM Maven plugin (`targetType` `WEBASSEMBLY`, `optimizationLeve
 
 ## Parameters and results
 
-The method's parameters are the UDF's arguments, in order, and their Java types decide both how an
-argument is decoded and what the signature says:
+The method's parameters, after the `Record` if it takes one, are the UDF's arguments, in order, and their
+Java types decide both how an argument is decoded and what the signature says:
 
 | Java | Signature | Takes |
 | --- | --- | --- |
@@ -87,8 +83,9 @@ runs, with a message that names the argument (`increment: argument 2 (n) is not 
 `increment takes at most 2 arguments, got 3`), the same way the Rust macro rejects a call.
 
 The return type is the result: `void` is nil, `long` and `int` an integer, `double`, `boolean`, `String`,
-`byte[]` a blob, `UdfMap` and `UdfList` a built collection, and `Value` any value (a scalar, guest bytes,
-a stored value by position; `Value.ofGeoJson(doc)` is a GeoJSON result). To fail the call, throw
+`byte[]` a blob, `MapBuilder` and `ListBuilder` a built collection, `MapValue` and `ListValue` a stored
+one, a `java.util.Map` or `java.util.List` of plain Java values, and `Value` any value (a scalar, guest
+bytes, a stored value by position; `Value.ofGeoJson(doc)` is a GeoJSON result). To fail the call, throw
 `UdfException` with the message; any other exception the method lets out fails the call with that
 exception's message too.
 
@@ -98,46 +95,73 @@ constructor without arguments that the generated class can reach.
 
 **The raw form.** A method declared `(int args, int argc)` and returning `int` is exported as it is: it
 takes the handles and returns the status, exactly as the hand-written export of the other languages does,
-and decodes its arguments itself with `Udf.args`. Since nothing can be derived, the annotation's `params`
+and decodes its arguments itself with `LowLevel.args`. Since nothing can be derived, the annotation's `params`
 gives the signature's parameter text: `@Function(value = "vec_distance", params = "(bin: str, query:
 bytes, metric: str)")`. This is the form for a hot path that wants to read its arguments once and keep
 them, as the vector example does.
 
-## Bins
+## The record
 
-A `Bin` is a bin of the record in hand, by name. Its getters read the bin as the type the UDF expects:
-`getLong()`, `getDouble()`, `getBoolean()`, `getString()`, `getBytes()` (a string or blob's bytes),
-`getFloats(float[])` (a blob of 32-bit floats straight into the array), and each throws `UdfException`
-naming the bin when it is absent or of another kind, unless given a default (`getLong(0)`), which covers
-absent and nil. `get()` is the bin as a `Value`, or `null` when absent; `exists()` says whether there is
-one; `asList()` and `asMap()` open a cursor over a collection bin. The setters stage a write of any kind:
-`set(long)`, `set(double)`, `set(boolean)`, `set(String)`, `set(byte[])` (a blob), `set(Value)` (a value
-read from the record, by position, keeping its kind), `set(UdfMap)`, `set(UdfList)`, `setGeoJson(doc)`
-(kept as the geospatial kind, not a string), `setNull()`, `setInts(long[])` and `setDoubles(double[])` (a
-list in one import, no value built per element), and `remove()`. `Udf.commit()` writes them; `Udf.delete()`
-deletes the record, and `Udf.setTtl(seconds)` sets the time to live the commit carries.
+The record a function was called on is its first parameter, of type `Record`. A function that does not
+touch the record leaves the parameter out. It is not one of the call's arguments: a client does not pass
+it, the arity check does not count it, and the signature the module exports does not list it.
 
-## Values and cursors
+Import it by name, `import com.aerospike.udf.Record;`. Java has a `java.lang.Record` of its own, and a
+wildcard import of `com.aerospike.udf.*` leaves the name ambiguous between the two, which does not
+compile.
 
-Every read is a `Value`: `kind`, `len`, `payload`, with the accessors `asLong()`, `asDouble()`,
-`asBoolean()`, `asString()`, `asBytes()`, each throwing when the kind is another, and `isInt()`,
-`isString()`, `isList()`, `isMap()`, `isNull()`. The kinds are `Value.NIL`, `BOOL`, `INT`, `DOUBLE`,
-`STR`, `BLOB`, `LIST`, `MAP`, `GEOJSON`, `HLL`, `ABSENT`, and a `switch` on `kind` is the fast form of
-a dispatch. A stored string or collection is held by position, never copied until asked.
+Everything about the record is a method on it. What is left on `Udf` is what is not about the record:
+`now()`, `log`, `fail`, the `list` and `map` builders, timers.
 
-`asList()` and `asMap()` on a `Value`, or on a `Bin`, open a `Cursor`: the Rust SDK's `iter()` and
-`entries()`. A list cursor is an `Iterable<Value>` and a map cursor an `Iterable<Cursor.Entry>`, an entry
-being a `key` and a `value` (and a `java.util.Map.Entry`), so the natural form is a for-each:
+There is one `Record` type, writable or not. A stream's records are read-only, and a write to one is
+refused when it is made: it throws `UdfException` saying the record is read-only.
+
+`Record` and the `EventRecord` an event handler is given both implement `RecordReader`, so a helper that
+takes a `RecordReader` reads a bin the same way in a UDF and in a handler:
 
 ```java
-private static final Bin L = Bin.of("l");
-private static final Bin COUNTS = Bin.of("counts");
+static long balanceOf(RecordReader rec) {
+    return rec.getLong("balance", 0);
+}
+```
 
+## Reading
+
+`rec.get("name")` returns the bin as a `Value`, or `null` when the record has no such bin. The typed
+readers say what the UDF expects: `getLong`, `getDouble`, `getBoolean`, `getString`, `getBytes` (a string
+or blob's bytes), `getList`, `getMap`, and `getFloats(name, float[])` for a blob of 32-bit floats read
+straight into the array. Each comes in two forms. Without a default the bin must be there:
+`rec.getLong("n")` throws `UdfException` naming the bin when it is absent. With a default,
+`rec.getLong("n", 0)` answers the default for an absent bin. Both throw for a bin of another kind.
+`rec.hasBin("name")` says whether there is one.
+
+A `Value` is one value, read-only. `kind()` gives its kind as one of `Value.NIL`, `BOOL`, `INT`,
+`DOUBLE`, `STR`, `BLOB`, `LIST`, `MAP`, `GEOJSON`, `HLL`, `ABSENT`. The tests `isInt()`, `isString()`,
+`isList()`, `isMap()`, `isNull()` and the rest say the same one at a time. The readers `asLong()`,
+`asDouble()`, `asBoolean()`, `asString()`, `asBytes()`, `asList()`, `asMap()` each throw when the kind is
+another. A stored string or collection is held by position and is not copied until it is asked for.
+
+## Lists and maps
+
+A list the server holds is a `ListValue` and a map is a `MapValue`. Both read the data where it is.
+
+A `ListValue` has `size()`, `isEmpty()`, `get(index)`, the typed `getLong(index)`, `getString(index)` and
+so on, and `contains(text)` or `contains(number)`. It is an `Iterable<Value>`. `get(index)` is one call
+to the server, which steps over the elements before it without decoding them. An index past the end
+throws.
+
+A `MapValue` has `get(key)`, which answers `null` for a key the map does not have, `containsKey(key)`,
+`size()`, `isEmpty()`, and the typed readers in the same two forms as the record's: `getLong(key)` throws
+when there is no such key, `getLong(key, dflt)` answers the default. A key is a `String` or a `long`. It
+is an `Iterable<MapValue.Entry>`, and an entry has `getKey()` and `getValue()`. A wrong kind throws
+`UdfException` naming the key or the index.
+
+```java
 @Function("sum_list")
-static long sumList() {
+static long sumList(Record rec) {
     long total = 0;
 
-    for (Value v : L.asList()) {
+    for (Value v : rec.getList("l")) {
         total += v.asLong();        // throws, and fails the call, on anything but an int
     }
 
@@ -145,70 +169,177 @@ static long sumList() {
 }
 
 @Function("max_count")
-static long maxCount() {
+static long maxCount(Record rec) {
     long max = 0;
 
-    for (var e : COUNTS.asMap()) {
-        max = Math.max(max, e.value.asLong());   // e.key is the site
+    for (MapValue.Entry e : rec.getMap("counts")) {
+        max = Math.max(max, e.getValue().asLong());   // e.getKey() is the site
     }
 
     return max;
 }
-```
 
-The for-each hands out a fresh `Value` or `Entry` each step. The `while` form allocates nothing: `c.next()`
-steps, refilling the reused `c.value` (and `c.key` for a map) from a window of 32 values per import, and
-goes inside a try-with-resources when the loop may `break`:
-
-```java
-try (Cursor<Cursor.Entry> c = COUNTS.asMap()) {
-    while (c.next()) {
-        if (c.value.asLong() > limit) {
-            break;                               // close() runs; at the end the cursor closes itself
-        }
-    }
+@Function("limit_for")
+static long limitFor(Record rec, String kind) {
+    return rec.getMap("limits").getLong(kind, 0);     // 0 when the map has no such key
 }
 ```
 
-Cursors nest, as long as the inner one is closed, by exhaustion or by hand, before the outer one steps
-on.
+Every element a loop yields is a fresh `Value`, so one can be kept after the loop moves on. Loops nest:
+an element that is itself a list or map is walked the same way.
+
+**A loop may be left early.** A for-each reads the collection from the server a window at a time, 128
+values per call, and gives the server's cursor back as soon as the last window is read. For a collection
+that fits one window, which is 128 elements or 64 entries, that is before the loop sees its first
+element. So `break` and `return` hold nothing:
+
+```java
+@Function("first_over")
+static long firstOver(Record rec, long limit) {
+    for (Value v : rec.getList("l")) {
+        if (v.asLong() > limit) {
+            return v.asLong();
+        }
+    }
+
+    return -1;
+}
+```
+
+One case still holds something. A collection longer than one window keeps its cursor between windows. A
+loop over one that is left early leaves that cursor open until the call returns, when the server releases
+every handle the call held. That costs one of the call's 256 handle slots until then. The thing to avoid
+is leaving a loop over a long collection early hundreds of times in one call.
+
+## Writing
+
+`rec.set("name", value)` stages a write of any kind: a `long`, a `double`, a `boolean`, a `String`, a
+`byte[]` (a blob), a built list or map, a stored `ListValue` or `MapValue`, a `java.util.List` or
+`java.util.Map`, or a `Value` read from the record, which goes back by position and keeps its kind.
+`rec.setGeoJson("name", doc)` writes a GeoJSON bin, kept as the geospatial kind and not a string.
+`rec.remove("name")` stages the removal of a bin. Writing `Value.ofNil()` does the same, since a bin
+cannot hold nil. `rec.setTtl(seconds)` sets the TTL of the write.
+
+**Nothing staged reaches the server until `rec.save()`.** A function that returns without saving has
+changed nothing, however plausible its result. `save()` creates the record when the key has none, so
+there is one verb for both. A function that must not overwrite checks `rec.exists()` first. The record is
+locked for the whole call, so nothing comes between the check and the save. Two details:
+
+- A save with nothing staged is still a write. The server treats it as a touch: the generation and the
+  last-update time move.
+- A save with nothing staged on a key with no record makes nothing, since a record must have a bin, and
+  the client is told "key not found".
+
+`rec.delete()` deletes the record. It needs no save, and whatever was staged goes with the record. The
+server carries it out when the call returns, so `rec.exists()` keeps its answer for the rest of the call.
+
+`rec.setInts("name", long[])` and `rec.setDoubles("name", double[])` write an array straight into a list
+bin, with no value built per element. They take effect at once, without a save.
 
 ## Building collections
 
-`UdfMap.create()` and `UdfList.create()` build a map or list on the host, to be written to a bin, returned
-as the result, nested in another collection, or handed back from an event handler. `put` and `add` take
-every kind (`long`, `double`, `boolean`, `String`, `byte[]` as a blob, `Value`, `UdfMap`, `UdfList`),
-`putNull` / `addNull` a nil, `putGeoJson` / `addGeoJson` a GeoJSON; a map's `put` takes a `String` or a
-`long` key. They chain, each is one import, and each throws when the host refuses it. `putAll(stored)`
-and `addAll(stored)` copy a stored map or list by position; `putAll(pairs, n)` and `addAll(values, n)`
-take a `Value[]` in one import.
+`Udf.list()` and `Udf.map()` start a list or map on the server and return a `ListBuilder` or a
+`MapBuilder`. A built collection is written to a bin, returned as the result, nested in another
+collection, or handed back from an event handler. `add` and `put` take every kind (`long`, `double`,
+`boolean`, `String`, `byte[]` as a blob, `Value`, another builder). `addNull` and `putNull` add a nil,
+`addGeoJson` and `putGeoJson` a GeoJSON. A map's `put` takes a `String` or a `long` key. They chain, each
+is one call to the server, and each throws when the server refuses it. `addAll(stored)` and
+`putAll(stored)` copy a stored list or map by position. `MapBuilder.containsKey(key)` asks a map being
+built whether it has a key, in one call.
+
+They are builders, not collections. What went in is not read back from them.
 
 ```java
 @Function("describe")
-static UdfMap describe() {
-    return UdfMap.create(4)
-            .put("generation", Udf.generation())
-            .put("bins", Udf.binCount())
-            .put("tags", UdfList.create(2).add("a").add("b"));
+static MapBuilder describe(Record rec) {
+    return Udf.map(4)
+            .put("generation", rec.generation())
+            .put("bins", rec.binCount())
+            .put("tags", Udf.list(2).add("a").add("b"));
 }
 ```
 
-## The record's metadata
+## Plain Java collections
 
-`Udf.generation()`, `ttl()`, `lastUpdateTime()`, `recordSize()`, `binCount()`, `setName()` (null when the
-record is in no set), `exists()`, `digest(buf)`, `keyType()` / `keyInt()` / `keyBytes(buf)` for the user
-key, and `now()`, the server's clock, which an event handler may not read.
+The SDK bridges to `java.util` in both directions.
+
+Out of the record: `ListValue.toList()` copies a stored list out as a `java.util.List<Object>` and
+`MapValue.toMap()` copies a stored map out as a `java.util.Map<Object, Object>`. An integer comes out as
+a `Long`, a double as a `Double`, a boolean as a `Boolean`, a string or a GeoJSON as a `String`, a blob as
+a `byte[]`, nil as `null`, and a nested list or map as a nested `List` or `Map`.
+
+Into the record: `rec.set(name, list)` and `rec.set(name, map)` take a `java.util.List` or `Map`, and so
+do the builders' `add`, `put`, `addAll` and `putAll`. A `@Function` method may return one. The elements
+are the same plain types, with `Integer` accepted for an integer. A map key is a `String` or an integer.
+Anything else throws `UdfException`.
+
+```java
+@Function("double_all")
+static List<Object> doubleAll(Record rec) {
+    List<Object> doubled = new ArrayList<>();
+
+    for (Object item : rec.getList("l").toList()) {
+        doubled.add(((Long) item) * 2);
+    }
+
+    rec.set("doubled", doubled);
+    rec.save();
+
+    return doubled;
+}
+```
+
+Copying out costs an object per element. The views read the same data without that cost, so prefer
+`ListValue` and `MapValue` when the code only reads.
+
+## Metadata
+
+On the record: `rec.exists()`, `rec.generation()`, `rec.ttl()`, `rec.lastUpdateTime()`, `rec.size()`,
+`rec.binCount()`, `rec.setName()` (`null` when the record is in no set), `rec.key()` (the user key as a
+`Value` when the record was written with `send_key`, `null` otherwise) and `rec.digest()`. Not on the
+record: `Udf.now()`, the server's clock, which an event handler may not read, and
+`Udf.log(level, message)`.
+
+## Bin names
+
+A bin is addressed by its name, as a `String`. The name crosses to the server as UTF-8 bytes. The record
+keeps the encoded form of the names it has seen, so a name passed as a string literal is encoded once and
+a read allocates nothing. No constant has to be declared for a name.
+
+The cost depends on how many names a call uses. The last eight distinct names are matched by identity,
+which is a few comparisons. Measured on the test server, a read of an integer bin costs about 640 ns this
+way, against about 690 ns for the pre-encoded name of the earlier API and about 610 ns for the low-level
+call. A call that rotates through more than eight distinct names pays a hash lookup for the others,
+measured at about 250 ns more per lookup. Map keys go through the same cache, so they count toward the
+eight.
 
 ## The low-level tier
 
-Under the objects is the layer that mirrors the natives one call at a time: `Udf.bin(name, value)` into
-a reused `Value`, `Udf.enter` / `next` / `close` over a window the caller owns, `Udf.newMap` and the
-`mapPut*` / `listPush*` calls over `int` handles, the `set*` calls returning a status, and the `byte[]`
-twins of every name. It allocates nothing and every call returns a status rather than throwing. The
-vector example is written on it, because it reads its arguments once per stream and scores from a static
-`float[]`; nothing else needs to be. `UdfMap.wrap(handle)` and `UdfList.wrap(handle)` bridge a handle built
-down there to the objects, and `Params` holds the decoders the generated exports call, so a hand-written
-export can use them too.
+`LowLevel` is the server's calls one at a time, for code that must not allocate. Names are `byte[]`
+constants. `LowLevel.bin(name, value)` reads into a `Value` the caller owns and reuses. `enter`, `next`
+and `close` walk a collection over a window the caller owns. `newMap`, `newList` and the `mapPut*` and
+`listPush*` calls build over `int` handles. The record's key and digest go into caller buffers. Every
+call returns a status and none throws.
+
+```java
+private static final byte[] N = LowLevel.bytes("n");
+private static final Value SLOT = new Value();
+
+@Function("peek")
+static long peek() {
+    if (LowLevel.bin(N, SLOT) != LowLevel.OK || !SLOT.isInt()) {
+        return 0;
+    }
+
+    return SLOT.asLong();
+}
+```
+
+Nothing in it is needed to write a UDF. The vector example is written on it, because a scan runs its
+`record` once per record and it scores from a `float[]` field. A cursor opened with `LowLevel.enter` is
+the caller's to close, on every path out of the loop. `LowLevel.list(handle)` and `LowLevel.map(handle)`
+bridge a handle built down there to the builders, and `Params` holds the decoders the generated exports
+call, so a hand-written export can use them too.
 
 ## What is different about Java
 
@@ -216,16 +347,17 @@ export can use them too.
   address is valid only until the next allocation. The SDK takes `Address.ofData(buf)` inside the
   expression that hands it to the host and never keeps one; code calling the natives directly must do the
   same.
-- **Strings.** Each `String` crossing is one UTF-8 encoding and one allocation, and so is each `String`
-  parameter; `Bin` encodes a name once, and a `byte[]` parameter takes a string argument as its bytes.
+- **Strings.** Each `String` value crossing is one UTF-8 encoding and one allocation, and so is each
+  `String` parameter. A bin name is encoded once and kept, and a `byte[]` parameter takes a string
+  argument as its bytes.
 - **Exceptions.** A generated export catches what the method throws and fails the call with the message;
   `UdfException` is the one to throw on purpose, and what the SDK throws.
-- **The runtime.** A Java module is larger (150 to 250 KB for the examples) and its instance costs a
-  little more to start: on the vector top-k it runs within 10 percent of Rust and Go, and a single call
-  costs some 40 µs more than theirs.
+- **The runtime.** A Java module is larger (200 to 330 KB for the examples) and its instance costs more
+  to start. On the vector top-k over 20,000 records it took 131 ms where the Rust module took 80 ms and
+  the Go module 61 ms, measured on 2026-11-18 on one aarch64 node.
 - **Coverage.** The SDK carries the Rust SDK's whole record surface; `examples/udf` is its fixture, one
-  function per corner, and `java_sdk_covers_the_rust_surface` in `tests/src/udf_java.rs` holds it to the
-  expectations of the Rust fixture's tests.
+  function per corner, and the tests in `tests/src/udf_java.rs` hold it to the expectations of the Rust
+  fixture's tests.
 
 ## What the processor generates
 
@@ -235,9 +367,10 @@ For the counter above, `CounterExports` reads, in short:
 @Export(name = "increment")
 public static int udf_increment(int args, int argc) {
     try {
-        int n = Udf.args(args, argc, ARGS_increment);
+        int n = Params.args(args, argc, ARGS_udf_increment);
         Params.arity("increment", 1, argc);
-        Udf.resultInt(Counter.increment(Params.int64(ARGS_increment, n, 0, "increment", "by")));
+        Udf.resultInt(Counter.increment(Params.record(),
+                Params.int64(ARGS_udf_increment, n, 0, "increment", "by")));
         return 0;
     }
     catch (UdfException e) {
@@ -248,16 +381,19 @@ public static int udf_increment(int args, int argc) {
     }
 }
 
-private static final byte[] SIG_increment = Udf.signatureBytes("fn increment(by: int) -> value");
+private static final byte[] SIG_increment = Params.signatureBytes("fn increment(by: int) -> value");
 
 @Export(name = "__udf_sig_increment")
 public static int sig_increment() {
-    return Udf.signature(SIG_increment);
+    return Params.signature(SIG_increment);
 }
 
 public static void main(String[] a) {
 }
 ```
+
+`Params.record()` is the record of the call. It is handed to the method and is no part of the arity
+check or of the signature.
 
 The processor runs inside `javac`, before TeaVM, depends on nothing but the JDK, and reports a method
 that cannot be exported (private, a parameter of another type, a handler with the wrong parameters, a
@@ -268,8 +404,8 @@ that cannot be exported (private, a parameter of another type, a handler with th
 `examples/vector/.../Vector.java` is the exact top-k over packed `f32` vectors, the same algorithm as the
 Rust, C and Go modules, bit for bit: a `@Stream("topk")` class whose `record` and `end` are the two halves,
 a `@Function` `vec_distance`, and four-lane kernels for the three metrics (no SIMD is emitted, but the fold
-order is the one the others use). Its state is the instance's fields. It keeps the raw form on the
-low-level tier, since it reads its arguments once per stream and keeps them, and gives the signatures
+order is the one the others use). Its state is the instance's fields. It keeps the raw form on
+`LowLevel`, since it reads its arguments once per stream and keeps them, and gives the signatures
 through `params`. The record half:
 
 ```java

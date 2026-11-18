@@ -25,8 +25,8 @@
 
 #include "aerospike_udf.hpp"
 
-static constexpr udf::Bin ADDED_AT{"addedAt"};
-static constexpr udf::Bin REMOVED_AT{"removedAt"};
+static constexpr udf::StrView ADDED_AT{"addedAt"};
+static constexpr udf::StrView REMOVED_AT{"removedAt"};
 static constexpr int MAX_TAGS = 64;
 static constexpr int TAG_MAX = 32;
 
@@ -120,13 +120,13 @@ static Stamps added;
 static Stamps removed;
 
 // Both of the record's maps.
-static udf::Result<void> load()
+static udf::Result<void> load(const udf::Record& rec)
 {
 	added.n = 0;
 	removed.n = 0;
 
-	if (udf::Optional<udf::Value> v = ADDED_AT.get()) UDF_TRY(added.offer_all(*v));
-	if (udf::Optional<udf::Value> v = REMOVED_AT.get()) UDF_TRY(removed.offer_all(*v));
+	if (udf::Optional<udf::Value> v = rec.get(ADDED_AT)) UDF_TRY(added.offer_all(*v));
+	if (udf::Optional<udf::Value> v = rec.get(REMOVED_AT)) UDF_TRY(removed.offer_all(*v));
 
 	return {};
 }
@@ -139,9 +139,9 @@ static bool is_member(udf::StrView tag)
 }
 
 // The members, in order, as a built list.
-static udf::Result<udf::List> members_of()
+static udf::Result<udf::List> members_of(const udf::Record& rec)
 {
-	UDF_TRY(load());
+	UDF_TRY(load(rec));
 
 	// The stored map comes out key-ordered, but a tag added on this site sits at the end: pick the
 	// smallest remaining each time, so the answer is sorted.
@@ -163,45 +163,45 @@ static udf::Result<udf::List> members_of()
 	return l;
 }
 
-// Stamps the tag in one of the maps and commits: the clock, or one past the tag's last stamp when the
+// Stamps the tag in one of the maps and saves: the clock, or one past the tag's last stamp when the
 // clock has not moved since.
-static udf::Result<void> stamp(const udf::Bin& bin, Stamps& into, udf::StrView tag)
+static udf::Result<void> stamp(udf::Record& rec, udf::StrView bin, Stamps& into, udf::StrView tag)
 {
-	UDF_TRY(load());
+	UDF_TRY(load(rec));
 
 	int64_t last = added.get(tag) > removed.get(tag) ? added.get(tag) : removed.get(tag);
 	int64_t now = udf::now();
 	int64_t at = now > last + 1 ? now : last + 1;
 
 	UDF_TRY(into.offer(tag, at));
-	UDF_TRY(bin.set(into.to_map()));
+	UDF_TRY(rec.set(bin, into.to_map()));
 
-	return udf::commit();
+	return rec.save();
 }
 
 // Adds a tag, or adds it back. Returns the members. The tag is a Text<32>, so a longer one is rejected
 // before the body runs, as the Rust module's Str<32> rejects it.
-UDF_FUNCTION(add, udf::Result<udf::List>, Tag tag)
+UDF_FUNCTION(add, udf::Result<udf::List>, udf::Record& rec, Tag tag)
 {
-	UDF_TRY(stamp(ADDED_AT, added, tag.view()));
+	UDF_TRY(stamp(rec, ADDED_AT, added, tag.view()));
 
-	return members_of();
+	return members_of(rec);
 }
 
 // Removes a tag that is a member. Returns the members.
-UDF_FUNCTION(remove, udf::Result<udf::List>, Tag tag)
+UDF_FUNCTION(remove, udf::Result<udf::List>, udf::Record& rec, Tag tag)
 {
-	UDF_TRY(load());
+	UDF_TRY(load(rec));
 
 	if (!is_member(tag.view())) return udf::error(AS_UDF_ERR, "not a member");
 
-	UDF_TRY(stamp(REMOVED_AT, removed, tag.view()));
+	UDF_TRY(stamp(rec, REMOVED_AT, removed, tag.view()));
 
-	return members_of();
+	return members_of(rec);
 }
 
 // The members, in order.
-UDF_FUNCTION(members, udf::Result<udf::List>)
+UDF_FUNCTION(members, udf::Result<udf::List>, const udf::Record& rec)
 {
-	return members_of();
+	return members_of(rec);
 }

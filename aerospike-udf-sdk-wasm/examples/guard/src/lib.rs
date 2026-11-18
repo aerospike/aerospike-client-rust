@@ -32,7 +32,7 @@
 // `Error`, `Record`, `Write`, `Delete` and `Truncate` are not imported: the types in an `event!` arm are
 // part of the macro's grammar, not names resolved here.
 use aerospike_udf_sdk_wasm::{
-    self as as_udf, event, Decision, Eviction, Expiry, Gate, ReadResult, ShipDecision, Value,
+    self as as_udf, event, Decision, Eviction, Expiry, Gate, ReadResult, Record, ShipDecision, Value,
 };
 
 event! {
@@ -43,7 +43,7 @@ event! {
     /// Returning `Record` replaces `after`; `after.with_bins(out)` keeps every bin the write produced and
     /// adds or overrides the ones in `out`.
     on before_write
-    fn guard_account(before: Record, after: Record, write: Write) -> Result<Decision, Error> {
+    fn guard_account(before: EventRecord, after: EventRecord, write: Write) -> Result<Decision, Error> {
         if let Some(balance) = after.int("balance")? {
             if balance < 0 {
                 return Ok(Decision::Reject { code: 22, message: "balance may not go negative" });
@@ -52,8 +52,8 @@ event! {
 
         let out = as_udf::map(2)?;
 
-        out.put("stamped", write.source().as_str())?;
-        out.put("writes", before.int("writes")?.unwrap_or(0) + 1)?;
+        out.insert("stamped", write.source().as_str())?;
+        out.insert("writes", before.int("writes")?.unwrap_or(0) + 1)?;
 
         Ok(Decision::Record { bins: after.with_bins(out)?, ttl: None })
     }
@@ -61,17 +61,17 @@ event! {
     /// A second handler on the same set, run before `guard_account` when bound with a lower `order`: it
     /// adds a bin the first one then sees in `after`.
     on before_write
-    fn stamp_region(_before: Record, after: Record, _write: Write) -> Result<Decision, Error> {
+    fn stamp_region(_before: EventRecord, after: EventRecord, _write: Write) -> Result<Decision, Error> {
         let out = as_udf::map(1)?;
 
-        out.put("region", "eu")?;
+        out.insert("region", "eu")?;
 
         Ok(Decision::Record { bins: after.with_bins(out)?, ttl: None })
     }
 
     /// A record with `locked: true` cannot be deleted.
     on before_delete
-    fn guard_delete(record: Record, _delete: Delete) -> Result<Gate, Error> {
+    fn guard_delete(record: EventRecord, _delete: Delete) -> Result<Gate, Error> {
         if matches!(record.bin("locked"), Ok(Value::Bool(true))) {
             return Ok(Gate::Refuse { code: 22, message: "record is locked" });
         }
@@ -101,7 +101,7 @@ event! {
     /// Records marked `keep: true` outlive their TTL: each time the supervisor comes for one, it is kept
     /// for another hour. Everything else expires as it would have.
     on before_expire
-    fn keep_marked(record: Record, _expire: Expire) -> Result<Expiry, Error> {
+    fn keep_marked(record: EventRecord, _expire: Expire) -> Result<Expiry, Error> {
         if matches!(record.bin("keep"), Ok(Value::Bool(true))) {
             return Ok(Expiry::Keep { ttl: Some(3600) });
         }
@@ -111,7 +111,7 @@ event! {
 
     /// The same mark protects a record from eviction.
     on before_evict
-    fn protect_marked(record: Record, _evict: Evict) -> Result<Eviction, Error> {
+    fn protect_marked(record: EventRecord, _evict: Evict) -> Result<Eviction, Error> {
         if matches!(record.bin("keep"), Ok(Value::Bool(true))) {
             return Ok(Eviction::Protect);
         }
@@ -121,11 +121,11 @@ event! {
 
     /// Reads do not see `secret`, and carry `read_by` so a client can tell a rewritten record.
     on after_read
-    fn hide_secret(record: Record, read: Read) -> Result<ReadResult, Error> {
+    fn hide_secret(record: EventRecord, read: Read) -> Result<ReadResult, Error> {
         let out = as_udf::map(2)?;
 
-        out.put("secret", Value::Nil)?;
-        out.put("read_by", read.source().as_str())?;
+        out.insert("secret", Value::Nil)?;
+        out.insert("read_by", read.source().as_str())?;
 
         Ok(ReadResult::Record { bins: record.with_bins(out)? })
     }
@@ -150,26 +150,23 @@ event! {
     /// The after-events run off the write path, from a queue, with the record as it was and as it is. A
     /// handler here cannot change anything; it observes, and will feed the outbox once there is one.
     on after_write
-    fn note_write(_before: Record, _after: Record, _write: Write) -> Result<(), Error> {
+    fn note_write(_before: EventRecord, _after: EventRecord, _write: Write) -> Result<(), Error> {
         Ok(())
     }
 
     on after_delete
-    fn note_delete(_record: Record, _delete: Delete) -> Result<(), Error> {
+    fn note_delete(_record: EventRecord, _delete: Delete) -> Result<(), Error> {
         Ok(())
     }
 
     /// A timer handler runs as a record UDF on the record the timer was set on: it counts the tick and,
     /// up to three, re-arms itself. The first timer comes from `event-timer-set` or `timer_set` in a UDF.
     on timer
-    fn tick(timer: Timer) -> Result<(), Error> {
-        let ticks = match as_udf::bin("ticks") {
-            Ok(v) => v.int()?,
-            Err(_) => 0,
-        } + 1;
+    fn tick(rec: &mut Record, timer: Timer) -> Result<(), Error> {
+        let ticks = rec.int("ticks")?.unwrap_or(0) + 1;
 
-        as_udf::set("ticks", ticks)?;
-        as_udf::update()?;
+        rec.set("ticks", ticks)?;
+        rec.save()?;
 
         if timer.is("tick") && ticks < 3 {
             as_udf::timer_set("tick", 200)?;
@@ -180,14 +177,14 @@ event! {
 
     /// Records ship to other DCs without their `secret` bin.
     on before_ship
-    fn strip_secret(record: Record, _ship: Ship) -> Result<ShipDecision, Error> {
+    fn strip_secret(record: EventRecord, _ship: Ship) -> Result<ShipDecision, Error> {
         if record.bin("secret").is_err() {
             return Ok(ShipDecision::Ship);
         }
 
         let out = as_udf::map(1)?;
 
-        out.put("secret", Value::Nil)?;
+        out.insert("secret", Value::Nil)?;
 
         Ok(ShipDecision::Record { bins: record.with_bins(out)? })
     }

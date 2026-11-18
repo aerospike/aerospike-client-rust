@@ -40,12 +40,12 @@ public final class Resolution extends Answer {
      * The final record: these bins, whole - a bin not in the map, or set to nil, is deleted - keeping the
      * TTL the incoming write asked for.
      */
-    public static Resolution record(UdfMap bins) {
+    public static Resolution record(MapBuilder bins) {
         return new Resolution("record", bins.handle(), -1);
     }
 
-    /** As {@link #record(UdfMap)}, with a TTL in seconds: 0 for the namespace default. */
-    public static Resolution record(UdfMap bins, long ttl) {
+    /** As {@link #record(MapBuilder)}, with a TTL in seconds: 0 for the namespace default. */
+    public static Resolution record(MapBuilder bins, long ttl) {
         return new Resolution("record", bins.handle(), ttl);
     }
 

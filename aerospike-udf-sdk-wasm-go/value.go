@@ -151,14 +151,14 @@ func (v Value) List() iter.Seq[Value] {
 		if v.Kind != KindList {
 			return
 		}
-		cur := Enter(v)
+		cur := enter(v)
 		if cur <= 0 {
 			return
 		}
-		defer Close(cur)
+		defer closeCursor(cur)
 		var w [32]Value
 		for {
-			n := Next(cur, w[:])
+			n := next(cur, w[:])
 			for i := int32(0); i < n; i++ {
 				if !yield(w[i]) {
 					return
@@ -177,14 +177,14 @@ func (v Value) Map() iter.Seq2[Value, Value] {
 		if v.Kind != KindMap {
 			return
 		}
-		cur := Enter(v)
+		cur := enter(v)
 		if cur <= 0 {
 			return
 		}
-		defer Close(cur)
+		defer closeCursor(cur)
 		var w [32]Value
 		for {
-			n := Next(cur, w[:])
+			n := next(cur, w[:])
 			for i := int32(0); i+1 < n; i += 2 {
 				if !yield(w[i], w[i+1]) {
 					return
@@ -197,10 +197,23 @@ func (v Value) Map() iter.Seq2[Value, Value] {
 	}
 }
 
+// Index is element i of a stored list, in one import: the host steps to it, nothing is walked from the
+// guest. False past the end, for a negative index, or when the value is not a list.
+func (v Value) Index(i int) (Value, bool) {
+	var out Value
+	if v.Kind != KindList || i < 0 || uint32(i) >= v.Len {
+		return Value{Kind: KindAbsent}, false
+	}
+	if listGet(v.Src(), v.At(), int32(i), unsafe.Pointer(&out), 16) != OK {
+		return Value{Kind: KindAbsent}, false
+	}
+	return out, true
+}
+
 // Lookup is the entry under a string key of a stored map; false when there is none.
 func (v Value) Lookup(key string) (Value, bool) {
 	var out Value
-	if v.Kind != KindMap || Get(v, key, &out) != OK {
+	if v.Kind != KindMap || get(v, key, &out) != OK {
 		return Value{Kind: KindAbsent}, false
 	}
 	return out, true
@@ -209,7 +222,7 @@ func (v Value) Lookup(key string) (Value, bool) {
 // LookupInt is the entry under an integer key of a stored map; false when there is none.
 func (v Value) LookupInt(key int64) (Value, bool) {
 	var out Value
-	if v.Kind != KindMap || GetI(v, key, &out) != OK {
+	if v.Kind != KindMap || getI(v, key, &out) != OK {
 		return Value{Kind: KindAbsent}, false
 	}
 	return out, true

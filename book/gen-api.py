@@ -19,16 +19,17 @@ OUT = os.path.join(HERE, 'src', 'api')
 RUST = os.path.join(ROOT, 'aerospike-udf-sdk-wasm', 'src', 'lib.rs')
 GO_DIR = os.path.join(ROOT, 'aerospike-udf-sdk-wasm-go')
 # The Go package's files and the area each belongs to; udf.go decides by its section comments.
-GO_FILES = [('udf.go', None), ('errors.go', 'record'), ('value.go', 'record'), ('bin.go', 'record'),
-            ('coll.go', 'record'), ('record.go', 'record'), ('args.go', 'record'), ('events.go', 'events')]
+GO_FILES = [('udf.go', None), ('errors.go', 'record'), ('record.go', 'record'), ('value.go', 'record'),
+            ('coll.go', 'record'), ('result.go', 'record'), ('args.go', 'record'), ('events.go', 'events')]
 C = os.path.join(ROOT, 'aerospike-udf-sdk-wasm-c', 'include', 'aerospike_udf.h')
 CPP = os.path.join(ROOT, 'aerospike-udf-sdk-wasm-cpp', 'include', 'aerospike_udf.hpp')
 JAVA_DIR = os.path.join(ROOT, 'aerospike-udf-sdk-wasm-java', 'sdk', 'src', 'main', 'java', 'com', 'aerospike', 'udf')
 # Which class belongs to which area of the book.
 JAVA_FILES = [('record', 'Function.java'), ('record', 'Nullable.java'), ('record', 'UdfException.java'),
-              ('record', 'Bin.java'), ('record', 'Value.java'), ('record', 'Cursor.java'),
-              ('record', 'UdfMap.java'), ('record', 'UdfList.java'), ('record', 'Udf.java'),
-              ('record', 'Params.java'),
+              ('record', 'Record.java'), ('record', 'RecordReader.java'), ('record', 'Value.java'),
+              ('record', 'ListValue.java'), ('record', 'MapValue.java'),
+              ('record', 'ListBuilder.java'), ('record', 'MapBuilder.java'), ('record', 'Udf.java'),
+              ('record', 'LowLevel.java'), ('record', 'Params.java'),
               ('stream', 'Stream.java'),
               ('events', 'On.java'), ('events', 'Decision.java'), ('events', 'Gate.java'),
               ('events', 'Expiry.java'), ('events', 'Eviction.java'), ('events', 'ReadResult.java'),
@@ -325,6 +326,9 @@ def parse_java(path, area):
             doc = [re.sub(r'\{@literal ([^}]*)\}', r'\1',
                           re.sub(r'\{@link #?([^}]*)\}', r'`\1`', re.sub(r'\{@code ([^}]*)\}', r'`\1`', c)))
                    .replace('<p>', '').replace('<pre>', '```text').replace('</pre>', '```')
+                   # The rest of the HTML a Javadoc comment uses, as the Markdown that means the same.
+                   .replace('<b>', '**').replace('</b>', '**')
+                   .replace('<ul>', '').replace('</ul>', '').replace('<li>', '- ').replace('</li>', '')
                    .replace('&lt;', '<').replace('&gt;', '>')
                    for c in comment if c]
             i += 1

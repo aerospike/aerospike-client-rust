@@ -2,7 +2,7 @@
 
 This tutorial writes six event handlers for one set of account records. Each step is a job handlers are
 used for, shown in all five languages so you can compare them. It follows on from the
-[record tutorial](../record-udfs/tutorial.md) and uses the same imports, bin handles and helpers.
+[record tutorial](../record-udfs/tutorial.md) and uses the same imports and helpers.
 
 A handler differs from a record UDF in three ways:
 
@@ -11,7 +11,7 @@ A handler differs from a record UDF in three ways:
 2. **Its records are read-only.** The event hands over one or two records. The handler reads their bins
    through the event, not through the record API, and writes nothing.
 3. **Its answer is the effect.** The handler returns a verdict, and the server acts on it: let the write
-   through, refuse it, or commit a different record.
+   through, refuse it, or write a different record.
 
 A binding connects a handler to an event:
 
@@ -90,8 +90,9 @@ passed. The handler answers expire, or keep with a new TTL in seconds.
 The event: `timer`. A timer is set on one record, and its handler runs on that record when the timer
 comes due.
 
-A timer handler is the exception to rule 2. It runs as a record UDF, so the whole record API from the
-record tutorial works in it: it reads bins, stages writes and commits. It can also set the next timer,
+A timer handler is the exception to rule 2. It runs as a record UDF, so it is handed the record as a
+record UDF is, and the whole record API from the record tutorial works in it: it reads bins, stages
+writes and saves. It can also set the next timer,
 which is how a recurring job is written.
 
 {{snippet tick}}

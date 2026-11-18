@@ -7,8 +7,10 @@ UDF_STREAM_RECORD(name, ret, ...)
 ```
 
 A stream UDF: `UDF_STREAM_RECORD(name, ret, params...) { ... }` then `UDF_STREAM_END(name, ret, params...)
-{ ... }`, in that order; the record half returns void or Result&lt;void&gt;, the end half the partial. State is
-static. UDF_STREAM_RAW(name, "(record params)", "(end params)") declares both halves raw.
+{ ... }`, in that order; the record half returns void or Result&lt;void&gt;, the end half the partial. The
+record half may take the record first, as `const udf::Record& rec` only: a stream's record takes no
+write. The end half has no record. State is static. UDF_STREAM_RAW(name, "(record params)",
+"(end params)") declares both halves raw.
 
 #### `UDF_STREAM_END`
 

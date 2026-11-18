@@ -30,37 +30,37 @@ public final class Pair {
 
     /** An integer bin on each side. */
     public Both<Long> int64(String name) {
-        return both(name, local.binInt(name), remote.binInt(name));
+        return both(name, local.boxedLong(name), remote.boxedLong(name));
     }
 
     /** A double bin on each side. */
     public Both<Double> float64(String name) {
-        return both(name, local.binDouble(name), remote.binDouble(name));
+        return both(name, local.boxedDouble(name), remote.boxedDouble(name));
     }
 
     /** A boolean bin on each side. */
     public Both<Boolean> bool(String name) {
-        return both(name, local.binBool(name), remote.binBool(name));
+        return both(name, local.boxedBoolean(name), remote.boxedBoolean(name));
     }
 
     /** A string bin on each side, its text copied out. */
     public Both<String> str(String name) {
-        return both(name, local.binStr(name), remote.binStr(name));
+        return both(name, local.getString(name, null), remote.getString(name, null));
     }
 
-    /** A list bin on each side, as stored values read by position. */
-    public Both<Value> list(String name) {
-        return both(name, local.binList(name), remote.binList(name));
+    /** A list bin on each side, read where it is stored. */
+    public Both<ListValue> list(String name) {
+        return both(name, local.getList(name, null), remote.getList(name, null));
     }
 
-    /** A map bin on each side, as stored values read by position. */
-    public Both<Value> map(String name) {
-        return both(name, local.binMap(name), remote.binMap(name));
+    /** A map bin on each side, read where it is stored. */
+    public Both<MapValue> map(String name) {
+        return both(name, local.getMap(name, null), remote.getMap(name, null));
     }
 
     /** The bin as a value on each side; absent and nil sides are null. */
     public Both<Value> bin(String name) {
-        return both(name, local.binValue(name), remote.binValue(name));
+        return both(name, local.get(name), remote.get(name));
     }
 
     /** Whether the remote side wrote {@code name} later, per bin: the order the bin-lut policy uses. */
@@ -72,37 +72,29 @@ public final class Pair {
     }
 
     /**
-     * Every bin either side has that {@code overrides} (a built map) lacks, from the side that wrote it
+     * Puts into {@code overrides} every bin either side has that it lacks, from the side that wrote the bin
      * later - which is what the policy would have kept - so a handler merges the bins it knows about and
      * leaves the rest as they would have been. Symmetric: both DCs order the two sides the same way.
      * Returns {@code overrides}.
      */
-    public int withNewer(int overrides) {
+    public MapBuilder withNewer(MapBuilder overrides) {
         for (int side = 0; side < 2; side++) {
             EventRecord rec = side == 0 ? local : remote;
 
-            Udf.eachStr(rec.bins, (text, len, v) -> {
-                byte[] name = new byte[len];
-                System.arraycopy(text, 0, name, 0, len);
+            for (Value name : rec.binNames()) {
+                String bin = name.asString();
 
-                if (Udf.mapHasKey(overrides, name)) {
-                    return;
+                if (overrides.containsKey(bin)) {
+                    continue;
                 }
 
-                Value newer = bin(Udf.string(name, len)).newer();
+                Value newer = bin(bin).newer();
 
                 if (newer != null) {
-                    Udf.mapPutValue(overrides, name, newer);
+                    overrides.put(bin, newer);
                 }
-            });
+            }
         }
-
-        return overrides;
-    }
-
-    /** {@link #withNewer(int)} over a built map. */
-    public UdfMap withNewer(UdfMap overrides) {
-        withNewer(overrides.handle());
 
         return overrides;
     }

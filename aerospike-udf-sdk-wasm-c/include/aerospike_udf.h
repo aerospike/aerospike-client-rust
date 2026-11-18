@@ -27,6 +27,14 @@
  * msgpack and nothing is allocated unless the UDF does it. A UDF is an export
  * `int32_t name(int32_t args, int32_t argc)` returning 0 on success; it sets its result with `result_*` and
  * fails with `as_udf_fail`. A stream (aggregation) UDF exports `<name>_record` and `<name>_end`.
+ *
+ * Everything that acts on the record of the call is named `as_udf_rec_*`: reading a bin (`as_udf_rec_bin`),
+ * staging one (`as_udf_rec_set_int` and the rest of the family), removing one (`as_udf_rec_remove`), the
+ * metadata (`as_udf_rec_gen`, `as_udf_rec_ttl`, ...), and the two calls that end a write:
+ * `as_udf_rec_save`, which writes what was staged and creates the record when it is not there, and
+ * `as_udf_rec_delete`, which deletes the record. The records an event hands over are read through the
+ * `as_udf_event_*` family instead. What is left without either prefix is not about a record: the clock,
+ * the log, results, failure, and the list and map builders.
  */
 
 #include <stdbool.h>
@@ -41,48 +49,47 @@
  * `name`. */
 #define AS_UDF_IMPORT(name) __attribute__((import_module("aerospike"), import_name(#name)))
 
-/* Bins - reading. One import for any kind: the host writes a 16-byte value. */
-AS_UDF_IMPORT(bin_value) int32_t as_udf_bin_value(const char* name, int32_t name_len, void* out, int32_t cap);
+/* The record's bins - reading. One import for any kind: the host writes a 16-byte value. */
+AS_UDF_IMPORT(bin_value) int32_t as_udf_rec_bin_value(const char* name, int32_t name_len, void* out, int32_t cap);
 
-/* Bins - writing. Staged until rec_update / rec_create. */
+/* The record's bins - writing. Staged until as_udf_rec_save. */
 
 /* Stage an integer into a bin. Returns AS_UDF_OK, AS_UDF_ERR for a name that is empty or longer than 15
  * bytes, or AS_UDF_REFUSED when the record does not take the write. */
-AS_UDF_IMPORT(set_int) int32_t as_udf_set_int(const char* name, int32_t name_len, int64_t value);
-/* Stage a double into a bin. Statuses as as_udf_set_int. */
-AS_UDF_IMPORT(set_double) int32_t as_udf_set_double(const char* name, int32_t name_len, double value);
-/* Stage a boolean into a bin: any non-zero `value` is true. Statuses as as_udf_set_int. */
-AS_UDF_IMPORT(set_bool) int32_t as_udf_set_bool(const char* name, int32_t name_len, int32_t value);
+AS_UDF_IMPORT(set_int) int32_t as_udf_rec_set_int(const char* name, int32_t name_len, int64_t value);
+/* Stage a double into a bin. Statuses as as_udf_rec_set_int. */
+AS_UDF_IMPORT(set_double) int32_t as_udf_rec_set_double(const char* name, int32_t name_len, double value);
+/* Stage a boolean into a bin: any non-zero `value` is true. Statuses as as_udf_rec_set_int. */
+AS_UDF_IMPORT(set_bool) int32_t as_udf_rec_set_bool(const char* name, int32_t name_len, int32_t value);
 /* Stage a string into a bin: `value_len` bytes, no terminator needed, copied by the host. Statuses as
- * as_udf_set_int. */
-AS_UDF_IMPORT(set_str) int32_t as_udf_set_str(const char* name, int32_t name_len, const char* value, int32_t value_len);
-/* Stage a blob into a bin, copied by the host. Statuses as as_udf_set_int, and AS_UDF_TYPE_MISMATCH when the
+ * as_udf_rec_set_int. */
+AS_UDF_IMPORT(set_str) int32_t as_udf_rec_set_str(const char* name, int32_t name_len, const char* value, int32_t value_len);
+/* Stage a blob into a bin, copied by the host. Statuses as as_udf_rec_set_int, and AS_UDF_TYPE_MISMATCH when the
  * bin holds bytes of another subtype (an HLL, say), which a plain blob would silently relabel. */
-AS_UDF_IMPORT(set_blob) int32_t as_udf_set_blob(const char* name, int32_t name_len, const void* value, int32_t value_len);
+AS_UDF_IMPORT(set_blob) int32_t as_udf_rec_set_blob(const char* name, int32_t name_len, const void* value, int32_t value_len);
 /* Stage GeoJSON text into a bin as a geospatial value rather than a string. The text is copied by the host and
- * not validated by this call. Statuses as as_udf_set_int. */
-AS_UDF_IMPORT(set_geojson) int32_t as_udf_set_geojson(const char* name, int32_t name_len, const char* value, int32_t value_len);
-/* Stage nil into a bin. Statuses as as_udf_set_int. */
-AS_UDF_IMPORT(set_nil) int32_t as_udf_set_nil(const char* name, int32_t name_len);
+ * not validated by this call. Statuses as as_udf_rec_set_int. */
+AS_UDF_IMPORT(set_geojson) int32_t as_udf_rec_set_geojson(const char* name, int32_t name_len, const char* value, int32_t value_len);
 /* Stage a value built on the host (a list, a map or a val_* value) into a bin, which takes it over. Returns
  * AS_UDF_OK, AS_UDF_ERR for an unusable handle or a bad name, AS_UDF_TYPE_MISMATCH when the handle holds bytes
  * and the bin holds bytes of another subtype, or AS_UDF_REFUSED. */
-AS_UDF_IMPORT(set_handle) int32_t as_udf_set_handle(const char* name, int32_t name_len, int32_t handle);
+AS_UDF_IMPORT(set_handle) int32_t as_udf_rec_set_handle(const char* name, int32_t name_len, int32_t handle);
 /* Stage the stored value at offset `at` of source `src` into a bin, copied on the host without the guest
  * decoding it. Returns AS_UDF_OK, AS_UDF_ERR for a bad source, offset or name, or AS_UDF_REFUSED when the record
  * does not take the write or a plain blob would replace bytes of another subtype. */
-AS_UDF_IMPORT(set_at) int32_t as_udf_set_at(const char* name, int32_t name_len, int32_t src, int32_t at);
-/* Remove a bin. Returns AS_UDF_OK, AS_UDF_ERR for a name that is empty or longer than 15 bytes, or
- * AS_UDF_REFUSED when the record does not take the removal. */
-AS_UDF_IMPORT(bin_remove) int32_t as_udf_bin_remove(const char* name, int32_t name_len);
+AS_UDF_IMPORT(set_at) int32_t as_udf_rec_set_at(const char* name, int32_t name_len, int32_t src, int32_t at);
+/* Remove a bin from the record: staged like a write, and applied by as_udf_rec_save. This is the one way to
+ * drop a bin; deleting the whole record is as_udf_rec_delete. Returns AS_UDF_OK, AS_UDF_ERR for a name that is
+ * empty or longer than 15 bytes, or AS_UDF_REFUSED when the record does not take the removal. */
+AS_UDF_IMPORT(bin_remove) int32_t as_udf_rec_remove(const char* name, int32_t name_len);
 /* Write an array of 64-bit integers to a bin as a list, with `vals_len` the size of the array in bytes. Applied
- * at once, not staged: as_udf_rec_update is not needed. Returns AS_UDF_OK, AS_UDF_ERR for a bad name,
+ * at once, not staged: as_udf_rec_save is not needed. Returns AS_UDF_OK, AS_UDF_ERR for a bad name,
  * AS_UDF_REFUSED where there is no writable record (a stream UDF), or another non-zero status when the server
  * rejects the write. */
-AS_UDF_IMPORT(set_list_ints) int32_t as_udf_set_list_ints(const char* name, int32_t name_len, const int64_t* vals, int32_t vals_len);
+AS_UDF_IMPORT(set_list_ints) int32_t as_udf_rec_set_list_ints(const char* name, int32_t name_len, const int64_t* vals, int32_t vals_len);
 /* Write an array of doubles to a bin as a list, with `vals_len` the size of the array in bytes. Applied at
- * once and with the statuses of as_udf_set_list_ints. */
-AS_UDF_IMPORT(set_list_doubles) int32_t as_udf_set_list_doubles(const char* name, int32_t name_len, const double* vals, int32_t vals_len);
+ * once and with the statuses of as_udf_rec_set_list_ints. */
+AS_UDF_IMPORT(set_list_doubles) int32_t as_udf_rec_set_list_doubles(const char* name, int32_t name_len, const double* vals, int32_t vals_len);
 
 /* Collections, by position in a source. */
 
@@ -110,6 +117,10 @@ AS_UDF_IMPORT(cursor_enter_at) int32_t as_udf_cursor_enter_at(int32_t src, int32
 AS_UDF_IMPORT(coll_get) int32_t as_udf_coll_get(int32_t src, int32_t at, const char* key, int32_t key_len, void* out, int32_t cap);
 /* Look up an integer key in the map at offset `at` of source `src`. Output and statuses as as_udf_coll_get. */
 AS_UDF_IMPORT(coll_get_i) int32_t as_udf_coll_get_i(int32_t src, int32_t at, int64_t key, void* out, int32_t cap);
+/* The element at `index` of the list at offset `at` of source `src`, written to `out` as a 16-byte value
+ * (`cap` at least 16), without opening a cursor. Returns AS_UDF_OK, AS_UDF_NOT_FOUND past the end or when the
+ * value is not a list (`out` is then AS_UDF_ABSENT), or AS_UDF_ERR for a bad source, offset or `cap`. */
+AS_UDF_IMPORT(list_get) int32_t as_udf_list_get(int32_t src, int32_t at, int32_t index, void* out, int32_t cap);
 /* Give a cursor's handle back. Only the most recently created handle is released; any other stays until the
  * call ends, when the host releases them all. */
 AS_UDF_IMPORT(cursor_close) void as_udf_cursor_close(int32_t cursor);
@@ -131,7 +142,12 @@ AS_UDF_IMPORT(list_new) int32_t as_udf_list_new(int32_t capacity);
 /* Start an empty map on the host, sized for `capacity` entries. The map is ordered by key, whatever order the
  * entries are put in. Returns its handle, or 0 when none is free. */
 AS_UDF_IMPORT(map_new) int32_t as_udf_map_new(int32_t capacity);
-/* An integer as a value of its own, for as_udf_list_push, as_udf_map_put or as_udf_set_handle. Returns its
+/* Whether a map the call built (a handle from as_udf_map_new) has a string key: 1 or 0, or a negative status
+ * when `handle` is not a built map. Asks the host directly, so the map is not packed to answer it. */
+AS_UDF_IMPORT(map_has) int32_t as_udf_map_has(int32_t handle, const char* key, int32_t key_len);
+/* Whether a map the call built has an integer key. Answers as as_udf_map_has. */
+AS_UDF_IMPORT(map_has_i) int32_t as_udf_map_has_i(int32_t handle, int64_t key);
+/* An integer as a value of its own, for as_udf_list_push, as_udf_map_put or as_udf_rec_set_handle. Returns its
  * handle, or 0 when none is free. */
 AS_UDF_IMPORT(val_int) int32_t as_udf_val_int(int64_t value);
 /* A double as a value of its own. Returns its handle, or 0 when none is free. */
@@ -213,46 +229,47 @@ AS_UDF_IMPORT(result_at) int32_t as_udf_result_at(int32_t src, int32_t at);
  * 511. The UDF still has to return; as_udf_failf does both. */
 AS_UDF_IMPORT(fail) void as_udf_fail(const char* message, int32_t message_len);
 
-/* Metadata. */
+/* The record's metadata. */
 
 /* The record's generation. */
-AS_UDF_IMPORT(gen) int64_t as_udf_gen(void);
+AS_UDF_IMPORT(gen) int64_t as_udf_rec_gen(void);
 /* The record's remaining lifetime in seconds; 0 for a record that does not expire. */
-AS_UDF_IMPORT(ttl) int64_t as_udf_ttl(void);
+AS_UDF_IMPORT(ttl) int64_t as_udf_rec_ttl(void);
 /* When the record was last written, in milliseconds, as the server stores it: counted from the Aerospike epoch
  * (2010-01-01 UTC), not the Unix one. */
-AS_UDF_IMPORT(last_update) int64_t as_udf_last_update(void);
+AS_UDF_IMPORT(last_update) int64_t as_udf_rec_last_update(void);
 /* The record's stored size in bytes. */
-AS_UDF_IMPORT(record_size) int64_t as_udf_record_size(void);
+AS_UDF_IMPORT(record_size) int64_t as_udf_rec_size(void);
 /* How many bins the record has. */
-AS_UDF_IMPORT(numbins) int64_t as_udf_numbins(void);
+AS_UDF_IMPORT(numbins) int64_t as_udf_rec_numbins(void);
 /* The server's wall clock, in milliseconds since the Unix epoch. Returns -1 in an event handler, where the
  * clock is refused: a decision that reads it cannot converge across clusters. */
 AS_UDF_IMPORT(current_time) int64_t as_udf_current_time(void);
 /* Set the TTL the record's write carries, in seconds, with a write's meaning. Returns AS_UDF_OK. */
-AS_UDF_IMPORT(set_ttl) int32_t as_udf_set_ttl(int32_t seconds);
+AS_UDF_IMPORT(set_ttl) int32_t as_udf_rec_set_ttl(int32_t seconds);
 /* Copy the record's set name into `out`, without a terminator. Returns the length, a needed-length status when
  * `cap` is too small, or AS_UDF_NOT_FOUND when the record is in no set. */
-AS_UDF_IMPORT(set_name) int32_t as_udf_set_name(void* out, int32_t cap);
+AS_UDF_IMPORT(set_name) int32_t as_udf_rec_set_name(void* out, int32_t cap);
 /* The kind of the record's user key (AS_UDF_INT, AS_UDF_STR or AS_UDF_BLOB), or AS_UDF_ABSENT when the record
  * was stored without one. */
-AS_UDF_IMPORT(key_type) int32_t as_udf_key_type(void);
-/* The record's user key when it is an integer; 0 when it is not, so check as_udf_key_type first. */
-AS_UDF_IMPORT(key_int) int64_t as_udf_key_int(void);
+AS_UDF_IMPORT(key_type) int32_t as_udf_rec_key_type(void);
+/* The record's user key when it is an integer; 0 when it is not, so check as_udf_rec_key_type first. */
+AS_UDF_IMPORT(key_int) int64_t as_udf_rec_key_int(void);
 /* Copy the record's string or blob user key into `out`. Returns the length, a needed-length status when `cap`
  * is too small, AS_UDF_NOT_FOUND when the record was stored without a key, or AS_UDF_ERR for an integer key. */
-AS_UDF_IMPORT(key_bytes) int32_t as_udf_key_bytes(void* out, int32_t cap);
+AS_UDF_IMPORT(key_bytes) int32_t as_udf_rec_key_bytes(void* out, int32_t cap);
 /* Copy the record's digest into `out`: 20 bytes. Returns the length, or a needed-length status when `cap` is
  * too small. */
-AS_UDF_IMPORT(digest) int32_t as_udf_digest(void* out, int32_t cap);
-/* Create the record, committing the staged writes to it. Returns AS_UDF_OK, or AS_UDF_REFUSED when the server
- * does not create it, as when the record already exists. */
-AS_UDF_IMPORT(rec_create) int32_t as_udf_rec_create(void);
-/* Commit the staged writes to the existing record. Returns AS_UDF_OK, or AS_UDF_REFUSED when the server does
- * not apply them. */
-AS_UDF_IMPORT(rec_update) int32_t as_udf_rec_update(void);
-/* Delete the record. Returns AS_UDF_OK, or AS_UDF_REFUSED when the server does not delete it. */
-AS_UDF_IMPORT(rec_remove) int32_t as_udf_rec_remove(void);
+AS_UDF_IMPORT(digest) int32_t as_udf_rec_digest(void* out, int32_t cap);
+/* The two host calls as_udf_rec_save chooses between: the host has one for a record that is not there yet and
+ * one for a record that is, and refuses each on the other. Not for a UDF to call: as_udf_rec_save is the
+ * record's one write. */
+AS_UDF_IMPORT(rec_create) int32_t as_udf_host_rec_create(void);
+AS_UDF_IMPORT(rec_update) int32_t as_udf_host_rec_update(void);
+/* Delete the record; nothing has to be saved first. The delete is carried out when the call returns, so
+ * as_udf_rec_exists keeps answering what it did until then. Returns AS_UDF_OK, or AS_UDF_REFUSED when the
+ * server does not delete it. */
+AS_UDF_IMPORT(rec_remove) int32_t as_udf_rec_delete(void);
 /* Whether the record exists: 1 or 0, not a status. */
 AS_UDF_IMPORT(rec_exists) int32_t as_udf_rec_exists(void);
 /* Write a line to the server log at an AS_UDF_LOG_* level; any other level logs as debug. `message_len` bytes,
@@ -304,7 +321,7 @@ AS_UDF_IMPORT(log) void as_udf_log(int32_t level, const char* message, int32_t m
 /* GeoJSON the host holds: `len` bytes of text, read by position with as_udf_bytes. */
 #define AS_UDF_GEOJSON 9
 /* A HyperLogLog the host holds: `len` bytes, read with as_udf_bytes. Write one back by position
- * (as_udf_set_at), which keeps it an HLL. */
+ * (as_udf_rec_set_at), which keeps it an HLL. */
 #define AS_UDF_HLL 10
 
 /* Kinds a guest uses only in a batch it hands the host: bytes of its own by address, a built collection by handle. */
@@ -364,9 +381,41 @@ static inline int32_t as_udf_strlen(const char* s)
 }
 
 /* A bin by name, as a value. Returns the status; AS_UDF_NOT_FOUND for no such bin. */
-static inline int32_t as_udf_bin(const char* name, as_udf_value* out)
+static inline int32_t as_udf_rec_bin(const char* name, as_udf_value* out)
 {
-	return as_udf_bin_value(name, as_udf_strlen(name), out, (int32_t)sizeof(*out));
+	return as_udf_rec_bin_value(name, as_udf_strlen(name), out, (int32_t)sizeof(*out));
+}
+
+/* Write the record: the staged bins and removals go to it, and it is created when it does not exist. With
+ * nothing staged it is still a write to a record that exists (the server treats it as a touch: the generation
+ * and the last-update time move); on a key with no record it creates nothing. Returns AS_UDF_OK, or
+ * AS_UDF_REFUSED when the server does not take the write, as in a stream UDF. */
+static inline int32_t as_udf_rec_save(void)
+{
+	return as_udf_rec_exists() ? as_udf_host_rec_update() : as_udf_host_rec_create();
+}
+
+/* The element at `index` of a stored list; AS_UDF_ABSENT kind past the end or when `list` is not a list. */
+static inline as_udf_value as_udf_list_at(const as_udf_value* list, int32_t index)
+{
+	as_udf_value v = { AS_UDF_ABSENT, 0, 0 };
+	if (list->kind == AS_UDF_LIST && index >= 0) {
+		as_udf_list_get(as_udf_value_src(list), as_udf_value_at(list), index, &v, (int32_t)sizeof(v));
+	}
+	return v;
+}
+
+/* Whether a map the call built has the NUL-terminated string key. False for a handle that is not a built
+ * map. */
+static inline bool as_udf_map_contains(int32_t handle, const char* key)
+{
+	return as_udf_map_has(handle, key, as_udf_strlen(key)) > 0;
+}
+
+/* Whether a map the call built has the integer key. False for a handle that is not a built map. */
+static inline bool as_udf_map_contains_i(int32_t handle, int64_t key)
+{
+	return as_udf_map_has_i(handle, key) > 0;
 }
 
 /* A stored value's bytes as the server stores them, msgpack header included, into a buffer: the encoding a

@@ -29,12 +29,12 @@ public final class Decision extends Answer {
     }
 
     /** Writes these bins instead; a bin absent from the map, or nil, is deleted. */
-    public static Decision record(UdfMap bins) {
+    public static Decision record(MapBuilder bins) {
         return new Decision("record", 0, null, bins.handle(), -1);
     }
 
-    /** As {@link #record(UdfMap)}, with a TTL in seconds (0 for the namespace default). */
-    public static Decision record(UdfMap bins, long ttl) {
+    /** As {@link #record(MapBuilder)}, with a TTL in seconds (0 for the namespace default). */
+    public static Decision record(MapBuilder bins, long ttl) {
         return new Decision("record", 0, null, bins.handle(), ttl);
     }
 }

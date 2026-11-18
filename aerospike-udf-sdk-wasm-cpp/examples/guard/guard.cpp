@@ -21,7 +21,7 @@
 
 #include "aerospike_udf.hpp"
 
-static constexpr udf::Bin TICKS{"ticks"};
+static constexpr udf::StrView TICKS{"ticks"};
 
 // Refuses a negative balance; otherwise stamps the write's source and counts it, keeping every other bin.
 UDF_ON_BEFORE_WRITE(guard_account)
@@ -55,13 +55,14 @@ UDF_ON_BEFORE_TRUNCATE(guard_truncate)
 	return udf::Gate::allow();
 }
 
-// The timer handler runs as a record UDF: the record functions work.
+// The timer handler runs as a record UDF, so unlike the other kinds it is handed the record the timer is
+// on, writable.
 UDF_ON_TIMER(tick)
 {
-	int64_t n = TICKS.int_or(0) + 1;
+	int64_t n = record.int_or(TICKS, 0) + 1;
 
-	UDF_TRY(TICKS.set(n));
-	UDF_TRY(udf::commit());
+	UDF_TRY(record.set(TICKS, n));
+	UDF_TRY(record.save());
 
 	if (n < 3) {
 		udf::timer_set("tick", 200);

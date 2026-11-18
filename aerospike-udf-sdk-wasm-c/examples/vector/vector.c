@@ -226,7 +226,7 @@ static int32_t
 read_vector(void)
 {
 	as_udf_value v;
-	int32_t rc = as_udf_bin_value(S.bin, (int32_t)S.bin_len, &v, (int32_t)sizeof(v));
+	int32_t rc = as_udf_rec_bin_value(S.bin, (int32_t)S.bin_len, &v, (int32_t)sizeof(v));
 
 	if (rc == AS_UDF_NOT_FOUND || (rc == AS_UDF_OK && v.kind != AS_UDF_BLOB)) {
 		S.skipped_none++;
@@ -293,7 +293,7 @@ offer(double score)
 
 	h.score = score;
 
-	if (as_udf_digest(h.digest, DIGEST) != DIGEST) return false;
+	if (as_udf_rec_digest(h.digest, DIGEST) != DIGEST) return false;
 
 	if (S.n == S.k && score == S.hits[S.n - 1].score && digest_cmp(h.digest, S.hits[S.n - 1].digest) >= 0) {
 		return true;
@@ -301,13 +301,13 @@ offer(double score)
 
 	h.key_len = 0;
 
-	switch (as_udf_key_type()) {
+	switch (as_udf_rec_key_type()) {
 	case AS_UDF_INT:
-		h.key_len = itoa(as_udf_key_int(), h.key);
+		h.key_len = itoa(as_udf_rec_key_int(), h.key);
 		break;
 	case AS_UDF_STR:
 	case AS_UDF_BLOB: {
-		int32_t n = as_udf_key_bytes(h.key, KEY_MAX);
+		int32_t n = as_udf_rec_key_bytes(h.key, KEY_MAX);
 		h.key_len = n < 0 ? 0 : (uint32_t)n;
 		break;
 	}

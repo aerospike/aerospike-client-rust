@@ -19,14 +19,20 @@ Three rules hold in every language, and every step leans on them:
 
 1. **A read borrows.** A value read from the record stays in the record. It is valid until the call ends
    or the bin it came from is written.
-2. **A write is staged.** Setting a bin changes nothing on the server until the function commits.
+2. **A write is staged.** Setting a bin changes nothing on the server until the function saves the record.
 3. **A failure is a message.** A function that fails hands the client an error with the text it chose.
 
 ## Setting up
 
-Go, C++ and Java name a bin once and read and write through that handle. Rust and C pass the name with
-each call. Rust functions sit together inside one `export! { ... }` block. C has no commit that creates a
-missing record, so the tutorial carries a three-line helper.
+A function that works on its record takes the record as its first parameter, before the arguments a
+client passes. It is not one of them: the client never sends it. Everything the function does to the
+record is a method on it, and a bin is named in each call. C has no objects, so there the record's
+functions share a prefix, `as_udf_rec_`, and the record is implied. Rust functions sit together inside one
+`export! { ... }` block.
+
+Rust and C++ say in the parameter's type whether a function writes: `&mut Record` or `udf::Record&` for
+one that does, `&Record` or `const udf::Record&` for one that only reads. Go and Java have one `Record`
+type.
 
 {{snippet setup}}
 
@@ -36,8 +42,7 @@ The task: read an integer that may not exist yet, add to it, write it back, and 
 This is the read-modify-write most UDFs are.
 
 The read needs a default, because a new account has no `visits` bin. The write is staged, so the function
-must commit. The commit creates the record when the key has none: Go, C++ and Java do that in one call,
-Rust and C choose between create and update.
+must save. The save creates the record when the key has none, in every language.
 
 The defaults differ in one detail. In Go and C++ a bin of another kind also answers the default. In Java
 it throws, and the Rust code here fails with `WrongType`.
@@ -53,7 +58,7 @@ The task: a bin that must exist and must be an integer, and a business rule that
 
 The strict read has no default: an absent bin or a bin of another kind ends the call with an error that
 names the problem. The rule is ordinary code. Failing is returning an error in Rust, Go and C++, a status
-in C, and throwing in Java. Nothing was committed, so the record is untouched.
+in C, and throwing in Java. Nothing was saved, so the record is untouched.
 
 {{snippet withdraw}}
 
@@ -114,8 +119,8 @@ earlier no longer points at anything.
 The task: answer with a collection, mixing stored values and record metadata.
 
 A map is built the same way as a list, and returning it hands it to the client. A value read from the
-record goes into the map as it is, whatever its kind. The metadata calls take no arguments: generation,
-bin count and time to live here, and also the record's size, last update time, set name, key and digest.
+record goes into the map as it is, whatever its kind. The metadata is on the record: generation, bin
+count and time to live here, and also its size, last update time, set name, key and digest.
 
 {{snippet summary}}
 
@@ -123,7 +128,7 @@ bin count and time to live here, and also the record's size, last update time, s
 
 The task: set the record's time to live.
 
-The TTL is in seconds and belongs to the write: it takes effect when the function commits. Zero asks for
+The TTL is in seconds and belongs to the write: it takes effect when the function saves. Zero asks for
 the namespace default and -1 for no expiry, subject to the namespace's rules.
 
 {{snippet renew}}
@@ -132,8 +137,8 @@ the namespace default and -1 for no expiry, subject to the namespace's rules.
 
 The task: remove a bin from the record.
 
-Writing nil to a bin drops it, and the write commits like any other. The SDKs also have a call that
-removes a bin by name. The server on this branch refuses it, so use the nil write.
+Removing a bin is staged like a write, and takes effect with the save. Writing nil to a bin does the
+same thing, since a bin cannot hold nil.
 
 {{snippet clear_note}}
 
@@ -141,7 +146,8 @@ removes a bin by name. The server on this branch refuses it, so use the nil writ
 
 The task: delete the record the function runs on.
 
-The delete is its own write. It needs no commit.
+The delete is its own write. It needs no save, and whatever was staged goes with the record. The server
+carries it out when the call returns, so inside the call the record still answers that it exists.
 
 {{snippet close}}
 
@@ -149,20 +155,22 @@ The delete is its own write. It needs no commit.
 
 | Task | Rust | Go | C | C++ | Java |
 | --- | --- | --- | --- | --- | --- |
-| Read a bin of any kind | `as_udf::bin(name)` | `bin.Get()` | `as_udf_bin(name, &v)` | `BIN.get()` | `bin.get()` |
-| Integer with a default | `match` on `Error::Absent` | `bin.IntOr(d)` | test `v.kind` | `BIN.int_or(d)` | `bin.getLong(d)` |
-| Required, typed | `.int()?` `.double()?` `.bool()?` `.text()?` | `Int()` `Float64()` `Bool()` `Str()` | test `v.kind`, read `v.payload` | `as_int()` `as_double()` `as_bool()` `as_text<N>()` | `getLong()` `getDouble()` `getBoolean()` `getString()` |
-| Write a bin | `as_udf::set(name, v)` | `SetInt` `SetStr` `SetList` ... | `as_udf_set_int` `as_udf_set_str` ... | `BIN.set(v)` | `bin.set(v)` |
-| Commit | `update()` or `create()` | `udf.Commit()` | `as_udf_rec_update()` or `as_udf_rec_create()` | `udf::commit()` | `Udf.commit()` |
+| Take the record | `rec: &mut Record` or `&Record`, first | `rec *udf.Record`, first | implied | `udf::Record& rec` or `const udf::Record&`, first | `Record rec`, first |
+| Read a bin of any kind | `rec.bin(name)` | `rec.Get(name)` | `as_udf_rec_bin(name, &v)` | `rec.get(name)` | `rec.get(name)` |
+| Integer with a default | `rec.int(name)?.unwrap_or(d)` | `rec.Int(name)`, test the bool | test `v.kind` | `rec.int_or(name, d)` | `rec.getLong(name, d)` |
+| Required, typed | `rec.bin(name)?` then `.int()?` `.double()?` `.bool()?` `.text()?` | `rec.Bin(name)` then `Int()` `Float64()` `Bool()` `Str()` | test `v.kind`, read `v.payload` | `rec.bin(name)` then `as_int()` `as_double()` `as_bool()` `as_text<N>()` | `rec.getLong(name)` `getDouble` `getBoolean` `getString` |
+| Write a bin | `rec.set(name, v)` | `rec.Set(name, v)` | `as_udf_rec_set_int` `as_udf_rec_set_str` ... | `rec.set(name, v)` | `rec.set(name, v)` |
+| Save | `rec.save()` | `rec.Save()` | `as_udf_rec_save()` | `rec.save()` | `rec.save()` |
 | Fail the call | `Err(Error::Custom(msg))` | return an `error` | `return as_udf_failf(msg)` | `return udf::error(status, msg)` | `throw new UdfException(msg)` |
-| Walk a list | `.list()?.iter()` | `range bin.List()` | cursor | `for (udf::Value v : BIN.list())` | `for (Value v : bin.asList())` |
-| Walk a map | `.map()?.entries()` | `range bin.Map()` | cursor, key then value | `for (udf::Entry e : BIN.map())` | `for (Cursor.Entry e : bin.asMap())` |
-| Look up a key | `map.get(key)` | `value.Lookup(key)` | `as_udf_coll_get(...)` | `value.get(key)` | `Udf.get(map, key, out)` |
-| Build a list | `as_udf::list(n)`, `push`, `extend` | `udf.NewList(n)`, `Add`, `AddAll` | `as_udf_list_new`, `as_udf_list_push_*` | `udf::List`, `add`, `add_all` | `UdfList.create(n)`, `add`, `addAll` |
-| Build a map | `as_udf::map(n)`, `put` | `udf.NewMap(n)`, `Put` | `as_udf_map_new`, `as_udf_map_put_*` | `udf::Map`, `put` | `UdfMap.create(n)`, `put` |
-| Set the TTL | `set_time_to_live(s)` | `udf.SetTTL(s)` | `as_udf_set_ttl(s)` | `udf::set_ttl(s)` | `Udf.setTtl(s)` |
-| Drop a bin | `set(name, Value::Nil)` | `bin.SetNull()` | `as_udf_set_nil(name, len)` | `BIN.set_null()` | `bin.setNull()` |
-| Delete the record | `remove_record()` | `udf.Delete()` | `as_udf_rec_remove()` | `udf::remove_record()` | `Udf.delete()` |
+| Walk a list | `.list()?.iter()` | `range rec.List(name)` | cursor | `for (udf::Value v : rec.list(name))` | `for (Value v : rec.getList(name))` |
+| Walk a map | `.map()?.entries()` | `range rec.Map(name)` | cursor, key then value | `for (udf::Entry e : rec.map(name))` | `for (MapValue.Entry e : rec.getMap(name))` |
+| Look up a key | `map.get(key)` | `value.Lookup(key)` | `as_udf_coll_get(...)` | `value.get(key)` | `map.get(key)` |
+| One element of a list | `list.at(i)` | `value.Index(i)` | `as_udf_list_at(&list, i)` | `value.at(i)` | `list.get(i)` |
+| Build a list | `as_udf::list(n)`, `push`, `extend` | `udf.NewList(n)`, `Add`, `AddAll` | `as_udf_list_new`, `as_udf_list_push_*` | `udf::List`, `add`, `add_all` | `Udf.list()`, `add`, `addAll` |
+| Build a map | `as_udf::map(n)`, `insert` | `udf.NewMap(n)`, `Put` | `as_udf_map_new`, `as_udf_map_put_*` | `udf::Map`, `put` | `Udf.map()`, `put` |
+| Set the TTL | `rec.set_ttl(s)` | `rec.SetTTL(s)` | `as_udf_rec_set_ttl(s)` | `rec.set_ttl(s)` | `rec.setTtl(s)` |
+| Remove a bin | `rec.remove(name)` | `rec.Remove(name)` | `as_udf_rec_remove(name, len)` | `rec.remove(name)` | `rec.remove(name)` |
+| Delete the record | `rec.delete()` | `rec.Delete()` | `as_udf_rec_delete()` | `rec.delete_record()` | `rec.delete()` |
 
 The code on this page is compiled: it comes from the sources under `book/tutorial/`, one file per
 language. The language chapters that follow cover building a module and list every call in full.

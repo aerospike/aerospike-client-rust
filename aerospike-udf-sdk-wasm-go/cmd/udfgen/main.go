@@ -30,6 +30,12 @@
 // takes the kind's parameters and returns the kind's answer and an error, or only an error for the kinds
 // that answer nothing. A function declared (args, argc int32) int32 is the raw form, exported as it is,
 // with params giving the signature text.
+//
+// A udf:function, and a stream's Record method, may take the record first, as a *udf.Record, in the typed
+// form and the raw one alike. The export passes it the record of the call. It is not an argument: it is
+// left out of the arity check and of the signature text, so adding or removing it changes nothing a
+// client sees. A stream's End takes none, since no record is in hand when the stream ends. The timer
+// handler runs as a record UDF and always takes it.
 package main
 
 import (
@@ -68,7 +74,7 @@ var kinds = map[string]kind{
 	"partition-transfer": {"partition-transfer", []string{"udf.TransferInfo"}, "", nil, "TransferInfo", "ParamsPartitionTransfer"},
 	"cluster-change":     {"cluster-change", []string{"udf.ClusterInfo"}, "", nil, "ClusterInfo", "ParamsClusterChange"},
 	"node-lifecycle":     {"node-lifecycle", []string{"udf.LifecycleInfo"}, "", nil, "LifecycleInfo", "ParamsNodeLifecycle"},
-	"timer":              {"timer", []string{"udf.TimerInfo"}, "", nil, "", "ParamsTimer"},
+	"timer":              {"timer", []string{"*udf.Record", "udf.TimerInfo"}, "", nil, "", "ParamsTimer"},
 	"xdr-merge":          {"xdr-merge", []string{"*udf.EventRecord", "*udf.EventRecord", "*udf.Conflict"}, "udf.Resolution", nil, "", ""},
 }
 
@@ -380,8 +386,23 @@ func (g *generator) results(fn *ast.FuncDecl) []string {
 	return out
 }
 
+// recordType is the parameter type that asks for the record of the call.
+const recordType = "*udf.Record"
+
+// arguments is a function's parameters without the leading record, and whether it declared one. The
+// record is handed over by the export, so nothing that concerns the client's arguments counts it.
+func (g *generator) arguments(fn *ast.FuncDecl) (names, types []string, record bool) {
+	names, types = g.params(fn)
+	if len(types) > 0 && types[0] == recordType {
+		return names[1:], types[1:], true
+	}
+	return names, types, false
+}
+
+// raw reports whether a function is in the raw form, (args, argc int32) int32, after the record if it
+// takes one.
 func (g *generator) raw(fn *ast.FuncDecl) bool {
-	_, types := g.params(fn)
+	_, types, _ := g.arguments(fn)
 	res := g.results(fn)
 	return len(types) == 2 && types[0] == "int32" && types[1] == "int32" && len(res) == 1 && res[0] == "int32"
 }
@@ -536,8 +557,18 @@ func (g *generator) function(b *strings.Builder, e *export, id string) string {
 	}
 	fmt.Fprintf(b, "\n//export %s\nfunc %s_%s(args, argc int32) int32 {\n", exportName, prefix, id)
 
+	names, types, record := g.arguments(e.fn)
+	if record && e.role == roleEnd {
+		g.errorf(e.fn.Pos(), "a stream's End takes no record: none is in hand when the stream ends")
+		return ""
+	}
+
 	if g.raw(e.fn) {
-		fmt.Fprintf(b, "\treturn %s(args, argc)\n}\n", g.call(e))
+		if record {
+			fmt.Fprintf(b, "\treturn %s(udf.CurrentRecord(), args, argc)\n}\n", g.call(e))
+		} else {
+			fmt.Fprintf(b, "\treturn %s(args, argc)\n}\n", g.call(e))
+		}
 		if e.params == "" {
 			return "()"
 		}
@@ -547,10 +578,13 @@ func (g *generator) function(b *strings.Builder, e *export, id string) string {
 		g.errorf(e.pos, "params is for the raw form (args, argc int32) int32; a typed function's signature is derived")
 	}
 
-	names, types := g.params(e.fn)
 	var decs []*decoded
 	rest := false
 	for i := range names {
+		if types[i] == recordType {
+			g.errorf(e.fn.Pos(), "parameter %s: the record is the first parameter, and there is one", names[i])
+			return ""
+		}
 		d := g.decode(names[i], types[i], i, len(names), e.name, "a[:]")
 		if d == nil {
 			g.errorf(e.fn.Pos(), "parameter %s: %s is not a type a udf:function takes", names[i], types[i])
@@ -571,7 +605,11 @@ func (g *generator) function(b *strings.Builder, e *export, id string) string {
 	if !rest {
 		fmt.Fprintf(b, "\tif err := udf.Arity(%q, %d, argc); err != nil {\n\t\treturn udf.FailErr(err)\n\t}\n", e.name, len(names))
 	}
+	// The record goes in ahead of the decoded arguments; the indexes above never counted it.
 	var actuals []string
+	if record {
+		actuals = append(actuals, "udf.CurrentRecord()")
+	}
 	var sig []string
 	for i, d := range decs {
 		p := fmt.Sprintf("p%d", i)
@@ -622,7 +660,16 @@ func (g *generator) handler(b *strings.Builder, e *export, id string) {
 	k := e.kind
 	fmt.Fprintf(b, "\n//export %s\nfunc udfExport_%s(args, argc int32) int32 {\n", e.name, id)
 	if g.raw(e.fn) {
-		fmt.Fprintf(b, "\treturn %s(args, argc)\n}\n", g.call(e))
+		// The raw form takes the record first only where the kind does: the timer.
+		_, _, record := g.arguments(e.fn)
+		switch {
+		case !record:
+			fmt.Fprintf(b, "\treturn %s(args, argc)\n}\n", g.call(e))
+		case k.event == "timer":
+			fmt.Fprintf(b, "\treturn %s(udf.CurrentRecord(), args, argc)\n}\n", g.call(e))
+		default:
+			g.errorf(e.fn.Pos(), "a udf:on %s handler takes no *udf.Record: an event reads its records as *udf.EventRecord", k.event)
+		}
 		return
 	}
 
@@ -660,7 +707,7 @@ func (g *generator) handler(b *strings.Builder, e *export, id string) {
 		actuals = []string{"&c.Local", "&c.Remote", "&c"}
 	case k.event == "timer":
 		fmt.Fprintf(b, "\tvar t udf.TimerInfo\n\tif !udf.EventTimerInfo(args, argc, &t) {\n%s\t}\n", failLine)
-		actuals = []string{"t"}
+		actuals = []string{"udf.CurrentRecord()", "t"}
 	default:
 		fmt.Fprintf(b, "\tvar desc udf.Value\n")
 		for i := range k.records {

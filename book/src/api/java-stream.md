@@ -16,12 +16,14 @@ with the signature `stream <name>` followed by the two parameter lists.
 @Stream("sum")
 final class Sum {
 private long total;
-void record(String bin) { total += Bin.of(bin).getLong(0); }
+void record(Record rec, String bin) { total += rec.getLong(bin, 0); }
 long end(String bin) { return total; }
 }
 ```
 Parameters and returns are as for `Function`: `record` returns `void`, `end`
-the partial. In the raw form both are `int name(int args, int argc)` and `params` and
+the partial. `record` may take the `Record` as its first parameter, which is the record the
+query thread is on and is read-only: a write to it throws `UdfException`. `end` takes none,
+since it runs after the last record. In the raw form both are `int name(int args, int argc)` and `params` and
 `endParams` give the signature's parameter text, which is the form for a stream that reads its
 arguments once, on the first record, and keeps them.
 

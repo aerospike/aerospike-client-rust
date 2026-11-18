@@ -28,12 +28,17 @@ AS_UDF_EVENT_BEFORE_WRITE(guard_account)
 }
 ```
 
+`with_bins` is the module's own helper; `examples/guard/guard.c` below has it. It asks
+`as_udf_map_has(out, name, len)` for each bin of the record, so what the handler put in the map wins.
+
 ## Records
 
 `as_udf_event_desc(args, argc, &desc)` reads the description; `as_udf_event_get_record(&desc, key, which,
 &rec)` fills an `as_udf_event_record` from its entry (`before`, `after`, `record`; `local` and `remote`
 for the conflict); `which` is the index the record is read by. `as_udf_event_bin(&rec, name, &v)` reads a
-bin through the event's own import; `rec.bins`, `rec.deleted`, `rec.bin_luts`, `rec.bin_srcs` are the
+bin through the event's own import. An event's records are read-only and are read with the
+`as_udf_event_` family, never with `as_udf_rec_`, which is for the record of a call and has none in a
+handler. The timer is the exception, below. `rec.bins`, `rec.deleted`, `rec.bin_luts`, `rec.bin_srcs` are the
 lists and maps from the description, and `as_udf_event_bin_lut` / `as_udf_event_bin_src` fall back to
 the record's values. `as_udf_map_get`, `as_udf_map_int`, `as_udf_map_str`, `as_udf_map_bool` and
 `as_udf_str_is` read the description's maps; `as_udf_list_has_str` searches a stored list of strings.
@@ -61,9 +66,29 @@ the record's values. `as_udf_map_get`, `as_udf_map_int`, `as_udf_map_str`, `as_u
 
 ## Timers
 
-A timer handler runs as a record UDF: `as_udf_bin`, `as_udf_set_int`, `as_udf_rec_update` work in it, and
-`as_udf_timer_set("tick", 4, 200)` re-arms it; `as_udf_timer_cancel` cancels. Both are refused in any other
-handler.
+A timer handler runs as a record UDF, on the record the timer was set on. So it is the one handler in
+which the `as_udf_rec_` family works: it reads with `as_udf_rec_bin`, stages with `as_udf_rec_set_int`
+and the rest, and saves with `as_udf_rec_save()` like any record UDF. `as_udf_timer_set("tick", 4, 200)`
+re-arms it; `as_udf_timer_cancel` cancels. Both are refused in any other handler.
+
+```c
+AS_UDF_EVENT_TIMER(tick)
+{
+	as_udf_timer_info t;
+	if (as_udf_event_timer_info(args, argc, &t) != AS_UDF_OK) return as_udf_failf("tick: not a timer");
+
+	as_udf_value ticks;
+	int64_t n = as_udf_rec_bin("ticks", &ticks) == AS_UDF_OK && ticks.kind == AS_UDF_INT ? ticks.payload : 0;
+	n++;
+
+	as_udf_rec_set_int("ticks", 5, n);
+	as_udf_rec_save();
+
+	if (n < 3) as_udf_timer_set("tick", 4, 200);
+
+	return as_udf_answer_done();
+}
+```
 
 ## The modules
 

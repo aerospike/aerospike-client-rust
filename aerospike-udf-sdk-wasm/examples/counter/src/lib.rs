@@ -16,7 +16,7 @@
 
 #![no_std]
 
-use aerospike_udf_sdk_wasm::{self as as_udf, event, export, Coll, Error, Map, Resolution, Str, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, event, export, Coll, Error, Map, Record, Resolution, Str, Value};
 
 const MAX_SITES: usize = 64;
 
@@ -77,7 +77,7 @@ impl Counts {
         let m = as_udf::map(self.n)?;
 
         for (site, count) in self.sites[..self.n].iter().flatten() {
-            m.put(site.as_str(), *count)?;
+            m.insert(site.as_str(), *count)?;
         }
 
         Ok(m)
@@ -87,7 +87,7 @@ impl Counts {
 event! {
     /// The merge: for every site, the larger of the two counts. Every other bin is the incoming one's.
     on xdr_merge
-    fn merge_counter(current: Record, incoming: Record, _conflict: Conflict) -> Result<Resolution, Error> {
+    fn merge_counter(current: EventRecord, incoming: EventRecord, _conflict: Conflict) -> Result<Resolution, Error> {
         let mut counts = Counts::new();
 
         counts.offer_all(current.map("counts")?)?;
@@ -95,29 +95,25 @@ event! {
 
         let out = as_udf::map(1)?;
 
-        out.put("counts", counts.into_map()?)?;
+        out.insert("counts", counts.into_map()?)?;
 
         Ok(Resolution::Record { bins: incoming.with_bins(out)?, ttl: None })
     }
 }
 
 /// The record's counts, or none.
-fn stored() -> Result<Counts, Error> {
+fn stored(rec: &Record) -> Result<Counts, Error> {
     let mut counts = Counts::new();
 
-    match as_udf::bin("counts") {
-        Ok(v) => counts.offer_all(Some(v.map()?))?,
-        Err(Error::Absent) => {}
-        Err(e) => return Err(e),
-    }
+    counts.offer_all(rec.map("counts")?)?;
 
     Ok(counts)
 }
 
 export! {
     /// Adds `n` to this site's count. Returns the counter's value.
-    fn increment(site: &str, n: i64) -> Result<Value, Error> {
-        let mut counts = stored()?;
+    fn increment(rec: &mut Record, site: &str, n: i64) -> Result<Value, Error> {
+        let mut counts = stored(rec)?;
         let site = Site::new(site)?;
         let mut found = false;
 
@@ -132,21 +128,16 @@ export! {
             counts.offer(site, n)?;
         }
 
-        as_udf::set("counts", counts.into_map()?)?;
+        rec.set("counts", counts.into_map()?)?;
 
-        if as_udf::exists() {
-            as_udf::update()?;
-        }
-        else {
-            as_udf::create()?;
-        }
+        rec.save()?;
 
         Ok(Value::Int(counts.total()))
     }
 
     /// The counter's value: the sum of every site's count.
-    fn value() -> Result<Value, Error> {
-        Ok(Value::Int(stored()?.total()))
+    fn value(rec: &Record) -> Result<Value, Error> {
+        Ok(Value::Int(stored(rec)?.total()))
     }
 }
 

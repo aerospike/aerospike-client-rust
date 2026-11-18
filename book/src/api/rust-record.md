@@ -563,18 +563,20 @@ The map's entries, paired.
 #### `Coll::get`
 
 ```rust
-pub fn get(&self, key: &str) -> Result<Value<'static>, Error>
+pub fn get(&self, key: impl MapKey) -> Result<Value<'static>, Error>
 ```
 
-The value under a string key of a map, in one import call. `Err(Absent)` for no such key.
+The value under a key of a map, a string or an integer, in one import call. `Err(Absent)` for no
+such key.
 
-#### `Coll::get_i`
+#### `Coll::at`
 
 ```rust
-pub fn get_i(&self, key: i64) -> Result<Value<'static>, Error>
+pub fn at(&self, index: usize) -> Result<Value<'static>, Error>
 ```
 
-[`get`](Coll::get) for a map keyed by integers.
+The element at `index` of a list, in one import call: the host steps over the elements before it
+where they are stored, so nothing before it is fetched. `Err(Absent)` past the end.
 
 #### `Iter`
 
@@ -617,61 +619,303 @@ impl Iterator for Entries
 Yields each entry as `Ok((key, value))`. A key with no value after it is `Err(Malformed)`; a failure of
 the walk underneath is passed on as it is.
 
-#### `bin`
+#### `ReadRecord`
 
 ```rust
-pub fn bin(name: &str) -> Result<Value<'static>, Error>
+pub trait ReadRecord
+```
+
+What any record can be asked: the one a record UDF is called on ([`Record`]) and either side of an
+event ([`EventRecord`]). A helper that takes `&impl ReadRecord` reads a bin the same way in both.
+
+[`bin`](ReadRecord::bin) is the form for a bin that must be there, `Err(Absent)` when it is not. The
+typed forms are for a bin that may not be: `None` when it is absent or nil, `Err(WrongType)` when it
+holds another kind.
+
+#### `Record`
+
+```rust
+pub struct Record
+```
+
+The record a UDF was called on.
+
+A record UDF, and the per-record half of a stream UDF, takes it as its first parameter, before the
+call's arguments. It is not one of them: a client does not pass it and the function's signature export
+does not list it. A function that does not touch the record leaves the parameter out.
+
+```ignore
+export! {
+fn withdraw(rec: &mut Record, amount: i64) -> Result<Value, Error> {
+let balance = rec.bin("balance")?.int()?;
+
+rec.set("balance", balance - amount)?;
+rec.save()?;
+
+Ok(Value::Int(balance - amount))
+}
+
+fn balance(rec: &Record) -> Result<Value, Error> {
+rec.bin("balance")
+}
+}
+```
+
+`&Record` reads; `&mut Record` also writes. **A bin write is staged**: [`set`](Record::set) and
+[`remove`](Record::remove) change the record in hand, and nothing reaches the server's record until
+[`save`](Record::save). [`delete`](Record::delete) is the exception: it needs no save.
+
+The reading methods are also on [`ReadRecord`], which [`EventRecord`] implements too.
+
+#### `Record::current`
+
+```rust
+pub fn current() -> Record
+```
+
+The record of the call in progress, for an export written without the macros, which otherwise
+pass it as the first parameter. Every one of these is the same record, so make one per call.
+
+#### `Record::bin`
+
+```rust
+pub fn bin(&self, name: &str) -> Result<Value<'static>, Error>
 ```
 
 A bin, whatever it holds, in one import call. `Err(Absent)` when the record has no such bin.
 
-#### `set`
+#### `Record::get`
 
 ```rust
-pub fn set<'a>(name: &str, value: impl Into<Value<'a>>) -> Result<(), Error>
+pub fn get(&self, name: &str) -> Result<Option<Value<'static>>, Error>
 ```
 
-Write a value to a bin. **Staged until [`update`] or [`create`] commits it.**
+A bin that may be absent: `None` when it is absent or nil.
 
-A value read from the record is written back from its stored bytes without the guest decoding it, which
-is how a sub-document is copied from one bin to another. A built [`List`] / [`Map`] is handed over whole.
-A string or blob of the guest's is copied during the call, so it may be any `&str` - a literal, a buffer
-of the UDF's, a `String` - not only a `'static` one.
-
-#### `set_value`
+#### `Record::int`
 
 ```rust
-pub fn set_value(name: &str, value: &Value<'_>) -> Result<(), Error>
+pub fn int(&self, name: &str) -> Result<Option<i64>, Error>
 ```
 
-[`set`] for a value held by reference.
+An integer bin, or `None` when the bin is absent or nil. A bin of another kind is `Err(WrongType)`.
 
-#### `remove`
+#### `Record::double`
 
 ```rust
-pub fn remove(name: &str) -> Result<(), Error>
+pub fn double(&self, name: &str) -> Result<Option<f64>, Error>
 ```
 
-Delete a bin.
+A double bin, or `None` when absent or nil.
 
-#### `set_list_ints`
+#### `Record::bool`
 
 ```rust
-pub fn set_list_ints(name: &str, values: &[i64]) -> Result<(), Error>
+pub fn bool(&self, name: &str) -> Result<Option<bool>, Error>
+```
+
+A boolean bin, or `None` when absent or nil.
+
+#### `Record::text`
+
+```rust
+pub fn text(&self, name: &str) -> Result<Option<Text<'static>>, Error>
+```
+
+A string bin's text, or `None` when absent or nil.
+
+#### `Record::blob`
+
+```rust
+pub fn blob(&self, name: &str) -> Result<Option<Blob<'static>>, Error>
+```
+
+A blob bin's bytes, or `None` when absent or nil.
+
+#### `Record::list`
+
+```rust
+pub fn list(&self, name: &str) -> Result<Option<Coll>, Error>
+```
+
+A list bin, or `None` when absent or nil.
+
+#### `Record::map`
+
+```rust
+pub fn map(&self, name: &str) -> Result<Option<Coll>, Error>
+```
+
+A map bin, or `None` when absent or nil.
+
+#### `Record::bin_count`
+
+```rust
+pub fn bin_count(&self) -> i64
+```
+
+How many bins the record has.
+
+#### `Record::set`
+
+```rust
+pub fn set<'a>(&mut self, name: &str, value: impl Into<Value<'a>>) -> Result<(), Error>
+```
+
+Write a value to a bin. **Staged until [`save`](Record::save).**
+
+A value read from the record is written back from its stored bytes without the guest decoding it,
+which is how a sub-document is copied from one bin to another. A built [`List`] / [`Map`] is handed
+over whole. A string or blob of the guest's is copied during the call, so it may be any `&str` - a
+literal, a buffer of the UDF's, a `String` - not only a `'static` one.
+
+Writing [`Value::Nil`] removes the bin, as [`remove`](Record::remove) does: a bin cannot hold nil.
+
+#### `Record::set_value`
+
+```rust
+pub fn set_value(&mut self, name: &str, value: &Value<'_>) -> Result<(), Error>
+```
+
+[`set`](Record::set) for a value held by reference.
+
+#### `Record::remove`
+
+```rust
+pub fn remove(&mut self, name: &str) -> Result<(), Error>
+```
+
+Remove a bin. Staged, like [`set`](Record::set).
+
+#### `Record::set_ints`
+
+```rust
+pub fn set_ints(&mut self, name: &str, values: &[i64]) -> Result<(), Error>
 ```
 
 Write a slice of integers to a bin as a list, **without building a value per element**.
 
 The host packs the slice straight into a LIST particle and applies it as one op, which takes effect
-immediately rather than being staged: [`update`] is not needed. Refused in an aggregation.
+immediately rather than being staged: [`save`](Record::save) is not needed.
 
-#### `set_list_doubles`
+#### `Record::set_doubles`
 
 ```rust
-pub fn set_list_doubles(name: &str, values: &[f64]) -> Result<(), Error>
+pub fn set_doubles(&mut self, name: &str, values: &[f64]) -> Result<(), Error>
 ```
 
-The counterpart of [`set_list_ints`] for doubles.
+The counterpart of [`set_ints`](Record::set_ints) for doubles.
+
+#### `Record::exists`
+
+```rust
+pub fn exists(&self) -> bool
+```
+
+Whether the record exists. A UDF can be called on a key that has no record yet.
+
+#### `Record::generation`
+
+```rust
+pub fn generation(&self) -> i64
+```
+
+The record's modification count.
+
+#### `Record::ttl`
+
+```rust
+pub fn ttl(&self) -> Option<u32>
+```
+
+The record's remaining lifetime in seconds, or `None` when it never expires.
+
+#### `Record::set_ttl`
+
+```rust
+pub fn set_ttl(&mut self, seconds: u32) -> Result<(), Error>
+```
+
+Set the record's time to live, in seconds. It is the TTL of the write, so it takes effect when
+[`save`](Record::save) writes the record.
+
+#### `Record::last_update_time`
+
+```rust
+pub fn last_update_time(&self) -> i64
+```
+
+When the record was last written, in milliseconds since the Aerospike epoch (2010-01-01 UTC), which
+is how the server stores it. It is not on the same scale as [`now`], which counts from the Unix
+epoch.
+
+#### `Record::size`
+
+```rust
+pub fn size(&self) -> i64
+```
+
+The record's stored size, in bytes.
+
+#### `Record::set_name`
+
+```rust
+pub fn set_name<'b>(&self, out: &'b mut [u8]) -> Result<&'b str, Error>
+```
+
+The record's set name, into a buffer you own.
+
+#### `Record::key`
+
+```rust
+pub fn key<'b>(&self, out: &'b mut [u8]) -> Result<Value<'b>, Error>
+```
+
+The record's user key, when it was written with `send_key`: an integer, or a string or blob whose
+bytes go into `out`. `Err(Absent)` when the record carries none.
+
+#### `Record::digest`
+
+```rust
+pub fn digest<'b>(&self, out: &'b mut [u8]) -> Result<&'b [u8], Error>
+```
+
+The record's digest, into a buffer you own: 20 bytes, always present. What identifies a record a
+UDF wants to point at rather than ship - a top-k hit, say - since a client can fetch it by digest
+afterwards.
+
+#### `Record::save`
+
+```rust
+pub fn save(&mut self) -> Result<(), Error>
+```
+
+Write the staged bins to the server's record, creating the record when it does not exist yet.
+
+This is the one way a staged write takes effect: a UDF that returns without saving has changed
+nothing. A UDF that must not overwrite checks [`exists`](Record::exists) first; the record is
+locked for the whole call, so nothing can come between the check and the save.
+
+With nothing staged it is still a write: the server treats it as a touch, and the record's
+generation and last-update time move. On a key with no record it makes nothing, since a record
+has to have a bin, and the call is answered "key not found".
+
+#### `Record::delete`
+
+```rust
+pub fn delete(&mut self) -> Result<(), Error>
+```
+
+Delete the record. Not staged: it needs no [`save`](Record::save) after it, and whatever was
+staged goes with the record. The server carries it out when the call returns, so for the rest of
+the call [`exists`](Record::exists) answers as it did before. `Err(Refused)` when the server
+could not do it.
+
+#### `impl ReadRecord for Record`
+
+```rust
+impl ReadRecord for Record
+```
 
 #### `list`
 
@@ -679,7 +923,7 @@ The counterpart of [`set_list_ints`] for doubles.
 pub fn list(capacity: usize) -> Result<List, Error>
 ```
 
-Start a list. It lives on the host; hand it to [`set`], return it, or nest it in another.
+Start a list. It lives on the host; hand it to [`Record::set`], return it, or nest it in another.
 
 #### `map`
 
@@ -735,21 +979,42 @@ pub struct Map
 
 A map under construction, keyed by strings.
 
-#### `Map::put`
+#### `MapKey`
 
 ```rust
-pub fn put<'a>(&self, key: &str, value: impl Into<Value<'a>>) -> Result<&Self, Error>
+pub trait MapKey: sealed::Sealed
 ```
 
-Put a value under a string key. The same values as [`List::push`].
+What a map is keyed by: a string or an integer. [`Map::insert`] and [`Coll::get`] take either.
 
-#### `Map::put_i`
+#### `impl MapKey for &str`
 
 ```rust
-pub fn put_i<'a>(&self, key: i64, value: impl Into<Value<'a>>) -> Result<&Self, Error>
+impl MapKey for &str
 ```
 
-Put a value under an integer key.
+#### `impl MapKey for i64`
+
+```rust
+impl MapKey for i64
+```
+
+#### `Map::insert`
+
+```rust
+pub fn insert<'a>(&self, key: impl MapKey, value: impl Into<Value<'a>>) -> Result<&Self, Error>
+```
+
+Insert a value under a key: a string or an integer. The same values as [`List::push`]. An entry
+already under the key is replaced.
+
+#### `Map::contains_key`
+
+```rust
+pub fn contains_key(&self, key: impl MapKey) -> bool
+```
+
+Whether the map holds an entry under `key`. The map is asked where it is, on the host.
 
 #### `Map::extend`
 
@@ -757,7 +1022,7 @@ Put a value under an integer key.
 pub fn extend<'a, I>(&self, entries: I) -> Result<&Self, Error> where I: IntoIterator, I::Item: PutEntry<'a>,
 ```
 
-Put every entry, 64 per import call instead of one each.
+Insert every entry, 64 per import call instead of one each.
 
 An entry is a `(key, value)` pair of anything [`push`](List::push) takes - a string or integer key,
 in practice - or a `Result<(Value, Value), Error>` as [`Coll::entries`] yields them, so
@@ -856,56 +1121,6 @@ pub fn fail(message: &str)
 Fail the call with a message the client will see. The [`export!`] macro does this with the `Err` a UDF
 returns.
 
-#### `generation`
-
-```rust
-pub fn generation() -> i64
-```
-
-The record's modification count.
-
-#### `time_to_live`
-
-```rust
-pub fn time_to_live() -> Option<u32>
-```
-
-The record's remaining lifetime in seconds, or `None` when it never expires.
-
-#### `set_time_to_live`
-
-```rust
-pub fn set_time_to_live(seconds: u32) -> Result<(), Error>
-```
-
-Set the record's time to live, in seconds. It is the TTL of the write, so it takes effect when
-[`update`] or [`create`] commits the record.
-
-#### `last_update_time`
-
-```rust
-pub fn last_update_time() -> i64
-```
-
-When the record was last written, in milliseconds since the Aerospike epoch (2010-01-01 UTC), which
-is how the server stores it. It is not on the same scale as [`now`], which counts from the Unix epoch.
-
-#### `size`
-
-```rust
-pub fn size() -> i64
-```
-
-The record's stored size, in bytes.
-
-#### `bin_count`
-
-```rust
-pub fn bin_count() -> i64
-```
-
-How many bins the record has.
-
 #### `now`
 
 ```rust
@@ -914,66 +1129,6 @@ pub fn now() -> Result<i64, Error>
 
 The server's clock, in milliseconds since the Unix epoch. Refused in an event handler, where a decision
 that reads the clock cannot converge across clusters; a handler takes its times from the data.
-
-#### `set_name`
-
-```rust
-pub fn set_name(out: &mut [u8]) -> Result<&str, Error>
-```
-
-The record's set name, into a buffer you own.
-
-#### `key`
-
-```rust
-pub fn key(out: &mut [u8]) -> Result<Value<'_>, Error>
-```
-
-The record's user key, when it was written with `send_key`: an integer, or a string or blob whose bytes
-go into `out`. `Err(Absent)` when the record carries none.
-
-#### `digest`
-
-```rust
-pub fn digest(out: &mut [u8]) -> Result<&[u8], Error>
-```
-
-The record's digest, into a buffer you own: 20 bytes, always present. What identifies a record a UDF
-wants to point at rather than ship - a top-k hit, say - since a client can fetch it by digest afterwards.
-
-#### `create`
-
-```rust
-pub fn create() -> Result<(), Error>
-```
-
-Commit a record that does not exist yet.
-
-#### `update`
-
-```rust
-pub fn update() -> Result<(), Error>
-```
-
-Commit the staged writes to an existing record.
-
-#### `remove_record`
-
-```rust
-pub fn remove_record() -> Result<(), Error>
-```
-
-Delete the record. Not staged: the delete is carried out by this call, with no [`update`] after it.
-`Err(Refused)` when the server could not do it.
-
-#### `exists`
-
-```rust
-pub fn exists() -> bool
-```
-
-Whether the record exists. A UDF can be called on a key that has no record yet, which is when a write
-is committed with [`create`] rather than [`update`].
 
 #### `log_at`
 
@@ -1281,12 +1436,19 @@ A UDF is an ordinary function with typed parameters and a `Result<Value, Error>`
 
 ```ignore
 export! {
-fn transfer(amount: i64, to: &str, dry_run: Option<bool>) -> Result<Value, Error> {
+fn transfer(rec: &mut Record, amount: i64, to: &str, dry_run: Option<bool>) -> Result<Value, Error> {
 ...
 Ok(Value::Int(balance))
 }
 }
 ```
+
+# The record
+
+A function that reads its record takes `rec: &Record` as its first parameter, and one that writes it
+`rec: &mut Record`; see [`Record`]. It is written exactly so, with `Record` in scope under that name.
+It is not an argument: a client does not pass it, it is not counted, and the signature export below
+does not list it.
 
 Each becomes a `(args: i32, argc: i32) -> i32` export, which is what the host calls. The macro decodes
 the arguments into the parameters, checks their count and kinds, and rejects a mismatched call with a
@@ -1324,9 +1486,9 @@ One arm per kind, the parameter types part of the arm; the `xdr_merge` arm has e
 ```ignore
 event! {
 on xdr_merge
-fn resolve_account(local: Record, remote: Record, conflict: Conflict) -> Result<Resolution, Error> {
+fn resolve_account(local: EventRecord, remote: EventRecord, conflict: Conflict) -> Result<Resolution, Error> {
 let out = as_udf::map(2)?;
-out.put("visits", conflict.pair().int("visits")?.max())?;
+out.insert("visits", conflict.pair().int("visits")?.max())?;
 Ok(Resolution::Record { bins: local.with_bins(out)?, ttl: None })
 }
 }
@@ -1341,6 +1503,34 @@ A handler must be a pure function of its inputs - no writes, no clock - and symm
 that resolve the same pair in opposite order must produce the same record, or they diverge. The dry run
 (`execute_udf(key, "__event__", "xdr-merge", ...)`) reports whether a handler is: `symmetric`,
 `idempotent` and, given a third record, `associative` - the three laws a convergent merge obeys.
+
+#### `udf_params!`
+
+```rust
+macro_rules! udf_params
+```
+
+The parameters of an export that a client passes: all of them but a leading record. Not for direct use.
+
+`writable` is a record UDF, which may take `&mut Record`; `readable` is the per-record half of a stream
+UDF, which may only read. A record parameter written any other way, or anywhere but first, is taken for
+an argument and fails to compile as one, with a message that says so (see `FromArg`).
+
+#### `udf_call!`
+
+```rust
+macro_rules! udf_call
+```
+
+An export's body, with its record parameter, if it has one, bound first. Not for direct use.
+
+#### `udf_record!`
+
+```rust
+macro_rules! udf_record
+```
+
+Bind the record parameter of an export. Not for direct use.
 
 #### `udf_body!`
 

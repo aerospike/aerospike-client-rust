@@ -21,7 +21,7 @@
 //!         let next = rec.get_int("n")?.unwrap_or(0) + by;
 //!
 //!         rec.set_int("n", next)?;
-//!         rec.write()?;
+//!         rec.save()?;
 //!
 //!         Ok(next)
 //!     }
@@ -301,7 +301,7 @@ pub enum LogLevel {
 /// The record this call is about.
 ///
 /// Reads borrow from the record itself — nothing is copied. Writes are staged and reach storage only when
-/// [`write`](Record::write) is called, which mirrors Lua's `aerospike:update()` and is deliberately explicit:
+/// [`save`](Record::save) is called, which mirrors Lua's `aerospike:update()` and is deliberately explicit:
 /// forgetting it is the mistake that looks like it worked, since the function returns a plausible value and
 /// the record does not change.
 pub struct Record {
@@ -375,7 +375,7 @@ impl Record {
         // length.
         //
         // **That the arena owns it is the safety property**, not an implementation detail. The value outlives every
-        // write staged during the call, so the returned slice stays valid across `set_*` and `write`. A version of
+        // write staged during the call, so the returned slice stays valid across `set_*` and `save`. A version of
         // this that borrowed the *stored* particle instead was reverted for exactly that reason: every accessor here
         // takes `&self`, so nothing stops a caller reading a bin, writing it, and then using the earlier slice - and
         // with a borrowed particle that is a use-after-free the compiler cannot see.
@@ -410,11 +410,11 @@ impl Record {
     ///
     /// ```ignore
     /// let n = rec.with_bytes_mut("ring", |bytes| { bytes[0] = 7; bytes.len() })?;
-    /// rec.write()?;
+    /// rec.save()?;
     /// ```
     ///
-    /// The bin is marked as changed when the pointer is handed out, so a later [`write`](Record::write) commits it.
-    /// Nothing is committed if `write` is never called.
+    /// The bin is marked as changed when the pointer is handed out, so a later [`save`](Record::save) writes it.
+    /// Nothing is written if `save` is never called.
     ///
     /// # What this saves
     ///
@@ -544,7 +544,7 @@ impl Record {
     ///
     /// Nothing is staged and nothing is materialised: the value is a raw particle payload and the op goes to the same
     /// server function a client's op reaches. There is nothing to commit afterwards — the transaction commits once
-    /// when the UDF returns, so [`write`](Record::write) is unnecessary here (and harmless).
+    /// when the UDF returns, so [`save`](Record::save) is unnecessary here (and harmless).
     ///
     /// A failed op fails the whole transaction, exactly as a client's failing op does; the record's bins are restored
     /// from the snapshot the server took before the first write.
@@ -998,7 +998,7 @@ impl Record {
     }
 
     //------------------------------------------------
-    // Writing. Staged until `write`.
+    // Writing. Staged until `save`.
     //
 
     /// Stage an integer bin.
@@ -1106,29 +1106,22 @@ impl Record {
         check(unsafe { (host().rec_set_ttl)(self.rec, ttl) })
     }
 
-    /// **Commit.** Creates the record if it does not exist, updates it if it does.
+    /// **Save.** Creates the record if it does not exist, updates it if it does.
     ///
     /// Nothing staged above reaches storage without this. The existence check is one metadata read, which is
-    /// a price worth paying to remove the choice — see [`update`](Record::update) and
-    /// [`create`](Record::create) if you want to be strict about which one happens.
-    pub fn write(&self) -> Result<()> {
-        if self.exists() {
-            self.update()
-        } else {
-            self.create()
-        }
-    }
-
-    /// Commit, requiring the record to already exist.
-    pub fn update(&self) -> Result<()> {
-        // SAFETY: commits the staged bins.
-        check(unsafe { (host().rec_update)(self.ctx.ptr, self.rec) })
-    }
-
-    /// Commit, requiring the record not to exist.
-    pub fn create(&self) -> Result<()> {
-        // SAFETY: as above.
-        check(unsafe { (host().rec_create)(self.ctx.ptr, self.rec) })
+    /// a price worth paying to remove the choice: the server has a separate "create" and "update", each of
+    /// which fails on the wrong kind of record, and a UDF that wants that strictness checks
+    /// [`exists`](Record::exists) itself - the record is locked for the whole call, so nothing comes between
+    /// the check and the save. The verb is the WASM SDKs' too.
+    pub fn save(&self) -> Result<()> {
+        // SAFETY: both commit the staged bins.
+        check(unsafe {
+            if self.exists() {
+                (host().rec_update)(self.ctx.ptr, self.rec)
+            } else {
+                (host().rec_create)(self.ctx.ptr, self.rec)
+            }
+        })
     }
 
     /// Delete the record.
@@ -1999,7 +1992,7 @@ pub mod private {
 ///         let next = rec.get_int("n")?.unwrap_or(0) + by;
 ///
 ///         rec.set_int("n", next)?;
-///         rec.write()?;
+///         rec.save()?;
 ///
 ///         Ok(next)
 ///     }

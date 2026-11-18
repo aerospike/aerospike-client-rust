@@ -33,8 +33,6 @@ import (
 
 const siteMax = 32
 
-var counts = udf.NewBin("counts")
-
 // The per-site counts gathered from one or both sides: for every site, the larger count seen.
 type table map[string]int64
 
@@ -58,6 +56,16 @@ func (t table) offerAll(stored udf.Value) error {
 		}
 
 		t.offer(site, count)
+	}
+
+	return nil
+}
+
+// The counts bin of a record. A udf.RecordReader is the record a UDF is called on or a side of the
+// merge, so the write UDFs and the merge read through this one function.
+func (t table) offerRecord(rec udf.RecordReader) error {
+	if stored, ok := rec.Get("counts"); ok {
+		return t.offerAll(stored)
 	}
 
 	return nil
@@ -91,10 +99,8 @@ func mergeCounter(current, incoming *udf.EventRecord, _ *udf.Conflict) (udf.Reso
 	t := table{}
 
 	for _, side := range []*udf.EventRecord{current, incoming} {
-		if stored, ok := side.Get("counts"); ok {
-			if err := t.offerAll(stored); err != nil {
-				return udf.Resolution{}, err
-			}
+		if err := t.offerRecord(side); err != nil {
+			return udf.Resolution{}, err
 		}
 	}
 
@@ -104,13 +110,11 @@ func mergeCounter(current, incoming *udf.EventRecord, _ *udf.Conflict) (udf.Reso
 }
 
 // The record's counts.
-func stored() (table, error) {
+func stored(rec *udf.Record) (table, error) {
 	t := table{}
 
-	if v, ok := counts.Get(); ok {
-		if err := t.offerAll(v); err != nil {
-			return nil, err
-		}
+	if err := t.offerRecord(rec); err != nil {
+		return nil, err
 	}
 
 	return t, nil
@@ -119,24 +123,24 @@ func stored() (table, error) {
 // Adds n to this site's count. Returns the counter's value.
 //
 //udf:function increment
-func increment(site string, n int64) (int64, error) {
+func increment(rec *udf.Record, site string, n int64) (int64, error) {
 	// The Rust module bounds the site name with a Str<32>; the same limit, as a check.
 	if len(site) > siteMax {
 		return 0, errors.New("increment: the site name is too long")
 	}
 
-	t, err := stored()
+	t, err := stored(rec)
 	if err != nil {
 		return 0, err
 	}
 
 	t[site] += n
 
-	if err := counts.SetMap(t.toMap()); err != nil {
+	if err := rec.Set("counts", t.toMap()); err != nil {
 		return 0, err
 	}
 
-	if err := udf.Commit(); err != nil {
+	if err := rec.Save(); err != nil {
 		return 0, err
 	}
 
@@ -146,8 +150,8 @@ func increment(site string, n int64) (int64, error) {
 // The counter's value: the sum of every site's count.
 //
 //udf:function value
-func value() (int64, error) {
-	t, err := stored()
+func value(rec *udf.Record) (int64, error) {
+	t, err := stored(rec)
 	if err != nil {
 		return 0, err
 	}

@@ -23,8 +23,10 @@
 //
 // The stream is the TopK variable under //udf:stream: udfgen (go generate) exports its Record and End
 // methods as topk_record and topk_end, and vec_distance under its own directive. All three keep the raw
-// (args, argc int32) int32 form on the low-level tier, since the arguments are read once per stream and
-// kept; the directives' params give the signatures.
+// (args, argc int32) int32 form, since the arguments are read once per stream and kept; the directives'
+// params give the signatures. Record and vec_distance take the *udf.Record first, which the export hands
+// them; End takes none, since the stream is over. A stream's record is read-only, and nothing here
+// writes.
 //
 // Build: go generate ./examples/vector && tinygo build -o vector_go.wasm -target=wasm-unknown.json \
 // -opt=2 -no-debug -panic=trap -scheduler=none -gc=leaking ./examples/vector
@@ -247,16 +249,14 @@ func scoreOf(measured float64) float64 {
 }
 
 // The record's vector into vec: 1 read, 0 skipped and counted, -1 a failure.
-func readVector() int {
-	var v udf.Value
-	rc := udf.Bin_(topk.bin, &v)
+func readVector(rec *udf.Record) int {
+	// Get, not Bin: a record without the vector is ordinary here, and Get says so without making an
+	// error for each one.
+	v, ok := rec.Get(topk.bin)
 
-	if rc == udf.NotFound || (rc == udf.OK && v.Kind != udf.KindBlob) {
+	if !ok || v.Kind != udf.KindBlob {
 		topk.skippedNone++
 		return 0
-	}
-	if rc != udf.OK {
-		return -1
 	}
 	if int(v.Len) != topk.dim*4 {
 		topk.skippedDim++
@@ -291,7 +291,7 @@ func better(a, b *hit) bool {
 }
 
 // Offer a candidate: kept if it beats the worst of the k, ties broken on the digest.
-func offer(score float64) bool {
+func offer(rec *udf.Record, score float64) bool {
 	if topk.n == topk.k && score > topk.hits[topk.n-1].score {
 		return true
 	}
@@ -299,7 +299,7 @@ func offer(score float64) bool {
 	var h hit
 	h.score = score
 
-	if udf.Digest(h.digest[:]) != digestLen {
+	if d, err := rec.Digest(h.digest[:]); err != nil || len(d) != digestLen {
 		return false
 	}
 
@@ -307,13 +307,12 @@ func offer(score float64) bool {
 		return true
 	}
 
-	switch udf.KeyType() {
-	case udf.KindInt:
-		h.keyLen = copy(h.key[:], strconv.FormatInt(udf.KeyInt(), 10))
-	case udf.KindStr, udf.KindBlob:
-		n := udf.KeyBytes(h.key[:])
-		if n > 0 {
-			h.keyLen = int(n)
+	// A string or blob key is copied by the host straight into the hit; an integer one is written out.
+	if key, ok := rec.Key(h.key[:]); ok {
+		if key.Kind == udf.KindInt {
+			h.keyLen = copy(h.key[:], strconv.FormatInt(key.Payload, 10))
+		} else {
+			h.keyLen = int(key.Len)
 		}
 	}
 
@@ -341,22 +340,22 @@ func offer(score float64) bool {
 	return true
 }
 
-// Record is the per-record half, in the raw form.
-func (t *TopK) Record(handle, argc int32) int32 {
+// Record is the per-record half, in the raw form, with the record first.
+func (t *TopK) Record(rec *udf.Record, handle, argc int32) int32 {
 	if !topk.configured {
 		if msg := configure(handle, argc); msg != "" {
 			return udf.Fail(msg)
 		}
 	}
 
-	switch readVector() {
+	switch readVector(rec) {
 	case -1:
 		return udf.Fail("topk: could not read the vector")
 	case 0:
 		return 0
 	}
 
-	if !offer(scoreOf(measure())) {
+	if !offer(rec, scoreOf(measure())) {
 		return udf.Fail("topk: could not read the digest")
 	}
 	return 0
@@ -368,34 +367,32 @@ var (
 	keyKey    = "key"
 )
 
-// End is the closing half: the partial, k hits at most.
+// End is the closing half: the partial, k hits at most. It runs once per stream, so it is written on the
+// builders; each hit still goes to the host as one batch of three entries.
 func (t *TopK) End(handle, argc int32) int32 {
-	out := udf.NewMapHandle(3)
-	hits := udf.NewListHandle(topk.n)
+	out := udf.NewMap(3)
+	hits := udf.NewList(topk.n)
 
-	if out <= 0 || hits <= 0 {
+	if out.Err() != nil || hits.Err() != nil {
 		return udf.Fail("topk: could not build the partial")
 	}
 
 	for i := 0; i < topk.n; i++ {
 		h := &topk.hits[i]
-		entry := udf.NewMapHandle(3)
 		pairs := [6]udf.Value{
 			udf.StrValue(keyScore), udf.DoubleValue(h.score),
 			udf.StrValue(keyDigest), udf.BlobValue(h.digest[:]),
 			udf.StrValue(keyKey), udf.StrBytesValue(h.key[:h.keyLen]),
 		}
 
-		if entry <= 0 || udf.MapPutEntries(entry, pairs[:]) != 3 || udf.ListPushHandle(hits, entry) != udf.OK {
+		if hits.Add(udf.NewMap(3).PutEntries(pairs[:])).Err() != nil {
 			return udf.Fail("topk: could not build a hit")
 		}
 	}
 
-	udf.MapPutHandle(out, "hits", hits)
-	udf.MapPutInt(out, "skipped_dim", topk.skippedDim)
-	udf.MapPutInt(out, "skipped_none", topk.skippedNone)
+	out.Put("hits", hits).Put("skipped_dim", topk.skippedDim).Put("skipped_none", topk.skippedNone)
 
-	if udf.ResultHandle(out) != udf.OK {
+	if udf.ResultMap(out) != nil {
 		return udf.Fail("topk: could not return the partial")
 	}
 	return 0
@@ -404,12 +401,12 @@ func (t *TopK) End(handle, argc int32) int32 {
 // The distance from this record's vector to the query: one record, one number, nil for no such vector.
 //
 //udf:function vec_distance params="(bin: str, query: bytes, metric: str)"
-func vecDistance(handle, argc int32) int32 {
+func vecDistance(rec *udf.Record, handle, argc int32) int32 {
 	if msg := configure(handle, argc); msg != "" {
 		return udf.Fail(msg)
 	}
 
-	switch readVector() {
+	switch readVector(rec) {
 	case -1:
 		return udf.Fail("vec_distance: could not read the vector")
 	case 0:

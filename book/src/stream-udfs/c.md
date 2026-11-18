@@ -18,7 +18,7 @@ sum_n_record(int32_t args, int32_t argc)
 	(void)args; (void)argc;
 
 	as_udf_value v;
-	if (as_udf_bin("n", &v) == AS_UDF_OK && v.kind == AS_UDF_INT) {
+	if (as_udf_rec_bin("n", &v) == AS_UDF_OK && v.kind == AS_UDF_INT) {
 		total += v.payload;
 		count++;
 	}
@@ -45,6 +45,11 @@ AS_UDF_SIGNATURE(sum_n, "stream sum_n { record() end() }")
 
 `_record` returning non-zero (after `as_udf_failf`) ends the stream with the message. `_end` returns the
 partial. One instance sees every record a query thread reads, so statics are the state.
+
+`_record` reads the record it is called on with the `as_udf_rec_` functions a record UDF uses:
+`as_udf_rec_bin`, the metadata, the key and the digest. It cannot write. An aggregation's record takes no
+write, so the `as_udf_rec_set_*` family, `as_udf_rec_remove`, `as_udf_rec_save` and `as_udf_rec_delete`
+are all refused there. `_end` runs after the last record and has no record to read.
 
 ## The vector top-k
 

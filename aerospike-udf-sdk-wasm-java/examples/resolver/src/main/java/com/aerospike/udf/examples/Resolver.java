@@ -15,12 +15,13 @@ package com.aerospike.udf.examples;
 import com.aerospike.udf.Both;
 import com.aerospike.udf.Conflict;
 import com.aerospike.udf.EventRecord;
+import com.aerospike.udf.ListBuilder;
+import com.aerospike.udf.ListValue;
+import com.aerospike.udf.MapBuilder;
 import com.aerospike.udf.On;
 import com.aerospike.udf.Pair;
 import com.aerospike.udf.Resolution;
 import com.aerospike.udf.Udf;
-import com.aerospike.udf.UdfList;
-import com.aerospike.udf.UdfMap;
 import com.aerospike.udf.Value;
 
 /**
@@ -33,7 +34,7 @@ public final class Resolver {
     @On.XdrMerge("merge_account")
     static Resolution mergeAccount(EventRecord local, EventRecord remote, Conflict conflict) {
         Pair pair = conflict.pair();
-        UdfMap out = UdfMap.create(8);
+        MapBuilder out = Udf.map(8);
 
         // A count each DC advanced on its own: both sides' increments are real, so the merge is the larger
         // of the two, not the sum (the sum would double-count the visits both already knew of).
@@ -45,18 +46,18 @@ public final class Resolver {
 
         // A set each DC added to: the union. Its order is part of the result, so it is the order both DCs
         // agree on - the older side's tags, then the newer side's new ones - never "mine first".
-        Both<Value> sides = pair.list("tags");
-        Value older = sides.remoteNewer() ? sides.local : sides.remote;
-        Value newer = sides.remoteNewer() ? sides.remote : sides.local;
-        UdfList tags = UdfList.create(16);
+        Both<ListValue> sides = pair.list("tags");
+        ListValue older = sides.remoteNewer() ? sides.local : sides.remote;
+        ListValue newer = sides.remoteNewer() ? sides.remote : sides.local;
+        ListBuilder tags = Udf.list(16);
 
         if (older != null) {
             tags.addAll(older);
         }
 
         if (newer != null) {
-            for (Value tag : newer.asList()) {
-                if (older == null || !Udf.listHasStr(older, tag.asBytes())) {
+            for (Value tag : newer) {
+                if (older == null || !older.contains(tag.asString())) {
                     tags.add(tag);
                 }
             }
@@ -83,12 +84,8 @@ public final class Resolver {
         return Resolution.record(pair.withNewer(out));
     }
 
-    private static void applyDeletes(Pair pair, UdfMap out, EventRecord side, boolean byRemote) {
-        if (!side.deletedAny()) {
-            return;
-        }
-
-        for (Value name : side.deleted.asList()) {
+    private static void applyDeletes(Pair pair, MapBuilder out, EventRecord side, boolean byRemote) {
+        for (Value name : side.deletedBins()) {
             String bin = name.asString();
 
             if (pair.remoteNewer(bin) == byRemote) {

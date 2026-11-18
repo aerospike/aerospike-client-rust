@@ -11,7 +11,7 @@ udfs! {
         let next = rec.get_int("n")?.unwrap_or(0) + by.unwrap_or(1);
 
         rec.set_int("n", next)?;
-        rec.write()?;                    // without this it returns a number and changes nothing
+        rec.save()?;                    // without this it returns a number and changes nothing
 
         Ok(next)
     }

@@ -12,11 +12,16 @@
 
 package com.aerospike.udf;
 
+import java.util.List;
+import java.util.Map;
+
+import org.teavm.interop.Address;
+
 /**
  * What the generated exports call: an argument decoded into a parameter of the method's type, failing
  * the call with a message that names the argument when it is missing or of another kind; a return value
  * delivered as the result; an uncaught exception turned into a failure. The arguments come from
- * {@link Udf#args} as a {@link Value} array and a count. Nothing here is specific to a generated class,
+ * {@link #args} as a {@link Value} array and a count. Nothing here is specific to a generated class,
  * so a hand-written export may use it too.
  */
 public final class Params {
@@ -31,7 +36,7 @@ public final class Params {
     }
 
     private static Value at(Value[] a, int n, int i, String fn, String p) {
-        if (i >= n || a[i].kind == Value.ABSENT) {
+        if (i >= n || a[i].kind() == Value.ABSENT) {
             throw new UdfException(fn + ": argument " + (i + 1) + " (" + p + ") is missing");
         }
 
@@ -39,7 +44,7 @@ public final class Params {
     }
 
     private static boolean none(Value[] a, int n, int i) {
-        return i >= n || a[i].kind == Value.ABSENT || a[i].kind == Value.NIL;
+        return i >= n || a[i].kind() == Value.ABSENT || a[i].kind() == Value.NIL;
     }
 
     private static UdfException mismatch(String fn, int i, String p, String want) {
@@ -48,9 +53,9 @@ public final class Params {
 
     /** Copies the bytes of a string or blob argument, exactly as long as they are. */
     private static byte[] copy(Value v, String fn, int i, String p) {
-        byte[] b = new byte[v.len];
+        byte[] b = new byte[v.length()];
 
-        if (v.len > 0 && Udf.bytes(v, b) < 0) {
+        if (b.length > 0 && LowLevel.bytes(v, b) < 0) {
             throw new UdfException(fn + ": could not read argument " + (i + 1) + " (" + p + ")");
         }
 
@@ -69,11 +74,11 @@ public final class Params {
     public static long int64(Value[] a, int n, int i, String fn, String p) {
         Value v = at(a, n, i, fn, p);
 
-        if (v.kind != Value.INT) {
+        if (v.kind() != Value.INT) {
             throw mismatch(fn, i, p, "an int");
         }
 
-        return v.payload;
+        return v.payload();
     }
 
     /** An integer argument that fits in 32 bits; one that does not is a mismatch. */
@@ -91,12 +96,12 @@ public final class Params {
     public static double float64(Value[] a, int n, int i, String fn, String p) {
         Value v = at(a, n, i, fn, p);
 
-        if (v.kind == Value.DOUBLE) {
-            return v.asDouble();
+        if (v.kind() == Value.DOUBLE) {
+            return v.doubleBits();
         }
 
-        if (v.kind == Value.INT) {
-            return (double) v.payload;
+        if (v.kind() == Value.INT) {
+            return (double) v.payload();
         }
 
         throw mismatch(fn, i, p, "a double");
@@ -106,31 +111,31 @@ public final class Params {
     public static boolean bool(Value[] a, int n, int i, String fn, String p) {
         Value v = at(a, n, i, fn, p);
 
-        if (v.kind != Value.BOOL) {
+        if (v.kind() != Value.BOOL) {
             throw mismatch(fn, i, p, "a bool");
         }
 
-        return v.payload != 0;
+        return v.payload() != 0;
     }
 
     /** The text of a string argument, copied out. */
     public static String str(Value[] a, int n, int i, String fn, String p) {
         Value v = at(a, n, i, fn, p);
 
-        if (v.kind != Value.STR) {
+        if (v.kind() != Value.STR) {
             throw mismatch(fn, i, p, "a string");
         }
 
         byte[] b = copy(v, fn, i, p);
 
-        return Udf.string(b, b.length);
+        return LowLevel.string(b, b.length);
     }
 
     /** The bytes of a string or a blob. */
     public static byte[] bytes(Value[] a, int n, int i, String fn, String p) {
         Value v = at(a, n, i, fn, p);
 
-        if (v.kind != Value.STR && v.kind != Value.BLOB) {
+        if (v.kind() != Value.STR && v.kind() != Value.BLOB) {
             throw mismatch(fn, i, p, "a string or a blob");
         }
 
@@ -200,61 +205,37 @@ public final class Params {
      * by handle, a stored value by position; null or absent is nil.
      */
     public static void result(Value v) {
-        if (v == null) {
-            Udf.resultNil();
-            return;
-        }
-
-        switch (v.kind) {
-        case Value.INT:
-            Udf.resultInt(v.payload);
-            break;
-        case Value.DOUBLE:
-            Udf.resultDouble(v.asDouble());
-            break;
-        case Value.BOOL:
-            Udf.resultBool(v.payload != 0);
-            break;
-        case Value.NIL:
-        case Value.ABSENT:
-            Udf.resultNil();
-            break;
-        case Value.GUEST_STR:
-            Udf.resultStr(v.bytes, v.bytesLen);
-            break;
-        case Value.GUEST_BLOB:
-            Udf.resultBlob(v.bytes, v.bytesLen);
-            break;
-        case Value.GUEST_GEOJSON:
-            Udf.resultGeoJson(v.bytes, v.bytesLen);
-            break;
-        case Value.HANDLE:
-            Udf.resultHandle((int) v.payload);
-            break;
-        default:
-            Udf.resultValue(v);
-            break;
-        }
+        Udf.result(v);
     }
 
     /** Delivers a built map as the result; null is nil. */
-    public static void result(UdfMap m) {
-        if (m == null) {
-            Udf.resultNil();
-        }
-        else {
-            Udf.resultHandle(m.handle());
-        }
+    public static void result(MapBuilder m) {
+        Udf.result(m == null ? null : m.asValue());
     }
 
     /** Delivers a built list as the result; null is nil. */
-    public static void result(UdfList l) {
-        if (l == null) {
-            Udf.resultNil();
-        }
-        else {
-            Udf.resultHandle(l.handle());
-        }
+    public static void result(ListBuilder l) {
+        Udf.result(l == null ? null : l.asValue());
+    }
+
+    /** Delivers a stored map as the result, by position; null is nil. */
+    public static void result(MapValue m) {
+        Udf.result(m == null ? null : m.asValue());
+    }
+
+    /** Delivers a stored list as the result, by position; null is nil. */
+    public static void result(ListValue l) {
+        Udf.result(l == null ? null : l.asValue());
+    }
+
+    /** Delivers a {@code java.util.List} as a list result, its elements as a builder takes them; null is nil. */
+    public static void result(List<?> l) {
+        Udf.result(l == null ? null : Udf.list(l.size()).addAll(l).asValue());
+    }
+
+    /** Delivers a {@code java.util.Map} as a map result, its entries as a builder takes them; null is nil. */
+    public static void result(Map<?, ?> m) {
+        Udf.result(m == null ? null : Udf.map(m.size()).putAll(m).asValue());
     }
 
     /** Delivers a string as the result; null is nil. */
@@ -275,6 +256,39 @@ public final class Params {
         else {
             Udf.resultBlob(b);
         }
+    }
+
+    //==========================================================
+    // What every export starts from: the record, the arguments, the signature.
+    //
+
+    /** The record the call is about, for a method that takes one as its first parameter. */
+    public static Record record() {
+        return Record.current();
+    }
+
+    /**
+     * Decodes the call's arguments into {@code out}, in one import, filling (or allocating) a Value per slot.
+     * Returns how many there are, bounded by {@code out.length}.
+     */
+    public static int args(int handle, int argc, Value[] out) {
+        return LowLevel.args(handle, argc, out);
+    }
+
+    /**
+     * The text behind a {@code __udf_sig_<name>} export: a NUL-terminated byte array, kept in a static field.
+     * The export returns {@link #signature} of it.
+     */
+    public static byte[] signatureBytes(String text) {
+        byte[] t = LowLevel.bytes(text);
+        byte[] out = new byte[t.length + 1];
+        System.arraycopy(t, 0, out, 0, t.length);
+        return out;
+    }
+
+    /** The address the host reads a signature from: valid until the next allocation, which is after the host read it. */
+    public static int signature(byte[] text) {
+        return Address.ofData(text).toInt();
     }
 
     /** Fails the call for an exception the method did not catch, with its message. Returns the status. */

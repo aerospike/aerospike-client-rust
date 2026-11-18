@@ -37,7 +37,7 @@ func udfExport_update_device(args, argc int32) int32 {
 	if err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := updateDevice(p0, p1)
+	r, err := updateDevice(udf.CurrentRecord(), p0, p1)
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -65,7 +65,7 @@ func udfExport_remove_device(args, argc int32) int32 {
 	if err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := removeDevice(p0, p1)
+	r, err := removeDevice(udf.CurrentRecord(), p0, p1)
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -89,7 +89,7 @@ func udfExport_purge_devices(args, argc int32) int32 {
 	if err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := purgeDevices(p0)
+	r, err := purgeDevices(udf.CurrentRecord(), p0)
 	if err != nil {
 		return udf.FailErr(err)
 	}

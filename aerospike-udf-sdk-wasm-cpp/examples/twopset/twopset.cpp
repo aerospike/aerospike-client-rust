@@ -24,8 +24,8 @@
 
 #include "aerospike_udf.hpp"
 
-static constexpr udf::Bin ADDED{"added"};
-static constexpr udf::Bin REMOVED{"removed"};
+static constexpr udf::StrView ADDED{"added"};
+static constexpr udf::StrView REMOVED{"removed"};
 static constexpr int MAX_TAGS = 64;
 static constexpr int TAG_MAX = 32;
 
@@ -101,11 +101,11 @@ struct Tags {
 };
 
 // One of the record's lists into a table.
-static udf::Result<void> load(const udf::Bin& bin, Tags& t)
+static udf::Result<void> load(const udf::Record& rec, udf::StrView bin, Tags& t)
 {
 	t.n = 0;
 
-	if (udf::Optional<udf::Value> v = bin.get()) {
+	if (udf::Optional<udf::Value> v = rec.get(bin)) {
 		return t.offer_all(*v);
 	}
 
@@ -139,53 +139,53 @@ static Tags added_tags;
 static Tags removed_tags;
 
 // The members: added and not removed.
-static udf::Result<udf::List> members_of()
+static udf::Result<udf::List> members_of(const udf::Record& rec)
 {
-	UDF_TRY(load(ADDED, added_tags));
-	UDF_TRY(load(REMOVED, removed_tags));
+	UDF_TRY(load(rec, ADDED, added_tags));
+	UDF_TRY(load(rec, REMOVED, removed_tags));
 
 	return added_tags.to_list(&removed_tags);
 }
 
-// Adds a tag to one of the lists and commits.
-static udf::Result<void> grow(const udf::Bin& bin, Tags& t, udf::StrView tag)
+// Adds a tag to one of the lists and saves.
+static udf::Result<void> grow(udf::Record& rec, udf::StrView bin, Tags& t, udf::StrView tag)
 {
-	UDF_TRY(load(bin, t));
+	UDF_TRY(load(rec, bin, t));
 
 	if (t.contains(tag)) return {};
 
 	UDF_TRY(t.insert(tag));
-	UDF_TRY(bin.set(t.to_list(nullptr)));
+	UDF_TRY(rec.set(bin, t.to_list(nullptr)));
 
-	return udf::commit();
+	return rec.save();
 }
 
 // Adds a tag. Returns the members. A tag removed before stays removed. The tag is a Text<32>, so a longer
 // one is rejected before the body runs, as the Rust module's Str<32> rejects it.
-UDF_FUNCTION(add, udf::Result<udf::List>, Tag tag)
+UDF_FUNCTION(add, udf::Result<udf::List>, udf::Record& rec, Tag tag)
 {
-	UDF_TRY(grow(ADDED, added_tags, tag.view()));
+	UDF_TRY(grow(rec, ADDED, added_tags, tag.view()));
 
-	return members_of();
+	return members_of(rec);
 }
 
 // Removes a tag that is a member, forever. Returns the members.
-UDF_FUNCTION(remove, udf::Result<udf::List>, Tag tag)
+UDF_FUNCTION(remove, udf::Result<udf::List>, udf::Record& rec, Tag tag)
 {
-	UDF_TRY(load(ADDED, added_tags));
-	UDF_TRY(load(REMOVED, removed_tags));
+	UDF_TRY(load(rec, ADDED, added_tags));
+	UDF_TRY(load(rec, REMOVED, removed_tags));
 
 	if (!added_tags.contains(tag.view()) || removed_tags.contains(tag.view())) {
 		return udf::error(AS_UDF_ERR, "not a member");
 	}
 
-	UDF_TRY(grow(REMOVED, removed_tags, tag.view()));
+	UDF_TRY(grow(rec, REMOVED, removed_tags, tag.view()));
 
-	return members_of();
+	return members_of(rec);
 }
 
 // The members, in order.
-UDF_FUNCTION(members, udf::Result<udf::List>)
+UDF_FUNCTION(members, udf::Result<udf::List>, const udf::Record& rec)
 {
-	return members_of();
+	return members_of(rec);
 }

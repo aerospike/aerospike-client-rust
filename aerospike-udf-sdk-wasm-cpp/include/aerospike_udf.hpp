@@ -16,7 +16,7 @@
 // Writing an Aerospike WASM UDF in C++, for the server's mod-wamr engine.
 //
 // Header-only, over the C header (aerospike_udf.h): the natives and the contract's constants come from
-// there, and this adds the typed tier - Bin, Value, Map, List, range-for over stored collections, Result
+// there, and this adds the typed tier - Record, Value, Map, List, range-for over stored collections, Result
 // and Error instead of status codes, the event records and answers, Pair and Both for a merge, and the
 // UDF_FUNCTION / UDF_STREAM / UDF_ON_* macros that derive the exports and their signatures from a
 // function's parameter types, the way the Rust SDK's macros do. A module is a freestanding C++20 file
@@ -27,6 +27,11 @@
 //
 // Nothing here allocates: strings live in fixed buffers (Text<N>), collections are built on the host, and
 // a module needs no operator new. The one clang extension used is the statement expression behind UDF_TRY.
+//
+// The record a UDF is called on is an object, udf::Record, that the function takes as its first parameter:
+// `udf::Record& rec` to write it, `const udf::Record& rec` to read it, and no such parameter when it does
+// not touch the record. Everything about the record is a method on it; what stays in the namespace is what
+// is not about the record: now(), log(), fail(), result_of(), the timers and the Map and List builders.
 
 extern "C" {
 #include "aerospike_udf.h"
@@ -363,7 +368,12 @@ struct Value : as_udf_value {
 	// The handle of the source a stored value sits in. Meaningful only when is_stored().
 	int32_t src() const { return as_udf_value_src(this); }
 	// The offset of a stored value within its source. Meaningful only when is_stored().
-	int32_t at() const { return as_udf_value_at(this); }
+	int32_t offset() const { return as_udf_value_at(this); }
+	// How much a stored value holds: the elements of a list, the entries of a map, the bytes of a string,
+	// blob, GeoJSON or HLL. 0 for anything else.
+	int32_t size() const { return is_stored() ? (int32_t)len : 0; }
+	// Whether size() is 0.
+	bool empty() const { return size() == 0; }
 	// The payload reinterpreted as a double, with no check of the kind. Use as_double() unless the kind is
 	// already known to be Double.
 	double as_double_bits() const { return as_udf_value_double(this); }
@@ -454,7 +464,7 @@ struct Value : as_udf_value {
 	Optional<Value> get(StrView key) const
 	{
 		Value out;
-		if (!is_map() || as_udf_coll_get(src(), at(), key.data, key.len, &out, (int32_t)sizeof(out)) != AS_UDF_OK) return {};
+		if (!is_map() || as_udf_coll_get(src(), offset(), key.data, key.len, &out, (int32_t)sizeof(out)) != AS_UDF_OK) return {};
 		return out;
 	}
 
@@ -462,7 +472,22 @@ struct Value : as_udf_value {
 	Optional<Value> get(int64_t key) const
 	{
 		Value out;
-		if (!is_map() || as_udf_coll_get_i(src(), at(), key, &out, (int32_t)sizeof(out)) != AS_UDF_OK) return {};
+		if (!is_map() || as_udf_coll_get_i(src(), offset(), key, &out, (int32_t)sizeof(out)) != AS_UDF_OK) return {};
+		return out;
+	}
+
+	// Whether a stored map has an entry under a string key. False when the value is not a map.
+	bool contains(StrView key) const { return get(key).has_value(); }
+	// Whether a stored map has an entry under an integer key. False when the value is not a map.
+	bool contains(int64_t key) const { return get(key).has_value(); }
+
+	// The element at `index` of a stored list, which the host finds without the guest walking the list;
+	// nothing past the end, for a negative index or when the value is not a list.
+	Optional<Value> at(int64_t index) const
+	{
+		Value out;
+		if (!is_list() || index < 0 || index >= (int64_t)len) return {};
+		if (as_udf_list_get(src(), offset(), (int32_t)index, &out, (int32_t)sizeof(out)) != AS_UDF_OK) return {};
 		return out;
 	}
 
@@ -567,7 +592,7 @@ struct CursorIter {
 // The end of a ListRange or MapRange walk: an iterator compares unequal to it until the walk is done.
 struct RangeEnd {};
 
-// The elements of a stored list, for a range-for. Made by Value::list(), Bin::list() and
+// The elements of a stored list, for a range-for. Made by Value::list(), Record::list() and
 // EventRecord::list(); empty when the value it was made from is not a list.
 class ListRange {
 public:
@@ -576,7 +601,7 @@ public:
 		Iterator(const Value& coll)
 		{
 			map = false;
-			cursor = coll.is_list() ? as_udf_cursor_enter_at(coll.src(), coll.at()) : 0;
+			cursor = coll.is_list() ? as_udf_cursor_enter_at(coll.src(), coll.offset()) : 0;
 			prime();
 		}
 		Iterator(Iterator&&) = default;
@@ -598,6 +623,12 @@ public:
 	};
 
 	explicit ListRange(const Value& coll) : coll_(coll) {}
+	// The number of elements the walk yields: 0 when it was made from something that is not a list.
+	int32_t size() const { return coll_.is_list() ? coll_.size() : 0; }
+	// Whether the walk yields nothing.
+	bool empty() const { return size() == 0; }
+	// The element at `index`, without walking to it; nothing past the end.
+	Optional<Value> at(int64_t index) const { return coll_.at(index); }
 	// Opens a host cursor on the list and returns an iterator on its first element. Every call opens its
 	// own cursor, released when the iterator is destroyed.
 	Iterator begin() const { return Iterator(coll_); }
@@ -608,7 +639,7 @@ private:
 	Value coll_;
 };
 
-// The entries of a stored map, for a range-for. Made by Value::map(), Bin::map() and
+// The entries of a stored map, for a range-for. Made by Value::map(), Record::map() and
 // EventRecord::map(); empty when the value it was made from is not a map.
 class MapRange {
 public:
@@ -617,7 +648,7 @@ public:
 		Iterator(const Value& coll)
 		{
 			map = true;
-			cursor = coll.is_map() ? as_udf_cursor_enter_at(coll.src(), coll.at()) : 0;
+			cursor = coll.is_map() ? as_udf_cursor_enter_at(coll.src(), coll.offset()) : 0;
 			prime();
 		}
 		Iterator(Iterator&&) = default;
@@ -639,6 +670,14 @@ public:
 	};
 
 	explicit MapRange(const Value& coll) : coll_(coll) {}
+	// The number of entries the walk yields: 0 when it was made from something that is not a map.
+	int32_t size() const { return coll_.is_map() ? coll_.size() : 0; }
+	// Whether the walk yields nothing.
+	bool empty() const { return size() == 0; }
+	// Whether the map has an entry under a string key.
+	bool contains(StrView key) const { return coll_.contains(key); }
+	// Whether the map has an entry under an integer key.
+	bool contains(int64_t key) const { return coll_.contains(key); }
 	// Opens a host cursor on the map and returns an iterator on its first entry. Every call opens its own
 	// cursor, released when the iterator is destroyed.
 	Iterator begin() const { return Iterator(coll_); }
@@ -691,14 +730,14 @@ public:
 	// pass it to result_of.
 	Value value() const { return Value::handle(handle_); }
 
-	// Whether the map holds key: it packs the map, so for the occasional check, not a loop.
-	bool has(StrView key) const
-	{
-		int32_t src = as_udf_pack_handle(handle_);
-		if (src <= 0) return false;
-		Value v;
-		return as_udf_coll_get(src, 0, key.data, key.len, &v, (int32_t)sizeof(v)) == AS_UDF_OK;
-	}
+	// Whether the map holds no entry, which is also what a map that could not be built answers.
+	bool empty() const { return size() <= 0; }
+
+	// Whether the map holds an entry under a string key. The host answers for the map it is building, so
+	// nothing is packed and the check is fit for a loop.
+	bool contains(StrView key) const { return as_udf_map_has(handle_, key.data, key.len) > 0; }
+	// Whether the map holds an entry under an integer key.
+	bool contains(int64_t key) const { return as_udf_map_has_i(handle_, key) > 0; }
 
 	// Puts an integer under a string key. Like every put, returns the map for chaining and keeps the first
 	// failure for error().
@@ -792,7 +831,7 @@ private:
 		case Kind::GuestGeoJson: return as_udf_map_put(handle_, as_udf_val_int(key), as_udf_val_geojson((const char*)(uintptr_t)v.payload, (int32_t)v.len));
 		case Kind::Handle: return as_udf_map_put(handle_, as_udf_val_int(key), (int32_t)v.payload);
 		case Kind::Absent: return AS_UDF_NOT_FOUND;
-		default: return as_udf_map_put_i_at(handle_, key, v.src(), v.at());
+		default: return as_udf_map_put_i_at(handle_, key, v.src(), v.offset());
 		}
 	}
 
@@ -836,6 +875,8 @@ public:
 	Result<void> result() const { return err_.failed() ? Result<void>(err_) : Result<void>(); }
 	// The number of elements the list holds, asked of the host; negative when the handle is not a valid one.
 	int32_t size() const { return as_udf_coll_size(handle_); }
+	// Whether the list holds no element, which is also what a list that could not be built answers.
+	bool empty() const { return size() <= 0; }
 	// The list as a Value of kind Handle, to nest it in a batch (List::add_values, Map::put_entries) or to
 	// pass it to result_of.
 	Value value() const { return Value::handle(handle_); }
@@ -898,7 +939,7 @@ private:
 		case Kind::GuestGeoJson: return as_udf_list_push(handle_, as_udf_val_geojson((const char*)(uintptr_t)v.payload, (int32_t)v.len));
 		case Kind::Handle: return as_udf_list_push(handle_, (int32_t)v.payload);
 		case Kind::Absent: return AS_UDF_NOT_FOUND;
-		default: return as_udf_list_push_at(handle_, v.src(), v.at());
+		default: return as_udf_list_push_at(handle_, v.src(), v.offset());
 		}
 	}
 
@@ -923,203 +964,274 @@ inline Map& Map::put(StrView key, const List& v) { return check(as_udf_map_put_s
 inline Map& Map::put(int64_t key, const List& v) { return check(as_udf_map_put(handle_, as_udf_val_int(key), v.handle_), "an integer key").carry(v.err_); }
 
 //==========================================================
-// Bins of the record in hand.
+// Records: what reading one offers, and the record a UDF is called on.
 //
 
-// A bin by name, made once (`static constexpr udf::Bin COUNTS{"counts"}`): typed reads with or without a
-// default, writes of every kind, staged until commit(), and the walk of a collection bin.
-class Bin {
+// Reading a record, whichever record it is. udf::Record, the record a UDF was called on, and
+// udf::EventRecord, a record an event hands over, both derive from it, so a helper written as
+// `template <class R> int64_t total(const udf::ReadRecord<R>& rec)` reads from either. It is a mixin over
+// the one thing the two do differently, `read(name, out)`: there is no virtual call and no state, so an
+// EventRecord stays the C struct it wraps.
+template <class Self>
+class ReadRecord {
 public:
-	constexpr Bin(const char* name) : name_(name), len_(detail::cstrlen(name)) {}
-
-	// The bin's name, as a view of the string the Bin was made from.
-	constexpr StrView name() const { return StrView{name_, len_}; }
-
-	// The bin as a value; nothing when the record has no such bin.
-	Optional<Value> get() const
+	// The bin as a value; nothing when the record has no such bin or it is nil.
+	Optional<Value> get(StrView name) const
 	{
 		Value v;
-		if (as_udf_bin_value(name_, len_, &v, (int32_t)sizeof(v)) != AS_UDF_OK) return {};
+		if (!self().read(name, v) || v.is_nil()) return {};
 		return v;
 	}
 
-	// Whether the record in hand has a bin of this name.
-	bool exists() const
+	// Whether the record has the bin, nil included.
+	bool has(StrView name) const
 	{
 		Value v;
-		return as_udf_bin_value(name_, len_, &v, (int32_t)sizeof(v)) == AS_UDF_OK;
+		return self().read(name, v);
 	}
 
-	// The bin as an integer. An error when the bin is absent, cannot be read or is not an int.
-	Result<int64_t> as_int() const { Result<Value> v = typed(Kind::Int, "an int"); if (!v) return v.error(); return v->as_int(); }
-	// The bin as a double, an integer bin widened to one. An error when the bin is absent or of another kind.
-	Result<double> as_double() const { Result<Value> v = read(); if (!v) return v.error(); return v->as_double(); }
-	// The bin as a boolean. An error when the bin is absent, cannot be read or is not a bool.
-	Result<bool> as_bool() const { Result<Value> v = typed(Kind::Bool, "a bool"); if (!v) return v.error(); return v->as_bool(); }
-	// The bin's string into an inline Text<N>. An error when the bin is absent, is not a string or does not
-	// fit in N bytes.
-	template <size_t N> Result<Text<N>> as_text() const { Result<Value> v = read(); if (!v) return v.error(); return v->as_text<N>(); }
-	// The bytes of a string, blob, GeoJSON or HLL bin into an inline Bytes<N>. An error when the bin is
-	// absent, of another kind or does not fit in N bytes.
-	template <size_t N> Result<Bytes<N>> as_bytes() const { Result<Value> v = read(); if (!v) return v.error(); return v->as_bytes<N>(); }
-	// A blob bin of 32-bit floats into an array of `count` elements. Returns how many were read; an error
-	// when the bin is absent, is not a blob or does not fit the array.
-	Result<int32_t> floats_into(float* out, int32_t count) const { Result<Value> v = read(); if (!v) return v.error(); return v->floats_into(out, count); }
+	// The bin that must be there, as a value: an error naming the bin when the record has none. Chain the
+	// value's own typed reader for a bin that must also be of a kind: `UDF_TRY(UDF_TRY(rec.bin("n")).as_int())`.
+	Result<Value> bin(StrView name) const
+	{
+		Value v;
+		if (!self().read(name, v)) return Error{AS_UDF_NOT_FOUND, detail::message().add("bin ").add(name.data, name.len).add(" is absent").buf};
+		return v;
+	}
 
-	// The Or forms: the default when the bin is absent or nil (or of another kind).
-	int64_t int_or(int64_t dflt) const { Optional<Value> v = get(); return v && v->is_int() ? v->payload : dflt; }
+	// The bin as an integer; nothing when the record has no such bin, it is nil or it is of another kind.
+	Optional<int64_t> as_int(StrView name) const { Optional<Value> v = get(name); if (!v || !v->is_int()) return {}; return v->payload; }
+	// The bin as a double; nothing when the record has no such bin, it is nil or it is of another kind. An
+	// integer bin is not widened.
+	Optional<double> as_double(StrView name) const { Optional<Value> v = get(name); if (!v || !v->is_double()) return {}; return v->as_double_bits(); }
+	// The bin as a boolean; nothing when the record has no such bin, it is nil or it is of another kind.
+	Optional<bool> as_bool(StrView name) const { Optional<Value> v = get(name); if (!v || !v->is_bool()) return {}; return v->payload != 0; }
+	// The bin's string as an inline Text<N>; nothing when the record has no such bin, it is nil, it is not a
+	// string or it does not fit in N bytes.
+	template <size_t N> Optional<Text<N>> as_text(StrView name) const
+	{
+		Optional<Value> v = get(name);
+		if (!v) return {};
+		Result<Text<N>> t = v->template as_text<N>();
+		if (!t) return {};
+		return *t;
+	}
+	// The bytes of a string, blob, GeoJSON or HLL bin as an inline Bytes<N>; nothing when the record has no
+	// such bin, it is nil, it is of another kind or it does not fit in N bytes.
+	template <size_t N> Optional<Bytes<N>> as_bytes(StrView name) const
+	{
+		Optional<Value> v = get(name);
+		if (!v) return {};
+		Result<Bytes<N>> b = v->template as_bytes<N>();
+		if (!b) return {};
+		return *b;
+	}
+
+	// The Or forms: the bin's integer, or `dflt` when the bin is absent, nil or of another kind.
+	int64_t int_or(StrView name, int64_t dflt) const { return as_int(name).value_or(dflt); }
 	// The bin's double, or `dflt` when the bin is absent, nil or of another kind. An integer bin is not
 	// widened here: it gives the default.
-	double double_or(double dflt) const { Optional<Value> v = get(); return v && v->is_double() ? v->as_double_bits() : dflt; }
+	double double_or(StrView name, double dflt) const { return as_double(name).value_or(dflt); }
 	// The bin's boolean, or `dflt` when the bin is absent, nil or of another kind.
-	bool bool_or(bool dflt) const { Optional<Value> v = get(); return v && v->is_bool() ? v->payload != 0 : dflt; }
+	bool bool_or(StrView name, bool dflt) const { return as_bool(name).value_or(dflt); }
 
-	// A walk over a collection bin; nothing when absent or of another kind.
-	ListRange list() const { Optional<Value> v = get(); return ListRange(v ? *v : Value()); }
-	// A walk over the entries of a map bin; nothing when absent or of another kind.
-	MapRange map() const { Optional<Value> v = get(); return MapRange(v ? *v : Value()); }
+	// A blob bin of 32-bit floats into an array of `count` elements. Returns how many were read; an error
+	// when the bin is absent, is not a blob or does not fit the array.
+	Result<int32_t> floats_into(StrView name, float* out, int32_t count) const
+	{
+		Result<Value> v = bin(name);
+		if (!v) return v.error();
+		return v->floats_into(out, count);
+	}
 
-	// Writes, staged until commit().
-	Result<void> set(int64_t v) const { return check(as_udf_set_int(name_, len_, v)); }
+	// A walk over a list bin; empty when the bin is missing or not a list.
+	ListRange list(StrView name) const { Optional<Value> v = get(name); return ListRange(v && v->is_list() ? *v : Value()); }
+	// A walk over the entries of a map bin; empty when the bin is missing or not a map.
+	MapRange map(StrView name) const { Optional<Value> v = get(name); return MapRange(v && v->is_map() ? *v : Value()); }
+
+private:
+	const Self& self() const { return static_cast<const Self&>(*this); }
+};
+
+namespace detail {
+struct RecordAccess;
+}
+
+// The record a UDF was called on. A record UDF, the per-record half of a stream UDF and a timer handler
+// take it as their first parameter, before the call's arguments. It is not one of them: a client does not
+// pass it, the arity check does not count it and the function's signature export does not list it. A
+// function that does not touch the record leaves the parameter out.
+//
+//   UDF_FUNCTION(withdraw, udf::Result<int64_t>, udf::Record& rec, int64_t amount)
+//   {
+//       int64_t balance = UDF_TRY(UDF_TRY(rec.bin("balance")).as_int());
+//
+//       UDF_TRY(rec.set("balance", balance - amount));
+//       UDF_TRY(rec.save());
+//
+//       return balance - amount;
+//   }
+//
+// `const udf::Record&` is the read-only record: the reading methods are const and the writing ones are
+// not, so a function that takes it that way cannot change the record, and the per-record half of a stream
+// UDF, whose record takes no write, can take it no other way. Only the SDK makes one, and it cannot be
+// copied, so a read-only record stays read-only. The reading methods are ReadRecord's.
+class Record : public ReadRecord<Record> {
+public:
+	Record(const Record&) = delete;
+	Record& operator=(const Record&) = delete;
+
+	// What ReadRecord reads through: the bin as the host hands it out. False when the record has no such
+	// bin.
+	bool read(StrView name, Value& out) const
+	{
+		return as_udf_rec_bin_value(name.data, name.len, &out, (int32_t)sizeof(out)) == AS_UDF_OK;
+	}
+
+	// Writes, staged until save().
+	Result<void> set(StrView name, int64_t v) { return check(name, as_udf_rec_set_int(name.data, name.len, v)); }
 	// Stages an int, widened to 64 bits.
-	Result<void> set(int v) const { return set((int64_t)v); }
+	Result<void> set(StrView name, int v) { return set(name, (int64_t)v); }
 	// Stages a double.
-	Result<void> set(double v) const { return check(as_udf_set_double(name_, len_, v)); }
+	Result<void> set(StrView name, double v) { return check(name, as_udf_rec_set_double(name.data, name.len, v)); }
 	// Stages a boolean.
-	Result<void> set(bool v) const { return check(as_udf_set_bool(name_, len_, v ? 1 : 0)); }
+	Result<void> set(StrView name, bool v) { return check(name, as_udf_rec_set_bool(name.data, name.len, v ? 1 : 0)); }
 	// Stages a string.
-	Result<void> set(StrView v) const { return check(as_udf_set_str(name_, len_, v.data, v.len)); }
+	Result<void> set(StrView name, StrView v) { return check(name, as_udf_rec_set_str(name.data, name.len, v.data, v.len)); }
 	// Stages a NUL-terminated string.
-	Result<void> set(const char* v) const { return set(StrView(v)); }
+	Result<void> set(StrView name, const char* v) { return set(name, StrView(v)); }
 	// Stages a built map as the bin's value. Fails with the map's own error when one of its puts failed.
-	Result<void> set(const Map& m) const { if (m.error().failed()) return m.error(); return check(as_udf_set_handle(name_, len_, m.handle())); }
+	Result<void> set(StrView name, const Map& m) { if (m.error().failed()) return m.error(); return check(name, as_udf_rec_set_handle(name.data, name.len, m.handle())); }
 	// Stages a built list as the bin's value. Fails with the list's own error when one of its adds failed.
-	Result<void> set(const List& l) const { if (l.error().failed()) return l.error(); return check(as_udf_set_handle(name_, len_, l.handle())); }
+	Result<void> set(StrView name, const List& l) { if (l.error().failed()) return l.error(); return check(name, as_udf_rec_set_handle(name.data, name.len, l.handle())); }
 	// Stages `n` bytes at `b` as a blob.
-	Result<void> set_blob(const void* b, int32_t n) const { return check(as_udf_set_blob(name_, len_, b, n)); }
+	Result<void> set_blob(StrView name, const void* b, int32_t n) { return check(name, as_udf_rec_set_blob(name.data, name.len, b, n)); }
 	// A GeoJSON document, kept as the geospatially indexable kind rather than a string.
-	Result<void> set_geojson(StrView doc) const { return check(as_udf_set_geojson(name_, len_, doc.data, doc.len)); }
-	// Stages a nil as the bin's value.
-	Result<void> set_null() const { return check(as_udf_set_nil(name_, len_)); }
-	// A list of integers or doubles from an array, in one import, no value built per element.
-	Result<void> set_ints(const int64_t* vals, int32_t count) const { return check(as_udf_set_list_ints(name_, len_, vals, count * 8)); }
-	// A list of doubles from an array of `count` elements, in one import.
-	Result<void> set_doubles(const double* vals, int32_t count) const { return check(as_udf_set_list_doubles(name_, len_, vals, count * 8)); }
+	Result<void> set_geojson(StrView name, StrView doc) { return check(name, as_udf_rec_set_geojson(name.data, name.len, doc.data, doc.len)); }
+	// A list of integers from an array of `count` elements, in one import, no value built per element.
+	// Written at once, not staged: it needs no save().
+	Result<void> set_ints(StrView name, const int64_t* vals, int32_t count) { return check(name, as_udf_rec_set_list_ints(name.data, name.len, vals, count * 8)); }
+	// A list of doubles from an array of `count` elements, in one import. Written at once, like set_ints.
+	Result<void> set_doubles(StrView name, const double* vals, int32_t count) { return check(name, as_udf_rec_set_list_doubles(name.data, name.len, vals, count * 8)); }
 
-	// A value: one read from the record by position, keeping its kind; or a scalar, guest bytes, a handle.
-	Result<void> set(const Value& v) const
+	// A value: one read from a record by position, keeping its kind; or a scalar, guest bytes, a handle. A
+	// nil removes the bin, as remove() does: a bin cannot hold nil.
+	Result<void> set(StrView name, const Value& v)
 	{
 		switch (v.kind()) {
-		case Kind::Int: return set(v.payload);
-		case Kind::Double: return set(v.as_double_bits());
-		case Kind::Bool: return set(v.payload != 0);
-		case Kind::Nil: return set_null();
-		case Kind::GuestStr: return check(as_udf_set_str(name_, len_, (const char*)(uintptr_t)v.payload, (int32_t)v.len));
-		case Kind::GuestBlob: return check(as_udf_set_blob(name_, len_, (const void*)(uintptr_t)v.payload, (int32_t)v.len));
-		case Kind::GuestGeoJson: return check(as_udf_set_geojson(name_, len_, (const char*)(uintptr_t)v.payload, (int32_t)v.len));
-		case Kind::Handle: return check(as_udf_set_handle(name_, len_, (int32_t)v.payload));
+		case Kind::Int: return set(name, v.payload);
+		case Kind::Double: return set(name, v.as_double_bits());
+		case Kind::Bool: return set(name, v.payload != 0);
+		case Kind::Nil: return remove(name);
+		case Kind::GuestStr: return check(name, as_udf_rec_set_str(name.data, name.len, (const char*)(uintptr_t)v.payload, (int32_t)v.len));
+		case Kind::GuestBlob: return check(name, as_udf_rec_set_blob(name.data, name.len, (const void*)(uintptr_t)v.payload, (int32_t)v.len));
+		case Kind::GuestGeoJson: return check(name, as_udf_rec_set_geojson(name.data, name.len, (const char*)(uintptr_t)v.payload, (int32_t)v.len));
+		case Kind::Handle: return check(name, as_udf_rec_set_handle(name.data, name.len, (int32_t)v.payload));
 		case Kind::Absent: return Error{AS_UDF_NOT_FOUND, "could not write an absent value"};
-		default: return check(as_udf_set_at(name_, len_, v.src(), v.at()));
+		default: return check(name, as_udf_rec_set_at(name.data, name.len, v.src(), v.offset()));
 		}
 	}
 
-	// Asks the host to remove the bin from the record in hand. An error when the host refuses.
-	Result<void> remove() const { return check(as_udf_bin_remove(name_, len_)); }
+	// Removes a bin: staged like a set, and applied by save(). Deleting the whole record is delete_record().
+	Result<void> remove(StrView name)
+	{
+		int32_t rc = as_udf_rec_remove(name.data, name.len);
+		if (rc == AS_UDF_OK) return {};
+		return Error{rc, detail::message().add("could not remove bin ").add(name.data, name.len).add(" (").add((int64_t)rc).add(")").buf};
+	}
+
+	// Whether the record exists on the server.
+	bool exists() const { return as_udf_rec_exists() != 0; }
+	// The record's generation, its modification count.
+	int64_t generation() const { return as_udf_rec_gen(); }
+	// The record's remaining time to live in seconds; 0 when it does not expire.
+	int64_t ttl() const { return as_udf_rec_ttl(); }
+	// When the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC), which is how the
+	// server stores it. Not on the same scale as now(), which counts from the Unix epoch.
+	int64_t last_update_time() const { return as_udf_rec_last_update(); }
+	// The record's stored size in bytes.
+	int64_t size() const { return as_udf_rec_size(); }
+	// The number of bins the record has.
+	int64_t bin_count() const { return as_udf_rec_numbins(); }
+
+	// The record's set name, into a Text; empty when it is in no set.
+	Text<64> set_name() const
+	{
+		Text<64> t;
+		int32_t n = as_udf_rec_set_name(t.buf, 64);
+		t.len = n < 0 ? 0 : n;
+		t.buf[t.len] = '\0';
+		return t;
+	}
+
+	// Sets the time to live the next save carries, in seconds: 0 for the namespace default, -1 for never.
+	Result<void> set_ttl(int32_t seconds)
+	{
+		int32_t rc = as_udf_rec_set_ttl(seconds);
+		if (rc != AS_UDF_OK) return detail::status_error(rc, "could not set the TTL");
+		return {};
+	}
+
+	// The kind of the record's user key; Kind::Absent when the record stores none, which is the case unless
+	// it was written with send_key.
+	Kind key_type() const { return (Kind)as_udf_rec_key_type(); }
+	// The user key when it is an integer; 0 when the record stores no key or it is of another kind, so
+	// check key_type() first.
+	int64_t key_int() const { return as_udf_rec_key_int(); }
+	// The bytes of a string or blob user key into `out`. Returns the length; AS_UDF_NOT_FOUND when the
+	// record stores no key, a status at or below AS_UDF_NEEDED_BASE when `cap` is too small.
+	int32_t key_bytes(void* out, int32_t cap) const { return as_udf_rec_key_bytes(out, cap); }
+	// The record's digest, 20 bytes, into `out`. Returns the length, or a negative status: at or below
+	// AS_UDF_NEEDED_BASE when `cap` is too small.
+	int32_t digest(void* out, int32_t cap) const { return as_udf_rec_digest(out, cap); }
+
+	// Writes the record: the staged bins and removals go to it, and it is created when it does not exist.
+	// With nothing staged it is still a write to a record that exists (the server treats it as a touch: the
+	// generation and the last-update time move); on a key with no record it creates nothing.
+	Result<void> save()
+	{
+		int32_t rc = as_udf_rec_save();
+		if (rc != AS_UDF_OK) return detail::status_error(rc, "could not save the record");
+		return {};
+	}
+
+	// Deletes the record; nothing has to be saved first, and what was staged goes with it. The server
+	// carries the delete out when the call returns, so exists() keeps answering what it did until then.
+	// Named so because `delete` is a keyword, and so that it cannot be read as remove(name), which removes
+	// one bin.
+	Result<void> delete_record()
+	{
+		int32_t rc = as_udf_rec_delete();
+		if (rc != AS_UDF_OK) return detail::status_error(rc, "could not delete the record");
+		return {};
+	}
 
 private:
-	Result<Value> read() const
-	{
-		Value v;
-		int32_t rc = as_udf_bin_value(name_, len_, &v, (int32_t)sizeof(v));
-		if (rc == AS_UDF_NOT_FOUND) return Error{rc, detail::message().add("bin ").add(name_).add(" is absent").buf};
-		if (rc != AS_UDF_OK) return Error{rc, detail::message().add("bin ").add(name_).add(" could not be read").buf};
-		return v;
-	}
+	Record() = default;
+	friend struct detail::RecordAccess;
 
-	Result<Value> typed(Kind kind, const char* what) const
-	{
-		Result<Value> v = read();
-		if (!v) return v;
-		if (v->kind() != kind) return Error{AS_UDF_TYPE_MISMATCH, detail::message().add("bin ").add(name_).add(" is not ").add(what).buf};
-		return v;
-	}
-
-	Result<void> check(int32_t rc) const
+	static Result<void> check(StrView name, int32_t rc)
 	{
 		if (rc == AS_UDF_OK) return {};
-		return Error{rc, detail::message().add("could not write bin ").add(name_).add(" (").add((int64_t)rc).add(")").buf};
+		return Error{rc, detail::message().add("could not write bin ").add(name.data, name.len).add(" (").add((int64_t)rc).add(")").buf};
 	}
-
-	const char* name_;
-	int32_t len_;
 };
 
+namespace detail {
+
+// Not API: how the generated exports make the record they hand to a function.
+struct RecordAccess {
+	static Record make() { return Record(); }
+};
+
+} // namespace detail
+
 //==========================================================
-// The record: commit, delete, metadata, results.
+// What is not about the record: the clock, failure, the log, results, timers.
 //
 
-// Writes the staged bins, creating the record if it does not exist.
-inline Result<void> commit()
-{
-	int32_t rc = as_udf_rec_exists() ? as_udf_rec_update() : as_udf_rec_create();
-	if (rc != AS_UDF_OK) return detail::status_error(rc, "could not commit the record");
-	return {};
-}
-
-// Deletes the record in hand. An error when the server refuses.
-inline Result<void> remove_record()
-{
-	int32_t rc = as_udf_rec_remove();
-	if (rc != AS_UDF_OK) return detail::status_error(rc, "could not delete the record");
-	return {};
-}
-
-// Whether the record in hand exists on the server.
-inline bool exists() { return as_udf_rec_exists() != 0; }
-// The record's generation, its modification count.
-inline int64_t generation() { return as_udf_gen(); }
-// The record's remaining time to live in seconds; 0 when it does not expire.
-inline int64_t ttl() { return as_udf_ttl(); }
-// When the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC), which is how the
-// server stores it. Not on the same scale as now(), which counts from the Unix epoch.
-inline int64_t last_update_time() { return as_udf_last_update(); }
-// The record's stored size in bytes.
-inline int64_t record_size() { return as_udf_record_size(); }
-// The number of bins the record has.
-inline int64_t bin_count() { return as_udf_numbins(); }
 // The server's clock in ms since the Unix epoch, or -1 inside an event handler, where it is refused.
 inline int64_t now() { return as_udf_current_time(); }
-
-// The record's set name, into a Text; empty when it is in no set.
-inline Text<64> set_name()
-{
-	Text<64> t;
-	int32_t n = as_udf_set_name(t.buf, 64);
-	t.len = n < 0 ? 0 : n;
-	t.buf[t.len] = '\0';
-	return t;
-}
-
-// Sets the time to live the next commit carries, in seconds: 0 for the namespace default, -1 for never.
-inline Result<void> set_ttl(int32_t seconds)
-{
-	int32_t rc = as_udf_set_ttl(seconds);
-	if (rc != AS_UDF_OK) return detail::status_error(rc, "could not set the TTL");
-	return {};
-}
-
-// The kind of the record's user key; Kind::Absent when the record stores none, which is the case unless
-// it was written with send_key.
-inline Kind key_type() { return (Kind)as_udf_key_type(); }
-// The user key when it is an integer; 0 when the record stores no key or it is of another kind, so
-// check key_type() first.
-inline int64_t key_int() { return as_udf_key_int(); }
-// The bytes of a string or blob user key into `out`. Returns the length; AS_UDF_NOT_FOUND when the
-// record stores no key, a status at or below AS_UDF_NEEDED_BASE when `cap` is too small.
-inline int32_t key_bytes(void* out, int32_t cap) { return as_udf_key_bytes(out, cap); }
-// The record's digest, 20 bytes, into `out`. Returns the length, or a negative status: at or below
-// AS_UDF_NEEDED_BASE when `cap` is too small.
-inline int32_t digest(void* out, int32_t cap) { return as_udf_digest(out, cap); }
 
 // Fails the call with a message and returns the status an export returns.
 inline int32_t fail(StrView message)
@@ -1153,7 +1265,7 @@ inline Result<void> result_of(const Value& v)
 		break;
 	}
 	default: {
-		int32_t rc = as_udf_result_at(v.src(), v.at());
+		int32_t rc = as_udf_result_at(v.src(), v.offset());
 		if (rc != AS_UDF_OK) return detail::status_error(rc, "could not return the value");
 		break;
 	}
@@ -1169,8 +1281,8 @@ inline Result<void> timer_set(StrView name, int64_t delay_ms)
 	return {};
 }
 
-// Cancels the timer of that name on the record in hand. An error when the host refuses, as it does
-// where there is no record in hand and for a name that is empty or 64 bytes or longer.
+// Cancels the timer of that name on the record of the call. An error when the host refuses, as it does
+// where the call has no record and for a name that is empty or 64 bytes or longer.
 inline Result<void> timer_cancel(StrView name)
 {
 	int32_t rc = as_udf_timer_cancel(name.data, name.len);
@@ -1182,45 +1294,16 @@ inline Result<void> timer_cancel(StrView name)
 // Events, the typed tier.
 //
 
-// One record an event hands over, read-only, with its metadata and typed reads; the C struct underneath.
-struct EventRecord : as_udf_event_record {
-	// The bin as a value; nothing when the side has no such bin or it is nil.
-	Optional<Value> get(StrView name) const
+// One record an event hands over, read-only, with its metadata; the C struct underneath. Its bins are
+// read with ReadRecord's methods, the ones udf::Record has: get(), has(), bin(), the typed readers with and
+// without a default, list() and map().
+struct EventRecord : as_udf_event_record, ReadRecord<EventRecord> {
+	// What ReadRecord reads through: the bin of this side as the host hands it out. False when the side
+	// has no such bin.
+	bool read(StrView name, Value& out) const
 	{
-		Value v;
-		if (as_udf_event_bin_value(which, name.data, name.len, &v, (int32_t)sizeof(v)) != AS_UDF_OK || v.is_nil()) return {};
-		return v;
+		return as_udf_event_bin_value(which, name.data, name.len, &out, (int32_t)sizeof(out)) == AS_UDF_OK;
 	}
-
-	// Whether the side has the bin, nil included.
-	bool has(StrView name) const
-	{
-		Value v;
-		return as_udf_event_bin_value(which, name.data, name.len, &v, (int32_t)sizeof(v)) == AS_UDF_OK;
-	}
-
-	// The bin as an integer; nothing when the side has no such bin, it is nil or it is of another kind.
-	Optional<int64_t> as_int(StrView name) const { Optional<Value> v = get(name); if (!v || !v->is_int()) return {}; return v->payload; }
-	// The bin as a double; nothing when the side has no such bin, it is nil or it is of another kind. An
-	// integer bin is not widened.
-	Optional<double> as_double(StrView name) const { Optional<Value> v = get(name); if (!v || !v->is_double()) return {}; return v->as_double_bits(); }
-	// The bin as a boolean; nothing when the side has no such bin, it is nil or it is of another kind.
-	Optional<bool> as_bool(StrView name) const { Optional<Value> v = get(name); if (!v || !v->is_bool()) return {}; return v->payload != 0; }
-	// The bin's string as an inline Text<N>; nothing when the side has no such bin, it is nil, it is not a
-	// string or it does not fit in N bytes.
-	template <size_t N> Optional<Text<N>> as_text(StrView name) const
-	{
-		Optional<Value> v = get(name);
-		if (!v) return {};
-		Result<Text<N>> t = v->as_text<N>();
-		if (!t) return {};
-		return *t;
-	}
-
-	// A walk over a list bin of this record; empty when the bin is missing or not a list.
-	ListRange list(StrView name) const { Optional<Value> v = get(name); return ListRange(v && v->is_list() ? *v : Value()); }
-	// A walk over the entries of a map bin of this record; empty when the bin is missing or not a map.
-	MapRange map(StrView name) const { Optional<Value> v = get(name); return MapRange(v && v->is_map() ? *v : Value()); }
 
 	// The record's bin names.
 	ListRange names() const { return ListRange(Value(bins)); }
@@ -1242,9 +1325,9 @@ struct EventRecord : as_udf_event_record {
 		for (Value name : names()) {
 			Result<Text<64>> n = name.as_text<64>();
 			if (!n) continue;
-			if (overrides.has(n->view())) continue;
+			if (overrides.contains(n->view())) continue;
 			Value v;
-			if (as_udf_event_bin_value(which, n->buf, n->len, &v, (int32_t)sizeof(v)) == AS_UDF_OK) overrides.put(n->view(), v);
+			if (read(n->view(), v)) overrides.put(n->view(), v);
 		}
 		return overrides;
 	}
@@ -1339,7 +1422,7 @@ struct Pair {
 		for (const EventRecord* side : sides) {
 			for (Value name : side->names()) {
 				Result<Text<64>> n = name.as_text<64>();
-				if (!n || overrides.has(n->view())) continue;
+				if (!n || overrides.contains(n->view())) continue;
 				Optional<Value> v = bin(n->view()).newer();
 				if (v) overrides.put(n->view(), *v);
 			}
@@ -1520,6 +1603,10 @@ struct Args {
 	const Value* begin() const { return values; }
 	// One past the last argument.
 	const Value* end() const { return values + count; }
+	// How many arguments there are.
+	int32_t size() const { return count; }
+	// Whether there is none.
+	bool empty() const { return count == 0; }
 	Value operator[](int32_t i) const { return values[i]; }
 };
 
@@ -1699,22 +1786,51 @@ template <> struct Outcome<Result<void>> {
 	}
 };
 
+// What an exported function looks like. `Params` and `arity` are the client's arguments only: a leading
+// udf::Record is the record the export hands in, so it is not decoded, not counted and not in the
+// signature. `record` says whether the function takes one, `writes` whether it takes it writable.
 template <class F> struct FnTraits;
 template <class R, class... A> struct FnTraits<R (*)(A...)> {
+	static_assert(!(false || ... || is_same<Bare<A>, Record>),
+	    "the record is a function's first parameter, taken as udf::Record& or const udf::Record&");
 	using Ret = R;
 	using Params = TypeList<A...>;
 	static constexpr size_t arity = sizeof...(A);
 	static constexpr bool raw = sizeof...(A) == 2 && is_same<TypeList<A...>, TypeList<int32_t, int32_t>> && is_same<R, int32_t>;
 	static constexpr bool rest = (false || ... || Param<Bare<A>>::rest);
+	static constexpr bool record = false, writes = false;
+};
+template <class R, class... A> struct FnTraits<R (*)(Record&, A...)> {
+	static_assert(!(false || ... || is_same<Bare<A>, Record>), "a function takes the record once, first");
+	using Ret = R;
+	using Params = TypeList<A...>;
+	static constexpr size_t arity = sizeof...(A);
+	static constexpr bool raw = false;
+	static constexpr bool rest = (false || ... || Param<Bare<A>>::rest);
+	static constexpr bool record = true, writes = true;
+};
+template <class R, class... A> struct FnTraits<R (*)(const Record&, A...)> {
+	static_assert(!(false || ... || is_same<Bare<A>, Record>), "a function takes the record once, first");
+	using Ret = R;
+	using Params = TypeList<A...>;
+	static constexpr size_t arity = sizeof...(A);
+	static constexpr bool raw = false;
+	static constexpr bool rest = (false || ... || Param<Bare<A>>::rest);
+	static constexpr bool record = true, writes = false;
 };
 
-// The parameter names, parsed at compile time from the stringised parameter list.
+// How many leading parameters of Fn are not the client's: 1 when it takes the record, else 0.
+template <auto Fn> constexpr size_t leading = FnTraits<decltype(Fn)>::record ? 1 : 0;
+
+// The parameter names, parsed at compile time from the stringised parameter list. The first `skip` of them
+// are left out: the record parameter, which is in the list the macro was given but is not an argument.
 struct ParamNames {
 	static constexpr size_t max = 16;
 	char names[max][32] = {};
 	size_t count = 0;
+	size_t skip = 0;
 
-	constexpr ParamNames(const char* text)
+	constexpr ParamNames(const char* text, size_t skip_ = 0) : skip(skip_)
 	{
 		// Split at top-level commas; a parameter's name is its trailing identifier.
 		int32_t depth = 0;
@@ -1739,6 +1855,10 @@ struct ParamNames {
 		int32_t begin = end;
 		while (begin > from && is_ident(text[begin - 1])) begin--;
 		if (begin == end || count == max) return;
+		if (skip > 0) {
+			skip--;
+			return;
+		}
 		int32_t n = 0;
 		for (int32_t k = begin; k < end && n < 31; k++) names[count][n++] = text[k];
 		names[count][n] = '\0';
@@ -1794,19 +1914,24 @@ constexpr Signature function_signature(const char* name, const char* params)
 	Signature s;
 	s.add("fn ");
 	s.add(name);
-	ParamNames names(params);
+	ParamNames names(params, leading<Fn>);
 	add_params(s, names, typename T::Params{});
 	s.add(" -> value");
 	return s;
 }
 
-template <auto Fn>
+// The parameter list of one half of a stream UDF. `RecordHalf` says which: the per-record half may take
+// the record, read-only, because a stream's record takes no write; the end half runs after the last
+// record and has none.
+template <auto Fn, bool RecordHalf>
 constexpr Signature params_text(const char* params)
 {
 	using T = FnTraits<decltype(Fn)>;
 	static_assert(!T::raw, "a stream half taking (int32_t args, int32_t argc) is the raw form: use UDF_STREAM_RAW");
+	static_assert(!RecordHalf || !T::writes, "a stream's per-record half cannot write the record: take it as const udf::Record&");
+	static_assert(RecordHalf || !T::record, "a stream's end half has no record: it runs after the last one");
 	Signature s;
-	ParamNames names(params);
+	ParamNames names(params, leading<Fn>);
 	add_params(s, names, typename T::Params{});
 	return s;
 }
@@ -1866,7 +1991,25 @@ int32_t call(const char* fn, const ParamNames& names, const Value* a, int32_t n,
 		if (!r.ok() && !err.failed()) err = r.error();
 		return r.ok() ? r.take() : decltype(r.take())();
 	};
-	return call_impl<Fn>(fn, err, record_half, keep(Param<Bare<A>>::decode(a, n, (int32_t)I, fn, names.names[I]))...);
+	if constexpr (FnTraits<decltype(Fn)>::record) {
+		Record rec = RecordAccess::make();
+		return call_impl<Fn>(fn, err, record_half, rec, keep(Param<Bare<A>>::decode(a, n, (int32_t)I, fn, names.names[I]))...);
+	}
+	else {
+		return call_impl<Fn>(fn, err, record_half, keep(Param<Bare<A>>::decode(a, n, (int32_t)I, fn, names.names[I]))...);
+	}
+}
+
+// The body of a timer handler's export: the timer is decoded, and the handler runs on the record it is on.
+template <auto Fn>
+int32_t timer(const char* not_a_timer, int32_t args, int32_t argc)
+{
+	TimerInfo info;
+	if (as_udf_event_timer_info(args, argc, &info) != AS_UDF_OK) return fail(not_a_timer);
+	Record rec = RecordAccess::make();
+	Result<void> r = Fn(rec, info);
+	if (!r) return fail(r.error());
+	return as_udf_answer_done();
 }
 
 // The export's body for a record UDF, a stream half or anything typed: raw functions pass through.
@@ -1905,11 +2048,13 @@ int32_t invoke(const char* fn, const ParamNames& names, int32_t args, int32_t ar
 
 // A record UDF: `UDF_FUNCTION(name, ReturnType, params...) { body }`. The return is a Result<T> or a plain
 // T (int64_t, double, bool, StrView, Text<N>, Value, Map, List, void); the parameters are int64_t,
-// int32_t, double, bool, Text<N>, Bytes<N>, Value, Optional<T> of those, and Args last. A function declared
-// (int32_t args, int32_t argc) returning int32_t is the raw form; see UDF_FUNCTION_RAW.
+// int32_t, double, bool, Text<N>, Bytes<N>, Value, Optional<T> of those, and Args last. Before them the
+// function may take the record it was called on, `udf::Record& rec` to write it or `const udf::Record& rec`
+// to read it: the export hands it in, and it is neither an argument of the call nor part of the signature.
+// A function declared (int32_t args, int32_t argc) returning int32_t is the raw form; see UDF_FUNCTION_RAW.
 #define UDF_FUNCTION(name, ret, ...)                                                                     \
 	static ret name##_udf_impl(__VA_ARGS__);                                                             \
-	static constexpr ::udf::detail::ParamNames udf_names_##name{#__VA_ARGS__};                           \
+	static constexpr ::udf::detail::ParamNames udf_names_##name{#__VA_ARGS__, ::udf::detail::leading<&name##_udf_impl>}; \
 	extern "C" __attribute__((export_name(#name))) int32_t udf_export_##name(int32_t args, int32_t argc)  \
 	{                                                                                                    \
 		return ::udf::detail::invoke<&name##_udf_impl>(#name, udf_names_##name, args, argc, false);      \
@@ -1929,13 +2074,15 @@ int32_t invoke(const char* fn, const ParamNames& names, int32_t args, int32_t ar
 	static int32_t name##_udf_impl(int32_t args, int32_t argc)
 
 // A stream UDF: `UDF_STREAM_RECORD(name, ret, params...) { ... }` then `UDF_STREAM_END(name, ret, params...)
-// { ... }`, in that order; the record half returns void or Result<void>, the end half the partial. State is
-// static. UDF_STREAM_RAW(name, "(record params)", "(end params)") declares both halves raw.
+// { ... }`, in that order; the record half returns void or Result<void>, the end half the partial. The
+// record half may take the record first, as `const udf::Record& rec` only: a stream's record takes no
+// write. The end half has no record. State is static. UDF_STREAM_RAW(name, "(record params)",
+// "(end params)") declares both halves raw.
 #define UDF_STREAM_RECORD(name, ret, ...)                                                                \
 	static ret name##_record_udf_impl(__VA_ARGS__);                                                      \
-	static constexpr ::udf::detail::ParamNames udf_names_##name##_record{#__VA_ARGS__};                  \
+	static constexpr ::udf::detail::ParamNames udf_names_##name##_record{#__VA_ARGS__, ::udf::detail::leading<&name##_record_udf_impl>}; \
 	static constexpr ::udf::detail::Signature udf_params_##name##_record =                               \
-	    ::udf::detail::params_text<&name##_record_udf_impl>(#__VA_ARGS__);                               \
+	    ::udf::detail::params_text<&name##_record_udf_impl, true>(#__VA_ARGS__);                         \
 	extern "C" __attribute__((export_name(#name "_record"))) int32_t udf_export_##name##_record(int32_t args, int32_t argc) \
 	{                                                                                                    \
 		return ::udf::detail::invoke<&name##_record_udf_impl>(#name, udf_names_##name##_record, args, argc, true); \
@@ -1949,7 +2096,7 @@ int32_t invoke(const char* fn, const ParamNames& names, int32_t args, int32_t ar
 	static ret name##_end_udf_impl(__VA_ARGS__);                                                         \
 	static constexpr ::udf::detail::ParamNames udf_names_##name##_end{#__VA_ARGS__};                     \
 	static constexpr ::udf::detail::Signature udf_params_##name##_end =                                  \
-	    ::udf::detail::params_text<&name##_end_udf_impl>(#__VA_ARGS__);                                  \
+	    ::udf::detail::params_text<&name##_end_udf_impl, false>(#__VA_ARGS__);                           \
 	extern "C" __attribute__((export_name(#name "_end"))) int32_t udf_export_##name##_end(int32_t args, int32_t argc) \
 	{                                                                                                    \
 		return ::udf::detail::invoke<&name##_end_udf_impl>(#name, udf_names_##name##_end, args, argc, false); \
@@ -2081,19 +2228,17 @@ inline int32_t deliver_answer(const Result<void>&) { return as_udf_answer_done()
 // `Result<void> name(const LifecycleInfo& lifecycle)`. It answers nothing.
 #define UDF_ON_NODE_LIFECYCLE(name) UDF_EVENT_INFO_ONLY(name, "node-lifecycle", "(lifecycle: lifecycle) -> ()", LifecycleInfo, as_udf_event_lifecycle_info, void, lifecycle)
 
-// A timer: `UDF_ON_TIMER(name) { ... }` defines `Result<void> name(const TimerInfo& timer)`, run as a record UDF.
+// A timer: `UDF_ON_TIMER(name) { ... }` defines `Result<void> name(Record& record, const TimerInfo& timer)`.
+// It is the one handler that runs as a record UDF, on the record the timer was set on, so it takes that
+// record, writable, where the other kinds take the read-only records of their event.
 #define UDF_ON_TIMER(name)                                                                               \
-	static ::udf::Result<void> name##_udf_impl(const ::udf::TimerInfo&);                                 \
+	static ::udf::Result<void> name##_udf_impl(::udf::Record&, const ::udf::TimerInfo&);                 \
 	extern "C" __attribute__((export_name(#name))) int32_t udf_export_##name(int32_t args, int32_t argc)  \
 	{                                                                                                    \
-		::udf::TimerInfo info;                                                                           \
-		if (as_udf_event_timer_info(args, argc, &info) != AS_UDF_OK) return ::udf::fail(#name ": not a timer event"); \
-		::udf::Result<void> r = name##_udf_impl(info);                                                   \
-		if (!r) return ::udf::fail(r.error());                                                           \
-		return as_udf_answer_done();                                                                     \
+		return ::udf::detail::timer<&name##_udf_impl>(#name ": not a timer event", args, argc);          \
 	}                                                                                                    \
 	UDF_HANDLER_SIG(name, "timer", "(timer: timer) -> ()")                                                \
-	static ::udf::Result<void> name##_udf_impl(const ::udf::TimerInfo& timer)
+	static ::udf::Result<void> name##_udf_impl(::udf::Record& record, const ::udf::TimerInfo& timer)
 
 // An xdr-merge: `UDF_ON_XDR_MERGE(name) { ... }` defines
 // `Result<Resolution> name(const EventRecord& current, const EventRecord& incoming, const Conflict& conflict)`.

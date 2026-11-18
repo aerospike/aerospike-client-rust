@@ -17,7 +17,13 @@
 // The contract is the one aerospike-udf-sdk-wasm (Rust) documents: every read is a 16-byte Value, a string or
 // collection is read by position from a source the host holds, nothing is msgpack. A UDF is an exported
 // function `func name(args, argc int32) int32` returning 0 on success, which sets its result with Result*
-// and fails with Fail. A stream (aggregation) UDF exports `<name>_record` and `<name>_end`.
+// and fails with Fail. A stream (aggregation) UDF exports `<name>_record` and `<name>_end`. cmd/udfgen
+// writes those exports from `udf:` directives, so a UDF is an ordinary Go function.
+//
+// The record a UDF is called on is a *Record, the function's first parameter when it wants one; every
+// read, write and piece of metadata of the record is a method on it, and Save writes what was staged.
+// What is left on the package is what is not about the record: the clock, the log, results, the list and
+// map builders, values, arguments, timers and the events.
 //
 // TinyGo brings a runtime and an allocator, so unlike the Rust SDK's default build nothing here is
 // allocation-free by construction. Package-level arrays keep a hot path allocation-free when that matters.
@@ -85,6 +91,15 @@ func packHandle(handle int32) int32
 
 //go:wasmimport aerospike args_values
 func argsValues(handle int32, out unsafe.Pointer, cap int32) int32
+
+//go:wasmimport aerospike list_get
+func listGet(src int32, at int32, index int32, out unsafe.Pointer, cap int32) int32
+
+//go:wasmimport aerospike map_has
+func mapHas(handle int32, key unsafe.Pointer, keyLen int32) int32
+
+//go:wasmimport aerospike map_has_i
+func mapHasI(handle int32, key int64) int32
 
 //go:wasmimport aerospike coll_size
 func collSize(handle int32) int32
@@ -280,8 +295,8 @@ func BlobValue(b []byte) Value {
 	return Value{Kind: KindGuestBlob, Len: uint32(len(b)), Payload: int64(uintptr(unsafe.Pointer(&b[0])))}
 }
 
-// HandleValue is a built list or map as a value, by its handle, for a batch.
-func HandleValue(h int32) Value { return Value{Kind: KindHandle, Payload: int64(h)} }
+// handleValue is a built list or map as a value, by its handle; Map.Value and List.Value are its public face.
+func handleValue(h int32) Value { return Value{Kind: KindHandle, Payload: int64(h)} }
 
 // StrBytesValue is a string value over bytes the caller holds, without making a Go string of them.
 func StrBytesValue(b []byte) Value {
@@ -307,12 +322,6 @@ func strptr(s string) unsafe.Pointer {
 		return nil
 	}
 	return unsafe.Pointer(unsafe.StringData(s))
-}
-
-// Bin_ reads a bin of any kind in one import. The status is NotFound for no such bin. (Bin is the typed
-// form.)
-func Bin_(name string, out *Value) int32 {
-	return binValue(strptr(name), int32(len(name)), unsafe.Pointer(out), 16)
 }
 
 // Bytes copies the bytes of a string, blob, GeoJSON or HLL value into buf. Returns the length, or a status.
@@ -343,137 +352,29 @@ func Args(handle, argc int32, out []Value) int32 {
 	return n
 }
 
-// Enter opens a cursor over the list or map at a value's position. 0 when it could not.
-func Enter(v Value) int32 { return cursorEnterAt(v.Src(), v.At()) }
+// enter opens a cursor over the list or map at a value's position. 0 when it could not.
+func enter(v Value) int32 { return cursorEnterAt(v.Src(), v.At()) }
 
-// Next fills out with the next values of a cursor, 128 at most per import. Returns how many, or a status.
-func Next(cursor int32, out []Value) int32 {
+// next fills out with the next values of a cursor, 128 at most per import. Returns how many, or a status.
+func next(cursor int32, out []Value) int32 {
 	return cursorValues(cursor, unsafe.Pointer(&out[0]), int32(len(out)*16))
 }
 
-// Close gives a cursor's slot back.
-func Close(cursor int32) { cursorClose(cursor) }
+// closeCursor gives a cursor's slot back.
+func closeCursor(cursor int32) { cursorClose(cursor) }
 
-// Get looks a string key up in the map at a value's position, in one import.
-func Get(m Value, key string, out *Value) int32 {
+// get looks a string key up in the map at a value's position, in one import.
+func get(m Value, key string, out *Value) int32 {
 	return collGet(m.Src(), m.At(), strptr(key), int32(len(key)), unsafe.Pointer(out), 16)
 }
 
-// Digest copies the record's digest (20 bytes) into buf. Returns the length, or a status.
-func Digest(buf []byte) int32 { return digest(ptr(buf), int32(len(buf))) }
-
-// KeyType reports the kind of the record's user key, or Absent when none was stored.
-func KeyType() Kind { return Kind(keyType()) }
-
-// KeyInt is the user key when it is an integer.
-func KeyInt() int64 { return keyInt() }
-
-// KeyBytes copies a string or blob user key into buf. Returns the length, or a status.
-func KeyBytes(buf []byte) int32 { return keyBytes(ptr(buf), int32(len(buf))) }
-
-// Generation is the record's modification count.
-func Generation() int64 { return gen() }
-
-// Exists reports whether the record exists.
-func Exists() bool { return recExists() != 0 }
-
 //==========================================================
-// Writing, building, reporting.
+// Building and reporting. The builders in coll.go and the event answers sit on these.
 //
 
-// SetInt writes an integer to a bin.
-// Staged until the record is committed. The status is Err for a name that is empty or longer than 15
-// bytes, Refused when the record refuses the write.
-func SetInt(name string, value int64) int32 {
-	return setInt(strptr(name), int32(len(name)), value)
-}
-
-// SetDouble writes a double to a bin.
-// Staged until the record is committed. The status is Err for a name that is empty or longer than 15
-// bytes, Refused when the record refuses the write.
-func SetDouble(name string, value float64) int32 {
-	return setDouble(strptr(name), int32(len(name)), value)
-}
-
-// SetStr writes a string to a bin; the host copies the bytes.
-// Staged until the record is committed. The status is Err for a name that is empty or longer than 15
-// bytes, Refused when the record refuses the write.
-func SetStr(name, value string) int32 {
-	return setStr(strptr(name), int32(len(name)), strptr(value), int32(len(value)))
-}
-
-// SetBlob writes a blob to a bin; the host copies the bytes. Staged until the record is committed. The
-// status is TypeMismatch when the bin holds bytes of another subtype, such as an HLL, which a plain blob
-// would relabel; Err for a name that is empty or longer than 15 bytes; Refused when the record refuses
-// the write.
-func SetBlob(name string, value []byte) int32 {
-	return setBlob(strptr(name), int32(len(name)), ptr(value), int32(len(value)))
-}
-
-// SetHandle writes a built list or map to a bin.
-func SetHandle(name string, handle int32) int32 {
-	return setHandle(strptr(name), int32(len(name)), handle)
-}
-
-// SetValue writes a value read from the record to a bin, by position.
-func SetValue(name string, v Value) int32 {
-	return setAt(strptr(name), int32(len(name)), v.Src(), v.At())
-}
-
-// Remove removes a bin from the record, staged like a write. The status is Err for a name that is empty or
-// longer than 15 bytes, Refused when the record refuses.
-func Remove(name string) int32 { return binRemove(strptr(name), int32(len(name))) }
-
-// Update commits the staged writes to an existing record; Create to one that does not exist yet.
-func Update() int32 { return recUpdate() }
-
-// Create commits the staged writes as a new record. The status is Refused when the server does not
-// create it.
-func Create() int32 { return recCreate() }
-
-// NewListHandle and NewMapHandle start a collection on the host as a bare handle, for the low-level
-// calls; NewList and NewMap are the typed builders.
-func NewListHandle(capacity int) int32 { return listNew(int32(capacity)) }
-
-// NewMapHandle starts a map on the host with room for capacity entries and returns its bare handle, 0
-// when it could not. A built map is ordered by key, not by insertion.
-func NewMapHandle(capacity int) int32 { return mapNew(int32(capacity)) }
-
-// NilHandle is a nil value as a handle, for a map entry that means "no such bin" in a record resolution.
-func NilHandle() int32 { return valNil() }
-
-// PackHandle packs a built collection into a source the host holds, for reading it back by position
-// (Get, Enter); the source lives until the call ends.
-func PackHandle(handle int32) int32 { return packHandle(handle) }
-
-// MapHasKey reports whether a built map holds key. It packs the map, so it is for the occasional check,
-// not a loop.
-func MapHasKey(m int32, key string) bool {
-	src := packHandle(m)
-	if src <= 0 {
-		return false
-	}
-	var v Value
-	return collGet(src, 0, strptr(key), int32(len(key)), unsafe.Pointer(&v), int32(unsafe.Sizeof(v))) == OK
-}
-
-// ListPushInt appends an integer to a built list. The status is Err when list is not a built list.
-func ListPushInt(list int32, value int64) int32 { return listPushInt(list, value) }
-
-// ListPushStr appends a string to a built list; the host copies the bytes. The status is Err when list is
-// not a built list.
-func ListPushStr(list int32, value string) int32 {
-	return listPushStr(list, strptr(value), int32(len(value)))
-}
-
-// ListPushHandle appends a value held by handle (a built collection, or one of NilHandle, IntHandle or
-// StrHandle) to a built list. The status is Err when list is not a built list or value is not a usable
-// handle.
-func ListPushHandle(list, value int32) int32 { return listPush(list, value) }
-
-// ListPushValue appends any value: a scalar by value, guest bytes by address, a stored value by position,
+// listPushValue appends any value: a scalar by value, guest bytes by address, a stored value by position,
 // a built collection by handle.
-func ListPushValue(list int32, v Value) int32 {
+func listPushValue(list int32, v Value) int32 {
 	switch v.Kind {
 	case KindInt:
 		return listPushInt(list, v.Payload)
@@ -497,37 +398,27 @@ func ListPushValue(list int32, v Value) int32 {
 	return listPushAt(list, v.Src(), v.At())
 }
 
-// ListPushValues appends a batch of values in one import: scalars, guest bytes by address, stored values by
-// position, built collections by handle. Returns how many went in.
-func ListPushValues(list int32, vals []Value) int32 {
-	if len(vals) == 0 {
-		return 0
-	}
-	return listPushValues(list, unsafe.Pointer(&vals[0]), int32(len(vals)*16))
-}
-
-// MapPutInt puts an integer under a string key in a built map. The status is Err when m is not a built
+// mapPutInt puts an integer under a string key in a built map. The status is Err when m is not a built
 // map.
-func MapPutInt(m int32, key string, value int64) int32 {
+func mapPutInt(m int32, key string, value int64) int32 {
 	return mapPutStrInt(m, strptr(key), int32(len(key)), value)
 }
 
-// MapPutStr puts a string under a string key in a built map; the host copies the bytes. The status is Err
+// mapPutStr puts a string under a string key in a built map; the host copies the bytes. The status is Err
 // when m is not a built map.
-func MapPutStr(m int32, key, value string) int32 {
+func mapPutStr(m int32, key, value string) int32 {
 	return mapPutStrStr(m, strptr(key), int32(len(key)), strptr(value), int32(len(value)))
 }
 
-// MapPutHandle puts a value held by handle (a built collection, or one of NilHandle, IntHandle or
-// StrHandle) under a string key in a built map. The status is Err when m is not a built map or value is
-// not a usable handle.
-func MapPutHandle(m int32, key string, value int32) int32 {
+// mapPutHandle puts a value held by handle (a built collection, or a value the host made) under a string
+// key in a built map. The status is Err when m is not a built map or value is not a usable handle.
+func mapPutHandle(m int32, key string, value int32) int32 {
 	return mapPutStrHandle(m, strptr(key), int32(len(key)), value)
 }
 
-// MapPutValue puts any value under a string key: a scalar by value, guest bytes by address, a stored value
+// mapPutValue puts any value under a string key: a scalar by value, guest bytes by address, a stored value
 // by position, a built collection by handle.
-func MapPutValue(m int32, key string, v Value) int32 {
+func mapPutValue(m int32, key string, v Value) int32 {
 	switch v.Kind {
 	case KindInt:
 		return mapPutStrInt(m, strptr(key), int32(len(key)), v.Payload)
@@ -550,19 +441,6 @@ func MapPutValue(m int32, key string, v Value) int32 {
 	}
 	return mapPutStrAt(m, strptr(key), int32(len(key)), v.Src(), v.At())
 }
-
-// MapPutEntries puts a batch of key-value pairs (pairs[0], pairs[1] is the first) in one import. Returns how
-// many pairs went in.
-func MapPutEntries(m int32, pairs []Value) int32 {
-	if len(pairs) < 2 {
-		return 0
-	}
-	return mapPutEntries(m, unsafe.Pointer(&pairs[0]), int32(len(pairs)*16))
-}
-
-// Size is the number of elements of the list, or entries of the map, behind a handle: a built collection
-// or an open cursor. Err (-1) when the handle is neither.
-func Size(handle int32) int { return int(collSize(handle)) }
 
 // ResultNil sets nil as the call's result. Of several Result calls, the last one wins.
 func ResultNil() { resultNil() }
@@ -588,13 +466,6 @@ func ResultStr(s string) { resultStr(strptr(s), int32(len(s))) }
 // ResultBlob sets a blob as the call's result; the host copies the bytes.
 func ResultBlob(b []byte) { resultBlob(ptr(b), int32(len(b))) }
 
-// ResultHandle sets a built list or map as the call's result, by handle. The status is Err when the
-// handle is not usable.
-func ResultHandle(h int32) int32 { return resultHandle(h) }
-
-// ResultValue hands a value read from the record back as the result, built by the server from its bytes.
-func ResultValue(v Value) int32 { return resultAt(v.Src(), v.At()) }
-
 // Fail fails the call with a message the client sees, and returns the non-zero status a UDF then returns.
 func Fail(message string) int32 {
 	fail(strptr(message), int32(len(message)))
@@ -616,7 +487,7 @@ func Signature(text *[]byte) int32 {
 //
 // An event handler is a function the server calls at a point in its own processing. The first event,
 // `xdr-merge`, hands it the local record and the incoming XDR write as two records (Which 0 and 1, read
-// through EventRecord.Bin, never the record imports) and a description of the conflict, and takes back a
+// through EventRecord, never the record imports) and a description of the conflict, and takes back a
 // verdict or the final record. Export the handler under its name and its signature under
 // `__udf_sig_<name>` (see XdrMergeSignature), which `event-set` checks before binding. A handler must be
 // pure and symmetric: both DCs resolve the same pair with the sides swapped and must land on the same
@@ -657,7 +528,7 @@ type Conflict struct {
 func MapGet(m Value, key string) Value {
 	v := Value{Kind: KindAbsent}
 	if m.Kind == KindMap {
-		Get(m, key, &v)
+		get(m, key, &v)
 	}
 	return v
 }
@@ -722,11 +593,6 @@ func DecodeConflict(handle, argc int32, out *Conflict) bool {
 	return true
 }
 
-// Bin reads one of this side's bins. NotFound when the side has no such bin.
-func (r *EventRecord) Bin(name string, out *Value) int32 {
-	return eventBinValue(r.Which, strptr(name), int32(len(name)), unsafe.Pointer(out), int32(unsafe.Sizeof(*out)))
-}
-
 // BinLUT is when this side last wrote the bin: per bin where the server keeps one, the record's otherwise.
 func (r *EventRecord) BinLUT(name string) int64 { return MapInt(r.BinLUTs, name, r.LUT) }
 
@@ -745,13 +611,13 @@ func EachStr(list Value, buf []byte, fn func(name []byte, v Value)) {
 	if list.Kind != KindList {
 		return
 	}
-	cur := Enter(list)
+	cur := enter(list)
 	if cur <= 0 {
 		return
 	}
 	var w [32]Value
 	for {
-		n := Next(cur, w[:])
+		n := next(cur, w[:])
 		for i := int32(0); i < n; i++ {
 			if k := Bytes(w[i], buf); k >= 0 && w[i].Kind == KindStr {
 				fn(buf[:k], w[i])
@@ -761,19 +627,7 @@ func EachStr(list Value, buf []byte, fn func(name []byte, v Value)) {
 			break
 		}
 	}
-	Close(cur)
-}
-
-// ListHasStr reports whether a stored list of strings holds text.
-func ListHasStr(list Value, text string) bool {
-	found := false
-	var buf [64]byte
-	EachStr(list, buf[:], func(name []byte, v Value) {
-		if !found && string(name) == text {
-			found = true
-		}
-	})
-	return found
+	closeCursor(cur)
 }
 
 // resolveRecord returns the final record: bins (a built map; a bin absent or nil is deleted) and a TTL
@@ -783,12 +637,12 @@ func resolveRecord(bins int32, ttl int64) int32 {
 	if out.err != nil {
 		return Fail("resolve: could not build the resolution")
 	}
-	MapPutStr(out.handle, "verdict", "record")
-	MapPutHandle(out.handle, "bins", bins)
+	mapPutStr(out.handle, "verdict", "record")
+	mapPutHandle(out.handle, "bins", bins)
 	if ttl >= 0 {
-		MapPutInt(out.handle, "ttl", ttl)
+		mapPutInt(out.handle, "ttl", ttl)
 	}
-	if ResultHandle(out.handle) != OK {
+	if resultHandle(out.handle) != OK {
 		return Fail("resolve: could not return the record")
 	}
 	return 0
@@ -1033,7 +887,8 @@ func EventTransferInfo(desc Value, out *TransferInfo) bool {
 	return true
 }
 
-// TimerInfo is a timer handler's argument: the timer that came due. The handler runs as a record UDF.
+// TimerInfo is a timer handler's argument: the timer that came due. The handler runs as a record UDF, so
+// it takes the *Record first, which it may write and save, and then this.
 type TimerInfo struct {
 	Name string
 	Due  int64
@@ -1064,20 +919,20 @@ func answer(verdict string, code int64, message string, bins int32, ttl int64) i
 	if out.err != nil {
 		return Fail("answer: could not build the answer")
 	}
-	MapPutStr(out.handle, "verdict", verdict)
+	mapPutStr(out.handle, "verdict", verdict)
 	if code != 0 {
-		MapPutInt(out.handle, "code", code)
+		mapPutInt(out.handle, "code", code)
 	}
 	if message != "" {
-		MapPutStr(out.handle, "message", message)
+		mapPutStr(out.handle, "message", message)
 	}
 	if bins != 0 {
-		MapPutHandle(out.handle, "bins", bins)
+		mapPutHandle(out.handle, "bins", bins)
 	}
 	if ttl >= 0 {
-		MapPutInt(out.handle, "ttl", ttl)
+		mapPutInt(out.handle, "ttl", ttl)
 	}
-	if ResultHandle(out.handle) != OK {
+	if resultHandle(out.handle) != OK {
 		return Fail("answer: could not return the answer")
 	}
 	return 0

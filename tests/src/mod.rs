@@ -69,6 +69,7 @@ mod udf_native;
 mod udf_native_bench;
 mod udf_vector;
 mod udf_wasm;
+mod udf_wasm_limits;
 mod udf_wasm_sandbox;
 mod value_order;
 mod vector;

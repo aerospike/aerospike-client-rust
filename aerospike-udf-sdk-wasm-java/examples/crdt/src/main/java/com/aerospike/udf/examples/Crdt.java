@@ -12,14 +12,23 @@
 
 package com.aerospike.udf.examples;
 
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
 import com.aerospike.udf.Conflict;
 import com.aerospike.udf.EventRecord;
 import com.aerospike.udf.Function;
+import com.aerospike.udf.ListBuilder;
+import com.aerospike.udf.ListValue;
+import com.aerospike.udf.MapBuilder;
+import com.aerospike.udf.MapValue;
 import com.aerospike.udf.On;
+import com.aerospike.udf.Record;
 import com.aerospike.udf.Resolution;
 import com.aerospike.udf.Udf;
 import com.aerospike.udf.UdfException;
-import com.aerospike.udf.UdfMap;
 import com.aerospike.udf.Value;
 
 /**
@@ -52,55 +61,87 @@ public final class Crdt {
     private static final long PURGE_AGE_MS = 7L * 24 * 60 * 60 * 1000;
 
     private static final int MAX_DEVICES = 128;
+    /** The longest device id, in UTF-8 bytes. */
     private static final int ID_MAX = 64;
 
-    private static final byte[] DEVICES = Udf.bytes("devices");
-    private static final byte[] DEVICES_REMOVED = Udf.bytes("devicesRemoved");
-    private static final byte[] DEVICE_ID = Udf.bytes("deviceId");
-    private static final byte[] VERSION = Udf.bytes("version");
-    private static final byte[] MARKERS = Udf.bytes("markers");
-    private static final byte[] PURGED_BEFORE = Udf.bytes("purgedBefore");
-    private static final byte[] VERSION_FLOOR = Udf.bytes("versionFloor");
-    private static final byte[] OFF_AT = Udf.bytes("offAt");
+    /** What a malformed record, or one with too many devices, ends a helper with; the caller says where. */
+    private static final class Malformed extends RuntimeException {
+        private static final long serialVersionUID = 1L;
+    }
 
     /** One side's candidate for a device: its live entry, or its removal marker. */
     private static final class Candidate {
-        final byte[] id = new byte[ID_MAX];
-        int idLen;
-        long version;
-        boolean removed;
+        final String id;
+        final long version;
+        final boolean removed;
         /** The entry or the marker, where it sits in the record it came from. */
-        final Value value = new Value();
+        final Value value;
         /** A marker's removal time; 0 for a live entry. */
-        long offAt;
+        final long offAt;
 
-        void copyFrom(Candidate o) {
-            System.arraycopy(o.id, 0, id, 0, o.idLen);
-            idLen = o.idLen;
-            version = o.version;
-            removed = o.removed;
-            value.set(o.value.kind, o.value.len, o.value.payload);
-            offAt = o.offAt;
+        Candidate(String id, long version, boolean removed, Value value, long offAt) {
+            this.id = id;
+            this.version = version;
+            this.removed = removed;
+            this.value = value;
+            this.offAt = offAt;
         }
     }
 
-    private static int cmpBytes(byte[] a, int alen, byte[] b, int blen) {
-        int n = Math.min(alen, blen);
+    /**
+     * Orders two ids by their UTF-8 bytes - the order the server keeps a key-ordered map's string keys in,
+     * so the list and the markers agree. That is code point order, which {@code String.compareTo} is not
+     * once a character outside the basic plane meets one near its top: surrogates sort below U+E000 in
+     * UTF-16 and above it in UTF-8, and this puts them where UTF-8 does.
+     */
+    private static int compareIds(String a, String b) {
+        int n = Math.min(a.length(), b.length());
 
         for (int i = 0; i < n; i++) {
-            int x = a[i] & 0xff;
-            int y = b[i] & 0xff;
+            char x = a.charAt(i);
+            char y = b.charAt(i);
 
             if (x != y) {
-                return x < y ? -1 : 1;
+                boolean xs = Character.isSurrogate(x);
+                boolean ys = Character.isSurrogate(y);
+
+                return xs == ys ? Character.compare(x, y) : xs ? 1 : -1;
             }
         }
 
-        return Integer.compare(alen, blen);
+        return Integer.compare(a.length(), b.length());
     }
 
-    private static boolean sameId(Candidate a, byte[] id, int idLen) {
-        return a.idLen == idLen && cmpBytes(a.id, a.idLen, id, idLen) == 0;
+    /** A device id read from a record: a string of at most {@link #ID_MAX} bytes, or the record is malformed. */
+    private static String idOf(Value v) {
+        if (v == null || !v.isString() || v.length() > ID_MAX) {
+            throw new Malformed();
+        }
+
+        return v.asString();
+    }
+
+    /** An integer a record must hold, or the record is malformed. */
+    private static long intOf(Value v) {
+        if (v == null || !v.isInt()) {
+            throw new Malformed();
+        }
+
+        return v.asLong();
+    }
+
+    /** An integer entry of a map, or {@code dflt} when it has none or holds something else there. */
+    private static long intOr(MapValue m, String key, long dflt) {
+        Value v = m == null ? null : m.get(key);
+
+        return v != null && v.isInt() ? v.asLong() : dflt;
+    }
+
+    /** A map entry of a map, or null when it has none or holds something else there. */
+    private static MapValue mapOr(MapValue m, String key) {
+        Value v = m == null ? null : m.get(key);
+
+        return v != null && v.isMap() ? v.asMap() : null;
     }
 
     /**
@@ -118,187 +159,77 @@ public final class Crdt {
             return a.removed ? a : b;
         }
 
-        return Udf.cmpStored(a.value, b.value) >= 0 ? a : b;
+        return a.value.compareStored(b.value) >= 0 ? a : b;
     }
 
     /** The candidates seen so far, one per device: {@link #offer} keeps the higher. */
     private static final class Best {
-        final Candidate[] items = new Candidate[MAX_DEVICES];
-        int n;
-        final Candidate scratch = new Candidate();
+        final List<Candidate> items = new ArrayList<>();
+        /** The latest purge horizon either side carries, and the highest version floor. */
+        long horizon;
+        long floor;
 
-        Best() {
-            for (int i = 0; i < MAX_DEVICES; i++) {
-                items[i] = new Candidate();
-            }
-        }
-
-        /** Offers {@link #scratch}; false when the table is full. */
-        boolean offer() {
-            for (int i = 0; i < n; i++) {
-                if (sameId(items[i], scratch.id, scratch.idLen)) {
-                    if (higher(items[i], scratch) == scratch) {
-                        items[i].copyFrom(scratch);
-                    }
-
-                    return true;
+        void offer(Candidate c) {
+            for (int i = 0; i < items.size(); i++) {
+                if (items.get(i).id.equals(c.id)) {
+                    items.set(i, higher(items.get(i), c));
+                    return;
                 }
             }
 
-            if (n == MAX_DEVICES) {
-                return false;
+            if (items.size() == MAX_DEVICES) {
+                throw new Malformed();
             }
 
-            items[n++].copyFrom(scratch);
-
-            return true;
+            items.add(c);
         }
 
-        /**
-         * In deviceId order, by UTF-8 bytes - the order the server keeps a key-ordered map's string keys in,
-         * so the list and the markers agree.
-         */
+        /** Every live entry of a devices list as a candidate. */
+        void offerLive(ListValue devices) {
+            for (Value device : devices) {
+                if (!device.isMap()) {
+                    throw new Malformed();
+                }
+
+                MapValue entry = device.asMap();
+
+                offer(new Candidate(idOf(entry.get("deviceId")), intOf(entry.get("version")), false, device, 0));
+            }
+        }
+
+        /** Every marker of a devicesRemoved bin as a candidate; the horizon and the floor it carries. */
+        void offerMarkers(MapValue removed) {
+            horizon = Math.max(horizon, intOr(removed, "purgedBefore", 0));
+            floor = Math.max(floor, intOr(removed, "versionFloor", 0));
+
+            MapValue markers = mapOr(removed, "markers");
+
+            if (markers == null) {
+                return;
+            }
+
+            for (MapValue.Entry e : markers) {
+                if (!e.getValue().isMap()) {
+                    throw new Malformed();
+                }
+
+                MapValue marker = e.getValue().asMap();
+
+                offer(new Candidate(idOf(e.getKey()), intOf(marker.get("version")), true, e.getValue(),
+                        intOf(marker.get("offAt"))));
+            }
+        }
+
         void sort() {
-            for (int i = 1; i < n; i++) {
-                int j = i;
-
-                while (j > 0 && cmpBytes(items[j - 1].id, items[j - 1].idLen, items[j].id, items[j].idLen) > 0) {
-                    Candidate t = items[j - 1];
-                    items[j - 1] = items[j];
-                    items[j] = t;
-                    j--;
-                }
-            }
+            Collections.sort(items, (a, b) -> compareIds(a.id, b.id));
         }
     }
 
-    private static final Value[] w = new Value[64];
-    private static final Value tmp = new Value();
-    private static final Value tmp2 = new Value();
+    /** A list or map bin of an event's record, or null when the record has none of that kind there. */
+    private static Value binOfKind(EventRecord rec, String name, int kind) {
+        Value v = rec.get(name);
 
-    /** Every live entry of a devices list as a candidate. */
-    private static boolean offerLive(Best best, Value devices) {
-        int cur = Udf.enter(devices);
-
-        if (cur <= 0) {
-            return false;
-        }
-
-        for (;;) {
-            int n = Udf.next(cur, w);
-
-            for (int i = 0; i < n; i++) {
-                Candidate c = best.scratch;
-
-                if (w[i].kind != Value.MAP || Udf.get(w[i], DEVICE_ID, tmp) != Udf.OK || tmp.kind != Value.STR) {
-                    Udf.close(cur);
-                    return false;
-                }
-
-                c.idLen = Udf.bytes(tmp, c.id);
-
-                if (c.idLen < 0 || Udf.get(w[i], VERSION, tmp) != Udf.OK || tmp.kind != Value.INT) {
-                    Udf.close(cur);
-                    return false;
-                }
-
-                c.version = tmp.payload;
-                c.removed = false;
-                c.value.set(w[i].kind, w[i].len, w[i].payload);
-                c.offAt = 0;
-
-                if (!best.offer()) {
-                    Udf.close(cur);
-                    return false;
-                }
-            }
-
-            if (n < w.length) {
-                break;
-            }
-        }
-
-        Udf.close(cur);
-
-        return true;
-    }
-
-    private static long horizon;
-    private static long floor;
-
-    /** Every marker of a devicesRemoved bin as a candidate; the horizon and the floor it carries. */
-    private static boolean offerMarkers(Best best, Value removed) {
-        if (removed.kind != Value.MAP) {
-            return true;
-        }
-
-        if (Udf.get(removed, PURGED_BEFORE, tmp) == Udf.OK && tmp.kind == Value.INT) {
-            horizon = Math.max(horizon, tmp.payload);
-        }
-
-        if (Udf.get(removed, VERSION_FLOOR, tmp) == Udf.OK && tmp.kind == Value.INT) {
-            floor = Math.max(floor, tmp.payload);
-        }
-
-        if (Udf.get(removed, MARKERS, tmp) != Udf.OK || tmp.kind != Value.MAP) {
-            return true;
-        }
-
-        int cur = Udf.enter(tmp);
-
-        if (cur <= 0) {
-            return false;
-        }
-
-        for (;;) {
-            int n = Udf.next(cur, w);
-
-            for (int i = 0; i + 1 < n; i += 2) {
-                Candidate c = best.scratch;
-                Value key = w[i];
-                Value marker = w[i + 1];
-
-                if (key.kind != Value.STR || marker.kind != Value.MAP) {
-                    Udf.close(cur);
-                    return false;
-                }
-
-                c.idLen = Udf.bytes(key, c.id);
-
-                if (c.idLen < 0 || Udf.get(marker, VERSION, tmp2) != Udf.OK || tmp2.kind != Value.INT) {
-                    Udf.close(cur);
-                    return false;
-                }
-
-                c.version = tmp2.payload;
-
-                if (Udf.get(marker, OFF_AT, tmp2) != Udf.OK || tmp2.kind != Value.INT) {
-                    Udf.close(cur);
-                    return false;
-                }
-
-                c.offAt = tmp2.payload;
-                c.removed = true;
-                c.value.set(marker.kind, marker.len, marker.payload);
-
-                if (!best.offer()) {
-                    Udf.close(cur);
-                    return false;
-                }
-            }
-
-            if (n < w.length) {
-                break;
-            }
-        }
-
-        Udf.close(cur);
-
-        return true;
-    }
-
-    private static boolean hasBin(EventRecord rec, byte[] name, int kind) {
-        return rec.bin(name, tmp) == Udf.OK && tmp.kind == kind;
+        return v != null && v.kind() == kind ? v : null;
     }
 
     /**
@@ -308,74 +239,63 @@ public final class Crdt {
      */
     @On.XdrMerge("xdr_merge")
     static Resolution xdrMerge(EventRecord current, EventRecord incoming, Conflict c) {
-        int out = Udf.newMap(8);
-
-        if (out <= 0) {
-            throw new UdfException("xdr_merge: could not build the record");
-        }
+        MapBuilder out = Udf.map(8);
 
         // Other bins: as XDR does today.
-        Udf.eachStr(incoming.bins, (text, len, v) -> {
-            byte[] name = new byte[len];
-            System.arraycopy(text, 0, name, 0, len);
+        for (Value name : incoming.binNames()) {
+            String bin = name.asString();
 
-            if (!Udf.equalBytes(name, DEVICES, len, DEVICES.length)
-                    && !Udf.equalBytes(name, DEVICES_REMOVED, len, DEVICES_REMOVED.length)) {
-                Value val = new Value();
+            if (!bin.equals("devices") && !bin.equals("devicesRemoved")) {
+                Value val = incoming.get(bin);
 
-                if (incoming.bin(name, val) == Udf.OK) {
-                    Udf.mapPutValue(out, name, val);
+                if (val != null) {
+                    out.put(bin, val);
                 }
             }
-        });
+        }
 
-        boolean incomingDevices = hasBin(incoming, DEVICES, Value.LIST);
-        boolean incomingRemoved = hasBin(incoming, DEVICES_REMOVED, Value.MAP);
-
-        if (incomingDevices || incomingRemoved) {
+        if (binOfKind(incoming, "devices", Value.LIST) != null
+                || binOfKind(incoming, "devicesRemoved", Value.MAP) != null) {
             Best best = new Best();
-            horizon = 0;
-            floor = 0;
-            Value side = new Value();
             boolean anyDevices = false;
 
-            for (int which = 0; which < 2; which++) {
-                EventRecord rec = which == 0 ? current : incoming;
+            for (EventRecord rec : new EventRecord[] { current, incoming }) {
+                Value devices = binOfKind(rec, "devices", Value.LIST);
+                Value removed = binOfKind(rec, "devicesRemoved", Value.MAP);
 
-                if (rec.bin(DEVICES, side) == Udf.OK && side.kind == Value.LIST) {
+                if (devices != null) {
                     anyDevices = true;
 
-                    if (!offerLive(best, side)) {
+                    try {
+                        best.offerLive(devices.asList());
+                    }
+                    catch (Malformed e) {
                         throw new UdfException("xdr_merge: malformed devices, or too many");
                     }
                 }
 
-                if (rec.bin(DEVICES_REMOVED, side) == Udf.OK && side.kind == Value.MAP && !offerMarkers(best, side)) {
-                    throw new UdfException("xdr_merge: malformed devicesRemoved, or too many");
+                if (removed != null) {
+                    try {
+                        best.offerMarkers(removed.asMap());
+                    }
+                    catch (Malformed e) {
+                        throw new UdfException("xdr_merge: malformed devicesRemoved, or too many");
+                    }
                 }
             }
 
             best.sort();
 
-            int live = Udf.newList(best.n);
-            int markers = Udf.newMap(best.n);
-            int nMarkers = 0;
+            ListBuilder live = Udf.list(best.items.size());
+            MapBuilder markers = Udf.map(best.items.size());
+            long floor = best.floor;
 
-            if (live <= 0 || markers <= 0) {
-                throw new UdfException("xdr_merge: could not build the result");
-            }
-
-            for (int i = 0; i < best.n; i++) {
-                Candidate cand = best.items[i];
-
+            for (Candidate cand : best.items) {
                 if (!cand.removed) {
-                    Udf.listPushValue(live, cand.value);
+                    live.add(cand.value);
                 }
-                else if (cand.offAt >= horizon) {
-                    byte[] id = new byte[cand.idLen];
-                    System.arraycopy(cand.id, 0, id, 0, cand.idLen);
-                    Udf.mapPutValue(markers, id, cand.value);
-                    nMarkers++;
+                else if (cand.offAt >= best.horizon) {
+                    markers.put(cand.id, cand.value);
                 }
                 else {
                     // Dropped by the other side's horizon before this side purged it: its version still
@@ -386,42 +306,26 @@ public final class Crdt {
             }
 
             if (anyDevices) {
-                Udf.mapPutHandle(out, DEVICES, live);
+                out.put("devices", live);
             }
 
-            if (nMarkers > 0 || horizon > 0) {
-                int removed = Udf.newMap(3);
-
-                Udf.mapPutHandle(removed, MARKERS, markers);
-                Udf.mapPutInt(removed, PURGED_BEFORE, horizon);
+            if (!markers.isEmpty() || best.horizon > 0) {
+                MapBuilder removed = Udf.map(3).put("markers", markers).put("purgedBefore", best.horizon);
 
                 if (floor > 0) {
-                    Udf.mapPutInt(removed, VERSION_FLOOR, floor);
+                    removed.put("versionFloor", floor);
                 }
 
-                Udf.mapPutHandle(out, DEVICES_REMOVED, removed);
+                out.put("devicesRemoved", removed);
             }
             else {
                 // The merge has no removals left: a nil deletes the bin, so a stale copy cannot come back.
-                Udf.mapPutHandle(out, DEVICES_REMOVED, Udf.nilHandle());
+                out.putNull("devicesRemoved");
             }
         }
 
-        // Every bin of the current record not decided above, by position: `with_bins`.
-        Udf.eachStr(current.bins, (text, len, v) -> {
-            byte[] name = new byte[len];
-            System.arraycopy(text, 0, name, 0, len);
-
-            if (!Udf.mapHasKey(out, name)) {
-                Value val = new Value();
-
-                if (current.bin(name, val) == Udf.OK) {
-                    Udf.mapPutValue(out, name, val);
-                }
-            }
-        });
-
-        return Resolution.record(UdfMap.wrap(out));
+        // Every bin of the current record not decided above, by position.
+        return Resolution.record(current.withBins(out));
     }
 
     //==========================================================
@@ -429,327 +333,168 @@ public final class Crdt {
     // device strictly up the order the merge uses.
     //
 
-    /** A live entry as the write UDFs hold it: its id and where it sits, or the map built for it. */
+    /** A live entry as the write UDFs hold it: its id, and the stored entry or the map built to replace it. */
     private static final class Entry {
-        final byte[] id = new byte[ID_MAX];
-        int idLen;
-        final Value value = new Value();
-        int handle;
-    }
+        final String id;
+        final Value value;
 
-    private static final Entry[] entries = new Entry[MAX_DEVICES];
-    private static final Entry[] sorted = new Entry[MAX_DEVICES + 1];
-    private static final Entry added = new Entry();
-
-    static {
-        for (int i = 0; i < MAX_DEVICES; i++) {
-            entries[i] = new Entry();
+        Entry(String id, Value value) {
+            this.id = id;
+            this.value = value;
         }
     }
 
-    /** The live entries, in stored order. -1 for too many or malformed. */
-    private static int liveEntries() {
-        Value devices = new Value();
+    /** The record's live entries, in stored order. */
+    private static List<Entry> liveEntries(Record rec, String fn) {
+        List<Entry> entries = new ArrayList<>();
+        Value devices = rec.get("devices");
 
-        if (Udf.bin(DEVICES, devices) != Udf.OK || devices.kind != Value.LIST) {
-            return 0;
+        if (devices == null || !devices.isList()) {
+            return entries;
         }
 
-        int cur = Udf.enter(devices);
-
-        if (cur <= 0) {
-            return -1;
-        }
-
-        int count = 0;
-
-        for (;;) {
-            int n = Udf.next(cur, w);
-
-            for (int i = 0; i < n; i++) {
-                if (count == MAX_DEVICES || w[i].kind != Value.MAP || Udf.get(w[i], DEVICE_ID, tmp) != Udf.OK
-                        || tmp.kind != Value.STR) {
-                    Udf.close(cur);
-                    return -1;
+        try {
+            for (Value device : devices.asList()) {
+                if (entries.size() == MAX_DEVICES || !device.isMap()) {
+                    throw new Malformed();
                 }
 
-                Entry e = entries[count];
-                e.idLen = Udf.bytes(tmp, e.id);
-
-                if (e.idLen < 0) {
-                    Udf.close(cur);
-                    return -1;
-                }
-
-                e.value.set(w[i].kind, w[i].len, w[i].payload);
-                e.handle = 0;
-                count++;
-            }
-
-            if (n < w.length) {
-                break;
+                entries.add(new Entry(idOf(device.asMap().get("deviceId")), device));
             }
         }
+        catch (Malformed e) {
+            throw new UdfException(fn + ": malformed devices, or too many");
+        }
 
-        Udf.close(cur);
+        return entries;
+    }
 
-        return count;
+    /** The record's devicesRemoved map, or null when it has none. */
+    private static MapValue removedOf(Record rec) {
+        Value removed = rec.get("devicesRemoved");
+
+        return removed != null && removed.isMap() ? removed.asMap() : null;
     }
 
     /** A marker's version, or -1 when the device has none. */
-    private static long markerVersion(byte[] id, int idLen) {
-        Value removed = new Value();
-        Value markers = new Value();
-        Value marker = new Value();
-        byte[] key = new byte[idLen];
-        System.arraycopy(id, 0, key, 0, idLen);
-
-        if (Udf.bin(DEVICES_REMOVED, removed) != Udf.OK || removed.kind != Value.MAP
-                || Udf.get(removed, MARKERS, markers) != Udf.OK || markers.kind != Value.MAP
-                || Udf.get(markers, key, marker) != Udf.OK || marker.kind != Value.MAP
-                || Udf.get(marker, VERSION, tmp) != Udf.OK || tmp.kind != Value.INT) {
-            return -1;
-        }
-
-        return tmp.payload;
-    }
-
-    private static long removedInt(byte[] key) {
-        Value removed = new Value();
-
-        if (Udf.bin(DEVICES_REMOVED, removed) != Udf.OK || removed.kind != Value.MAP
-                || Udf.get(removed, key, tmp) != Udf.OK || tmp.kind != Value.INT) {
-            return 0;
-        }
-
-        return tmp.payload;
+    private static long markerVersion(Record rec, String id) {
+        return intOr(mapOr(mapOr(removedOf(rec), "markers"), id), "version", -1);
     }
 
     /** The device's latest version, live or removed, and never below the version floor. */
-    private static long lastVersion(int n, byte[] id, int idLen) {
-        long v = removedInt(VERSION_FLOOR);
+    private static long lastVersion(Record rec, List<Entry> entries, String id) {
+        long v = intOr(removedOf(rec), "versionFloor", 0);
 
-        for (int i = 0; i < n; i++) {
-            Entry e = entries[i];
-
-            if (e.idLen == idLen && cmpBytes(e.id, e.idLen, id, idLen) == 0
-                    && Udf.get(e.value, VERSION, tmp) == Udf.OK && tmp.kind == Value.INT) {
-                v = Math.max(v, tmp.payload);
+        for (Entry e : entries) {
+            if (e.id.equals(id)) {
+                v = Math.max(v, intOr(e.value.asMap(), "version", v));
             }
         }
 
-        return Math.max(v, markerVersion(id, idLen));
+        return Math.max(v, markerVersion(rec, id));
     }
 
-    /** Stores the entries plus an optional built entry, sorted by id, less any entry under {@code without}. */
-    private static boolean storeDevices(int n, byte[] without, int withoutLen, Entry add) {
-        int count = 0;
+    /** Stores the entries plus an optional new one, sorted by id, less any entry under {@code without}. */
+    private static void storeDevices(Record rec, List<Entry> entries, String without, Entry add) {
+        List<Entry> sorted = new ArrayList<>();
 
-        for (int i = 0; i < n; i++) {
-            Entry e = entries[i];
-
-            if (!(e.idLen == withoutLen && cmpBytes(e.id, e.idLen, without, withoutLen) == 0)) {
-                sorted[count++] = e;
+        for (Entry e : entries) {
+            if (!e.id.equals(without)) {
+                sorted.add(e);
             }
         }
 
         if (add != null) {
-            sorted[count++] = add;
+            sorted.add(add);
         }
 
-        for (int i = 1; i < count; i++) {
-            int j = i;
+        Collections.sort(sorted, (a, b) -> compareIds(a.id, b.id));
 
-            while (j > 0 && cmpBytes(sorted[j - 1].id, sorted[j - 1].idLen, sorted[j].id, sorted[j].idLen) > 0) {
-                Entry t = sorted[j - 1];
-                sorted[j - 1] = sorted[j];
-                sorted[j] = t;
-                j--;
-            }
+        ListBuilder list = Udf.list(sorted.size());
+
+        for (Entry e : sorted) {
+            list.add(e.value);
         }
 
-        int list = Udf.newList(count);
-
-        if (list <= 0) {
-            return false;
-        }
-
-        for (int i = 0; i < count; i++) {
-            Entry e = sorted[i];
-            int rc = e.handle != 0 ? Udf.listPushHandle(list, e.handle) : Udf.listPushValue(list, e.value);
-
-            if (rc != Udf.OK) {
-                return false;
-            }
-        }
-
-        return Udf.setHandle(DEVICES, list) == Udf.OK;
+        rec.set("devices", list);
     }
 
     /**
      * Rebuilds devicesRemoved from the current one with one marker removed ({@code drop}), one added or
      * replaced ({@code addId} with {@code addOffAt}, {@code addVersion}), and a purge at {@code now} (when
-     * {@code now} is not negative). The bin is left out while it holds nothing.
+     * {@code now} is not negative). The bin is left out while it holds nothing. Returns the purge horizon.
      */
-    private static boolean storeRemoved(byte[] drop, int dropLen, byte[] addId, int addLen, long addOffAt,
+    private static long storeRemoved(Record rec, String fn, String drop, String addId, long addOffAt,
             long addVersion, long now) {
-        long hz = removedInt(PURGED_BEFORE);
-        long fl = removedInt(VERSION_FLOOR);
+        MapValue removed = removedOf(rec);
+        long horizon = intOr(removed, "purgedBefore", 0);
+        long floor = intOr(removed, "versionFloor", 0);
 
         if (now >= 0) {
-            hz = Math.max(hz, now - PURGE_AGE_MS);
+            horizon = Math.max(horizon, now - PURGE_AGE_MS);
         }
 
-        int markers = Udf.newMap(8);
+        MapBuilder markers = Udf.map(8);
+        MapValue existing = mapOr(removed, "markers");
 
-        if (markers <= 0) {
-            return false;
-        }
+        if (existing != null) {
+            try {
+                for (MapValue.Entry e : existing) {
+                    Value key = e.getKey();
 
-        int nMarkers = 0;
-        Value removed = new Value();
-        Value existing = new Value();
-
-        if (Udf.bin(DEVICES_REMOVED, removed) == Udf.OK && removed.kind == Value.MAP
-                && Udf.get(removed, MARKERS, existing) == Udf.OK && existing.kind == Value.MAP) {
-            int cur = Udf.enter(existing);
-
-            if (cur <= 0) {
-                return false;
-            }
-
-            byte[] idBuf = new byte[ID_MAX];
-
-            for (;;) {
-                int n = Udf.next(cur, w);
-
-                for (int i = 0; i + 1 < n; i += 2) {
-                    Value key = w[i];
-                    Value marker = w[i + 1];
-                    int idLen = Udf.bytes(key, idBuf);
-
-                    if (idLen < 0 || marker.kind != Value.MAP) {
-                        Udf.close(cur);
-                        return false;
+                    if (!key.isString() || key.length() > ID_MAX || !e.getValue().isMap()) {
+                        throw new Malformed();
                     }
 
-                    if ((drop != null && idLen == dropLen && cmpBytes(idBuf, idLen, drop, dropLen) == 0)
-                            || (addId != null && idLen == addLen && cmpBytes(idBuf, idLen, addId, addLen) == 0)) {
+                    String id = key.asString();
+                    MapValue marker = e.getValue().asMap();
+
+                    if (id.equals(drop) || id.equals(addId)) {
                         continue;
                     }
 
-                    if (Udf.get(marker, OFF_AT, tmp2) != Udf.OK || tmp2.kind != Value.INT) {
-                        Udf.close(cur);
-                        return false;
-                    }
-
-                    if (tmp2.payload < hz) {
+                    if (intOf(marker.get("offAt")) < horizon) {
                         // Purged: its version becomes the floor every later version starts above.
-                        if (Udf.get(marker, VERSION, tmp2) == Udf.OK && tmp2.kind == Value.INT) {
-                            fl = Math.max(fl, tmp2.payload);
-                        }
-
+                        floor = Math.max(floor, intOr(marker, "version", floor));
                         continue;
                     }
 
-                    byte[] id = new byte[idLen];
-                    System.arraycopy(idBuf, 0, id, 0, idLen);
-                    Udf.mapPutValue(markers, id, marker);
-                    nMarkers++;
-                }
-
-                if (n < w.length) {
-                    break;
+                    markers.put(id, e.getValue());
                 }
             }
-
-            Udf.close(cur);
+            catch (Malformed e) {
+                throw new UdfException(fn + ": malformed devicesRemoved");
+            }
         }
 
         if (addId != null) {
-            int marker = Udf.newMap(2);
-            byte[] id = new byte[addLen];
-            System.arraycopy(addId, 0, id, 0, addLen);
-
-            Udf.mapPutInt(marker, OFF_AT, addOffAt);
-            Udf.mapPutInt(marker, VERSION, addVersion);
-            Udf.mapPutHandle(markers, id, marker);
-            nMarkers++;
+            markers.put(addId, Udf.map(2).put("offAt", addOffAt).put("version", addVersion));
         }
 
-        if (nMarkers == 0 && hz == 0) {
-            if (Udf.bin(DEVICES_REMOVED, removed) == Udf.OK) {
-                return Udf.remove(DEVICES_REMOVED) == Udf.OK;
+        if (markers.isEmpty() && horizon == 0) {
+            if (rec.hasBin("devicesRemoved")) {
+                rec.remove("devicesRemoved");
             }
 
-            return true;
+            return horizon;
         }
 
-        int out = Udf.newMap(3);
+        MapBuilder out = Udf.map(3).put("markers", markers).put("purgedBefore", horizon);
 
-        Udf.mapPutHandle(out, MARKERS, markers);
-        Udf.mapPutInt(out, PURGED_BEFORE, hz);
-
-        if (fl > 0) {
-            Udf.mapPutInt(out, VERSION_FLOOR, fl);
+        if (floor > 0) {
+            out.put("versionFloor", floor);
         }
 
-        return Udf.setHandle(DEVICES_REMOVED, out) == Udf.OK;
+        rec.set("devicesRemoved", out);
+
+        return horizon;
     }
 
-    private static int commit() {
-        return Udf.exists() ? Udf.update() : Udf.create();
-    }
-
-    private static final byte[] idBuf = new byte[ID_MAX];
-
-    /** The id's bytes into idBuf; its length. */
-    private static int idBytes(String id, String fn) {
-        byte[] b = Udf.bytes(id);
-
-        if (b.length > ID_MAX) {
+    /** The Rust module bounds an id with a Str<64>; the same limit, as a check. */
+    private static void checkId(String id, String fn) {
+        if (id.getBytes(StandardCharsets.UTF_8).length > ID_MAX) {
             throw new UdfException(fn + ": the id is too long");
         }
-
-        System.arraycopy(b, 0, idBuf, 0, b.length);
-
-        return b.length;
-    }
-
-    /** Copies every entry of a stored map into a built map, by position. */
-    private static boolean copyEntries(Value map, int into) {
-        int cur = Udf.enter(map);
-
-        if (cur <= 0) {
-            return false;
-        }
-
-        byte[] keyBuf = new byte[ID_MAX];
-
-        for (;;) {
-            int n = Udf.next(cur, w);
-
-            for (int i = 0; i + 1 < n; i += 2) {
-                int klen = Udf.bytes(w[i], keyBuf);
-
-                if (klen < 0) {
-                    Udf.close(cur);
-                    return false;
-                }
-
-                byte[] key = new byte[klen];
-                System.arraycopy(keyBuf, 0, key, 0, klen);
-                Udf.mapPutValue(into, key, w[i + 1]);
-            }
-
-            if (n < w.length) {
-                break;
-            }
-        }
-
-        Udf.close(cur);
-
-        return true;
     }
 
     /**
@@ -757,110 +502,64 @@ public final class Crdt {
      * {@code changes} on top and a version one above the device's last, live or removed. Returns the version.
      */
     @Function("update_device")
-    static long updateDevice(String id, Value changes) {
-        if (changes.kind != Value.MAP) {
+    static long updateDevice(Record rec, String id, Value changes) {
+        if (!changes.isMap()) {
             throw new UdfException("update_device: changes is not a map");
         }
 
-        int idLen = idBytes(id, "update_device");
-        int n = liveEntries();
+        checkId(id, "update_device");
 
-        if (n < 0) {
-            throw new UdfException("update_device: malformed devices, or too many");
-        }
+        List<Entry> entries = liveEntries(rec, "update_device");
+        long version = lastVersion(rec, entries, id) + 1;
+        MapBuilder entry = Udf.map(8);
 
-        long version = lastVersion(n, idBuf, idLen) + 1;
-        int entry = Udf.newMap(8);
-
-        if (entry <= 0) {
-            throw new UdfException("update_device: could not build the entry");
-        }
-
-        for (int i = 0; i < n; i++) {
-            Entry e = entries[i];
-
-            if (e.idLen == idLen && cmpBytes(e.id, e.idLen, idBuf, idLen) == 0 && !copyEntries(e.value, entry)) {
-                throw new UdfException("update_device: could not read the entry");
+        for (Entry e : entries) {
+            if (e.id.equals(id)) {
+                entry.putAll(e.value.asMap());
             }
         }
 
-        if (!copyEntries(changes, entry)) {
-            throw new UdfException("update_device: could not read the changes");
+        entry.putAll(changes.asMap()).put("deviceId", id).put("version", version);
+
+        storeDevices(rec, entries, id, new Entry(id, entry.asValue()));
+
+        if (markerVersion(rec, id) >= 0) {
+            storeRemoved(rec, "update_device", id, null, 0, 0, -1);
         }
 
-        byte[] idCopy = new byte[idLen];
-        System.arraycopy(idBuf, 0, idCopy, 0, idLen);
-        Udf.mapPutStr(entry, DEVICE_ID, idCopy, idLen);
-        Udf.mapPutInt(entry, VERSION, version);
-
-        System.arraycopy(idBuf, 0, added.id, 0, idLen);
-        added.idLen = idLen;
-        added.handle = entry;
-
-        if (!storeDevices(n, idBuf, idLen, added)) {
-            throw new UdfException("update_device: could not store the devices");
-        }
-
-        if (markerVersion(idBuf, idLen) >= 0 && !storeRemoved(idBuf, idLen, null, 0, 0, 0, -1)) {
-            throw new UdfException("update_device: could not drop the marker");
-        }
-
-        if (commit() != Udf.OK) {
-            throw new UdfException("update_device: could not commit");
-        }
+        rec.save();
 
         return version;
     }
 
     /** Removes a device, leaving a marker with the application's time {@code now} (ms) and the next version. */
     @Function("remove_device")
-    static long removeDevice(String id, long now) {
-        int idLen = idBytes(id, "remove_device");
-        int n = liveEntries();
+    static long removeDevice(Record rec, String id, long now) {
+        checkId(id, "remove_device");
 
-        if (n < 0) {
-            throw new UdfException("remove_device: malformed devices, or too many");
-        }
+        List<Entry> entries = liveEntries(rec, "remove_device");
+        long version = lastVersion(rec, entries, id) + 1;
 
-        long version = lastVersion(n, idBuf, idLen) + 1;
-
-        if (!storeDevices(n, idBuf, idLen, null)) {
-            throw new UdfException("remove_device: could not store the devices");
-        }
-
-        if (!storeRemoved(null, 0, idBuf, idLen, now, version, now)) {
-            throw new UdfException("remove_device: could not store the marker");
-        }
-
-        if (commit() != Udf.OK) {
-            throw new UdfException("remove_device: could not commit");
-        }
+        storeDevices(rec, entries, id, null);
+        storeRemoved(rec, "remove_device", null, id, now, version, now);
+        rec.save();
 
         return version;
     }
 
     /** Drops the markers older than the purge age before {@code now}, and stores the list sorted. */
     @Function("purge_devices")
-    static long purgeDevices(long now) {
-        int n = liveEntries();
+    static long purgeDevices(Record rec, long now) {
+        List<Entry> entries = liveEntries(rec, "purge_devices");
 
-        if (n < 0) {
-            throw new UdfException("purge_devices: malformed devices, or too many");
+        if (!entries.isEmpty()) {
+            storeDevices(rec, entries, null, null);
         }
 
-        if (n > 0 && !storeDevices(n, null, -1, null)) {
-            throw new UdfException("purge_devices: could not store the devices");
-        }
+        long horizon = storeRemoved(rec, "purge_devices", null, null, 0, 0, now);
 
-        if (!storeRemoved(null, 0, null, 0, 0, 0, now)) {
-            throw new UdfException("purge_devices: could not store the markers");
-        }
+        rec.save();
 
-        if (commit() != Udf.OK) {
-            throw new UdfException("purge_devices: could not commit");
-        }
-
-        return removedInt(PURGED_BEFORE);
+        return horizon;
     }
-
 }

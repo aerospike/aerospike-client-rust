@@ -35,11 +35,6 @@ import (
 
 const siteMax = 32
 
-var (
-	inc = udf.NewBin("inc")
-	dec = udf.NewBin("dec")
-)
-
 // The per-site amounts of one map, gathered from one or both sides: for every site, the larger amount seen.
 type table map[string]int64
 
@@ -112,11 +107,11 @@ func mergePnCounter(current, incoming *udf.EventRecord, _ *udf.Conflict) (udf.Re
 	return udf.Resolve(incoming.WithBins(out)), out.Err()
 }
 
-// One of the record's maps.
-func stored(bin udf.Bin) (table, error) {
+// One of the record's maps, by its bin's name.
+func stored(rec *udf.Record, bin string) (table, error) {
 	t := table{}
 
-	if v, ok := bin.Get(); ok {
+	if v, ok := rec.Get(bin); ok {
 		if err := t.offerAll(v); err != nil {
 			return nil, err
 		}
@@ -126,13 +121,13 @@ func stored(bin udf.Bin) (table, error) {
 }
 
 // The counter's value: everything added minus everything taken.
-func valueOf() (int64, error) {
-	added, err := stored(inc)
+func valueOf(rec *udf.Record) (int64, error) {
+	added, err := stored(rec, "inc")
 	if err != nil {
 		return 0, err
 	}
 
-	taken, err := stored(dec)
+	taken, err := stored(rec, "dec")
 	if err != nil {
 		return 0, err
 	}
@@ -140,8 +135,8 @@ func valueOf() (int64, error) {
 	return added.total() - taken.total(), nil
 }
 
-// Adds n to this site's entry of one map and commits; answers the counter's value.
-func grow(bin udf.Bin, site string, n int64) (int64, error) {
+// Adds n to this site's entry of one map and saves; answers the counter's value.
+func grow(rec *udf.Record, bin string, site string, n int64) (int64, error) {
 	// The Rust module bounds the site name with a Str<32>; the same limit, as a check.
 	if len(site) > siteMax {
 		return 0, errors.New("the site name is too long")
@@ -151,43 +146,43 @@ func grow(bin udf.Bin, site string, n int64) (int64, error) {
 		return 0, errors.New("the amount must not be negative: an entry only grows")
 	}
 
-	t, err := stored(bin)
+	t, err := stored(rec, bin)
 	if err != nil {
 		return 0, err
 	}
 
 	t[site] += n
 
-	if err := bin.SetMap(t.toMap()); err != nil {
+	if err := rec.Set(bin, t.toMap()); err != nil {
 		return 0, err
 	}
 
-	if err := udf.Commit(); err != nil {
+	if err := rec.Save(); err != nil {
 		return 0, err
 	}
 
-	return valueOf()
+	return valueOf(rec)
 }
 
 // Adds n to this site's increments. Returns the counter's value.
 //
 //udf:function increment
-func increment(site string, n int64) (int64, error) {
-	return grow(inc, site, n)
+func increment(rec *udf.Record, site string, n int64) (int64, error) {
+	return grow(rec, "inc", site, n)
 }
 
 // Adds n to this site's decrements. Returns the counter's value.
 //
 //udf:function decrement
-func decrement(site string, n int64) (int64, error) {
-	return grow(dec, site, n)
+func decrement(rec *udf.Record, site string, n int64) (int64, error) {
+	return grow(rec, "dec", site, n)
 }
 
 // The counter's value: the sum of every site's increments minus the sum of every site's decrements.
 //
 //udf:function value
-func value() (int64, error) {
-	return valueOf()
+func value(rec *udf.Record) (int64, error) {
+	return valueOf(rec)
 }
 
 func main() {}

@@ -50,16 +50,3 @@ func statusError(rc int32, what string) error {
 func FailErr(err error) int32 {
 	return Fail(err.Error())
 }
-
-// Commit writes the staged bins, creating the record if it does not exist.
-func Commit() error {
-	if Exists() {
-		return statusError(recUpdate(), "could not commit the record")
-	}
-	return statusError(recCreate(), "could not create the record")
-}
-
-// Delete deletes the record.
-func Delete() error {
-	return statusError(recRemove(), "could not delete the record")
-}

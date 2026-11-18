@@ -137,7 +137,7 @@ public @interface NodeLifecycle
 public @interface Timer
 ```
 
-`(Events.TimerInfo timer)`; runs as a record UDF and answers done.
+`(Record rec, Events.TimerInfo timer)`; runs as a record UDF, so it takes the record, and answers done.
 
 #### `On.XdrMerge`
 
@@ -175,7 +175,7 @@ Refuses the write with a result code the client sees and a message.
 #### `Decision.record`
 
 ```java
-public static Decision record(UdfMap bins)
+public static Decision record(MapBuilder bins)
 ```
 
 Writes these bins instead; a bin absent from the map, or nil, is deleted.
@@ -183,10 +183,10 @@ Writes these bins instead; a bin absent from the map, or nil, is deleted.
 #### `Decision.record`
 
 ```java
-public static Decision record(UdfMap bins, long ttl)
+public static Decision record(MapBuilder bins, long ttl)
 ```
 
-As `record(UdfMap)`, with a TTL in seconds (0 for the namespace default).
+As `record(MapBuilder)`, with a TTL in seconds (0 for the namespace default).
 
 #### `Gate`
 
@@ -279,7 +279,7 @@ Answers the read with the record as it was read.
 #### `ReadResult.record`
 
 ```java
-public static ReadResult record(UdfMap bins)
+public static ReadResult record(MapBuilder bins)
 ```
 
 Answers the read with these bins instead, as the whole response; the stored record is untouched.
@@ -311,7 +311,7 @@ Does not ship the record.
 #### `ShipDecision.record`
 
 ```java
-public static ShipDecision record(UdfMap bins)
+public static ShipDecision record(MapBuilder bins)
 ```
 
 Ships these bins instead of the record.
@@ -352,7 +352,7 @@ Let the namespace's policy decide, as it would have without the event.
 #### `Resolution.record`
 
 ```java
-public static Resolution record(UdfMap bins)
+public static Resolution record(MapBuilder bins)
 ```
 
 The final record: these bins, whole - a bin not in the map, or set to nil, is deleted - keeping the
@@ -361,10 +361,10 @@ TTL the incoming write asked for.
 #### `Resolution.record`
 
 ```java
-public static Resolution record(UdfMap bins, long ttl)
+public static Resolution record(MapBuilder bins, long ttl)
 ```
 
-As `record(UdfMap)`, with a TTL in seconds: 0 for the namespace default.
+As `record(MapBuilder)`, with a TTL in seconds: 0 for the namespace default.
 
 #### `Resolution.deliver`
 
@@ -404,33 +404,29 @@ The verdict word as the server reads it, such as `accept` or `keep-local`.
 #### `EventRecord`
 
 ```java
-public final class EventRecord
+public final class EventRecord implements RecordReader
 ```
 
-One record an event hands over: read-only, with its metadata, its bins read through the event's own
-import (never the record imports, which answer nothing in a handler). `which` is the index the
-record is read by: 0 for the first record the event hands over, 1 for the second.
+One record an event hands over: the record before a write and after it, the record being deleted, each
+side of a merge. It is read-only, and it reads like the record of a call - the same readers, through
+`RecordReader` - with what an event adds: the names of its bins, the bins this side deleted, and,
+where the server keeps them, when and by whom each bin was last written.
+A handler changes a record by answering with the bins it should have (`Decision#record`,
+`Resolution#record`); `withBins` fills such an answer with every bin of this record the
+handler did not decide.
 
-#### `EventRecord.which`
-
-```java
-public int which
-```
-
-The index the record is read by: 0 or 1.
-
-#### `EventRecord.gen`
+#### `EventRecord.generation`
 
 ```java
-public long gen
+public long generation()
 ```
 
 The record's generation; 0 on both sides of an `xdr-merge`.
 
-#### `EventRecord.lut`
+#### `EventRecord.lastUpdateTime`
 
 ```java
-public long lut
+public long lastUpdateTime()
 ```
 
 When the record was last written; 0 on both sides of an `xdr-merge`.
@@ -438,66 +434,40 @@ When the record was last written; 0 on both sides of an `xdr-merge`.
 #### `EventRecord.ttl`
 
 ```java
-public long ttl
+public long ttl()
 ```
 
-The time to live, in seconds.
-
-#### `EventRecord.srcId`
+#### `EventRecord.sourceId`
 
 ```java
-public long srcId
+public long sourceId()
 ```
 
-The XDR source id of the DC that wrote this version.
+The XDR source id of the data centre that wrote this version.
 
-#### `EventRecord.bins`
+#### `EventRecord.binNames`
 
 ```java
-public Value bins = new Value()
+public ListValue binNames()
 ```
 
-The list of bin names.
+The names of the record's bins, as a list of strings.
 
-#### `EventRecord.deleted`
+#### `EventRecord.deletedBins`
 
 ```java
-public Value deleted = new Value()
+public ListValue deletedBins()
 ```
 
-The bin names this side deleted (bin deletes, or tombstones); ABSENT when none.
+The names of the bins this side deleted (bin deletes, or tombstones); empty when it deleted none.
 
-#### `EventRecord.binLuts`
+#### `EventRecord.deletedAny`
 
 ```java
-public Value binLuts = new Value()
+public boolean deletedAny()
 ```
 
-name -> LUT per bin, when the server keeps one; ABSENT otherwise.
-
-#### `EventRecord.binSrcs`
-
-```java
-public Value binSrcs = new Value()
-```
-
-name -> source id per bin, likewise.
-
-#### `EventRecord.bin`
-
-```java
-public int bin(byte[] name, Value out)
-```
-
-Reads one of this side's bins. NOT_FOUND when the side has no such bin.
-
-#### `EventRecord.bin`
-
-```java
-public int bin(String name, Value out)
-```
-
-As `bin(byte[], Value)`, encoding the name on each call.
+Whether this side deleted any bin.
 
 #### `EventRecord.binLut`
 
@@ -513,109 +483,116 @@ When this side last wrote the bin: per bin where the server keeps one, the recor
 public long binSrc(String name)
 ```
 
-The source id that wrote the bin, likewise.
+The source id that wrote the bin: per bin where the server keeps one, the record's otherwise.
 
-#### `EventRecord.binValue`
-
-```java
-public Value binValue(String name)
-```
-
-The bin as a fresh value, or null when absent or nil.
-
-#### `EventRecord.binInt`
+#### `EventRecord.get`
 
 ```java
-public Long binInt(String name)
+public Value get(String name)
 ```
 
-An integer bin, or null when it is absent or nil; throws `UdfException` when it is of another kind.
+The bin as a value, or null when this side has no such bin or holds nil in it (a bin it deleted).
 
-#### `EventRecord.binDouble`
+#### `EventRecord.hasBin`
 
 ```java
-public Double binDouble(String name)
+public boolean hasBin(String name)
 ```
 
-A double bin, or null when it is absent or nil; throws `UdfException` when it is of another kind.
-
-#### `EventRecord.binBool`
+#### `EventRecord.getLong`
 
 ```java
-public Boolean binBool(String name)
+public long getLong(String name)
 ```
 
-A boolean bin, or null when it is absent or nil; throws `UdfException` when it is of another kind.
-
-#### `EventRecord.binStr`
+#### `EventRecord.getLong`
 
 ```java
-public String binStr(String name)
+public long getLong(String name, long dflt)
 ```
 
-The text of a string bin, copied out, or null when it is absent or nil; throws `UdfException` when
-it is of another kind.
-
-#### `EventRecord.binList`
+#### `EventRecord.getDouble`
 
 ```java
-public Value binList(String name)
+public double getDouble(String name)
 ```
 
-A list bin as a fresh value to walk or hand on by position, or null when it is absent or nil; throws
-`UdfException` when it is of another kind.
-
-#### `EventRecord.binMap`
+#### `EventRecord.getDouble`
 
 ```java
-public Value binMap(String name)
+public double getDouble(String name, double dflt)
 ```
 
-A map bin as a fresh value to walk or hand on by position, or null when it is absent or nil; throws
-`UdfException` when it is of another kind.
-
-#### `EventRecord.list`
+#### `EventRecord.getBoolean`
 
 ```java
-public Cursor<Value> list(String name)
+public boolean getBoolean(String name)
 ```
 
-A walk over a list bin, or null when the bin is absent or nil.
-
-#### `EventRecord.map`
+#### `EventRecord.getBoolean`
 
 ```java
-public Cursor<Cursor.Entry> map(String name)
+public boolean getBoolean(String name, boolean dflt)
 ```
 
-A walk over a map bin's entries, or null when the bin is absent or nil.
+#### `EventRecord.getString`
+
+```java
+public String getString(String name)
+```
+
+#### `EventRecord.getString`
+
+```java
+public String getString(String name, String dflt)
+```
+
+#### `EventRecord.getBytes`
+
+```java
+public byte[] getBytes(String name)
+```
+
+#### `EventRecord.getBytes`
+
+```java
+public byte[] getBytes(String name, byte[] dflt)
+```
+
+#### `EventRecord.getList`
+
+```java
+public ListValue getList(String name)
+```
+
+#### `EventRecord.getList`
+
+```java
+public ListValue getList(String name, ListValue dflt)
+```
+
+#### `EventRecord.getMap`
+
+```java
+public MapValue getMap(String name)
+```
+
+#### `EventRecord.getMap`
+
+```java
+public MapValue getMap(String name, MapValue dflt)
+```
 
 #### `EventRecord.withBins`
 
 ```java
-public UdfMap withBins(UdfMap overrides)
+public MapBuilder withBins(MapBuilder overrides)
 ```
 
-`withBins(int)` over a built map.
-
-#### `EventRecord.deletedAny`
-
-```java
-public boolean deletedAny()
-```
-
-Whether this side deleted any bin.
-
-#### `EventRecord.withBins`
-
-```java
-public int withBins(int overrides)
-```
-
-`overrides` (a built map) with every bin of this record it lacks put on top, by position: the
-Rust SDK's `Record::with_bins`, for a `record` answer that changes a few bins and keeps
-the rest. This prefers one side, so an `xdr-merge` handler that uses it on the current record
-is not symmetric; `Pair#withNewer` is the symmetric form. Returns `overrides`.
+Puts every bin of this record that `overrides` lacks into it, by position, and returns it: for
+a `record` answer that changes a few bins and keeps the rest. This prefers one side, so an
+`xdr-merge` handler that uses it on the current record is not symmetric;
+`Pair#withNewer` is the symmetric form.
 
 #### `Conflict`
 
@@ -739,10 +716,10 @@ classic merge mistake.
 #### `Conflict.remoteDeleted`
 
 ```java
-public Value remoteDeleted()
+public ListValue remoteDeleted()
 ```
 
-The names of the bins the incoming write deletes, as a stored list; `remote.deleted`.
+The names of the bins the incoming write deletes; `remote.deletedBins()`.
 
 #### `Conflict.pair`
 
@@ -855,18 +832,18 @@ A string bin on each side, its text copied out.
 #### `Pair.list`
 
 ```java
-public Both<Value> list(String name)
+public Both<ListValue> list(String name)
 ```
 
-A list bin on each side, as stored values read by position.
+A list bin on each side, read where it is stored.
 
 #### `Pair.map`
 
 ```java
-public Both<Value> map(String name)
+public Both<MapValue> map(String name)
 ```
 
-A map bin on each side, as stored values read by position.
+A map bin on each side, read where it is stored.
 
 #### `Pair.bin`
 
@@ -887,21 +864,13 @@ Whether the remote side wrote `name` later, per bin: the order the bin-lut polic
 #### `Pair.withNewer`
 
 ```java
-public int withNewer(int overrides)
+public MapBuilder withNewer(MapBuilder overrides)
 ```
 
-Every bin either side has that `overrides` (a built map) lacks, from the side that wrote it
+Puts into `overrides` every bin either side has that it lacks, from the side that wrote the bin
 later - which is what the policy would have kept - so a handler merges the bins it knows about and
 leaves the rest as they would have been. Symmetric: both DCs order the two sides the same way.
 Returns `overrides`.
-
-#### `Pair.withNewer`
-
-```java
-public UdfMap withNewer(UdfMap overrides)
-```
-
-`withNewer(int)` over a built map.
 
 #### `Both`
 
@@ -1032,11 +1001,11 @@ The description map of an event call, or null when the arguments are not one.
 #### `Events.side`
 
 ```java
-public static boolean side(Value desc, String key, int which, EventRecord out)
+public static EventRecord side(Value desc, String key, int which)
 ```
 
-Fills an `EventRecord` from the description's entry (`before`, `after`, `record`);
-`which` is the index the record is read by.
+The record under the description's entry `key` (`before`, `after`, `record`),
+or null when the description has none; `which` is the index the record is read by.
 
 #### `Events.WriteInfo`
 
@@ -1574,7 +1543,7 @@ public static byte[] signature(String kind, String name, String params)
 
 The signature text for a handler of `kind` with the given parameter text, for example
 `signature("before-write", "guard", PARAMS_BEFORE_WRITE)`; NUL-terminated, for a static field
-served by `Udf#signature`.
+served by `Params#signature`.
 
 #### `Events.PARAMS_BEFORE_WRITE`
 

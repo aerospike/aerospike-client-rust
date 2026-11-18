@@ -41,14 +41,14 @@ event! {
     /// The merge: visits take the larger count, tags unite, the profile is whichever side wrote it last,
     /// and everything else - `balance` included - is the newer side's, which is the policy's own answer.
     on xdr_merge
-    fn merge_account(local: Record, remote: Record, conflict: Conflict) -> Result<Resolution, Error> {
+    fn merge_account(local: EventRecord, remote: EventRecord, conflict: Conflict) -> Result<Resolution, Error> {
         let pair = conflict.pair();
         let out = as_udf::map(8)?;
 
         // A count each DC advanced on its own: both sides' increments are real, so the merge is the larger
         // of the two, not the sum (the sum would double-count the visits both already knew of).
         if let Some(visits) = pair.int("visits")?.max() {
-            out.put("visits", visits)?;
+            out.insert("visits", visits)?;
         }
 
         // A set each DC added to: the union. Its order is part of the result, so it is the order both DCs
@@ -75,11 +75,11 @@ event! {
             }
         }
 
-        out.put("tags", tags)?;
+        out.insert("tags", tags)?;
 
         // A document one side rewrote whole: last writer wins, by LUT, which both DCs agree on.
         if let Some(profile) = pair.bin("profile")?.newer() {
-            out.put("profile", profile)?;
+            out.insert("profile", profile)?;
         }
 
         // A bin one side deleted stays deleted when the delete is the later write for that bin: a nil in
@@ -93,7 +93,7 @@ event! {
                 let name = name.as_str(&mut nbuf)?;
 
                 if pair.remote_is_newer(name) == by_remote {
-                    out.put(name, Value::Nil)?;
+                    out.insert(name, Value::Nil)?;
                 }
             }
         }

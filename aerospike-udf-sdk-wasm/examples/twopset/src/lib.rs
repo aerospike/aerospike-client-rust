@@ -21,7 +21,7 @@
 
 #![no_std]
 
-use aerospike_udf_sdk_wasm::{self as as_udf, event, export, Coll, Error, List, Resolution, Str, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, event, export, Coll, Error, List, Record, Resolution, Str, Value};
 
 const MAX_TAGS: usize = 64;
 
@@ -103,7 +103,7 @@ impl Tags {
 event! {
     /// The merge: the union of each list. Every other bin is the incoming one's.
     on xdr_merge
-    fn merge_twopset(current: Record, incoming: Record, _conflict: Conflict) -> Result<Resolution, Error> {
+    fn merge_twopset(current: EventRecord, incoming: EventRecord, _conflict: Conflict) -> Result<Resolution, Error> {
         let out = as_udf::map(2)?;
 
         for bin in ["added", "removed"] {
@@ -111,7 +111,7 @@ event! {
 
             tags.offer_all(current.list(bin)?)?;
             tags.offer_all(incoming.list(bin)?)?;
-            out.put(bin, tags.into_list(None)?)?;
+            out.insert(bin, tags.into_list(None)?)?;
         }
 
         Ok(Resolution::Record { bins: incoming.with_bins(out)?, ttl: None })
@@ -119,43 +119,34 @@ event! {
 }
 
 /// One of the record's lists, or none.
-fn stored(bin: &str) -> Result<Tags, Error> {
+fn stored(rec: &Record, bin: &str) -> Result<Tags, Error> {
     let mut tags = Tags::new();
 
-    match as_udf::bin(bin) {
-        Ok(v) => tags.offer_all(Some(v.list()?))?,
-        Err(Error::Absent) => {}
-        Err(e) => return Err(e),
-    }
+    tags.offer_all(rec.list(bin)?)?;
 
     Ok(tags)
 }
 
 /// The members: added and not removed.
-fn members_of() -> Result<Value<'static>, Error> {
-    let added = stored("added")?;
-    let removed = stored("removed")?;
+fn members_of(rec: &Record) -> Result<Value<'static>, Error> {
+    let added = stored(rec, "added")?;
+    let removed = stored(rec, "removed")?;
 
     Ok(added.into_list(Some(&removed))?.into_value())
 }
 
-/// Adds `tag` to one of the lists and commits.
-fn grow(bin: &str, tag: Tag) -> Result<(), Error> {
-    let mut tags = stored(bin)?;
+/// Adds `tag` to one of the lists and saves.
+fn grow(rec: &mut Record, bin: &str, tag: Tag) -> Result<(), Error> {
+    let mut tags = stored(rec, bin)?;
 
     if tags.contains(tag.as_str()) {
         return Ok(());
     }
 
     tags.insert(tag)?;
-    as_udf::set(bin, tags.into_list(None)?)?;
+    rec.set(bin, tags.into_list(None)?)?;
 
-    if as_udf::exists() {
-        as_udf::update()?;
-    }
-    else {
-        as_udf::create()?;
-    }
+    rec.save()?;
 
     Ok(())
 }
@@ -163,24 +154,24 @@ fn grow(bin: &str, tag: Tag) -> Result<(), Error> {
 export! {
     /// Adds a tag. Returns the members. A tag removed before stays removed: `added` already has it, and
     /// `removed` never forgets it.
-    fn add(tag: &str) -> Result<Value, Error> {
-        grow("added", Tag::new(tag)?)?;
-        members_of()
+    fn add(rec: &mut Record, tag: &str) -> Result<Value, Error> {
+        grow(rec, "added", Tag::new(tag)?)?;
+        members_of(rec)
     }
 
     /// Removes a tag that is a member, forever. Returns the members.
-    fn remove(tag: &str) -> Result<Value, Error> {
-        if !stored("added")?.contains(tag) || stored("removed")?.contains(tag) {
+    fn remove(rec: &mut Record, tag: &str) -> Result<Value, Error> {
+        if !stored(rec, "added")?.contains(tag) || stored(rec, "removed")?.contains(tag) {
             return Err(Error::Custom("not a member"));
         }
 
-        grow("removed", Tag::new(tag)?)?;
-        members_of()
+        grow(rec, "removed", Tag::new(tag)?)?;
+        members_of(rec)
     }
 
     /// The members, in order.
-    fn members() -> Result<Value, Error> {
-        members_of()
+    fn members(rec: &Record) -> Result<Value, Error> {
+        members_of(rec)
     }
 }
 

@@ -19,6 +19,9 @@ fixtures: all
 	cp -f examples/guard/target/wasm/guard_java.wasm $(FIXTURES)/guard_java.wasm
 	cp -f examples/resolver/target/wasm/resolver_java.wasm $(FIXTURES)/resolver_java.wasm
 	cp -f examples/counter/target/wasm/counter_java.wasm $(FIXTURES)/counter_java.wasm
+	cp -f examples/pncounter/target/wasm/pncounter_java.wasm $(FIXTURES)/pncounter_java.wasm
+	cp -f examples/twopset/target/wasm/twopset_java.wasm $(FIXTURES)/twopset_java.wasm
+	cp -f examples/lwwset/target/wasm/lwwset_java.wasm $(FIXTURES)/lwwset_java.wasm
 	cp -f examples/crdt/target/wasm/crdt_java.wasm $(FIXTURES)/crdt_java.wasm
 	cp -f examples/udf/target/wasm/udf_java.wasm $(FIXTURES)/udf_java.wasm
 

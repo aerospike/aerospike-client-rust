@@ -18,7 +18,8 @@ import org.teavm.interop.Import;
 /**
  * The module's imports: the server's natives under the {@code aerospike} import module, one static native
  * method each. An {@link Address} parameter crosses as the i32 offset into linear memory the host reads or
- * writes; the host validates every pointer and length. Nothing here is public: {@link Udf} is the API.
+ * writes; the host validates every pointer and length. Nothing here is public: {@link LowLevel} is these
+ * calls for user code, one at a time, and the rest of the SDK is built on them.
  */
 final class Natives {
     private Natives() {
@@ -49,6 +50,9 @@ final class Natives {
 
     @Import(module = "aerospike", name = "coll_get_i")
     static native int collGetI(int src, int at, long key, Address out, int cap);
+
+    @Import(module = "aerospike", name = "list_get")
+    static native int listGet(int src, int at, int index, Address out, int cap);
 
     @Import(module = "aerospike", name = "cursor_close")
     static native void cursorClose(int cursor);
@@ -163,6 +167,12 @@ final class Natives {
 
     @Import(module = "aerospike", name = "map_put_entries")
     static native int mapPutEntries(int handle, Address pairs, int pairsLen);
+
+    @Import(module = "aerospike", name = "map_has")
+    static native int mapHas(int handle, Address key, int keyLen);
+
+    @Import(module = "aerospike", name = "map_has_i")
+    static native int mapHasI(int handle, long key);
 
     // Results and reporting.
 

@@ -36,8 +36,8 @@
 static constexpr int64_t PURGE_AGE_MS = 7LL * 24 * 60 * 60 * 1000;
 static constexpr int MAX_DEVICES = 128;
 
-static constexpr udf::Bin DEVICES{"devices"};
-static constexpr udf::Bin DEVICES_REMOVED{"devicesRemoved"};
+static constexpr udf::StrView DEVICES{"devices"};
+static constexpr udf::StrView DEVICES_REMOVED{"devicesRemoved"};
 
 using Id = udf::Text<64>;
 
@@ -268,11 +268,11 @@ static Entry entries[MAX_DEVICES];
 static Entry all[MAX_DEVICES + 1];
 
 // The live entries, in stored order; how many.
-static udf::Result<int> live_entries()
+static udf::Result<int> live_entries(const udf::Record& rec)
 {
 	int n = 0;
 
-	for (udf::Value item : DEVICES.list()) {
+	for (udf::Value item : rec.list(DEVICES)) {
 		if (n == MAX_DEVICES) return udf::error(AS_UDF_ERR, "too many devices");
 
 		entries[n].id = UDF_TRY(id_of(item));
@@ -284,9 +284,9 @@ static udf::Result<int> live_entries()
 }
 
 // A marker's version, if the device has one.
-static udf::Optional<int64_t> marker_version(udf::StrView id)
+static udf::Optional<int64_t> marker_version(const udf::Record& rec, udf::StrView id)
 {
-	udf::Optional<udf::Value> removed = DEVICES_REMOVED.get();
+	udf::Optional<udf::Value> removed = rec.get(DEVICES_REMOVED);
 	if (!removed) return {};
 	udf::Optional<udf::Value> markers = removed->get("markers");
 	if (!markers) return {};
@@ -297,9 +297,9 @@ static udf::Optional<int64_t> marker_version(udf::StrView id)
 	return *v;
 }
 
-static int64_t removed_int(udf::StrView key)
+static int64_t removed_int(const udf::Record& rec, udf::StrView key)
 {
-	udf::Optional<udf::Value> removed = DEVICES_REMOVED.get();
+	udf::Optional<udf::Value> removed = rec.get(DEVICES_REMOVED);
 	if (!removed) return 0;
 	udf::Optional<udf::Value> v = removed->get(key);
 	if (!v || !v->is_int()) return 0;
@@ -307,9 +307,9 @@ static int64_t removed_int(udf::StrView key)
 }
 
 // The device's latest version, live or removed, and never below the version floor.
-static udf::Result<int64_t> last_version(int n, udf::StrView id)
+static udf::Result<int64_t> last_version(const udf::Record& rec, int n, udf::StrView id)
 {
-	int64_t v = removed_int("versionFloor");
+	int64_t v = removed_int(rec, "versionFloor");
 
 	for (int i = 0; i < n; i++) {
 		if (entries[i].id == id) {
@@ -318,13 +318,13 @@ static udf::Result<int64_t> last_version(int n, udf::StrView id)
 		}
 	}
 
-	if (udf::Optional<int64_t> mv = marker_version(id); mv && *mv > v) v = *mv;
+	if (udf::Optional<int64_t> mv = marker_version(rec, id); mv && *mv > v) v = *mv;
 
 	return v;
 }
 
 // Stores the entries plus an optional built entry under id, sorted by id, less any entry under without.
-static udf::Result<void> store_devices(int n, udf::StrView without, const Entry* add)
+static udf::Result<void> store_devices(udf::Record& rec, int n, udf::StrView without, const Entry* add)
 {
 	int count = 0;
 
@@ -346,7 +346,7 @@ static udf::Result<void> store_devices(int n, udf::StrView without, const Entry*
 
 	for (int i = 0; i < count; i++) list.add(all[i].value);
 
-	return DEVICES.set(list);
+	return rec.set(DEVICES, list);
 }
 
 // A marker to add: its device, removal time and version.
@@ -358,17 +358,17 @@ struct Marker {
 
 // Rebuilds devicesRemoved from the current one with one marker dropped (drop non-empty), one added or
 // replaced, and a purge at now (when given). The bin is left out while it holds nothing.
-static udf::Result<void> store_removed(udf::StrView drop, const Marker* add, const int64_t* now)
+static udf::Result<void> store_removed(udf::Record& rec, udf::StrView drop, const Marker* add, const int64_t* now)
 {
-	int64_t horizon = removed_int("purgedBefore");
-	int64_t floor = removed_int("versionFloor");
+	int64_t horizon = removed_int(rec, "purgedBefore");
+	int64_t floor = removed_int(rec, "versionFloor");
 
 	if (now != nullptr && *now - PURGE_AGE_MS > horizon) horizon = *now - PURGE_AGE_MS;
 
 	udf::Map markers(8);
 	int n = 0;
 
-	if (udf::Optional<udf::Value> removed = DEVICES_REMOVED.get()) {
+	if (udf::Optional<udf::Value> removed = rec.get(DEVICES_REMOVED)) {
 		if (udf::Optional<udf::Value> existing = removed->get("markers")) {
 			for (udf::Entry e : existing->map()) {
 				Id id = UDF_TRY(e.key.as_text<64>());
@@ -399,7 +399,7 @@ static udf::Result<void> store_removed(udf::StrView drop, const Marker* add, con
 	}
 
 	if (n == 0 && horizon == 0) {
-		if (DEVICES_REMOVED.exists()) return DEVICES_REMOVED.remove();
+		if (rec.has(DEVICES_REMOVED)) return rec.remove(DEVICES_REMOVED);
 		return {};
 	}
 
@@ -409,17 +409,17 @@ static udf::Result<void> store_removed(udf::StrView drop, const Marker* add, con
 
 	if (floor > 0) removed.put("versionFloor", floor);
 
-	return DEVICES_REMOVED.set(removed);
+	return rec.set(DEVICES_REMOVED, removed);
 }
 
 // Adds a device, updates one, or adds a removed one back: the entry becomes the old one (if any) with
 // changes on top and a version one above the device's last, live or removed. Returns the version.
-UDF_FUNCTION(update_device, udf::Result<int64_t>, Id id, udf::Value changes)
+UDF_FUNCTION(update_device, udf::Result<int64_t>, udf::Record& rec, Id id, udf::Value changes)
 {
 	if (!changes.is_map()) return udf::error(AS_UDF_TYPE_MISMATCH, "update_device: changes is not a map");
 
-	int n = UDF_TRY(live_entries());
-	int64_t version = UDF_TRY(last_version(n, id.view())) + 1;
+	int n = UDF_TRY(live_entries(rec));
+	int64_t version = UDF_TRY(last_version(rec, n, id.view())) + 1;
 	udf::Map e(8);
 
 	for (int i = 0; i < n; i++) {
@@ -435,44 +435,44 @@ UDF_FUNCTION(update_device, udf::Result<int64_t>, Id id, udf::Value changes)
 	added.id = id;
 	added.value = e.value();
 
-	UDF_TRY(store_devices(n, id.view(), &added));
+	UDF_TRY(store_devices(rec, n, id.view(), &added));
 
-	if (marker_version(id.view())) {
-		UDF_TRY(store_removed(id.view(), nullptr, nullptr));
+	if (marker_version(rec, id.view())) {
+		UDF_TRY(store_removed(rec, id.view(), nullptr, nullptr));
 	}
 
-	UDF_TRY(udf::commit());
+	UDF_TRY(rec.save());
 
 	return version;
 }
 
 // Removes a device, leaving a marker with the application's time now (ms) and the next version.
-UDF_FUNCTION(remove_device, udf::Result<int64_t>, Id id, int64_t now)
+UDF_FUNCTION(remove_device, udf::Result<int64_t>, udf::Record& rec, Id id, int64_t now)
 {
-	int n = UDF_TRY(live_entries());
-	int64_t version = UDF_TRY(last_version(n, id.view())) + 1;
+	int n = UDF_TRY(live_entries(rec));
+	int64_t version = UDF_TRY(last_version(rec, n, id.view())) + 1;
 
-	UDF_TRY(store_devices(n, id.view(), nullptr));
+	UDF_TRY(store_devices(rec, n, id.view(), nullptr));
 
 	Marker marker{id.view(), now, version};
 
-	UDF_TRY(store_removed("", &marker, &now));
-	UDF_TRY(udf::commit());
+	UDF_TRY(store_removed(rec, "", &marker, &now));
+	UDF_TRY(rec.save());
 
 	return version;
 }
 
 // Drops the markers older than the purge age before now, and stores the list sorted.
-UDF_FUNCTION(purge_devices, udf::Result<int64_t>, int64_t now)
+UDF_FUNCTION(purge_devices, udf::Result<int64_t>, udf::Record& rec, int64_t now)
 {
-	int n = UDF_TRY(live_entries());
+	int n = UDF_TRY(live_entries(rec));
 
 	if (n > 0) {
-		UDF_TRY(store_devices(n, "", nullptr));
+		UDF_TRY(store_devices(rec, n, "", nullptr));
 	}
 
-	UDF_TRY(store_removed("", nullptr, &now));
-	UDF_TRY(udf::commit());
+	UDF_TRY(store_removed(rec, "", nullptr, &now));
+	UDF_TRY(rec.save());
 
-	return removed_int("purgedBefore");
+	return removed_int(rec, "purgedBefore");
 }

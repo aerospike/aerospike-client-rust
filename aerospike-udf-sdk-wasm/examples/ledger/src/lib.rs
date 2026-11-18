@@ -10,27 +10,12 @@
 
 #![no_std]
 
-use aerospike_udf_sdk_wasm::{self as as_udf, export, stream, Error, Str, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, export, stream, Error, Record, Str, Value};
 
 /// The balance, or zero for an account that has none yet. A balance that is not an integer is the
 /// caller's data problem, reported as such.
-fn balance() -> Result<i64, Error> {
-    match as_udf::bin("balance") {
-        Ok(value) => value.int(),
-        Err(Error::Absent) => Ok(0),
-        Err(e) => Err(e),
-    }
-}
-
-/// Commit the staged writes: `update` for a record that exists, `create` for one that does not. A `set` is
-/// staged in the record's cache until one of these runs, which is the one way a UDF looks right and changes
-/// nothing.
-fn commit() -> Result<(), Error> {
-    if as_udf::exists() {
-        as_udf::update()
-    } else {
-        as_udf::create()
-    }
+fn balance(rec: &Record) -> Result<i64, Error> {
+    Ok(rec.int("balance")?.unwrap_or(0))
 }
 
 export! {
@@ -39,8 +24,8 @@ export! {
     ///
     /// `amount: i64` and `dry_run: Option<bool>` are checked before this body runs: a string where the
     /// amount should be is rejected as `withdraw: argument 0 (amount): expected an integer, got a string`.
-    fn withdraw(amount: i64, dry_run: Option<bool>) -> Result<Value, Error> {
-        let balance = balance()?;
+    fn withdraw(rec: &mut Record, amount: i64, dry_run: Option<bool>) -> Result<Value, Error> {
+        let balance = balance(rec)?;
 
         if amount < 0 {
             return Err(Error::Custom("withdraw: the amount must not be negative"));
@@ -51,8 +36,9 @@ export! {
         }
 
         if dry_run != Some(true) {
-            as_udf::set("balance", balance - amount)?;
-            commit()?;
+            // A `set` is staged until `save`, which is the one way a UDF looks right and changes nothing.
+            rec.set("balance", balance - amount)?;
+            rec.save()?;
         }
 
         Ok(Value::Int(balance - amount))
@@ -64,12 +50,11 @@ export! {
     /// The history is trimmed **on the host, by position**: the postings that stay are handed from the
     /// stored list into the new one in one import call per 128, and the guest never copies a posting it
     /// merely keeps. `memo: Str<64>` is the memo's limit; a longer one is rejected before this runs.
-    fn post(amount: i64, memo: Str<64>, keep: Option<i64>) -> Result<Value, Error> {
+    fn post(rec: &mut Record, amount: i64, memo: Str<64>, keep: Option<i64>) -> Result<Value, Error> {
         let keep = keep.unwrap_or(100).max(1) as usize;
         let history = as_udf::list(keep)?;
 
-        if let Ok(existing) = as_udf::bin("postings") {
-            let existing = existing.list()?;
+        if let Some(existing) = rec.list("postings")? {
             let skip = existing.len().saturating_sub(keep - 1);
 
             history.extend(existing.iter().skip(skip))?;
@@ -77,26 +62,28 @@ export! {
 
         let posting = as_udf::map(2)?;
 
-        posting.put("amount", amount)?.put("memo", &memo)?;
+        posting.insert("amount", amount)?.insert("memo", &memo)?;
         history.push(posting)?;
 
         let kept = history.into_value().list()?.len() as i64;
 
-        as_udf::set("postings", history)?;
-        as_udf::set("balance", balance()? + amount)?;
-        commit()?;
+        let balance = balance(rec)?;
+
+        rec.set("postings", history)?;
+        rec.set("balance", balance + amount)?;
+        rec.save()?;
 
         Ok(Value::Int(kept))
     }
 
     /// The account as one map: the balance, how many postings it keeps, and the largest of them. Read-only,
     /// and built on the host - a map the guest fills by key and returns as a value.
-    fn summary() -> Result<Value, Error> {
+    fn summary(rec: &Record) -> Result<Value, Error> {
         let mut count = 0i64;
         let mut largest = 0i64;
 
-        if let Ok(postings) = as_udf::bin("postings") {
-            for posting in postings.list()?.iter() {
+        if let Some(postings) = rec.list("postings")? {
+            for posting in postings.iter() {
                 let amount = posting?.map()?.get("amount")?.int()?;
 
                 count += 1;
@@ -106,9 +93,9 @@ export! {
 
         let out = as_udf::map(3)?;
 
-        out.put("balance", balance()?)?
-            .put("postings", count)?
-            .put("largest", largest)?;
+        out.insert("balance", balance(rec)?)?
+            .insert("postings", count)?
+            .insert("largest", largest)?;
 
         Ok(out.into_value())
     }
@@ -123,8 +110,8 @@ stream! {
     /// The total balance across the accounts the query reaches, and how many there were: one
     /// `{"total": int, "accounts": int}` per node.
     fn balances {
-        record() -> Result<(), Error> {
-            let balance = balance()?;
+        record(rec: &Record) -> Result<(), Error> {
+            let balance = balance(rec)?;
 
             unsafe {
                 TOTAL += balance;
@@ -136,7 +123,7 @@ stream! {
         end() -> Result<Value, Error> {
             let out = as_udf::map(2)?;
 
-            out.put("total", unsafe { TOTAL })?.put("accounts", unsafe { ACCOUNTS })?;
+            out.insert("total", unsafe { TOTAL })?.insert("accounts", unsafe { ACCOUNTS })?;
 
             Ok(out.into_value())
         }

@@ -263,13 +263,30 @@ int32_t src() const
 
 The handle of the source a stored value sits in. Meaningful only when is_stored().
 
-#### `Value::at`
+#### `Value::offset`
 
 ```cpp
-int32_t at() const
+int32_t offset() const
 ```
 
 The offset of a stored value within its source. Meaningful only when is_stored().
+
+#### `Value::size`
+
+```cpp
+int32_t size() const
+```
+
+How much a stored value holds: the elements of a list, the entries of a map, the bytes of a string,
+blob, GeoJSON or HLL. 0 for anything else.
+
+#### `Value::empty`
+
+```cpp
+bool empty() const
+```
+
+Whether size() is 0.
 
 #### `Value::as_double_bits`
 
@@ -377,6 +394,31 @@ Optional<Value> get(int64_t key) const
 ```
 
 The entry under an integer key of a stored map; nothing when there is none or the value is not a map.
+
+#### `Value::contains`
+
+```cpp
+bool contains(StrView key) const
+```
+
+Whether a stored map has an entry under a string key. False when the value is not a map.
+
+#### `Value::contains`
+
+```cpp
+bool contains(int64_t key) const
+```
+
+Whether a stored map has an entry under an integer key. False when the value is not a map.
+
+#### `Value::at`
+
+```cpp
+Optional<Value> at(int64_t index) const
+```
+
+The element at `index` of a stored list, which the host finds without the guest walking the list;
+nothing past the end, for a negative index or when the value is not a list.
 
 #### `Value::list`
 
@@ -500,8 +542,32 @@ The end of a ListRange or MapRange walk: an iterator compares unequal to it unti
 class ListRange
 ```
 
-The elements of a stored list, for a range-for. Made by Value::list(), Bin::list() and
+The elements of a stored list, for a range-for. Made by Value::list(), Record::list() and
 EventRecord::list(); empty when the value it was made from is not a list.
+
+#### `ListRange::size`
+
+```cpp
+int32_t size() const
+```
+
+The number of elements the walk yields: 0 when it was made from something that is not a list.
+
+#### `ListRange::empty`
+
+```cpp
+bool empty() const
+```
+
+Whether the walk yields nothing.
+
+#### `ListRange::at`
+
+```cpp
+Optional<Value> at(int64_t index) const
+```
+
+The element at `index`, without walking to it; nothing past the end.
 
 #### `ListRange::begin`
 
@@ -526,8 +592,40 @@ The end sentinel the iterator is compared with.
 class MapRange
 ```
 
-The entries of a stored map, for a range-for. Made by Value::map(), Bin::map() and
+The entries of a stored map, for a range-for. Made by Value::map(), Record::map() and
 EventRecord::map(); empty when the value it was made from is not a map.
+
+#### `MapRange::size`
+
+```cpp
+int32_t size() const
+```
+
+The number of entries the walk yields: 0 when it was made from something that is not a map.
+
+#### `MapRange::empty`
+
+```cpp
+bool empty() const
+```
+
+Whether the walk yields nothing.
+
+#### `MapRange::contains`
+
+```cpp
+bool contains(StrView key) const
+```
+
+Whether the map has an entry under a string key.
+
+#### `MapRange::contains`
+
+```cpp
+bool contains(int64_t key) const
+```
+
+Whether the map has an entry under an integer key.
 
 #### `MapRange::begin`
 
@@ -613,13 +711,30 @@ Value value() const
 The map as a Value of kind Handle, to nest it in a batch (List::add_values, Map::put_entries) or to
 pass it to result_of.
 
-#### `Map::has`
+#### `Map::empty`
 
 ```cpp
-bool has(StrView key) const
+bool empty() const
 ```
 
-Whether the map holds key: it packs the map, so for the occasional check, not a loop.
+Whether the map holds no entry, which is also what a map that could not be built answers.
+
+#### `Map::contains`
+
+```cpp
+bool contains(StrView key) const
+```
+
+Whether the map holds an entry under a string key. The host answers for the map it is building, so
+nothing is packed and the check is fit for a loop.
+
+#### `Map::contains`
+
+```cpp
+bool contains(int64_t key) const
+```
+
+Whether the map holds an entry under an integer key.
 
 #### `Map::put`
 
@@ -842,6 +957,14 @@ int32_t size() const
 
 The number of elements the list holds, asked of the host; negative when the handle is not a valid one.
 
+#### `List::empty`
+
+```cpp
+bool empty() const
+```
+
+Whether the list holds no element, which is also what a list that could not be built answers.
+
 #### `List::value`
 
 ```cpp
@@ -965,315 +1088,135 @@ List& add_values(const Value* vals, int32_t count)
 
 Values in one import.
 
-#### `Bin`
+#### `ReadRecord`
 
 ```cpp
-class Bin
+class ReadRecord
 ```
 
-A bin by name, made once (`static constexpr udf::Bin COUNTS{"counts"}`): typed reads with or without a
-default, writes of every kind, staged until commit(), and the walk of a collection bin.
+Reading a record, whichever record it is. udf::Record, the record a UDF was called on, and
+udf::EventRecord, a record an event hands over, both derive from it, so a helper written as
+`template <class R> int64_t total(const udf::ReadRecord<R>& rec)` reads from either. It is a mixin over
+the one thing the two do differently, `read(name, out)`: there is no virtual call and no state, so an
+EventRecord stays the C struct it wraps.
 
-#### `Bin::name`
+#### `ReadRecord::get`
 
 ```cpp
-constexpr StrView name() const
+Optional<Value> get(StrView name) const
 ```
 
-The bin's name, as a view of the string the Bin was made from.
+The bin as a value; nothing when the record has no such bin or it is nil.
 
-#### `Bin::get`
+#### `ReadRecord::has`
 
 ```cpp
-Optional<Value> get() const
+bool has(StrView name) const
 ```
 
-The bin as a value; nothing when the record has no such bin.
+Whether the record has the bin, nil included.
 
-#### `Bin::exists`
+#### `ReadRecord::bin`
 
 ```cpp
-bool exists() const
+Result<Value> bin(StrView name) const
 ```
 
-Whether the record in hand has a bin of this name.
+The bin that must be there, as a value: an error naming the bin when the record has none. Chain the
+value's own typed reader for a bin that must also be of a kind: `UDF_TRY(UDF_TRY(rec.bin("n")).as_int())`.
 
-#### `Bin::as_int`
+#### `ReadRecord::as_int`
 
 ```cpp
-Result<int64_t> as_int() const
+Optional<int64_t> as_int(StrView name) const
 ```
 
-The bin as an integer. An error when the bin is absent, cannot be read or is not an int.
+The bin as an integer; nothing when the record has no such bin, it is nil or it is of another kind.
 
-#### `Bin::as_double`
+#### `ReadRecord::as_double`
 
 ```cpp
-Result<double> as_double() const
+Optional<double> as_double(StrView name) const
 ```
 
-The bin as a double, an integer bin widened to one. An error when the bin is absent or of another kind.
+The bin as a double; nothing when the record has no such bin, it is nil or it is of another kind. An
+integer bin is not widened.
 
-#### `Bin::as_bool`
+#### `ReadRecord::as_bool`
 
 ```cpp
-Result<bool> as_bool() const
+Optional<bool> as_bool(StrView name) const
 ```
 
-The bin as a boolean. An error when the bin is absent, cannot be read or is not a bool.
+The bin as a boolean; nothing when the record has no such bin, it is nil or it is of another kind.
 
-#### `Bin::as_text`
+#### `ReadRecord::as_text`
 
 ```cpp
-template <size_t N> Result<Text<N>> as_text() const
+template <size_t N> Optional<Text<N>> as_text(StrView name) const
 ```
 
-The bin's string into an inline Text&lt;N&gt;. An error when the bin is absent, is not a string or does not
-fit in N bytes.
+The bin's string as an inline Text&lt;N&gt;; nothing when the record has no such bin, it is nil, it is not a
+string or it does not fit in N bytes.
 
-#### `Bin::as_bytes`
+#### `ReadRecord::as_bytes`
 
 ```cpp
-template <size_t N> Result<Bytes<N>> as_bytes() const
+template <size_t N> Optional<Bytes<N>> as_bytes(StrView name) const
 ```
 
-The bytes of a string, blob, GeoJSON or HLL bin into an inline Bytes&lt;N&gt;. An error when the bin is
-absent, of another kind or does not fit in N bytes.
+The bytes of a string, blob, GeoJSON or HLL bin as an inline Bytes&lt;N&gt;; nothing when the record has no
+such bin, it is nil, it is of another kind or it does not fit in N bytes.
 
-#### `Bin::floats_into`
+#### `ReadRecord::int_or`
 
 ```cpp
-Result<int32_t> floats_into(float* out, int32_t count) const
+int64_t int_or(StrView name, int64_t dflt) const
 ```
 
-A blob bin of 32-bit floats into an array of `count` elements. Returns how many were read; an error
-when the bin is absent, is not a blob or does not fit the array.
+The Or forms: the bin's integer, or `dflt` when the bin is absent, nil or of another kind.
 
-#### `Bin::int_or`
-
-```cpp
-int64_t int_or(int64_t dflt) const
-```
-
-The Or forms: the default when the bin is absent or nil (or of another kind).
-
-#### `Bin::double_or`
+#### `ReadRecord::double_or`
 
 ```cpp
-double double_or(double dflt) const
+double double_or(StrView name, double dflt) const
 ```
 
 The bin's double, or `dflt` when the bin is absent, nil or of another kind. An integer bin is not
 widened here: it gives the default.
 
-#### `Bin::bool_or`
+#### `ReadRecord::bool_or`
 
 ```cpp
-bool bool_or(bool dflt) const
+bool bool_or(StrView name, bool dflt) const
 ```
 
 The bin's boolean, or `dflt` when the bin is absent, nil or of another kind.
 
-#### `Bin::list`
+#### `ReadRecord::floats_into`
 
 ```cpp
-ListRange list() const
+Result<int32_t> floats_into(StrView name, float* out, int32_t count) const
 ```
 
-A walk over a collection bin; nothing when absent or of another kind.
+A blob bin of 32-bit floats into an array of `count` elements. Returns how many were read; an error
+when the bin is absent, is not a blob or does not fit the array.
 
-#### `Bin::map`
+#### `ReadRecord::list`
 
 ```cpp
-MapRange map() const
+ListRange list(StrView name) const
 ```
 
-A walk over the entries of a map bin; nothing when absent or of another kind.
+A walk over a list bin; empty when the bin is missing or not a list.
 
-#### `Bin::set`
+#### `ReadRecord::map`
 
 ```cpp
-Result<void> set(int64_t v) const
+MapRange map(StrView name) const
 ```
 
-Writes, staged until commit().
-
-#### `Bin::set`
-
-```cpp
-Result<void> set(int v) const
-```
-
-Stages an int, widened to 64 bits.
-
-#### `Bin::set`
-
-```cpp
-Result<void> set(double v) const
-```
-
-Stages a double.
-
-#### `Bin::set`
-
-```cpp
-Result<void> set(bool v) const
-```
-
-Stages a boolean.
-
-#### `Bin::set`
-
-```cpp
-Result<void> set(StrView v) const
-```
-
-Stages a string.
-
-#### `Bin::set`
-
-```cpp
-Result<void> set(const char* v) const
-```
-
-Stages a NUL-terminated string.
-
-#### `Bin::set`
-
-```cpp
-Result<void> set(const Map& m) const
-```
-
-Stages a built map as the bin's value. Fails with the map's own error when one of its puts failed.
-
-#### `Bin::set`
-
-```cpp
-Result<void> set(const List& l) const
-```
-
-Stages a built list as the bin's value. Fails with the list's own error when one of its adds failed.
-
-#### `Bin::set_blob`
-
-```cpp
-Result<void> set_blob(const void* b, int32_t n) const
-```
-
-Stages `n` bytes at `b` as a blob.
-
-#### `Bin::set_geojson`
-
-```cpp
-Result<void> set_geojson(StrView doc) const
-```
-
-A GeoJSON document, kept as the geospatially indexable kind rather than a string.
-
-#### `Bin::set_null`
-
-```cpp
-Result<void> set_null() const
-```
-
-Stages a nil as the bin's value.
-
-#### `Bin::set_ints`
-
-```cpp
-Result<void> set_ints(const int64_t* vals, int32_t count) const
-```
-
-A list of integers or doubles from an array, in one import, no value built per element.
-
-#### `Bin::set_doubles`
-
-```cpp
-Result<void> set_doubles(const double* vals, int32_t count) const
-```
-
-A list of doubles from an array of `count` elements, in one import.
-
-#### `Bin::set`
-
-```cpp
-Result<void> set(const Value& v) const
-```
-
-A value: one read from the record by position, keeping its kind; or a scalar, guest bytes, a handle.
-
-#### `Bin::remove`
-
-```cpp
-Result<void> remove() const
-```
-
-Asks the host to remove the bin from the record in hand. An error when the host refuses.
-
-#### `commit`
-
-```cpp
-inline Result<void> commit()
-```
-
-Writes the staged bins, creating the record if it does not exist.
-
-#### `remove_record`
-
-```cpp
-inline Result<void> remove_record()
-```
-
-Deletes the record in hand. An error when the server refuses.
-
-#### `exists`
-
-```cpp
-inline bool exists()
-```
-
-Whether the record in hand exists on the server.
-
-#### `generation`
-
-```cpp
-inline int64_t generation()
-```
-
-The record's generation, its modification count.
-
-#### `ttl`
-
-```cpp
-inline int64_t ttl()
-```
-
-The record's remaining time to live in seconds; 0 when it does not expire.
-
-#### `last_update_time`
-
-```cpp
-inline int64_t last_update_time()
-```
-
-When the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC), which is how the
-server stores it. Not on the same scale as now(), which counts from the Unix epoch.
-
-#### `record_size`
-
-```cpp
-inline int64_t record_size()
-```
-
-The record's stored size in bytes.
-
-#### `bin_count`
-
-```cpp
-inline int64_t bin_count()
-```
-
-The number of bins the record has.
+A walk over the entries of a map bin; empty when the bin is missing or not a map.
 
 #### `now`
 
@@ -1282,58 +1225,6 @@ inline int64_t now()
 ```
 
 The server's clock in ms since the Unix epoch, or -1 inside an event handler, where it is refused.
-
-#### `set_name`
-
-```cpp
-inline Text<64> set_name()
-```
-
-The record's set name, into a Text; empty when it is in no set.
-
-#### `set_ttl`
-
-```cpp
-inline Result<void> set_ttl(int32_t seconds)
-```
-
-Sets the time to live the next commit carries, in seconds: 0 for the namespace default, -1 for never.
-
-#### `key_type`
-
-```cpp
-inline Kind key_type()
-```
-
-The kind of the record's user key; Kind::Absent when the record stores none, which is the case unless
-it was written with send_key.
-
-#### `key_int`
-
-```cpp
-inline int64_t key_int()
-```
-
-The user key when it is an integer; 0 when the record stores no key or it is of another kind, so
-check key_type() first.
-
-#### `key_bytes`
-
-```cpp
-inline int32_t key_bytes(void* out, int32_t cap)
-```
-
-The bytes of a string or blob user key into `out`. Returns the length; AS_UDF_NOT_FOUND when the
-record stores no key, a status at or below AS_UDF_NEEDED_BASE when `cap` is too small.
-
-#### `digest`
-
-```cpp
-inline int32_t digest(void* out, int32_t cap)
-```
-
-The record's digest, 20 bytes, into `out`. Returns the length, or a negative status: at or below
-AS_UDF_NEEDED_BASE when `cap` is too small.
 
 #### `fail`
 
@@ -1383,8 +1274,8 @@ Timers, from a record UDF or a timer handler.
 inline Result<void> timer_cancel(StrView name)
 ```
 
-Cancels the timer of that name on the record in hand. An error when the host refuses, as it does
-where there is no record in hand and for a name that is empty or 64 bytes or longer.
+Cancels the timer of that name on the record of the call. An error when the host refuses, as it does
+where the call has no record and for a name that is empty or 64 bytes or longer.
 
 #### `Args`
 
@@ -1410,6 +1301,22 @@ const Value* end() const
 
 One past the last argument.
 
+#### `Args::size`
+
+```cpp
+int32_t size() const
+```
+
+How many arguments there are.
+
+#### `Args::empty`
+
+```cpp
+bool empty() const
+```
+
+Whether there is none.
+
 #### `UDF_FUNCTION`
 
 ```cpp
@@ -1418,8 +1325,10 @@ UDF_FUNCTION(name, ret, ...)
 
 A record UDF: `UDF_FUNCTION(name, ReturnType, params...) { body }`. The return is a Result&lt;T&gt; or a plain
 T (int64_t, double, bool, StrView, Text&lt;N&gt;, Value, Map, List, void); the parameters are int64_t,
-int32_t, double, bool, Text&lt;N&gt;, Bytes&lt;N&gt;, Value, Optional&lt;T&gt; of those, and Args last. A function declared
-(int32_t args, int32_t argc) returning int32_t is the raw form; see UDF_FUNCTION_RAW.
+int32_t, double, bool, Text&lt;N&gt;, Bytes&lt;N&gt;, Value, Optional&lt;T&gt; of those, and Args last. Before them the
+function may take the record it was called on, `udf::Record& rec` to write it or `const udf::Record& rec`
+to read it: the export hands it in, and it is neither an argument of the call nor part of the signature.
+A function declared (int32_t args, int32_t argc) returning int32_t is the raw form; see UDF_FUNCTION_RAW.
 
 #### `UDF_FUNCTION_RAW`
 

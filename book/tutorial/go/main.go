@@ -23,31 +23,21 @@ import (
 	udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk-wasm-go"
 )
 
-var (
-	visits   = udf.NewBin("visits")
-	balance  = udf.NewBin("balance")
-	owner    = udf.NewBin("owner")
-	history  = udf.NewBin("history")
-	limits   = udf.NewBin("limits")
-	renewals = udf.NewBin("renewals")
-	note     = udf.NewBin("note")
-	ticks    = udf.NewBin("ticks")
-)
-
 // ANCHOR_END: setup
 
 // ANCHOR: visit
 // Counts a visit and answers the new count.
 //
 //udf:function visit
-func visit(by int64) (int64, error) {
-	n := visits.IntOr(0) + by // 0 when the bin is absent
+func visit(rec *udf.Record, by int64) (int64, error) {
+	visits, _ := rec.Int("visits") // 0 when the bin is absent
+	n := visits + by
 
-	if err := visits.SetInt(n); err != nil { // staged, not yet written
+	if err := rec.Set("visits", n); err != nil { // staged, not yet written
 		return 0, err
 	}
 
-	return n, udf.Commit() // creates the record when there is none
+	return n, rec.Save() // creates the record when there is none
 }
 
 // ANCHOR_END: visit
@@ -56,8 +46,13 @@ func visit(by int64) (int64, error) {
 // Takes amount off the balance, or fails when there is not enough.
 //
 //udf:function withdraw
-func withdraw(amount int64) (int64, error) {
-	have, err := balance.Int() // an error when absent or not an integer
+func withdraw(rec *udf.Record, amount int64) (int64, error) {
+	balance, err := rec.Bin("balance") // an error when the bin is absent
+	if err != nil {
+		return 0, err
+	}
+
+	have, err := balance.Int() // an error when it is not an integer
 	if err != nil {
 		return 0, err
 	}
@@ -66,11 +61,11 @@ func withdraw(amount int64) (int64, error) {
 		return 0, errors.New("insufficient funds")
 	}
 
-	if err := balance.SetInt(have - amount); err != nil {
+	if err := rec.Set("balance", have-amount); err != nil {
 		return 0, err
 	}
 
-	return have - amount, udf.Commit()
+	return have - amount, rec.Save()
 }
 
 // ANCHOR_END: withdraw
@@ -79,7 +74,12 @@ func withdraw(amount int64) (int64, error) {
 // Changes the owner; false when the name is already that.
 //
 //udf:function rename
-func rename(name string) (bool, error) {
+func rename(rec *udf.Record, name string) (bool, error) {
+	owner, err := rec.Bin("owner")
+	if err != nil {
+		return false, err
+	}
+
 	current, err := owner.Str() // copied out of the record
 	if err != nil {
 		return false, err
@@ -89,11 +89,11 @@ func rename(name string) (bool, error) {
 		return false, nil
 	}
 
-	if err := owner.SetStr(name); err != nil {
+	if err := rec.Set("owner", name); err != nil {
 		return false, err
 	}
 
-	return true, udf.Commit()
+	return true, rec.Save()
 }
 
 // ANCHOR_END: rename
@@ -102,10 +102,10 @@ func rename(name string) (bool, error) {
 // The sum of the payments in history.
 //
 //udf:function total
-func total() (int64, error) {
+func total(rec *udf.Record) (int64, error) {
 	var sum int64
 
-	for payment := range history.List() {
+	for payment := range rec.List("history") {
 		n, err := payment.Int()
 		if err != nil {
 			return 0, err
@@ -122,13 +122,13 @@ func total() (int64, error) {
 // The limit of one kind, 0 when there is none.
 //
 //udf:function limit_for
-func limitFor(kind string) (int64, error) {
-	m, ok := limits.Get()
-	if !ok {
-		return 0, errors.New("bin limits is absent")
+func limitFor(rec *udf.Record, kind string) (int64, error) {
+	limits, err := rec.Bin("limits")
+	if err != nil {
+		return 0, err
 	}
 
-	limit, ok := m.Lookup(kind)
+	limit, ok := limits.Lookup(kind)
 	if !ok { // no such key
 		return 0, nil
 	}
@@ -142,10 +142,10 @@ func limitFor(kind string) (int64, error) {
 // The sum of every limit.
 //
 //udf:function limits_total
-func limitsTotal() (int64, error) {
+func limitsTotal(rec *udf.Record) (int64, error) {
 	var sum int64
 
-	for _, limit := range limits.Map() {
+	for _, limit := range rec.Map("limits") {
 		n, err := limit.Int()
 		if err != nil {
 			return 0, err
@@ -162,20 +162,20 @@ func limitsTotal() (int64, error) {
 // Appends a payment to history and answers the new length.
 //
 //udf:function log_payment
-func logPayment(amount int64) (int64, error) {
-	stored, ok := history.Get()
-	if !ok {
-		return 0, errors.New("bin history is absent")
+func logPayment(rec *udf.Record, amount int64) (int64, error) {
+	stored, err := rec.Bin("history")
+	if err != nil {
+		return 0, err
 	}
 
 	count := int(stored.Len) + 1
 	out := udf.NewList(count).AddAll(stored).Add(amount) // the stored elements, then the new one
 
-	if err := history.SetList(out); err != nil {
+	if err := rec.Set("history", out); err != nil {
 		return 0, err
 	}
 
-	return int64(count), udf.Commit()
+	return int64(count), rec.Save()
 }
 
 // ANCHOR_END: log_payment
@@ -184,16 +184,16 @@ func logPayment(amount int64) (int64, error) {
 // The account at a glance, as a map.
 //
 //udf:function summary
-func summary() (*udf.Map, error) {
-	name, _ := owner.Get()
-	amount, _ := balance.Get()
+func summary(rec *udf.Record) (*udf.Map, error) {
+	name, _ := rec.Get("owner")
+	amount, _ := rec.Get("balance")
 
 	out := udf.NewMap(5).
 		Put("owner", name). // a stored value goes in as it is
 		Put("balance", amount).
-		Put("generation", udf.Generation()).
-		Put("bins", udf.BinCount()).
-		Put("ttl", udf.TTL())
+		Put("generation", rec.Generation()).
+		Put("bins", rec.BinCount()).
+		Put("ttl", rec.TTL())
 
 	return out, out.Err()
 }
@@ -204,18 +204,19 @@ func summary() (*udf.Map, error) {
 // Counts a renewal and gives the record seconds more to live.
 //
 //udf:function renew
-func renew(seconds int64) (int64, error) {
-	n := renewals.IntOr(0) + 1
+func renew(rec *udf.Record, seconds int64) (int64, error) {
+	renewals, _ := rec.Int("renewals")
+	n := renewals + 1
 
-	if err := renewals.SetInt(n); err != nil {
+	if err := rec.Set("renewals", n); err != nil {
 		return 0, err
 	}
 
-	if err := udf.SetTTL(int32(seconds)); err != nil { // takes effect with the commit
+	if err := rec.SetTTL(int32(seconds)); err != nil { // takes effect with the save
 		return 0, err
 	}
 
-	return n, udf.Commit()
+	return n, rec.Save()
 }
 
 // ANCHOR_END: renew
@@ -224,12 +225,12 @@ func renew(seconds int64) (int64, error) {
 // Drops the note bin.
 //
 //udf:function clear_note
-func clearNote() error {
-	if err := note.SetNull(); err != nil { // a nil write drops the bin
+func clearNote(rec *udf.Record) error {
+	if err := rec.Remove("note"); err != nil { // staged, like a write
 		return err
 	}
 
-	return udf.Commit()
+	return rec.Save()
 }
 
 // ANCHOR_END: clear_note
@@ -238,8 +239,8 @@ func clearNote() error {
 // Deletes the record.
 //
 //udf:function close
-func closeAccount() error {
-	return udf.Delete() // no commit: the delete is the write
+func closeAccount(rec *udf.Record) error {
+	return rec.Delete() // no save: the delete is the write
 }
 
 // ANCHOR_END: close
@@ -323,14 +324,15 @@ func keepMarked(rec *udf.EventRecord, _ udf.ExpireInfo) (udf.Expiry, error) {
 // Counts a tick and re-arms itself, up to three.
 //
 //udf:on timer tick
-func tick(_ udf.TimerInfo) error {
-	n := ticks.IntOr(0) + 1 // the record API works here
+func tick(rec *udf.Record, _ udf.TimerInfo) error {
+	ticks, _ := rec.Int("ticks") // a timer runs as a record UDF: it gets the record, and may write it
+	n := ticks + 1
 
-	if err := ticks.SetInt(n); err != nil {
+	if err := rec.Set("ticks", n); err != nil {
 		return err
 	}
 
-	if err := udf.Commit(); err != nil {
+	if err := rec.Save(); err != nil {
 		return err
 	}
 

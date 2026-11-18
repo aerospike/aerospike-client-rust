@@ -13,9 +13,12 @@ into the method's parameters and delivers its return value as the result, and th
 export whose text it derives from the parameter types.
 ```text
 @Function("increment")
-static long increment(String site, long n) { ... }
+static long increment(Record rec, String site, long n) { ... }
 // exports increment and __udf_sig_increment = "fn increment(site: str, n: int) -> value"
 ```
+A first parameter of type `Record` is the record the call is about. It is handed to the method,
+not decoded from the arguments, so it is no part of the signature or of the argument count; a method
+that does not touch the record leaves it out.
 Parameters: `long`, `int` (`int` in the signature), `double`, `boolean`
 (`bool`), `String` (`str`), `byte[]` (`bytes`: a string or a blob),
 `Value` (`any`), and `Value[]` as the last parameter for every remaining argument
@@ -24,8 +27,9 @@ scalar one is boxed (`Long`, `Integer`, `Double`, `Boolean`). A call with a
 missing or mismatched argument, or more arguments than parameters, fails with a message naming the
 argument, before the method runs.
 Return: `void` (a nil result), `long` or `int`, `double`, `boolean`,
-`String`, `byte[]` (a blob), or `Value` (a scalar by value, guest bytes, a stored value
-by position, or a built collection by handle). The method fails the call by throwing `UdfException`
+`String`, `byte[]` (a blob), `Value` (a scalar by value, guest bytes, a stored value
+by position), a `MapBuilder` or `ListBuilder`, a `MapValue` or `ListValue`, or a
+`java.util.Map` or `java.util.List` of plain Java values. The method fails the call by throwing `UdfException`
 with the message; any other exception fails it with the exception's message.
 A method declared `(int args, int argc)` returning `int` is exported as it is: it takes
 the raw handles and returns the status, exactly as a hand-written export does, and `params` gives
@@ -53,265 +57,393 @@ Fails the call from inside a `Function`, `Stream` or `On` method: the generated 
 catches it and delivers its message with `Udf#fail`, the way a hand-written export returns
 `Udf.fail(message)`. `Params` throws it for an argument that does not fit its parameter.
 
-#### `Bin`
+#### `Record`
 
 ```java
-public final class Bin
+public final class Record implements RecordReader
 ```
 
-A bin of the record in hand, by name: reads as the type expected, writes of every kind, and the walk of
-a collection bin. The name is encoded once, when the `Bin` is made, so a module keeps its bins as
-constants (`static final Bin COUNTS = Bin.of("counts")`) and pays nothing per call; this is what
-the `byte[]` forms of the low-level calls were for. A getter throws `UdfException` naming
-the bin when it is absent or of another kind, unless given a default, which covers absent and nil; a
-setter throws when the host refuses the write. Writes are staged until `Udf#commit`.
+The record a call is about. A `@Function` method, a stream's `record` method and a timer
+handler take it as their first parameter, and everything a UDF does to the record is a method of it:
+reading a bin, writing one, the record's metadata, saving and deleting.
 ```text
-static final Bin TICKS = Bin.of("ticks");
-long n = TICKS.getLong(0) + 1;
-TICKS.set(n);
-Udf.commit();
+@Function("visit")
+static long visit(Record rec, String page) {
+long visits = rec.getLong("visits", 0) + 1;
+rec.set("visits", visits);
+rec.set("last", page);
+rec.save();
+return visits;
+}
 ```
+**Reading.** `get` gives a bin of any kind, or null. The typed readers
+(`getLong(String)`, `getString(String)`, `getList(String)` and the rest) throw
+`UdfException` naming the bin when it is absent or of another kind; given a default, they answer
+it for an absent bin and still throw for a wrong kind. See `RecordReader`.
+**Writing.** `set` stages a bin, `remove` stages its removal, and `save`
+writes what is staged, creating the record when it does not exist. `delete` deletes the record.
+Nothing is written until `save`, with one exception the server makes: `setInts` and
+`setDoubles` take effect at once.
+**One type, writable or not.** A stream's records are read-only, and so is the record of a call
+the server runs as a read. A write there throws `UdfException` saying the record is read-only: it
+is refused by the server when it is made, not by the type.
+Bins are addressed by name. The record keeps the encoded form of the names it has seen, so a name
+passed as a string literal is encoded once, not once per call, and a reader allocates nothing.
 
-#### `Bin.of`
+#### `Record.get`
 
 ```java
-public static Bin of(String name)
+public Value get(String name)
 ```
 
-A bin by name. The name is encoded here, once; nothing is read.
-
-#### `Bin.name`
+#### `Record.hasBin`
 
 ```java
-public String name()
+public boolean hasBin(String name)
 ```
 
-The bin's name.
+#### `Record.getLong`
 
-#### `Bin.exists`
+```java
+public long getLong(String name)
+```
+
+#### `Record.getLong`
+
+```java
+public long getLong(String name, long dflt)
+```
+
+#### `Record.getDouble`
+
+```java
+public double getDouble(String name)
+```
+
+#### `Record.getDouble`
+
+```java
+public double getDouble(String name, double dflt)
+```
+
+#### `Record.getBoolean`
+
+```java
+public boolean getBoolean(String name)
+```
+
+#### `Record.getBoolean`
+
+```java
+public boolean getBoolean(String name, boolean dflt)
+```
+
+#### `Record.getString`
+
+```java
+public String getString(String name)
+```
+
+#### `Record.getString`
+
+```java
+public String getString(String name, String dflt)
+```
+
+#### `Record.getBytes`
+
+```java
+public byte[] getBytes(String name)
+```
+
+#### `Record.getBytes`
+
+```java
+public byte[] getBytes(String name, byte[] dflt)
+```
+
+#### `Record.getList`
+
+```java
+public ListValue getList(String name)
+```
+
+#### `Record.getList`
+
+```java
+public ListValue getList(String name, ListValue dflt)
+```
+
+#### `Record.getMap`
+
+```java
+public MapValue getMap(String name)
+```
+
+#### `Record.getMap`
+
+```java
+public MapValue getMap(String name, MapValue dflt)
+```
+
+#### `Record.getFloats`
+
+```java
+public int getFloats(String name, float[] out)
+```
+
+A blob bin of little-endian 32-bit floats straight into `out`, element for element, with no
+copy in between: how a vector is read. Returns how many floats there were; throws
+`UdfException` when the bin is absent, is not a blob, or does not fit.
+
+#### `Record.binCount`
+
+```java
+public long binCount()
+```
+
+How many bins the record has.
+
+#### `Record.set`
+
+```java
+public void set(String name, long value)
+```
+
+Stages an integer bin. Throws `UdfException` when the record cannot be written, as every write does.
+
+#### `Record.set`
+
+```java
+public void set(String name, double value)
+```
+
+Stages a double bin.
+
+#### `Record.set`
+
+```java
+public void set(String name, boolean value)
+```
+
+Stages a boolean bin.
+
+#### `Record.set`
+
+```java
+public void set(String name, String value)
+```
+
+Stages a string bin, written as UTF-8.
+
+#### `Record.set`
+
+```java
+public void set(String name, byte[] value)
+```
+
+Stages a blob bin.
+
+#### `Record.set`
+
+```java
+public void set(String name, Value value)
+```
+
+Stages a bin from a value of any kind: a scalar, a string or blob of the guest's, a built collection,
+or a stored value, which is written by position and keeps its kind (a GeoJSON stays one). A nil value
+removes the bin, since a bin cannot hold nil.
+
+#### `Record.set`
+
+```java
+public void set(String name, ListBuilder value)
+```
+
+Stages a bin from a built list.
+
+#### `Record.set`
+
+```java
+public void set(String name, MapBuilder value)
+```
+
+Stages a bin from a built map.
+
+#### `Record.set`
+
+```java
+public void set(String name, ListValue value)
+```
+
+Stages a bin from a stored list, by position: a copy of a list this or another record holds.
+
+#### `Record.set`
+
+```java
+public void set(String name, MapValue value)
+```
+
+Stages a bin from a stored map, by position.
+
+#### `Record.set`
+
+```java
+public void set(String name, List<?> value)
+```
+
+Stages a list bin from a `java.util.List`, its elements as `ListBuilder#addAll` takes them.
+
+#### `Record.set`
+
+```java
+public void set(String name, Map<?, ?> value)
+```
+
+Stages a map bin from a `java.util.Map`, its entries as `MapBuilder#putAll(Map)` takes them.
+
+#### `Record.setGeoJson`
+
+```java
+public void setGeoJson(String name, String doc)
+```
+
+Stages a GeoJSON bin from the document's text, kept as the geospatially indexable kind, not a string.
+
+#### `Record.setInts`
+
+```java
+public void setInts(String name, long[] values)
+```
+
+Writes a list bin of integers straight from the array, in one call, with no value built per element.
+Unlike the other writes it takes effect at once, without `save`.
+
+#### `Record.setDoubles`
+
+```java
+public void setDoubles(String name, double[] values)
+```
+
+As `setInts`, for a list of doubles.
+
+#### `Record.remove`
+
+```java
+public void remove(String name)
+```
+
+Stages the removal of a bin; removing one the record does not have is not an error.
+
+#### `Record.exists`
 
 ```java
 public boolean exists()
 ```
 
-Whether the record has this bin.
+Whether the record exists. It answers what it did when the call began for the whole call: a
+`delete` is carried out when the call returns.
 
-#### `Bin.get`
-
-```java
-public Value get()
-```
-
-The bin as a fresh value, or null when the record has no such bin.
-
-#### `Bin.read`
+#### `Record.generation`
 
 ```java
-public boolean read(Value out)
+public long generation()
 ```
 
-The bin into a reused value; false when absent.
-
-#### `Bin.getLong`
+#### `Record.ttl`
 
 ```java
-public long getLong()
+public long ttl()
 ```
 
-The bin as an integer; throws `UdfException` when it is absent or of another kind.
-
-#### `Bin.getLong`
+#### `Record.setTtl`
 
 ```java
-public long getLong(long dflt)
+public void setTtl(int seconds)
 ```
 
-The bin as an integer, or `dflt` when it is absent or nil; throws when it is of another kind.
+Sets the record's time to live, in seconds, for the next `save`: 0 for the namespace default,
+-1 for never expire. Throws `UdfException` when the host refuses it.
 
-#### `Bin.getDouble`
+#### `Record.lastUpdateTime`
 
 ```java
-public double getDouble()
+public long lastUpdateTime()
 ```
 
-The bin as a double; throws `UdfException` when it is absent or of another kind. An integer bin is
-not widened.
+When the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC), which is how the
+server stores it. Not on the same scale as `Udf#now`, which counts from the Unix epoch.
 
-#### `Bin.getDouble`
+#### `Record.size`
 
 ```java
-public double getDouble(double dflt)
+public long size()
 ```
 
-The bin as a double, or `dflt` when it is absent or nil; throws when it is of another kind.
+The record's size on device, in bytes.
 
-#### `Bin.getBoolean`
+#### `Record.setName`
 
 ```java
-public boolean getBoolean()
+public String setName()
 ```
 
-The bin as a boolean; throws `UdfException` when it is absent or of another kind.
+The record's set name, or null when it is in no set.
 
-#### `Bin.getBoolean`
+#### `Record.key`
 
 ```java
-public boolean getBoolean(boolean dflt)
+public Value key()
 ```
 
-The bin as a boolean, or `dflt` when it is absent or nil; throws when it is of another kind.
+The record's user key - an integer, a string or a blob - or null when none was stored with the
+record, which is the server's default.
 
-#### `Bin.getString`
+#### `Record.digest`
 
 ```java
-public String getString()
+public byte[] digest()
 ```
 
-The text of a string bin, copied out; throws `UdfException` when it is absent or of another kind.
+The record's digest: the 20 bytes the server knows the record by.
 
-#### `Bin.getString`
+#### `Record.save`
 
 ```java
-public String getString(String dflt)
+public void save()
 ```
 
-The text of a string bin, or `dflt` when it is absent or nil; throws when it is of another kind.
+Writes the staged bins, creating the record when it does not exist. With nothing staged it is still
+a write: the server treats it as a touch, so the generation and the last-update time move. Throws
+`UdfException` when the record cannot be written.
 
-#### `Bin.getBytes`
+#### `Record.delete`
 
 ```java
-public byte[] getBytes()
+public void delete()
 ```
 
-The bytes of a string, blob, GeoJSON or HLL bin.
+Deletes the record, with whatever was staged; no `save` is needed. The server carries it out
+when the call returns. Throws `UdfException` when the record cannot be deleted.
 
-#### `Bin.getFloats`
+#### `RecordReader`
 
 ```java
-public int getFloats(float[] out)
+public interface RecordReader
 ```
 
-A blob of 32-bit floats straight into `out`, element for element; how many were copied.
-
-#### `Bin.asList`
-
-```java
-public Cursor<Value> asList()
+Reading a record: what the record of a call (`Record`) and a record an event hands over
+(`EventRecord`) have in common, so that a helper which only reads bins is written once and works
+on both.
+```text
+static long balanceOf(RecordReader rec) {
+return rec.getLong("balance", 0);
+}
 ```
-
-A walk over the list in this bin.
-
-#### `Bin.asMap`
-
-```java
-public Cursor<Cursor.Entry> asMap()
-```
-
-A walk over the entries of the map in this bin.
-
-#### `Bin.set`
-
-```java
-public void set(long value)
-```
-
-An integer.
-
-#### `Bin.set`
-
-```java
-public void set(double value)
-```
-
-A double.
-
-#### `Bin.set`
-
-```java
-public void set(boolean value)
-```
-
-A boolean.
-
-#### `Bin.set`
-
-```java
-public void set(String value)
-```
-
-A string, written as UTF-8.
-
-#### `Bin.set`
-
-```java
-public void set(byte[] value)
-```
-
-A blob.
-
-#### `Bin.set`
-
-```java
-public void set(Value value)
-```
-
-A value read from the record, by position, keeping its kind; or a scalar, guest bytes or a handle.
-
-#### `Bin.set`
-
-```java
-public void set(UdfMap value)
-```
-
-A built map.
-
-#### `Bin.set`
-
-```java
-public void set(UdfList value)
-```
-
-A built list.
-
-#### `Bin.setGeoJson`
-
-```java
-public void setGeoJson(String doc)
-```
-
-A GeoJSON document, kept as the geospatially indexable kind rather than a string.
-
-#### `Bin.setNull`
-
-```java
-public void setNull()
-```
-
-A nil bin.
-
-#### `Bin.setInts`
-
-```java
-public void setInts(long[] values)
-```
-
-A list of integers from the array, in one import, no value built per element.
-
-#### `Bin.setDoubles`
-
-```java
-public void setDoubles(double[] values)
-```
-
-A list of doubles from the array, in one import, no value built per element.
-
-#### `Bin.remove`
-
-```java
-public void remove()
-```
-
-Removes the bin from the record, staged like a write; throws `UdfException` when the host refuses.
+The readers come in two forms. Without a default, the bin must be there: the reader throws
+`UdfException` naming the bin when it is absent. With a default, an absent bin (or one holding
+nil) answers the default. Either way a bin of another kind throws: a wrong type is a bug to hear about,
+not a value to paper over.
 
 #### `Value`
 
@@ -319,10 +451,17 @@ Removes the bin from the record, staged like a write; throws `UdfException` when
 public final class Value
 ```
 
-The 16-byte value the host hands out, and the one a guest hands back in a batch: a kind, a length (bytes,
-elements or entries) and a payload, which is the scalar itself or, for a string, blob or collection the
-host holds, `source << 32 | offset`. A `Value` is reused: `read` refills it from a
-16-byte slot, so a hot loop allocates none.
+One value of the record, of an argument list or of a collection: an integer, a double, a boolean, nil,
+or a string, blob, GeoJSON, HLL, list or map that the server holds and this reads by position. A scalar
+is here whole; a string's text or a list's elements stay on the server until they are asked for
+(`asString`, `asList`), so handing a stored value on - into a bin, a builder, the result -
+copies nothing through the guest.
+The `is*` tests say what the value is, `kind` gives the same as one of the constants of
+this class, and each `as*` reader throws `UdfException` when the value is of another kind.
+A value read from the record, from an argument or from an iteration is never changed afterwards, so it
+can be kept for the rest of the call.
+`ofInt`, `ofStr` and the other factories make a value of the guest's own, for a
+builder, a bin or a result.
 
 #### `Value.ABSENT`
 
@@ -346,7 +485,7 @@ Nil.
 public static final int BOOL = 1
 ```
 
-A boolean; the payload is non-zero for true.
+A boolean.
 
 #### `Value.INT`
 
@@ -354,7 +493,7 @@ A boolean; the payload is non-zero for true.
 public static final int INT = 2
 ```
 
-A 64-bit integer; the payload is the integer.
+A 64-bit integer.
 
 #### `Value.DOUBLE`
 
@@ -362,7 +501,7 @@ A 64-bit integer; the payload is the integer.
 public static final int DOUBLE = 3
 ```
 
-A double; the payload is its bits, read with `asDouble`.
+A double.
 
 #### `Value.STR`
 
@@ -450,56 +589,24 @@ A GeoJSON document of the guest's own, handed to the host by address.
 public static final int HANDLE = 19
 ```
 
-A value built on the host, handed back by its handle, which is the payload.
+A value built on the host, handed back by its handle.
 
 #### `Value.kind`
 
 ```java
-public int kind = ABSENT
+public int kind()
 ```
 
-The kind, one of the constants of this class; `ABSENT` until the value is filled.
+The kind, one of the constants of this class.
 
-#### `Value.len`
+#### `Value.length`
 
 ```java
-public int len
+public int length()
 ```
 
-The length: bytes for a string or blob, elements for a list, entries for a map.
-
-#### `Value.payload`
-
-```java
-public long payload
-```
-
-The scalar itself (a double as its bits), a handle, or `source << 32 | offset` for a value the host
-holds.
-
-#### `Value.src`
-
-```java
-public int src()
-```
-
-The source handle a string, blob or collection sits in.
-
-#### `Value.at`
-
-```java
-public int at()
-```
-
-The offset in that source.
-
-#### `Value.asDouble`
-
-```java
-public double asDouble()
-```
-
-The payload as a double.
+The length: bytes for a string, blob, GeoJSON or HLL, elements for a list, entries for a map, and 0
+for a scalar.
 
 #### `Value.isAbsent`
 
@@ -508,184 +615,6 @@ public boolean isAbsent()
 ```
 
 Whether there is no value at all, which is not the same as nil.
-
-#### `Value.isStored`
-
-```java
-public boolean isStored()
-```
-
-Whether the value is a string, blob, GeoJSON, HLL, list or map the host holds (read by position).
-
-#### `Value.read`
-
-```java
-public Value read(byte[] buf, int off)
-```
-
-Refill from the 16-byte slot at `off` in `buf`, as the host wrote it (little-endian).
-
-#### `Value.set`
-
-```java
-public Value set(int kind, int len, long payload)
-```
-
-Sets the three fields and drops any guest bytes: the way to copy another value's fields, to keep one
-across cursor steps. Returns this.
-
-#### `Value.setInt`
-
-```java
-public Value setInt(long i)
-```
-
-Makes this an integer. Returns this, as every setter does.
-
-#### `Value.setDouble`
-
-```java
-public Value setDouble(double d)
-```
-
-Makes this a double.
-
-#### `Value.setBool`
-
-```java
-public Value setBool(boolean b)
-```
-
-Makes this a boolean.
-
-#### `Value.setNil`
-
-```java
-public Value setNil()
-```
-
-Makes this nil.
-
-#### `Value.setHandle`
-
-```java
-public Value setHandle(int handle)
-```
-
-A built collection, by handle.
-
-#### `Value.setStr`
-
-```java
-public Value setStr(String s)
-```
-
-A string of the guest's, as UTF-8 bytes the caller keeps alive until the batch is sent.
-
-#### `Value.setStrBytes`
-
-```java
-public Value setStrBytes(byte[] b)
-```
-
-A string of the guest's from UTF-8 bytes, all of `b`. The array is kept, not copied.
-
-#### `Value.setStrBytes`
-
-```java
-public Value setStrBytes(byte[] b, int len)
-```
-
-A string of the guest's from the first `len` bytes of `b`, as UTF-8. The array is kept, not
-copied.
-
-#### `Value.setBlob`
-
-```java
-public Value setBlob(byte[] b)
-```
-
-A blob of the guest's, all of `b`. The array is kept, not copied.
-
-#### `Value.setBlob`
-
-```java
-public Value setBlob(byte[] b, int len)
-```
-
-A blob of the guest's from the first `len` bytes of `b`. The array is kept, not copied.
-
-#### `Value.ofInt`
-
-```java
-public static Value ofInt(long i)
-```
-
-A fresh integer value.
-
-#### `Value.ofDouble`
-
-```java
-public static Value ofDouble(double d)
-```
-
-A fresh double value.
-
-#### `Value.ofBool`
-
-```java
-public static Value ofBool(boolean b)
-```
-
-A fresh boolean value.
-
-#### `Value.ofNil`
-
-```java
-public static Value ofNil()
-```
-
-A fresh nil value.
-
-#### `Value.ofHandle`
-
-```java
-public static Value ofHandle(int handle)
-```
-
-A fresh value for a built collection, by handle.
-
-#### `Value.ofStr`
-
-```java
-public static Value ofStr(String s)
-```
-
-A fresh string of the guest's, encoded as UTF-8.
-
-#### `Value.ofBlob`
-
-```java
-public static Value ofBlob(byte[] b)
-```
-
-A fresh blob of the guest's over `b`, which is kept, not copied.
-
-#### `Value.setGeoJson`
-
-```java
-public Value setGeoJson(byte[] doc, int len)
-```
-
-A GeoJSON document of the guest's, kept as that kind when it is pushed, put or returned.
-
-#### `Value.ofGeoJson`
-
-```java
-public static Value ofGeoJson(String doc)
-```
-
-A fresh GeoJSON document of the guest's, from its text.
 
 #### `Value.isNil`
 
@@ -733,7 +662,23 @@ Whether the value is a boolean.
 public boolean isString()
 ```
 
-Whether the value is a string the host holds; false for a string of the guest's.
+Whether the value is a string.
+
+#### `Value.isBlob`
+
+```java
+public boolean isBlob()
+```
+
+Whether the value is a blob.
+
+#### `Value.isGeoJson`
+
+```java
+public boolean isGeoJson()
+```
+
+Whether the value is a GeoJSON document.
 
 #### `Value.isList`
 
@@ -751,6 +696,14 @@ public boolean isMap()
 
 Whether the value is a map the host holds; false for a built one, which is a handle.
 
+#### `Value.isStored`
+
+```java
+public boolean isStored()
+```
+
+Whether the value is a string, blob, GeoJSON, HLL, list or map the host holds (read by position).
+
 #### `Value.asLong`
 
 ```java
@@ -758,6 +711,14 @@ public long asLong()
 ```
 
 The integer; throws `UdfException` when the value is of another kind.
+
+#### `Value.asDouble`
+
+```java
+public double asDouble()
+```
+
+The double; throws `UdfException` when the value is of another kind. An integer is not widened.
 
 #### `Value.asBoolean`
 
@@ -773,7 +734,7 @@ The boolean; throws `UdfException` when the value is of another kind.
 public String asString()
 ```
 
-The text of a stored string, copied out.
+The text of a string, copied out; throws `UdfException` when the value is of another kind.
 
 #### `Value.asBytes`
 
@@ -781,79 +742,297 @@ The text of a stored string, copied out.
 public byte[] asBytes()
 ```
 
-The bytes of a stored string, blob, GeoJSON or HLL, copied out.
+The bytes of a string, blob, GeoJSON or HLL, copied out; throws `UdfException` when the value
+is of another kind.
+
+#### `Value.readBytes`
+
+```java
+public int readBytes(byte[] into)
+```
+
+Copies the bytes of a stored string, blob, GeoJSON or HLL into `into`, which the caller keeps
+and reuses, and returns how many there were. Throws `UdfException` when the value is of another
+kind or does not fit.
+
+#### `Value.readFloats`
+
+```java
+public int readFloats(float[] into)
+```
+
+Copies a stored blob of little-endian 32-bit floats straight into `into`, element for element -
+the way a vector is read without converting it - and returns how many floats there were. Throws
+`UdfException` when the value is not a blob or does not fit.
 
 #### `Value.asList`
 
 ```java
-public Cursor<Value> asList()
+public ListValue asList()
 ```
 
-A walk over a stored list.
+The list this value is, to index and iterate; throws `UdfException` when it is not a list.
 
 #### `Value.asMap`
 
 ```java
-public Cursor<Cursor.Entry> asMap()
+public MapValue asMap()
 ```
 
-A walk over a stored map's entries.
+The map this value is, to look up in and iterate; throws `UdfException` when it is not a map.
 
-#### `Cursor`
+#### `Value.toObject`
 
 ```java
-public final class Cursor<T> implements AutoCloseable, Iterable<T>
+public Object toObject()
 ```
 
-A walk over a stored list or map, the Java face of the Rust SDK's `Coll::iter` and
-`entries`. A list cursor is an `Iterable<Value>`, a map cursor an `Iterable<Entry>`,
-so the natural form is a for-each, over a fresh element each time:
-```text
-for (Value v : L.asList()) {
-total += v.asLong();
-}
-for (var e : COUNTS.asMap()) {
-offer(e.key.asString(), e.value.asLong());
-}
-```
-The `while` form allocates nothing: `next` steps, refilling the reused `value`
-(and, for a map, `key`) from a window of 32 values per import, and a value to keep across steps
-is copied with `Value#set`. Either way the cursor closes itself when the walk ends, and
-`close` closes it early, so an early `break` goes inside a try-with-resources:
-```text
-try (Cursor<Entry> c = COUNTS.asMap()) {
-while (c.next()) {
-... c.key, c.value ...
-}
-}
-```
-Cursors nest (a list inside a map), as long as the inner one is closed, by exhaustion or by hand,
-before the outer one steps on: the host releases cursor slots last in, first out.
-@param &lt;T&gt; what the for-each yields: `Value` for a list, `Entry` for a map
+The value as a plain Java object, copied out whole: `Long`, `Double`, `Boolean`,
+`String` (a GeoJSON document as its text), `byte[]`, a `java.util.List` or a
+`java.util.Map` of the same, and `null` for nil or absent.
 
-#### `Cursor.Entry`
+#### `Value.compareStored`
+
+```java
+public int compareStored(Value other)
+```
+
+Compares two stored values byte by byte, as memcmp would on their stored encodings, without copying
+either: negative, zero or positive. It is the last resort of a convergent merge, which needs some
+order that both sides compute alike. Throws `UdfException` when either is not a stored value.
+
+#### `Value.ofInt`
+
+```java
+public static Value ofInt(long i)
+```
+
+An integer value.
+
+#### `Value.ofDouble`
+
+```java
+public static Value ofDouble(double d)
+```
+
+A double value.
+
+#### `Value.ofBool`
+
+```java
+public static Value ofBool(boolean b)
+```
+
+A boolean value.
+
+#### `Value.ofNil`
+
+```java
+public static Value ofNil()
+```
+
+A nil value.
+
+#### `Value.ofStr`
+
+```java
+public static Value ofStr(String s)
+```
+
+A string of the guest's, encoded as UTF-8.
+
+#### `Value.ofBlob`
+
+```java
+public static Value ofBlob(byte[] b)
+```
+
+A blob of the guest's over `b`, which is kept, not copied.
+
+#### `Value.ofGeoJson`
+
+```java
+public static Value ofGeoJson(String doc)
+```
+
+A GeoJSON document of the guest's, from its text; kept as that kind when it is stored or returned.
+
+#### `ListValue`
+
+```java
+public final class ListValue implements Iterable<Value>
+```
+
+A list the server holds - a list bin, an element of another collection, an argument - to read: its
+size, an element by index, and every element in order. It is read where it is, so nothing is copied
+until an element is asked for, and an element that is itself a list or map is another view.
+```text
+ListValue tags = rec.getList("tags");
+for (Value tag : tags) {
+if (tag.asString().equals(wanted)) {
+break;            // leaving early is fine
+}
+}
+long first = tags.getLong(0);
+```
+The typed readers (`getLong(int)` and the rest) throw `UdfException` naming the index
+when the element is of another kind, and so does every reader for an index past the end. A list is
+read-only: to change one, build another (`ListBuilder`) and write that. `toList` copies
+the whole list out as a `java.util.List`.
+
+#### `ListValue.size`
+
+```java
+public int size()
+```
+
+How many elements the list has.
+
+#### `ListValue.isEmpty`
+
+```java
+public boolean isEmpty()
+```
+
+Whether the list has no elements.
+
+#### `ListValue.asValue`
+
+```java
+public Value asValue()
+```
+
+The list as the one value it is, to hand on: into a bin, a builder or the result, by position.
+
+#### `ListValue.get`
+
+```java
+public Value get(int index)
+```
+
+The element at `index`, counted from 0; throws `UdfException` when the list has no such
+element. The server steps over the elements before it without decoding them.
+
+#### `ListValue.getLong`
+
+```java
+public long getLong(int index)
+```
+
+The integer at `index`; throws `UdfException` naming the index when it is not one.
+
+#### `ListValue.getDouble`
+
+```java
+public double getDouble(int index)
+```
+
+The double at `index`; an integer is not widened.
+
+#### `ListValue.getBoolean`
+
+```java
+public boolean getBoolean(int index)
+```
+
+The boolean at `index`.
+
+#### `ListValue.getString`
+
+```java
+public String getString(int index)
+```
+
+The text of the string at `index`, copied out.
+
+#### `ListValue.getBytes`
+
+```java
+public byte[] getBytes(int index)
+```
+
+The bytes of the string, blob, GeoJSON or HLL at `index`, copied out.
+
+#### `ListValue.getList`
+
+```java
+public ListValue getList(int index)
+```
+
+The list at `index`.
+
+#### `ListValue.getMap`
+
+```java
+public MapValue getMap(int index)
+```
+
+The map at `index`.
+
+#### `ListValue.contains`
+
+```java
+public boolean contains(String text)
+```
+
+Whether the list holds the string `text`.
+
+#### `ListValue.contains`
+
+```java
+public boolean contains(long i)
+```
+
+Whether the list holds the integer `i`.
+
+#### `ListValue.iterator`
+
+```java
+public Iterator<Value> iterator()
+```
+
+The elements in order, a fresh `Value` each, so one can be kept after the loop moves on. The
+loop may be left early.
+
+#### `ListValue.toList`
+
+```java
+public List<Object> toList()
+```
+
+The whole list copied out as a `java.util.List`, each element as `Value#toObject` gives
+it; a nested list or map is copied too.
+
+#### `MapValue`
+
+```java
+public final class MapValue implements Iterable<MapValue.Entry>
+```
+
+A map the server holds - a map bin, an element of another collection, an argument - to read: an entry
+by its key, which is a string or an integer, and every entry in the order the server keeps them. It is
+read where it is, so nothing is copied until an entry is asked for.
+```text
+MapValue device = rec.getMap("device");
+long version = device.getLong("version", 0);     // 0 when there is no such key
+String id = device.getString("deviceId");        // throws when there is no such key
+for (MapValue.Entry e : rec.getMap("counts")) {
+total += e.getValue().asLong();
+}
+```
+`get(String)` answers `null` for a key the map does not have, as a `java.util.Map`
+does. A typed reader without a default throws `UdfException` naming the key when the map has no
+such key; one with a default answers the default for a missing key or a nil entry; either throws when
+the entry is of another kind. A map is read-only: to change one, build another (`MapBuilder`) and
+write that. `toMap` copies the whole map out as a `java.util.Map`.
+
+#### `MapValue.Entry`
 
 ```java
 public static final class Entry implements Map.Entry<Value, Value>
 ```
 
-One entry of a stored map, as a map cursor's for-each yields it: a key and a value, both fresh.
-
-#### `Entry.key`
-
-```java
-public final Value key
-```
-
-The entry's key.
-
-#### `Entry.value`
-
-```java
-public final Value value
-```
-
-The entry's value.
+One entry of a stored map: a key and a value, both read-only and both safe to keep.
 
 #### `Entry.getKey`
 
@@ -861,7 +1040,7 @@ The entry's value.
 public Value getKey()
 ```
 
-The key: the same object as `key`.
+The entry's key: a string or an integer, as a rule.
 
 #### `Entry.getValue`
 
@@ -869,7 +1048,7 @@ The key: the same object as `key`.
 public Value getValue()
 ```
 
-The value: the same object as `value`.
+The entry's value.
 
 #### `Entry.setValue`
 
@@ -877,95 +1056,470 @@ The value: the same object as `value`.
 public Value setValue(Value v)
 ```
 
-Entries are read-only.
+A stored map is read-only: this throws `UnsupportedOperationException`.
 
-#### `Cursor.value`
-
-```java
-public final Value value = new Value()
-```
-
-The current element, or the current entry's value for a map.
-
-#### `Cursor.key`
+#### `MapValue.size`
 
 ```java
-public final Value key = new Value()
+public int size()
 ```
 
-The current entry's key, for a map; untouched for a list.
+How many entries the map has.
 
-#### `Cursor.next`
+#### `MapValue.isEmpty`
 
 ```java
-public boolean next()
+public boolean isEmpty()
 ```
 
-Steps to the next element or entry; false at the end, when the cursor has closed itself.
+Whether the map has no entries.
 
-#### `Cursor.close`
+#### `MapValue.asValue`
 
 ```java
-public void close()
+public Value asValue()
 ```
 
-Gives the host's cursor slot back; harmless when already closed.
+The map as the one value it is, to hand on: into a bin, a builder or the result, by position.
 
-#### `Cursor.iterator`
+#### `MapValue.get`
 
 ```java
-public Iterator<T> iterator()
+public Value get(String key)
 ```
 
-The elements or entries, a fresh one each; the walk closes the cursor when it reaches the end.
+The value under `key`, or null when the map has no such key.
 
-#### `UdfMap`
+#### `MapValue.containsKey`
 
 ```java
-public final class UdfMap
+public boolean containsKey(String key)
 ```
 
-A map built on the host, to be written to a bin, returned as a result, nested in another collection or
-handed back from an event handler: the Java face of the Rust SDK's `Map`. Every `put` is one
-import and throws `UdfException` when the host refuses it; they chain. The map lives until the
-call ends. `handle` is what the low-level `Udf.mapPut*` calls take, for a hot path.
+Whether the map has `key`.
+
+#### `MapValue.getLong`
+
+```java
+public long getLong(String key)
+```
+
+The integer under `key`; throws `UdfException` when there is none or it is not one.
+
+#### `MapValue.getLong`
+
+```java
+public long getLong(String key, long dflt)
+```
+
+The integer under `key`, or `dflt` when there is none; throws when it is of another kind.
+
+#### `MapValue.getDouble`
+
+```java
+public double getDouble(String key)
+```
+
+The double under `key`; an integer is not widened.
+
+#### `MapValue.getDouble`
+
+```java
+public double getDouble(String key, double dflt)
+```
+
+The double under `key`, or `dflt` when there is none.
+
+#### `MapValue.getBoolean`
+
+```java
+public boolean getBoolean(String key)
+```
+
+The boolean under `key`.
+
+#### `MapValue.getBoolean`
+
+```java
+public boolean getBoolean(String key, boolean dflt)
+```
+
+The boolean under `key`, or `dflt` when there is none.
+
+#### `MapValue.getString`
+
+```java
+public String getString(String key)
+```
+
+The text of the string under `key`, copied out.
+
+#### `MapValue.getString`
+
+```java
+public String getString(String key, String dflt)
+```
+
+The text of the string under `key`, or `dflt` when there is none.
+
+#### `MapValue.getBytes`
+
+```java
+public byte[] getBytes(String key)
+```
+
+The bytes of the string, blob, GeoJSON or HLL under `key`, copied out.
+
+#### `MapValue.getBytes`
+
+```java
+public byte[] getBytes(String key, byte[] dflt)
+```
+
+The bytes under `key`, or `dflt` when there is none.
+
+#### `MapValue.getList`
+
+```java
+public ListValue getList(String key)
+```
+
+The list under `key`.
+
+#### `MapValue.getList`
+
+```java
+public ListValue getList(String key, ListValue dflt)
+```
+
+The list under `key`, or `dflt` (which may be null) when there is none.
+
+#### `MapValue.getMap`
+
+```java
+public MapValue getMap(String key)
+```
+
+The map under `key`.
+
+#### `MapValue.getMap`
+
+```java
+public MapValue getMap(String key, MapValue dflt)
+```
+
+The map under `key`, or `dflt` (which may be null) when there is none.
+
+#### `MapValue.get`
+
+```java
+public Value get(long key)
+```
+
+The value under the integer `key`, or null when the map has no such key.
+
+#### `MapValue.containsKey`
+
+```java
+public boolean containsKey(long key)
+```
+
+Whether the map has the integer `key`.
+
+#### `MapValue.getLong`
+
+```java
+public long getLong(long key)
+```
+
+The integer under the integer `key`; throws when there is none or it is not one.
+
+#### `MapValue.getLong`
+
+```java
+public long getLong(long key, long dflt)
+```
+
+The integer under the integer `key`, or `dflt` when there is none.
+
+#### `MapValue.getDouble`
+
+```java
+public double getDouble(long key)
+```
+
+The double under the integer `key`; an integer is not widened.
+
+#### `MapValue.getDouble`
+
+```java
+public double getDouble(long key, double dflt)
+```
+
+The double under the integer `key`, or `dflt` when there is none.
+
+#### `MapValue.getBoolean`
+
+```java
+public boolean getBoolean(long key)
+```
+
+The boolean under the integer `key`.
+
+#### `MapValue.getBoolean`
+
+```java
+public boolean getBoolean(long key, boolean dflt)
+```
+
+The boolean under the integer `key`, or `dflt` when there is none.
+
+#### `MapValue.getString`
+
+```java
+public String getString(long key)
+```
+
+The text of the string under the integer `key`, copied out.
+
+#### `MapValue.getString`
+
+```java
+public String getString(long key, String dflt)
+```
+
+The text of the string under the integer `key`, or `dflt` when there is none.
+
+#### `MapValue.getBytes`
+
+```java
+public byte[] getBytes(long key)
+```
+
+The bytes of the string, blob, GeoJSON or HLL under the integer `key`, copied out.
+
+#### `MapValue.getBytes`
+
+```java
+public byte[] getBytes(long key, byte[] dflt)
+```
+
+The bytes under the integer `key`, or `dflt` when there is none.
+
+#### `MapValue.getList`
+
+```java
+public ListValue getList(long key)
+```
+
+The list under the integer `key`.
+
+#### `MapValue.getList`
+
+```java
+public ListValue getList(long key, ListValue dflt)
+```
+
+The list under the integer `key`, or `dflt` (which may be null) when there is none.
+
+#### `MapValue.getMap`
+
+```java
+public MapValue getMap(long key)
+```
+
+The map under the integer `key`.
+
+#### `MapValue.getMap`
+
+```java
+public MapValue getMap(long key, MapValue dflt)
+```
+
+The map under the integer `key`, or `dflt` (which may be null) when there is none.
+
+#### `MapValue.iterator`
+
+```java
+public Iterator<Entry> iterator()
+```
+
+The entries in the order the server keeps them, a fresh key and value each, so an entry can be kept
+after the loop moves on. The loop may be left early.
+
+#### `ListBuilder`
+
+```java
+public final class ListBuilder
+```
+
+A list being built on the server, to be written to a bin, returned as the result, nested in another
+collection or handed back from an event handler. `Udf#list()` starts one; every `add` is
+one call to the host, appends, and returns the builder, so they chain; one that the host refuses throws
+`UdfException`. The list lives until the call ends.
 ```text
-UdfMap out = UdfMap.create(2).put("visits", visits).put("tags", tags);
+ListBuilder tags = Udf.list().add("a").add("b").addAll(rec.getList("more"));
+rec.set("tags", tags);
 ```
+It is a builder, not a collection: what went in is not read back from it. To read a list, read the
+stored one (`ListValue`); to build from plain Java data, `addAll(Iterable)` takes a
+`java.util.List`.
 
-#### `UdfMap.create`
+#### `ListBuilder.size`
 
 ```java
-public static UdfMap create(int capacity)
+public int size()
 ```
 
-A new map with room for `capacity` entries.
+How many elements have been added.
 
-#### `UdfMap.create`
+#### `ListBuilder.isEmpty`
 
 ```java
-public static UdfMap create()
+public boolean isEmpty()
 ```
 
-A new map with the default room, for 8 entries.
+Whether nothing has been added.
 
-#### `UdfMap.wrap`
+#### `ListBuilder.asValue`
 
 ```java
-public static UdfMap wrap(int handle)
+public Value asValue()
 ```
 
-A map over a handle the low-level calls built.
+The list as a value, to put where a `Value` is taken.
 
-#### `UdfMap.handle`
+#### `ListBuilder.add`
 
 ```java
-public int handle()
+public ListBuilder add(long value)
 ```
 
-The host's handle on the map, as the low-level `Udf.mapPut*` calls take it.
+Appends an integer.
 
-#### `UdfMap.size`
+#### `ListBuilder.add`
+
+```java
+public ListBuilder add(double value)
+```
+
+Appends a double.
+
+#### `ListBuilder.add`
+
+```java
+public ListBuilder add(boolean value)
+```
+
+Appends a boolean.
+
+#### `ListBuilder.add`
+
+```java
+public ListBuilder add(String value)
+```
+
+Appends a string.
+
+#### `ListBuilder.add`
+
+```java
+public ListBuilder add(byte[] value)
+```
+
+Appends a blob.
+
+#### `ListBuilder.add`
+
+```java
+public ListBuilder add(Value value)
+```
+
+Appends a value of any kind: a scalar, a string or blob of the guest's, a stored value by position
+(so a nested document goes in exactly as it is stored), a built collection.
+
+#### `ListBuilder.add`
+
+```java
+public ListBuilder add(MapBuilder value)
+```
+
+Appends a built map, nested.
+
+#### `ListBuilder.add`
+
+```java
+public ListBuilder add(ListBuilder value)
+```
+
+Appends a built list, nested.
+
+#### `ListBuilder.add`
+
+```java
+public ListBuilder add(List<?> value)
+```
+
+Appends a `java.util.List` as one nested list, its elements as `addAll(Iterable)` takes them.
+
+#### `ListBuilder.add`
+
+```java
+public ListBuilder add(Map<?, ?> value)
+```
+
+Appends a `java.util.Map` as one nested map, its entries as `MapBuilder#putAll(Map)` takes them.
+
+#### `ListBuilder.addNull`
+
+```java
+public ListBuilder addNull()
+```
+
+Appends nil.
+
+#### `ListBuilder.addGeoJson`
+
+```java
+public ListBuilder addGeoJson(String doc)
+```
+
+Appends a GeoJSON document, kept as that kind rather than a string.
+
+#### `ListBuilder.addAll`
+
+```java
+public ListBuilder addAll(Iterable<?> items)
+```
+
+Appends every element of `items`, one by one: a stored list (`ListValue`), whose
+elements go in by position, or a `java.util.List` or other iterable of `Long`,
+`Integer`, `Double`, `Boolean`, `String`, `byte[]`, `Value`,
+builders, nested `java.util` lists and maps, and `null` for nil. Anything else throws
+`UdfException`.
+
+#### `MapBuilder`
+
+```java
+public final class MapBuilder
+```
+
+A map being built on the server, to be written to a bin, returned as the result, nested in another
+collection or handed back from an event handler. `Udf#map()` starts one; every `put` is one
+call to the host and returns the builder, so they chain; one that the host refuses throws
+`UdfException`. A key is a string or an integer. The map is ordered by key, whatever order its
+entries are put in, and lives until the call ends.
+```text
+MapBuilder out = Udf.map().put("visits", visits).put("tags", tags);
+if (!out.containsKey("profile")) {
+out.put("profile", profile);
+}
+```
+It is a builder, not a collection: `containsKey` and `size` are all it answers about
+what went in. To read a map, read the stored one (`MapValue`); to build from plain Java data,
+`putAll(Map)` takes a `java.util.Map`.
+
+#### `MapBuilder.size`
 
 ```java
 public int size()
@@ -973,311 +1527,241 @@ public int size()
 
 How many entries the map holds.
 
-#### `UdfMap.asValue`
+#### `MapBuilder.isEmpty`
+
+```java
+public boolean isEmpty()
+```
+
+Whether the map holds nothing.
+
+#### `MapBuilder.asValue`
 
 ```java
 public Value asValue()
 ```
 
-As a value, for a batch or a result.
+The map as a value, to put where a `Value` is taken.
 
-#### `UdfMap.has`
+#### `MapBuilder.containsKey`
 
 ```java
-public boolean has(String key)
+public boolean containsKey(String key)
 ```
 
-Whether the map holds `key`: it packs the map, so for the occasional check, not a loop.
+Whether an entry has been put under `key`: one call to the host, which asks the map itself.
 
-#### `UdfMap.put`
+#### `MapBuilder.containsKey`
 
 ```java
-public UdfMap put(String key, long value)
+public boolean containsKey(long key)
+```
+
+Whether an entry has been put under the integer `key`.
+
+#### `MapBuilder.put`
+
+```java
+public MapBuilder put(String key, long value)
 ```
 
 An integer under a string key.
 
-#### `UdfMap.put`
+#### `MapBuilder.put`
 
 ```java
-public UdfMap put(String key, double value)
+public MapBuilder put(String key, double value)
 ```
 
 A double under a string key.
 
-#### `UdfMap.put`
+#### `MapBuilder.put`
 
 ```java
-public UdfMap put(String key, boolean value)
+public MapBuilder put(String key, boolean value)
 ```
 
 A boolean under a string key.
 
-#### `UdfMap.put`
+#### `MapBuilder.put`
 
 ```java
-public UdfMap put(String key, String value)
+public MapBuilder put(String key, String value)
 ```
 
 A string under a string key.
 
-#### `UdfMap.put`
+#### `MapBuilder.put`
 
 ```java
-public UdfMap put(String key, byte[] value)
+public MapBuilder put(String key, byte[] value)
 ```
 
-A blob.
+A blob under a string key.
 
-#### `UdfMap.put`
+#### `MapBuilder.put`
 
 ```java
-public UdfMap put(String key, Value value)
+public MapBuilder put(String key, Value value)
 ```
 
-A value of any kind: a scalar, guest bytes, a stored value by position, a built collection.
+A value of any kind under a string key: a scalar, a string or blob of the guest's, a stored value by
+position (so a nested document goes in exactly as it is stored), a built collection.
 
-#### `UdfMap.put`
+#### `MapBuilder.put`
 
 ```java
-public UdfMap put(String key, UdfMap value)
+public MapBuilder put(String key, MapBuilder value)
 ```
 
 A built map, nested under a string key.
 
-#### `UdfMap.put`
+#### `MapBuilder.put`
 
 ```java
-public UdfMap put(String key, UdfList value)
+public MapBuilder put(String key, ListBuilder value)
 ```
 
 A built list, nested under a string key.
 
-#### `UdfMap.putNull`
+#### `MapBuilder.put`
 
 ```java
-public UdfMap putNull(String key)
+public MapBuilder put(String key, List<?> value)
 ```
 
-A nil entry: in a record answer, "no such bin".
+A `java.util.List` as a nested list under a string key.
 
-#### `UdfMap.putGeoJson`
+#### `MapBuilder.put`
 
 ```java
-public UdfMap putGeoJson(String key, String doc)
+public MapBuilder put(String key, Map<?, ?> value)
+```
+
+A `java.util.Map` as a nested map under a string key.
+
+#### `MapBuilder.putNull`
+
+```java
+public MapBuilder putNull(String key)
+```
+
+A nil entry: in a record an event handler answers with, "no such bin".
+
+#### `MapBuilder.putGeoJson`
+
+```java
+public MapBuilder putGeoJson(String key, String doc)
 ```
 
 A GeoJSON document under a string key, kept as that kind rather than a string.
 
-#### `UdfMap.put`
+#### `MapBuilder.put`
 
 ```java
-public UdfMap put(long key, long value)
+public MapBuilder put(long key, long value)
 ```
 
 An integer under an integer key.
 
-#### `UdfMap.put`
+#### `MapBuilder.put`
 
 ```java
-public UdfMap put(long key, String value)
+public MapBuilder put(long key, double value)
+```
+
+A double under an integer key.
+
+#### `MapBuilder.put`
+
+```java
+public MapBuilder put(long key, boolean value)
+```
+
+A boolean under an integer key.
+
+#### `MapBuilder.put`
+
+```java
+public MapBuilder put(long key, String value)
 ```
 
 A string under an integer key.
 
-#### `UdfMap.put`
+#### `MapBuilder.put`
 
 ```java
-public UdfMap put(long key, Value value)
+public MapBuilder put(long key, byte[] value)
+```
+
+A blob under an integer key.
+
+#### `MapBuilder.put`
+
+```java
+public MapBuilder put(long key, Value value)
 ```
 
 A value of any kind under an integer key, the kinds as `put(String, Value)` takes them.
 
-#### `UdfMap.put`
+#### `MapBuilder.put`
 
 ```java
-public UdfMap put(long key, UdfMap value)
+public MapBuilder put(long key, MapBuilder value)
 ```
 
 A built map, nested under an integer key.
 
-#### `UdfMap.put`
+#### `MapBuilder.put`
 
 ```java
-public UdfMap put(long key, UdfList value)
+public MapBuilder put(long key, ListBuilder value)
 ```
 
 A built list, nested under an integer key.
 
-#### `UdfMap.putAll`
+#### `MapBuilder.put`
 
 ```java
-public UdfMap putAll(Value[] pairs, int n)
+public MapBuilder put(long key, List<?> value)
 ```
 
-The first `n` pairs of `pairs` in one import.
+A `java.util.List` as a nested list under an integer key.
 
-#### `UdfMap.putAll`
+#### `MapBuilder.put`
 
 ```java
-public UdfMap putAll(Value stored)
+public MapBuilder put(long key, Map<?, ?> value)
 ```
 
-Every entry of a stored map, by position.
+A `java.util.Map` as a nested map under an integer key.
 
-#### `UdfList`
+#### `MapBuilder.putNull`
 
 ```java
-public final class UdfList
+public MapBuilder putNull(long key)
 ```
 
-A list built on the host: the Java face of the Rust SDK's `List`. Every `add` is one import
-and throws `UdfException` when the host refuses it; they chain. See `UdfMap`.
+A nil entry under an integer key.
 
-#### `UdfList.create`
+#### `MapBuilder.putAll`
 
 ```java
-public static UdfList create(int capacity)
+public MapBuilder putAll(MapValue stored)
 ```
 
-A new list with room for `capacity` elements, which it grows past; throws `UdfException` when
-the host cannot build it.
+Every entry of a stored map, each value by position.
 
-#### `UdfList.create`
+#### `MapBuilder.putAll`
 
 ```java
-public static UdfList create()
+public MapBuilder putAll(Map<?, ?> entries)
 ```
 
-A new list with the default room, for 8 elements.
-
-#### `UdfList.wrap`
-
-```java
-public static UdfList wrap(int handle)
-```
-
-A list over a handle the low-level calls built.
-
-#### `UdfList.handle`
-
-```java
-public int handle()
-```
-
-The host's handle on the list, as the low-level `Udf.listPush*` calls take it.
-
-#### `UdfList.size`
-
-```java
-public int size()
-```
-
-How many elements the list holds.
-
-#### `UdfList.asValue`
-
-```java
-public Value asValue()
-```
-
-As a value, for a batch or a result.
-
-#### `UdfList.add`
-
-```java
-public UdfList add(long value)
-```
-
-Appends an integer.
-
-#### `UdfList.add`
-
-```java
-public UdfList add(double value)
-```
-
-Appends a double.
-
-#### `UdfList.add`
-
-```java
-public UdfList add(boolean value)
-```
-
-Appends a boolean.
-
-#### `UdfList.add`
-
-```java
-public UdfList add(String value)
-```
-
-Appends a string.
-
-#### `UdfList.add`
-
-```java
-public UdfList add(byte[] value)
-```
-
-A blob.
-
-#### `UdfList.add`
-
-```java
-public UdfList add(Value value)
-```
-
-A value of any kind: a scalar, guest bytes, a stored value by position, a built collection.
-
-#### `UdfList.add`
-
-```java
-public UdfList add(UdfMap value)
-```
-
-Appends a built map, nested.
-
-#### `UdfList.add`
-
-```java
-public UdfList add(UdfList value)
-```
-
-Appends a built list, nested.
-
-#### `UdfList.addNull`
-
-```java
-public UdfList addNull()
-```
-
-Appends nil.
-
-#### `UdfList.addGeoJson`
-
-```java
-public UdfList addGeoJson(String doc)
-```
-
-Appends a GeoJSON document, kept as that kind rather than a string.
-
-#### `UdfList.addAll`
-
-```java
-public UdfList addAll(Value[] values, int n)
-```
-
-The first `n` of `values` in one import.
-
-#### `UdfList.addAll`
-
-```java
-public UdfList addAll(Value stored)
-```
-
-Every element of a stored list, by position.
+Every entry of a `java.util.Map`: a key is a `String` or an integer, a value a
+`Long`, `Integer`, `Double`, `Boolean`, `String`, `byte[]`,
+`Value`, a builder, a nested `java.util` list or map, or `null` for nil. Anything
+else throws `UdfException`.
 
 #### `Udf`
 
@@ -1286,66 +1770,22 @@ public final class Udf
 ```
 
 Aerospike WASM UDFs in Java, for the server's mod-wamr engine, compiled with TeaVM's linear-memory
-WebAssembly backend. The contract is the one the Rust SDK (aerospike-udf-sdk-wasm) documents: every read
-is a 16-byte `Value`, a string or collection is read by position from a source the host holds,
-nothing is msgpack. A UDF is an exported static method `int name(int args, int argc)` returning 0 on
-success, which sets its result with `result*` and fails with `fail`. A stream (aggregation)
-UDF exports `<name>_record` and `<name>_end`.
-Names and text cross as UTF-8 bytes: every method taking a `String` has a `byte[]` twin,
-and a hot path keeps its names as `byte[]` constants (`bytes`) so it allocates nothing.
-One rule of this backend shapes the code: the address of an array is valid only until the next
-allocation, since the collector may move it, so an address is always taken inside the expression that
-hands it to the host and never kept.
-
-#### `Udf.OK`
-
-```java
-public static final int OK = 0
+WebAssembly backend. This class is what a UDF reaches for that is not about the record: the clock, the
+server's log, the builders of lists and maps, timers, and - for a function written in the raw form -
+the result and the failure. Everything about the record is a method of the `Record` a function
+takes as its first parameter.
+```text
+@Function("increment")
+static long increment(Record rec, long by) {
+long n = rec.getLong("n", 0) + by;
+rec.set("n", n);
+rec.save();
+return n;
+}
 ```
-
-The call succeeded.
-
-#### `Udf.ERR`
-
-```java
-public static final int ERR = -1
-```
-
-The call failed on what it was given, such as a bin name that is empty or longer than 15 bytes, or a
-handle the host does not hold.
-
-#### `Udf.NOT_FOUND`
-
-```java
-public static final int NOT_FOUND = -2
-```
-
-There is no such bin, key or entry.
-
-#### `Udf.TYPE_MISMATCH`
-
-```java
-public static final int TYPE_MISMATCH = -3
-```
-
-The value is not of a kind the call takes.
-
-#### `Udf.REFUSED`
-
-```java
-public static final int REFUSED = -4
-```
-
-The host refused the operation: a write the record does not accept, or a call not allowed where it was
-made.
-
-#### `Udf.NEEDED_BASE`
-
-```java
-public static final int NEEDED_BASE = -16
-```
-
-The buffer was too small: a status at or below this carries the size needed, `-(rc) - 16`.
+The contract underneath is the one the Rust SDK (aerospike-udf-sdk-wasm) documents: every read is a
+16-byte `Value`, a string or collection is read by position from a source the host holds, nothing
+is msgpack. `LowLevel` has that contract one call at a time, for code that must allocate nothing.
 
 #### `Udf.LOG_WARN`
 
@@ -1371,285 +1811,6 @@ public static final int LOG_DEBUG = 2
 
 A `log` level: a debug line in the server log.
 
-#### `Udf.BATCH`
-
-```java
-public static final int BATCH = 128
-```
-
-Values cross the boundary at most this many per import.
-
-#### `Udf.bytes`
-
-```java
-public static byte[] bytes(String s)
-```
-
-The UTF-8 bytes of a string; keep the result in a constant for a name used on every call.
-
-#### `Udf.string`
-
-```java
-public static String string(byte[] b, int len)
-```
-
-A string from the first `len` bytes of `b`, decoded as UTF-8.
-
-#### `Udf.bin`
-
-```java
-public static int bin(byte[] name, Value out)
-```
-
-Reads a bin of any kind in one import. The status is NOT_FOUND for no such bin.
-
-#### `Udf.bin`
-
-```java
-public static int bin(String name, Value out)
-```
-
-As `bin(byte[], Value)`, encoding the name on each call.
-
-#### `Udf.binInt`
-
-```java
-public static long binInt(String name)
-```
-
-An integer bin; throws `UdfException` when it is absent or of another kind.
-
-#### `Udf.binDouble`
-
-```java
-public static double binDouble(String name)
-```
-
-A double bin; throws `UdfException` when it is absent or of another kind. An integer bin is not
-widened.
-
-#### `Udf.binBool`
-
-```java
-public static boolean binBool(String name)
-```
-
-A boolean bin; throws `UdfException` when it is absent or of another kind.
-
-#### `Udf.binStr`
-
-```java
-public static String binStr(String name)
-```
-
-The text of a string bin, copied out; throws `UdfException` when it is absent or of another kind.
-
-#### `Udf.binBytes`
-
-```java
-public static byte[] binBytes(String name)
-```
-
-The bytes of a string, blob, GeoJSON or HLL bin.
-
-#### `Udf.binList`
-
-```java
-public static Value binList(String name)
-```
-
-A list bin, as a fresh value to walk or hand on by position.
-
-#### `Udf.binMap`
-
-```java
-public static Value binMap(String name)
-```
-
-A map bin, as a fresh value to walk, look up in or hand on by position.
-
-#### `Udf.list`
-
-```java
-public static Cursor<Value> list(Value v)
-```
-
-A walk over a stored list; see `Cursor`. Throws when the value is not a list.
-
-#### `Udf.list`
-
-```java
-public static Cursor<Value> list(String name)
-```
-
-A walk over the list in a bin.
-
-#### `Udf.map`
-
-```java
-public static Cursor<Cursor.Entry> map(Value v)
-```
-
-A walk over a stored map's entries: `key` and `value` per step.
-
-#### `Udf.map`
-
-```java
-public static Cursor<Cursor.Entry> map(String name)
-```
-
-A walk over the entries of the map in a bin.
-
-#### `Udf.bytes`
-
-```java
-public static int bytes(Value v, byte[] buf)
-```
-
-Copies the bytes of a string, blob, GeoJSON or HLL value into `buf`. Returns the length, or a status.
-
-#### `Udf.floats`
-
-```java
-public static int floats(Value v, float[] buf)
-```
-
-Copies a blob of little-endian 32-bit floats straight into a float array, element for element: the way a
-vector is read without converting it. Returns the length in bytes, or a status.
-
-#### `Udf.storedBytes`
-
-```java
-public static int storedBytes(Value v, byte[] buf)
-```
-
-Copies a stored value's bytes as the server stores them, msgpack header included, into `buf`: the
-encoding a convergent merge compares when nothing else tells two candidates apart. Returns the length,
-or a status.
-
-#### `Udf.cmpStored`
-
-```java
-public static int cmpStored(Value a, Value b)
-```
-
-Compares two stored values byte by byte, as memcmp would on their stored encodings, without copying
-either: negative, zero or positive; TYPE_MISMATCH when a value is not a stored one.
-
-#### `Udf.args`
-
-```java
-public static int args(int handle, int argc, Value[] out)
-```
-
-Decodes the call's arguments into `out`, in one import, filling (or allocating) a Value per slot.
-Returns how many there are, bounded by `out.length` and `BATCH`.
-
-#### `Udf.enter`
-
-```java
-public static int enter(Value v)
-```
-
-Opens a cursor over the list or map at a value's position. 0 when it could not.
-
-#### `Udf.next`
-
-```java
-public static int next(int cursor, Value[] out)
-```
-
-Fills `out` with the next values of a cursor, `BATCH` at most per import. A map yields key,
-value, key, value. Returns how many, or a status.
-
-#### `Udf.close`
-
-```java
-public static void close(int cursor)
-```
-
-Gives a cursor's slot back.
-
-#### `Udf.get`
-
-```java
-public static int get(Value m, byte[] key, Value out)
-```
-
-Looks a string key up in the map at a value's position, in one import.
-
-#### `Udf.get`
-
-```java
-public static int get(Value m, String key, Value out)
-```
-
-As `get(Value, byte[], Value)`, encoding the key on each call.
-
-#### `Udf.get`
-
-```java
-public static int get(Value m, long key, Value out)
-```
-
-Looks an integer key up in the map at a value's position.
-
-#### `Udf.digest`
-
-```java
-public static int digest(byte[] buf)
-```
-
-Copies the record's digest (20 bytes) into `buf`. Returns the length, or a status.
-
-#### `Udf.keyType`
-
-```java
-public static int keyType()
-```
-
-The kind of the record's user key, or ABSENT when none was stored.
-
-#### `Udf.keyInt`
-
-```java
-public static long keyInt()
-```
-
-The user key when it is an integer.
-
-#### `Udf.keyBytes`
-
-```java
-public static int keyBytes(byte[] buf)
-```
-
-Copies a string or blob user key into `buf`. Returns the length, or a status.
-
-#### `Udf.generation`
-
-```java
-public static long generation()
-```
-
-The record's modification count.
-
-#### `Udf.ttl`
-
-```java
-public static long ttl()
-```
-
-The record's time to live, in seconds.
-
-#### `Udf.exists`
-
-```java
-public static boolean exists()
-```
-
-Whether the record exists.
-
 #### `Udf.now`
 
 ```java
@@ -1658,554 +1819,62 @@ public static long now()
 
 The server's clock in ms since the Unix epoch, or -1 inside an event handler, where it is refused.
 
-#### `Udf.lastUpdateTime`
+#### `Udf.log`
 
 ```java
-public static long lastUpdateTime()
+public static void log(int level, String message)
 ```
 
-When the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC), which is how
-the server stores it. Not on the same scale as `now`, which counts from the Unix epoch.
+Writes a line to the server's log at `LOG_WARN`, `LOG_INFO` or `LOG_DEBUG`.
 
-#### `Udf.recordSize`
+#### `Udf.list`
 
 ```java
-public static long recordSize()
+public static ListBuilder list()
 ```
 
-The record's size on device, in bytes.
+Starts a list on the server, to add to and then write to a bin, return, or nest.
 
-#### `Udf.binCount`
+#### `Udf.list`
 
 ```java
-public static long binCount()
+public static ListBuilder list(int capacity)
 ```
 
-How many bins the record has.
+As `list()`, with room for `capacity` elements to begin with.
 
-#### `Udf.setName`
+#### `Udf.map`
 
 ```java
-public static String setName()
+public static MapBuilder map()
 ```
 
-The record's set name, or null when it is in no set.
+Starts a map on the server, to put into and then write to a bin, return, or nest.
 
-#### `Udf.setTtl`
+#### `Udf.map`
 
 ```java
-public static int setTtl(int seconds)
+public static MapBuilder map(int capacity)
 ```
 
-Sets the record's time to live, in seconds, for the next commit: 0 for the namespace default, -1 for
-never expire, subject to the namespace's rule on TTL reductions.
+As `map()`, with room for `capacity` entries to begin with.
 
-#### `Udf.removeRecord`
+#### `Udf.timerSet`
 
 ```java
-public static int removeRecord()
+public static void timerSet(String name, long delayMs)
 ```
 
-Deletes the record.
+Runs this set's timer handler on the record in hand `delayMs` from now, under `name`;
+throws `UdfException` when the host refuses, as it does where there is no record to set it on.
 
-#### `Udf.setInt`
+#### `Udf.timerCancel`
 
 ```java
-public static int setInt(byte[] name, long value)
+public static boolean timerCancel(String name)
 ```
 
-Writes an integer bin. Returns OK or a status. Like every write here, it is staged until the record is
-committed.
-
-#### `Udf.setInt`
-
-```java
-public static int setInt(String name, long value)
-```
-
-As `setInt(byte[], long)`, encoding the name on each call.
-
-#### `Udf.setDouble`
-
-```java
-public static int setDouble(byte[] name, double value)
-```
-
-Writes a double bin. Returns OK or a status.
-
-#### `Udf.setDouble`
-
-```java
-public static int setDouble(String name, double value)
-```
-
-As `setDouble(byte[], double)`, encoding the name on each call.
-
-#### `Udf.setStr`
-
-```java
-public static int setStr(byte[] name, byte[] value, int valueLen)
-```
-
-Writes a string bin from the first `valueLen` bytes of `value`, which are UTF-8. Returns OK
-or a status.
-
-#### `Udf.setStr`
-
-```java
-public static int setStr(String name, String value)
-```
-
-Writes a string bin, encoding the name and the text on each call.
-
-#### `Udf.setBlob`
-
-```java
-public static int setBlob(byte[] name, byte[] value, int valueLen)
-```
-
-Writes a blob bin from the first `valueLen` bytes of `value`. Returns OK or a status.
-
-#### `Udf.setBlob`
-
-```java
-public static int setBlob(String name, byte[] value)
-```
-
-Writes all of `value` as a blob bin, encoding the name on each call.
-
-#### `Udf.setHandle`
-
-```java
-public static int setHandle(byte[] name, int handle)
-```
-
-Writes a built list or map to a bin.
-
-#### `Udf.setHandle`
-
-```java
-public static int setHandle(String name, int handle)
-```
-
-As `setHandle(byte[], int)`, encoding the name on each call.
-
-#### `Udf.setValue`
-
-```java
-public static int setValue(byte[] name, Value v)
-```
-
-Writes a value read from the record to a bin, by position.
-
-#### `Udf.setValue`
-
-```java
-public static int setValue(String name, Value v)
-```
-
-As `setValue(byte[], Value)`, encoding the name on each call.
-
-#### `Udf.setBool`
-
-```java
-public static int setBool(byte[] name, boolean value)
-```
-
-Writes a boolean bin. Returns OK or a status.
-
-#### `Udf.setBool`
-
-```java
-public static int setBool(String name, boolean value)
-```
-
-As `setBool(byte[], boolean)`, encoding the name on each call.
-
-#### `Udf.setNil`
-
-```java
-public static int setNil(byte[] name)
-```
-
-Writes a nil bin.
-
-#### `Udf.setNil`
-
-```java
-public static int setNil(String name)
-```
-
-As `setNil(byte[])`, encoding the name on each call.
-
-#### `Udf.setGeoJson`
-
-```java
-public static int setGeoJson(byte[] name, byte[] doc, int docLen)
-```
-
-Writes a GeoJSON document, kept as the geospatially indexable kind rather than a string.
-
-#### `Udf.setGeoJson`
-
-```java
-public static int setGeoJson(String name, String doc)
-```
-
-As `setGeoJson(byte[], byte[], int)`, encoding the name and the document on each call.
-
-#### `Udf.setListInts`
-
-```java
-public static int setListInts(byte[] name, long[] values)
-```
-
-Writes a list of integers from the array, in one import, with no value built per element.
-
-#### `Udf.setListInts`
-
-```java
-public static int setListInts(String name, long[] values)
-```
-
-As `setListInts(byte[], long[])`, encoding the name on each call.
-
-#### `Udf.setListDoubles`
-
-```java
-public static int setListDoubles(byte[] name, double[] values)
-```
-
-Writes a list of doubles from the array, in one import, with no value built per element.
-
-#### `Udf.setListDoubles`
-
-```java
-public static int setListDoubles(String name, double[] values)
-```
-
-As `setListDoubles(byte[], double[])`, encoding the name on each call.
-
-#### `Udf.remove`
-
-```java
-public static int remove(byte[] name)
-```
-
-Removes a bin from the record, staged like a write. Returns OK or a status.
-
-#### `Udf.remove`
-
-```java
-public static int remove(String name)
-```
-
-As `remove(byte[])`, encoding the name on each call.
-
-#### `Udf.update`
-
-```java
-public static int update()
-```
-
-Commits the staged writes to an existing record.
-
-#### `Udf.create`
-
-```java
-public static int create()
-```
-
-Commits the staged writes as a new record.
-
-#### `Udf.commit`
-
-```java
-public static void commit()
-```
-
-Commits the staged writes, creating the record if it does not exist; throws when the host refuses.
-
-#### `Udf.delete`
-
-```java
-public static void delete()
-```
-
-Deletes the record; throws when the host refuses.
-
-#### `Udf.newList`
-
-```java
-public static int newList(int capacity)
-```
-
-Starts a list on the host; the handle is what the other builders take.
-
-#### `Udf.newMap`
-
-```java
-public static int newMap(int capacity)
-```
-
-Starts a map on the host, as `newList` starts a list. The map is ordered by key, whatever order
-its entries are put in.
-
-#### `Udf.nilHandle`
-
-```java
-public static int nilHandle()
-```
-
-A nil value as a handle, for a map entry that means "no such bin" in a record resolution.
-
-#### `Udf.packHandle`
-
-```java
-public static int packHandle(int handle)
-```
-
-Packs a built collection into a source the host holds, for reading it back by position (`get`,
-`enter`); the source lives until the call ends.
-
-#### `Udf.mapHasKey`
-
-```java
-public static boolean mapHasKey(int m, byte[] key)
-```
-
-Whether a built map holds `key`. It packs the map, so it is for the occasional check, not a loop.
-
-#### `Udf.mapHasKey`
-
-```java
-public static boolean mapHasKey(int m, String key)
-```
-
-As `mapHasKey(int, byte[])`, encoding the key on each call.
-
-#### `Udf.listPushInt`
-
-```java
-public static int listPushInt(int list, long value)
-```
-
-Appends an integer to a built list. Returns OK or a status.
-
-#### `Udf.listPushStr`
-
-```java
-public static int listPushStr(int list, byte[] value, int valueLen)
-```
-
-Appends a string from the first `valueLen` bytes of `value`, which are UTF-8. Returns OK or a
-status.
-
-#### `Udf.listPushStr`
-
-```java
-public static int listPushStr(int list, String value)
-```
-
-Appends a string, encoding it on each call.
-
-#### `Udf.listPushHandle`
-
-```java
-public static int listPushHandle(int list, int value)
-```
-
-Appends a built value by its handle: a nested list or map, or a value from `nilHandle`,
-`strHandle` or `intHandle`. Returns OK or a status.
-
-#### `Udf.listPushValue`
-
-```java
-public static int listPushValue(int list, Value v)
-```
-
-Appends a value read from the record, by position.
-
-#### `Udf.listPushValues`
-
-```java
-public static int listPushValues(int list, Value[] vals, int n)
-```
-
-Appends the first `n` of `vals` in one import: scalars, guest bytes by address, stored values
-by position, built collections by handle. Returns how many went in.
-
-#### `Udf.mapPutInt`
-
-```java
-public static int mapPutInt(int m, byte[] key, long value)
-```
-
-Puts an integer under a string key of a built map. Returns OK or a status.
-
-#### `Udf.mapPutInt`
-
-```java
-public static int mapPutInt(int m, String key, long value)
-```
-
-As `mapPutInt(int, byte[], long)`, encoding the key on each call.
-
-#### `Udf.mapPutStr`
-
-```java
-public static int mapPutStr(int m, byte[] key, byte[] value, int valueLen)
-```
-
-Puts a string, the first `valueLen` bytes of `value` as UTF-8, under a string key. Returns OK
-or a status.
-
-#### `Udf.mapPutStr`
-
-```java
-public static int mapPutStr(int m, String key, String value)
-```
-
-Puts a string under a string key, encoding both on each call.
-
-#### `Udf.mapPutHandle`
-
-```java
-public static int mapPutHandle(int m, byte[] key, int value)
-```
-
-Puts a built value, by its handle, under a string key: a nested list or map, or nil from
-`nilHandle`. Returns OK or a status.
-
-#### `Udf.mapPutHandle`
-
-```java
-public static int mapPutHandle(int m, String key, int value)
-```
-
-As `mapPutHandle(int, byte[], int)`, encoding the key on each call.
-
-#### `Udf.mapPutValue`
-
-```java
-public static int mapPutValue(int m, byte[] key, Value v)
-```
-
-Puts any value under a string key: a scalar by value, guest bytes by address, a stored value by position,
-a built collection by handle.
-
-#### `Udf.mapPutValue`
-
-```java
-public static int mapPutValue(int m, String key, Value v)
-```
-
-As `mapPutValue(int, byte[], Value)`, encoding the key on each call.
-
-#### `Udf.mapPutDouble`
-
-```java
-public static int mapPutDouble(int m, String key, double value)
-```
-
-Puts a double under a string key. Returns OK or a status.
-
-#### `Udf.mapPutBool`
-
-```java
-public static int mapPutBool(int m, String key, boolean value)
-```
-
-Puts a boolean under a string key. Returns OK or a status.
-
-#### `Udf.listPushDouble`
-
-```java
-public static int listPushDouble(int list, double value)
-```
-
-Appends a double to a built list. Returns OK or a status.
-
-#### `Udf.listPushBool`
-
-```java
-public static int listPushBool(int list, boolean value)
-```
-
-Appends a boolean to a built list. Returns OK or a status.
-
-#### `Udf.mapPutIInt`
-
-```java
-public static int mapPutIInt(int m, long key, long value)
-```
-
-Puts an integer under an integer key. Returns OK or a status.
-
-#### `Udf.mapPutIStr`
-
-```java
-public static int mapPutIStr(int m, long key, String value)
-```
-
-Puts a string under an integer key. Returns OK or a status.
-
-#### `Udf.mapPutIHandle`
-
-```java
-public static int mapPutIHandle(int m, long key, int value)
-```
-
-Puts a built value, by its handle, under an integer key. Returns OK or a status.
-
-#### `Udf.mapPutIValue`
-
-```java
-public static int mapPutIValue(int m, long key, Value v)
-```
-
-Puts any value under an integer key, the kinds as `mapPutValue` takes them.
-
-#### `Udf.mapPut`
-
-```java
-public static int mapPut(int m, int key, int value)
-```
-
-Puts a built value under a built key, both by handle: for a key of any other kind.
-
-#### `Udf.strHandle`
-
-```java
-public static int strHandle(String s)
-```
-
-A guest string as a handle, for `mapPut`.
-
-#### `Udf.intHandle`
-
-```java
-public static int intHandle(long i)
-```
-
-An integer as a handle, for `mapPut`.
-
-#### `Udf.mapPutEntries`
-
-```java
-public static int mapPutEntries(int m, Value[] pairs, int n)
-```
-
-Puts the first `n` pairs of `pairs` (`pairs[0]`, `pairs[1]` is the first) in one
-import. Returns how many pairs went in.
-
-#### `Udf.size`
-
-```java
-public static int size(int handle)
-```
-
-The size of a built collection.
+Cancels the timer set on the record in hand under `name`; false when the host refuses.
 
 #### `Udf.resultNil`
 
@@ -2242,26 +1911,10 @@ Sets a boolean as the result.
 #### `Udf.resultStr`
 
 ```java
-public static void resultStr(byte[] s, int len)
-```
-
-Sets a string as the result: the first `len` bytes of `s`, which are UTF-8.
-
-#### `Udf.resultStr`
-
-```java
 public static void resultStr(String s)
 ```
 
-Sets a string as the result, encoding it on each call.
-
-#### `Udf.resultBlob`
-
-```java
-public static void resultBlob(byte[] b, int len)
-```
-
-Sets a blob as the result: the first `len` bytes of `b`.
+Sets a string as the result.
 
 #### `Udf.resultBlob`
 
@@ -2274,35 +1927,19 @@ Sets all of `b` as a blob result.
 #### `Udf.resultGeoJson`
 
 ```java
-public static void resultGeoJson(byte[] doc, int len)
-```
-
-A GeoJSON document as the result, kept as that kind.
-
-#### `Udf.resultGeoJson`
-
-```java
 public static void resultGeoJson(String doc)
 ```
 
-As `resultGeoJson(byte[], int)`, from the text of the document.
+Sets a GeoJSON document as the result, kept as that kind.
 
-#### `Udf.resultHandle`
-
-```java
-public static int resultHandle(int handle)
-```
-
-Sets a built list or map as the result, by its handle. Returns OK, or ERR when the host has no value
-under the handle.
-
-#### `Udf.resultValue`
+#### `Udf.result`
 
 ```java
-public static int resultValue(Value v)
+public static void result(Value v)
 ```
 
-Hands a value read from the record back as the result, built by the server from its bytes.
+Sets a `Value` as the result: a scalar by value, a string or blob of the guest's, a built
+collection, a stored value by position; null or absent is nil.
 
 #### `Udf.fail`
 
@@ -2310,146 +1947,658 @@ Hands a value read from the record back as the result, built by the server from 
 public static int fail(String message)
 ```
 
-Fails the call with a message the client sees, and returns the non-zero status a UDF then returns.
+Fails the call with a message the client sees, and returns the non-zero status a raw UDF then returns.
 
-#### `Udf.log`
-
-```java
-public static void log(int level, String message)
-```
-
-Writes a line to the server's log at `LOG_WARN`, `LOG_INFO` or `LOG_DEBUG`.
-
-#### `Udf.signatureBytes`
+#### `LowLevel`
 
 ```java
-public static byte[] signatureBytes(String text)
+public final class LowLevel
 ```
 
-The text behind a `__udf_sig_<name>` export: a NUL-terminated byte array, kept in a static field.
-The export returns `signature` of it.
+The server's calls one at a time, for a hot path that must allocate nothing: names as `byte[]`
+constants, values read into a `Value` the caller owns and reuses, collections as `int`
+handles, cursors opened and closed by hand, and a status code where the rest of the SDK throws. Nothing
+here is needed to write a UDF; `Record`, `ListValue`, `MapValue` and the builders are
+the API, and they are built on these same calls. `examples/vector` is what this tier is for: a
+stream that reads a blob from every record of a scan and must not create garbage per record.
+The rules the rest of the SDK keeps for its callers are the caller's own here:
 
-#### `Udf.signature`
+- A status is `OK` or negative: `NOT_FOUND`, `TYPE_MISMATCH`, `REFUSED`,
+`ERR`, and at or below `NEEDED_BASE` a buffer that was too small, `-(rc) - 16`
+being the size needed.
+- A cursor from `enter` holds one of the call's 256 handle slots until `close`, and
+the host gives a slot back only when it is the last one handed out: close cursors in the reverse of
+the order they were opened, on every path out of the loop.
+- A `Value` filled here is overwritten by the next call that fills it; `copy` keeps
+one.
+
+
+#### `LowLevel.OK`
 
 ```java
-public static int signature(byte[] text)
+public static final int OK = 0
 ```
 
-The address the host reads a signature from: valid until the next allocation, which is after the host read it.
+The call succeeded.
 
-#### `Udf.timerSet`
+#### `LowLevel.ERR`
 
 ```java
-public static int timerSet(String name, long delayMs)
+public static final int ERR = -1
 ```
 
-Runs this set's timer handler on the record in hand `delayMs` from now, under `name`.
+The call failed on what it was given, such as a bin name that is empty or longer than 15 bytes, or a
+handle the host does not hold.
 
-#### `Udf.timerCancel`
+#### `LowLevel.NOT_FOUND`
 
 ```java
-public static int timerCancel(String name)
+public static final int NOT_FOUND = -2
 ```
 
-Cancels the timer set on the record in hand under `name`. Returns OK, or REFUSED.
+There is no such bin, key or entry.
 
-#### `Udf.StrVisitor`
+#### `LowLevel.TYPE_MISMATCH`
 
 ```java
-public interface StrVisitor
+public static final int TYPE_MISMATCH = -3
 ```
 
-What `eachStr` calls with every string of a stored list, as UTF-8 bytes in a buffer the SDK owns.
+The value is not of a kind the call takes.
 
-#### `Udf.eachStr`
+#### `LowLevel.REFUSED`
 
 ```java
-public static void eachStr(Value list, StrVisitor fn)
+public static final int REFUSED = -4
 ```
 
-Calls `fn` with every string of a stored list.
+The host refused the operation: a write the record does not accept, or a call not allowed where it was
+made.
 
-#### `Udf.listHasStr`
+#### `LowLevel.NEEDED_BASE`
 
 ```java
-public static boolean listHasStr(Value list, byte[] text)
+public static final int NEEDED_BASE = -16
 ```
 
-Whether a stored list of strings holds `text`.
+The buffer was too small: a status at or below this carries the size needed, `-(rc) - 16`.
 
-#### `Udf.listHasStr`
+#### `LowLevel.BATCH`
 
 ```java
-public static boolean listHasStr(Value list, String text)
+public static final int BATCH = Slots.BATCH
 ```
 
-As `listHasStr(Value, byte[])`, encoding the text on each call.
+Values cross the boundary at most this many per import.
 
-#### `Udf.strIs`
+#### `LowLevel.bytes`
 
 ```java
-public static boolean strIs(Value v, byte[] text)
+public static byte[] bytes(String s)
 ```
 
-Whether a stored string value reads as `text`.
+The UTF-8 bytes of a string; keep the result in a constant for a name used on every call.
 
-#### `Udf.strIs`
+#### `LowLevel.string`
 
 ```java
-public static boolean strIs(Value v, String text)
+public static String string(byte[] b, int len)
 ```
 
-As `strIs(Value, byte[])`, encoding the text on each call.
+A string from the first `len` bytes of `b`, decoded as UTF-8.
 
-#### `Udf.str`
+#### `LowLevel.setInt`
 
 ```java
-public static String str(Value v)
+public static Value setInt(Value v, long i)
 ```
 
-A stored string as a Java string, or "" when it is not one.
+Makes `v` an integer.
 
-#### `Udf.equalBytes`
+#### `LowLevel.setDouble`
 
 ```java
-public static boolean equalBytes(byte[] a, byte[] b, int alen, int blen)
+public static Value setDouble(Value v, double d)
 ```
 
-Whether the first `alen` bytes of `a` are the first `blen` bytes of `b`.
+Makes `v` a double.
 
-#### `Udf.mapGet`
+#### `LowLevel.setBool`
 
 ```java
-public static Value mapGet(Value m, String key)
+public static Value setBool(Value v, boolean b)
 ```
 
-A map entry by string key: a value of ABSENT kind when there is none or `m` is not a map.
+Makes `v` a boolean.
 
-#### `Udf.mapInt`
+#### `LowLevel.setNil`
 
 ```java
-public static long mapInt(Value m, String key, long dflt)
+public static Value setNil(Value v)
 ```
 
-An integer map entry by string key, or `dflt` when there is none, it is not an integer, or
-`m` is not a map.
+Makes `v` nil.
 
-#### `Udf.mapStr`
+#### `LowLevel.setStr`
 
 ```java
-public static String mapStr(Value m, String key)
+public static Value setStr(Value v, byte[] b, int len)
 ```
 
-A string map entry by string key, or "" when there is none, it is not a string, or `m` is not a
-map. A string over 256 bytes also reads as "".
+Makes `v` a string of the guest's: the first `len` bytes of `b`, kept, not copied.
 
-#### `Udf.mapBool`
+#### `LowLevel.setBlob`
 
 ```java
-public static boolean mapBool(Value m, String key)
+public static Value setBlob(Value v, byte[] b, int len)
 ```
 
-Whether a map entry by string key is the boolean true; false when there is none or it is of another kind.
+Makes `v` a blob of the guest's: the first `len` bytes of `b`, kept, not copied.
+
+#### `LowLevel.setGeoJson`
+
+```java
+public static Value setGeoJson(Value v, byte[] b, int len)
+```
+
+Makes `v` a GeoJSON document of the guest's: the first `len` bytes of `b`, kept.
+
+#### `LowLevel.setHandle`
+
+```java
+public static Value setHandle(Value v, int handle)
+```
+
+Makes `v` a built collection, by its handle.
+
+#### `LowLevel.copy`
+
+```java
+public static Value copy(Value from, Value into)
+```
+
+Makes `into` what `from` is: the way to keep a value across cursor steps.
+
+#### `LowLevel.bin`
+
+```java
+public static int bin(byte[] name, Value out)
+```
+
+Reads a bin of any kind into `out`, in one import. NOT_FOUND for no such bin.
+
+#### `LowLevel.eventBin`
+
+```java
+public static int eventBin(EventRecord rec, byte[] name, Value out)
+```
+
+Reads a bin of one of an event's records into `out`. NOT_FOUND when that side has no such bin.
+
+#### `LowLevel.bytes`
+
+```java
+public static int bytes(Value v, byte[] buf)
+```
+
+Copies the bytes of a string, blob, GeoJSON or HLL value into `buf`. Returns the length, or a status.
+
+#### `LowLevel.floats`
+
+```java
+public static int floats(Value v, float[] buf)
+```
+
+Copies a blob of little-endian 32-bit floats straight into a float array, element for element: the way a
+vector is read without converting it. Returns the length in bytes, or a status.
+
+#### `LowLevel.storedBytes`
+
+```java
+public static int storedBytes(Value v, byte[] buf)
+```
+
+Copies a stored value's bytes as the server stores them, msgpack header included, into `buf`.
+Returns the length, or a status.
+
+#### `LowLevel.cmpStored`
+
+```java
+public static int cmpStored(Value a, Value b)
+```
+
+Compares two stored values byte by byte, as memcmp would on their stored encodings, without copying
+either: negative, zero or positive; TYPE_MISMATCH when a value is not a stored one.
+
+#### `LowLevel.args`
+
+```java
+public static int args(int handle, int argc, Value[] out)
+```
+
+Decodes the call's arguments into `out`, in one import, filling (or allocating) a Value per slot.
+Returns how many there are, bounded by `out.length` and `BATCH`.
+
+#### `LowLevel.enter`
+
+```java
+public static int enter(Value v)
+```
+
+Opens a cursor over the stored list or map `v`. 0 when it could not.
+
+#### `LowLevel.next`
+
+```java
+public static int next(int cursor, Value[] out)
+```
+
+Fills `out` with the next values of a cursor, `BATCH` at most per import. A map yields key,
+value, key, value. Returns how many, or a status; fewer than `out.length` means the end.
+
+#### `LowLevel.close`
+
+```java
+public static void close(int cursor)
+```
+
+Gives a cursor's slot back.
+
+#### `LowLevel.get`
+
+```java
+public static int get(Value m, byte[] key, Value out)
+```
+
+Looks a string key up in the stored map `m`, in one import.
+
+#### `LowLevel.get`
+
+```java
+public static int get(Value m, long key, Value out)
+```
+
+Looks an integer key up in the stored map `m`.
+
+#### `LowLevel.listGet`
+
+```java
+public static int listGet(Value list, int index, Value out)
+```
+
+The element at `index` of the stored list `list`. NOT_FOUND past the end.
+
+#### `LowLevel.digest`
+
+```java
+public static int digest(byte[] buf)
+```
+
+Copies the record's digest (20 bytes) into `buf`. Returns the length, or a status.
+
+#### `LowLevel.keyType`
+
+```java
+public static int keyType()
+```
+
+The kind of the record's user key (`Value#INT`, `Value#STR`, `Value#BLOB`), or ABSENT.
+
+#### `LowLevel.keyInt`
+
+```java
+public static long keyInt()
+```
+
+The user key when it is an integer.
+
+#### `LowLevel.keyBytes`
+
+```java
+public static int keyBytes(byte[] buf)
+```
+
+Copies a string or blob user key into `buf`. Returns the length, or a status.
+
+#### `LowLevel.setInt`
+
+```java
+public static int setInt(byte[] name, long value)
+```
+
+Writes an integer bin. Returns OK or a status.
+
+#### `LowLevel.setDouble`
+
+```java
+public static int setDouble(byte[] name, double value)
+```
+
+Writes a double bin.
+
+#### `LowLevel.setBool`
+
+```java
+public static int setBool(byte[] name, boolean value)
+```
+
+Writes a boolean bin.
+
+#### `LowLevel.setStr`
+
+```java
+public static int setStr(byte[] name, byte[] value, int valueLen)
+```
+
+Writes a string bin from the first `valueLen` bytes of `value`, which are UTF-8.
+
+#### `LowLevel.setBlob`
+
+```java
+public static int setBlob(byte[] name, byte[] value, int valueLen)
+```
+
+Writes a blob bin from the first `valueLen` bytes of `value`.
+
+#### `LowLevel.setGeoJson`
+
+```java
+public static int setGeoJson(byte[] name, byte[] doc, int docLen)
+```
+
+Writes a GeoJSON document, kept as the geospatially indexable kind rather than a string.
+
+#### `LowLevel.setHandle`
+
+```java
+public static int setHandle(byte[] name, int handle)
+```
+
+Writes a built list or map to a bin, by its handle.
+
+#### `LowLevel.setValue`
+
+```java
+public static int setValue(byte[] name, Value v)
+```
+
+Writes a stored value to a bin, by position.
+
+#### `LowLevel.setListInts`
+
+```java
+public static int setListInts(byte[] name, long[] values)
+```
+
+Writes a list of integers from the array, in one import; it takes effect at once, not on save.
+
+#### `LowLevel.setListDoubles`
+
+```java
+public static int setListDoubles(byte[] name, double[] values)
+```
+
+Writes a list of doubles from the array, in one import; it takes effect at once, not on save.
+
+#### `LowLevel.remove`
+
+```java
+public static int remove(byte[] name)
+```
+
+Removes a bin from the record, staged like a write.
+
+#### `LowLevel.save`
+
+```java
+public static int save()
+```
+
+Writes the staged bins, creating the record when it does not exist. Returns OK or a status.
+
+#### `LowLevel.newList`
+
+```java
+public static int newList(int capacity)
+```
+
+Starts a list on the host; the handle is what the other calls take. 0 when it could not.
+
+#### `LowLevel.newMap`
+
+```java
+public static int newMap(int capacity)
+```
+
+Starts a map on the host, ordered by key whatever order its entries are put in.
+
+#### `LowLevel.handle`
+
+```java
+public static int handle(ListBuilder list)
+```
+
+The handle of a builder, for these calls.
+
+#### `LowLevel.handle`
+
+```java
+public static int handle(MapBuilder map)
+```
+
+The handle of a builder, for these calls.
+
+#### `LowLevel.list`
+
+```java
+public static ListBuilder list(int handle)
+```
+
+A builder over a list handle these calls made.
+
+#### `LowLevel.map`
+
+```java
+public static MapBuilder map(int handle)
+```
+
+A builder over a map handle these calls made.
+
+#### `LowLevel.nilHandle`
+
+```java
+public static int nilHandle()
+```
+
+A nil value as a handle.
+
+#### `LowLevel.strHandle`
+
+```java
+public static int strHandle(byte[] s, int len)
+```
+
+A guest string as a handle, for `mapPut`.
+
+#### `LowLevel.intHandle`
+
+```java
+public static int intHandle(long i)
+```
+
+An integer as a handle, for `mapPut`.
+
+#### `LowLevel.packHandle`
+
+```java
+public static int packHandle(int handle)
+```
+
+Packs a built collection into a source the host holds, for reading it back by position; returns the
+source, whose value sits at offset 0, and which lives until the call ends.
+
+#### `LowLevel.size`
+
+```java
+public static int size(int handle)
+```
+
+The size of a built collection.
+
+#### `LowLevel.mapHas`
+
+```java
+public static int mapHas(int m, byte[] key)
+```
+
+Whether a built map has the string key: 1 or 0, negative for a bad handle.
+
+#### `LowLevel.mapHas`
+
+```java
+public static int mapHas(int m, long key)
+```
+
+Whether a built map has the integer key: 1 or 0, negative for a bad handle.
+
+#### `LowLevel.listPushInt`
+
+```java
+public static int listPushInt(int list, long value)
+```
+
+Appends an integer to a built list. Returns OK or a status.
+
+#### `LowLevel.listPushStr`
+
+```java
+public static int listPushStr(int list, byte[] value, int valueLen)
+```
+
+Appends a string from the first `valueLen` bytes of `value`, which are UTF-8.
+
+#### `LowLevel.listPushHandle`
+
+```java
+public static int listPushHandle(int list, int value)
+```
+
+Appends a built value by its handle: a nested list or map, or a value from one of the handle calls.
+
+#### `LowLevel.listPushValue`
+
+```java
+public static int listPushValue(int list, Value v)
+```
+
+Appends a stored value, by position.
+
+#### `LowLevel.listPushValues`
+
+```java
+public static int listPushValues(int list, Value[] vals, int n)
+```
+
+Appends the first `n` of `vals` in one import: scalars, guest bytes by address, stored values
+by position, built collections by handle. Returns how many went in.
+
+#### `LowLevel.mapPutInt`
+
+```java
+public static int mapPutInt(int m, byte[] key, long value)
+```
+
+Puts an integer under a string key of a built map. Returns OK or a status.
+
+#### `LowLevel.mapPutStr`
+
+```java
+public static int mapPutStr(int m, byte[] key, byte[] value, int valueLen)
+```
+
+Puts a string, the first `valueLen` bytes of `value` as UTF-8, under a string key.
+
+#### `LowLevel.mapPutHandle`
+
+```java
+public static int mapPutHandle(int m, byte[] key, int value)
+```
+
+Puts a built value, by its handle, under a string key.
+
+#### `LowLevel.mapPutValue`
+
+```java
+public static int mapPutValue(int m, byte[] key, Value v)
+```
+
+Puts a stored value, by position, under a string key.
+
+#### `LowLevel.mapPutValue`
+
+```java
+public static int mapPutValue(int m, long key, Value v)
+```
+
+Puts a stored value, by position, under an integer key.
+
+#### `LowLevel.mapPut`
+
+```java
+public static int mapPut(int m, int key, int value)
+```
+
+Puts a built value under a built key, both by handle: for a key of any kind.
+
+#### `LowLevel.mapPutEntries`
+
+```java
+public static int mapPutEntries(int m, Value[] pairs, int n)
+```
+
+Puts the first `n` values of `pairs` as entries (`pairs[0]` the first key,
+`pairs[1]` its value) in one import, each of any kind `listPushValues` takes. Returns how
+many entries went in.
+
+#### `LowLevel.resultStr`
+
+```java
+public static void resultStr(byte[] s, int len)
+```
+
+Sets a string as the result: the first `len` bytes of `s`, which are UTF-8.
+
+#### `LowLevel.resultBlob`
+
+```java
+public static void resultBlob(byte[] b, int len)
+```
+
+Sets a blob as the result: the first `len` bytes of `b`.
+
+#### `LowLevel.resultGeoJson`
+
+```java
+public static void resultGeoJson(byte[] doc, int len)
+```
+
+Sets a GeoJSON document as the result, kept as that kind.
+
+#### `LowLevel.resultHandle`
+
+```java
+public static int resultHandle(int handle)
+```
+
+Sets a built list or map as the result, by its handle. Returns OK, or ERR for a handle the host lacks.
+
+#### `LowLevel.resultValue`
+
+```java
+public static int resultValue(Value v)
+```
+
+Sets a stored value as the result, by position.
 
 #### `Params`
 
@@ -2460,7 +2609,7 @@ public final class Params
 What the generated exports call: an argument decoded into a parameter of the method's type, failing
 the call with a message that names the argument when it is missing or of another kind; a return value
 delivered as the result; an uncaught exception turned into a failure. The arguments come from
-`Udf#args` as a `Value` array and a count. Nothing here is specific to a generated class,
+`args` as a `Value` array and a count. Nothing here is specific to a generated class,
 so a hand-written export may use it too.
 
 #### `Params.arity`
@@ -2605,7 +2754,7 @@ by handle, a stored value by position; null or absent is nil.
 #### `Params.result`
 
 ```java
-public static void result(UdfMap m)
+public static void result(MapBuilder m)
 ```
 
 Delivers a built map as the result; null is nil.
@@ -2613,10 +2762,42 @@ Delivers a built map as the result; null is nil.
 #### `Params.result`
 
 ```java
-public static void result(UdfList l)
+public static void result(ListBuilder l)
 ```
 
 Delivers a built list as the result; null is nil.
+
+#### `Params.result`
+
+```java
+public static void result(MapValue m)
+```
+
+Delivers a stored map as the result, by position; null is nil.
+
+#### `Params.result`
+
+```java
+public static void result(ListValue l)
+```
+
+Delivers a stored list as the result, by position; null is nil.
+
+#### `Params.result`
+
+```java
+public static void result(List<?> l)
+```
+
+Delivers a `java.util.List` as a list result, its elements as a builder takes them; null is nil.
+
+#### `Params.result`
+
+```java
+public static void result(Map<?, ?> m)
+```
+
+Delivers a `java.util.Map` as a map result, its entries as a builder takes them; null is nil.
 
 #### `Params.resultStr`
 
@@ -2633,6 +2814,40 @@ public static void resultBytes(byte[] b)
 ```
 
 Delivers a byte array as a blob result; null is nil.
+
+#### `Params.record`
+
+```java
+public static Record record()
+```
+
+The record the call is about, for a method that takes one as its first parameter.
+
+#### `Params.args`
+
+```java
+public static int args(int handle, int argc, Value[] out)
+```
+
+Decodes the call's arguments into `out`, in one import, filling (or allocating) a Value per slot.
+Returns how many there are, bounded by `out.length`.
+
+#### `Params.signatureBytes`
+
+```java
+public static byte[] signatureBytes(String text)
+```
+
+The text behind a `__udf_sig_<name>` export: a NUL-terminated byte array, kept in a static field.
+The export returns `signature` of it.
+
+#### `Params.signature`
+
+```java
+public static int signature(byte[] text)
+```
+
+The address the host reads a signature from: valid until the next allocation, which is after the host read it.
 
 #### `Params.uncaught`
 

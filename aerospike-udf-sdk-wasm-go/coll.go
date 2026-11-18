@@ -54,40 +54,51 @@ func NewList(capacity int) *List {
 	return &List{handle: h}
 }
 
-// WrapMap and WrapList take a handle the low-level calls built.
-func WrapMap(handle int32) *Map { return &Map{handle: handle} }
-
-// WrapList takes a list handle the low-level calls built.
-func WrapList(handle int32) *List { return &List{handle: handle} }
-
-// Handle is what the low-level calls take.
-func (m *Map) Handle() int32 { return m.handle }
-
-// Handle is the list's handle, as the low-level calls take it.
-func (l *List) Handle() int32 { return l.handle }
-
 // Err is the first refusal, nil when every put went in.
 func (m *Map) Err() error { return m.err }
 
 // Err is the first refusal, nil when every add went in.
 func (l *List) Err() error { return l.err }
 
-// Size is how many entries the map holds; -1 when its handle is not a collection's, as after a failed
-// NewMap.
-func (m *Map) Size() int { return int(collSize(m.handle)) }
-
-// Size is how many elements the list holds; -1 when its handle is not a collection's, as after a failed
-// NewList.
-func (l *List) Size() int { return int(collSize(l.handle)) }
-
 // Value is the collection as a value, for a batch or a result.
-func (m *Map) Value() Value { return HandleValue(m.handle) }
+func (m *Map) Value() Value { return handleValue(m.handle) }
 
 // Value is the list as a value, for a batch or a result.
-func (l *List) Value() Value { return HandleValue(l.handle) }
+func (l *List) Value() Value { return handleValue(l.handle) }
 
-// Has reports whether the map holds key; it packs the map, so for the occasional check, not a loop.
-func (m *Map) Has(key string) bool { return MapHasKey(m.handle, key) }
+// Len is how many entries the map holds; -1 when it could not be built, as after a failed NewMap.
+func (m *Map) Len() int { return int(collSize(m.handle)) }
+
+// Len is how many elements the list holds; -1 when it could not be built, as after a failed NewList.
+func (l *List) Len() int { return int(collSize(l.handle)) }
+
+// mapKey is a Go value as a map key: a string, or an integer. ok is false for any other type.
+func mapKey(key any) (text string, number int64, isInt bool, ok bool) {
+	switch k := key.(type) {
+	case string:
+		return k, 0, false, true
+	case int64:
+		return "", k, true, true
+	case int:
+		return "", int64(k), true, true
+	case int32:
+		return "", int64(k), true, true
+	}
+	return "", 0, false, false
+}
+
+// Contains reports whether the map holds key, a string or an integer, in one import: the host answers
+// from the map as built, nothing is packed.
+func (m *Map) Contains(key any) bool {
+	text, number, isInt, ok := mapKey(key)
+	if !ok {
+		return false
+	}
+	if isInt {
+		return mapHasI(m.handle, number) == 1
+	}
+	return mapHas(m.handle, strptr(text), int32(len(text))) == 1
+}
 
 func (m *Map) fail(rc int32, key string) *Map {
 	if rc != OK && m.err == nil {
@@ -103,8 +114,8 @@ func (l *List) fail(rc int32) *List {
 	return l
 }
 
-// valueOf is any supported Go value as a handle (for the kinds the typed natives do not take), or a
-// Value for the ones they do. ok is false for an unsupported type.
+// valueOf is any supported Go value as a Value: a scalar by value, a string or blob by the address of its
+// bytes, a built collection by its handle. ok is false for an unsupported type.
 func valueOf(v any) (Value, bool) {
 	switch x := v.(type) {
 	case nil:
@@ -135,13 +146,25 @@ func valueOf(v any) (Value, bool) {
 	return Value{Kind: KindAbsent}, false
 }
 
-// Put puts a value under a string key: an int, int32, int64, float32, float64, bool, string, []byte (a
-// blob), Value, *Map, *List, or nil for a nil entry (in a record answer, "no such bin").
-func (m *Map) Put(key string, v any) *Map {
+// Put puts a value under a key. The key is a string or an integer (int, int32, int64); the value an int,
+// int32, int64, float32, float64, bool, string, []byte (a blob), Value, *Map, *List, or nil for a nil
+// entry (in a record answer, "no such bin").
+func (m *Map) Put(key any, v any) *Map {
+	text, number, isInt, ok := mapKey(key)
+	if !ok {
+		if m.err == nil {
+			m.err = errorf(TypeMismatch, "could not put an entry: the key is neither a string nor an integer")
+		}
+		return m
+	}
+	if isInt {
+		text = strconv.FormatInt(number, 10)
+	}
+
 	val, ok := valueOf(v)
 	if !ok {
 		if m.err == nil {
-			m.err = errorf(TypeMismatch, "could not put ", key, ": unsupported Go type")
+			m.err = errorf(TypeMismatch, "could not put ", text, ": unsupported Go type")
 		}
 		return m
 	}
@@ -151,32 +174,18 @@ func (m *Map) Put(key string, v any) *Map {
 	if c, is := v.(*List); is && c.err != nil && m.err == nil {
 		m.err = c.err
 	}
-	return m.fail(MapPutValue(m.handle, key, val), key)
-}
 
-// PutI puts a value under an integer key; the kinds as Put takes them.
-func (m *Map) PutI(key int64, v any) *Map {
-	val, ok := valueOf(v)
-	k := strconv.FormatInt(key, 10)
-	if !ok {
-		if m.err == nil {
-			m.err = errorf(TypeMismatch, "could not put ", k, ": unsupported Go type")
-		}
-		return m
+	if isInt {
+		return m.fail(mapPutIValue(m.handle, number, val), text)
 	}
-	return m.fail(MapPutIValue(m.handle, key, val), k)
-}
-
-// PutGeoJSON puts a GeoJSON document, kept as that kind.
-func (m *Map) PutGeoJSON(key, doc string) *Map {
-	return m.fail(mapPutStrHandle(m.handle, strptr(key), int32(len(key)), valGeoJSON(strptr(doc), int32(len(doc)))), key)
+	return m.fail(mapPutValue(m.handle, text, val), text)
 }
 
 // PutAll puts every entry of a stored map, by position.
 func (m *Map) PutAll(stored Value) *Map {
 	for k, v := range stored.Map() {
 		if k.Kind == KindInt {
-			m.PutI(k.Payload, v)
+			m.Put(k.Payload, v)
 		} else if s, err := k.Str(); err == nil {
 			m.Put(s, v)
 		} else if m.err == nil {
@@ -186,12 +195,34 @@ func (m *Map) PutAll(stored Value) *Map {
 	return m
 }
 
-// PutEntries puts pairs (pairs[0], pairs[1] is the first) in one import.
+// PutEntries puts pairs (pairs[0], pairs[1] is the first) in one import: scalars, guest bytes by address,
+// stored values by position, built collections as their Value.
 func (m *Map) PutEntries(pairs []Value) *Map {
-	if put := MapPutEntries(m.handle, pairs); int(put) != len(pairs)/2 && m.err == nil {
+	if len(pairs) < 2 {
+		return m
+	}
+	put := mapPutEntries(m.handle, unsafe.Pointer(&pairs[0]), int32(len(pairs)*16))
+	if int(put) != len(pairs)/2 && m.err == nil {
 		m.err = errorf(Err, "could not put entry ", strconv.Itoa(int(put)))
 	}
 	return m
+}
+
+// AddValues appends values in one import, the kinds as PutEntries takes them.
+func (l *List) AddValues(vals []Value) *List {
+	if len(vals) == 0 {
+		return l
+	}
+	added := listPushValues(l.handle, unsafe.Pointer(&vals[0]), int32(len(vals)*16))
+	if int(added) != len(vals) && l.err == nil {
+		l.err = errorf(Err, "could not add value ", strconv.Itoa(int(added)))
+	}
+	return l
+}
+
+// PutGeoJSON puts a GeoJSON document, kept as that kind.
+func (m *Map) PutGeoJSON(key, doc string) *Map {
+	return m.fail(mapPutStrHandle(m.handle, strptr(key), int32(len(key)), valGeoJSON(strptr(doc), int32(len(doc)))), key)
 }
 
 // Add appends a value: the kinds as Map.Put takes them.
@@ -209,7 +240,7 @@ func (l *List) Add(v any) *List {
 	if c, is := v.(*List); is && c.err != nil && l.err == nil {
 		l.err = c.err
 	}
-	return l.fail(ListPushValue(l.handle, val))
+	return l.fail(listPushValue(l.handle, val))
 }
 
 // AddGeoJSON appends a GeoJSON document, kept as that kind.
@@ -225,14 +256,6 @@ func (l *List) AddAll(stored Value) *List {
 	return l
 }
 
-// AddValues appends values in one import.
-func (l *List) AddValues(vals []Value) *List {
-	if added := ListPushValues(l.handle, vals); int(added) != len(vals) && l.err == nil {
-		l.err = errorf(Err, "could not add value ", strconv.Itoa(int(added)))
-	}
-	return l
-}
-
 // Contains reports whether a stored list of strings holds text.
 func Contains(list Value, text string) bool {
 	for v := range list.List() {
@@ -244,13 +267,13 @@ func Contains(list Value, text string) bool {
 }
 
 //==========================================================
-// The kinds the low-level MapPutValue and ListPushValue did not take, and integer keys.
+// Under the builders: integer keys, and the lookups in a stored map.
 //
 
 func guestPtr(v Value) unsafe.Pointer { return unsafe.Pointer(uintptr(v.Payload)) }
 
-// MapPutIValue puts any value under an integer key, the kinds as MapPutValue takes them.
-func MapPutIValue(m int32, key int64, v Value) int32 {
+// mapPutIValue puts any value under an integer key, the kinds as mapPutValue takes them.
+func mapPutIValue(m int32, key int64, v Value) int32 {
 	switch v.Kind {
 	case KindInt:
 		return mapPut(m, valInt(key), valInt(v.Payload))
@@ -274,18 +297,7 @@ func MapPutIValue(m int32, key int64, v Value) int32 {
 	return mapPutIAt(m, key, v.Src(), v.At())
 }
 
-// MapPut puts a built value under a built key, both by handle; IntHandle and StrHandle make a key.
-func MapPut(m, key, value int32) int32 { return mapPut(m, key, value) }
-
-// IntHandle is an integer as a handle, for the calls that take a key or value by handle. 0 when the host
-// could not make one.
-func IntHandle(i int64) int32 { return valInt(i) }
-
-// StrHandle is a string as a handle, copied by the host, for the calls that take a key or value by
-// handle. 0 when the host could not make one.
-func StrHandle(s string) int32 { return valStr(strptr(s), int32(len(s))) }
-
-// GetI looks an integer key up in the map at a value's position.
-func GetI(m Value, key int64, out *Value) int32 {
+// getI looks an integer key up in the map at a value's position.
+func getI(m Value, key int64, out *Value) int32 {
 	return collGetI(m.Src(), m.At(), key, unsafe.Pointer(out), 16)
 }

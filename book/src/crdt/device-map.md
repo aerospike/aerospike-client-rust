@@ -84,7 +84,7 @@ is what XDR would have written on its own.
 ```rust
 event! {
     on xdr_merge
-    fn xdr_merge(current: Record, incoming: Record, _conflict: Conflict) -> Result<Resolution, Error> {
+    fn xdr_merge(current: EventRecord, incoming: EventRecord, _conflict: Conflict) -> Result<Resolution, Error> {
         ...
         for side in [&current, &incoming] {
             if let Some(devices) = side.list("devices")? {
@@ -195,32 +195,34 @@ private static Candidate higher(Candidate a, Candidate b) {
         return a.removed ? a : b;
     }
 
-    return Udf.cmpStored(a.value, b.value) >= 0 ? a : b;
+    return a.value.compareStored(b.value) >= 0 ? a : b;
 }
 ```
 
-`Udf.cmpStored` compares the two candidates' stored bytes without copying either. The candidates are
+`Value.compareStored` compares the two candidates' stored bytes without copying either. The candidates are
 collected the same way, sorted by `deviceId` bytes, and written out as the live list plus the markers
 inside the higher horizon, a dropped marker's version folded into the floor. What differs is the
 language:
 
-- **Ids are bytes.** A device id is a `byte[64]` with a length, compared with `cmpBytes`, and a `byte[]`
-  of the exact length is cut only when a name has to cross to the host. A `String` would cost an
-  encoding each time it crosses.
-- **Reused values and a windowed walk.** A `Value` is an object, so the module keeps one per candidate
-  and refills it from the 64-value window `Udf.next` fills, stepping `Udf.enter` / `Udf.next` itself
-  rather than through a `Cursor`, because it copies candidates out of the window as it goes. Steps 1 to
-  4 show the `Cursor` form of the same walk.
-- **Preallocated candidates and entries.** `Best` holds 128 `Candidate` objects and swaps references when
-  it sorts; the write UDFs keep 128 `Entry` objects. The merge of a record of ordinary size allocates only
-  the exact-length id arrays and the map handles the host builds.
-- **No `Option`, no `Result`.** A helper returns a count or -1, a version or -1, or false, and the exported
-  method turns that into a thrown `UdfException`, which the generated export delivers as the failure
+- **Ids are strings, ordered as bytes.** A device id is a `String`, checked against the 64-byte limit when
+  it is read. `compareIds` orders two ids by their UTF-8 bytes, the order the server keeps a key-ordered
+  map's keys in, which `String.compareTo` does not give once a surrogate pair is involved.
+- **For-each over the stored collections.** `for (Value device : devices)` over a `ListValue` and
+  `for (MapValue.Entry e : markers)` over a `MapValue` are the Rust `iter()` and `entries()` loops, the
+  form steps 1 to 4 use. `entry.get("version")` reads a field of a stored map, and a candidate keeps the
+  `Value` of its entry or marker by position, so it goes back into the result uncopied.
+- **Lists that grow.** `Best` holds an `ArrayList` of `Candidate` objects and sorts it with
+  `Collections.sort`; the write UDFs collect the live entries in an `ArrayList` of `Entry` objects. Both
+  stop at 128 devices, the limit of the Rust module's fixed arrays.
+- **No `Option`, no `Result`.** A missing value is a `null` or a default (`intOr`, `mapOr`). A helper that
+  meets a malformed record throws a private `Malformed` exception, and the exported method turns that into
+  a thrown `UdfException` that names the function, which the generated export delivers as the failure
   message.
 - **The handler's shape.** `@On.XdrMerge("xdr_merge")` on `static Resolution xdrMerge(EventRecord current,
-  EventRecord incoming, Conflict c)`, returning `Resolution.record(UdfMap.wrap(out))` over the map it built
-  on the low-level tier, and `@Function` on the three write UDFs with typed parameters, each returning the
-  version it stored. The processor generates `CrdtExports`.
+  EventRecord incoming, Conflict c)`, returning `Resolution.record(current.withBins(out))` over the
+  `MapBuilder` it filled, and `@Function` on the three write UDFs, each taking the `Record` first and then
+  typed parameters, staging its bins with `rec.set` and writing them with `rec.save()`. The processor
+  generates `CrdtExports`.
 - **The rule this backend imposes.** An array's address is valid only until the next allocation, because
   the collector may move it and this backend cannot pin. The SDK takes every address inside the expression
   that hands it to the host, so the module never has to think about it.
@@ -261,7 +263,7 @@ func higher(a, b candidate) candidate {
   stored map, and the entry itself, a `udf.Value` by position, goes back into the result list uncopied.
 - **Errors, not `Result`.** Every helper returns `(T, error)` and the handler returns the first one. A
   panic would trap the module with a message that says only that, so the module never relies on one.
-- **The builders.** `udf.NewMap(8).Put("markers", markers).Put("purgedBefore", horizon)` chains, and
+- **The builders.** `udf.NewMap(3).Put("markers", markers).Put("purgedBefore", horizon)` chains, and
   `e.PutAll(old.value)` then `e.PutAll(changes)` is the "old entry with the changes on top" of
   `update_device`. The first refusal surfaces through `Err()`.
 - **The handler's shape.** `//udf:on xdr-merge xdr_merge` on `func xdrMerge(current, incoming

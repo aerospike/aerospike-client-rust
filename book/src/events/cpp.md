@@ -9,8 +9,6 @@ checks before binding. The parameter names are the kind's (`before`, `after`, `w
 fails the call with its message.
 
 ```cpp
-static constexpr udf::Bin TICKS{"ticks"};
-
 UDF_ON_BEFORE_WRITE(guard_account)
 {
 	if (udf::Optional<int64_t> balance = after.as_int("balance"); balance && *balance < 0) {
@@ -23,35 +21,27 @@ UDF_ON_BEFORE_WRITE(guard_account)
 
 	return udf::Decision::record(after.with_bins(out));   // every bin of `after` under the two decided
 }
-
-UDF_ON_TIMER(tick)
-{
-	int64_t n = TICKS.int_or(0) + 1;
-
-	UDF_TRY(TICKS.set(n));
-	UDF_TRY(udf::commit());
-
-	if (n < 3) {
-		udf::timer_set("tick", 200);
-	}
-
-	return {};
-}
 ```
 
 ## Records
 
-A `udf::EventRecord` is one record the event hands over, read-only, the C struct with typed reads: `get(name)`
-is the bin as an `Optional<Value>`, empty for absent or nil; `as_int(name)`, `as_double`, `as_bool` and
-`as_text<N>` answer an `Optional` of the type, empty for absent, nil or another kind, the Rust SDK's
-`Record::int` and friends; `list(name)` and `map(name)` give a range over a collection bin, `names()` over
-the record's bin names. `bins`, `deleted`, `bin_luts`, `bin_srcs` are the lists and maps from the
+A `udf::EventRecord` is one record the event hands over, read-only, the C struct underneath. It reads its
+bins with the methods of `udf::ReadRecord`, the same ones `udf::Record` has in a record UDF: `get(name)`
+is the bin as an `Optional<Value>`, empty for absent or nil; `bin(name)` is the bin that must be there, a
+`Result<Value>`; `as_int(name)`, `as_double`, `as_bool`, `as_text<N>` and `as_bytes<N>` answer an
+`Optional` of the type, empty for absent, nil or another kind; `int_or(name, 0)`, `double_or` and
+`bool_or` take a default; `has(name)` says whether the bin is there; `list(name)` and `map(name)` give a
+range over a collection bin. A helper written as `template <class R> ... (const udf::ReadRecord<R>& rec)`
+serves a handler and a UDF alike, as `load` does in `examples/counter`. An `EventRecord` has none of the
+writing methods, and a handler is not handed a `udf::Record`. The timer is the exception, below. `names()`
+ranges over the record's bin names. `bins`, `deleted`, `bin_luts`, `bin_srcs` are the lists and maps from the
 description, `bin_lut(name)` and `bin_src(name)` fall back to the record's values, and `gen`, `lut`, `ttl`,
 `src_id` are its metadata.
 
 `rec.with_bins(out)` is the Rust SDK's `with_bins`: every bin of the record that the `udf::Map` `out` lacks
 goes in by position, so a handler that decides two bins and keeps the rest writes those two and returns
-`udf::Decision::record(after.with_bins(out))`. It prefers one side, so an `xdr-merge` handler uses
+`udf::Decision::record(after.with_bins(out))`. It asks `out.contains(name)` for each bin, which the host
+answers for the map being built. It prefers one side, so an `xdr-merge` handler uses
 `Pair::with_newer` instead.
 
 ## The kinds
@@ -71,7 +61,7 @@ goes in by position, so a handler that decides two bins and keeps the rest write
 | `UDF_ON_PARTITION_TRANSFER` | `transfer` (`TransferInfo`) | `void` |
 | `UDF_ON_CLUSTER_CHANGE` | `cluster` (`ClusterInfo`) | `void` |
 | `UDF_ON_NODE_LIFECYCLE` | `lifecycle` (`LifecycleInfo`) | `void` |
-| `UDF_ON_TIMER` | `timer` (`TimerInfo`); runs as a record UDF | `void` |
+| `UDF_ON_TIMER` | `record` (`udf::Record&`, writable), `timer` (`TimerInfo`); runs as a record UDF | `void` |
 | `UDF_ON_XDR_MERGE` | `current, incoming` (`EventRecord`), `conflict` (`Conflict`) | `Resolution`: `keep_local()`, `take_remote()`, `policy()`, `record(bins[, ttl])` |
 
 A `record` answer takes a `udf::Map`; a bin absent from it, or nil, is deleted, and the map's own error, if
@@ -104,9 +94,26 @@ return udf::Resolution::record(pair.with_newer(out));   // the rest as the polic
 
 ## Timers
 
-A timer handler runs as a record UDF: `udf::Bin` reads and writes and `udf::commit` work in it, and
-`udf::timer_set("tick", 200)` re-arms it; `udf::timer_cancel` cancels. Both are refused in any other
-handler.
+A timer handler runs as a record UDF, on the record the timer was set on. So it is the one handler that
+takes a `udf::Record`, writable, as its first parameter, named `record`, and reads, sets and saves like
+any record UDF. `udf::timer_set("tick", 200)` re-arms it; `udf::timer_cancel("tick")` cancels. Both are
+refused in any other handler.
+
+```cpp
+UDF_ON_TIMER(tick)
+{
+	int64_t ticks = record.int_or("ticks", 0) + 1;
+
+	UDF_TRY(record.set("ticks", ticks));
+	UDF_TRY(record.save());
+
+	if (timer.name_view() == "tick" && ticks < 3) {
+		UDF_TRY(udf::timer_set("tick", 200));
+	}
+
+	return {};
+}
+```
 
 ## The raw form
 

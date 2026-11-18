@@ -13,6 +13,7 @@
 package com.aerospike.udf.examples;
 
 import com.aerospike.udf.Function;
+import com.aerospike.udf.LowLevel;
 import com.aerospike.udf.Stream;
 import com.aerospike.udf.Udf;
 import com.aerospike.udf.Value;
@@ -24,7 +25,9 @@ import com.aerospike.udf.Value;
  * step for step - see the Rust module's documentation for the shared algorithm. In short: the host copies
  * the blob straight into a float array; distances accumulate in double from float elements in one fixed
  * order; larger is always worse; ties break on the digest; the arguments are read once per stream. The hot
- * path allocates nothing: every buffer and every hit is a field of the one instance, filled in place.
+ * path allocates nothing: every buffer and every hit is a field of the one instance, filled in place. That
+ * is why this module is written on {@link LowLevel}, the SDK's calls one at a time with names as bytes and
+ * values read into ones it owns, rather than on {@code Record}: a scan runs {@code record} once per record.
  *
  * <p>The class is the stream: {@code @Stream} names it, {@code record} and {@code end} are its two
  * halves, and the processor builds one instance per module instance - the state a stream keeps between
@@ -106,13 +109,13 @@ public final class Vector {
 
     /** Reads the arguments once: bin, query, metric, k. Returns null or the failure message. */
     private String configure(int handle, int argc) {
-        int count = Udf.args(handle, argc, args);
+        int count = LowLevel.args(handle, argc, args);
 
-        if (count < 2 || args[0].kind != Value.STR) {
+        if (count < 2 || args[0].kind() != Value.STR) {
             return "topk: bin name missing";
         }
 
-        int blen = Udf.bytes(args[0], binBuf);
+        int blen = LowLevel.bytes(args[0], binBuf);
 
         if (blen < 0) {
             return "topk: bin name too long";
@@ -121,17 +124,17 @@ public final class Vector {
         bin = new byte[blen];
         System.arraycopy(binBuf, 0, bin, 0, blen);
 
-        if (args[1].kind != Value.BLOB) {
+        if (args[1].kind() != Value.BLOB) {
             return "topk: the query must be a blob of f32";
         }
 
-        if (args[1].len % 4 != 0 || args[1].len / 4 > MAX_DIM) {
+        if (args[1].length() % 4 != 0 || args[1].length() / 4 > MAX_DIM) {
             return "topk: the query is not a vector of f32 this module can hold";
         }
 
-        dim = args[1].len / 4;
+        dim = args[1].length() / 4;
 
-        if (Udf.floats(args[1], query) < 0) {
+        if (LowLevel.floats(args[1], query) < 0) {
             return "topk: could not read the query";
         }
 
@@ -146,14 +149,14 @@ public final class Vector {
 
         String name = "";
 
-        if (count > 2 && args[2].kind == Value.STR) {
-            int mlen = Udf.bytes(args[2], metricBuf);
+        if (count > 2 && args[2].kind() == Value.STR) {
+            int mlen = LowLevel.bytes(args[2], metricBuf);
 
             if (mlen < 0) {
                 return "topk: unknown metric";
             }
 
-            name = Udf.string(metricBuf, mlen);
+            name = LowLevel.string(metricBuf, mlen);
         }
 
         metric = parseMetric(name);
@@ -164,8 +167,8 @@ public final class Vector {
 
         k = 10;
 
-        if (count > 3 && args[3].kind == Value.INT) {
-            long kk = args[3].payload;
+        if (count > 3 && args[3].kind() == Value.INT) {
+            long kk = args[3].asLong();
 
             if (kk < 1) {
                 kk = 1;
@@ -296,23 +299,23 @@ public final class Vector {
 
     /** The record's vector into vec: 1 read, 0 skipped and counted, -1 a failure. */
     private int readVector() {
-        int rc = Udf.bin(bin, v);
+        int rc = LowLevel.bin(bin, v);
 
-        if (rc == Udf.NOT_FOUND || (rc == Udf.OK && v.kind != Value.BLOB)) {
+        if (rc == LowLevel.NOT_FOUND || (rc == LowLevel.OK && v.kind() != Value.BLOB)) {
             skippedNone++;
             return 0;
         }
 
-        if (rc != Udf.OK) {
+        if (rc != LowLevel.OK) {
             return -1;
         }
 
-        if (v.len != dim * 4) {
+        if (v.length() != dim * 4) {
             skippedDim++;
             return 0;
         }
 
-        if (Udf.floats(v, vec) < 0) {
+        if (LowLevel.floats(v, vec) < 0) {
             return -1;
         }
 
@@ -347,7 +350,7 @@ public final class Vector {
         Hit h = spare;
         h.score = score;
 
-        if (Udf.digest(h.digest) != DIGEST_LEN) {
+        if (LowLevel.digest(h.digest) != DIGEST_LEN) {
             return false;
         }
 
@@ -357,16 +360,16 @@ public final class Vector {
 
         h.keyLen = 0;
 
-        switch (Udf.keyType()) {
+        switch (LowLevel.keyType()) {
         case Value.INT: {
-            byte[] text = Udf.bytes(Long.toString(Udf.keyInt()));
+            byte[] text = LowLevel.bytes(Long.toString(LowLevel.keyInt()));
             h.keyLen = Math.min(text.length, KEY_MAX);
             System.arraycopy(text, 0, h.key, 0, h.keyLen);
             break;
         }
         case Value.STR:
         case Value.BLOB: {
-            int kl = Udf.keyBytes(h.key);
+            int kl = LowLevel.keyBytes(h.key);
 
             if (kl > 0) {
                 h.keyLen = kl;
@@ -433,18 +436,18 @@ public final class Vector {
         return 0;
     }
 
-    private static final byte[] KEY_SCORE = Udf.bytes("score");
-    private static final byte[] KEY_DIGEST = Udf.bytes("digest");
-    private static final byte[] KEY_KEY = Udf.bytes("key");
-    private static final byte[] KEY_HITS = Udf.bytes("hits");
-    private static final byte[] KEY_SKIPPED_DIM = Udf.bytes("skipped_dim");
-    private static final byte[] KEY_SKIPPED_NONE = Udf.bytes("skipped_none");
+    private static final byte[] KEY_SCORE = LowLevel.bytes("score");
+    private static final byte[] KEY_DIGEST = LowLevel.bytes("digest");
+    private static final byte[] KEY_KEY = LowLevel.bytes("key");
+    private static final byte[] KEY_HITS = LowLevel.bytes("hits");
+    private static final byte[] KEY_SKIPPED_DIM = LowLevel.bytes("skipped_dim");
+    private static final byte[] KEY_SKIPPED_NONE = LowLevel.bytes("skipped_none");
     private final Value[] pairs = { new Value(), new Value(), new Value(), new Value(), new Value(), new Value() };
 
     /** The closing half: the partial, k hits at most. */
     int end(int handle, int argc) {
-        int out = Udf.newMap(3);
-        int list = Udf.newList(n);
+        int out = LowLevel.newMap(3);
+        int list = LowLevel.newList(n);
 
         if (out <= 0 || list <= 0) {
             return Udf.fail("topk: could not build the partial");
@@ -452,25 +455,26 @@ public final class Vector {
 
         for (int i = 0; i < n; i++) {
             Hit h = hits[i];
-            int entry = Udf.newMap(3);
+            int entry = LowLevel.newMap(3);
 
-            pairs[0].setStrBytes(KEY_SCORE);
-            pairs[1].setDouble(h.score);
-            pairs[2].setStrBytes(KEY_DIGEST);
-            pairs[3].setBlob(h.digest, DIGEST_LEN);
-            pairs[4].setStrBytes(KEY_KEY);
-            pairs[5].setStrBytes(h.key, h.keyLen);
+            LowLevel.setStr(pairs[0], KEY_SCORE, KEY_SCORE.length);
+            LowLevel.setDouble(pairs[1], h.score);
+            LowLevel.setStr(pairs[2], KEY_DIGEST, KEY_DIGEST.length);
+            LowLevel.setBlob(pairs[3], h.digest, DIGEST_LEN);
+            LowLevel.setStr(pairs[4], KEY_KEY, KEY_KEY.length);
+            LowLevel.setStr(pairs[5], h.key, h.keyLen);
 
-            if (entry <= 0 || Udf.mapPutEntries(entry, pairs, 6) != 3 || Udf.listPushHandle(list, entry) != Udf.OK) {
+            if (entry <= 0 || LowLevel.mapPutEntries(entry, pairs, 6) != 3
+                    || LowLevel.listPushHandle(list, entry) != LowLevel.OK) {
                 return Udf.fail("topk: could not build a hit");
             }
         }
 
-        Udf.mapPutHandle(out, KEY_HITS, list);
-        Udf.mapPutInt(out, KEY_SKIPPED_DIM, skippedDim);
-        Udf.mapPutInt(out, KEY_SKIPPED_NONE, skippedNone);
+        LowLevel.mapPutHandle(out, KEY_HITS, list);
+        LowLevel.mapPutInt(out, KEY_SKIPPED_DIM, skippedDim);
+        LowLevel.mapPutInt(out, KEY_SKIPPED_NONE, skippedNone);
 
-        if (Udf.resultHandle(out) != Udf.OK) {
+        if (LowLevel.resultHandle(out) != LowLevel.OK) {
             return Udf.fail("topk: could not return the partial");
         }
 

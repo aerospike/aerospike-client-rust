@@ -15,7 +15,7 @@ func udfExport_visit(args, argc int32) int32 {
 	if err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := visit(p0)
+	r, err := visit(udf.CurrentRecord(), p0)
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -39,7 +39,7 @@ func udfExport_withdraw(args, argc int32) int32 {
 	if err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := withdraw(p0)
+	r, err := withdraw(udf.CurrentRecord(), p0)
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -63,7 +63,7 @@ func udfExport_rename(args, argc int32) int32 {
 	if err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := rename(p0)
+	r, err := rename(udf.CurrentRecord(), p0)
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -81,7 +81,7 @@ func udfExport_total(args, argc int32) int32 {
 	if err := udf.Arity("total", 0, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := total()
+	r, err := total(udf.CurrentRecord())
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -105,7 +105,7 @@ func udfExport_limit_for(args, argc int32) int32 {
 	if err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := limitFor(p0)
+	r, err := limitFor(udf.CurrentRecord(), p0)
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -123,7 +123,7 @@ func udfExport_limits_total(args, argc int32) int32 {
 	if err := udf.Arity("limits_total", 0, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := limitsTotal()
+	r, err := limitsTotal(udf.CurrentRecord())
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -147,7 +147,7 @@ func udfExport_log_payment(args, argc int32) int32 {
 	if err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := logPayment(p0)
+	r, err := logPayment(udf.CurrentRecord(), p0)
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -165,7 +165,7 @@ func udfExport_summary(args, argc int32) int32 {
 	if err := udf.Arity("summary", 0, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := summary()
+	r, err := summary(udf.CurrentRecord())
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -191,7 +191,7 @@ func udfExport_renew(args, argc int32) int32 {
 	if err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := renew(p0)
+	r, err := renew(udf.CurrentRecord(), p0)
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -209,7 +209,7 @@ func udfExport_clear_note(args, argc int32) int32 {
 	if err := udf.Arity("clear_note", 0, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	if err := clearNote(); err != nil {
+	if err := clearNote(udf.CurrentRecord()); err != nil {
 		return udf.FailErr(err)
 	}
 	udf.ResultNil()
@@ -226,7 +226,7 @@ func udfExport_close(args, argc int32) int32 {
 	if err := udf.Arity("close", 0, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	if err := closeAccount(); err != nil {
+	if err := closeAccount(udf.CurrentRecord()); err != nil {
 		return udf.FailErr(err)
 	}
 	udf.ResultNil()
@@ -346,7 +346,7 @@ func udfExport_tick(args, argc int32) int32 {
 	if !udf.EventTimerInfo(args, argc, &t) {
 		return udf.Fail("tick: not a timer event")
 	}
-	if err := tick(t); err != nil {
+	if err := tick(udf.CurrentRecord(), t); err != nil {
 		return udf.FailErr(err)
 	}
 	return udf.Done()

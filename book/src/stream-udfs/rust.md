@@ -9,7 +9,7 @@
 ```rust
 #![no_std]
 
-use aerospike_udf_sdk_wasm::{self as as_udf, stream, Error, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, stream, Error, Record, Value};
 
 static mut TOTAL: i64 = 0;
 static mut COUNT: i64 = 0;
@@ -17,10 +17,10 @@ static mut COUNT: i64 = 0;
 stream! {
     /// The sum of bin `n` over the records the query reaches, and how many there were.
     fn sum_n {
-        record() -> Result<(), Error> {
-            if let Ok(v) = as_udf::bin("n") {
+        record(rec: &Record) -> Result<(), Error> {
+            if let Some(n) = rec.int("n")? {
                 unsafe {
-                    TOTAL += v.int()?;
+                    TOTAL += n;
                     COUNT += 1;
                 }
             }
@@ -32,7 +32,7 @@ stream! {
             let out = as_udf::map(2)?;
 
             unsafe {
-                out.put("total", TOTAL)?.put("count", COUNT)?;
+                out.insert("total", TOTAL)?.insert("count", COUNT)?;
             }
 
             Ok(out.into_value())
@@ -42,10 +42,12 @@ stream! {
 ```
 
 The state is `static mut` because one instance sees every record a query thread reads and nothing else
-touches it; the `unsafe` is the compiler's honesty, not a hazard here. `record` returns `Result<(),
-Error>`: `Err` ends the stream with its message. `end` returns the partial.
+touches it; the `unsafe` is the compiler's honesty, not a hazard here. `record` takes the record it is
+called on as `rec: &Record`, read-only: an aggregation cannot write, and `&mut Record` there does not
+compile. It returns `Result<(), Error>`: `Err` ends the stream with its message. `end` has no record, and
+returns the partial.
 
-Parameters work as in `export!`: `record(bin: &str, query: &[u8], k: Option<i64>)` is decoded and checked
+Parameters work as in `export!`: `record(rec: &Record, bin: &str, query: &[u8], k: Option<i64>)` is decoded and checked
 on every record, so a stream reads its configuration from the arguments on the first call and keeps it in
 statics.
 

@@ -32,11 +32,6 @@ import (
 
 const tagMax = 32
 
-var (
-	added   = udf.NewBin("added")
-	removed = udf.NewBin("removed")
-)
-
 // A set of tags, gathered from one or both sides.
 type tags map[string]bool
 
@@ -98,11 +93,11 @@ func mergeTwoPSet(current, incoming *udf.EventRecord, _ *udf.Conflict) (udf.Reso
 	return udf.Resolve(incoming.WithBins(out)), out.Err()
 }
 
-// One of the record's lists.
-func stored(bin udf.Bin) (tags, error) {
+// One of the record's lists, by its bin's name.
+func stored(rec *udf.Record, bin string) (tags, error) {
 	t := tags{}
 
-	if v, ok := bin.Get(); ok {
+	if v, ok := rec.Get(bin); ok {
 		if err := t.offerAll(v); err != nil {
 			return nil, err
 		}
@@ -112,13 +107,13 @@ func stored(bin udf.Bin) (tags, error) {
 }
 
 // The members: added and not removed.
-func membersOf() (*udf.List, error) {
-	a, err := stored(added)
+func membersOf(rec *udf.Record) (*udf.List, error) {
+	a, err := stored(rec, "added")
 	if err != nil {
 		return nil, err
 	}
 
-	r, err := stored(removed)
+	r, err := stored(rec, "removed")
 	if err != nil {
 		return nil, err
 	}
@@ -126,14 +121,14 @@ func membersOf() (*udf.List, error) {
 	return a.toList(r), nil
 }
 
-// Adds a tag to one of the lists and commits.
-func grow(bin udf.Bin, tag string) error {
+// Adds a tag to one of the lists and saves.
+func grow(rec *udf.Record, bin string, tag string) error {
 	// The Rust module bounds a tag with a Str<32>; the same limit, as a check.
 	if len(tag) > tagMax {
 		return errors.New("the tag is too long")
 	}
 
-	t, err := stored(bin)
+	t, err := stored(rec, bin)
 	if err != nil {
 		return err
 	}
@@ -144,34 +139,34 @@ func grow(bin udf.Bin, tag string) error {
 
 	t[tag] = true
 
-	if err := bin.SetList(t.toList(nil)); err != nil {
+	if err := rec.Set(bin, t.toList(nil)); err != nil {
 		return err
 	}
 
-	return udf.Commit()
+	return rec.Save()
 }
 
 // Adds a tag. Returns the members. A tag removed before stays removed.
 //
 //udf:function add
-func add(tag string) (*udf.List, error) {
-	if err := grow(added, tag); err != nil {
+func add(rec *udf.Record, tag string) (*udf.List, error) {
+	if err := grow(rec, "added", tag); err != nil {
 		return nil, err
 	}
 
-	return membersOf()
+	return membersOf(rec)
 }
 
 // Removes a tag that is a member, forever. Returns the members.
 //
 //udf:function remove
-func remove(tag string) (*udf.List, error) {
-	a, err := stored(added)
+func remove(rec *udf.Record, tag string) (*udf.List, error) {
+	a, err := stored(rec, "added")
 	if err != nil {
 		return nil, err
 	}
 
-	r, err := stored(removed)
+	r, err := stored(rec, "removed")
 	if err != nil {
 		return nil, err
 	}
@@ -180,18 +175,18 @@ func remove(tag string) (*udf.List, error) {
 		return nil, errors.New("not a member")
 	}
 
-	if err := grow(removed, tag); err != nil {
+	if err := grow(rec, "removed", tag); err != nil {
 		return nil, err
 	}
 
-	return membersOf()
+	return membersOf(rec)
 }
 
 // The members, in order.
 //
 //udf:function members
-func members() (*udf.List, error) {
-	return membersOf()
+func members(rec *udf.Record) (*udf.List, error) {
+	return membersOf(rec)
 }
 
 func main() {}

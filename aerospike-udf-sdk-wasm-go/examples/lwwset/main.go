@@ -33,11 +33,6 @@ import (
 
 const tagMax = 32
 
-var (
-	addedAt   = udf.NewBin("addedAt")
-	removedAt = udf.NewBin("removedAt")
-)
-
 // The stamps of one map, gathered from one or both sides: for every tag, the later stamp seen.
 type stamps map[string]int64
 
@@ -100,16 +95,16 @@ func mergeLwwSet(current, incoming *udf.EventRecord, _ *udf.Conflict) (udf.Resol
 }
 
 // Both of the record's maps.
-func load() (stamps, stamps, error) {
+func load(rec *udf.Record) (stamps, stamps, error) {
 	a, r := stamps{}, stamps{}
 
-	if v, ok := addedAt.Get(); ok {
+	if v, ok := rec.Get("addedAt"); ok {
 		if err := a.offerAll(v); err != nil {
 			return nil, nil, err
 		}
 	}
 
-	if v, ok := removedAt.Get(); ok {
+	if v, ok := rec.Get("removedAt"); ok {
 		if err := r.offerAll(v); err != nil {
 			return nil, nil, err
 		}
@@ -124,8 +119,8 @@ func isMember(a, r stamps, tag string) bool {
 }
 
 // The members, in order, as a built list.
-func membersOf() (*udf.List, error) {
-	a, r, err := load()
+func membersOf(rec *udf.Record) (*udf.List, error) {
+	a, r, err := load(rec)
 	if err != nil {
 		return nil, err
 	}
@@ -149,9 +144,9 @@ func membersOf() (*udf.List, error) {
 	return l, nil
 }
 
-// Stamps the tag in one of the maps and commits: the clock, or one past the tag's last stamp when the
+// Stamps the tag in one of the maps and saves: the clock, or one past the tag's last stamp when the
 // clock has not moved since.
-func stamp(bin udf.Bin, into stamps, a, r stamps, tag string) error {
+func stamp(rec *udf.Record, bin string, into stamps, a, r stamps, tag string) error {
 	// The Rust module bounds a tag with a Str<32>; the same limit, as a check.
 	if len(tag) > tagMax {
 		return errors.New("the tag is too long")
@@ -162,34 +157,34 @@ func stamp(bin udf.Bin, into stamps, a, r stamps, tag string) error {
 
 	into.offer(tag, at)
 
-	if err := bin.SetMap(into.toMap()); err != nil {
+	if err := rec.Set(bin, into.toMap()); err != nil {
 		return err
 	}
 
-	return udf.Commit()
+	return rec.Save()
 }
 
 // Adds a tag, or adds it back. Returns the members.
 //
 //udf:function add
-func add(tag string) (*udf.List, error) {
-	a, r, err := load()
+func add(rec *udf.Record, tag string) (*udf.List, error) {
+	a, r, err := load(rec)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := stamp(addedAt, a, a, r, tag); err != nil {
+	if err := stamp(rec, "addedAt", a, a, r, tag); err != nil {
 		return nil, err
 	}
 
-	return membersOf()
+	return membersOf(rec)
 }
 
 // Removes a tag that is a member. Returns the members.
 //
 //udf:function remove
-func remove(tag string) (*udf.List, error) {
-	a, r, err := load()
+func remove(rec *udf.Record, tag string) (*udf.List, error) {
+	a, r, err := load(rec)
 	if err != nil {
 		return nil, err
 	}
@@ -198,18 +193,18 @@ func remove(tag string) (*udf.List, error) {
 		return nil, errors.New("not a member")
 	}
 
-	if err := stamp(removedAt, r, a, r, tag); err != nil {
+	if err := stamp(rec, "removedAt", r, a, r, tag); err != nil {
 		return nil, err
 	}
 
-	return membersOf()
+	return membersOf(rec)
 }
 
 // The members, in order.
 //
 //udf:function members
-func members() (*udf.List, error) {
-	return membersOf()
+func members(rec *udf.Record) (*udf.List, error) {
+	return membersOf(rec)
 }
 
 func main() {}

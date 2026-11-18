@@ -2,7 +2,7 @@
 
 Write Aerospike WASM UDFs in C++ and compile them with clang for the server's `mod-wamr` engine. One
 header, `include/aerospike_udf.hpp`, over the C SDK's `aerospike_udf.h`: the natives and the contract's
-constants come from the C header, and this one adds the typed tier, `udf::Bin`, `Value`, `Map`, `List`,
+constants come from the C header, and this one adds the typed tier, `udf::Record`, `Value`, `Map`, `List`,
 range-for over stored collections, `Result` and `Error` instead of status codes, the event records and
 answers, `Pair` and `Both` for a merge, and the `UDF_*` macros that derive the exports and their
 signatures from a function's parameter types, as the Rust SDK's macros do. The Rust SDK's documentation
@@ -11,18 +11,19 @@ is the reference for the contract.
 ```cpp
 #include "aerospike_udf.hpp"
 
-static constexpr udf::Bin N{"n"};
-
-UDF_FUNCTION(increment, udf::Result<int64_t>, int64_t by)
+UDF_FUNCTION(increment, udf::Result<int64_t>, udf::Record& rec, int64_t by)
 {
-	int64_t next = N.int_or(0) + by;
+	int64_t next = rec.int_or("n", 0) + by;
 
-	UDF_TRY(N.set(next));
-	UDF_TRY(udf::commit());
+	UDF_TRY(rec.set("n", next));
+	UDF_TRY(rec.save());
 
 	return next;
 }
 ```
+
+The record the UDF was called on is its first parameter. It is not an argument of the call: a client
+passes only `by`, and the signature the module exports is `fn increment(by: int) -> value`.
 
 ```sh
 clang -x c++ -std=c++20 --target=wasm32 -O3 -nostdlib -nostdinc++ -ffreestanding -fno-exceptions \
@@ -47,42 +48,65 @@ WASM tier has no SIMD (Fast JIT, the x86-64 default) refuses a module built with
   `StrView`, `Text<N>`, `Value`, `Map`, `List`, `void`), is the result. The signature text is built at
   compile time from the types and the stringised parameter names. A missing, mismatched, too-long or
   surplus argument fails the call before the body runs, naming the argument; a returned error fails it
-  with its message.
+  with its message. Before the arguments the function may take **the record**: `udf::Record& rec` to write
+  it, `const udf::Record& rec` to read it, nothing when it does not touch the record. The export hands it
+  in; it is not decoded, not counted against the arguments and not in the signature.
 - **`UDF_STREAM_RECORD(name, ret, params...)`** then **`UDF_STREAM_END(name, ret, params...)`**: a stream
   UDF, exported as `name_record` and `name_end` with the signature `stream name { record(...) end(...) }`;
-  state in statics.
+  state in statics. The record half may take `const udf::Record& rec` first, and only const: a stream's
+  record takes no write, and `udf::Record&` there does not compile. The end half has no record.
 - **`UDF_ON_BEFORE_WRITE(name)`**, `UDF_ON_BEFORE_DELETE`, ..., `UDF_ON_TIMER`, `UDF_ON_XDR_MERGE`: an event
   handler of the kind, with the kind's parameters under fixed names (`before`, `after`, `write`; `record`;
   `current`, `incoming`, `conflict`; ...) and returning `udf::Result` of the kind's answer: `Decision`
   (`accept()`, `reject(code, msg)`, `record(bins)`), `Gate`, `Expiry`, `Eviction`, `ReadResult`,
   `ShipDecision`, `Resolution` (`keep_local()`, `take_remote()`, `policy()`, `record(bins)`), or
-  `Result<void>` for the kinds that answer nothing.
+  `Result<void>` for the kinds that answer nothing. The records of an event are read-only
+  `udf::EventRecord`s. The timer is the exception: it runs as a record UDF, so `UDF_ON_TIMER` hands it
+  `udf::Record& record`, writable, before `timer`.
 - **The raw form**: `UDF_FUNCTION_RAW(name, "(params)")` and `UDF_STREAM_RAW(name, "(record)", "(end)")`
   declare `(int32_t args, int32_t argc)` functions exported as they are, for a hot path that reads its
   arguments once and keeps them, as `examples/vector` does.
 
 ## Shape of the API
 
-- **`udf::Bin`**: a bin by name, `constexpr` (`static constexpr udf::Bin N{"n"}`). Typed getters
-  (`as_int()`, `as_double()`, `as_bool()`, `as_text<N>()`, `as_bytes<N>()`, `floats_into()`, each a
-  `Result`; `int_or(0)` and the other `_or` forms for a default), `get()` as an `Optional<Value>`,
-  `list()` / `map()` to range over; setters of every kind (`set(...)` overloads, `set_blob`, `set_geojson`,
-  `set_null`, `set_ints`, `set_doubles`, `remove()`), staged until `udf::commit()`. `udf::remove_record()`
-  deletes the record, `udf::set_ttl` sets its time to live.
+- **`udf::Record`**: the record the UDF was called on, with everything about it as a method. Bins are
+  addressed by name; there is no bin object.
+  - Reading (const): `get(name)` as an `Optional<Value>`, nothing when the bin is absent or nil;
+    `bin(name)` for the bin that must be there, a `Result<Value>` whose error names the bin, chained with
+    the value's own reader when the kind must hold too (`UDF_TRY(UDF_TRY(rec.bin("n")).as_int())`); the
+    typed readers `as_int(name)`, `as_double`, `as_bool`, `as_text<N>`, `as_bytes<N>`, each an `Optional`
+    that is empty when the bin is absent, nil or of another kind; `int_or(name, 0)`, `double_or`, `bool_or`
+    for a default; `has(name)`; `floats_into`; `list(name)` / `map(name)` to range over.
+  - Writing (not const): `set(name, value)` overloads for every kind, `set_blob`, `set_geojson`,
+    `set_ints`, `set_doubles`, and `remove(name)` to remove a bin. There is no `set_null`: a bin cannot hold
+    nil, and `set(name, udf::Value::nil())` removes it as `remove` does. Writes are staged until `save()`;
+    the two bulk list writes take effect at once.
+  - Metadata (const): `exists`, `generation`, `ttl`, `last_update_time`, `size`, `bin_count`, `set_name`,
+    `key_type` / `key_int` / `key_bytes`, `digest`; and `set_ttl`, which is a write.
+  - Lifecycle: `save()` writes what was staged and creates the record when it does not exist;
+    `delete_record()` deletes it, with no save. `delete` is a C++ keyword, and the name keeps the verb the
+    other SDKs use while staying clear of `remove(name)`, which removes one bin.
+  - `const udf::Record&` is the read-only record. A `Record` is made only by the SDK and cannot be copied,
+    so a function handed a const one has no way to write.
+- **`udf::ReadRecord<R>`**: the reading methods above, shared by `udf::Record` and `udf::EventRecord`, so
+  a helper written as `template <class R> ... (const udf::ReadRecord<R>& rec)` reads from the record of a
+  call and from either side of an event. `examples/counter` loads its table that way.
 - **`udf::Value`**: the 16-byte value every read is, with `kind()`, the `is_*` tests, `as_int()`,
-  `as_double()`, `as_bool()`, `as_text<N>()`, `as_bytes<N>()`, `floats_into()`, `get(key)`,
-  `cmp_stored()`, and **`list()` / `map()`** as ranges: `for (udf::Value v : v.list())`, `for (udf::Entry e :
-  v.map())`, 32 per import, the cursor released when the loop ends or breaks.
+  `as_double()`, `as_bool()`, `as_text<N>()`, `as_bytes<N>()`, `floats_into()`, `cmp_stored()`; for a
+  stored collection `size()`, `empty()`, `get(key)` and `contains(key)` on a map, `at(index)` on a list
+  (one import, no walk); and **`list()` / `map()`** as ranges: `for (udf::Value v : v.list())`,
+  `for (udf::Entry e : v.map())`, 32 per import, the cursor released when the loop ends or breaks.
 - **`udf::Map` and `udf::List`**: collections built on the host, with chainable `put` / `add` overloads for
   every kind, string and integer keys, `put_null`, `put_geojson`, `put_all` / `add_all` by position; the
-  first refusal is kept and answered by `error()` / `result()`. Written to a bin, returned as the result,
-  nested, or handed back from a handler.
+  first refusal is kept and answered by `error()` / `result()`. `size()` and `empty()` on both, and
+  `Map::contains(key)` for a string or an integer key, answered by the host for the map being built.
+  Written to a bin, returned as the result, nested, or handed back from a handler.
 - **Strings**: `udf::StrView` (a pointer and a length over bytes the caller keeps alive) and
   `udf::Text<N>` (an inline buffer), both comparing bytewise; nothing allocates.
-- **Metadata**: `udf::generation`, `ttl`, `last_update_time`, `record_size`, `bin_count`, `set_name`,
-  `digest`, the user key, `exists`, `now`; `udf::log` writes to the server log.
-- **Events**: `udf::EventRecord` for a record the event hands over (`get`, `as_int`, ..., `list` / `map` /
-  `names` ranges, `with_bins(out)` to keep the rest of a record under a few decided bins), the `*Info`
+- **What is not about the record** stays in the namespace: `udf::now`, `udf::log`, `udf::fail`,
+  `udf::result_of`, `udf::timer_set` / `timer_cancel`.
+- **Events**: `udf::EventRecord` for a record the event hands over (the reading methods of `ReadRecord`,
+  `names()`, `with_bins(out)` to keep the rest of a record under a few decided bins), the `*Info`
   structs for the kind's own entry, the answer types; the merge through `udf::Conflict` (`pair()` into
   `Pair` and `Both<T>` with `newer`, `older`, `max`, `min`, `sum`, `merge`, `with_newer`;
   `involves_delete`, `lost_bins`). `examples/guard` and `examples/resolver` are the worked examples, held
@@ -106,8 +130,9 @@ WASM tier has no SIMD (Fast JIT, the x86-64 default) refuses a module built with
 - `examples/crdt`: the active-active CRDT of the design note, rule for rule the same as the Rust one, held
   to the same nine dry-run scenarios by `tests/src/events.rs`.
 - `examples/udf`: the SDK's own fixture, one function per corner of the record API, which
-  `cpp_sdk_covers_the_rust_surface` in `tests/src/udf_cpp.rs` holds to the Rust fixture's expectations. Not
-  an example to copy.
+  `cpp_sdk_covers_the_rust_surface`, `cpp_udf_saves_removes_and_deletes` and
+  `cpp_udf_indexes_a_list_and_asks_a_built_map` in `tests/src/udf_cpp.rs` hold to the Rust fixture's
+  expectations. Not an example to copy.
 
 `make` builds every example (`make CLANG=clang-18` for a specific clang; `wasm-ld` from lld must be on the
 path); `make fixtures` copies them to `tests/fixtures/wasm/` as `*_cpp.wasm`. Apple's clang targets

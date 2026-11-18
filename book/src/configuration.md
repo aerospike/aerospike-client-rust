@@ -12,6 +12,9 @@ mod-wamr {
     aot-cache-dir /opt/aerospike/usr/udf/wasm-aot
     aot-compile-threads 2
     max-memory 67108864
+    max-total-memory 4294967296
+    stream-timeout-ms 10000
+    max-modules 256
     cache-enabled true
 }
 ```
@@ -20,9 +23,12 @@ mod-wamr {
 | --- | --- | --- |
 | `running-mode` | `aot` | Which tier runs a module: `aot` (compiled by `wamrc` at registration), `interp` (WAMR's bytecode interpreter), `jit` (LLVM ORC JIT, compiled on load; only in a build that linked LLVM), `fast-jit` (WAMR's own JIT; its code generator exists for x86-64 only, so it cannot be built on an arm64 host, and it has no SIMD, so a build with it refuses a `simd128` module at registration). An unavailable mode is reported at startup and falls back to the interpreter. |
 | `aot-compiler` | empty | The path to `wamrc`. **Empty means no ahead-of-time compilation**: every module runs interpreted. `wamrc` must match the server's WAMR version and architecture; a mismatch is detected when the compiled module is loaded and that module falls back to the interpreter. |
-| `aot-cache-dir` | `<udf dir>-aot` | Where compiled modules are kept, under a tag of the module's content hash. It must not be the UDF directory itself, which the server empties at startup (SMD is the source of truth for registered modules) and which would make every start recompile everything. |
+| `aot-cache-dir` | `<udf dir>-aot` | Where compiled modules are kept, each beside a keyed tag (see [Security](security.md)). It must belong to the server's user alone. It must not be the UDF directory itself, which the server empties at startup (SMD is the source of truth for registered modules) and which would make every start recompile everything. |
 | `aot-compile-threads` | `2` | How many `wamrc` processes may run at once, 1 to 8. One keeps a burst of registrations from loading the node; more shortens how long a SIMD module's first call waits for its own build, since the interpreter cannot run SIMD and such a call waits for the compiled form. |
-| `max-memory` | 64 MiB | The ceiling on one instance's linear memory, rounded up to wasm pages. A module that grows past it is refused the growth and traps or reports. |
+| `max-memory` | 64 MiB | The ceiling on one instance's linear memory, rounded up to wasm pages, at most 2 GiB. A module that grows past it is refused the growth and traps or reports. It is also the ceiling on what one call may build on the server's side through the host calls: strings, blobs, lists and maps. |
+| `max-total-memory` | 4 GiB | The ceiling on the linear memory of every instance on the node together, and on what their calls have built on the server's side. At the ceiling a new instance is refused, and its call fails with an error naming this setting; a `memory.grow` is refused, which the guest sees as an ordinary out-of-memory. |
+| `stream-timeout-ms` | `10000` | How long one batch of a stream UDF, or its final call, may run, 1 ms to 1 hour. An aggregation query has no deadline of its own, so this is the only clock a stream UDF is on. Past it the guest is stopped and the query fails. The time covers reading the batch's records as well as the guest's work on them. |
+| `max-modules` | `256` | How many WASM modules may be registered, 1 to 256. A registration past it is refused with an error naming this setting. Registering a name that exists replaces it and is always allowed. |
 | `cache-enabled` | `true` | Whether loaded modules are kept between calls. `false` reloads on every call, which is for working on the runtime itself. |
 
 The UDF directory is not set here: the server keeps one directory of registered UDF files, named by the
@@ -42,6 +48,17 @@ WAMR_TIER=aot|jit|fastjit|interp` overrides it). `aot` keeps LLVM out of the ser
 compile fails until a restart). Measured on the vector top-k, the LLVM JIT equals AoT, and the interpreter
 is Lua speed. The runtime is WAMR at upstream `main` (the 2.4 line); the AoT numbers were unchanged across
 the 2.4.3 snapshot, the 2.4.5 release and main.
+
+## What the node reports
+
+| Info command | What it answers |
+| --- | --- |
+| `statistics` | Among the node's statistics, the engine's counters, each prefixed `udf_wasm_`: `calls`, `traps`, `timeouts`, `errors`, `stream_batches`, `stream_timeouts`, `stream_abandoned`, `instantiate_failures`, `memory_refusals`, `host_refusals` (a host call refused because the value it would build is over the call's budget or the node's), `registrations_refused`, `compiles`, `compile_failures`, `cache_hits`, `cache_rejects`, `log_lines_dropped`, and the gauges `guest_memory_bytes`, `modules_loaded` and `compile_queue`. |
+| `udf-stats` | One entry per module this node has loaded: `filename=<name>,type=WASM,tier=<tier>,calls=<n>,traps=<n>,timeouts=<n>,errors=<n>,log_lines_dropped=<n>;`. |
+
+Every registration, removal and event binding change is written to the server log as a line beginning
+`audit:`, with the client's address and the module's SHA-256, and to the security audit trail when
+security is configured. [Security](security.md) has the detail.
 
 ## What a running module costs
 

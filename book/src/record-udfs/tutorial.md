@@ -21,19 +21,25 @@ Three rules hold in every language, and every step leans on them:
 
 1. **A read borrows.** A value read from the record stays in the record. It is valid until the call ends
    or the bin it came from is written.
-2. **A write is staged.** Setting a bin changes nothing on the server until the function commits.
+2. **A write is staged.** Setting a bin changes nothing on the server until the function saves the record.
 3. **A failure is a message.** A function that fails hands the client an error with the text it chose.
 
 ## Setting up
 
-Go, C++ and Java name a bin once and read and write through that handle. Rust and C pass the name with
-each call. Rust functions sit together inside one `export! { ... }` block. C has no commit that creates a
-missing record, so the tutorial carries a three-line helper.
+A function that works on its record takes the record as its first parameter, before the arguments a
+client passes. It is not one of them: the client never sends it. Everything the function does to the
+record is a method on it, and a bin is named in each call. C has no objects, so there the record's
+functions share a prefix, `as_udf_rec_`, and the record is implied. Rust functions sit together inside one
+`export! { ... }` block.
+
+Rust and C++ say in the parameter's type whether a function writes: `&mut Record` or `udf::Record&` for
+one that does, `&Record` or `const udf::Record&` for one that only reads. Go and Java have one `Record`
+type.
 
 **Rust**
 
 ```rust
-use aerospike_udf_sdk_wasm::{self as as_udf, event, export, Decision, Error, Expiry, Gate, ReadResult, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, event, export, Decision, Error, Expiry, Gate, ReadResult, Record, Value};
 ```
 
 **Go**
@@ -44,74 +50,40 @@ import (
 
     udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk-wasm-go"
 )
-
-var (
-    visits   = udf.NewBin("visits")
-    balance  = udf.NewBin("balance")
-    owner    = udf.NewBin("owner")
-    history  = udf.NewBin("history")
-    limits   = udf.NewBin("limits")
-    renewals = udf.NewBin("renewals")
-    note     = udf.NewBin("note")
-    ticks    = udf.NewBin("ticks")
-)
 ```
 
 **C**
 
 ```c
 #include "aerospike_udf.h"
-
-/* Writes the staged bins, creating the record when there is none. */
-static int32_t commit(void)
-{
-    return as_udf_rec_exists() ? as_udf_rec_update() : as_udf_rec_create();
-}
 ```
 
 **C++**
 
 ```cpp
 #include "aerospike_udf.hpp"
-
-static constexpr udf::Bin VISITS{"visits"};
-static constexpr udf::Bin BALANCE{"balance"};
-static constexpr udf::Bin OWNER{"owner"};
-static constexpr udf::Bin HISTORY{"history"};
-static constexpr udf::Bin LIMITS{"limits"};
-static constexpr udf::Bin RENEWALS{"renewals"};
-static constexpr udf::Bin NOTE{"note"};
-static constexpr udf::Bin TICKS{"ticks"};
 ```
 
 **Java**
 
 ```java
-import com.aerospike.udf.Bin;
-import com.aerospike.udf.Cursor;
 import com.aerospike.udf.Decision;
 import com.aerospike.udf.EventRecord;
 import com.aerospike.udf.Events;
 import com.aerospike.udf.Expiry;
 import com.aerospike.udf.Function;
 import com.aerospike.udf.Gate;
+import com.aerospike.udf.ListValue;
+import com.aerospike.udf.MapBuilder;
+import com.aerospike.udf.MapValue;
 import com.aerospike.udf.On;
 import com.aerospike.udf.ReadResult;
+import com.aerospike.udf.Record;
 import com.aerospike.udf.Udf;
 import com.aerospike.udf.UdfException;
-import com.aerospike.udf.UdfList;
-import com.aerospike.udf.UdfMap;
 import com.aerospike.udf.Value;
 
 public final class Tutorial {
-    private static final Bin VISITS = Bin.of("visits");
-    private static final Bin BALANCE = Bin.of("balance");
-    private static final Bin OWNER = Bin.of("owner");
-    private static final Bin HISTORY = Bin.of("history");
-    private static final Bin LIMITS = Bin.of("limits");
-    private static final Bin RENEWALS = Bin.of("renewals");
-    private static final Bin NOTE = Bin.of("note");
-    private static final Bin TICKS = Bin.of("ticks");
 ```
 
 ## Step 1: count a visit
@@ -120,8 +92,7 @@ The task: read an integer that may not exist yet, add to it, write it back, and 
 This is the read-modify-write most UDFs are.
 
 The read needs a default, because a new account has no `visits` bin. The write is staged, so the function
-must commit. The commit creates the record when the key has none: Go, C++ and Java do that in one call,
-Rust and C choose between create and update.
+must save. The save creates the record when the key has none, in every language.
 
 The defaults differ in one detail. In Go and C++ a bin of another kind also answers the default. In Java
 it throws, and the Rust code here fails with `WrongType`.
@@ -129,20 +100,12 @@ it throws, and the Rust code here fails with `WrongType`.
 **Rust**
 
 ```rust
-fn visit(by: i64) -> Result<Value, Error> {
-    let visits = match as_udf::bin("visits") {
-        Ok(v) => v.int()?,            // WrongType when the bin holds something else
-        Err(Error::Absent) => 0,      // no such bin yet
-        Err(e) => return Err(e),
-    } + by;
+fn visit(rec: &mut Record, by: i64) -> Result<Value, Error> {
+    // None when there is no such bin yet; WrongType when it holds something else.
+    let visits = rec.int("visits")?.unwrap_or(0) + by;
 
-    as_udf::set("visits", visits)?;   // staged, not yet written
-
-    if as_udf::exists() {
-        as_udf::update()?;
-    } else {
-        as_udf::create()?;
-    }
+    rec.set("visits", visits)?;       // staged, not yet written
+    rec.save()?;                      // written, and the record created if it was not there
 
     Ok(Value::Int(visits))
 }
@@ -154,14 +117,15 @@ fn visit(by: i64) -> Result<Value, Error> {
 // Counts a visit and answers the new count.
 //
 //udf:function visit
-func visit(by int64) (int64, error) {
-    n := visits.IntOr(0) + by // 0 when the bin is absent
+func visit(rec *udf.Record, by int64) (int64, error) {
+    visits, _ := rec.Int("visits") // 0 when the bin is absent
+    n := visits + by
 
-    if err := visits.SetInt(n); err != nil { // staged, not yet written
+    if err := rec.Set("visits", n); err != nil { // staged, not yet written
         return 0, err
     }
 
-    return n, udf.Commit() // creates the record when there is none
+    return n, rec.Save() // creates the record when there is none
 }
 ```
 
@@ -175,11 +139,11 @@ visit(int32_t args, int32_t argc)
     if (as_udf_args(args, argc, &by, 1) < 1 || by.kind != AS_UDF_INT) return as_udf_failf("visit: by must be an integer");
 
     as_udf_value v;
-    int64_t n = as_udf_bin("visits", &v) == AS_UDF_OK && v.kind == AS_UDF_INT ? v.payload : 0;   /* 0 when absent */
+    int64_t n = as_udf_rec_bin("visits", &v) == AS_UDF_OK && v.kind == AS_UDF_INT ? v.payload : 0;   /* 0 when absent */
     n += by.payload;
 
-    as_udf_set_int("visits", 6, n);                                    /* staged, not yet written */
-    if (commit() != AS_UDF_OK) return as_udf_failf("visit: could not commit");
+    as_udf_rec_set_int("visits", 6, n);                                    /* staged, not yet written */
+    if (as_udf_rec_save() != AS_UDF_OK) return as_udf_failf("visit: could not save");   /* creates the record when there is none */
 
     as_udf_result_int(n);
     return 0;
@@ -190,12 +154,12 @@ AS_UDF_SIGNATURE(visit, "fn visit(by: int) -> value")
 **C++**
 
 ```cpp
-UDF_FUNCTION(visit, udf::Result<int64_t>, int64_t by)
+UDF_FUNCTION(visit, udf::Result<int64_t>, udf::Record& rec, int64_t by)
 {
-    int64_t n = VISITS.int_or(0) + by;   // 0 when the bin is absent
+    int64_t n = rec.int_or("visits", 0) + by;   // 0 when the bin is absent
 
-    UDF_TRY(VISITS.set(n));              // staged, not yet written
-    UDF_TRY(udf::commit());              // creates the record when there is none
+    UDF_TRY(rec.set("visits", n));              // staged, not yet written
+    UDF_TRY(rec.save());                        // creates the record when there is none
 
     return n;
 }
@@ -205,11 +169,11 @@ UDF_FUNCTION(visit, udf::Result<int64_t>, int64_t by)
 
 ```java
 @Function("visit")
-static long visit(long by) {
-    long n = VISITS.getLong(0) + by;   // 0 when the bin is absent
+static long visit(Record rec, long by) {
+    long n = rec.getLong("visits", 0) + by;   // 0 when the bin is absent
 
-    VISITS.set(n);                     // staged, not yet written
-    Udf.commit();                      // creates the record when there is none
+    rec.set("visits", n);                     // staged, not yet written
+    rec.save();                               // creates the record when there is none
 
     return n;
 }
@@ -224,20 +188,20 @@ The task: a bin that must exist and must be an integer, and a business rule that
 
 The strict read has no default: an absent bin or a bin of another kind ends the call with an error that
 names the problem. The rule is ordinary code. Failing is returning an error in Rust, Go and C++, a status
-in C, and throwing in Java. Nothing was committed, so the record is untouched.
+in C, and throwing in Java. Nothing was saved, so the record is untouched.
 
 **Rust**
 
 ```rust
-fn withdraw(amount: i64) -> Result<Value, Error> {
-    let balance = as_udf::bin("balance")?.int()?;   // Absent or WrongType fails the call
+fn withdraw(rec: &mut Record, amount: i64) -> Result<Value, Error> {
+    let balance = rec.bin("balance")?.int()?;       // Absent or WrongType fails the call
 
     if amount > balance {
         return Err(Error::Custom("insufficient funds"));
     }
 
-    as_udf::set("balance", balance - amount)?;
-    as_udf::update()?;
+    rec.set("balance", balance - amount)?;
+    rec.save()?;
 
     Ok(Value::Int(balance - amount))
 }
@@ -249,8 +213,13 @@ fn withdraw(amount: i64) -> Result<Value, Error> {
 // Takes amount off the balance, or fails when there is not enough.
 //
 //udf:function withdraw
-func withdraw(amount int64) (int64, error) {
-    have, err := balance.Int() // an error when absent or not an integer
+func withdraw(rec *udf.Record, amount int64) (int64, error) {
+    balance, err := rec.Bin("balance") // an error when the bin is absent
+    if err != nil {
+        return 0, err
+    }
+
+    have, err := balance.Int() // an error when it is not an integer
     if err != nil {
         return 0, err
     }
@@ -259,11 +228,11 @@ func withdraw(amount int64) (int64, error) {
         return 0, errors.New("insufficient funds")
     }
 
-    if err := balance.SetInt(have - amount); err != nil {
+    if err := rec.Set("balance", have-amount); err != nil {
         return 0, err
     }
 
-    return have - amount, udf.Commit()
+    return have - amount, rec.Save()
 }
 ```
 
@@ -277,13 +246,13 @@ withdraw(int32_t args, int32_t argc)
     if (as_udf_args(args, argc, &amount, 1) < 1 || amount.kind != AS_UDF_INT) return as_udf_failf("withdraw: amount must be an integer");
 
     as_udf_value balance;
-    if (as_udf_bin("balance", &balance) != AS_UDF_OK) return as_udf_failf("withdraw: bin balance is absent");
+    if (as_udf_rec_bin("balance", &balance) != AS_UDF_OK) return as_udf_failf("withdraw: bin balance is absent");
     if (balance.kind != AS_UDF_INT) return as_udf_failf("withdraw: bin balance is not an integer");
 
     if (amount.payload > balance.payload) return as_udf_failf("insufficient funds");
 
-    as_udf_set_int("balance", 7, balance.payload - amount.payload);
-    if (as_udf_rec_update() != AS_UDF_OK) return as_udf_failf("withdraw: could not commit");
+    as_udf_rec_set_int("balance", 7, balance.payload - amount.payload);
+    if (as_udf_rec_save() != AS_UDF_OK) return as_udf_failf("withdraw: could not save");
 
     as_udf_result_int(balance.payload - amount.payload);
     return 0;
@@ -294,14 +263,15 @@ AS_UDF_SIGNATURE(withdraw, "fn withdraw(amount: int) -> value")
 **C++**
 
 ```cpp
-UDF_FUNCTION(withdraw, udf::Result<int64_t>, int64_t amount)
+UDF_FUNCTION(withdraw, udf::Result<int64_t>, udf::Record& rec, int64_t amount)
 {
-    int64_t balance = UDF_TRY(BALANCE.as_int());   // an error when absent or not an integer
+    // An error when the bin is absent, and another when it is not an integer.
+    int64_t balance = UDF_TRY(UDF_TRY(rec.bin("balance")).as_int());
 
     if (amount > balance) return udf::error(AS_UDF_REFUSED, "insufficient funds");
 
-    UDF_TRY(BALANCE.set(balance - amount));
-    UDF_TRY(udf::commit());
+    UDF_TRY(rec.set("balance", balance - amount));
+    UDF_TRY(rec.save());
 
     return balance - amount;
 }
@@ -311,15 +281,15 @@ UDF_FUNCTION(withdraw, udf::Result<int64_t>, int64_t amount)
 
 ```java
 @Function("withdraw")
-static long withdraw(long amount) {
-    long balance = BALANCE.getLong();  // throws when absent or not an integer
+static long withdraw(Record rec, long amount) {
+    long balance = rec.getLong("balance");    // throws when absent or not an integer
 
     if (amount > balance) {
         throw new UdfException("insufficient funds");
     }
 
-    BALANCE.set(balance - amount);
-    Udf.commit();
+    rec.set("balance", balance - amount);
+    rec.save();
 
     return balance - amount;
 }
@@ -336,16 +306,16 @@ that holds up to `N` bytes inline. A string that does not fit is an error, not a
 **Rust**
 
 ```rust
-fn rename(name: &str) -> Result<Value, Error> {
+fn rename(rec: &mut Record, name: &str) -> Result<Value, Error> {
     let mut buf = [0u8; 64];
-    let owner = as_udf::bin("owner")?.text()?;      // the string, still in the record
+    let owner = rec.bin("owner")?.text()?;          // the string, still in the record
 
     if owner.as_str(&mut buf)? == name {            // its bytes, copied into `buf`
         return Ok(Value::Bool(false));
     }
 
-    as_udf::set("owner", name)?;
-    as_udf::update()?;
+    rec.set("owner", name)?;
+    rec.save()?;
 
     Ok(Value::Bool(true))
 }
@@ -357,7 +327,12 @@ fn rename(name: &str) -> Result<Value, Error> {
 // Changes the owner; false when the name is already that.
 //
 //udf:function rename
-func rename(name string) (bool, error) {
+func rename(rec *udf.Record, name string) (bool, error) {
+    owner, err := rec.Bin("owner")
+    if err != nil {
+        return false, err
+    }
+
     current, err := owner.Str() // copied out of the record
     if err != nil {
         return false, err
@@ -367,11 +342,11 @@ func rename(name string) (bool, error) {
         return false, nil
     }
 
-    if err := owner.SetStr(name); err != nil {
+    if err := rec.Set("owner", name); err != nil {
         return false, err
     }
 
-    return true, udf.Commit()
+    return true, rec.Save()
 }
 ```
 
@@ -392,15 +367,15 @@ rename(int32_t args, int32_t argc)
     name[len] = '\0';
 
     as_udf_value owner;
-    if (as_udf_bin("owner", &owner) != AS_UDF_OK || owner.kind != AS_UDF_STR) return as_udf_failf("rename: no string bin owner");
+    if (as_udf_rec_bin("owner", &owner) != AS_UDF_OK || owner.kind != AS_UDF_STR) return as_udf_failf("rename: no string bin owner");
 
     if (as_udf_str_is(&owner, name)) {
         as_udf_result_bool(0);
         return 0;
     }
 
-    as_udf_set_str("owner", 5, name, len);
-    if (as_udf_rec_update() != AS_UDF_OK) return as_udf_failf("rename: could not commit");
+    as_udf_rec_set_str("owner", 5, name, len);
+    if (as_udf_rec_save() != AS_UDF_OK) return as_udf_failf("rename: could not save");
 
     as_udf_result_bool(1);
     return 0;
@@ -411,14 +386,14 @@ AS_UDF_SIGNATURE(rename, "fn rename(name: str) -> value")
 **C++**
 
 ```cpp
-UDF_FUNCTION(rename, udf::Result<bool>, udf::Text<64> name)
+UDF_FUNCTION(rename, udf::Result<bool>, udf::Record& rec, udf::Text<64> name)
 {
-    udf::Text<64> owner = UDF_TRY(OWNER.as_text<64>());   // copied out of the record
+    udf::Text<64> owner = UDF_TRY(UDF_TRY(rec.bin("owner")).as_text<64>());   // copied out of the record
 
     if (owner == name.view()) return false;
 
-    UDF_TRY(OWNER.set(name.view()));
-    UDF_TRY(udf::commit());
+    UDF_TRY(rec.set("owner", name.view()));
+    UDF_TRY(rec.save());
 
     return true;
 }
@@ -428,13 +403,13 @@ UDF_FUNCTION(rename, udf::Result<bool>, udf::Text<64> name)
 
 ```java
 @Function("rename")
-static boolean rename(String name) {
-    if (OWNER.getString().equals(name)) {   // copied out of the record
+static boolean rename(Record rec, String name) {
+    if (rec.getString("owner").equals(name)) {   // copied out of the record
         return false;
     }
 
-    OWNER.set(name);
-    Udf.commit();
+    rec.set("owner", name);
+    rec.save();
 
     return true;
 }
@@ -451,10 +426,10 @@ and Java give an iterator. C drives the cursor itself.
 **Rust**
 
 ```rust
-fn total() -> Result<Value, Error> {
+fn total(rec: &Record) -> Result<Value, Error> {
     let mut sum = 0;
 
-    for payment in as_udf::bin("history")?.list()?.iter() {
+    for payment in rec.bin("history")?.list()?.iter() {
         sum += payment?.int()?;
     }
 
@@ -468,10 +443,10 @@ fn total() -> Result<Value, Error> {
 // The sum of the payments in history.
 //
 //udf:function total
-func total() (int64, error) {
+func total(rec *udf.Record) (int64, error) {
     var sum int64
 
-    for payment := range history.List() {
+    for payment := range rec.List("history") {
         n, err := payment.Int()
         if err != nil {
             return 0, err
@@ -492,7 +467,7 @@ total(int32_t args, int32_t argc)
     (void)args; (void)argc;
 
     as_udf_value history;
-    if (as_udf_bin("history", &history) != AS_UDF_OK || history.kind != AS_UDF_LIST) return as_udf_failf("total: no list bin history");
+    if (as_udf_rec_bin("history", &history) != AS_UDF_OK || history.kind != AS_UDF_LIST) return as_udf_failf("total: no list bin history");
 
     int32_t cur = as_udf_cursor_enter_at(as_udf_value_src(&history), as_udf_value_at(&history));
     if (cur <= 0) return as_udf_failf("total: could not open the list");
@@ -517,11 +492,11 @@ AS_UDF_SIGNATURE(total, "fn total() -> value")
 **C++**
 
 ```cpp
-UDF_FUNCTION(total, udf::Result<int64_t>)
+UDF_FUNCTION(total, udf::Result<int64_t>, const udf::Record& rec)
 {
     int64_t sum = 0;
 
-    for (udf::Value payment : HISTORY.list()) {
+    for (udf::Value payment : rec.list("history")) {
         sum += UDF_TRY(payment.as_int());
     }
 
@@ -533,10 +508,10 @@ UDF_FUNCTION(total, udf::Result<int64_t>)
 
 ```java
 @Function("total")
-static long total() {
+static long total(Record rec) {
     long sum = 0;
 
-    for (Value payment : HISTORY.asList()) {
+    for (Value payment : rec.getList("history")) {
         sum += payment.asLong();
     }
 
@@ -555,8 +530,8 @@ C++, `AS_UDF_NOT_FOUND` in C and a status other than `Udf.OK` in Java.
 **Rust**
 
 ```rust
-fn limit_for(kind: &str) -> Result<Value, Error> {
-    let limits = as_udf::bin("limits")?.map()?;
+fn limit_for(rec: &Record, kind: &str) -> Result<Value, Error> {
+    let limits = rec.bin("limits")?.map()?;
 
     match limits.get(kind) {
         Ok(limit) => Ok(Value::Int(limit.int()?)),
@@ -572,13 +547,13 @@ fn limit_for(kind: &str) -> Result<Value, Error> {
 // The limit of one kind, 0 when there is none.
 //
 //udf:function limit_for
-func limitFor(kind string) (int64, error) {
-    m, ok := limits.Get()
-    if !ok {
-        return 0, errors.New("bin limits is absent")
+func limitFor(rec *udf.Record, kind string) (int64, error) {
+    limits, err := rec.Bin("limits")
+    if err != nil {
+        return 0, err
     }
 
-    limit, ok := m.Lookup(kind)
+    limit, ok := limits.Lookup(kind)
     if !ok { // no such key
         return 0, nil
     }
@@ -601,7 +576,7 @@ limit_for(int32_t args, int32_t argc)
     if (len < 0) return as_udf_failf("limit_for: kind must be a string of at most 64 bytes");
 
     as_udf_value limits;
-    if (as_udf_bin("limits", &limits) != AS_UDF_OK || limits.kind != AS_UDF_MAP) return as_udf_failf("limit_for: no map bin limits");
+    if (as_udf_rec_bin("limits", &limits) != AS_UDF_OK || limits.kind != AS_UDF_MAP) return as_udf_failf("limit_for: no map bin limits");
 
     as_udf_value limit;
     int32_t rc = as_udf_coll_get(as_udf_value_src(&limits), as_udf_value_at(&limits), kind, len, &limit, (int32_t)sizeof(limit));
@@ -621,13 +596,10 @@ AS_UDF_SIGNATURE(limit_for, "fn limit_for(kind: str) -> value")
 **C++**
 
 ```cpp
-UDF_FUNCTION(limit_for, udf::Result<int64_t>, udf::Text<64> kind)
+UDF_FUNCTION(limit_for, udf::Result<int64_t>, const udf::Record& rec, udf::Text<64> kind)
 {
-    udf::Optional<udf::Value> limits = LIMITS.get();
-
-    if (!limits) return udf::error(AS_UDF_NOT_FOUND, "bin limits is absent");
-
-    udf::Optional<udf::Value> limit = limits->get(kind.view());
+    udf::Value limits = UDF_TRY(rec.bin("limits"));
+    udf::Optional<udf::Value> limit = limits.get(kind.view());
 
     if (!limit) return 0;   // no such key
 
@@ -639,20 +611,8 @@ UDF_FUNCTION(limit_for, udf::Result<int64_t>, udf::Text<64> kind)
 
 ```java
 @Function("limit_for")
-static long limitFor(String kind) {
-    Value limits = LIMITS.get();
-
-    if (limits == null) {
-        throw new UdfException("bin limits is absent");
-    }
-
-    Value limit = new Value();
-
-    if (Udf.get(limits, kind, limit) != Udf.OK) {   // no such key
-        return 0;
-    }
-
-    return limit.asLong();
+static long limitFor(Record rec, String kind) {
+    return rec.getMap("limits").getLong(kind, 0);   // 0 when the map has no such key
 }
 ```
 
@@ -666,10 +626,10 @@ together. A C cursor yields them in turn: key, value, key, value.
 **Rust**
 
 ```rust
-fn limits_total() -> Result<Value, Error> {
+fn limits_total(rec: &Record) -> Result<Value, Error> {
     let mut sum = 0;
 
-    for entry in as_udf::bin("limits")?.map()?.entries() {
+    for entry in rec.bin("limits")?.map()?.entries() {
         let (_kind, limit) = entry?;
         sum += limit.int()?;
     }
@@ -684,10 +644,10 @@ fn limits_total() -> Result<Value, Error> {
 // The sum of every limit.
 //
 //udf:function limits_total
-func limitsTotal() (int64, error) {
+func limitsTotal(rec *udf.Record) (int64, error) {
     var sum int64
 
-    for _, limit := range limits.Map() {
+    for _, limit := range rec.Map("limits") {
         n, err := limit.Int()
         if err != nil {
             return 0, err
@@ -708,7 +668,7 @@ limits_total(int32_t args, int32_t argc)
     (void)args; (void)argc;
 
     as_udf_value limits;
-    if (as_udf_bin("limits", &limits) != AS_UDF_OK || limits.kind != AS_UDF_MAP) return as_udf_failf("limits_total: no map bin limits");
+    if (as_udf_rec_bin("limits", &limits) != AS_UDF_OK || limits.kind != AS_UDF_MAP) return as_udf_failf("limits_total: no map bin limits");
 
     int32_t cur = as_udf_cursor_enter_at(as_udf_value_src(&limits), as_udf_value_at(&limits));
     if (cur <= 0) return as_udf_failf("limits_total: could not open the map");
@@ -732,11 +692,11 @@ AS_UDF_SIGNATURE(limits_total, "fn limits_total() -> value")
 **C++**
 
 ```cpp
-UDF_FUNCTION(limits_total, udf::Result<int64_t>)
+UDF_FUNCTION(limits_total, udf::Result<int64_t>, const udf::Record& rec)
 {
     int64_t sum = 0;
 
-    for (udf::Entry e : LIMITS.map()) {
+    for (udf::Entry e : rec.map("limits")) {
         sum += UDF_TRY(e.value.as_int());
     }
 
@@ -748,11 +708,11 @@ UDF_FUNCTION(limits_total, udf::Result<int64_t>)
 
 ```java
 @Function("limits_total")
-static long limitsTotal() {
+static long limitsTotal(Record rec) {
     long sum = 0;
 
-    for (Cursor.Entry e : LIMITS.asMap()) {
-        sum += e.value.asLong();
+    for (MapValue.Entry e : rec.getMap("limits")) {
+        sum += e.getValue().asLong();
     }
 
     return sum;
@@ -773,15 +733,15 @@ earlier no longer points at anything.
 **Rust**
 
 ```rust
-fn log_payment(amount: i64) -> Result<Value, Error> {
-    let history = as_udf::bin("history")?.list()?;
+fn log_payment(rec: &mut Record, amount: i64) -> Result<Value, Error> {
+    let history = rec.bin("history")?.list()?;
     let count = history.len() + 1;
 
     let out = as_udf::list(count)?;
     out.extend(history.iter())?.push(amount)?;      // the stored elements, then the new one
 
-    as_udf::set("history", out)?;
-    as_udf::update()?;
+    rec.set("history", out)?;
+    rec.save()?;
 
     Ok(Value::Int(count as i64))
 }
@@ -793,20 +753,20 @@ fn log_payment(amount: i64) -> Result<Value, Error> {
 // Appends a payment to history and answers the new length.
 //
 //udf:function log_payment
-func logPayment(amount int64) (int64, error) {
-    stored, ok := history.Get()
-    if !ok {
-        return 0, errors.New("bin history is absent")
+func logPayment(rec *udf.Record, amount int64) (int64, error) {
+    stored, err := rec.Bin("history")
+    if err != nil {
+        return 0, err
     }
 
     count := int(stored.Len) + 1
     out := udf.NewList(count).AddAll(stored).Add(amount) // the stored elements, then the new one
 
-    if err := history.SetList(out); err != nil {
+    if err := rec.Set("history", out); err != nil {
         return 0, err
     }
 
-    return int64(count), udf.Commit()
+    return int64(count), rec.Save()
 }
 ```
 
@@ -820,7 +780,7 @@ log_payment(int32_t args, int32_t argc)
     if (as_udf_args(args, argc, &amount, 1) < 1 || amount.kind != AS_UDF_INT) return as_udf_failf("log_payment: amount must be an integer");
 
     as_udf_value history;
-    if (as_udf_bin("history", &history) != AS_UDF_OK || history.kind != AS_UDF_LIST) return as_udf_failf("log_payment: no list bin history");
+    if (as_udf_rec_bin("history", &history) != AS_UDF_OK || history.kind != AS_UDF_LIST) return as_udf_failf("log_payment: no list bin history");
 
     int32_t count = (int32_t)history.len + 1;
     int32_t out = as_udf_list_new(count);
@@ -835,8 +795,8 @@ log_payment(int32_t args, int32_t argc)
     as_udf_cursor_close(cur);
     as_udf_list_push_int(out, amount.payload);                         /* then the new one */
 
-    as_udf_set_handle("history", 7, out);
-    if (as_udf_rec_update() != AS_UDF_OK) return as_udf_failf("log_payment: could not commit");
+    as_udf_rec_set_handle("history", 7, out);
+    if (as_udf_rec_save() != AS_UDF_OK) return as_udf_failf("log_payment: could not save");
 
     as_udf_result_int(count);
     return 0;
@@ -847,19 +807,17 @@ AS_UDF_SIGNATURE(log_payment, "fn log_payment(amount: int) -> value")
 **C++**
 
 ```cpp
-UDF_FUNCTION(log_payment, udf::Result<int64_t>, int64_t amount)
+UDF_FUNCTION(log_payment, udf::Result<int64_t>, udf::Record& rec, int64_t amount)
 {
-    udf::Optional<udf::Value> stored = HISTORY.get();
+    udf::Value stored = UDF_TRY(rec.bin("history"));
 
-    if (!stored) return udf::error(AS_UDF_NOT_FOUND, "bin history is absent");
-
-    int64_t count = (int64_t)stored->len + 1;
+    int64_t count = (int64_t)stored.size() + 1;
     udf::List out((int32_t)count);
 
-    out.add_all(*stored).add(amount);   // the stored elements, then the new one
+    out.add_all(stored).add(amount);   // the stored elements, then the new one
 
-    UDF_TRY(HISTORY.set(out));
-    UDF_TRY(udf::commit());
+    UDF_TRY(rec.set("history", out));
+    UDF_TRY(rec.save());
 
     return count;
 }
@@ -869,17 +827,12 @@ UDF_FUNCTION(log_payment, udf::Result<int64_t>, int64_t amount)
 
 ```java
 @Function("log_payment")
-static long logPayment(long amount) {
-    Value stored = HISTORY.get();
+static long logPayment(Record rec, long amount) {
+    ListValue stored = rec.getList("history");
+    int count = stored.size() + 1;
 
-    if (stored == null) {
-        throw new UdfException("bin history is absent");
-    }
-
-    int count = stored.len + 1;
-
-    HISTORY.set(UdfList.create(count).addAll(stored).add(amount));   // the stored elements, then the new one
-    Udf.commit();
+    rec.set("history", Udf.list(count).addAll(stored).add(amount));   // the stored elements, then the new one
+    rec.save();
 
     return count;
 }
@@ -890,20 +843,20 @@ static long logPayment(long amount) {
 The task: answer with a collection, mixing stored values and record metadata.
 
 A map is built the same way as a list, and returning it hands it to the client. A value read from the
-record goes into the map as it is, whatever its kind. The metadata calls take no arguments: generation,
-bin count and time to live here, and also the record's size, last update time, set name, key and digest.
+record goes into the map as it is, whatever its kind. The metadata is on the record: generation, bin
+count and time to live here, and also its size, last update time, set name, key and digest.
 
 **Rust**
 
 ```rust
-fn summary() -> Result<Value, Error> {
+fn summary(rec: &Record) -> Result<Value, Error> {
     let out = as_udf::map(5)?;
 
-    out.put("owner", as_udf::bin("owner")?)?        // a stored value goes in as it is
-        .put("balance", as_udf::bin("balance")?)?
-        .put("generation", as_udf::generation())?
-        .put("bins", as_udf::bin_count())?
-        .put("ttl", as_udf::time_to_live().map_or(-1, i64::from))?;
+    out.insert("owner", rec.bin("owner")?)?         // a stored value goes in as it is
+        .insert("balance", rec.bin("balance")?)?
+        .insert("generation", rec.generation())?
+        .insert("bins", rec.bin_count())?
+        .insert("ttl", rec.ttl().map_or(-1, i64::from))?;
 
     Ok(out.into_value())
 }
@@ -915,16 +868,16 @@ fn summary() -> Result<Value, Error> {
 // The account at a glance, as a map.
 //
 //udf:function summary
-func summary() (*udf.Map, error) {
-    name, _ := owner.Get()
-    amount, _ := balance.Get()
+func summary(rec *udf.Record) (*udf.Map, error) {
+    name, _ := rec.Get("owner")
+    amount, _ := rec.Get("balance")
 
     out := udf.NewMap(5).
         Put("owner", name). // a stored value goes in as it is
         Put("balance", amount).
-        Put("generation", udf.Generation()).
-        Put("bins", udf.BinCount()).
-        Put("ttl", udf.TTL())
+        Put("generation", rec.Generation()).
+        Put("bins", rec.BinCount()).
+        Put("ttl", rec.TTL())
 
     return out, out.Err()
 }
@@ -939,16 +892,16 @@ summary(int32_t args, int32_t argc)
     (void)args; (void)argc;
 
     as_udf_value owner, balance;
-    if (as_udf_bin("owner", &owner) != AS_UDF_OK || as_udf_bin("balance", &balance) != AS_UDF_OK) return as_udf_failf("summary: no owner or balance");
+    if (as_udf_rec_bin("owner", &owner) != AS_UDF_OK || as_udf_rec_bin("balance", &balance) != AS_UDF_OK) return as_udf_failf("summary: no owner or balance");
 
     int32_t out = as_udf_map_new(5);
     if (out <= 0) return as_udf_failf("summary: could not build the map");
 
     as_udf_map_put_value(out, "owner", &owner);                        /* a stored value goes in as it is */
     as_udf_map_put_value(out, "balance", &balance);
-    as_udf_map_put_str_int(out, "generation", 10, as_udf_gen());
-    as_udf_map_put_str_int(out, "bins", 4, as_udf_numbins());
-    as_udf_map_put_str_int(out, "ttl", 3, as_udf_ttl());
+    as_udf_map_put_str_int(out, "generation", 10, as_udf_rec_gen());
+    as_udf_map_put_str_int(out, "bins", 4, as_udf_rec_numbins());
+    as_udf_map_put_str_int(out, "ttl", 3, as_udf_rec_ttl());
 
     as_udf_result_handle(out);
     return 0;
@@ -959,15 +912,15 @@ AS_UDF_SIGNATURE(summary, "fn summary() -> value")
 **C++**
 
 ```cpp
-UDF_FUNCTION(summary, udf::Result<udf::Map>)
+UDF_FUNCTION(summary, udf::Result<udf::Map>, const udf::Record& rec)
 {
     udf::Map out(5);
 
-    out.put("owner", OWNER.get().value_or(udf::Value()))   // a stored value goes in as it is
-        .put("balance", BALANCE.int_or(0))
-        .put("generation", udf::generation())
-        .put("bins", udf::bin_count())
-        .put("ttl", udf::ttl());
+    out.put("owner", rec.get("owner").value_or(udf::Value()))   // a stored value goes in as it is
+        .put("balance", rec.int_or("balance", 0))
+        .put("generation", rec.generation())
+        .put("bins", rec.bin_count())
+        .put("ttl", rec.ttl());
 
     UDF_TRY(out.result());
 
@@ -979,20 +932,17 @@ UDF_FUNCTION(summary, udf::Result<udf::Map>)
 
 ```java
 @Function("summary")
-static UdfMap summary() {
-    Value owner = OWNER.get();
-    Value balance = BALANCE.get();
-
-    if (owner == null || balance == null) {
+static MapBuilder summary(Record rec) {
+    if (!rec.hasBin("owner") || !rec.hasBin("balance")) {
         throw new UdfException("no owner or balance");
     }
 
-    return UdfMap.create(5)
-            .put("owner", owner)       // a stored value goes in as it is
-            .put("balance", balance)
-            .put("generation", Udf.generation())
-            .put("bins", Udf.binCount())
-            .put("ttl", Udf.ttl());
+    return Udf.map(5)
+            .put("owner", rec.get("owner"))       // a stored value goes in as it is
+            .put("balance", rec.get("balance"))
+            .put("generation", rec.generation())
+            .put("bins", rec.binCount())
+            .put("ttl", rec.ttl());
 }
 ```
 
@@ -1000,21 +950,18 @@ static UdfMap summary() {
 
 The task: set the record's time to live.
 
-The TTL is in seconds and belongs to the write: it takes effect when the function commits. Zero asks for
+The TTL is in seconds and belongs to the write: it takes effect when the function saves. Zero asks for
 the namespace default and -1 for no expiry, subject to the namespace's rules.
 
 **Rust**
 
 ```rust
-fn renew(seconds: i64) -> Result<Value, Error> {
-    let renewals = match as_udf::bin("renewals") {
-        Ok(v) => v.int()?,
-        Err(_) => 0,
-    } + 1;
+fn renew(rec: &mut Record, seconds: i64) -> Result<Value, Error> {
+    let renewals = rec.int("renewals")?.unwrap_or(0) + 1;
 
-    as_udf::set("renewals", renewals)?;
-    as_udf::set_time_to_live(seconds as u32)?;      // takes effect with the commit
-    as_udf::update()?;
+    rec.set("renewals", renewals)?;
+    rec.set_ttl(seconds as u32)?;                   // takes effect with the save
+    rec.save()?;
 
     Ok(Value::Int(renewals))
 }
@@ -1026,18 +973,19 @@ fn renew(seconds: i64) -> Result<Value, Error> {
 // Counts a renewal and gives the record seconds more to live.
 //
 //udf:function renew
-func renew(seconds int64) (int64, error) {
-    n := renewals.IntOr(0) + 1
+func renew(rec *udf.Record, seconds int64) (int64, error) {
+    renewals, _ := rec.Int("renewals")
+    n := renewals + 1
 
-    if err := renewals.SetInt(n); err != nil {
+    if err := rec.Set("renewals", n); err != nil {
         return 0, err
     }
 
-    if err := udf.SetTTL(int32(seconds)); err != nil { // takes effect with the commit
+    if err := rec.SetTTL(int32(seconds)); err != nil { // takes effect with the save
         return 0, err
     }
 
-    return n, udf.Commit()
+    return n, rec.Save()
 }
 ```
 
@@ -1051,12 +999,12 @@ renew(int32_t args, int32_t argc)
     if (as_udf_args(args, argc, &seconds, 1) < 1 || seconds.kind != AS_UDF_INT) return as_udf_failf("renew: seconds must be an integer");
 
     as_udf_value v;
-    int64_t n = as_udf_bin("renewals", &v) == AS_UDF_OK && v.kind == AS_UDF_INT ? v.payload : 0;
+    int64_t n = as_udf_rec_bin("renewals", &v) == AS_UDF_OK && v.kind == AS_UDF_INT ? v.payload : 0;
     n++;
 
-    as_udf_set_int("renewals", 8, n);
-    if (as_udf_set_ttl((int32_t)seconds.payload) != AS_UDF_OK) return as_udf_failf("renew: the TTL was refused");   /* takes effect with the commit */
-    if (as_udf_rec_update() != AS_UDF_OK) return as_udf_failf("renew: could not commit");
+    as_udf_rec_set_int("renewals", 8, n);
+    if (as_udf_rec_set_ttl((int32_t)seconds.payload) != AS_UDF_OK) return as_udf_failf("renew: the TTL was refused");   /* takes effect with the save */
+    if (as_udf_rec_save() != AS_UDF_OK) return as_udf_failf("renew: could not save");
 
     as_udf_result_int(n);
     return 0;
@@ -1067,13 +1015,13 @@ AS_UDF_SIGNATURE(renew, "fn renew(seconds: int) -> value")
 **C++**
 
 ```cpp
-UDF_FUNCTION(renew, udf::Result<int64_t>, int64_t seconds)
+UDF_FUNCTION(renew, udf::Result<int64_t>, udf::Record& rec, int64_t seconds)
 {
-    int64_t n = RENEWALS.int_or(0) + 1;
+    int64_t n = rec.int_or("renewals", 0) + 1;
 
-    UDF_TRY(RENEWALS.set(n));
-    UDF_TRY(udf::set_ttl((int32_t)seconds));   // takes effect with the commit
-    UDF_TRY(udf::commit());
+    UDF_TRY(rec.set("renewals", n));
+    UDF_TRY(rec.set_ttl((int32_t)seconds));   // takes effect with the save
+    UDF_TRY(rec.save());
 
     return n;
 }
@@ -1083,16 +1031,12 @@ UDF_FUNCTION(renew, udf::Result<int64_t>, int64_t seconds)
 
 ```java
 @Function("renew")
-static long renew(long seconds) {
-    long n = RENEWALS.getLong(0) + 1;
+static long renew(Record rec, long seconds) {
+    long n = rec.getLong("renewals", 0) + 1;
 
-    RENEWALS.set(n);
-
-    if (Udf.setTtl((int) seconds) != Udf.OK) {   // takes effect with the commit
-        throw new UdfException("the TTL was refused");
-    }
-
-    Udf.commit();
+    rec.set("renewals", n);
+    rec.setTtl((int) seconds);   // takes effect with the save; throws when it is refused
+    rec.save();
 
     return n;
 }
@@ -1102,15 +1046,15 @@ static long renew(long seconds) {
 
 The task: remove a bin from the record.
 
-Writing nil to a bin drops it, and the write commits like any other. The SDKs also have a call that
-removes a bin by name. The server on this branch refuses it, so use the nil write.
+Removing a bin is staged like a write, and takes effect with the save. Writing nil to a bin does the
+same thing, since a bin cannot hold nil.
 
 **Rust**
 
 ```rust
-fn clear_note() -> Result<Value, Error> {
-    as_udf::set("note", Value::Nil)?;               // a nil write drops the bin
-    as_udf::update()?;
+fn clear_note(rec: &mut Record) -> Result<Value, Error> {
+    rec.remove("note")?;                            // staged, like a set
+    rec.save()?;
 
     Ok(Value::Nil)
 }
@@ -1122,12 +1066,12 @@ fn clear_note() -> Result<Value, Error> {
 // Drops the note bin.
 //
 //udf:function clear_note
-func clearNote() error {
-    if err := note.SetNull(); err != nil { // a nil write drops the bin
+func clearNote(rec *udf.Record) error {
+    if err := rec.Remove("note"); err != nil { // staged, like a write
         return err
     }
 
-    return udf.Commit()
+    return rec.Save()
 }
 ```
 
@@ -1139,8 +1083,8 @@ clear_note(int32_t args, int32_t argc)
 {
     (void)args; (void)argc;
 
-    as_udf_set_nil("note", 4);                                         /* a nil write drops the bin */
-    if (as_udf_rec_update() != AS_UDF_OK) return as_udf_failf("clear_note: could not commit");
+    as_udf_rec_remove("note", 4);                                      /* staged, like a set */
+    if (as_udf_rec_save() != AS_UDF_OK) return as_udf_failf("clear_note: could not save");
 
     as_udf_result_nil();
     return 0;
@@ -1151,10 +1095,10 @@ AS_UDF_SIGNATURE(clear_note, "fn clear_note() -> value")
 **C++**
 
 ```cpp
-UDF_FUNCTION(clear_note, udf::Result<void>)
+UDF_FUNCTION(clear_note, udf::Result<void>, udf::Record& rec)
 {
-    UDF_TRY(NOTE.set_null());   // a nil write drops the bin
-    UDF_TRY(udf::commit());
+    UDF_TRY(rec.remove("note"));   // staged, like a set
+    UDF_TRY(rec.save());
 
     return {};
 }
@@ -1164,9 +1108,9 @@ UDF_FUNCTION(clear_note, udf::Result<void>)
 
 ```java
 @Function("clear_note")
-static void clearNote() {
-    NOTE.setNull();   // a nil write drops the bin
-    Udf.commit();
+static void clearNote(Record rec) {
+    rec.remove("note");   // staged like a write
+    rec.save();
 }
 ```
 
@@ -1174,13 +1118,14 @@ static void clearNote() {
 
 The task: delete the record the function runs on.
 
-The delete is its own write. It needs no commit.
+The delete is its own write. It needs no save, and whatever was staged goes with the record. The server
+carries it out when the call returns, so inside the call the record still answers that it exists.
 
 **Rust**
 
 ```rust
-fn close() -> Result<Value, Error> {
-    as_udf::remove_record()?;                       // no commit: the delete is the write
+fn close(rec: &mut Record) -> Result<Value, Error> {
+    rec.delete()?;                                  // no save: the delete is the write
 
     Ok(Value::Nil)
 }
@@ -1192,8 +1137,8 @@ fn close() -> Result<Value, Error> {
 // Deletes the record.
 //
 //udf:function close
-func closeAccount() error {
-    return udf.Delete() // no commit: the delete is the write
+func closeAccount(rec *udf.Record) error {
+    return rec.Delete() // no save: the delete is the write
 }
 ```
 
@@ -1205,7 +1150,7 @@ close(int32_t args, int32_t argc)
 {
     (void)args; (void)argc;
 
-    if (as_udf_rec_remove() != AS_UDF_OK) return as_udf_failf("close: could not delete the record");   /* no commit: the delete is the write */
+    if (as_udf_rec_delete() != AS_UDF_OK) return as_udf_failf("close: could not delete the record");   /* no save: the delete is the write */
 
     as_udf_result_nil();
     return 0;
@@ -1216,9 +1161,9 @@ AS_UDF_SIGNATURE(close, "fn close() -> value")
 **C++**
 
 ```cpp
-UDF_FUNCTION(close, udf::Result<void>)
+UDF_FUNCTION(close, udf::Result<void>, udf::Record& rec)
 {
-    UDF_TRY(udf::remove_record());   // no commit: the delete is the write
+    UDF_TRY(rec.delete_record());   // no save: the delete is the write
 
     return {};
 }
@@ -1228,8 +1173,8 @@ UDF_FUNCTION(close, udf::Result<void>)
 
 ```java
 @Function("close")
-static void close() {
-    Udf.delete();     // no commit: the delete is the write
+static void close(Record rec) {
+    rec.delete();     // no save: the delete is the write
 }
 ```
 
@@ -1237,20 +1182,22 @@ static void close() {
 
 | Task | Rust | Go | C | C++ | Java |
 | --- | --- | --- | --- | --- | --- |
-| Read a bin of any kind | `as_udf::bin(name)` | `bin.Get()` | `as_udf_bin(name, &v)` | `BIN.get()` | `bin.get()` |
-| Integer with a default | `match` on `Error::Absent` | `bin.IntOr(d)` | test `v.kind` | `BIN.int_or(d)` | `bin.getLong(d)` |
-| Required, typed | `.int()?` `.double()?` `.bool()?` `.text()?` | `Int()` `Float64()` `Bool()` `Str()` | test `v.kind`, read `v.payload` | `as_int()` `as_double()` `as_bool()` `as_text<N>()` | `getLong()` `getDouble()` `getBoolean()` `getString()` |
-| Write a bin | `as_udf::set(name, v)` | `SetInt` `SetStr` `SetList` ... | `as_udf_set_int` `as_udf_set_str` ... | `BIN.set(v)` | `bin.set(v)` |
-| Commit | `update()` or `create()` | `udf.Commit()` | `as_udf_rec_update()` or `as_udf_rec_create()` | `udf::commit()` | `Udf.commit()` |
+| Take the record | `rec: &mut Record` or `&Record`, first | `rec *udf.Record`, first | implied | `udf::Record& rec` or `const udf::Record&`, first | `Record rec`, first |
+| Read a bin of any kind | `rec.bin(name)` | `rec.Get(name)` | `as_udf_rec_bin(name, &v)` | `rec.get(name)` | `rec.get(name)` |
+| Integer with a default | `rec.int(name)?.unwrap_or(d)` | `rec.Int(name)`, test the bool | test `v.kind` | `rec.int_or(name, d)` | `rec.getLong(name, d)` |
+| Required, typed | `rec.bin(name)?` then `.int()?` `.double()?` `.bool()?` `.text()?` | `rec.Bin(name)` then `Int()` `Float64()` `Bool()` `Str()` | test `v.kind`, read `v.payload` | `rec.bin(name)` then `as_int()` `as_double()` `as_bool()` `as_text<N>()` | `rec.getLong(name)` `getDouble` `getBoolean` `getString` |
+| Write a bin | `rec.set(name, v)` | `rec.Set(name, v)` | `as_udf_rec_set_int` `as_udf_rec_set_str` ... | `rec.set(name, v)` | `rec.set(name, v)` |
+| Save | `rec.save()` | `rec.Save()` | `as_udf_rec_save()` | `rec.save()` | `rec.save()` |
 | Fail the call | `Err(Error::Custom(msg))` | return an `error` | `return as_udf_failf(msg)` | `return udf::error(status, msg)` | `throw new UdfException(msg)` |
-| Walk a list | `.list()?.iter()` | `range bin.List()` | cursor | `for (udf::Value v : BIN.list())` | `for (Value v : bin.asList())` |
-| Walk a map | `.map()?.entries()` | `range bin.Map()` | cursor, key then value | `for (udf::Entry e : BIN.map())` | `for (Cursor.Entry e : bin.asMap())` |
-| Look up a key | `map.get(key)` | `value.Lookup(key)` | `as_udf_coll_get(...)` | `value.get(key)` | `Udf.get(map, key, out)` |
-| Build a list | `as_udf::list(n)`, `push`, `extend` | `udf.NewList(n)`, `Add`, `AddAll` | `as_udf_list_new`, `as_udf_list_push_*` | `udf::List`, `add`, `add_all` | `UdfList.create(n)`, `add`, `addAll` |
-| Build a map | `as_udf::map(n)`, `put` | `udf.NewMap(n)`, `Put` | `as_udf_map_new`, `as_udf_map_put_*` | `udf::Map`, `put` | `UdfMap.create(n)`, `put` |
-| Set the TTL | `set_time_to_live(s)` | `udf.SetTTL(s)` | `as_udf_set_ttl(s)` | `udf::set_ttl(s)` | `Udf.setTtl(s)` |
-| Drop a bin | `set(name, Value::Nil)` | `bin.SetNull()` | `as_udf_set_nil(name, len)` | `BIN.set_null()` | `bin.setNull()` |
-| Delete the record | `remove_record()` | `udf.Delete()` | `as_udf_rec_remove()` | `udf::remove_record()` | `Udf.delete()` |
+| Walk a list | `.list()?.iter()` | `range rec.List(name)` | cursor | `for (udf::Value v : rec.list(name))` | `for (Value v : rec.getList(name))` |
+| Walk a map | `.map()?.entries()` | `range rec.Map(name)` | cursor, key then value | `for (udf::Entry e : rec.map(name))` | `for (MapValue.Entry e : rec.getMap(name))` |
+| Look up a key | `map.get(key)` | `value.Lookup(key)` | `as_udf_coll_get(...)` | `value.get(key)` | `map.get(key)` |
+| One element of a list | `list.at(i)` | `value.Index(i)` | `as_udf_list_at(&list, i)` | `value.at(i)` | `list.get(i)` |
+| Build a list | `as_udf::list(n)`, `push`, `extend` | `udf.NewList(n)`, `Add`, `AddAll` | `as_udf_list_new`, `as_udf_list_push_*` | `udf::List`, `add`, `add_all` | `Udf.list()`, `add`, `addAll` |
+| Build a map | `as_udf::map(n)`, `insert` | `udf.NewMap(n)`, `Put` | `as_udf_map_new`, `as_udf_map_put_*` | `udf::Map`, `put` | `Udf.map()`, `put` |
+| Set the TTL | `rec.set_ttl(s)` | `rec.SetTTL(s)` | `as_udf_rec_set_ttl(s)` | `rec.set_ttl(s)` | `rec.setTtl(s)` |
+| Remove a bin | `rec.remove(name)` | `rec.Remove(name)` | `as_udf_rec_remove(name, len)` | `rec.remove(name)` | `rec.remove(name)` |
+| Delete the record | `rec.delete()` | `rec.Delete()` | `as_udf_rec_delete()` | `rec.delete_record()` | `rec.delete()` |
 
 The code on this page is compiled: it comes from the sources under `book/tutorial/`, one file per
 language. The language chapters that follow cover building a module and list every call in full.

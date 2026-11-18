@@ -31,7 +31,7 @@ In Rust:
 ```rust
 event! {
     on xdr_merge
-    fn merge_counter(current: Record, incoming: Record, _conflict: Conflict) -> Result<Resolution, Error> {
+    fn merge_counter(current: EventRecord, incoming: EventRecord, _conflict: Conflict) -> Result<Resolution, Error> {
         let mut counts = Counts::new();
 
         counts.offer_all(current.map("counts")?)?;
@@ -39,7 +39,7 @@ event! {
 
         let out = as_udf::map(1)?;
 
-        out.put("counts", counts.into_map()?)?;
+        out.insert("counts", counts.into_map()?)?;
 
         Ok(Resolution::Record { bins: incoming.with_bins(out)?, ttl: None })
     }
@@ -56,21 +56,21 @@ The same in Java:
 @On.XdrMerge("merge_counter")
 static Resolution mergeCounter(EventRecord current, EventRecord incoming, Conflict conflict) {
     size = 0;
-    offerAll(current.binMap("counts"));
-    offerAll(incoming.binMap("counts"));
+    offerAll(current.getMap("counts", null));
+    offerAll(incoming.getMap("counts", null));
 
-    // Every other bin is the incoming write's, by position.
-    return Resolution.record(incoming.withBins(UdfMap.create(2).put("counts", toMap())));
+    return Resolution.record(incoming.withBins(Udf.map(2).put("counts", toMap())));
 }
 ```
 
-`offerAll` walks the stored map entry by entry (`for (Cursor.Entry e : map.asMap())`), the Java form of
-the Rust `entries()` loop, `toMap` builds a `UdfMap`, and `incoming.withBins(out)` is
+`offerAll` walks the stored map entry by entry (`for (MapValue.Entry e : map)`), the Java form of
+the Rust `entries()` loop, `toMap` builds a `MapBuilder`, and `incoming.withBins(out)` is
 `incoming.with_bins(out)`. The annotation is the export: the processor generates the `merge_counter` export
 that decodes the event into the three parameters and delivers the `Resolution`, and its signature. The
-two write UDFs are `@Function("increment")` on `static long increment(String site, long n)` and
-`@Function("value")` on `static long value()`, their arguments decoded and their returns delivered the same
-way; a `Bin` constant reads and writes the `counts` bin, and `Udf.commit()` writes it.
+two write UDFs are `@Function("increment")` on `static long increment(Record rec, String site, long n)` and
+`@Function("value")` on `static long value(Record rec)`, their arguments decoded and their returns delivered
+the same way. The record is the first parameter: `rec.getMap("counts", null)` reads the `counts` bin,
+`rec.set` stages the new map, and `rec.save()` writes it.
 
 And in Go:
 
@@ -80,10 +80,8 @@ func mergeCounter(current, incoming *udf.EventRecord, _ *udf.Conflict) (udf.Reso
 	t := table{}
 
 	for _, side := range []*udf.EventRecord{current, incoming} {
-		if stored, ok := side.Get("counts"); ok {
-			if err := t.offerAll(stored); err != nil {
-				return udf.Resolution{}, err
-			}
+		if err := t.offerRecord(side); err != nil {
+			return udf.Resolution{}, err
 		}
 	}
 
@@ -93,12 +91,13 @@ func mergeCounter(current, incoming *udf.EventRecord, _ *udf.Conflict) (udf.Reso
 }
 ```
 
-`table` is a `map[string]int64` whose `offer` keeps the larger count, `offerAll` ranges over the stored
-map (`for k, v := range stored.Map()`), and the `//udf:on` directive is the export: `udfgen` writes the
+`table` is a `map[string]int64` whose `offer` keeps the larger count, `offerRecord` reads the `counts` bin
+of either side, `offerAll` ranges over the stored map (`for k, v := range stored.Map()`), and the `//udf:on` directive is the export: `udfgen` writes the
 `merge_counter` trampoline that decodes the event and delivers the `Resolution`, and its signature. The
-write UDFs are `//udf:function increment` on `func increment(site string, n int64) (int64, error)` and
-`//udf:function value`; a `udf.Bin` variable reads and writes the `counts` bin, and `udf.Commit()` writes
-it.
+write UDFs are `//udf:function increment` on `func increment(rec *udf.Record, site string, n int64) (int64,
+error)` and `//udf:function value`. The record is the first parameter: `offerRecord` reads its `counts` bin
+too, since a `udf.RecordReader` is either kind of record, `rec.Set` stages the new map, and `rec.Save()`
+writes it.
 
 And in C++:
 
@@ -106,12 +105,11 @@ And in C++:
 UDF_ON_XDR_MERGE(merge_counter)
 {
 	Table t;
+
 	const udf::EventRecord* sides[] = {&current, &incoming};
 
 	for (const udf::EventRecord* side : sides) {
-		if (udf::Optional<udf::Value> stored = side->get("counts")) {
-			UDF_TRY(t.offer_all(*stored));
-		}
+		UDF_TRY(load(*side, t));
 	}
 
 	udf::Map out(2);
@@ -124,15 +122,17 @@ UDF_ON_XDR_MERGE(merge_counter)
 
 `Table` is a fixed array of 64 `(Text<32>, count)` pairs, since a module has no allocator, whose `offer`
 keeps the larger count and whose `offer_all` ranges over the stored map (`for (udf::Entry e :
-stored.map())`); `UDF_ON_XDR_MERGE` is the export, writing the `merge_counter` trampoline and its signature.
-The write UDFs are `UDF_FUNCTION(increment, udf::Result<int64_t>, Site site, int64_t n)` and
-`UDF_FUNCTION(value, udf::Result<int64_t>)`, the `Text<32>` site bounding the name as the Rust `Str<32>`
-does; a `constexpr udf::Bin` reads and writes the `counts` bin, and `udf::commit()` writes it.
+stored.map())`); `load` offers the `counts` bin of a record, either side of the merge or the record a UDF
+runs on; `UDF_ON_XDR_MERGE` is the export, writing the `merge_counter` trampoline and its signature.
+The write UDFs are `UDF_FUNCTION(increment, udf::Result<int64_t>, udf::Record& rec, Site site, int64_t n)`
+and `UDF_FUNCTION(value, udf::Result<int64_t>, const udf::Record& rec)`, the `Text<32>` site bounding the
+name as the Rust `Str<32>` does. The record is the first parameter: `rec.set` stages the `counts` bin, and
+`rec.save()` writes it.
 
 ## The write UDFs
 
 `increment(site, n)` reads the map, adds `n` to the site's entry (creating it if the site is new), stores
-the map and commits, answering the new total; `value()` answers the sum. Every application write goes
+the map and saves the record, answering the new total; `value()` answers the sum. Every application write goes
 through `increment`, which is the only invariant this CRDT needs: a site touches its own entry and never
 lowers it.
 

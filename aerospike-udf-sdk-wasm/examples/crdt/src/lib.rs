@@ -25,7 +25,7 @@
 
 use core::cmp::Ordering;
 
-use aerospike_udf_sdk_wasm::{self as as_udf, event, export, Coll, Error, Resolution, Str, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, event, export, Coll, Error, Record, Resolution, Str, Value};
 
 /// How long a removal marker outlives its removal, in ms. Longer than the longest outage between the
 /// clusters plus the replication lag, or a purged device can come back on one side.
@@ -177,7 +177,7 @@ event! {
     /// wins per device, and the result is the sorted live list plus the markers still inside the purge
     /// horizon. Every other bin is the incoming one's, as XDR would have applied it.
     on xdr_merge
-    fn xdr_merge(current: Record, incoming: Record, _conflict: Conflict) -> Result<Resolution, Error> {
+    fn xdr_merge(current: EventRecord, incoming: EventRecord, _conflict: Conflict) -> Result<Resolution, Error> {
         let out = as_udf::map(8)?;
 
         // Other bins: as XDR does today.
@@ -188,7 +188,7 @@ event! {
             let name = name.as_str(&mut nbuf)?;
 
             if name != "devices" && name != "devicesRemoved" {
-                out.put(name, incoming.bin(name)?)?;
+                out.insert(name, incoming.bin(name)?)?;
             }
         }
 
@@ -218,7 +218,7 @@ event! {
                     live.push(c.value)?;
                 }
                 else if c.off_at >= horizon {
-                    markers.put(c.id.as_str(), c.value)?;
+                    markers.insert(c.id.as_str(), c.value)?;
                     n_markers += 1;
                 }
                 else {
@@ -230,24 +230,24 @@ event! {
             }
 
             if current.list("devices")?.is_some() || incoming.list("devices")?.is_some() {
-                out.put("devices", live)?;
+                out.insert("devices", live)?;
             }
 
             if n_markers > 0 || horizon > 0 {
                 let removed = as_udf::map(3)?;
 
-                removed.put("markers", markers)?.put("purgedBefore", horizon)?;
+                removed.insert("markers", markers)?.insert("purgedBefore", horizon)?;
 
                 if floor > 0 {
-                    removed.put("versionFloor", floor)?;
+                    removed.insert("versionFloor", floor)?;
                 }
 
-                out.put("devicesRemoved", removed)?;
+                out.insert("devicesRemoved", removed)?;
             }
             else {
                 // The merge has no removals left: the bin stays out, so with_bins below cannot bring a
                 // stale copy back.
-                out.put("devicesRemoved", Value::Nil)?;
+                out.insert("devicesRemoved", Value::Nil)?;
             }
         }
 
@@ -261,11 +261,11 @@ event! {
 //
 
 /// The live entries as (id, entry) pairs, in stored order.
-fn live_entries(buf: &mut [Option<(Id, Value<'static>)>; MAX_DEVICES]) -> Result<usize, Error> {
+fn live_entries(rec: &Record, buf: &mut [Option<(Id, Value<'static>)>; MAX_DEVICES]) -> Result<usize, Error> {
     let mut n = 0;
 
-    if let Ok(devices) = as_udf::bin("devices") {
-        for item in devices.list()?.iter() {
+    if let Some(devices) = rec.list("devices")? {
+        for item in devices.iter() {
             let item = item?;
 
             if n == MAX_DEVICES {
@@ -281,14 +281,12 @@ fn live_entries(buf: &mut [Option<(Id, Value<'static>)>; MAX_DEVICES]) -> Result
 }
 
 /// A marker's version, if the device has one.
-fn marker_version(id: &str) -> Result<Option<i64>, Error> {
-    match as_udf::bin("devicesRemoved") {
-        Ok(removed) => match removed.map()?.get("markers") {
-            Ok(markers) => match markers.map()?.get(id) {
-                Ok(marker) => Ok(Some(marker.map()?.get("version")?.int()?)),
-                Err(Error::Absent) => Ok(None),
-                Err(e) => Err(e),
-            },
+fn marker_version(rec: &Record, id: &str) -> Result<Option<i64>, Error> {
+    let Some(removed) = rec.map("devicesRemoved")? else { return Ok(None) };
+
+    match removed.get("markers") {
+        Ok(markers) => match markers.map()?.get(id) {
+            Ok(marker) => Ok(Some(marker.map()?.get("version")?.int()?)),
             Err(Error::Absent) => Ok(None),
             Err(e) => Err(e),
         },
@@ -297,21 +295,19 @@ fn marker_version(id: &str) -> Result<Option<i64>, Error> {
     }
 }
 
-fn removed_int(key: &str) -> Result<i64, Error> {
-    match as_udf::bin("devicesRemoved") {
-        Ok(removed) => match removed.map()?.get(key) {
-            Ok(v) => v.int(),
-            Err(Error::Absent) => Ok(0),
-            Err(e) => Err(e),
-        },
+fn removed_int(rec: &Record, key: &str) -> Result<i64, Error> {
+    let Some(removed) = rec.map("devicesRemoved")? else { return Ok(0) };
+
+    match removed.get(key) {
+        Ok(v) => v.int(),
         Err(Error::Absent) => Ok(0),
         Err(e) => Err(e),
     }
 }
 
 /// The device's latest version, live or removed, and never below the version floor.
-fn last_version(entries: &[Option<(Id, Value<'static>)>], id: &str) -> Result<i64, Error> {
-    let mut v = removed_int("versionFloor")?;
+fn last_version(rec: &Record, entries: &[Option<(Id, Value<'static>)>], id: &str) -> Result<i64, Error> {
+    let mut v = removed_int(rec, "versionFloor")?;
 
     for (eid, entry) in entries.iter().flatten() {
         if eid.as_str() == id {
@@ -319,7 +315,7 @@ fn last_version(entries: &[Option<(Id, Value<'static>)>], id: &str) -> Result<i6
         }
     }
 
-    if let Some(mv) = marker_version(id)? {
+    if let Some(mv) = marker_version(rec, id)? {
         v = v.max(mv);
     }
 
@@ -327,7 +323,12 @@ fn last_version(entries: &[Option<(Id, Value<'static>)>], id: &str) -> Result<i6
 }
 
 /// Store `entries` plus an optional built entry under `id`, sorted by id, less any entry under `id`.
-fn store_devices(entries: &[Option<(Id, Value<'static>)>], without: &str, add: Option<(Id, Value<'static>)>) -> Result<(), Error> {
+fn store_devices(
+    rec: &mut Record,
+    entries: &[Option<(Id, Value<'static>)>],
+    without: &str,
+    add: Option<(Id, Value<'static>)>,
+) -> Result<(), Error> {
     let mut all: [Option<(Id, Value<'static>)>; MAX_DEVICES] = [None; MAX_DEVICES];
     let mut n = 0;
 
@@ -362,14 +363,19 @@ fn store_devices(entries: &[Option<(Id, Value<'static>)>], without: &str, add: O
         list.push(*value)?;
     }
 
-    as_udf::set("devices", list)
+    rec.set("devices", list)
 }
 
 /// Rebuild `devicesRemoved` from the current one with one marker removed, one added or replaced, and a
 /// purge at `now` (when `now` is Some). The bin is left out while it holds nothing.
-fn store_removed(drop: Option<&str>, add: Option<(&str, i64, i64)>, now: Option<i64>) -> Result<(), Error> {
-    let mut horizon = removed_int("purgedBefore")?;
-    let mut floor = removed_int("versionFloor")?;
+fn store_removed(
+    rec: &mut Record,
+    drop: Option<&str>,
+    add: Option<(&str, i64, i64)>,
+    now: Option<i64>,
+) -> Result<(), Error> {
+    let mut horizon = removed_int(rec, "purgedBefore")?;
+    let mut floor = removed_int(rec, "versionFloor")?;
 
     if let Some(now) = now {
         horizon = horizon.max(now - PURGE_AGE_MS);
@@ -379,8 +385,8 @@ fn store_removed(drop: Option<&str>, add: Option<(&str, i64, i64)>, now: Option<
     let mut n_markers = 0;
     let mut kbuf = [0u8; 64];
 
-    if let Ok(removed) = as_udf::bin("devicesRemoved") {
-        if let Ok(existing) = removed.map()?.get("markers") {
+    if let Some(removed) = rec.map("devicesRemoved")? {
+        if let Ok(existing) = removed.get("markers") {
             for entry in existing.map()?.entries() {
                 let (key, marker) = entry?;
                 let id = key.as_str(&mut kbuf)?;
@@ -396,7 +402,7 @@ fn store_removed(drop: Option<&str>, add: Option<(&str, i64, i64)>, now: Option<
                     continue;
                 }
 
-                markers.put(id, marker)?;
+                markers.insert(id, marker)?;
                 n_markers += 1;
             }
         }
@@ -405,45 +411,36 @@ fn store_removed(drop: Option<&str>, add: Option<(&str, i64, i64)>, now: Option<
     if let Some((id, off_at, version)) = add {
         let marker = as_udf::map(2)?;
 
-        marker.put("offAt", off_at)?.put("version", version)?;
-        markers.put(id, marker)?;
+        marker.insert("offAt", off_at)?.insert("version", version)?;
+        markers.insert(id, marker)?;
         n_markers += 1;
     }
 
     if n_markers == 0 && horizon == 0 {
-        return match as_udf::bin("devicesRemoved") {
-            Ok(_) => as_udf::remove("devicesRemoved"),
+        return match rec.bin("devicesRemoved") {
+            Ok(_) => rec.remove("devicesRemoved"),
             Err(_) => Ok(()),
         };
     }
 
     let removed = as_udf::map(3)?;
 
-    removed.put("markers", markers)?.put("purgedBefore", horizon)?;
+    removed.insert("markers", markers)?.insert("purgedBefore", horizon)?;
 
     if floor > 0 {
-        removed.put("versionFloor", floor)?;
+        removed.insert("versionFloor", floor)?;
     }
 
-    as_udf::set("devicesRemoved", removed)
-}
-
-fn commit() -> Result<(), Error> {
-    if as_udf::exists() {
-        as_udf::update()
-    }
-    else {
-        as_udf::create()
-    }
+    rec.set("devicesRemoved", removed)
 }
 
 export! {
     /// Add a device, update one, or add a removed one back: the entry becomes the old one (if any) with
     /// `changes` on top and a version one above the device's last, live or removed. Returns the version.
-    fn update_device(id: &str, changes: Coll) -> Result<Value, Error> {
+    fn update_device(rec: &mut Record, id: &str, changes: Coll) -> Result<Value, Error> {
         let mut entries: [Option<(Id, Value<'static>)>; MAX_DEVICES] = [None; MAX_DEVICES];
-        let n = live_entries(&mut entries)?;
-        let version = last_version(&entries[..n], id)? + 1;
+        let n = live_entries(rec, &mut entries)?;
+        let version = last_version(rec, &entries[..n], id)? + 1;
 
         let entry = as_udf::map(8)?;
 
@@ -453,7 +450,7 @@ export! {
                     let mut kbuf = [0u8; 64];
                     let (k, v) = pair?;
 
-                    entry.put(k.as_str(&mut kbuf)?, v)?;
+                    entry.insert(k.as_str(&mut kbuf)?, v)?;
                 }
             }
         }
@@ -462,47 +459,47 @@ export! {
             let mut kbuf = [0u8; 64];
             let (k, v) = pair?;
 
-            entry.put(k.as_str(&mut kbuf)?, v)?;
+            entry.insert(k.as_str(&mut kbuf)?, v)?;
         }
 
-        entry.put("deviceId", id)?.put("version", version)?;
-        store_devices(&entries[..n], id, Some((Id::new(id)?, entry.into_value())))?;
+        entry.insert("deviceId", id)?.insert("version", version)?;
+        store_devices(rec, &entries[..n], id, Some((Id::new(id)?, entry.into_value())))?;
 
-        if marker_version(id)?.is_some() {
-            store_removed(Some(id), None, None)?;
+        if marker_version(rec, id)?.is_some() {
+            store_removed(rec, Some(id), None, None)?;
         }
 
-        commit()?;
+        rec.save()?;
 
         Ok(Value::Int(version))
     }
 
     /// Remove a device, leaving a marker with the application's time `now` (ms) and the next version.
-    fn remove_device(id: &str, now: i64) -> Result<Value, Error> {
+    fn remove_device(rec: &mut Record, id: &str, now: i64) -> Result<Value, Error> {
         let mut entries: [Option<(Id, Value<'static>)>; MAX_DEVICES] = [None; MAX_DEVICES];
-        let n = live_entries(&mut entries)?;
-        let version = last_version(&entries[..n], id)? + 1;
+        let n = live_entries(rec, &mut entries)?;
+        let version = last_version(rec, &entries[..n], id)? + 1;
 
-        store_devices(&entries[..n], id, None)?;
-        store_removed(None, Some((id, now, version)), Some(now))?;
-        commit()?;
+        store_devices(rec, &entries[..n], id, None)?;
+        store_removed(rec, None, Some((id, now, version)), Some(now))?;
+        rec.save()?;
 
         Ok(Value::Int(version))
     }
 
     /// Drop the markers older than the purge age before `now`, and store the list sorted.
-    fn purge_devices(now: i64) -> Result<Value, Error> {
+    fn purge_devices(rec: &mut Record, now: i64) -> Result<Value, Error> {
         let mut entries: [Option<(Id, Value<'static>)>; MAX_DEVICES] = [None; MAX_DEVICES];
-        let n = live_entries(&mut entries)?;
+        let n = live_entries(rec, &mut entries)?;
 
         if n > 0 {
-            store_devices(&entries[..n], "", None)?;
+            store_devices(rec, &entries[..n], "", None)?;
         }
 
-        store_removed(None, None, Some(now))?;
-        commit()?;
+        store_removed(rec, None, None, Some(now))?;
+        rec.save()?;
 
-        Ok(Value::Int(removed_int("purgedBefore")?))
+        Ok(Value::Int(removed_int(rec, "purgedBefore")?))
     }
 }
 

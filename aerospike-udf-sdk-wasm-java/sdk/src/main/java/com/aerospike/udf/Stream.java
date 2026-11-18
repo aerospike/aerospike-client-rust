@@ -30,14 +30,16 @@ import java.lang.annotation.Target;
  * final class Sum {
  *     private long total;
  *
- *     void record(String bin) { total += Bin.of(bin).getLong(0); }
+ *     void record(Record rec, String bin) { total += rec.getLong(bin, 0); }
  *
  *     long end(String bin) { return total; }
  * }
  * </pre>
  *
  * <p>Parameters and returns are as for {@link Function}: {@code record} returns {@code void}, {@code end}
- * the partial. In the raw form both are {@code int name(int args, int argc)} and {@link #params} and
+ * the partial. {@code record} may take the {@link Record} as its first parameter, which is the record the
+ * query thread is on and is read-only: a write to it throws {@link UdfException}. {@code end} takes none,
+ * since it runs after the last record. In the raw form both are {@code int name(int args, int argc)} and {@link #params} and
  * {@link #endParams} give the signature's parameter text, which is the form for a stream that reads its
  * arguments once, on the first record, and keeps them.
  */

@@ -45,7 +45,7 @@ maximum changed to a union:
 ```rust
 event! {
     on xdr_merge
-    fn merge_twopset(current: Record, incoming: Record, _conflict: Conflict) -> Result<Resolution, Error> {
+    fn merge_twopset(current: EventRecord, incoming: EventRecord, _conflict: Conflict) -> Result<Resolution, Error> {
         let out = as_udf::map(2)?;
 
         for bin in ["added", "removed"] {
@@ -53,7 +53,7 @@ event! {
 
             tags.offer_all(current.list(bin)?)?;
             tags.offer_all(incoming.list(bin)?)?;
-            out.put(bin, tags.into_list(None)?)?;
+            out.insert(bin, tags.into_list(None)?)?;
         }
 
         Ok(Resolution::Record { bins: incoming.with_bins(out)?, ttl: None })
@@ -71,12 +71,12 @@ The same in Java, with the sorted table as a small class:
 ```java
 @On.XdrMerge("merge_twopset")
 static Resolution mergeTwoPSet(EventRecord current, EventRecord incoming, Conflict conflict) {
-    UdfMap out = UdfMap.create(2);
+    MapBuilder out = Udf.map(2);
 
     for (String bin : new String[] {"added", "removed"}) {
         ADDED_TAGS.size = 0;
-        ADDED_TAGS.offerAll(current.binList(bin));
-        ADDED_TAGS.offerAll(incoming.binList(bin));
+        ADDED_TAGS.offerAll(current.getList(bin, null));
+        ADDED_TAGS.offerAll(incoming.getList(bin, null));
         out.put(bin, ADDED_TAGS.toList(null));
     }
 

@@ -30,8 +30,8 @@ static mut TOTAL: i64 = 0;
 
 stream! {
 fn sum {
-record(bin: &str) -> Result<(), Error> {
-unsafe { TOTAL += as_udf::bin(bin)?.int()? };
+record(rec: &Record, bin: &str) -> Result<(), Error> {
+unsafe { TOTAL += rec.bin(bin)?.int()? };
 Ok(())
 }
 end(_bin: &str) -> Result<Value, Error> {

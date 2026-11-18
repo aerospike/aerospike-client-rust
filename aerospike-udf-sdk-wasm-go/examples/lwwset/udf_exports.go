@@ -33,7 +33,7 @@ func udfExport_add(args, argc int32) int32 {
 	if err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := add(p0)
+	r, err := add(udf.CurrentRecord(), p0)
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -59,7 +59,7 @@ func udfExport_remove(args, argc int32) int32 {
 	if err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := remove(p0)
+	r, err := remove(udf.CurrentRecord(), p0)
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -79,7 +79,7 @@ func udfExport_members(args, argc int32) int32 {
 	if err := udf.Arity("members", 0, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	r, err := members()
+	r, err := members(udf.CurrentRecord())
 	if err != nil {
 		return udf.FailErr(err)
 	}

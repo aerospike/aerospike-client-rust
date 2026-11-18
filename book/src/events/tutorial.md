@@ -4,7 +4,7 @@
 
 This tutorial writes six event handlers for one set of account records. Each step is a job handlers are
 used for, shown in all five languages so you can compare them. It follows on from the
-[record tutorial](../record-udfs/tutorial.md) and uses the same imports, bin handles and helpers.
+[record tutorial](../record-udfs/tutorial.md) and uses the same imports and helpers.
 
 A handler differs from a record UDF in three ways:
 
@@ -13,7 +13,7 @@ A handler differs from a record UDF in three ways:
 2. **Its records are read-only.** The event hands over one or two records. The handler reads their bins
    through the event, not through the record API, and writes nothing.
 3. **Its answer is the effect.** The handler returns a verdict, and the server acts on it: let the write
-   through, refuse it, or commit a different record.
+   through, refuse it, or write a different record.
 
 A binding connects a handler to an event:
 
@@ -40,7 +40,7 @@ Rejecting fails the client's write with the result code and message given. Code 
 
 ```rust
 on before_write
-fn no_overdraft(_before: Record, after: Record, _write: Write) -> Result<Decision, Error> {
+fn no_overdraft(_before: EventRecord, after: EventRecord, _write: Write) -> Result<Decision, Error> {
     match after.int("balance")? {                   // None when the bin is absent or nil
         Some(balance) if balance < 0 => {
             Ok(Decision::Reject { code: 22, message: "balance may not go negative" })
@@ -107,9 +107,7 @@ UDF_ON_BEFORE_WRITE(no_overdraft)
 ```java
 @On.BeforeWrite("no_overdraft")
 static Decision noOverdraft(EventRecord before, EventRecord after, Events.WriteInfo write) {
-    Long balance = after.binInt("balance");   // null when absent or nil
-
-    if (balance != null && balance < 0) {
+    if (after.getLong("balance", 0) < 0) {   // 0 when absent or nil
         return Decision.reject(22, "balance may not go negative");
     }
 
@@ -132,11 +130,11 @@ the record.
 
 ```rust
 on before_write
-fn stamp(before: Record, after: Record, write: Write) -> Result<Decision, Error> {
+fn stamp(before: EventRecord, after: EventRecord, write: Write) -> Result<Decision, Error> {
     let out = as_udf::map(2)?;
 
-    out.put("writes", before.int("writes")?.unwrap_or(0) + 1)?;
-    out.put("source", write.source().as_str())?;
+    out.insert("writes", before.int("writes")?.unwrap_or(0) + 1)?;
+    out.insert("source", write.source().as_str())?;
 
     // Every bin the write produced, with the two above on top.
     Ok(Decision::Record { bins: after.with_bins(out)?, ttl: None })
@@ -210,10 +208,8 @@ UDF_ON_BEFORE_WRITE(stamp)
 ```java
 @On.BeforeWrite("stamp")
 static Decision stamp(EventRecord before, EventRecord after, Events.WriteInfo write) {
-    Long writes = before.binInt("writes");
-
-    UdfMap out = UdfMap.create(2)
-            .put("writes", (writes == null ? 0 : writes) + 1)
+    MapBuilder out = Udf.map(2)
+            .put("writes", before.getLong("writes", 0) + 1)
             .put("source", write.source);
 
     // Every bin the write produced, with the two above on top.
@@ -233,7 +229,6 @@ static void with_bins(const as_udf_event_record* rec, int32_t out)
     int32_t cur = as_udf_cursor_enter_at(as_udf_value_src(&rec->bins), as_udf_value_at(&rec->bins));
     if (cur <= 0) return;
 
-    int32_t packed = as_udf_pack_handle(out);                          /* `out`, readable by position */
     as_udf_value w[32];
 
     for (int32_t n; (n = as_udf_cursor_values(cur, w, (int32_t)sizeof(w))) > 0;) {
@@ -243,8 +238,7 @@ static void with_bins(const as_udf_event_record* rec, int32_t out)
             if (len < 0) continue;
             name[len] = '\0';
 
-            as_udf_value have;
-            if (packed > 0 && as_udf_coll_get(packed, 0, name, len, &have, (int32_t)sizeof(have)) == AS_UDF_OK) continue;
+            if (as_udf_map_has(out, name, len) > 0) continue;              /* what the handler put there wins */
 
             as_udf_value v;
             if (as_udf_event_bin(rec, name, &v) == AS_UDF_OK) as_udf_map_put_value(out, name, &v);
@@ -271,7 +265,7 @@ The event: `before-delete`. It gets the record about to be deleted and answers a
 
 ```rust
 on before_delete
-fn keep_locked(record: Record, _delete: Delete) -> Result<Gate, Error> {
+fn keep_locked(record: EventRecord, _delete: Delete) -> Result<Gate, Error> {
     if matches!(record.bin("locked"), Ok(Value::Bool(true))) {
         return Ok(Gate::Refuse { code: 22, message: "record is locked" });
     }
@@ -335,9 +329,7 @@ UDF_ON_BEFORE_DELETE(keep_locked)
 ```java
 @On.BeforeDelete("keep_locked")
 static Gate keepLocked(EventRecord record, Events.DeleteInfo delete) {
-    Boolean locked = record.binBool("locked");
-
-    if (locked != null && locked) {
+    if (record.getBoolean("locked", false)) {
         return Gate.refuse(22, "record is locked");
     }
 
@@ -357,13 +349,13 @@ answer is left out, so the handler keeps every bin and sets `secret` to nil.
 
 ```rust
 on after_read
-fn hide_secret(record: Record, _read: Read) -> Result<ReadResult, Error> {
+fn hide_secret(record: EventRecord, _read: Read) -> Result<ReadResult, Error> {
     if record.bin("secret").is_err() {
         return Ok(ReadResult::Unchanged);
     }
 
     let out = as_udf::map(1)?;
-    out.put("secret", Value::Nil)?;                 // nil in an answer: no such bin
+    out.insert("secret", Value::Nil)?;                 // nil in an answer: no such bin
 
     Ok(ReadResult::Record { bins: record.with_bins(out)? })
 }
@@ -432,11 +424,11 @@ UDF_ON_AFTER_READ(hide_secret)
 ```java
 @On.AfterRead("hide_secret")
 static ReadResult hideSecret(EventRecord record, Events.ReadInfo read) {
-    if (record.binValue("secret") == null) {
+    if (!record.hasBin("secret")) {
         return ReadResult.unchanged();
     }
 
-    UdfMap out = UdfMap.create(1).putNull("secret");   // nil in an answer: no such bin
+    MapBuilder out = Udf.map(1).putNull("secret");   // nil in an answer: no such bin
 
     return ReadResult.record(record.withBins(out));
 }
@@ -451,7 +443,7 @@ passed. The handler answers expire, or keep with a new TTL in seconds.
 
 ```rust
 on before_expire
-fn keep_marked(record: Record, _expire: Expire) -> Result<Expiry, Error> {
+fn keep_marked(record: EventRecord, _expire: Expire) -> Result<Expiry, Error> {
     if matches!(record.bin("keep"), Ok(Value::Bool(true))) {
         return Ok(Expiry::Keep { ttl: Some(3600) });
     }
@@ -515,9 +507,7 @@ UDF_ON_BEFORE_EXPIRE(keep_marked)
 ```java
 @On.BeforeExpire("keep_marked")
 static Expiry keepMarked(EventRecord record, Events.ExpireInfo expire) {
-    Boolean keep = record.binBool("keep");
-
-    if (keep != null && keep) {
+    if (record.getBoolean("keep", false)) {
         return Expiry.keep(3600);
     }
 
@@ -530,22 +520,20 @@ static Expiry keepMarked(EventRecord record, Events.ExpireInfo expire) {
 The event: `timer`. A timer is set on one record, and its handler runs on that record when the timer
 comes due.
 
-A timer handler is the exception to rule 2. It runs as a record UDF, so the whole record API from the
-record tutorial works in it: it reads bins, stages writes and commits. It can also set the next timer,
+A timer handler is the exception to rule 2. It runs as a record UDF, so it is handed the record as a
+record UDF is, and the whole record API from the record tutorial works in it: it reads bins, stages
+writes and saves. It can also set the next timer,
 which is how a recurring job is written.
 
 **Rust**
 
 ```rust
 on timer
-fn tick(timer: Timer) -> Result<(), Error> {
-    let ticks = match as_udf::bin("ticks") {        // the record API works here
-        Ok(v) => v.int()?,
-        Err(_) => 0,
-    } + 1;
+fn tick(rec: &mut Record, timer: Timer) -> Result<(), Error> {
+    let ticks = rec.int("ticks")?.unwrap_or(0) + 1; // a timer runs on a record, which it is handed
 
-    as_udf::set("ticks", ticks)?;
-    as_udf::update()?;
+    rec.set("ticks", ticks)?;
+    rec.save()?;
 
     if timer.is("tick") && ticks < 3 {
         as_udf::timer_set("tick", 200)?;            // run again in 200 ms
@@ -561,14 +549,15 @@ fn tick(timer: Timer) -> Result<(), Error> {
 // Counts a tick and re-arms itself, up to three.
 //
 //udf:on timer tick
-func tick(_ udf.TimerInfo) error {
-    n := ticks.IntOr(0) + 1 // the record API works here
+func tick(rec *udf.Record, _ udf.TimerInfo) error {
+    ticks, _ := rec.Int("ticks") // a timer runs as a record UDF: it gets the record, and may write it
+    n := ticks + 1
 
-    if err := ticks.SetInt(n); err != nil {
+    if err := rec.Set("ticks", n); err != nil {
         return err
     }
 
-    if err := udf.Commit(); err != nil {
+    if err := rec.Save(); err != nil {
         return err
     }
 
@@ -589,11 +578,11 @@ AS_UDF_EVENT_TIMER(tick)
     if (as_udf_event_timer_info(args, argc, &timer) != AS_UDF_OK) return as_udf_failf("tick: not a timer");
 
     as_udf_value v;
-    int64_t n = as_udf_bin("ticks", &v) == AS_UDF_OK && v.kind == AS_UDF_INT ? v.payload : 0;   /* the record API works here */
+    int64_t n = as_udf_rec_bin("ticks", &v) == AS_UDF_OK && v.kind == AS_UDF_INT ? v.payload : 0;   /* the record API works here */
     n++;
 
-    as_udf_set_int("ticks", 5, n);
-    as_udf_rec_update();
+    as_udf_rec_set_int("ticks", 5, n);
+    as_udf_rec_save();
 
     if (n < 3) as_udf_timer_set("tick", 4, 200);                       /* run again in 200 ms */
 
@@ -608,10 +597,10 @@ UDF_ON_TIMER(tick)
 {
     (void)timer;
 
-    int64_t n = TICKS.int_or(0) + 1;   // the record API works here
+    int64_t n = record.int_or("ticks", 0) + 1;   // a timer handler is handed the record, writable
 
-    UDF_TRY(TICKS.set(n));
-    UDF_TRY(udf::commit());
+    UDF_TRY(record.set("ticks", n));
+    UDF_TRY(record.save());
 
     if (n < 3) {
         udf::timer_set("tick", 200);   // run again in 200 ms
@@ -625,11 +614,11 @@ UDF_ON_TIMER(tick)
 
 ```java
 @On.Timer("tick")
-static void tick(Events.TimerInfo timer) {
-    long n = TICKS.getLong(0) + 1;   // the record API works here
+static void tick(Record rec, Events.TimerInfo timer) {
+    long n = rec.getLong("ticks", 0) + 1;   // a timer runs as a record UDF: it takes the record
 
-    TICKS.set(n);
-    Udf.commit();
+    rec.set("ticks", n);
+    rec.save();
 
     if (n < 3) {
         Udf.timerSet("tick", 200);   // run again in 200 ms

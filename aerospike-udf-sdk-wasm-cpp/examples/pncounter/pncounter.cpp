@@ -28,8 +28,8 @@
 
 #include "aerospike_udf.hpp"
 
-static constexpr udf::Bin INC{"inc"};
-static constexpr udf::Bin DEC{"dec"};
+static constexpr udf::StrView INC{"inc"};
+static constexpr udf::StrView DEC{"dec"};
 static constexpr int MAX_SITES = 64;
 static constexpr int SITE_MAX = 32;
 
@@ -112,11 +112,11 @@ struct Table {
 };
 
 // One of the record's maps.
-static udf::Result<void> load(const udf::Bin& bin, Table& t)
+static udf::Result<void> load(const udf::Record& rec, udf::StrView bin, Table& t)
 {
 	t.n = 0;
 
-	if (udf::Optional<udf::Value> v = bin.get()) {
+	if (udf::Optional<udf::Value> v = rec.get(bin)) {
 		return t.offer_all(*v);
 	}
 
@@ -147,47 +147,47 @@ UDF_ON_XDR_MERGE(merge_pncounter)
 }
 
 // The counter's value: everything added minus everything taken.
-static udf::Result<int64_t> value_of()
+static udf::Result<int64_t> value_of(const udf::Record& rec)
 {
 	static Table t;
 
-	UDF_TRY(load(INC, t));
+	UDF_TRY(load(rec, INC, t));
 	int64_t added = t.total();
-	UDF_TRY(load(DEC, t));
+	UDF_TRY(load(rec, DEC, t));
 
 	return added - t.total();
 }
 
-// Adds n to this site's entry of one map and commits; answers the counter's value.
-static udf::Result<int64_t> grow(const udf::Bin& bin, const Site& site, int64_t n)
+// Adds n to this site's entry of one map and saves; answers the counter's value.
+static udf::Result<int64_t> grow(udf::Record& rec, udf::StrView bin, const Site& site, int64_t n)
 {
 	if (n < 0) return udf::error(AS_UDF_ERR, "the amount must not be negative: an entry only grows");
 
 	static Table t;
 
-	UDF_TRY(load(bin, t));
+	UDF_TRY(load(rec, bin, t));
 	UDF_TRY(t.add(site.view(), n));
-	UDF_TRY(bin.set(t.to_map()));
-	UDF_TRY(udf::commit());
+	UDF_TRY(rec.set(bin, t.to_map()));
+	UDF_TRY(rec.save());
 
-	return value_of();
+	return value_of(rec);
 }
 
 // Adds n to this site's increments. Returns the counter's value. The site is a Text<32>, so a longer name
 // is rejected before the body runs, as the Rust module's Str<32> rejects it.
-UDF_FUNCTION(increment, udf::Result<int64_t>, Site site, int64_t n)
+UDF_FUNCTION(increment, udf::Result<int64_t>, udf::Record& rec, Site site, int64_t n)
 {
-	return grow(INC, site, n);
+	return grow(rec, INC, site, n);
 }
 
 // Adds n to this site's decrements. Returns the counter's value.
-UDF_FUNCTION(decrement, udf::Result<int64_t>, Site site, int64_t n)
+UDF_FUNCTION(decrement, udf::Result<int64_t>, udf::Record& rec, Site site, int64_t n)
 {
-	return grow(DEC, site, n);
+	return grow(rec, DEC, site, n);
 }
 
 // The counter's value: the sum of every site's increments minus the sum of every site's decrements.
-UDF_FUNCTION(value, udf::Result<int64_t>)
+UDF_FUNCTION(value, udf::Result<int64_t>, const udf::Record& rec)
 {
-	return value_of();
+	return value_of(rec);
 }

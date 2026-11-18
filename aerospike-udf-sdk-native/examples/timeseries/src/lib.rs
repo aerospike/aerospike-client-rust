@@ -387,7 +387,7 @@ struct Landed {
 /// the 3,600 second-buckets it should with no accumulator and no alignment step. So a coarse mean is the true mean of
 /// the samples — better than RRDtool, and it falls out of the indexing rather than costing anything.
 ///
-/// Each archive is a separate bin, so each is a separate in-place borrow; there is one `rec.write()` for all of them.
+/// Each archive is a separate bin, so each is a separate in-place borrow; there is one `rec.save()` for all of them.
 fn append_everywhere(
     rec: &mut Record,
     base: &str,
@@ -588,7 +588,7 @@ udfs! {
         }
 
         if wrote_config || made > 0 {
-            rec.write()?;
+            rec.save()?;
         }
 
         put_shape(&map, &Shape::base(&cfg, fingerprint))?;
@@ -697,7 +697,7 @@ udfs! {
 
         // No `set_blob`: the bytes are already the bins'. Handing out the mutable pointer marked each changed, so this
         // commits what was written in place - **one write for every archive**, not one per archive.
-        rec.write()?;
+        rec.save()?;
 
         Ok(map.as_value())
     }
@@ -787,7 +787,7 @@ udfs! {
 
         if accepted > 0 {
             // **One commit for every metric and every archive.**
-            rec.write()?;
+            rec.save()?;
         }
 
         map.put_str_str(
@@ -969,7 +969,7 @@ udfs! {
         // One write for the batch. The bytes are already the bin's, so there is nothing to set - taking the mutable
         // borrow marked it changed.
         if accepted > 0 {
-            rec.write()?;
+            rec.save()?;
         }
 
         Ok(map.as_value())
@@ -1606,7 +1606,7 @@ udfs! {
         }
 
         rec.set(bin, &list.as_value())?;
-        rec.write()?;
+        rec.save()?;
 
         Ok(i64::from(n))
     }
@@ -1643,7 +1643,7 @@ udfs! {
         let now = rec.get_int(bin)?.unwrap_or(0) + delta;
 
         rec.set_int(bin, now)?;
-        rec.write()?;
+        rec.save()?;
 
         Ok(now)
     }
@@ -1664,7 +1664,7 @@ udfs! {
         let len = buf.len() as i64;
 
         rec.set_blob(bin, &buf)?;
-        rec.write()?;
+        rec.save()?;
 
         Ok(len)
     }

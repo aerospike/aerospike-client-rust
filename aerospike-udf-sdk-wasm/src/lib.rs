@@ -3,20 +3,20 @@
 //! # The shape of a UDF
 //!
 //! ```ignore
-//! use aerospike_udf_sdk_wasm::{self as as_udf, export, Error, Value};
+//! use aerospike_udf_sdk_wasm::{export, Error, Record, Value};
 //!
 //! export! {
 //!     /// Move `amount` out of this record's balance, unless `dry_run`.
-//!     fn withdraw(amount: i64, dry_run: Option<bool>) -> Result<Value, Error> {
-//!         let balance = as_udf::bin("balance")?.int()?;
+//!     fn withdraw(rec: &mut Record, amount: i64, dry_run: Option<bool>) -> Result<Value, Error> {
+//!         let balance = rec.bin("balance")?.int()?;
 //!
 //!         if balance < amount {
 //!             return Err(Error::Custom("insufficient funds"));
 //!         }
 //!
 //!         if dry_run != Some(true) {
-//!             as_udf::set("balance", balance - amount)?;
-//!             as_udf::update()?;
+//!             rec.set("balance", balance - amount)?;
+//!             rec.save()?;
 //!         }
 //!
 //!         Ok(Value::Int(balance - amount))
@@ -24,9 +24,13 @@
 //! }
 //! ```
 //!
-//! Three ideas carry the whole API:
+//! Four ideas carry the whole API:
 //!
-//! - **Every read is a [`Value`]**, the guest-side analogue of the client's `Value`: [`bin`] returns one, a
+//! - **The record is a [`Record`]**, the function's first parameter: `&Record` to read it, `&mut Record` to
+//!   write it too, and left out by a function that does neither. Everything about the record is a method
+//!   on it; what is left at the crate's top level is not about the record - the clock, the log, the
+//!   builders of lists and maps. A bin write is staged until [`Record::save`].
+//! - **Every read is a [`Value`]**, the guest-side analogue of the client's `Value`: [`Record::bin`] returns one, a
 //!   collection iterates them, a map lookup returns one, and a UDF returns one as its result. It is *borrowed*
 //!   rather than owned, because the guest need not have an allocator: a string is its length and where it
 //!   sits, fetched into a buffer you own with [`Text::as_str`], into a [`Str`] of a fixed capacity, or - with
@@ -116,6 +120,8 @@ extern "C" {
     fn raw_coll_get(src: i32, at: i32, key: *const u8, key_len: i32, out: *mut u8, out_cap: i32) -> i32;
     #[link_name = "coll_get_i"]
     fn raw_coll_get_i(src: i32, at: i32, key: i64, out: *mut u8, out_cap: i32) -> i32;
+    #[link_name = "list_get"]
+    fn raw_list_get(src: i32, at: i32, index: i32, out: *mut u8, out_cap: i32) -> i32;
     #[link_name = "cursor_close"]
     fn raw_cursor_close(cursor: i32);
     #[link_name = "pack_handle"]
@@ -138,6 +144,10 @@ extern "C" {
     fn list_push_int(handle: i32, value: i64) -> i32;
     fn list_push_str(handle: i32, value: *const u8, value_len: i32) -> i32;
     fn map_put(handle: i32, key: i32, value: i32) -> i32;
+    #[link_name = "map_has"]
+    fn raw_map_has(handle: i32, key: *const u8, key_len: i32) -> i32;
+    #[link_name = "map_has_i"]
+    fn raw_map_has_i(handle: i32, key: i64) -> i32;
     fn map_put_str_int(handle: i32, key: *const u8, key_len: i32, value: i64) -> i32;
     fn map_put_str_str(
         handle: i32,
@@ -976,8 +986,28 @@ impl Coll {
         Entries { values: self.iter() }
     }
 
-    /// The value under a string key of a map, in one import call. `Err(Absent)` for no such key.
-    pub fn get(&self, key: &str) -> Result<Value<'static>, Error> {
+    /// The value under a key of a map, a string or an integer, in one import call. `Err(Absent)` for no
+    /// such key.
+    pub fn get(&self, key: impl MapKey) -> Result<Value<'static>, Error> {
+        key.lookup_in(self)
+    }
+
+    /// The element at `index` of a list, in one import call: the host steps over the elements before it
+    /// where they are stored, so nothing before it is fetched. `Err(Absent)` past the end.
+    pub fn at(&self, index: usize) -> Result<Value<'static>, Error> {
+        let (src, at) = self.position()?;
+        let mut raw = [0u8; VALUE_SZ];
+        let index = i32::try_from(index).map_err(|_| Error::Absent)?;
+        let rc = unsafe { raw_list_get(src, at as i32, index, raw.as_mut_ptr(), VALUE_SZ as i32) };
+
+        if rc != OK {
+            return Err(Error::from_status(rc));
+        }
+
+        Ok(Value::from_raw(&raw))
+    }
+
+    fn get_str(&self, key: &str) -> Result<Value<'static>, Error> {
         let (src, at) = self.position()?;
         let mut raw = [0u8; VALUE_SZ];
         let rc = unsafe {
@@ -998,8 +1028,7 @@ impl Coll {
         Ok(Value::from_raw(&raw))
     }
 
-    /// [`get`](Coll::get) for a map keyed by integers.
-    pub fn get_i(&self, key: i64) -> Result<Value<'static>, Error> {
+    fn get_int(&self, key: i64) -> Result<Value<'static>, Error> {
         let (src, at) = self.position()?;
         let mut raw = [0u8; VALUE_SZ];
         let rc = unsafe { raw_coll_get_i(src, at as i32, key, raw.as_mut_ptr(), VALUE_SZ as i32) };
@@ -1122,83 +1151,371 @@ impl Iterator for Entries {
 }
 
 //==========================================================
-// Bins.
+// The record.
 //
 
-/// A bin, whatever it holds, in one import call. `Err(Absent)` when the record has no such bin.
-pub fn bin(name: &str) -> Result<Value<'static>, Error> {
-    let mut raw = [0u8; VALUE_SZ];
-    let rc = unsafe { raw_bin_value(name.as_ptr(), name.len() as i32, raw.as_mut_ptr(), VALUE_SZ as i32) };
+/// What any record can be asked: the one a record UDF is called on ([`Record`]) and either side of an
+/// event ([`EventRecord`]). A helper that takes `&impl ReadRecord` reads a bin the same way in both.
+///
+/// [`bin`](ReadRecord::bin) is the form for a bin that must be there, `Err(Absent)` when it is not. The
+/// typed forms are for a bin that may not be: `None` when it is absent or nil, `Err(WrongType)` when it
+/// holds another kind.
+pub trait ReadRecord {
+    /// A bin, whatever it holds. `Err(Absent)` when the record has no such bin.
+    fn bin(&self, name: &str) -> Result<Value<'static>, Error>;
 
-    if rc != OK {
-        return Err(Error::from_status(rc));
+    /// The record's modification count.
+    fn generation(&self) -> i64;
+
+    /// When the record was last written, in milliseconds since the Aerospike epoch (2010-01-01 UTC).
+    fn last_update_time(&self) -> i64;
+
+    /// A bin that may be absent: `None` when it is absent or nil.
+    fn get(&self, name: &str) -> Result<Option<Value<'static>>, Error> {
+        match self.bin(name) {
+            Ok(Value::Nil) | Err(Error::Absent) => Ok(None),
+            Ok(v) => Ok(Some(v)),
+            Err(e) => Err(e),
+        }
     }
 
-    Ok(Value::from_raw(&raw))
+    /// An integer bin, or `None`.
+    fn int(&self, name: &str) -> Result<Option<i64>, Error> {
+        self.get(name)?.map(|v| v.int()).transpose()
+    }
+
+    /// A double bin, or `None`.
+    fn double(&self, name: &str) -> Result<Option<f64>, Error> {
+        self.get(name)?.map(|v| v.double()).transpose()
+    }
+
+    /// A boolean bin, or `None`.
+    fn bool(&self, name: &str) -> Result<Option<bool>, Error> {
+        self.get(name)?.map(|v| v.bool()).transpose()
+    }
+
+    /// A string bin's text, or `None`.
+    fn text(&self, name: &str) -> Result<Option<Text<'static>>, Error> {
+        self.get(name)?.map(|v| v.text()).transpose()
+    }
+
+    /// A blob bin's bytes, or `None`.
+    fn blob(&self, name: &str) -> Result<Option<Blob<'static>>, Error> {
+        self.get(name)?.map(|v| v.blob()).transpose()
+    }
+
+    /// A list bin, or `None`.
+    fn list(&self, name: &str) -> Result<Option<Coll>, Error> {
+        self.get(name)?.map(|v| v.list()).transpose()
+    }
+
+    /// A map bin, or `None`.
+    fn map(&self, name: &str) -> Result<Option<Coll>, Error> {
+        self.get(name)?.map(|v| v.map()).transpose()
+    }
 }
 
-/// Write a value to a bin. **Staged until [`update`] or [`create`] commits it.**
+/// The record a UDF was called on.
 ///
-/// A value read from the record is written back from its stored bytes without the guest decoding it, which
-/// is how a sub-document is copied from one bin to another. A built [`List`] / [`Map`] is handed over whole.
-/// A string or blob of the guest's is copied during the call, so it may be any `&str` - a literal, a buffer
-/// of the UDF's, a `String` - not only a `'static` one.
-pub fn set<'a>(name: &str, value: impl Into<Value<'a>>) -> Result<(), Error> {
-    set_value(name, &value.into())
+/// A record UDF, and the per-record half of a stream UDF, takes it as its first parameter, before the
+/// call's arguments. It is not one of them: a client does not pass it and the function's signature export
+/// does not list it. A function that does not touch the record leaves the parameter out.
+///
+/// ```ignore
+/// export! {
+///     fn withdraw(rec: &mut Record, amount: i64) -> Result<Value, Error> {
+///         let balance = rec.bin("balance")?.int()?;
+///
+///         rec.set("balance", balance - amount)?;
+///         rec.save()?;
+///
+///         Ok(Value::Int(balance - amount))
+///     }
+///
+///     fn balance(rec: &Record) -> Result<Value, Error> {
+///         rec.bin("balance")
+///     }
+/// }
+/// ```
+///
+/// `&Record` reads; `&mut Record` also writes. **A bin write is staged**: [`set`](Record::set) and
+/// [`remove`](Record::remove) change the record in hand, and nothing reaches the server's record until
+/// [`save`](Record::save). [`delete`](Record::delete) is the exception: it needs no save.
+///
+/// The reading methods are also on [`ReadRecord`], which [`EventRecord`] implements too.
+pub struct Record {
+    // Not constructible outside the SDK: there is exactly one record per call, and the export macros hand
+    // it over. It holds nothing, because the host knows which record a call is on.
+    _one_per_call: (),
 }
 
-/// [`set`] for a value held by reference.
-pub fn set_value(name: &str, value: &Value<'_>) -> Result<(), Error> {
-    let n = name.as_ptr();
-    let nl = name.len() as i32;
-    let rc = unsafe {
-        match value {
-            Value::Nil => raw_set_nil(n, nl),
-            Value::Bool(b) => raw_set_bool(n, nl, i32::from(*b)),
-            Value::Int(i) => raw_set_int(n, nl, *i),
-            Value::Double(d) => raw_set_double(n, nl, *d),
-            Value::Str(Text::Guest(s)) => raw_set_str(n, nl, s.as_ptr(), s.len() as i32),
-            Value::GeoJson(Text::Guest(s)) => raw_set_geojson(n, nl, s.as_ptr(), s.len() as i32),
-            Value::Blob(Blob::Guest(b)) => raw_set_blob(n, nl, b.as_ptr(), b.len() as i32),
-            Value::Str(Text::Stored { src, at, .. })
-            | Value::GeoJson(Text::Stored { src, at, .. })
-            | Value::Blob(Blob::Stored { src, at, .. })
-            | Value::Hll(Blob::Stored { src, at, .. })
-            | Value::List(Coll::Stored { src, at, .. })
-            | Value::Map(Coll::Stored { src, at, .. }) => raw_set_at(n, nl, *src, *at as i32),
-            Value::List(Coll::Built(h)) | Value::Map(Coll::Built(h)) => raw_set_handle(n, nl, *h),
-            // Guest bytes cannot be an HLL: the subtype is the server's to set.
-            Value::Hll(Blob::Guest(_)) | Value::Other => return Err(Error::WrongType),
+impl Record {
+    /// The record of the call in progress, for an export written without the macros, which otherwise
+    /// pass it as the first parameter. Every one of these is the same record, so make one per call.
+    #[must_use]
+    pub fn current() -> Record {
+        Record { _one_per_call: () }
+    }
+
+    //----------------------------------------------------------
+    // Reading bins.
+    //
+
+    /// A bin, whatever it holds, in one import call. `Err(Absent)` when the record has no such bin.
+    pub fn bin(&self, name: &str) -> Result<Value<'static>, Error> {
+        let mut raw = [0u8; VALUE_SZ];
+        let rc = unsafe { raw_bin_value(name.as_ptr(), name.len() as i32, raw.as_mut_ptr(), VALUE_SZ as i32) };
+
+        if rc != OK {
+            return Err(Error::from_status(rc));
         }
-    };
 
-    status(rc)
+        Ok(Value::from_raw(&raw))
+    }
+
+    /// A bin that may be absent: `None` when it is absent or nil.
+    pub fn get(&self, name: &str) -> Result<Option<Value<'static>>, Error> {
+        ReadRecord::get(self, name)
+    }
+
+    /// An integer bin, or `None` when the bin is absent or nil. A bin of another kind is `Err(WrongType)`.
+    pub fn int(&self, name: &str) -> Result<Option<i64>, Error> {
+        ReadRecord::int(self, name)
+    }
+
+    /// A double bin, or `None` when absent or nil.
+    pub fn double(&self, name: &str) -> Result<Option<f64>, Error> {
+        ReadRecord::double(self, name)
+    }
+
+    /// A boolean bin, or `None` when absent or nil.
+    pub fn bool(&self, name: &str) -> Result<Option<bool>, Error> {
+        ReadRecord::bool(self, name)
+    }
+
+    /// A string bin's text, or `None` when absent or nil.
+    pub fn text(&self, name: &str) -> Result<Option<Text<'static>>, Error> {
+        ReadRecord::text(self, name)
+    }
+
+    /// A blob bin's bytes, or `None` when absent or nil.
+    pub fn blob(&self, name: &str) -> Result<Option<Blob<'static>>, Error> {
+        ReadRecord::blob(self, name)
+    }
+
+    /// A list bin, or `None` when absent or nil.
+    pub fn list(&self, name: &str) -> Result<Option<Coll>, Error> {
+        ReadRecord::list(self, name)
+    }
+
+    /// A map bin, or `None` when absent or nil.
+    pub fn map(&self, name: &str) -> Result<Option<Coll>, Error> {
+        ReadRecord::map(self, name)
+    }
+
+    /// How many bins the record has.
+    #[must_use]
+    pub fn bin_count(&self) -> i64 {
+        unsafe { numbins() }
+    }
+
+    //----------------------------------------------------------
+    // Writing bins.
+    //
+
+    /// Write a value to a bin. **Staged until [`save`](Record::save).**
+    ///
+    /// A value read from the record is written back from its stored bytes without the guest decoding it,
+    /// which is how a sub-document is copied from one bin to another. A built [`List`] / [`Map`] is handed
+    /// over whole. A string or blob of the guest's is copied during the call, so it may be any `&str` - a
+    /// literal, a buffer of the UDF's, a `String` - not only a `'static` one.
+    ///
+    /// Writing [`Value::Nil`] removes the bin, as [`remove`](Record::remove) does: a bin cannot hold nil.
+    pub fn set<'a>(&mut self, name: &str, value: impl Into<Value<'a>>) -> Result<(), Error> {
+        self.set_value(name, &value.into())
+    }
+
+    /// [`set`](Record::set) for a value held by reference.
+    pub fn set_value(&mut self, name: &str, value: &Value<'_>) -> Result<(), Error> {
+        let n = name.as_ptr();
+        let nl = name.len() as i32;
+        let rc = unsafe {
+            match value {
+                Value::Nil => raw_set_nil(n, nl),
+                Value::Bool(b) => raw_set_bool(n, nl, i32::from(*b)),
+                Value::Int(i) => raw_set_int(n, nl, *i),
+                Value::Double(d) => raw_set_double(n, nl, *d),
+                Value::Str(Text::Guest(s)) => raw_set_str(n, nl, s.as_ptr(), s.len() as i32),
+                Value::GeoJson(Text::Guest(s)) => raw_set_geojson(n, nl, s.as_ptr(), s.len() as i32),
+                Value::Blob(Blob::Guest(b)) => raw_set_blob(n, nl, b.as_ptr(), b.len() as i32),
+                Value::Str(Text::Stored { src, at, .. })
+                | Value::GeoJson(Text::Stored { src, at, .. })
+                | Value::Blob(Blob::Stored { src, at, .. })
+                | Value::Hll(Blob::Stored { src, at, .. })
+                | Value::List(Coll::Stored { src, at, .. })
+                | Value::Map(Coll::Stored { src, at, .. }) => raw_set_at(n, nl, *src, *at as i32),
+                Value::List(Coll::Built(h)) | Value::Map(Coll::Built(h)) => raw_set_handle(n, nl, *h),
+                // Guest bytes cannot be an HLL: the subtype is the server's to set.
+                Value::Hll(Blob::Guest(_)) | Value::Other => return Err(Error::WrongType),
+            }
+        };
+
+        status(rc)
+    }
+
+    /// Remove a bin. Staged, like [`set`](Record::set).
+    pub fn remove(&mut self, name: &str) -> Result<(), Error> {
+        status(unsafe { raw_bin_remove(name.as_ptr(), name.len() as i32) })
+    }
+
+    /// Write a slice of integers to a bin as a list, **without building a value per element**.
+    ///
+    /// The host packs the slice straight into a LIST particle and applies it as one op, which takes effect
+    /// immediately rather than being staged: [`save`](Record::save) is not needed.
+    pub fn set_ints(&mut self, name: &str, values: &[i64]) -> Result<(), Error> {
+        let bytes = core::mem::size_of_val(values);
+
+        status(unsafe {
+            raw_set_list_ints(name.as_ptr(), name.len() as i32, values.as_ptr().cast::<u8>(), bytes as i32)
+        })
+    }
+
+    /// The counterpart of [`set_ints`](Record::set_ints) for doubles.
+    pub fn set_doubles(&mut self, name: &str, values: &[f64]) -> Result<(), Error> {
+        let bytes = core::mem::size_of_val(values);
+
+        status(unsafe {
+            raw_set_list_doubles(name.as_ptr(), name.len() as i32, values.as_ptr().cast::<u8>(), bytes as i32)
+        })
+    }
+
+    //----------------------------------------------------------
+    // Metadata.
+    //
+
+    /// Whether the record exists. A UDF can be called on a key that has no record yet.
+    #[must_use]
+    pub fn exists(&self) -> bool {
+        unsafe { raw_rec_exists() == 1 }
+    }
+
+    /// The record's modification count.
+    #[must_use]
+    pub fn generation(&self) -> i64 {
+        unsafe { gen() }
+    }
+
+    /// The record's remaining lifetime in seconds, or `None` when it never expires.
+    #[must_use]
+    pub fn ttl(&self) -> Option<u32> {
+        match unsafe { raw_ttl() } {
+            // Zero is how the server reports a record with no expiry.
+            0 => None,
+            value if value < 0 => None,
+            value => u32::try_from(value).ok(),
+        }
+    }
+
+    /// Set the record's time to live, in seconds. It is the TTL of the write, so it takes effect when
+    /// [`save`](Record::save) writes the record.
+    pub fn set_ttl(&mut self, seconds: u32) -> Result<(), Error> {
+        status(unsafe { raw_set_ttl(seconds as i32) })
+    }
+
+    /// When the record was last written, in milliseconds since the Aerospike epoch (2010-01-01 UTC), which
+    /// is how the server stores it. It is not on the same scale as [`now`], which counts from the Unix
+    /// epoch.
+    #[must_use]
+    pub fn last_update_time(&self) -> i64 {
+        unsafe { last_update() }
+    }
+
+    /// The record's stored size, in bytes.
+    #[must_use]
+    pub fn size(&self) -> i64 {
+        unsafe { record_size() }
+    }
+
+    /// The record's set name, into a buffer you own.
+    pub fn set_name<'b>(&self, out: &'b mut [u8]) -> Result<&'b str, Error> {
+        let rc = unsafe { raw_set_name(out.as_mut_ptr(), out.len() as i32) };
+        let written = bytes_result(rc, out.len())?;
+
+        core::str::from_utf8(&out[..written]).map_err(|_| Error::Malformed)
+    }
+
+    /// The record's user key, when it was written with `send_key`: an integer, or a string or blob whose
+    /// bytes go into `out`. `Err(Absent)` when the record carries none.
+    pub fn key<'b>(&self, out: &'b mut [u8]) -> Result<Value<'b>, Error> {
+        match unsafe { key_type() } {
+            2 => Ok(Value::Int(unsafe { key_int() })),
+            4 | 5 => {
+                let rc = unsafe { raw_key_bytes(out.as_mut_ptr(), out.len() as i32) };
+                let written = bytes_result(rc, out.len())?;
+
+                match core::str::from_utf8(&out[..written]) {
+                    Ok(text) => Ok(Value::Str(Text::Guest(text))),
+                    Err(_) => Ok(Value::Blob(Blob::Guest(&out[..written]))),
+                }
+            }
+            _ => Err(Error::Absent),
+        }
+    }
+
+    /// The record's digest, into a buffer you own: 20 bytes, always present. What identifies a record a
+    /// UDF wants to point at rather than ship - a top-k hit, say - since a client can fetch it by digest
+    /// afterwards.
+    pub fn digest<'b>(&self, out: &'b mut [u8]) -> Result<&'b [u8], Error> {
+        let rc = unsafe { raw_digest(out.as_mut_ptr(), out.len() as i32) };
+        let written = bytes_result(rc, out.len())?;
+
+        Ok(&out[..written])
+    }
+
+    //----------------------------------------------------------
+    // Saving and deleting.
+    //
+
+    /// Write the staged bins to the server's record, creating the record when it does not exist yet.
+    ///
+    /// This is the one way a staged write takes effect: a UDF that returns without saving has changed
+    /// nothing. A UDF that must not overwrite checks [`exists`](Record::exists) first; the record is
+    /// locked for the whole call, so nothing can come between the check and the save.
+    ///
+    /// With nothing staged it is still a write: the server treats it as a touch, and the record's
+    /// generation and last-update time move. On a key with no record it makes nothing, since a record
+    /// has to have a bin, and the call is answered "key not found".
+    pub fn save(&mut self) -> Result<(), Error> {
+        status(unsafe {
+            if raw_rec_exists() == 1 {
+                raw_rec_update()
+            } else {
+                raw_rec_create()
+            }
+        })
+    }
+
+    /// Delete the record. Not staged: it needs no [`save`](Record::save) after it, and whatever was
+    /// staged goes with the record. The server carries it out when the call returns, so for the rest of
+    /// the call [`exists`](Record::exists) answers as it did before. `Err(Refused)` when the server
+    /// could not do it.
+    pub fn delete(&mut self) -> Result<(), Error> {
+        status(unsafe { raw_rec_remove() })
+    }
 }
 
-/// Delete a bin.
-pub fn remove(name: &str) -> Result<(), Error> {
-    status(unsafe { raw_bin_remove(name.as_ptr(), name.len() as i32) })
-}
+impl ReadRecord for Record {
+    fn bin(&self, name: &str) -> Result<Value<'static>, Error> {
+        Record::bin(self, name)
+    }
 
-/// Write a slice of integers to a bin as a list, **without building a value per element**.
-///
-/// The host packs the slice straight into a LIST particle and applies it as one op, which takes effect
-/// immediately rather than being staged: [`update`] is not needed. Refused in an aggregation.
-pub fn set_list_ints(name: &str, values: &[i64]) -> Result<(), Error> {
-    let bytes = core::mem::size_of_val(values);
+    fn generation(&self) -> i64 {
+        Record::generation(self)
+    }
 
-    status(unsafe {
-        raw_set_list_ints(name.as_ptr(), name.len() as i32, values.as_ptr().cast::<u8>(), bytes as i32)
-    })
-}
-
-/// The counterpart of [`set_list_ints`] for doubles.
-pub fn set_list_doubles(name: &str, values: &[f64]) -> Result<(), Error> {
-    let bytes = core::mem::size_of_val(values);
-
-    status(unsafe {
-        raw_set_list_doubles(name.as_ptr(), name.len() as i32, values.as_ptr().cast::<u8>(), bytes as i32)
-    })
+    fn last_update_time(&self) -> i64 {
+        Record::last_update_time(self)
+    }
 }
 
 fn status(rc: i32) -> Result<(), Error> {
@@ -1213,7 +1530,7 @@ fn status(rc: i32) -> Result<(), Error> {
 // Building collections.
 //
 
-/// Start a list. It lives on the host; hand it to [`set`], return it, or nest it in another.
+/// Start a list. It lives on the host; hand it to [`Record::set`], return it, or nest it in another.
 pub fn list(capacity: usize) -> Result<List, Error> {
     let handle = unsafe { list_new(capacity as i32) };
 
@@ -1314,10 +1631,67 @@ pub struct Map {
     handle: i32,
 }
 
+/// What a map is keyed by: a string or an integer. [`Map::insert`] and [`Coll::get`] take either.
+pub trait MapKey: sealed::Sealed {
+    #[doc(hidden)]
+    fn insert_into(self, map: &Map, value: Value<'_>) -> Result<(), Error>;
+    #[doc(hidden)]
+    fn lookup_in(self, coll: &Coll) -> Result<Value<'static>, Error>;
+    #[doc(hidden)]
+    fn contained_in(self, map: &Map) -> bool;
+}
+
+mod sealed {
+    pub trait Sealed {}
+
+    impl Sealed for &str {}
+    impl Sealed for i64 {}
+}
+
+impl MapKey for &str {
+    fn insert_into(self, map: &Map, value: Value<'_>) -> Result<(), Error> {
+        map.insert_str(self, value).map(|_| ())
+    }
+
+    fn lookup_in(self, coll: &Coll) -> Result<Value<'static>, Error> {
+        coll.get_str(self)
+    }
+
+    fn contained_in(self, map: &Map) -> bool {
+        unsafe { raw_map_has(map.handle, self.as_ptr(), self.len() as i32) == 1 }
+    }
+}
+
+impl MapKey for i64 {
+    fn insert_into(self, map: &Map, value: Value<'_>) -> Result<(), Error> {
+        map.insert_int(self, value).map(|_| ())
+    }
+
+    fn lookup_in(self, coll: &Coll) -> Result<Value<'static>, Error> {
+        coll.get_int(self)
+    }
+
+    fn contained_in(self, map: &Map) -> bool {
+        unsafe { raw_map_has_i(map.handle, self) == 1 }
+    }
+}
+
 impl Map {
-    /// Put a value under a string key. The same values as [`List::push`].
-    pub fn put<'a>(&self, key: &str, value: impl Into<Value<'a>>) -> Result<&Self, Error> {
-        let value = value.into();
+    /// Insert a value under a key: a string or an integer. The same values as [`List::push`]. An entry
+    /// already under the key is replaced.
+    pub fn insert<'a>(&self, key: impl MapKey, value: impl Into<Value<'a>>) -> Result<&Self, Error> {
+        key.insert_into(self, value.into())?;
+
+        Ok(self)
+    }
+
+    /// Whether the map holds an entry under `key`. The map is asked where it is, on the host.
+    #[must_use]
+    pub fn contains_key(&self, key: impl MapKey) -> bool {
+        key.contained_in(self)
+    }
+
+    fn insert_str(&self, key: &str, value: Value<'_>) -> Result<&Self, Error> {
         let k = key.as_ptr();
         let kl = key.len() as i32;
         let rc = unsafe {
@@ -1340,9 +1714,7 @@ impl Map {
         status(rc).map(|()| self)
     }
 
-    /// Put a value under an integer key.
-    pub fn put_i<'a>(&self, key: i64, value: impl Into<Value<'a>>) -> Result<&Self, Error> {
-        let value = value.into();
+    fn insert_int(&self, key: i64, value: Value<'_>) -> Result<&Self, Error> {
         let rc = unsafe {
             match &value {
                 Value::List(Coll::Built(h)) | Value::Map(Coll::Built(h)) => map_put(self.handle, val_int(key), *h),
@@ -1359,7 +1731,7 @@ impl Map {
         status(rc).map(|()| self)
     }
 
-    /// Put every entry, 64 per import call instead of one each.
+    /// Insert every entry, 64 per import call instead of one each.
     ///
     /// An entry is a `(key, value)` pair of anything [`push`](List::push) takes - a string or integer key,
     /// in practice - or a `Result<(Value, Value), Error>` as [`Coll::entries`] yields them, so
@@ -1672,48 +2044,6 @@ pub fn fail(message: &str) {
 // Metadata.
 //
 
-/// The record's modification count.
-#[must_use]
-pub fn generation() -> i64 {
-    unsafe { gen() }
-}
-
-/// The record's remaining lifetime in seconds, or `None` when it never expires.
-#[must_use]
-pub fn time_to_live() -> Option<u32> {
-    match unsafe { raw_ttl() } {
-        // Zero is how the server reports a record with no expiry.
-        0 => None,
-        value if value < 0 => None,
-        value => u32::try_from(value).ok(),
-    }
-}
-
-/// Set the record's time to live, in seconds. It is the TTL of the write, so it takes effect when
-/// [`update`] or [`create`] commits the record.
-pub fn set_time_to_live(seconds: u32) -> Result<(), Error> {
-    status(unsafe { raw_set_ttl(seconds as i32) })
-}
-
-/// When the record was last written, in milliseconds since the Aerospike epoch (2010-01-01 UTC), which
-/// is how the server stores it. It is not on the same scale as [`now`], which counts from the Unix epoch.
-#[must_use]
-pub fn last_update_time() -> i64 {
-    unsafe { last_update() }
-}
-
-/// The record's stored size, in bytes.
-#[must_use]
-pub fn size() -> i64 {
-    unsafe { record_size() }
-}
-
-/// How many bins the record has.
-#[must_use]
-pub fn bin_count() -> i64 {
-    unsafe { numbins() }
-}
-
 /// The server's clock, in milliseconds since the Unix epoch. Refused in an event handler, where a decision
 /// that reads the clock cannot converge across clusters; a handler takes its times from the data.
 pub fn now() -> Result<i64, Error> {
@@ -1724,64 +2054,6 @@ pub fn now() -> Result<i64, Error> {
     }
 
     Ok(t)
-}
-
-/// The record's set name, into a buffer you own.
-pub fn set_name(out: &mut [u8]) -> Result<&str, Error> {
-    let rc = unsafe { raw_set_name(out.as_mut_ptr(), out.len() as i32) };
-    let written = bytes_result(rc, out.len())?;
-
-    core::str::from_utf8(&out[..written]).map_err(|_| Error::Malformed)
-}
-
-/// The record's user key, when it was written with `send_key`: an integer, or a string or blob whose bytes
-/// go into `out`. `Err(Absent)` when the record carries none.
-pub fn key(out: &mut [u8]) -> Result<Value<'_>, Error> {
-    match unsafe { key_type() } {
-        2 => Ok(Value::Int(unsafe { key_int() })),
-        4 | 5 => {
-            let rc = unsafe { raw_key_bytes(out.as_mut_ptr(), out.len() as i32) };
-            let written = bytes_result(rc, out.len())?;
-
-            match core::str::from_utf8(&out[..written]) {
-                Ok(text) => Ok(Value::Str(Text::Guest(text))),
-                Err(_) => Ok(Value::Blob(Blob::Guest(&out[..written]))),
-            }
-        }
-        _ => Err(Error::Absent),
-    }
-}
-
-/// The record's digest, into a buffer you own: 20 bytes, always present. What identifies a record a UDF
-/// wants to point at rather than ship - a top-k hit, say - since a client can fetch it by digest afterwards.
-pub fn digest(out: &mut [u8]) -> Result<&[u8], Error> {
-    let rc = unsafe { raw_digest(out.as_mut_ptr(), out.len() as i32) };
-    let written = bytes_result(rc, out.len())?;
-
-    Ok(&out[..written])
-}
-
-/// Commit a record that does not exist yet.
-pub fn create() -> Result<(), Error> {
-    status(unsafe { raw_rec_create() })
-}
-
-/// Commit the staged writes to an existing record.
-pub fn update() -> Result<(), Error> {
-    status(unsafe { raw_rec_update() })
-}
-
-/// Delete the record. Not staged: the delete is carried out by this call, with no [`update`] after it.
-/// `Err(Refused)` when the server could not do it.
-pub fn remove_record() -> Result<(), Error> {
-    status(unsafe { raw_rec_remove() })
-}
-
-/// Whether the record exists. A UDF can be called on a key that has no record yet, which is when a write
-/// is committed with [`create`] rather than [`update`].
-#[must_use]
-pub fn exists() -> bool {
-    unsafe { raw_rec_exists() == 1 }
 }
 
 /// Write a line to the server log, under the UDF context.
@@ -1893,6 +2165,11 @@ pub const ARG_BUF: usize = 256;
 ///
 /// The constants describe the parameter for the signature export (see [`export!`]): what the type is called
 /// there, the most bytes it takes when that is bounded, whether it may be absent, whether it takes the rest.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a type a UDF argument can have",
+    note = "the record is not an argument: it is the first parameter, written `rec: &Record` or \
+            `rec: &mut Record` exactly, and a stream UDF's `record` takes `&Record` and its `end` none"
+)]
 pub trait FromArg<'a>: Sized {
     /// What the signature calls this type: `int`, `double`, `bool`, `str`, `bytes`, `any`, `coll`.
     const NAME: &'static str;
@@ -2343,10 +2620,24 @@ pub fn reject_arity(function: &str, declared: usize, got: i32) -> i32 {
 // `event!`.
 //
 
+impl ReadRecord for EventRecord {
+    fn bin(&self, name: &str) -> Result<Value<'static>, Error> {
+        EventRecord::bin(self, name)
+    }
+
+    fn generation(&self) -> i64 {
+        self.generation
+    }
+
+    fn last_update_time(&self) -> i64 {
+        self.last_update_time
+    }
+}
+
 /// One side of an event: a read-only record with its metadata. Its bins are read through the event's own
 /// import, never the ordinary record natives, which in an event answer "nothing".
 #[derive(Clone, Copy)]
-pub struct Record {
+pub struct EventRecord {
     which: i32,
     generation: i64,
     last_update_time: i64,
@@ -2358,8 +2649,8 @@ pub struct Record {
     bin_srcs: Option<Coll>,
 }
 
-impl Record {
-    /// A bin, as [`bin`](crate::bin) reads one: `Err(Absent)` when the record has no such bin.
+impl EventRecord {
+    /// A bin, as [`Record::bin`] reads one: `Err(Absent)` when the record has no such bin.
     pub fn bin(&self, name: &str) -> Result<Value<'static>, Error> {
         let mut raw = [0u8; VALUE_SZ];
         let rc = unsafe {
@@ -2373,49 +2664,44 @@ impl Record {
         Ok(Value::from_raw(&raw))
     }
 
+    /// A bin that may be absent: `None` when it is absent or nil.
+    pub fn get(&self, name: &str) -> Result<Option<Value<'static>>, Error> {
+        ReadRecord::get(self, name)
+    }
+
     /// An integer bin, or `None` when the bin is absent or nil. A bin of another kind is `Err(WrongType)`.
     pub fn int(&self, name: &str) -> Result<Option<i64>, Error> {
-        match self.bin(name) {
-            Ok(Value::Nil) | Err(Error::Absent) => Ok(None),
-            Ok(v) => v.int().map(Some),
-            Err(e) => Err(e),
-        }
+        ReadRecord::int(self, name)
     }
 
     /// A double bin, or `None` when absent or nil.
     pub fn double(&self, name: &str) -> Result<Option<f64>, Error> {
-        match self.bin(name) {
-            Ok(Value::Nil) | Err(Error::Absent) => Ok(None),
-            Ok(v) => v.double().map(Some),
-            Err(e) => Err(e),
-        }
+        ReadRecord::double(self, name)
+    }
+
+    /// A boolean bin, or `None` when absent or nil.
+    pub fn bool(&self, name: &str) -> Result<Option<bool>, Error> {
+        ReadRecord::bool(self, name)
     }
 
     /// A string bin's text, or `None` when absent or nil.
     pub fn text(&self, name: &str) -> Result<Option<Text<'static>>, Error> {
-        match self.bin(name) {
-            Ok(Value::Nil) | Err(Error::Absent) => Ok(None),
-            Ok(v) => v.text().map(Some),
-            Err(e) => Err(e),
-        }
+        ReadRecord::text(self, name)
+    }
+
+    /// A blob bin's bytes, or `None` when absent or nil.
+    pub fn blob(&self, name: &str) -> Result<Option<Blob<'static>>, Error> {
+        ReadRecord::blob(self, name)
     }
 
     /// A list bin, or `None` when absent or nil.
     pub fn list(&self, name: &str) -> Result<Option<Coll>, Error> {
-        match self.bin(name) {
-            Ok(Value::Nil) | Err(Error::Absent) => Ok(None),
-            Ok(v) => v.list().map(Some),
-            Err(e) => Err(e),
-        }
+        ReadRecord::list(self, name)
     }
 
     /// A map bin, or `None` when absent or nil.
     pub fn map(&self, name: &str) -> Result<Option<Coll>, Error> {
-        match self.bin(name) {
-            Ok(Value::Nil) | Err(Error::Absent) => Ok(None),
-            Ok(v) => v.map().map(Some),
-            Err(e) => Err(e),
-        }
+        ReadRecord::map(self, name)
     }
 
     /// The names of this record's bins, as a stored list to iterate.
@@ -2432,7 +2718,7 @@ impl Record {
     }
 
     /// When the record was last written. Zero on both sides of an `xdr-merge`, for the same reason as
-    /// [`generation`](Record::generation).
+    /// [`generation`](EventRecord::generation).
     #[must_use]
     pub fn last_update_time(&self) -> i64 {
         self.last_update_time
@@ -2452,7 +2738,7 @@ impl Record {
 
     /// The names of the bins this side deleted: for the incoming write, its bin-delete ops; for the local
     /// record, its bin tombstones. A deleted bin reads as absent, so this is the only way to tell "never
-    /// had it" from "removed it", and [`bin_lut`](Record::bin_lut) says when.
+    /// had it" from "removed it", and [`bin_lut`](EventRecord::bin_lut) says when.
     #[must_use]
     pub fn deleted(&self) -> Coll {
         self.deleted
@@ -2491,11 +2777,11 @@ impl Record {
             let name = name?;
             let name = name.as_str(&mut buf)?;
 
-            if overrides.into_value().map()?.get(name).is_ok() {
+            if overrides.contains_key(name) {
                 continue;
             }
 
-            overrides.put(name, self.bin(name)?)?;
+            overrides.insert(name, self.bin(name)?)?;
         }
 
         Ok(overrides)
@@ -2513,8 +2799,8 @@ pub struct Conflict {
     remote_partial: bool,
     remote_deleted_record: bool,
     local_tombstone: bool,
-    local: Record,
-    remote: Record,
+    local: EventRecord,
+    remote: EventRecord,
 }
 
 /// What made the event fire.
@@ -2560,7 +2846,7 @@ impl Conflict {
 
     /// Whether either side deleted a bin: the incoming write carries a bin delete, or the local record has
     /// a bin tombstone. Such a bin is absent on that side, and resurrecting it from the other side is the
-    /// classic merge mistake; see [`Record::deleted`].
+    /// classic merge mistake; see [`EventRecord::deleted`].
     #[must_use]
     pub fn involves_delete(&self) -> bool {
         !self.local.deleted.is_empty() || !self.remote.deleted.is_empty()
@@ -2580,13 +2866,13 @@ impl Conflict {
 
     /// The record this node holds.
     #[must_use]
-    pub fn local(&self) -> Record {
+    pub fn local(&self) -> EventRecord {
         self.local
     }
 
     /// The record XDR delivered: the incoming write.
     #[must_use]
-    pub fn remote(&self) -> Record {
+    pub fn remote(&self) -> EventRecord {
         self.remote
     }
 
@@ -2607,8 +2893,8 @@ impl Conflict {
 /// The two sides of a conflict, read bin by bin into a [`Both`].
 #[derive(Clone, Copy)]
 pub struct Pair {
-    local: Record,
-    remote: Record,
+    local: EventRecord,
+    remote: EventRecord,
 }
 
 impl Pair {
@@ -2635,7 +2921,7 @@ impl Pair {
 
     /// The bin as a value on each side; absent sides are `None`.
     pub fn bin(&self, name: &str) -> Result<Both<Value<'static>>, Error> {
-        let side = |r: &Record| match r.bin(name) {
+        let side = |r: &EventRecord| match r.bin(name) {
             Ok(Value::Nil) | Err(Error::Absent) => Ok(None),
             Ok(v) => Ok(Some(v)),
             Err(e) => Err(e),
@@ -2662,7 +2948,7 @@ impl Pair {
                 }
 
                 if let Some(value) = self.bin(name)?.newer() {
-                    overrides.put(name, value)?;
+                    overrides.insert(name, value)?;
                 }
             }
         }
@@ -2810,15 +3096,15 @@ impl From<Map> for Resolution {
 
 /// Decode an event call's inputs. Used by [`event!`].
 #[doc(hidden)]
-pub fn xdr_merge_inputs(args_handle: i32, argc: i32) -> Result<(Record, Record, Conflict), Error> {
+pub fn xdr_merge_inputs(args_handle: i32, argc: i32) -> Result<(EventRecord, EventRecord, Conflict), Error> {
     let args = Args::from_handle(args_handle, argc);
     let conflict = args.get(0).ok_or(Error::Custom("event: the conflict description is missing"))?.map()?;
 
-    let side = |which: i32, key: &str| -> Result<Record, Error> {
+    let side = |which: i32, key: &str| -> Result<EventRecord, Error> {
         let m = conflict.get(key)?.map()?;
         let bins = m.get("bins")?.list()?;
 
-        Ok(Record {
+        Ok(EventRecord {
             which,
             // Absent for an xdr-merge side: each cluster sets its own, and a merge must not read them.
             generation: m.get("gen").ok().and_then(|v| v.int().ok()).unwrap_or(0),
@@ -2880,10 +3166,10 @@ pub fn deliver_resolution(r: Result<Resolution, Error>) -> i32 {
         Ok(Resolution::Record { bins, ttl }) => (|| {
             let out = map(3)?;
 
-            out.put("verdict", "record")?.put("bins", bins)?;
+            out.insert("verdict", "record")?.insert("bins", bins)?;
 
             if let Some(ttl) = ttl {
-                out.put("ttl", i64::from(ttl))?;
+                out.insert("ttl", i64::from(ttl))?;
             }
 
             result(&out.into_value())
@@ -3449,11 +3735,11 @@ pub fn event_description(args_handle: i32, argc: i32) -> Result<Coll, Error> {
 
 /// One side of an event from its entry in the description. Used by [`event!`].
 #[doc(hidden)]
-pub fn event_record(desc: Coll, key: &str, which: i32) -> Result<Record, Error> {
+pub fn event_record(desc: Coll, key: &str, which: i32) -> Result<EventRecord, Error> {
     let m = desc.get(key)?.map()?;
     let bins = m.get("bins")?.list()?;
 
-    Ok(Record {
+    Ok(EventRecord {
         which,
         generation: m.get("gen")?.int()?,
         last_update_time: m.get("lut")?.int()?,
@@ -3515,22 +3801,22 @@ pub fn deliver_verdict(verdict: &str, code: i32, message: &str, bins: Option<Map
 
         let out = map(5)?;
 
-        out.put("verdict", verdict)?;
+        out.insert("verdict", verdict)?;
 
         if code != 0 {
-            out.put("code", i64::from(code))?;
+            out.insert("code", i64::from(code))?;
         }
 
         if !message.is_empty() {
-            out.put("message", message)?;
+            out.insert("message", message)?;
         }
 
         if let Some(bins) = bins {
-            out.put("bins", bins)?;
+            out.insert("bins", bins)?;
         }
 
         if let Some(ttl) = ttl {
-            out.put("ttl", i64::from(ttl))?;
+            out.insert("ttl", i64::from(ttl))?;
         }
 
         result(&out.into_value())
@@ -3591,12 +3877,19 @@ pub fn deliver_done(r: Result<(), Error>) -> i32 {
 ///
 /// ```ignore
 /// export! {
-///     fn transfer(amount: i64, to: &str, dry_run: Option<bool>) -> Result<Value, Error> {
+///     fn transfer(rec: &mut Record, amount: i64, to: &str, dry_run: Option<bool>) -> Result<Value, Error> {
 ///         ...
 ///         Ok(Value::Int(balance))
 ///     }
 /// }
 /// ```
+///
+/// # The record
+///
+/// A function that reads its record takes `rec: &Record` as its first parameter, and one that writes it
+/// `rec: &mut Record`; see [`Record`]. It is written exactly so, with `Record` in scope under that name.
+/// It is not an argument: a client does not pass it, it is not counted, and the signature export below
+/// does not list it.
 ///
 /// Each becomes a `(args: i32, argc: i32) -> i32` export, which is what the host calls. The macro decodes
 /// the arguments into the parameters, checks their count and kinds, and rejects a mismatched call with a
@@ -3624,7 +3917,7 @@ pub fn deliver_done(r: Result<(), Error>) -> i32 {
 macro_rules! export {
     ($(
         $(#[$meta:meta])*
-        fn $name:ident($($arg:ident : $ty:ty),* $(,)?) -> Result<Value, Error> $body:block
+        fn $name:ident($($params:tt)*) -> Result<Value, Error> $body:block
     )*) => {
         $(
             const _: () = {
@@ -3636,7 +3929,7 @@ macro_rules! export {
                     unsafe {
                         (*::core::ptr::addr_of_mut!(SIG)).function(
                             stringify!($name),
-                            &[$($crate::param::<$ty>(stringify!($arg))),*],
+                            $crate::udf_params!(writable, $($params)*),
                         )
                     }
                 }
@@ -3645,7 +3938,7 @@ macro_rules! export {
             $(#[$meta])*
             #[no_mangle]
             pub extern "C" fn $name(args_handle: i32, argc: i32) -> i32 {
-                $crate::udf_body!($name, args_handle, argc, ($($arg : $ty),*), $body, result)
+                $crate::udf_call!(writable, $name, args_handle, argc, $body, result, $($params)*)
             }
         )*
     };
@@ -3667,8 +3960,8 @@ macro_rules! export {
 ///
 /// stream! {
 ///     fn sum {
-///         record(bin: &str) -> Result<(), Error> {
-///             unsafe { TOTAL += as_udf::bin(bin)?.int()? };
+///         record(rec: &Record, bin: &str) -> Result<(), Error> {
+///             unsafe { TOTAL += rec.bin(bin)?.int()? };
 ///             Ok(())
 ///         }
 ///         end(_bin: &str) -> Result<Value, Error> {
@@ -3690,7 +3983,7 @@ macro_rules! stream {
     ($(
         $(#[$meta:meta])*
         fn $name:ident {
-            record($($rarg:ident : $rty:ty),* $(,)?) -> Result<(), Error> $rbody:block
+            record($($rparams:tt)*) -> Result<(), Error> $rbody:block
             end($($earg:ident : $ety:ty),* $(,)?) -> Result<Value, Error> $ebody:block
         }
     )*) => {
@@ -3703,7 +3996,7 @@ macro_rules! stream {
                     unsafe {
                         (*::core::ptr::addr_of_mut!(SIG)).stream(
                             stringify!($name),
-                            &[$($crate::param::<$rty>(stringify!($rarg))),*],
+                            $crate::udf_params!(readable, $($rparams)*),
                             &[$($crate::param::<$ety>(stringify!($earg))),*],
                         )
                     }
@@ -3711,12 +4004,12 @@ macro_rules! stream {
 
                 #[export_name = concat!(stringify!($name), "_record")]
                 pub extern "C" fn record(args_handle: i32, argc: i32) -> i32 {
-                    $crate::udf_body!($name, args_handle, argc, ($($rarg : $rty),*), $rbody, unit)
+                    $crate::udf_call!(readable, $name, args_handle, argc, $rbody, unit, $($rparams)*)
                 }
 
                 #[export_name = concat!(stringify!($name), "_end")]
                 pub extern "C" fn end(args_handle: i32, argc: i32) -> i32 {
-                    $crate::udf_body!($name, args_handle, argc, ($($earg : $ety),*), $ebody, result)
+                    $crate::udf_body!($name, args_handle, argc, [], ($($earg : $ety),*), $ebody, result)
                 }
             };
         )*
@@ -3730,9 +4023,9 @@ macro_rules! stream {
 /// ```ignore
 /// event! {
 ///     on xdr_merge
-///     fn resolve_account(local: Record, remote: Record, conflict: Conflict) -> Result<Resolution, Error> {
+///     fn resolve_account(local: EventRecord, remote: EventRecord, conflict: Conflict) -> Result<Resolution, Error> {
 ///         let out = as_udf::map(2)?;
-///         out.put("visits", conflict.pair().int("visits")?.max())?;
+///         out.insert("visits", conflict.pair().int("visits")?.max())?;
 ///         Ok(Resolution::Record { bins: local.with_bins(out)?, ttl: None })
 ///     }
 /// }
@@ -3766,7 +4059,7 @@ macro_rules! event {
     (
         $(#[$meta:meta])*
         on xdr_merge
-        fn $name:ident($local:ident : Record, $remote:ident : Record, $conflict:ident : Conflict)
+        fn $name:ident($local:ident : EventRecord, $remote:ident : EventRecord, $conflict:ident : Conflict)
             -> Result<Resolution, Error> $body:block
         $($rest:tt)*
     ) => {
@@ -3794,7 +4087,7 @@ macro_rules! event {
     (
         $(#[$meta:meta])*
         on before_write
-        fn $name:ident($before:ident : Record, $after:ident : Record, $write:ident : Write)
+        fn $name:ident($before:ident : EventRecord, $after:ident : EventRecord, $write:ident : Write)
             -> Result<Decision, Error> $body:block
         $($rest:tt)*
     ) => {
@@ -3828,7 +4121,7 @@ macro_rules! event {
     (
         $(#[$meta:meta])*
         on after_write
-        fn $name:ident($before:ident : Record, $after:ident : Record, $write:ident : Write)
+        fn $name:ident($before:ident : EventRecord, $after:ident : EventRecord, $write:ident : Write)
             -> Result<(), Error> $body:block
         $($rest:tt)*
     ) => {
@@ -3862,7 +4155,7 @@ macro_rules! event {
     (
         $(#[$meta:meta])*
         on after_delete
-        fn $name:ident($record:ident : Record, $delete:ident : Delete) -> Result<(), Error> $body:block
+        fn $name:ident($record:ident : EventRecord, $delete:ident : Delete) -> Result<(), Error> $body:block
         $($rest:tt)*
     ) => {
         $crate::event!(@sig $name, concat!("event after-delete/1 ", stringify!($name),
@@ -3894,7 +4187,7 @@ macro_rules! event {
     (
         $(#[$meta:meta])*
         on before_delete
-        fn $name:ident($record:ident : Record, $delete:ident : Delete) -> Result<Gate, Error> $body:block
+        fn $name:ident($record:ident : EventRecord, $delete:ident : Delete) -> Result<Gate, Error> $body:block
         $($rest:tt)*
     ) => {
         $crate::event!(@sig $name, concat!("event before-delete/1 ", stringify!($name),
@@ -3926,7 +4219,7 @@ macro_rules! event {
     (
         $(#[$meta:meta])*
         on before_expire
-        fn $name:ident($record:ident : Record, $expire:ident : Expire) -> Result<Expiry, Error> $body:block
+        fn $name:ident($record:ident : EventRecord, $expire:ident : Expire) -> Result<Expiry, Error> $body:block
         $($rest:tt)*
     ) => {
         $crate::event!(@sig $name, concat!("event before-expire/1 ", stringify!($name),
@@ -3958,7 +4251,7 @@ macro_rules! event {
     (
         $(#[$meta:meta])*
         on before_evict
-        fn $name:ident($record:ident : Record, $evict:ident : Evict) -> Result<Eviction, Error> $body:block
+        fn $name:ident($record:ident : EventRecord, $evict:ident : Evict) -> Result<Eviction, Error> $body:block
         $($rest:tt)*
     ) => {
         $crate::event!(@sig $name, concat!("event before-evict/1 ", stringify!($name),
@@ -3990,7 +4283,7 @@ macro_rules! event {
     (
         $(#[$meta:meta])*
         on after_read
-        fn $name:ident($record:ident : Record, $read:ident : Read) -> Result<ReadResult, Error> $body:block
+        fn $name:ident($record:ident : EventRecord, $read:ident : Read) -> Result<ReadResult, Error> $body:block
         $($rest:tt)*
     ) => {
         $crate::event!(@sig $name, concat!("event after-read/1 ", stringify!($name),
@@ -4073,7 +4366,7 @@ macro_rules! event {
     (
         $(#[$meta:meta])*
         on timer
-        fn $name:ident($timer:ident : Timer) -> Result<(), Error> $body:block
+        fn $name:ident($rec:ident : &mut Record, $timer:ident : Timer) -> Result<(), Error> $body:block
         $($rest:tt)*
     ) => {
         $crate::event!(@sig $name, concat!("event timer/1 ", stringify!($name), "(timer: timer) -> ()"));
@@ -4081,6 +4374,10 @@ macro_rules! event {
         $(#[$meta])*
         #[no_mangle]
         pub extern "C" fn $name(args_handle: i32, argc: i32) -> i32 {
+            // A timer handler is the one event that runs as a record UDF: on the record the timer was set
+            // on, which it may read and write.
+            let mut __record = $crate::Record::current();
+            let $rec: &mut Record = &mut __record;
             let $timer = match $crate::event_timer(args_handle, argc) {
                 Ok(t) => t,
                 Err(e) => {
@@ -4099,7 +4396,7 @@ macro_rules! event {
     (
         $(#[$meta:meta])*
         on before_ship
-        fn $name:ident($record:ident : Record, $ship:ident : Ship) -> Result<ShipDecision, Error> $body:block
+        fn $name:ident($record:ident : EventRecord, $ship:ident : Ship) -> Result<ShipDecision, Error> $body:block
         $($rest:tt)*
     ) => {
         $crate::event!(@sig $name, concat!("event before-ship/1 ", stringify!($name),
@@ -4187,11 +4484,69 @@ macro_rules! event {
     };
 }
 
+/// The parameters of an export that a client passes: all of them but a leading record. Not for direct use.
+///
+/// `writable` is a record UDF, which may take `&mut Record`; `readable` is the per-record half of a stream
+/// UDF, which may only read. A record parameter written any other way, or anywhere but first, is taken for
+/// an argument and fails to compile as one, with a message that says so (see `FromArg`).
+#[doc(hidden)]
+#[macro_export]
+macro_rules! udf_params {
+    (writable, $rec:ident : &mut Record $(, $arg:ident : $ty:ty)* $(,)?) => {
+        &[$($crate::param::<$ty>(stringify!($arg))),*]
+    };
+    ($access:ident, $rec:ident : &Record $(, $arg:ident : $ty:ty)* $(,)?) => {
+        &[$($crate::param::<$ty>(stringify!($arg))),*]
+    };
+    ($access:ident, $($arg:ident : $ty:ty),* $(,)?) => {
+        &[$($crate::param::<$ty>(stringify!($arg))),*]
+    };
+}
+
+/// An export's body, with its record parameter, if it has one, bound first. Not for direct use.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! udf_call {
+    (writable, $name:ident, $h:expr, $argc:expr, $body:block, $outcome:ident,
+     $rec:ident : &mut Record $(, $arg:ident : $ty:ty)* $(,)?) => {
+        $crate::udf_body!($name, $h, $argc, [mut $rec], ($($arg : $ty),*), $body, $outcome)
+    };
+    ($access:ident, $name:ident, $h:expr, $argc:expr, $body:block, $outcome:ident,
+     $rec:ident : &Record $(, $arg:ident : $ty:ty)* $(,)?) => {
+        $crate::udf_body!($name, $h, $argc, [ref $rec], ($($arg : $ty),*), $body, $outcome)
+    };
+    ($access:ident, $name:ident, $h:expr, $argc:expr, $body:block, $outcome:ident,
+     $($arg:ident : $ty:ty),* $(,)?) => {
+        $crate::udf_body!($name, $h, $argc, [], ($($arg : $ty),*), $body, $outcome)
+    };
+}
+
+/// Bind the record parameter of an export. Not for direct use.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! udf_record {
+    ([]) => {};
+    // `Record` here is the name as the UDF's own source sees it, not `$crate::Record`: a function that
+    // declares `rec: &mut Record` must have this crate's `Record` in scope under that name, as its
+    // signature reads, and a different type of that name is a mismatch the compiler reports.
+    ([mut $rec:ident]) => {
+        let mut __record = $crate::Record::current();
+        let $rec: &mut Record = &mut __record;
+    };
+    ([ref $rec:ident]) => {
+        let __record = $crate::Record::current();
+        let $rec: &Record = &__record;
+    };
+}
+
 /// The body of an export: decode the arguments, run the block, deliver the outcome. Not for direct use.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! udf_body {
-    ($name:ident, $args_handle:expr, $argc:expr, ($($arg:ident : $ty:ty),*), $body:block, $outcome:ident) => {{
+    ($name:ident, $args_handle:expr, $argc:expr, [$($record:tt)*], ($($arg:ident : $ty:ty),*), $body:block,
+     $outcome:ident) => {{
+        $crate::udf_record!([$($record)*]);
+
         let __args = $crate::Args::from_handle($args_handle, $argc);
         let mut __index: usize = 0;
         let mut __rest = false;

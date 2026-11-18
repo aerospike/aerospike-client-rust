@@ -26,7 +26,7 @@
 
 #include "aerospike_udf.hpp"
 
-static constexpr udf::Bin COUNTS{"counts"};
+static constexpr udf::StrView COUNTS{"counts"};
 static constexpr int MAX_SITES = 64;
 static constexpr int SITE_MAX = 32;
 
@@ -94,10 +94,12 @@ struct Table {
 	}
 };
 
-// The record's counts.
-static udf::Result<void> load(Table& t)
+// The counts of a record, whichever record it is: the one a UDF was called on, or one side of a merge. Both
+// are read through udf::ReadRecord, so one function serves the UDFs and the handler.
+template <class R>
+static udf::Result<void> load(const udf::ReadRecord<R>& rec, Table& t)
 {
-	if (udf::Optional<udf::Value> v = COUNTS.get()) {
+	if (udf::Optional<udf::Value> v = rec.get(COUNTS)) {
 		return t.offer_all(*v);
 	}
 
@@ -112,9 +114,7 @@ UDF_ON_XDR_MERGE(merge_counter)
 	const udf::EventRecord* sides[] = {&current, &incoming};
 
 	for (const udf::EventRecord* side : sides) {
-		if (udf::Optional<udf::Value> stored = side->get("counts")) {
-			UDF_TRY(t.offer_all(*stored));
-		}
+		UDF_TRY(load(*side, t));
 	}
 
 	udf::Map out(2);
@@ -126,11 +126,11 @@ UDF_ON_XDR_MERGE(merge_counter)
 
 // Adds n to this site's count. Returns the counter's value. The site is a Text<32>, so a longer name is
 // rejected before the body runs, as the Rust module's Str<32> rejects it.
-UDF_FUNCTION(increment, udf::Result<int64_t>, Site site, int64_t n)
+UDF_FUNCTION(increment, udf::Result<int64_t>, udf::Record& rec, Site site, int64_t n)
 {
 	Table t;
 
-	UDF_TRY(load(t));
+	UDF_TRY(load(rec, t));
 
 	int i = t.find(site.view());
 
@@ -141,18 +141,18 @@ UDF_FUNCTION(increment, udf::Result<int64_t>, Site site, int64_t n)
 		UDF_TRY(t.offer(site.view(), n));
 	}
 
-	UDF_TRY(COUNTS.set(t.to_map()));
-	UDF_TRY(udf::commit());
+	UDF_TRY(rec.set(COUNTS, t.to_map()));
+	UDF_TRY(rec.save());
 
 	return t.total();
 }
 
 // The counter's value: the sum of every site's count.
-UDF_FUNCTION(value, udf::Result<int64_t>)
+UDF_FUNCTION(value, udf::Result<int64_t>, const udf::Record& rec)
 {
 	Table t;
 
-	UDF_TRY(load(t));
+	UDF_TRY(load(rec, t));
 
 	return t.total();
 }

@@ -15,6 +15,7 @@ package udf
 import (
 	"cmp"
 	"iter"
+	"unsafe"
 )
 
 //==========================================================
@@ -158,51 +159,60 @@ func Done() int32 { return answer("ok", 0, "", 0, -1) }
 // The event record, typed.
 //
 
+// An EventRecord reads like a Record: both are RecordReaders, so a helper written over that interface
+// takes either. It has no writing methods; an event changes a record through its answer.
+var _ RecordReader = (*EventRecord)(nil)
+var _ RecordReader = (*Record)(nil)
+
+// Bin is one of this side's bins, whatever it holds, a nil included; an error naming the bin when the
+// side has none by that name.
+func (r *EventRecord) Bin(name string) (Value, error) {
+	var v Value
+	rc := eventBinValue(r.Which, strptr(name), int32(len(name)), unsafe.Pointer(&v), 16)
+	if rc == NotFound {
+		return Value{Kind: KindAbsent}, errorf(rc, "bin ", name, " is absent")
+	}
+	if rc != OK {
+		return Value{Kind: KindAbsent}, statusError(rc, "bin "+name+" could not be read")
+	}
+	return v, nil
+}
+
 // Get is the bin as a value; false when the side has no such bin or it is nil.
 func (r *EventRecord) Get(name string) (Value, bool) {
 	var v Value
-	if r.Bin(name, &v) != OK || v.Kind == KindNil {
+	if eventBinValue(r.Which, strptr(name), int32(len(name)), unsafe.Pointer(&v), 16) != OK || v.Kind == KindNil {
 		return Value{Kind: KindAbsent}, false
 	}
 	return v, true
 }
 
-// Int is an int bin; false when absent, nil or of another kind.
-func (r *EventRecord) Int(name string) (int64, bool) {
-	v, ok := r.Get(name)
-	if !ok || v.Kind != KindInt {
-		return 0, false
-	}
-	return v.Payload, true
+// Has reports whether the side has the bin, nil included.
+func (r *EventRecord) Has(name string) bool {
+	var v Value
+	return eventBinValue(r.Which, strptr(name), int32(len(name)), unsafe.Pointer(&v), 16) == OK
 }
+
+// Int is an int bin; false when absent, nil or of another kind.
+func (r *EventRecord) Int(name string) (int64, bool) { return readInt(r, name) }
 
 // Float64 is a double bin; false when absent, nil or of another kind. An integer bin is not widened.
-func (r *EventRecord) Float64(name string) (float64, bool) {
-	v, ok := r.Get(name)
-	if !ok || v.Kind != KindDouble {
-		return 0, false
-	}
-	return v.Double(), true
-}
+func (r *EventRecord) Float64(name string) (float64, bool) { return readFloat64(r, name) }
 
 // Bool is a boolean bin; false when absent, nil or of another kind.
-func (r *EventRecord) Bool(name string) (bool, bool) {
-	v, ok := r.Get(name)
-	if !ok || v.Kind != KindBool {
-		return false, false
-	}
-	return v.Payload != 0, true
-}
+func (r *EventRecord) Bool(name string) (bool, bool) { return readBool(r, name) }
 
 // Str is the text of a string bin, copied out; false when absent, nil, of another kind, or unreadable.
-func (r *EventRecord) Str(name string) (string, bool) {
-	v, ok := r.Get(name)
-	if !ok || v.Kind != KindStr {
-		return "", false
-	}
-	s, err := v.Str()
-	return s, err == nil
-}
+func (r *EventRecord) Str(name string) (string, bool) { return readStr(r, name) }
+
+// Bytes is the bytes of a blob bin, copied out; false when absent, nil or of another kind.
+func (r *EventRecord) Bytes(name string) ([]byte, bool) { return readBytes(r, name) }
+
+// Generation is this side's modification count: the Gen field, as RecordReader asks for it.
+func (r *EventRecord) Generation() int64 { return r.Gen }
+
+// LastUpdateTime is when this side was last written: the LUT field, as RecordReader asks for it.
+func (r *EventRecord) LastUpdateTime() int64 { return r.LUT }
 
 // List walks a list bin; nothing when absent or not a list.
 func (r *EventRecord) List(name string) iter.Seq[Value] {
@@ -216,12 +226,6 @@ func (r *EventRecord) Map(name string) iter.Seq2[Value, Value] {
 	return v.Map()
 }
 
-// Has reports whether the side has the bin, nil included.
-func (r *EventRecord) Has(name string) bool {
-	var v Value
-	return r.Bin(name, &v) == OK
-}
-
 // Names walks the record's bin names.
 func (r *EventRecord) Names() iter.Seq[string] {
 	return func(yield func(string) bool) {
@@ -233,26 +237,25 @@ func (r *EventRecord) Names() iter.Seq[string] {
 	}
 }
 
-// DeletedAny reports whether this side deleted any bin.
-func (r *EventRecord) DeletedAny() bool {
-	return r.Deleted.Kind == KindList && r.Deleted.Len > 0
-}
-
 // WithBins is overrides with every bin of this record it lacks put on top, by position: the Rust SDK's
 // with_bins, for a record answer that changes a few bins and keeps the rest. It prefers one side, so an
 // xdr-merge handler that uses it on the current record is not symmetric; Pair.WithNewer is the symmetric
 // form. Returns overrides.
 func (r *EventRecord) WithBins(overrides *Map) *Map {
 	for name := range r.Names() {
-		if overrides.Has(name) {
+		if overrides.Contains(name) {
 			continue
 		}
-		var v Value
-		if r.Bin(name, &v) == OK {
+		if v, err := r.Bin(name); err == nil {
 			overrides.Put(name, v)
 		}
 	}
 	return overrides
+}
+
+// DeletedAny reports whether this side deleted any bin.
+func (r *EventRecord) DeletedAny() bool {
+	return r.Deleted.Kind == KindList && r.Deleted.Len > 0
 }
 
 //==========================================================
@@ -353,7 +356,7 @@ func (p Pair) RemoteNewer(name string) bool {
 func (p Pair) WithNewer(overrides *Map) *Map {
 	for _, side := range [2]*EventRecord{p.Local, p.Remote} {
 		for name := range side.Names() {
-			if overrides.Has(name) {
+			if overrides.Contains(name) {
 				continue
 			}
 			if v, ok := p.Bin(name).Newer(); ok {

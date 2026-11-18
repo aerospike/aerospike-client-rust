@@ -12,16 +12,17 @@
 
 package com.aerospike.udf.examples;
 
-import com.aerospike.udf.Bin;
 import com.aerospike.udf.Conflict;
 import com.aerospike.udf.EventRecord;
 import com.aerospike.udf.Function;
+import com.aerospike.udf.ListBuilder;
+import com.aerospike.udf.ListValue;
+import com.aerospike.udf.MapBuilder;
 import com.aerospike.udf.On;
+import com.aerospike.udf.Record;
 import com.aerospike.udf.Resolution;
 import com.aerospike.udf.Udf;
 import com.aerospike.udf.UdfException;
-import com.aerospike.udf.UdfList;
-import com.aerospike.udf.UdfMap;
 import com.aerospike.udf.Value;
 
 /**
@@ -37,8 +38,8 @@ import com.aerospike.udf.Value;
 public final class TwoPSet {
     private static final int MAX_TAGS = 64;
     private static final int TAG_MAX = 32;
-    private static final Bin ADDED = Bin.of("added");
-    private static final Bin REMOVED = Bin.of("removed");
+    private static final String ADDED = "added";
+    private static final String REMOVED = "removed";
 
     /** A sorted set of tags with no duplicates, gathered from one or both sides. */
     private static final class Tags {
@@ -85,19 +86,19 @@ public final class TwoPSet {
         }
 
         /** Every item of a stored list. */
-        void offerAll(Value list) {
+        void offerAll(ListValue list) {
             if (list == null) {
                 return;
             }
 
-            for (Value item : list.asList()) {
+            for (Value item : list) {
                 insert(item.asString());
             }
         }
 
         /** The tags not in {@code except}, as a built list, in order. */
-        UdfList toList(Tags except) {
-            UdfList l = UdfList.create(Math.max(size, 1));
+        ListBuilder toList(Tags except) {
+            ListBuilder l = Udf.list(Math.max(size, 1));
 
             for (int i = 0; i < size; i++) {
                 if (except == null || !except.contains(tags[i])) {
@@ -115,12 +116,12 @@ public final class TwoPSet {
     /** The merge: the union of each list. Every other bin is the incoming one's. */
     @On.XdrMerge("merge_twopset")
     static Resolution mergeTwoPSet(EventRecord current, EventRecord incoming, Conflict conflict) {
-        UdfMap out = UdfMap.create(2);
+        MapBuilder out = Udf.map(2);
 
         for (String bin : new String[] {"added", "removed"}) {
             ADDED_TAGS.size = 0;
-            ADDED_TAGS.offerAll(current.binList(bin));
-            ADDED_TAGS.offerAll(incoming.binList(bin));
+            ADDED_TAGS.offerAll(current.getList(bin, null));
+            ADDED_TAGS.offerAll(incoming.getList(bin, null));
             out.put(bin, ADDED_TAGS.toList(null));
         }
 
@@ -128,63 +129,63 @@ public final class TwoPSet {
     }
 
     /** One of the record's lists into a table. */
-    private static void load(Bin bin, Tags into) {
+    private static void load(Record rec, String bin, Tags into) {
         into.size = 0;
-        into.offerAll(bin.get());
+        into.offerAll(rec.getList(bin, null));
     }
 
     /** The members: added and not removed. */
-    private static UdfList membersOf() {
-        load(ADDED, ADDED_TAGS);
-        load(REMOVED, REMOVED_TAGS);
+    private static ListBuilder membersOf(Record rec) {
+        load(rec, ADDED, ADDED_TAGS);
+        load(rec, REMOVED, REMOVED_TAGS);
 
         return ADDED_TAGS.toList(REMOVED_TAGS);
     }
 
-    /** Adds a tag to one of the lists and commits. */
-    private static void grow(Bin bin, Tags into, String tag) {
+    /** Adds a tag to one of the lists and saves. */
+    private static void grow(Record rec, String bin, Tags into, String tag) {
         // The Rust module bounds a tag with a Str<32>; the same limit, as a check.
         if (tag.length() > TAG_MAX) {
             throw new UdfException("the tag is too long");
         }
 
-        load(bin, into);
+        load(rec, bin, into);
 
         if (into.contains(tag)) {
             return;
         }
 
         into.insert(tag);
-        bin.set(into.toList(null));
-        Udf.commit();
+        rec.set(bin, into.toList(null));
+        rec.save();
     }
 
     /** Adds a tag. Returns the members. A tag removed before stays removed. */
     @Function("add")
-    static UdfList add(String tag) {
-        grow(ADDED, ADDED_TAGS, tag);
+    static ListBuilder add(Record rec, String tag) {
+        grow(rec, ADDED, ADDED_TAGS, tag);
 
-        return membersOf();
+        return membersOf(rec);
     }
 
     /** Removes a tag that is a member, forever. Returns the members. */
     @Function("remove")
-    static UdfList remove(String tag) {
-        load(ADDED, ADDED_TAGS);
-        load(REMOVED, REMOVED_TAGS);
+    static ListBuilder remove(Record rec, String tag) {
+        load(rec, ADDED, ADDED_TAGS);
+        load(rec, REMOVED, REMOVED_TAGS);
 
         if (!ADDED_TAGS.contains(tag) || REMOVED_TAGS.contains(tag)) {
             throw new UdfException("not a member");
         }
 
-        grow(REMOVED, REMOVED_TAGS, tag);
+        grow(rec, REMOVED, REMOVED_TAGS, tag);
 
-        return membersOf();
+        return membersOf(rec);
     }
 
     /** The members, in order. */
     @Function("members")
-    static UdfList members() {
-        return membersOf();
+    static ListBuilder members(Record rec) {
+        return membersOf(rec);
     }
 }

@@ -16,31 +16,27 @@ extern crate alloc;
 
 use alloc::{format, string::String, vec::Vec};
 
-use aerospike_udf_sdk_wasm::{self as as_udf, Args, Coll, Error, Level, List, Str, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, Args, Coll, Error, Level, List, Record, Str, Value};
 
 as_udf::export! {
     /// Read a bin, write it back incremented, and return the new value.
     ///
     /// The read-modify-write a real UDF does, and the cheapest this ABI gets: two import calls, no buffer
     /// and no allocation on either side. A record without the bin starts from zero.
-    fn increment() -> Result<Value, Error> {
-        let n = match as_udf::bin("n") {
+    fn increment(rec: &mut Record) -> Result<Value, Error> {
+        let n = match rec.bin("n") {
             Ok(value) => value.int()?,
             Err(Error::Absent) => 0,
             Err(e) => return Err(e),
         };
 
-        as_udf::set("n", n + 1)?;
+        rec.set("n", n + 1)?;
 
-        // **Staged until committed** - the one mistake that looks like it worked. `set` only writes into
-        // the record's own cache; without this the UDF returns a perfectly plausible new value and changes
-        // nothing on disk. `create` when there is no record yet, `update` when there is: the server refuses
-        // an update to a record that does not exist, so a counter starting from nothing needs both.
-        if as_udf::exists() {
-            as_udf::update()?;
-        } else {
-            as_udf::create()?;
-        }
+        // **Staged until saved** - the one mistake that looks like it worked. `set` only writes into the
+        // record's own cache; without this the UDF returns a perfectly plausible new value and changes
+        // nothing on disk. `save` creates the record when there is none yet, so a counter starting from
+        // nothing needs no more than this.
+        rec.save()?;
 
         Ok(Value::Int(n + 1))
     }
@@ -49,8 +45,8 @@ as_udf::export! {
     ///
     /// The macro has already checked that `name` is a string by the time this runs; `numbers` is whatever
     /// followed it, and each is checked as it is used.
-    fn add_all(name: &str, numbers: Args) -> Result<Value, Error> {
-        let mut total = match as_udf::bin(name) {
+    fn add_all(rec: &mut Record, name: &str, numbers: Args) -> Result<Value, Error> {
+        let mut total = match rec.bin(name) {
             Ok(value) => value.int()?,
             Err(Error::Absent) => 0,
             Err(e) => return Err(e),
@@ -60,8 +56,8 @@ as_udf::export! {
             total += n.int()?;
         }
 
-        as_udf::set(name, total)?;
-        as_udf::update()?;
+        rec.set(name, total)?;
+        rec.save()?;
 
         Ok(Value::Int(total))
     }
@@ -72,46 +68,46 @@ as_udf::export! {
     /// read as - `set` sees [`Value::GeoJson`] and keeps the particle type - where writing its text back as a
     /// string would keep the bytes and quietly turn a geospatially indexable bin into an ordinary string.
     /// Reports the document's length so a caller can tell the round trip actually happened.
-    fn geo_roundtrip(name: &str) -> Result<Value, Error> {
-        let doc = as_udf::bin(name)?;
+    fn geo_roundtrip(rec: &mut Record, name: &str) -> Result<Value, Error> {
+        let doc = rec.bin(name)?;
 
         let Value::GeoJson(text) = doc else {
             return Err(Error::Custom("that bin does not hold geojson"));
         };
 
         // Written back from its stored bytes: the guest never decodes the document.
-        as_udf::set_value(name, &doc)?;
-        as_udf::update()?;
+        rec.set_value(name, &doc)?;
+        rec.save()?;
 
         Ok(Value::Int(text.len() as i64))
     }
 
     /// Everything the record knows about itself, as a map.
-    fn describe() -> Result<Value, Error> {
+    fn describe(rec: &Record) -> Result<Value, Error> {
         let out = as_udf::map(6)?;
 
-        out.put("generation", as_udf::generation())?
-            .put("bins", as_udf::bin_count())?
-            .put("size", as_udf::size())?;
+        out.insert("generation", rec.generation())?
+            .insert("bins", rec.bin_count())?
+            .insert("size", rec.size())?;
 
         let mut buf = [0u8; 64];
 
-        match as_udf::set_name(&mut buf) {
-            Ok(set) => out.put("set", set)?,
-            Err(_) => out.put("set", Value::Nil)?,
+        match rec.set_name(&mut buf) {
+            Ok(set) => out.insert("set", set)?,
+            Err(_) => out.insert("set", Value::Nil)?,
         };
 
         // The key is only there when the record was written with send_key.
         let mut key_buf = [0u8; 256];
 
-        match as_udf::key(&mut key_buf) {
-            Ok(key) => out.put("key", key)?,
-            Err(_) => out.put("key", Value::Nil)?,
+        match rec.key(&mut key_buf) {
+            Ok(key) => out.insert("key", key)?,
+            Err(_) => out.insert("key", Value::Nil)?,
         };
 
-        match as_udf::time_to_live() {
-            Some(ttl) => out.put("ttl", i64::from(ttl))?,
-            None => out.put("ttl", Value::Nil)?,
+        match rec.ttl() {
+            Some(ttl) => out.insert("ttl", i64::from(ttl))?,
+            None => out.insert("ttl", Value::Nil)?,
         };
 
         Ok(out.into_value())
@@ -127,7 +123,7 @@ as_udf::export! {
 
         let tail = as_udf::map(1)?;
 
-        tail.put("three", 3.5)?;
+        tail.insert("three", 3.5)?;
 
         let out = as_udf::list(4)?;
 
@@ -139,8 +135,8 @@ as_udf::export! {
     /// Say which guest ABI linked, by calling an import that only this one has.
     ///
     /// Returns 2 for this ABI. Read-only: the bin it asks for need not exist.
-    fn abi_probe() -> Result<Value, Error> {
-        let _ = as_udf::bin("abi_probe_does_not_need_this_bin");
+    fn abi_probe(rec: &Record) -> Result<Value, Error> {
+        let _ = rec.bin("abi_probe_does_not_need_this_bin");
 
         Ok(Value::Int(2))
     }
@@ -152,6 +148,64 @@ as_udf::export! {
     /// everything on a trivial UDF.
     fn answer() -> Result<Value, Error> {
         Ok(Value::Int(42))
+    }
+
+    /// Save with nothing staged, and report what that did: whether the record exists afterwards.
+    ///
+    /// Exists so that a test can pin down what `save` means when there is nothing to save, on a record
+    /// that is there and on one that is not.
+    fn save_nothing(rec: &mut Record) -> Result<Value, Error> {
+        rec.save()?;
+
+        Ok(Value::Bool(rec.exists()))
+    }
+
+    /// Delete the record, staged writes and all. Answers what `exists` says straight afterwards.
+    fn delete_it(rec: &mut Record) -> Result<Value, Error> {
+        rec.set("n", 99)?;
+        rec.delete()?;
+
+        Ok(Value::Bool(rec.exists()))
+    }
+
+    /// Remove a bin by name and save.
+    fn drop_bin(rec: &mut Record, name: &str) -> Result<Value, Error> {
+        rec.remove(name)?;
+        rec.save()?;
+
+        Ok(Value::Int(rec.bin_count()))
+    }
+
+    /// Set a bin to nil and save, which removes it: a bin cannot hold nil.
+    fn nil_bin(rec: &mut Record, name: &str) -> Result<Value, Error> {
+        rec.set(name, Value::Nil)?;
+        rec.save()?;
+
+        Ok(Value::Int(rec.bin_count()))
+    }
+
+    /// One element of a list bin by its index, and whether a map the call builds knows its keys.
+    fn index_probe(rec: &Record, name: &str, index: i64) -> Result<Value, Error> {
+        let out = as_udf::map(4)?;
+        let list = rec.bin(name)?.list()?;
+
+        out.insert("len", list.len() as i64)?;
+
+        // An index too large for this target's `usize` is past the end of any list it could hold.
+        match usize::try_from(index).map_err(|_| Error::Absent).and_then(|i| list.at(i)) {
+            Ok(v) => out.insert("at", v)?,
+            Err(Error::Absent) => out.insert("at", "absent")?,
+            Err(e) => return Err(e),
+        };
+
+        out.insert(7, "seven")?;
+
+        let knows = out.contains_key("len") && out.contains_key(7);
+        let invents = out.contains_key("nope") || out.contains_key(8);
+
+        out.insert("knows", knows)?.insert("invents", invents)?;
+
+        Ok(out.into_value())
     }
 
     /// Return nothing at all, which is nil.
@@ -166,11 +220,11 @@ as_udf::export! {
     /// The other half of the comparison, and the half that decides whether an interpreter is acceptable. A
     /// trivial UDF measures setup; this measures execution, where a JIT or AoT-compiled module should pull
     /// far ahead of a bytecode interpreter - and where Lua's own interpreter is the thing to beat.
-    fn work() -> Result<Value, Error> {
+    fn work(rec: &Record) -> Result<Value, Error> {
         // **Seeded from the record.** `sum(i*i)` over a literal range is a constant, and an optimiser is
         // entitled to fold the whole loop away - which would make this measure nothing at all. The seed is
         // only knowable at run time, so the arithmetic has to actually happen.
-        let seed = as_udf::bin("n").and_then(|v| v.int()).unwrap_or(0);
+        let seed = rec.bin("n").and_then(|v| v.int()).unwrap_or(0);
         let mut sum: i64 = 0;
 
         for i in 1..=200_000i64 {
@@ -233,10 +287,10 @@ as_udf::export! {
     /// import, where the handle path of old had the host build one `as_val` per element before the first
     /// read. An element that is not an integer fails the call: the UDF decides what a stray value means,
     /// not the library.
-    fn sum_list() -> Result<Value, Error> {
+    fn sum_list(rec: &Record) -> Result<Value, Error> {
         let mut total = 0i64;
 
-        for v in as_udf::bin("l")?.list()?.iter() {
+        for v in rec.bin("l")?.list()?.iter() {
             match v? {
                 Value::Int(i) => total += i,
                 other => {
@@ -253,41 +307,41 @@ as_udf::export! {
     ///
     /// Every entry is one of the accessors, so the test that reads this back checks the whole family
     /// against the values the client wrote. -1 (or "?") means an accessor declined.
-    fn packed_probe() -> Result<Value, Error> {
+    fn packed_probe(rec: &Record) -> Result<Value, Error> {
         let out = as_udf::map(16)?;
-        let l = as_udf::bin("l")?.list()?;
-        let d = as_udf::bin("d")?.list()?;
-        let m = as_udf::bin("m")?.map()?;
+        let l = rec.bin("l")?.list()?;
+        let d = rec.bin("d")?.list()?;
+        let m = rec.bin("m")?.map()?;
 
-        out.put("len", l.len() as i64)?;
-        out.put("sum", l.iter().map(|v| v.and_then(|v| v.int()).unwrap_or(0)).sum::<i64>())?;
-        out.put("tail", l.iter().skip(3).count() as i64)?;
-        out.put("dsum", d.iter().map(|v| v.and_then(|v| v.double()).unwrap_or(0.0)).sum::<f64>())?;
-        out.put("mlen", m.len() as i64)?;
-        out.put("x", m.get("x").and_then(|v| v.int()).unwrap_or(-1))?;
-        out.put("f", m.get("f").and_then(|v| v.double()).unwrap_or(-1.0))?;
+        out.insert("len", l.len() as i64)?;
+        out.insert("sum", l.iter().map(|v| v.and_then(|v| v.int()).unwrap_or(0)).sum::<i64>())?;
+        out.insert("tail", l.iter().skip(3).count() as i64)?;
+        out.insert("dsum", d.iter().map(|v| v.and_then(|v| v.double()).unwrap_or(0.0)).sum::<f64>())?;
+        out.insert("mlen", m.len() as i64)?;
+        out.insert("x", m.get("x").and_then(|v| v.int()).unwrap_or(-1))?;
+        out.insert("f", m.get("f").and_then(|v| v.double()).unwrap_or(-1.0))?;
 
         let mut text = [0u8; 32];
 
         match m.get("s").and_then(|v| v.text()) {
-            Ok(t) => out.put("s", t.as_str(&mut text).unwrap_or("?"))?,
-            Err(_) => out.put("s", "?")?,
+            Ok(t) => out.insert("s", t.as_str(&mut text).unwrap_or("?"))?,
+            Err(_) => out.insert("s", "?")?,
         };
 
-        out.put("k7", m.get_i(7).and_then(|v| v.int()).unwrap_or(-1))?;
+        out.insert("k7", m.get(7).and_then(|v| v.int()).unwrap_or(-1))?;
         // A nested list is a value like any other, with its length.
-        out.put("nested", m.get("l").and_then(|v| v.list()).map_or(-1, |c| c.len() as i64))?;
-        out.put("missing", matches!(m.get("nope"), Err(Error::Absent)))?;
+        out.insert("nested", m.get("l").and_then(|v| v.list()).map_or(-1, |c| c.len() as i64))?;
+        out.insert("missing", matches!(m.get("nope"), Err(Error::Absent)))?;
         // The nested list, entered and summed: its length times 100 plus its sum.
-        out.put(
+        out.insert(
             "found",
             match m.get("l").and_then(|v| v.list()) {
                 Ok(inner) => inner.len() as i64 * 100 + sum_ints(inner),
                 Err(_) => -1,
             },
         )?;
-        out.put("bulk", m.get("l").and_then(|v| v.list()).map_or(-1, sum_ints))?;
-        out.put("run", sum_ints(l))?;
+        out.insert("bulk", m.get("l").and_then(|v| v.list()).map_or(-1, sum_ints))?;
+        out.insert("run", sum_ints(l))?;
 
         Ok(out.into_value())
     }
@@ -296,9 +350,9 @@ as_udf::export! {
     ///
     /// Nested collections are bracketed with their length, so the test can see the descent and that the
     /// parent walk resumes after the child.
-    fn cursor_probe() -> Result<Value, Error> {
+    fn cursor_probe(rec: &Record) -> Result<Value, Error> {
         let out = as_udf::list(32)?;
-        let doc = as_udf::bin("doc")?.list()?;
+        let doc = rec.bin("doc")?.list()?;
 
         out.push(doc.len() as i64)?;
         walk(doc, &out)?;
@@ -307,9 +361,9 @@ as_udf::export! {
     }
 
     /// Two bins written through the packed writers: no value built per element.
-    fn write_lists() -> Result<Value, Error> {
-        as_udf::set_list_ints("w", &[5, -1, 1 << 40])?;
-        as_udf::set_list_doubles("wd", &[0.5, -4.0])?;
+    fn write_lists(rec: &mut Record) -> Result<Value, Error> {
+        rec.set_ints("w", &[5, -1, 1 << 40])?;
+        rec.set_doubles("wd", &[0.5, -4.0])?;
 
         Ok(Value::Int(1))
     }
@@ -317,8 +371,8 @@ as_udf::export! {
     /// Hand a nested value back exactly as stored: the map under `doc`'s last element.
     ///
     /// The guest never decodes it - the result is set from the record's bytes by position.
-    fn last_of_doc() -> Result<Value, Error> {
-        let doc = as_udf::bin("doc")?.list()?;
+    fn last_of_doc(rec: &Record) -> Result<Value, Error> {
+        let doc = rec.bin("doc")?.list()?;
         let mut last = Value::Nil;
 
         for v in doc.iter() {
@@ -333,14 +387,14 @@ as_udf::export! {
     /// `[doc[index], <geojson>, {1: "one", "first": doc[0]}]` - the stored values go into the builders by
     /// position, built by the server from the record's bytes; the GeoJson stays a GeoJson rather than
     /// becoming a string.
-    fn relist(index: i64) -> Result<Value, Error> {
-        let doc = as_udf::bin("doc")?.list()?;
+    fn relist(rec: &Record, index: i64) -> Result<Value, Error> {
+        let doc = rec.bin("doc")?.list()?;
         let picked = doc.iter().nth(index as usize).ok_or(Error::Absent)??;
         let first = doc.iter().next().ok_or(Error::Absent)??;
         let out = as_udf::list(3)?;
         let inner = as_udf::map(2)?;
 
-        inner.put_i(1, "one")?.put("first", first)?;
+        inner.insert(1, "one")?.insert("first", first)?;
         out.push(picked)?
             .push(Value::GeoJson("{\"type\":\"Point\",\"coordinates\":[1.0,2.0]}".into()))?
             .push(inner)?;
@@ -352,22 +406,22 @@ as_udf::export! {
     ///
     /// An HLL is readable as its bytes and writable back only from where it sits, so the subtype that makes
     /// it an HLL - the server's to set - survives the trip.
-    fn copy_hll() -> Result<Value, Error> {
-        let h = as_udf::bin("h")?;
+    fn copy_hll(rec: &mut Record) -> Result<Value, Error> {
+        let h = rec.bin("h")?;
         let bytes = h.hll()?;
 
-        as_udf::set_value("h2", &h)?;
-        as_udf::update()?;
+        rec.set_value("h2", &h)?;
+        rec.save()?;
 
         Ok(Value::Int(bytes.len() as i64))
     }
 
     /// Copy the list under key `vals` of map bin `m` into bin `copy`, from its stored bytes.
-    fn copy_vals() -> Result<Value, Error> {
-        let vals = as_udf::bin("m")?.map()?.get("vals")?;
+    fn copy_vals(rec: &mut Record) -> Result<Value, Error> {
+        let vals = rec.bin("m")?.map()?.get("vals")?;
 
-        as_udf::set_value("copy", &vals)?;
-        as_udf::update()?;
+        rec.set_value("copy", &vals)?;
+        rec.save()?;
 
         Ok(Value::Int(vals.list()?.len() as i64))
     }
@@ -377,12 +431,12 @@ as_udf::export! {
     /// A `String` parameter: allocated once at the argument's reported length, however long. A `&str`
     /// parameter would have refused anything past 256 bytes. The string is written into bin `echo` too,
     /// since a result borrows and a `String` is the function's own.
-    fn echo(text: String) -> Result<Value, Error> {
+    fn echo(rec: &mut Record, text: String) -> Result<Value, Error> {
         let mut marked = text;
 
         marked.push('!');
-        as_udf::set("echo", marked.as_str())?;
-        as_udf::update()?;
+        rec.set("echo", marked.as_str())?;
+        rec.save()?;
 
         let out = as_udf::list(2)?;
 
@@ -393,9 +447,9 @@ as_udf::export! {
 
     /// Write a short label into bin `tag`: a `Str<8>` parameter, so a longer argument is rejected before
     /// the body runs, with the limit in the message.
-    fn tag(label: Str<8>) -> Result<Value, Error> {
-        as_udf::set("tag", label.as_str())?;
-        as_udf::update()?;
+    fn tag(rec: &mut Record, label: Str<8>) -> Result<Value, Error> {
+        rec.set("tag", label.as_str())?;
+        rec.save()?;
 
         Ok(Value::Int(label.len() as i64))
     }
@@ -421,9 +475,9 @@ as_udf::export! {
 
     /// Copy list bin `doc` and map bin `m` into new collections element by element, by position, a window
     /// at a time: `extend` straight over a stored collection's iterator. Returns `[copy of doc, copy of m]`.
-    fn copy_list() -> Result<Value, Error> {
-        let doc = as_udf::bin("doc")?.list()?;
-        let m = as_udf::bin("m")?.map()?;
+    fn copy_list(rec: &Record) -> Result<Value, Error> {
+        let doc = rec.bin("doc")?.list()?;
+        let m = rec.bin("m")?.map()?;
         let list_copy = as_udf::list(doc.len())?;
         let map_copy = as_udf::map(m.len())?;
 
@@ -502,8 +556,8 @@ as_udf::stream! {
     ///
     /// One import call per record, no serialisation, and the total accumulates in the guest's own memory.
     fn sum {
-        record() -> Result<(), Error> {
-            if let Ok(v) = as_udf::bin("n") {
+        record(rec: &Record) -> Result<(), Error> {
+            if let Ok(v) = rec.bin("n") {
                 unsafe { TOTAL += v.int()? };
             }
 
@@ -521,11 +575,11 @@ as_udf::stream! {
     /// Here to show a non-scalar aggregation result, and that the collection builders work at `end` just as
     /// they do in a record UDF.
     fn stats {
-        record() -> Result<(), Error> {
+        record(rec: &Record) -> Result<(), Error> {
             unsafe {
                 SEEN += 1;
 
-                if let Ok(v) = as_udf::bin("n") {
+                if let Ok(v) = rec.bin("n") {
                     TOTAL += v.int()?;
                 }
             }
@@ -537,7 +591,7 @@ as_udf::stream! {
             let out = as_udf::map(2)?;
 
             unsafe {
-                out.put("count", SEEN)?.put("sum", TOTAL)?;
+                out.insert("count", SEEN)?.insert("sum", TOTAL)?;
             }
 
             Ok(out.into_value())
@@ -550,8 +604,8 @@ as_udf::stream! {
     /// the elements of the list - **three import calls per record, nothing deserialised**. The Lua
     /// counterpart does the same work through the server's own object model.
     fn sumnested {
-        record() -> Result<(), Error> {
-            let Ok(m) = as_udf::bin("m") else {
+        record(rec: &Record) -> Result<(), Error> {
+            let Ok(m) = rec.bin("m") else {
                 return Ok(());
             };
 

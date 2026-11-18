@@ -19,12 +19,6 @@
 
 // ANCHOR: setup
 #include "aerospike_udf.h"
-
-/* Writes the staged bins, creating the record when there is none. */
-static int32_t commit(void)
-{
-	return as_udf_rec_exists() ? as_udf_rec_update() : as_udf_rec_create();
-}
 // ANCHOR_END: setup
 
 // ANCHOR: visit
@@ -35,11 +29,11 @@ visit(int32_t args, int32_t argc)
 	if (as_udf_args(args, argc, &by, 1) < 1 || by.kind != AS_UDF_INT) return as_udf_failf("visit: by must be an integer");
 
 	as_udf_value v;
-	int64_t n = as_udf_bin("visits", &v) == AS_UDF_OK && v.kind == AS_UDF_INT ? v.payload : 0;   /* 0 when absent */
+	int64_t n = as_udf_rec_bin("visits", &v) == AS_UDF_OK && v.kind == AS_UDF_INT ? v.payload : 0;   /* 0 when absent */
 	n += by.payload;
 
-	as_udf_set_int("visits", 6, n);                                    /* staged, not yet written */
-	if (commit() != AS_UDF_OK) return as_udf_failf("visit: could not commit");
+	as_udf_rec_set_int("visits", 6, n);                                    /* staged, not yet written */
+	if (as_udf_rec_save() != AS_UDF_OK) return as_udf_failf("visit: could not save");   /* creates the record when there is none */
 
 	as_udf_result_int(n);
 	return 0;
@@ -55,13 +49,13 @@ withdraw(int32_t args, int32_t argc)
 	if (as_udf_args(args, argc, &amount, 1) < 1 || amount.kind != AS_UDF_INT) return as_udf_failf("withdraw: amount must be an integer");
 
 	as_udf_value balance;
-	if (as_udf_bin("balance", &balance) != AS_UDF_OK) return as_udf_failf("withdraw: bin balance is absent");
+	if (as_udf_rec_bin("balance", &balance) != AS_UDF_OK) return as_udf_failf("withdraw: bin balance is absent");
 	if (balance.kind != AS_UDF_INT) return as_udf_failf("withdraw: bin balance is not an integer");
 
 	if (amount.payload > balance.payload) return as_udf_failf("insufficient funds");
 
-	as_udf_set_int("balance", 7, balance.payload - amount.payload);
-	if (as_udf_rec_update() != AS_UDF_OK) return as_udf_failf("withdraw: could not commit");
+	as_udf_rec_set_int("balance", 7, balance.payload - amount.payload);
+	if (as_udf_rec_save() != AS_UDF_OK) return as_udf_failf("withdraw: could not save");
 
 	as_udf_result_int(balance.payload - amount.payload);
 	return 0;
@@ -84,15 +78,15 @@ rename(int32_t args, int32_t argc)
 	name[len] = '\0';
 
 	as_udf_value owner;
-	if (as_udf_bin("owner", &owner) != AS_UDF_OK || owner.kind != AS_UDF_STR) return as_udf_failf("rename: no string bin owner");
+	if (as_udf_rec_bin("owner", &owner) != AS_UDF_OK || owner.kind != AS_UDF_STR) return as_udf_failf("rename: no string bin owner");
 
 	if (as_udf_str_is(&owner, name)) {
 		as_udf_result_bool(0);
 		return 0;
 	}
 
-	as_udf_set_str("owner", 5, name, len);
-	if (as_udf_rec_update() != AS_UDF_OK) return as_udf_failf("rename: could not commit");
+	as_udf_rec_set_str("owner", 5, name, len);
+	if (as_udf_rec_save() != AS_UDF_OK) return as_udf_failf("rename: could not save");
 
 	as_udf_result_bool(1);
 	return 0;
@@ -107,7 +101,7 @@ total(int32_t args, int32_t argc)
 	(void)args; (void)argc;
 
 	as_udf_value history;
-	if (as_udf_bin("history", &history) != AS_UDF_OK || history.kind != AS_UDF_LIST) return as_udf_failf("total: no list bin history");
+	if (as_udf_rec_bin("history", &history) != AS_UDF_OK || history.kind != AS_UDF_LIST) return as_udf_failf("total: no list bin history");
 
 	int32_t cur = as_udf_cursor_enter_at(as_udf_value_src(&history), as_udf_value_at(&history));
 	if (cur <= 0) return as_udf_failf("total: could not open the list");
@@ -141,7 +135,7 @@ limit_for(int32_t args, int32_t argc)
 	if (len < 0) return as_udf_failf("limit_for: kind must be a string of at most 64 bytes");
 
 	as_udf_value limits;
-	if (as_udf_bin("limits", &limits) != AS_UDF_OK || limits.kind != AS_UDF_MAP) return as_udf_failf("limit_for: no map bin limits");
+	if (as_udf_rec_bin("limits", &limits) != AS_UDF_OK || limits.kind != AS_UDF_MAP) return as_udf_failf("limit_for: no map bin limits");
 
 	as_udf_value limit;
 	int32_t rc = as_udf_coll_get(as_udf_value_src(&limits), as_udf_value_at(&limits), kind, len, &limit, (int32_t)sizeof(limit));
@@ -165,7 +159,7 @@ limits_total(int32_t args, int32_t argc)
 	(void)args; (void)argc;
 
 	as_udf_value limits;
-	if (as_udf_bin("limits", &limits) != AS_UDF_OK || limits.kind != AS_UDF_MAP) return as_udf_failf("limits_total: no map bin limits");
+	if (as_udf_rec_bin("limits", &limits) != AS_UDF_OK || limits.kind != AS_UDF_MAP) return as_udf_failf("limits_total: no map bin limits");
 
 	int32_t cur = as_udf_cursor_enter_at(as_udf_value_src(&limits), as_udf_value_at(&limits));
 	if (cur <= 0) return as_udf_failf("limits_total: could not open the map");
@@ -194,7 +188,7 @@ log_payment(int32_t args, int32_t argc)
 	if (as_udf_args(args, argc, &amount, 1) < 1 || amount.kind != AS_UDF_INT) return as_udf_failf("log_payment: amount must be an integer");
 
 	as_udf_value history;
-	if (as_udf_bin("history", &history) != AS_UDF_OK || history.kind != AS_UDF_LIST) return as_udf_failf("log_payment: no list bin history");
+	if (as_udf_rec_bin("history", &history) != AS_UDF_OK || history.kind != AS_UDF_LIST) return as_udf_failf("log_payment: no list bin history");
 
 	int32_t count = (int32_t)history.len + 1;
 	int32_t out = as_udf_list_new(count);
@@ -209,8 +203,8 @@ log_payment(int32_t args, int32_t argc)
 	as_udf_cursor_close(cur);
 	as_udf_list_push_int(out, amount.payload);                         /* then the new one */
 
-	as_udf_set_handle("history", 7, out);
-	if (as_udf_rec_update() != AS_UDF_OK) return as_udf_failf("log_payment: could not commit");
+	as_udf_rec_set_handle("history", 7, out);
+	if (as_udf_rec_save() != AS_UDF_OK) return as_udf_failf("log_payment: could not save");
 
 	as_udf_result_int(count);
 	return 0;
@@ -225,16 +219,16 @@ summary(int32_t args, int32_t argc)
 	(void)args; (void)argc;
 
 	as_udf_value owner, balance;
-	if (as_udf_bin("owner", &owner) != AS_UDF_OK || as_udf_bin("balance", &balance) != AS_UDF_OK) return as_udf_failf("summary: no owner or balance");
+	if (as_udf_rec_bin("owner", &owner) != AS_UDF_OK || as_udf_rec_bin("balance", &balance) != AS_UDF_OK) return as_udf_failf("summary: no owner or balance");
 
 	int32_t out = as_udf_map_new(5);
 	if (out <= 0) return as_udf_failf("summary: could not build the map");
 
 	as_udf_map_put_value(out, "owner", &owner);                        /* a stored value goes in as it is */
 	as_udf_map_put_value(out, "balance", &balance);
-	as_udf_map_put_str_int(out, "generation", 10, as_udf_gen());
-	as_udf_map_put_str_int(out, "bins", 4, as_udf_numbins());
-	as_udf_map_put_str_int(out, "ttl", 3, as_udf_ttl());
+	as_udf_map_put_str_int(out, "generation", 10, as_udf_rec_gen());
+	as_udf_map_put_str_int(out, "bins", 4, as_udf_rec_numbins());
+	as_udf_map_put_str_int(out, "ttl", 3, as_udf_rec_ttl());
 
 	as_udf_result_handle(out);
 	return 0;
@@ -250,12 +244,12 @@ renew(int32_t args, int32_t argc)
 	if (as_udf_args(args, argc, &seconds, 1) < 1 || seconds.kind != AS_UDF_INT) return as_udf_failf("renew: seconds must be an integer");
 
 	as_udf_value v;
-	int64_t n = as_udf_bin("renewals", &v) == AS_UDF_OK && v.kind == AS_UDF_INT ? v.payload : 0;
+	int64_t n = as_udf_rec_bin("renewals", &v) == AS_UDF_OK && v.kind == AS_UDF_INT ? v.payload : 0;
 	n++;
 
-	as_udf_set_int("renewals", 8, n);
-	if (as_udf_set_ttl((int32_t)seconds.payload) != AS_UDF_OK) return as_udf_failf("renew: the TTL was refused");   /* takes effect with the commit */
-	if (as_udf_rec_update() != AS_UDF_OK) return as_udf_failf("renew: could not commit");
+	as_udf_rec_set_int("renewals", 8, n);
+	if (as_udf_rec_set_ttl((int32_t)seconds.payload) != AS_UDF_OK) return as_udf_failf("renew: the TTL was refused");   /* takes effect with the save */
+	if (as_udf_rec_save() != AS_UDF_OK) return as_udf_failf("renew: could not save");
 
 	as_udf_result_int(n);
 	return 0;
@@ -269,8 +263,8 @@ clear_note(int32_t args, int32_t argc)
 {
 	(void)args; (void)argc;
 
-	as_udf_set_nil("note", 4);                                         /* a nil write drops the bin */
-	if (as_udf_rec_update() != AS_UDF_OK) return as_udf_failf("clear_note: could not commit");
+	as_udf_rec_remove("note", 4);                                      /* staged, like a set */
+	if (as_udf_rec_save() != AS_UDF_OK) return as_udf_failf("clear_note: could not save");
 
 	as_udf_result_nil();
 	return 0;
@@ -284,7 +278,7 @@ close(int32_t args, int32_t argc)
 {
 	(void)args; (void)argc;
 
-	if (as_udf_rec_remove() != AS_UDF_OK) return as_udf_failf("close: could not delete the record");   /* no commit: the delete is the write */
+	if (as_udf_rec_delete() != AS_UDF_OK) return as_udf_failf("close: could not delete the record");   /* no save: the delete is the write */
 
 	as_udf_result_nil();
 	return 0;
@@ -299,7 +293,6 @@ static void with_bins(const as_udf_event_record* rec, int32_t out)
 	int32_t cur = as_udf_cursor_enter_at(as_udf_value_src(&rec->bins), as_udf_value_at(&rec->bins));
 	if (cur <= 0) return;
 
-	int32_t packed = as_udf_pack_handle(out);                          /* `out`, readable by position */
 	as_udf_value w[32];
 
 	for (int32_t n; (n = as_udf_cursor_values(cur, w, (int32_t)sizeof(w))) > 0;) {
@@ -309,8 +302,7 @@ static void with_bins(const as_udf_event_record* rec, int32_t out)
 			if (len < 0) continue;
 			name[len] = '\0';
 
-			as_udf_value have;
-			if (packed > 0 && as_udf_coll_get(packed, 0, name, len, &have, (int32_t)sizeof(have)) == AS_UDF_OK) continue;
+			if (as_udf_map_has(out, name, len) > 0) continue;              /* what the handler put there wins */
 
 			as_udf_value v;
 			if (as_udf_event_bin(rec, name, &v) == AS_UDF_OK) as_udf_map_put_value(out, name, &v);
@@ -431,11 +423,11 @@ AS_UDF_EVENT_TIMER(tick)
 	if (as_udf_event_timer_info(args, argc, &timer) != AS_UDF_OK) return as_udf_failf("tick: not a timer");
 
 	as_udf_value v;
-	int64_t n = as_udf_bin("ticks", &v) == AS_UDF_OK && v.kind == AS_UDF_INT ? v.payload : 0;   /* the record API works here */
+	int64_t n = as_udf_rec_bin("ticks", &v) == AS_UDF_OK && v.kind == AS_UDF_INT ? v.payload : 0;   /* the record API works here */
 	n++;
 
-	as_udf_set_int("ticks", 5, n);
-	as_udf_rec_update();
+	as_udf_rec_set_int("ticks", 5, n);
+	as_udf_rec_save();
 
 	if (n < 3) as_udf_timer_set("tick", 4, 200);                       /* run again in 200 ms */
 
