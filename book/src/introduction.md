@@ -54,8 +54,8 @@ runtime asks the host for its own logging, clock and `Math` functions under `tea
 engine provides those and nothing more.
 
 **A module describes itself.** Beside every function the SDKs export a signature, `fn withdraw(amount:
-int, dry_run?: bool) -> value` or `event before-write/1 guard(...)`, which the server serves to a client
-as a string and checks when a function is bound to an event.
+int, dry_run?: bool) -> value` or `event xdr-merge/1 merge(...)`, which the server serves to a client
+as a string and checks when a function is bound to the event.
 
 ## Three kinds of function
 
@@ -63,13 +63,12 @@ as a string and checks when a function is bound to an event.
 | --- | --- | --- | --- |
 | **Record UDF** | a client, on one key | the transaction thread, under the record lock | a value |
 | **Stream UDF** | a client, over a query | the query threads, one instance per thread | one partial per thread, which the client combines |
-| **Event handler** | the server itself, at a point in its own processing | the thread that reached that point, or a service thread | a verdict, or a record |
+| **Merge handler** | the server itself, when an XDR write arrives for a record that exists | the transaction thread applying that write | a verdict, or a record |
 
 The first two are the UDFs Lua users know, faster and typed. The third is new: a function bound with
-`event-set` to a kind of event, `before-write`, `before-expire`, `xdr-merge`, `timer`, fourteen others,
-and run when the server reaches that point, with the records involved and a description of what is
-happening. That is the subject of the third part of this book, and the fourth part, the CRDT
-tutorial, is what you can build with one of those events.
+`event-set` to the `xdr-merge` event and run when a write arrives over XDR for a record this cluster
+already has, with both records in hand, to decide what the record should be. That is the subject of the
+third part of this book, and the fourth part, the CRDT tutorial, is what you can build with it.
 
 ## The SDKs
 
@@ -91,14 +90,13 @@ reference for that language, generated from the SDK's source.
 
 ## How to read this book
 
-[Configuration](configuration.md) is the server side: the `mod-wamr` stanza and what the events need.
+[Configuration](configuration.md) is the server side: the `mod-wamr` stanza and what the merge event needs.
 [How the engine runs a module](engine.md) is what the server keeps between calls and builds for each
 one, next to the Lua engine, and what it measured. [Security](security.md) is what a module can
 reach, what stops it, and where the design is still weak. [Record UDFs](record-udfs/README.md) is where to
 start writing; its Rust chapter walks through a real
 module. [Stream UDFs](stream-udfs/README.md) is short, because a stream UDF is a record UDF with two
-entry points and one rule about state. [The event system](events/README.md) is the longest part: the
-binding model, every event kind with its payload and answers, timers, and then the four language
-chapters. The [CRDT tutorial](crdt/README.md) is the last part: five data structures that two clusters
+entry points and one rule about state. [The `xdr-merge` event](events/README.md) is the third part: the
+binding, what a handler sees and may answer, how to check a merge, and then the language chapters. The [CRDT tutorial](crdt/README.md) is the last part: five data structures that two clusters
 can both write and still agree on, built step by step on the `xdr-merge` event, each step in all four
 languages.

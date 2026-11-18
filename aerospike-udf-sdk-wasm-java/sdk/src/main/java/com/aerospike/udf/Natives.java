@@ -206,16 +206,10 @@ final class Natives {
     @Import(module = "aerospike", name = "log")
     static native void log(int level, Address message, int messageLen);
 
-    // Events and timers.
+    // Events.
 
     @Import(module = "aerospike", name = "event_bin_value")
     static native int eventBinValue(int which, Address name, int nameLen, Address out, int cap);
-
-    @Import(module = "aerospike", name = "timer_set")
-    static native int timerSet(Address name, int nameLen, long delayMs);
-
-    @Import(module = "aerospike", name = "timer_cancel")
-    static native int timerCancel(Address name, int nameLen);
 
     // The rest of the record: metadata and writes the Rust SDK has.
 

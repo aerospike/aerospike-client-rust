@@ -1,6 +1,6 @@
-# The C guest SDK for Aerospike WASM UDFs is one header; this builds its example.
+# The C guest SDK for Aerospike WASM UDFs is one header; this builds its examples.
 #
-#   make                    examples/vector/vector_c.wasm
+#   make                    examples/vector/vector_c.wasm and examples/resolver/resolver_c.wasm
 #   make CLANG=clang-18     a specific clang; wasm-ld must be on the path (lld)
 #   make SIMD=1             with 128-bit SIMD (see SIMD below)
 #
@@ -22,7 +22,7 @@ ifeq ($(SIMD),1)
 endif
 
 .PHONY: all clean
-all: examples/vector/vector_c.wasm examples/resolver/resolver_c.wasm examples/guard/guard_c.wasm
+all: examples/vector/vector_c.wasm examples/resolver/resolver_c.wasm
 
 examples/vector/vector_c.wasm: examples/vector/vector.c include/aerospike_udf.h
 	$(CLANG) $(CFLAGS) $(WASM_FLAGS) -Iinclude -o $@ $<
@@ -30,8 +30,5 @@ examples/vector/vector_c.wasm: examples/vector/vector.c include/aerospike_udf.h
 examples/resolver/resolver_c.wasm: examples/resolver/resolver.c include/aerospike_udf.h
 	$(CLANG) $(CFLAGS) $(WASM_FLAGS) -Iinclude -o $@ $<
 
-examples/guard/guard_c.wasm: examples/guard/guard.c include/aerospike_udf.h
-	$(CLANG) $(CFLAGS) $(WASM_FLAGS) -Iinclude -o $@ $<
-
 clean:
-	rm -f examples/vector/vector_c.wasm examples/resolver/resolver_c.wasm examples/guard/guard_c.wasm
+	rm -f examples/vector/vector_c.wasm examples/resolver/resolver_c.wasm

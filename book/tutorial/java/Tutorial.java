@@ -14,17 +14,10 @@
 package com.aerospike.udf.tutorial;
 
 // ANCHOR: setup
-import com.aerospike.udf.Decision;
-import com.aerospike.udf.EventRecord;
-import com.aerospike.udf.Events;
-import com.aerospike.udf.Expiry;
 import com.aerospike.udf.Function;
-import com.aerospike.udf.Gate;
 import com.aerospike.udf.ListValue;
 import com.aerospike.udf.MapBuilder;
 import com.aerospike.udf.MapValue;
-import com.aerospike.udf.On;
-import com.aerospike.udf.ReadResult;
 import com.aerospike.udf.Record;
 import com.aerospike.udf.Udf;
 import com.aerospike.udf.UdfException;
@@ -164,78 +157,6 @@ public final class Tutorial {
         rec.delete();     // no save: the delete is the write
     }
     // ANCHOR_END: close
-
-    // ANCHOR: no_overdraft
-    @On.BeforeWrite("no_overdraft")
-    static Decision noOverdraft(EventRecord before, EventRecord after, Events.WriteInfo write) {
-        if (after.getLong("balance", 0) < 0) {   // 0 when absent or nil
-            return Decision.reject(22, "balance may not go negative");
-        }
-
-        return Decision.accept();
-    }
-    // ANCHOR_END: no_overdraft
-
-    // ANCHOR: stamp
-    @On.BeforeWrite("stamp")
-    static Decision stamp(EventRecord before, EventRecord after, Events.WriteInfo write) {
-        MapBuilder out = Udf.map(2)
-                .put("writes", before.getLong("writes", 0) + 1)
-                .put("source", write.source);
-
-        // Every bin the write produced, with the two above on top.
-        return Decision.record(after.withBins(out));
-    }
-    // ANCHOR_END: stamp
-
-    // ANCHOR: keep_locked
-    @On.BeforeDelete("keep_locked")
-    static Gate keepLocked(EventRecord record, Events.DeleteInfo delete) {
-        if (record.getBoolean("locked", false)) {
-            return Gate.refuse(22, "record is locked");
-        }
-
-        return Gate.allow();
-    }
-    // ANCHOR_END: keep_locked
-
-    // ANCHOR: hide_secret
-    @On.AfterRead("hide_secret")
-    static ReadResult hideSecret(EventRecord record, Events.ReadInfo read) {
-        if (!record.hasBin("secret")) {
-            return ReadResult.unchanged();
-        }
-
-        MapBuilder out = Udf.map(1).putNull("secret");   // nil in an answer: no such bin
-
-        return ReadResult.record(record.withBins(out));
-    }
-    // ANCHOR_END: hide_secret
-
-    // ANCHOR: keep_marked
-    @On.BeforeExpire("keep_marked")
-    static Expiry keepMarked(EventRecord record, Events.ExpireInfo expire) {
-        if (record.getBoolean("keep", false)) {
-            return Expiry.keep(3600);
-        }
-
-        return Expiry.expire();
-    }
-    // ANCHOR_END: keep_marked
-
-    // ANCHOR: tick
-    @On.Timer("tick")
-    static void tick(Record rec, Events.TimerInfo timer) {
-        long n = rec.getLong("ticks", 0) + 1;   // a timer runs as a record UDF: it takes the record
-
-        rec.set("ticks", n);
-        rec.save();
-
-        if (n < 3) {
-            Udf.timerSet("tick", 200);   // run again in 200 ms
-        }
-    }
-    // ANCHOR_END: tick
 
     private Tutorial() {
     }

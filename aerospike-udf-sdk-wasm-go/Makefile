@@ -22,7 +22,7 @@ TARGET = $(if $(filter 1,$(SIMD)),./wasm-unknown-simd.json,./wasm-unknown.json)
 TINYGO ?= tinygo
 GO ?= go
 TINYGO_FLAGS = -target=$(TARGET) -opt=2 -no-debug -panic=trap -scheduler=none -gc=leaking
-EXAMPLES = vector resolver guard counter pncounter twopset lwwset crdt udf
+EXAMPLES = vector resolver counter pncounter twopset lwwset crdt udf
 WASM = $(foreach e,$(EXAMPLES),examples/$(e)/$(e)_go.wasm)
 SDK = $(wildcard *.go) go.mod wasm-unknown.json wasm-unknown-simd.json
 FIXTURES = ../tests/fixtures/wasm

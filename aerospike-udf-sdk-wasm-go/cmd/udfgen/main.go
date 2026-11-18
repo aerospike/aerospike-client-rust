@@ -21,21 +21,20 @@
 // go in the doc comment of the declaration:
 //
 //	//udf:function <name> [params="(...)"]         on a func: a record UDF
-//	//udf:on <kind> <name>                         on a func: an event handler (before-write, xdr-merge, ...)
+//	//udf:on xdr-merge <name>                      on a func: an xdr-merge handler
 //	//udf:stream <name> [params="(...)"] [end="(...)"]   on a `var x T`: a stream UDF; T has Record and End
 //
 // A typed function's parameters are int64, int, int32, float64, bool, string, []byte, udf.Value, their
 // pointer forms for an optional argument, or []udf.Value last for the rest; it returns nothing, an error, a
 // value, or a value and an error, the value being any of those types or *udf.Map / *udf.List. A handler
-// takes the kind's parameters and returns the kind's answer and an error, or only an error for the kinds
-// that answer nothing. A function declared (args, argc int32) int32 is the raw form, exported as it is,
-// with params giving the signature text.
+// takes the two records and the conflict and returns a udf.Resolution and an error. A function declared
+// (args, argc int32) int32 is the raw form, exported as it is, with params giving the signature text.
 //
 // A udf:function, and a stream's Record method, may take the record first, as a *udf.Record, in the typed
 // form and the raw one alike. The export passes it the record of the call. It is not an argument: it is
 // left out of the arity check and of the signature text, so adding or removing it changes nothing a
-// client sees. A stream's End takes none, since no record is in hand when the stream ends. The timer
-// handler runs as a record UDF and always takes it.
+// client sees. A stream's End takes none, since no record is in hand when the stream ends, and
+// neither does a handler: an event reads its records as *udf.EventRecord.
 package main
 
 import (
@@ -51,32 +50,13 @@ import (
 
 const sdkPath = "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk-wasm-go"
 
-type kind struct {
-	event    string
-	params   []string // the Go parameter types, with the SDK alias as "udf"
-	answer   string   // the answer type, "" for the kinds that answer nothing
-	records  []string // the description keys of the records, by index
-	info     string   // the Event*Info decoder, "" for the merge and the timer
-	constant string   // the Params* constant of the signature
-}
+// The one event kind, and what a typed handler of it takes and returns, with the SDK alias as "udf".
+const (
+	mergeEvent  = "xdr-merge"
+	mergeAnswer = "udf.Resolution"
+)
 
-var kinds = map[string]kind{
-	"before-write":       {"before-write", []string{"*udf.EventRecord", "*udf.EventRecord", "udf.WriteInfo"}, "udf.Decision", []string{"before", "after"}, "WriteInfo", "ParamsBeforeWrite"},
-	"after-write":        {"after-write", []string{"*udf.EventRecord", "*udf.EventRecord", "udf.WriteInfo"}, "", []string{"before", "after"}, "WriteInfo", "ParamsAfterWrite"},
-	"before-delete":      {"before-delete", []string{"*udf.EventRecord", "udf.DeleteInfo"}, "udf.Gate", []string{"record"}, "DeleteInfo", "ParamsBeforeDelete"},
-	"after-delete":       {"after-delete", []string{"*udf.EventRecord", "udf.DeleteInfo"}, "", []string{"record"}, "DeleteInfo", "ParamsAfterDelete"},
-	"before-expire":      {"before-expire", []string{"*udf.EventRecord", "udf.ExpireInfo"}, "udf.Expiry", []string{"record"}, "ExpireInfo", "ParamsBeforeExpire"},
-	"before-evict":       {"before-evict", []string{"*udf.EventRecord", "udf.ExpireInfo"}, "udf.Eviction", []string{"record"}, "ExpireInfo", "ParamsBeforeEvict"},
-	"after-read":         {"after-read", []string{"*udf.EventRecord", "udf.ReadInfo"}, "udf.ReadResult", []string{"record"}, "ReadInfo", "ParamsAfterRead"},
-	"before-truncate":    {"before-truncate", []string{"udf.TruncateInfo"}, "udf.Gate", nil, "TruncateInfo", "ParamsBeforeTruncate"},
-	"after-truncate":     {"after-truncate", []string{"udf.TruncateInfo"}, "", nil, "TruncateInfo", "ParamsAfterTruncate"},
-	"before-ship":        {"before-ship", []string{"*udf.EventRecord", "udf.ShipInfo"}, "udf.ShipDecision", []string{"record"}, "ShipInfo", "ParamsBeforeShip"},
-	"partition-transfer": {"partition-transfer", []string{"udf.TransferInfo"}, "", nil, "TransferInfo", "ParamsPartitionTransfer"},
-	"cluster-change":     {"cluster-change", []string{"udf.ClusterInfo"}, "", nil, "ClusterInfo", "ParamsClusterChange"},
-	"node-lifecycle":     {"node-lifecycle", []string{"udf.LifecycleInfo"}, "", nil, "LifecycleInfo", "ParamsNodeLifecycle"},
-	"timer":              {"timer", []string{"*udf.Record", "udf.TimerInfo"}, "", nil, "", "ParamsTimer"},
-	"xdr-merge":          {"xdr-merge", []string{"*udf.EventRecord", "*udf.EventRecord", "*udf.Conflict"}, "udf.Resolution", nil, "", ""},
-}
+var mergeParams = []string{"*udf.EventRecord", "*udf.EventRecord", "*udf.Conflict"}
 
 type role int
 
@@ -91,7 +71,6 @@ type export struct {
 	role     role
 	name     string
 	params   string // the signature's parameter text, raw form
-	kind     *kind
 	fn       *ast.FuncDecl
 	receiver string // the stream variable, for a method
 	pos      token.Pos
@@ -276,15 +255,14 @@ func (g *generator) collect(pkg *ast.Package) []*export {
 						add(&export{role: roleFunction, name: dir.words[1], params: dir.opts["params"], fn: decl, pos: dir.pos})
 					case "on":
 						if len(dir.words) != 3 {
-							g.errorf(dir.pos, "udf:on <kind> <name>")
+							g.errorf(dir.pos, "udf:on %s <name>", mergeEvent)
 							continue
 						}
-						k, ok := kinds[dir.words[1]]
-						if !ok {
-							g.errorf(dir.pos, "unknown event kind %s", dir.words[1])
+						if dir.words[1] != mergeEvent {
+							g.errorf(dir.pos, "unknown event kind %s: the one event is %s", dir.words[1], mergeEvent)
 							continue
 						}
-						add(&export{role: roleHandler, name: dir.words[2], kind: &k, fn: decl, pos: dir.pos})
+						add(&export{role: roleHandler, name: dir.words[2], fn: decl, pos: dir.pos})
 					default:
 						g.errorf(dir.pos, "unknown directive udf:%s on a function", dir.words[0])
 					}
@@ -508,11 +486,7 @@ func (g *generator) generate(exports []*export) string {
 		case roleFunction:
 			signature(&b, e.name, id, "fn "+e.name+params+" -> value")
 		case roleHandler:
-			if e.kind.constant == "" {
-				signatureExpr(&b, e.name, id, fmt.Sprintf("udf.XdrMergeSignature(%q)", e.name))
-			} else {
-				signatureExpr(&b, e.name, id, fmt.Sprintf("udf.EventSignature(%q, %q, udf.%s)", e.kind.event, e.name, e.kind.constant))
-			}
+			signatureExpr(&b, e.name, id, fmt.Sprintf("udf.XdrMergeSignature(%q)", e.name))
 		default:
 			halves, seen := streams[e.name]
 			if !seen {
@@ -655,78 +629,33 @@ func (g *generator) function(b *strings.Builder, e *export, id string) string {
 	return "(" + strings.Join(sig, ", ") + ")"
 }
 
-// handler writes an event handler's export.
+// handler writes an xdr-merge handler's export.
 func (g *generator) handler(b *strings.Builder, e *export, id string) {
-	k := e.kind
 	fmt.Fprintf(b, "\n//export %s\nfunc udfExport_%s(args, argc int32) int32 {\n", e.name, id)
 	if g.raw(e.fn) {
-		// The raw form takes the record first only where the kind does: the timer.
-		_, _, record := g.arguments(e.fn)
-		switch {
-		case !record:
-			fmt.Fprintf(b, "\treturn %s(args, argc)\n}\n", g.call(e))
-		case k.event == "timer":
-			fmt.Fprintf(b, "\treturn %s(udf.CurrentRecord(), args, argc)\n}\n", g.call(e))
-		default:
-			g.errorf(e.fn.Pos(), "a udf:on %s handler takes no *udf.Record: an event reads its records as *udf.EventRecord", k.event)
+		if _, _, record := g.arguments(e.fn); record {
+			g.errorf(e.fn.Pos(), "a udf:on %s handler takes no *udf.Record: an event reads its records as *udf.EventRecord", mergeEvent)
+			return
 		}
+		fmt.Fprintf(b, "\treturn %s(args, argc)\n}\n", g.call(e))
 		return
 	}
 
 	_, types := g.params(e.fn)
 	res := g.results(e.fn)
-	ok := len(types) == len(k.params)
+	ok := len(types) == len(mergeParams) && len(res) == 2 && res[0] == mergeAnswer && res[1] == "error"
 	for i := 0; ok && i < len(types); i++ {
-		ok = types[i] == k.params[i]
-	}
-	if k.answer == "" {
-		ok = ok && len(res) == 1 && res[0] == "error"
-	} else {
-		ok = ok && len(res) == 2 && res[0] == k.answer && res[1] == "error"
+		ok = types[i] == mergeParams[i]
 	}
 	if !ok {
-		want := "(" + strings.Join(k.params, ", ") + ")"
-		if k.answer == "" {
-			want += " error"
-		} else {
-			want += " (" + k.answer + ", error)"
-		}
-		g.errorf(e.fn.Pos(), "a udf:on %s handler is func%s, or the raw func(args, argc int32) int32", k.event, want)
+		g.errorf(e.fn.Pos(), "a udf:on %s handler is func(%s) (%s, error), or the raw func(args, argc int32) int32",
+			mergeEvent, strings.Join(mergeParams, ", "), mergeAnswer)
 		return
 	}
 
-	article := "a"
-	if strings.ContainsRune("aeioux", rune(k.event[0])) {
-		article = "an"
-	}
-	failLine := fmt.Sprintf("\t\treturn udf.Fail(%q)\n", e.name+": not "+article+" "+k.event+" event")
-	var actuals []string
-	switch {
-	case k.event == "xdr-merge":
-		fmt.Fprintf(b, "\tvar c udf.Conflict\n\tif !udf.DecodeConflict(args, argc, &c) {\n%s\t}\n", failLine)
-		actuals = []string{"&c.Local", "&c.Remote", "&c"}
-	case k.event == "timer":
-		fmt.Fprintf(b, "\tvar t udf.TimerInfo\n\tif !udf.EventTimerInfo(args, argc, &t) {\n%s\t}\n", failLine)
-		actuals = []string{"udf.CurrentRecord()", "t"}
-	default:
-		fmt.Fprintf(b, "\tvar desc udf.Value\n")
-		for i := range k.records {
-			fmt.Fprintf(b, "\tvar r%d udf.EventRecord\n", i)
-		}
-		fmt.Fprintf(b, "\tvar info udf.%s\n\tif !udf.EventDesc(args, argc, &desc)", k.info)
-		for i, key := range k.records {
-			fmt.Fprintf(b, " || !udf.EventSide(desc, %q, %d, &r%d)", key, i, i)
-			actuals = append(actuals, fmt.Sprintf("&r%d", i))
-		}
-		fmt.Fprintf(b, " || !udf.Event%s(desc, &info) {\n%s\t}\n", k.info, failLine)
-		actuals = append(actuals, "info")
-	}
-	call := g.call(e) + "(" + strings.Join(actuals, ", ") + ")"
-	if k.answer == "" {
-		fmt.Fprintf(b, "\tif err := %s; err != nil {\n\t\treturn udf.FailErr(err)\n\t}\n\treturn udf.Done()\n}\n", call)
-	} else {
-		fmt.Fprintf(b, "\tr, err := %s\n\tif err != nil {\n\t\treturn udf.FailErr(err)\n\t}\n\treturn r.Deliver()\n}\n", call)
-	}
+	fmt.Fprintf(b, "\tvar c udf.Conflict\n\tif !udf.DecodeConflict(args, argc, &c) {\n\t\treturn udf.Fail(%q)\n\t}\n",
+		e.name+": not an "+mergeEvent+" event")
+	fmt.Fprintf(b, "\tr, err := %s(&c.Local, &c.Remote, &c)\n\tif err != nil {\n\t\treturn udf.FailErr(err)\n\t}\n\treturn r.Deliver()\n}\n", g.call(e))
 }
 
 func signature(b *strings.Builder, name, id, text string) {

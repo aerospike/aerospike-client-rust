@@ -5,6 +5,7 @@
 - [Configuration](configuration.md)
 - [How the engine runs a module](engine.md)
 - [Security](security.md)
+- [Design decisions](decisions.md)
 
 # Record UDFs
 
@@ -25,10 +26,9 @@
   - [C++](stream-udfs/cpp.md)
   - [Java](stream-udfs/java.md)
 
-# Events
+# The merge event
 
-- [The event system](events/README.md)
-  - [Tutorial: handling records in events](events/tutorial.md)
+- [The xdr-merge event](events/README.md)
   - [Rust](events/rust.md)
   - [Go](events/go.md)
   - [C](events/c.md)

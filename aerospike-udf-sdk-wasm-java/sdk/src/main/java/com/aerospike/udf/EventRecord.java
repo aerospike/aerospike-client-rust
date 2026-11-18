@@ -15,13 +15,13 @@ package com.aerospike.udf;
 import org.teavm.interop.Address;
 
 /**
- * One record an event hands over: the record before a write and after it, the record being deleted, each
- * side of a merge. It is read-only, and it reads like the record of a call - the same readers, through
+ * One record an event hands over: each side of a merge, the current record and the incoming write. It is
+ * read-only, and it reads like the record of a call - the same readers, through
  * {@link RecordReader} - with what an event adds: the names of its bins, the bins this side deleted, and,
  * where the server keeps them, when and by whom each bin was last written.
  *
- * <p>A handler changes a record by answering with the bins it should have ({@link Decision#record},
- * {@link Resolution#record}); {@link #withBins} fills such an answer with every bin of this record the
+ * <p>A handler changes a record by answering with the bins it should have
+ * ({@link Resolution#record}); {@link #withBins} fills such an answer with every bin of this record the
  * handler did not decide.
  */
 public final class EventRecord implements RecordReader {
@@ -307,7 +307,7 @@ public final class EventRecord implements RecordReader {
         return overrides;
     }
 
-    /** Fills this from a description's entry ({@code before}, {@code after}, {@code record}, {@code current}, {@code incoming}). */
+    /** Fills this from a description's entry ({@code current}, {@code incoming}). */
     boolean decode(Value desc, String key, int which) {
         Value m = Maps.get(desc, key);
 

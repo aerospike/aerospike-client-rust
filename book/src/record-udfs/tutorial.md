@@ -39,7 +39,7 @@ type.
 **Rust**
 
 ```rust
-use aerospike_udf_sdk_wasm::{self as as_udf, event, export, Decision, Error, Expiry, Gate, ReadResult, Record, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, export, Error, Record, Value};
 ```
 
 **Go**
@@ -67,17 +67,10 @@ import (
 **Java**
 
 ```java
-import com.aerospike.udf.Decision;
-import com.aerospike.udf.EventRecord;
-import com.aerospike.udf.Events;
-import com.aerospike.udf.Expiry;
 import com.aerospike.udf.Function;
-import com.aerospike.udf.Gate;
 import com.aerospike.udf.ListValue;
 import com.aerospike.udf.MapBuilder;
 import com.aerospike.udf.MapValue;
-import com.aerospike.udf.On;
-import com.aerospike.udf.ReadResult;
 import com.aerospike.udf.Record;
 import com.aerospike.udf.Udf;
 import com.aerospike.udf.UdfException;

@@ -17,8 +17,8 @@
 //
 // Header-only, over the C header (aerospike_udf.h): the natives and the contract's constants come from
 // there, and this adds the typed tier - Record, Value, Map, List, range-for over stored collections, Result
-// and Error instead of status codes, the event records and answers, Pair and Both for a merge, and the
-// UDF_FUNCTION / UDF_STREAM / UDF_ON_* macros that derive the exports and their signatures from a
+// and Error instead of status codes, the records and the answer of an xdr-merge, Pair and Both for a merge,
+// and the UDF_FUNCTION / UDF_STREAM / UDF_ON_XDR_MERGE macros that derive the exports and their signatures from a
 // function's parameter types, the way the Rust SDK's macros do. A module is a freestanding C++20 file
 // compiled with clang for wasm32, no standard library, no exceptions, no RTTI:
 //
@@ -31,7 +31,7 @@
 // The record a UDF is called on is an object, udf::Record, that the function takes as its first parameter:
 // `udf::Record& rec` to write it, `const udf::Record& rec` to read it, and no such parameter when it does
 // not touch the record. Everything about the record is a method on it; what stays in the namespace is what
-// is not about the record: now(), log(), fail(), result_of(), the timers and the Map and List builders.
+// is not about the record: now(), log(), fail(), result_of() and the Map and List builders.
 
 extern "C" {
 #include "aerospike_udf.h"
@@ -1057,8 +1057,8 @@ namespace detail {
 struct RecordAccess;
 }
 
-// The record a UDF was called on. A record UDF, the per-record half of a stream UDF and a timer handler
-// take it as their first parameter, before the call's arguments. It is not one of them: a client does not
+// The record a UDF was called on. A record UDF and the per-record half of a stream UDF take it as
+// their first parameter, before the call's arguments. It is not one of them: a client does not
 // pass it, the arity check does not count it and the function's signature export does not list it. A
 // function that does not touch the record leaves the parameter out.
 //
@@ -1227,7 +1227,7 @@ struct RecordAccess {
 } // namespace detail
 
 //==========================================================
-// What is not about the record: the clock, failure, the log, results, timers.
+// What is not about the record: the clock, failure, the log, results.
 //
 
 // The server's clock in ms since the Unix epoch, or -1 inside an event handler, where it is refused.
@@ -1273,28 +1273,11 @@ inline Result<void> result_of(const Value& v)
 	return {};
 }
 
-// Timers, from a record UDF or a timer handler.
-inline Result<void> timer_set(StrView name, int64_t delay_ms)
-{
-	int32_t rc = as_udf_timer_set(name.data, name.len, delay_ms);
-	if (rc != AS_UDF_OK) return detail::status_error(rc, "could not set the timer");
-	return {};
-}
-
-// Cancels the timer of that name on the record of the call. An error when the host refuses, as it does
-// where the call has no record and for a name that is empty or 64 bytes or longer.
-inline Result<void> timer_cancel(StrView name)
-{
-	int32_t rc = as_udf_timer_cancel(name.data, name.len);
-	if (rc != AS_UDF_OK) return detail::status_error(rc, "could not cancel the timer");
-	return {};
-}
-
 //==========================================================
-// Events, the typed tier.
+// Events, the typed tier: xdr-merge.
 //
 
-// One record an event hands over, read-only, with its metadata; the C struct underneath. Its bins are
+// One record the event hands over, read-only, with its metadata; the C struct underneath. Its bins are
 // read with ReadRecord's methods, the ones udf::Record has: get(), has(), bin(), the typed readers with and
 // without a default, list() and map().
 struct EventRecord : as_udf_event_record, ReadRecord<EventRecord> {
@@ -1461,125 +1444,31 @@ struct Conflict : as_udf_conflict {
 
 static_assert(sizeof(Conflict) == sizeof(as_udf_conflict), "Conflict adds no state");
 
-// The kinds' own inputs: the C structs, with the strings as views.
-struct WriteInfo : as_udf_write_info { StrView source_view() const { return StrView(source); } };
-// A delete's input: where it came from (`source`, as a view through source_view()) and whether it is
-// durable.
-struct DeleteInfo : as_udf_delete_info { StrView source_view() const { return StrView(source); } };
-// A truncate's input: the namespace, the set (empty for the whole namespace) and `lut`, the cutoff in
-// ms since the epoch: records last updated before it go.
-struct TruncateInfo : as_udf_truncate_info { StrView ns_view() const { return StrView(ns); } StrView set_view() const { return StrView(set); } };
-// The input of before-expire and before-evict: the record's void time in seconds since the Aerospike
-// epoch, the current time, and for an eviction the void time below which records are being evicted.
-struct ExpireInfo : as_udf_expire_info {};
-// A read's input: where it came from and whether every bin was asked for (`all`), not named ones.
-struct ReadInfo : as_udf_read_info { StrView source_view() const { return StrView(source); } };
-// A ship's input: the name of the DC, as a view through dc_view().
-struct ShipInfo : as_udf_ship_info { StrView dc_view() const { return StrView(dc); } };
-// A node-lifecycle event's input: the phase (service-ready, shutdown, binding-deployed), this node's id
-// in hex, and for binding-deployed the binding as a stored map (absent otherwise).
-struct LifecycleInfo : as_udf_lifecycle_info { StrView phase_view() const { return StrView(phase); } StrView node_view() const { return StrView(node); } };
-// A cluster-change event's input: the cluster key, the cluster size, this node's id and the node ids
-// as a stored list, in succession order.
-struct ClusterInfo : as_udf_cluster_info {};
-// A partition-transfer event's input: the namespace, the partition id, the peer node and whether the
-// partition arrived here (`arrived`) or departed.
-struct TransferInfo : as_udf_transfer_info { StrView ns_view() const { return StrView(ns); } StrView peer_view() const { return StrView(peer); } };
-// A timer handler's input, the timer that came due: its name, when it was due and the current time.
-struct TimerInfo : as_udf_timer_info { StrView name_view() const { return StrView(name); } };
-
-// The answers. Each kind's type is built by its functions and delivered by the generated export.
-struct Answer {
+// What an xdr-merge handler returns: one of the verdicts, or the final record. It is built by its
+// functions and delivered by the generated export.
+struct Resolution {
 	const char* verdict;
-	int32_t code;
-	const char* message;
 	int32_t bins;
 	int64_t ttl;
 	Error err;
 
-	// An empty answer, for a Result that failed; never delivered.
-	Answer() : verdict(""), code(0), message(nullptr), bins(0), ttl(-1), err() {}
-	Answer(const char* verdict_, int32_t code_ = 0, const char* message_ = nullptr, int32_t bins_ = 0, int64_t ttl_ = -1, Error err_ = {})
-	    : verdict(verdict_), code(code_), message(message_), bins(bins_), ttl(ttl_), err(err_) {}
+	// An empty resolution, for a Result that failed; never delivered.
+	Resolution() : verdict(""), bins(0), ttl(-1), err() {}
+	Resolution(const char* verdict_, int32_t bins_ = 0, int64_t ttl_ = -1, Error err_ = {})
+	    : verdict(verdict_), bins(bins_), ttl(ttl_), err(err_) {}
 
-	// Delivers the answer to the host and returns the status the export returns. Fails the call instead
-	// when the answer carries an error, as it does when a put on its bins map failed. The generated export
-	// calls it.
-	int32_t deliver() const
-	{
-		if (err.failed()) return fail(err);
-		return as_udf_answer(verdict, code, message, bins, ttl);
-	}
-};
-
-// What a before-write handler returns.
-struct Decision : Answer {
-	// Lets the write go ahead as it is.
-	static Decision accept() { return Decision{{"accept"}}; }
-	// Refuses the write with a code and a message. The message is not copied: it must stay alive until the
-	// export has delivered the answer.
-	static Decision reject(int32_t code, const char* message) { return Decision{{"reject", code, message}}; }
-	// Writes these bins instead; a bin absent from the map, or nil, is deleted.
-	static Decision record(const Map& bins, int64_t ttl = -1) { return Decision{{"record", 0, nullptr, bins.handle(), ttl, bins.error()}}; }
-};
-
-// What a before-delete or before-truncate handler returns.
-struct Gate : Answer {
-	// Lets the delete or truncate go ahead.
-	static Gate allow() { return Gate{{"allow"}}; }
-	// Refuses it with a code and a message. The message is not copied: it must stay alive until the export
-	// has delivered the answer.
-	static Gate refuse(int32_t code, const char* message) { return Gate{{"refuse", code, message}}; }
-};
-
-// What a before-expire handler returns.
-struct Expiry : Answer {
-	// Lets the record expire.
-	static Expiry expire() { return Expiry{{"expire"}}; }
-	// Keeps the record, with the time to live given.
-	static Expiry keep(int64_t ttl) { return Expiry{{"keep", 0, nullptr, 0, ttl}}; }
-};
-
-// What a before-evict handler returns.
-struct Eviction : Answer {
-	// Lets the record be evicted.
-	static Eviction evict() { return Eviction{{"evict"}}; }
-	// Keeps the record from being evicted.
-	static Eviction protect() { return Eviction{{"protect"}}; }
-};
-
-// What an after-read handler returns.
-struct ReadResult : Answer {
-	// Leaves the record as it was read.
-	static ReadResult unchanged() { return ReadResult{{"unchanged"}}; }
-	// Answers the read with the bins of this map instead. A failure kept by the map fails the call.
-	static ReadResult record(const Map& bins) { return ReadResult{{"record", 0, nullptr, bins.handle(), -1, bins.error()}}; }
-};
-
-// What a before-ship handler returns.
-struct ShipDecision : Answer {
-	// Ships the record as it is.
-	static ShipDecision ship() { return ShipDecision{{"ship"}}; }
-	// Does not ship the record.
-	static ShipDecision skip() { return ShipDecision{{"skip"}}; }
-	// Ships the bins of this map instead. A failure kept by the map fails the call.
-	static ShipDecision record(const Map& bins) { return ShipDecision{{"record", 0, nullptr, bins.handle(), -1, bins.error()}}; }
-};
-
-// What an xdr-merge handler returns.
-struct Resolution : Answer {
 	// Keeps the current record; the incoming write is not applied.
-	static Resolution keep_local() { return Resolution{{"keep-local"}}; }
+	static Resolution keep_local() { return Resolution{"keep-local"}; }
 	// Takes the incoming write.
-	static Resolution take_remote() { return Resolution{{"take-remote"}}; }
+	static Resolution take_remote() { return Resolution{"take-remote"}; }
 	// Leaves the outcome to the policy the handler stands in for.
-	static Resolution policy() { return Resolution{{"policy"}}; }
+	static Resolution policy() { return Resolution{"policy"}; }
 	// Removes the record on this cluster. The other cluster decides for itself, so a merge that deletes
 	// has to delete on both sides for the two to agree. (`delete` is a keyword, as for Record.)
-	static Resolution delete_record() { return Resolution{{"delete"}}; }
+	static Resolution delete_record() { return Resolution{"delete"}; }
 	// The final record: these bins, whole; a bin absent or nil is deleted. ttl -1 keeps the incoming write's.
 	// At least one bin must be left: a record of no bins is the handler's failure, not a deletion.
-	static Resolution record(const Map& bins, int64_t ttl = -1) { return Resolution{{"record", 0, nullptr, bins.handle(), ttl, bins.error()}}; }
+	static Resolution record(const Map& bins, int64_t ttl = -1) { return Resolution{"record", bins.handle(), ttl, bins.error()}; }
 
 	// Delivers the resolution and returns the status the export returns: the verdict word, or for record()
 	// the final bins and TTL. Fails the call instead when the bins map kept a failure. The generated export
@@ -2004,18 +1893,6 @@ int32_t call(const char* fn, const ParamNames& names, const Value* a, int32_t n,
 	}
 }
 
-// The body of a timer handler's export: the timer is decoded, and the handler runs on the record it is on.
-template <auto Fn>
-int32_t timer(const char* not_a_timer, int32_t args, int32_t argc)
-{
-	TimerInfo info;
-	if (as_udf_event_timer_info(args, argc, &info) != AS_UDF_OK) return fail(not_a_timer);
-	Record rec = RecordAccess::make();
-	Result<void> r = Fn(rec, info);
-	if (!r) return fail(r.error());
-	return as_udf_answer_done();
-}
-
 // The export's body for a record UDF, a stream half or anything typed: raw functions pass through.
 template <auto Fn>
 int32_t invoke(const char* fn, const ParamNames& names, int32_t args, int32_t argc, bool record_half)
@@ -2125,127 +2002,12 @@ int32_t invoke(const char* fn, const ParamNames& names, int32_t args, int32_t ar
 	}                                                                                                    \
 	UDF_SIG_EXPORT(name, ::udf::detail::literal_signature("stream " #name " { record" record_params " end" end_params " }"))
 
-// Event handlers: `UDF_ON_BEFORE_WRITE(name) { ... }` defines
-// `Result<Decision> name(const EventRecord& before, const EventRecord& after, const WriteInfo& write)` and
-// so on, one macro per kind, each with the parameters and answer the kind takes; the kinds that answer
-// nothing return Result<void>. The export decodes the event and delivers the answer.
+// The signature of an event handler, `event <kind>/1 name(...)`, which `event-set` checks before binding.
 #define UDF_HANDLER_SIG(name, kind, params) UDF_SIG_EXPORT(name, ::udf::detail::literal_signature("event " kind "/1 " #name params))
 
-#define UDF_EVENT_TWO_RECORDS(name, kind, params, Info, decode_info, Ret, p0, p1, pinfo)                \
-	static ::udf::Result<Ret> name##_udf_impl(const ::udf::EventRecord&, const ::udf::EventRecord&, const ::udf::Info&); \
-	extern "C" __attribute__((export_name(#name))) int32_t udf_export_##name(int32_t args, int32_t argc)  \
-	{                                                                                                    \
-		::udf::Value desc;                                                                               \
-		::udf::EventRecord r0, r1;                                                                       \
-		::udf::Info info;                                                                                \
-		if (as_udf_event_desc(args, argc, &desc) != AS_UDF_OK || as_udf_event_get_record(&desc, #p0, 0, &r0) != AS_UDF_OK \
-		    || as_udf_event_get_record(&desc, #p1, 1, &r1) != AS_UDF_OK || decode_info(&desc, &info) != AS_UDF_OK) { \
-			return ::udf::fail(#name ": not a " kind " event");                                           \
-		}                                                                                                \
-		::udf::Result<Ret> r = name##_udf_impl(r0, r1, info);                                            \
-		if (!r) return ::udf::fail(r.error());                                                           \
-		return ::udf::detail::deliver_answer(r);                                                         \
-	}                                                                                                    \
-	UDF_HANDLER_SIG(name, kind, params)                                                                  \
-	static ::udf::Result<Ret> name##_udf_impl(const ::udf::EventRecord& p0, const ::udf::EventRecord& p1, const ::udf::Info& pinfo)
-
-#define UDF_EVENT_ONE_RECORD(name, kind, params, Info, decode_info, Ret, pinfo)                           \
-	static ::udf::Result<Ret> name##_udf_impl(const ::udf::EventRecord&, const ::udf::Info&);            \
-	extern "C" __attribute__((export_name(#name))) int32_t udf_export_##name(int32_t args, int32_t argc)  \
-	{                                                                                                    \
-		::udf::Value desc;                                                                               \
-		::udf::EventRecord r0;                                                                           \
-		::udf::Info info;                                                                                \
-		if (as_udf_event_desc(args, argc, &desc) != AS_UDF_OK || as_udf_event_get_record(&desc, "record", 0, &r0) != AS_UDF_OK \
-		    || decode_info(&desc, &info) != AS_UDF_OK) {                                                 \
-			return ::udf::fail(#name ": not a " kind " event");                                           \
-		}                                                                                                \
-		::udf::Result<Ret> r = name##_udf_impl(r0, info);                                                \
-		if (!r) return ::udf::fail(r.error());                                                           \
-		return ::udf::detail::deliver_answer(r);                                                         \
-	}                                                                                                    \
-	UDF_HANDLER_SIG(name, kind, params)                                                                  \
-	static ::udf::Result<Ret> name##_udf_impl(const ::udf::EventRecord& record, const ::udf::Info& pinfo)
-
-#define UDF_EVENT_INFO_ONLY(name, kind, params, Info, decode_info, Ret, pinfo)                            \
-	static ::udf::Result<Ret> name##_udf_impl(const ::udf::Info&);                                       \
-	extern "C" __attribute__((export_name(#name))) int32_t udf_export_##name(int32_t args, int32_t argc)  \
-	{                                                                                                    \
-		::udf::Value desc;                                                                               \
-		::udf::Info info;                                                                                \
-		if (as_udf_event_desc(args, argc, &desc) != AS_UDF_OK || decode_info(&desc, &info) != AS_UDF_OK) { \
-			return ::udf::fail(#name ": not a " kind " event");                                           \
-		}                                                                                                \
-		::udf::Result<Ret> r = name##_udf_impl(info);                                                    \
-		if (!r) return ::udf::fail(r.error());                                                           \
-		return ::udf::detail::deliver_answer(r);                                                         \
-	}                                                                                                    \
-	UDF_HANDLER_SIG(name, kind, params)                                                                  \
-	static ::udf::Result<Ret> name##_udf_impl(const ::udf::Info& pinfo)
-
-namespace udf::detail {
-
-// Not API, used by the UDF_ON_* exports: delivers a handler's answer and returns the export's status.
-template <class T> int32_t deliver_answer(const Result<T>& r) { return r->deliver(); }
-// Not API, used by the UDF_ON_* exports: the acknowledgement of a handler that answers nothing.
-inline int32_t deliver_answer(const Result<void>&) { return as_udf_answer_done(); }
-
-} // namespace udf::detail
-
-// A before-write handler: `UDF_ON_BEFORE_WRITE(name) { ... }` defines
-// `Result<Decision> name(const EventRecord& before, const EventRecord& after, const WriteInfo& write)`. The answer accepts the write, rejects it or replaces its bins.
-#define UDF_ON_BEFORE_WRITE(name) UDF_EVENT_TWO_RECORDS(name, "before-write", "(before: record, after: record, write: write) -> decision", WriteInfo, as_udf_event_write_info, ::udf::Decision, before, after, write)
-// A after-write handler: `UDF_ON_AFTER_WRITE(name) { ... }` defines
-// `Result<void> name(const EventRecord& before, const EventRecord& after, const WriteInfo& write)`. It answers nothing.
-#define UDF_ON_AFTER_WRITE(name) UDF_EVENT_TWO_RECORDS(name, "after-write", "(before: record, after: record, write: write) -> ()", WriteInfo, as_udf_event_write_info, void, before, after, write)
-// A before-delete handler: `UDF_ON_BEFORE_DELETE(name) { ... }` defines
-// `Result<Gate> name(const EventRecord& record, const DeleteInfo& del)`. The answer allows or refuses the delete.
-#define UDF_ON_BEFORE_DELETE(name) UDF_EVENT_ONE_RECORD(name, "before-delete", "(record: record, delete: delete) -> gate", DeleteInfo, as_udf_event_delete_info, ::udf::Gate, del)
-// A after-delete handler: `UDF_ON_AFTER_DELETE(name) { ... }` defines
-// `Result<void> name(const EventRecord& record, const DeleteInfo& del)`. It answers nothing.
-#define UDF_ON_AFTER_DELETE(name) UDF_EVENT_ONE_RECORD(name, "after-delete", "(record: record, delete: delete) -> ()", DeleteInfo, as_udf_event_delete_info, void, del)
-// A before-expire handler: `UDF_ON_BEFORE_EXPIRE(name) { ... }` defines
-// `Result<Expiry> name(const EventRecord& record, const ExpireInfo& expire)`. The answer lets the record expire or keeps it with a TTL.
-#define UDF_ON_BEFORE_EXPIRE(name) UDF_EVENT_ONE_RECORD(name, "before-expire", "(record: record, expire: expire) -> expiry", ExpireInfo, as_udf_event_expire_info, ::udf::Expiry, expire)
-// A before-evict handler: `UDF_ON_BEFORE_EVICT(name) { ... }` defines
-// `Result<Eviction> name(const EventRecord& record, const ExpireInfo& evict)`. The answer evicts the record or protects it.
-#define UDF_ON_BEFORE_EVICT(name) UDF_EVENT_ONE_RECORD(name, "before-evict", "(record: record, evict: evict) -> eviction", ExpireInfo, as_udf_event_expire_info, ::udf::Eviction, evict)
-// A after-read handler: `UDF_ON_AFTER_READ(name) { ... }` defines
-// `Result<ReadResult> name(const EventRecord& record, const ReadInfo& read)`. The answer leaves the record unchanged or gives other bins.
-#define UDF_ON_AFTER_READ(name) UDF_EVENT_ONE_RECORD(name, "after-read", "(record: record, read: read) -> read-result", ReadInfo, as_udf_event_read_info, ::udf::ReadResult, read)
-// A before-truncate handler: `UDF_ON_BEFORE_TRUNCATE(name) { ... }` defines
-// `Result<Gate> name(const TruncateInfo& truncate)`. The answer allows or refuses the truncate.
-#define UDF_ON_BEFORE_TRUNCATE(name) UDF_EVENT_INFO_ONLY(name, "before-truncate", "(truncate: truncate) -> gate", TruncateInfo, as_udf_event_truncate_info, ::udf::Gate, truncate)
-// A after-truncate handler: `UDF_ON_AFTER_TRUNCATE(name) { ... }` defines
-// `Result<void> name(const TruncateInfo& truncate)`. It answers nothing.
-#define UDF_ON_AFTER_TRUNCATE(name) UDF_EVENT_INFO_ONLY(name, "after-truncate", "(truncate: truncate) -> ()", TruncateInfo, as_udf_event_truncate_info, void, truncate)
-// A before-ship handler: `UDF_ON_BEFORE_SHIP(name) { ... }` defines
-// `Result<ShipDecision> name(const EventRecord& record, const ShipInfo& ship)`. The answer ships the record, skips it or ships other bins.
-#define UDF_ON_BEFORE_SHIP(name) UDF_EVENT_ONE_RECORD(name, "before-ship", "(record: record, ship: ship) -> ship-decision", ShipInfo, as_udf_event_ship_info, ::udf::ShipDecision, ship)
-// A partition-transfer handler: `UDF_ON_PARTITION_TRANSFER(name) { ... }` defines
-// `Result<void> name(const TransferInfo& transfer)`. It answers nothing.
-#define UDF_ON_PARTITION_TRANSFER(name) UDF_EVENT_INFO_ONLY(name, "partition-transfer", "(transfer: transfer) -> ()", TransferInfo, as_udf_event_transfer_info, void, transfer)
-// A cluster-change handler: `UDF_ON_CLUSTER_CHANGE(name) { ... }` defines
-// `Result<void> name(const ClusterInfo& cluster)`. It answers nothing.
-#define UDF_ON_CLUSTER_CHANGE(name) UDF_EVENT_INFO_ONLY(name, "cluster-change", "(cluster: cluster) -> ()", ClusterInfo, as_udf_event_cluster_info, void, cluster)
-// A node-lifecycle handler: `UDF_ON_NODE_LIFECYCLE(name) { ... }` defines
-// `Result<void> name(const LifecycleInfo& lifecycle)`. It answers nothing.
-#define UDF_ON_NODE_LIFECYCLE(name) UDF_EVENT_INFO_ONLY(name, "node-lifecycle", "(lifecycle: lifecycle) -> ()", LifecycleInfo, as_udf_event_lifecycle_info, void, lifecycle)
-
-// A timer: `UDF_ON_TIMER(name) { ... }` defines `Result<void> name(Record& record, const TimerInfo& timer)`.
-// It is the one handler that runs as a record UDF, on the record the timer was set on, so it takes that
-// record, writable, where the other kinds take the read-only records of their event.
-#define UDF_ON_TIMER(name)                                                                               \
-	static ::udf::Result<void> name##_udf_impl(::udf::Record&, const ::udf::TimerInfo&);                 \
-	extern "C" __attribute__((export_name(#name))) int32_t udf_export_##name(int32_t args, int32_t argc)  \
-	{                                                                                                    \
-		return ::udf::detail::timer<&name##_udf_impl>(#name ": not a timer event", args, argc);          \
-	}                                                                                                    \
-	UDF_HANDLER_SIG(name, "timer", "(timer: timer) -> ()")                                                \
-	static ::udf::Result<void> name##_udf_impl(::udf::Record& record, const ::udf::TimerInfo& timer)
-
-// An xdr-merge: `UDF_ON_XDR_MERGE(name) { ... }` defines
+// An xdr-merge handler: `UDF_ON_XDR_MERGE(name) { ... }` defines
 // `Result<Resolution> name(const EventRecord& current, const EventRecord& incoming, const Conflict& conflict)`.
+// The export decodes the event and delivers the resolution.
 #define UDF_ON_XDR_MERGE(name)                                                                           \
 	static ::udf::Result<::udf::Resolution> name##_udf_impl(const ::udf::EventRecord&, const ::udf::EventRecord&, const ::udf::Conflict&); \
 	extern "C" __attribute__((export_name(#name))) int32_t udf_export_##name(int32_t args, int32_t argc)  \

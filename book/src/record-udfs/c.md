@@ -49,7 +49,7 @@ C has no objects, so the record of the call is a family of functions. Every func
 starts with `as_udf_rec_`: reading a bin, staging a write, removing a bin, the metadata, saving and
 deleting. The records an event hands over have their own family, `as_udf_event_`. What carries neither
 prefix is not about a record: `as_udf_current_time`, `as_udf_log`, `as_udf_fail`, `as_udf_result_*`, the
-list and map builders, the timers.
+list and map builders.
 
 A function that does not touch the record calls none of them. The record is not one of the call's
 arguments: `args` and `argc` hold only what the client passed.

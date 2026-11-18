@@ -1481,7 +1481,7 @@ macro_rules! event
 
 Export an event handler.
 
-One arm per kind, the parameter types part of the arm; the `xdr_merge` arm has exactly this shape:
+The server has one event, `xdr-merge`, and the macro one arm for it, of exactly this shape:
 
 ```ignore
 event! {

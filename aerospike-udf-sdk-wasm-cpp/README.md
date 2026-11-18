@@ -3,8 +3,8 @@
 Write Aerospike WASM UDFs in C++ and compile them with clang for the server's `mod-wamr` engine. One
 header, `include/aerospike_udf.hpp`, over the C SDK's `aerospike_udf.h`: the natives and the contract's
 constants come from the C header, and this one adds the typed tier, `udf::Record`, `Value`, `Map`, `List`,
-range-for over stored collections, `Result` and `Error` instead of status codes, the event records and
-answers, `Pair` and `Both` for a merge, and the `UDF_*` macros that derive the exports and their
+range-for over stored collections, `Result` and `Error` instead of status codes, the records and the
+answer of an `xdr-merge`, `Pair` and `Both` for a merge, and the `UDF_*` macros that derive the exports and their
 signatures from a function's parameter types, as the Rust SDK's macros do. The Rust SDK's documentation
 is the reference for the contract.
 
@@ -55,14 +55,10 @@ WASM tier has no SIMD (Fast JIT, the x86-64 default) refuses a module built with
   UDF, exported as `name_record` and `name_end` with the signature `stream name { record(...) end(...) }`;
   state in statics. The record half may take `const udf::Record& rec` first, and only const: a stream's
   record takes no write, and `udf::Record&` there does not compile. The end half has no record.
-- **`UDF_ON_BEFORE_WRITE(name)`**, `UDF_ON_BEFORE_DELETE`, ..., `UDF_ON_TIMER`, `UDF_ON_XDR_MERGE`: an event
-  handler of the kind, with the kind's parameters under fixed names (`before`, `after`, `write`; `record`;
-  `current`, `incoming`, `conflict`; ...) and returning `udf::Result` of the kind's answer: `Decision`
-  (`accept()`, `reject(code, msg)`, `record(bins)`), `Gate`, `Expiry`, `Eviction`, `ReadResult`,
-  `ShipDecision`, `Resolution` (`keep_local()`, `take_remote()`, `policy()`, `record(bins)`), or
-  `Result<void>` for the kinds that answer nothing. The records of an event are read-only
-  `udf::EventRecord`s. The timer is the exception: it runs as a record UDF, so `UDF_ON_TIMER` hands it
-  `udf::Record& record`, writable, before `timer`.
+- **`UDF_ON_XDR_MERGE(name)`**: an `xdr-merge` event handler, with the event's parameters under fixed
+  names (`current`, `incoming`, `conflict`) and returning a `udf::Result<udf::Resolution>`:
+  `keep_local()`, `take_remote()`, `policy()`, `delete_record()` or `record(bins[, ttl])`. The two records
+  are read-only `udf::EventRecord`s.
 - **The raw form**: `UDF_FUNCTION_RAW(name, "(params)")` and `UDF_STREAM_RAW(name, "(record)", "(end)")`
   declare `(int32_t args, int32_t argc)` functions exported as they are, for a hot path that reads its
   arguments once and keeps them, as `examples/vector` does.
@@ -104,13 +100,13 @@ WASM tier has no SIMD (Fast JIT, the x86-64 default) refuses a module built with
 - **Strings**: `udf::StrView` (a pointer and a length over bytes the caller keeps alive) and
   `udf::Text<N>` (an inline buffer), both comparing bytewise; nothing allocates.
 - **What is not about the record** stays in the namespace: `udf::now`, `udf::log`, `udf::fail`,
-  `udf::result_of`, `udf::timer_set` / `timer_cancel`.
-- **Events**: `udf::EventRecord` for a record the event hands over (the reading methods of `ReadRecord`,
-  `names()`, `with_bins(out)` to keep the rest of a record under a few decided bins), the `*Info`
-  structs for the kind's own entry, the answer types; the merge through `udf::Conflict` (`pair()` into
+  `udf::result_of`.
+- **The `xdr-merge` event**: `udf::EventRecord` for each of the two records the event hands over (the
+  reading methods of `ReadRecord`, `names()`, `with_bins(out)` to keep the rest of a record under a few
+  decided bins) and `udf::Resolution` for the answer; the merge through `udf::Conflict` (`pair()` into
   `Pair` and `Both<T>` with `newer`, `older`, `max`, `min`, `sum`, `merge`, `with_newer`;
-  `involves_delete`, `lost_bins`). `examples/guard` and `examples/resolver` are the worked examples, held
-  to the same behaviour as the other languages' by the client tests.
+  `involves_delete`, `lost_bins`). `examples/resolver` is the worked example, held to the same behaviour
+  as the other languages' by the client tests.
 - **The low-level tier**: the whole C header, under the C++ one. `udf::Map::wrap` / `List::wrap` bridge a
   handle to the typed collections, and `udf::Value` is layout-compatible with `as_udf_value`.
 
@@ -118,7 +114,6 @@ WASM tier has no SIMD (Fast JIT, the x86-64 default) refuses a module built with
 
 - `examples/vector`: the exact top-k over packed float vectors that the Rust, C, Go and Java SDKs also
   carry, bit for bit: the C module's kernels under `UDF_STREAM_RAW` and `UDF_FUNCTION_RAW`.
-- `examples/guard`: before-write, before-delete, before-truncate and timer handlers.
 - `examples/resolver`: the account merge on `xdr-merge`, over `Pair` and `Both`.
 - `examples/counter`: the smallest CRDT, a grow-only counter on `xdr-merge`; read it first. The client test
   `cpp_generated_exports_decode_arguments` drives its exports through every rejection.

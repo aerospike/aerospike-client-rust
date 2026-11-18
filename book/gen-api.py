@@ -31,17 +31,15 @@ JAVA_FILES = [('record', 'Function.java'), ('record', 'Nullable.java'), ('record
               ('record', 'ListBuilder.java'), ('record', 'MapBuilder.java'), ('record', 'Udf.java'),
               ('record', 'LowLevel.java'), ('record', 'Params.java'),
               ('stream', 'Stream.java'),
-              ('events', 'On.java'), ('events', 'Decision.java'), ('events', 'Gate.java'),
-              ('events', 'Expiry.java'), ('events', 'Eviction.java'), ('events', 'ReadResult.java'),
-              ('events', 'ShipDecision.java'), ('events', 'Resolution.java'), ('events', 'Answer.java'),
+              ('events', 'On.java'), ('events', 'Resolution.java'),
               ('events', 'EventRecord.java'), ('events', 'Conflict.java'), ('events', 'Pair.java'),
-              ('events', 'Both.java'), ('events', 'Events.java')]
+              ('events', 'Both.java')]
 
-EVENT_SECTIONS = {'Events', 'The other events: their inputs and answers', 'The other events'}
+EVENT_SECTIONS = {'Events'}
 
 
 def area_of(section, name=''):
-    if section in EVENT_SECTIONS or section.startswith('The other events'):
+    if section in EVENT_SECTIONS:
         return 'events'
     if name in ('stream', 'stream!'):
         return 'stream'

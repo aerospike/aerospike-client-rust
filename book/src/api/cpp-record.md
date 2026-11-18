@@ -1260,23 +1260,6 @@ inline Result<void> result_of(const Value& v)
 
 Sets a value of any kind as the result.
 
-#### `timer_set`
-
-```cpp
-inline Result<void> timer_set(StrView name, int64_t delay_ms)
-```
-
-Timers, from a record UDF or a timer handler.
-
-#### `timer_cancel`
-
-```cpp
-inline Result<void> timer_cancel(StrView name)
-```
-
-Cancels the timer of that name on the record of the call. An error when the host refuses, as it does
-where the call has no record and for a name that is empty or 64 bytes or longer.
-
 #### `Args`
 
 ```cpp

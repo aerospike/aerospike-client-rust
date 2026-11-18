@@ -14,11 +14,18 @@ package com.aerospike.udf;
 
 /**
  * What an {@code xdr-merge} handler returns: the Java face of the Rust SDK's {@code Resolution}. Keep the
- * current record, apply the incoming write whole, let the namespace's policy decide, or the final record.
+ * current record, apply the incoming write whole, let the namespace's policy decide, remove the record, or
+ * the final record.
  */
-public final class Resolution extends Answer {
+public final class Resolution {
+    private final String verdict;
+    private final int bins;
+    private final long ttl;
+
     private Resolution(String verdict, int bins, long ttl) {
-        super(verdict, 0, null, bins, ttl);
+        this.verdict = verdict;
+        this.bins = bins;
+        this.ttl = ttl;
     }
 
     /** Keep the local record; the incoming write is dropped. */
@@ -59,7 +66,6 @@ public final class Resolution extends Answer {
     }
 
     /** Sets the resolution as the result of the call. Called by the generated export; returns the status. */
-    @Override
     public int deliver() {
         if (bins == 0) {
             Udf.resultStr(verdict);
@@ -67,5 +73,10 @@ public final class Resolution extends Answer {
         }
 
         return Conflict.record(bins, ttl);
+    }
+
+    /** The verdict word as the server reads it, such as {@code keep-local} or {@code record}. */
+    public String verdict() {
+        return verdict;
     }
 }

@@ -17,7 +17,7 @@ licence to register modules from people the cluster does not trust.
   `event-remove`. Listing bindings needs none.
 - **Calling a record UDF** needs what calling a Lua UDF needs: the caller's write permission on the
   record.
-- The event system is an Enterprise feature gated by a feature key, and **that check is commented out
+- The `xdr-merge` event is an Enterprise feature gated by a feature key, and **that check is commented out
   for now**, because no issued key carries it yet. Until it is restored, an Enterprise server with any
   key accepts event bindings.
 
@@ -35,8 +35,8 @@ shared memory or guest threads, so a guest cannot outlive the record lock it run
 A guest's only imports are the functions this engine exports to it:
 
 - **The `aerospike` imports**: read the record's bins, metadata, key and digest; stage and commit
-  writes to *that* record; build lists and maps; set the call's result or fail it; set and cancel
-  timers; write a line to the server log. There is no import that names another record, runs a query,
+  writes to *that* record; build lists and maps; set the call's result or fail it; write a line to the
+  server log. There is no import that names another record, runs a query,
   or sends an info command.
 - **The `teavm` imports**, for modules built by the Java toolchain: elementary math functions, the
   runtime's logging, and a clock.

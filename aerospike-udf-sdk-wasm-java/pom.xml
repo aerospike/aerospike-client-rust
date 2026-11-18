@@ -16,7 +16,6 @@
     <module>processor</module>
     <module>examples/hello</module>
     <module>examples/vector</module>
-    <module>examples/guard</module>
     <module>examples/resolver</module>
     <module>examples/counter</module>
     <module>examples/pncounter</module>

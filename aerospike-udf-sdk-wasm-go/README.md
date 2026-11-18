@@ -65,14 +65,12 @@ The three directives are the Go face of the Rust SDK's `export!`, `stream!` and 
   UDF, exported as `name_record` and `name_end` with the signature `stream name { record(...) end(...) }`.
   The variable is the stream's state; `Record` returns nothing or an `error`, `End` the partial. `Record`
   may take the `*udf.Record` first, to read: a stream's record refuses every write. `End` takes none.
-- **`//udf:on <kind> <name>`** on a function: an event handler (`before-write`, `before-delete`, ...,
-  `timer`, `xdr-merge`), whose parameters are the records and the info the kind hands over and whose
-  return is the kind's answer and an `error`: `udf.Decision` for a write (`Accept()`, `Reject(code, msg)`,
-  `AcceptRecord(bins)`), `udf.Gate` for a delete or truncate, `Expiry`, `Eviction`, `ReadResult`,
-  `ShipDecision`, `Resolution` for the merge (`KeepLocal()`, `TakeRemote()`, `Policy()`, `Resolve(bins)`), and
-  only an `error` for the after- and once-per-node kinds and timers. The `timer` handler runs as a record
-  UDF, so it is `func(rec *udf.Record, t udf.TimerInfo) error` and may write and save the record. A
-  handler with other parameters or another return is a generation error naming the file and line.
+- **`//udf:on xdr-merge <name>`** on a function: the handler of the one event, the merge of an incoming
+  XDR write with the record it meets. It is `func(local, remote *udf.EventRecord, c *udf.Conflict)
+  (udf.Resolution, error)`, and the resolution is `KeepLocal()`, `TakeRemote()`, `Policy()`,
+  `DeleteRecord()`, or the final record: `Resolve(bins)`, `ResolveTTL(bins, ttl)`. A handler with other
+  parameters or another return, or another kind after `on`, is a generation error naming the file and
+  line.
 - **The raw form.** A function declared `(args, argc int32) int32` is exported as it is under any of the
   three, and decodes its arguments itself with `udf.Args`; the directive's `params` (and `end` for a
   stream) gives the signature's parameter text. It too may take the record first: `(rec *udf.Record, args,
@@ -107,15 +105,13 @@ The three directives are the Go face of the Rust SDK's `export!`, `stream!` and 
   stored collection by position, `PutEntries` / `AddValues` for a batch in one import, `Len()`, and
   `Map.Contains(key)`, which the host answers without packing the map; the first refusal is kept and
   answered by `Err()`. Written to a bin, returned as the result, nested, or handed back from a handler.
-- **Not about the record**, so on the package: `udf.Now`, `udf.Log`, `udf.Fail`, the `Result*` calls,
-  `udf.TimerSet` / `TimerCancel`.
-- **Events**: `*udf.EventRecord` for a record the event hands over, read-only (the `RecordReader`
-  methods, a `Names` iterator, `WithBins(out)` to keep the rest of a record under a few
-  decided bins), the `udf.*Info` structs for the kind's own entry, the answer values; the merge through
-  `*udf.Conflict` (`Pair()` into `udf.Pair` and `udf.Both[T]` with `Newer`, `Older`, `Ordered`, `Merge`,
-  `WithNewer`, and `udf.Max` / `Min` / `Sum` over a `Both`; `InvolvesDelete`, `Lost`, ...). `examples/guard`
-  and `examples/resolver` are the worked examples, held to the same behaviour as the other languages' by
-  the client tests.
+- **Not about the record**, so on the package: `udf.Now`, `udf.Log`, `udf.Fail`, the `Result*` calls.
+- **The merge**: `*udf.EventRecord` for each of the two records the event hands over, read-only (the
+  `RecordReader` methods, a `Names` iterator, `WithBins(out)` to keep the rest of a record under a few
+  decided bins), and `*udf.Conflict` for what is being decided (`Pair()` into `udf.Pair` and
+  `udf.Both[T]` with `Newer`, `Older`, `Ordered`, `Merge`, `WithNewer`, and `udf.Max` / `Min` / `Sum` over
+  a `Both`; `InvolvesDelete`, `Lost`, ...). `examples/resolver` is the worked example, held to the same
+  behaviour as the other languages' by the client tests.
 - **Under the typed tier**, for a hot path that must not allocate: `udf.Args` into a caller-owned
   window, `udf.Bytes(v, buf)` to copy a value's bytes into a buffer, `Record.Get`, `Record.Digest(buf)`
   and `Record.Key(buf)`, the `udf.*Value` constructors for a batch, `udf.Fail` and the scalar `Result*`
@@ -139,8 +135,6 @@ module (`-panic=trap`), and the host reports only that it trapped: return an `er
   digest for digest and bit for bit, a `//udf:stream` over a `TopK` variable in the raw form, its
   per-record path allocation-free; `tests/src/udf_vector.rs` holds the five engines (Lua included) to one answer and times
   them.
-- `examples/guard`: before-write, before-delete, before-truncate and timer handlers; the timer takes the
-  `*udf.Record` and saves it.
 - `examples/resolver`: the account merge on `xdr-merge`, over `Pair` and `Both`.
 - `examples/counter`: the smallest CRDT, a grow-only counter on `xdr-merge` over a `map[string]int64`; read
   it first. The client test `go_generated_exports_decode_arguments` drives its generated exports through

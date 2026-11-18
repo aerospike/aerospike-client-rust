@@ -17,7 +17,7 @@ import org.teavm.interop.Address;
 /**
  * Aerospike WASM UDFs in Java, for the server's mod-wamr engine, compiled with TeaVM's linear-memory
  * WebAssembly backend. This class is what a UDF reaches for that is not about the record: the clock, the
- * server's log, the builders of lists and maps, timers, and - for a function written in the raw form -
+ * server's log, the builders of lists and maps, and - for a function written in the raw form -
  * the result and the failure. Everything about the record is a method of the {@link Record} a function
  * takes as its first parameter.
  *
@@ -81,30 +81,6 @@ public final class Udf {
     /** As {@link #map()}, with room for {@code capacity} entries to begin with. */
     public static MapBuilder map(int capacity) {
         return MapBuilder.create(capacity);
-    }
-
-    //==========================================================
-    // Timers. A timer runs this set's timer handler on the record the call is about.
-    //
-
-    /**
-     * Runs this set's timer handler on the record in hand {@code delayMs} from now, under {@code name};
-     * throws {@link UdfException} when the host refuses, as it does where there is no record to set it on.
-     */
-    public static void timerSet(String name, long delayMs) {
-        byte[] b = LowLevel.bytes(name);
-        int rc = Natives.timerSet(Address.ofData(b), b.length, delayMs);
-
-        if (rc != LowLevel.OK) {
-            throw new UdfException("could not set the timer " + name + ": " + Reads.why(rc));
-        }
-    }
-
-    /** Cancels the timer set on the record in hand under {@code name}; false when the host refuses. */
-    public static boolean timerCancel(String name) {
-        byte[] b = LowLevel.bytes(name);
-
-        return Natives.timerCancel(Address.ofData(b), b.length) == LowLevel.OK;
     }
 
     //==========================================================

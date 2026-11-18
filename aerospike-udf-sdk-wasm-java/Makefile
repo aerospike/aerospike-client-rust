@@ -16,7 +16,6 @@ all:
 fixtures: all
 	cp -f examples/hello/target/wasm/hello_java.wasm $(FIXTURES)/hello_java.wasm
 	cp -f examples/vector/target/wasm/vector_java.wasm $(FIXTURES)/vector_java.wasm
-	cp -f examples/guard/target/wasm/guard_java.wasm $(FIXTURES)/guard_java.wasm
 	cp -f examples/resolver/target/wasm/resolver_java.wasm $(FIXTURES)/resolver_java.wasm
 	cp -f examples/counter/target/wasm/counter_java.wasm $(FIXTURES)/counter_java.wasm
 	cp -f examples/pncounter/target/wasm/pncounter_java.wasm $(FIXTURES)/pncounter_java.wasm

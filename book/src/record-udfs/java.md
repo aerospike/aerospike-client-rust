@@ -111,7 +111,7 @@ wildcard import of `com.aerospike.udf.*` leaves the name ambiguous between the t
 compile.
 
 Everything about the record is a method on it. What is left on `Udf` is what is not about the record:
-`now()`, `log`, `fail`, the `list` and `map` builders, timers.
+`now()`, `log`, `fail`, the `list` and `map` builders.
 
 There is one `Record` type, writable or not. A stream's records are read-only, and a write to one is
 refused when it is made: it throws `UdfException` saying the record is read-only.

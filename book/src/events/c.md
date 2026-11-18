@@ -1,102 +1,85 @@
 # C
 
-A C event handler is declared with one of the `AS_UDF_EVENT_<KIND>(name)` macros, which emits the
-signature `event <kind>/1 name(...)` and the export, and takes a body with `args` and `argc` in scope:
+A C `xdr-merge` handler is declared with `AS_UDF_EVENT_XDR_MERGE(name)`, which emits the signature
+`event xdr-merge/1 name(current: record, incoming: record, conflict: conflict) -> resolution` and the
+export, and takes a body with `args` and `argc` in scope. The opening and the close of the account merge
+in `examples/resolver/resolver.c`:
 
 ```c
-AS_UDF_EVENT_BEFORE_WRITE(guard_account)
+AS_UDF_EVENT_XDR_MERGE(merge_account)
 {
-	as_udf_value desc;
-	as_udf_event_record before, after;
-	as_udf_write_info write;
-	if (as_udf_event_desc(args, argc, &desc) != AS_UDF_OK ||
-			as_udf_event_get_record(&desc, "before", 0, &before) != AS_UDF_OK ||
-			as_udf_event_get_record(&desc, "after", 1, &after) != AS_UDF_OK ||
-			as_udf_event_write_info(&desc, &write) != AS_UDF_OK) {
-		return as_udf_failf("guard_account: not a before-write event");
+	as_udf_conflict c;
+	if (as_udf_event_decode(args, argc, &c) != AS_UDF_OK) return as_udf_failf("merge_account: not a conflict");
+
+	int32_t out = as_udf_map_new(8);
+	if (out <= 0) return as_udf_failf("merge_account: could not build the record");
+
+	/* visits: the larger of the two counts. */
+	as_udf_value lv, rv;
+	bool has_l = as_udf_event_bin(&c.local, "visits", &lv) == AS_UDF_OK && lv.kind == AS_UDF_INT;
+	bool has_r = as_udf_event_bin(&c.remote, "visits", &rv) == AS_UDF_OK && rv.kind == AS_UDF_INT;
+	if (has_l || has_r) {
+		int64_t visits = has_l && has_r ? (rv.payload > lv.payload ? rv.payload : lv.payload) : has_l ? lv.payload : rv.payload;
+		as_udf_map_put_str_int(out, "visits", 6, visits);
 	}
 
-	as_udf_value balance;
-	if (as_udf_event_bin(&after, "balance", &balance) == AS_UDF_OK && balance.kind == AS_UDF_INT && balance.payload < 0) {
-		return as_udf_answer_reject(22, "balance may not go negative");
-	}
+	/* ... the other bins: the whole module is below ... */
 
-	int32_t out = as_udf_map_new(4);
-	as_udf_map_put_str_str(out, "stamped", 7, write.source, as_udf_strlen(write.source));
-	with_bins(&after, out); /* every bin of `after` not already in `out`, by position */
-	return as_udf_answer_record(out, -1);
+	return as_udf_resolve_record(out, -1);
 }
 ```
 
-`with_bins` is the module's own helper; `examples/guard/guard.c` below has it. It asks
-`as_udf_map_has(out, name, len)` for each bin of the record, so what the handler put in the map wins.
+## The conflict
+
+`as_udf_event_decode(args, argc, &c)` fills an `as_udf_conflict`, and returns `AS_UDF_ERR` when the
+arguments are not a conflict:
+
+| Field | What it is |
+| --- | --- |
+| `c.local`, `c.remote` | the current record and the incoming one, each an `as_udf_event_record` |
+| `c.lost` | a stored list: the incoming bins that would lose |
+| `c.dry_run` | the binding runs in dry-run mode |
+| `c.conflict_trigger` | the binding has `trigger=conflict`: a bin would lose under bin convergence |
+| `c.bin_convergence` | the policy the handler stands in for is `bin-lut` rather than a plain apply |
+| `c.remote_partial` | the incoming write carries only the bins that changed |
+| `c.remote_deleted_record` | the incoming write is a record delete; the remote side has no bins |
+| `c.local_tombstone` | the current record is a tombstone: it exists and has no bins |
+| `c.description` | the whole description map, for anything not decoded above |
+
+`as_udf_map_get`, `as_udf_map_int`, `as_udf_map_str`, `as_udf_map_bool` and `as_udf_str_is` read the
+description's maps.
 
 ## Records
 
-`as_udf_event_desc(args, argc, &desc)` reads the description; `as_udf_event_get_record(&desc, key, which,
-&rec)` fills an `as_udf_event_record` from its entry (`before`, `after`, `record`; `local` and `remote`
-for the conflict); `which` is the index the record is read by. `as_udf_event_bin(&rec, name, &v)` reads a
-bin through the event's own import. An event's records are read-only and are read with the
+An `as_udf_event_record` carries one side's `gen`, `lut`, `ttl` and `src_id`, and four stored values from
+the description: `bins` (the list of bin names), `deleted` (the names this side deleted), and `bin_luts`
+and `bin_srcs` (per-bin LUTs and source ids, where the server keeps them). `as_udf_event_bin(&rec, name,
+&v)` reads a bin through the event's own import. An event's records are read-only and are read with the
 `as_udf_event_` family, never with `as_udf_rec_`, which is for the record of a call and has none in a
-handler. The timer is the exception, below. `rec.bins`, `rec.deleted`, `rec.bin_luts`, `rec.bin_srcs` are the
-lists and maps from the description, and `as_udf_event_bin_lut` / `as_udf_event_bin_src` fall back to
-the record's values. `as_udf_map_get`, `as_udf_map_int`, `as_udf_map_str`, `as_udf_map_bool` and
-`as_udf_str_is` read the description's maps; `as_udf_list_has_str` searches a stored list of strings.
+handler.
 
-## The kinds
+`as_udf_event_bin_lut` and `as_udf_event_bin_src` answer per bin and fall back to the record's values.
+`as_udf_event_remote_newer(&c, name)` orders the two sides of one bin by LUT, then source id: the order
+the server's bin convergence uses, so both clusters answer the same. When nothing but the data tells two
+values apart, `as_udf_cmp_stored(&a, &b)` compares their stored bytes without copying either, and
+`as_udf_stored_bytes` copies them out. `as_udf_list_has_str` searches a stored list of strings, and
+`as_udf_map_put_value(out, name, &v)` puts a value read from either side into the map being built, by
+position.
 
-| Kind | Declaration | Decoder | Answer helpers |
-| --- | --- | --- | --- |
-| `before-write` | `AS_UDF_EVENT_BEFORE_WRITE` | `as_udf_event_get_record` ×2, `as_udf_event_write_info` | `as_udf_answer_accept`, `_reject`, `_record` |
-| `before-delete` | `AS_UDF_EVENT_BEFORE_DELETE` | `as_udf_event_get_record`, `as_udf_event_delete_info` | `_allow`, `_refuse` |
-| `after-write`, `after-delete` | `AS_UDF_EVENT_AFTER_WRITE`, `_DELETE` | as above | `_done` |
-| `before-expire` | `AS_UDF_EVENT_BEFORE_EXPIRE` | `as_udf_event_expire_info` | `_expire`, `_keep(ttl)` |
-| `before-evict` | `AS_UDF_EVENT_BEFORE_EVICT` | `as_udf_event_expire_info` | `_evict`, `_protect` |
-| `after-read` | `AS_UDF_EVENT_AFTER_READ` | `as_udf_event_read_info` | `_unchanged`, `_record` |
-| `before-truncate`, `after-truncate` | `AS_UDF_EVENT_BEFORE_TRUNCATE`, `_AFTER_TRUNCATE` | `as_udf_event_truncate_info` | `_allow`, `_refuse` / `_done` |
-| `before-ship` | `AS_UDF_EVENT_BEFORE_SHIP` | `as_udf_event_ship_info` | `_ship`, `_skip`, `_record` |
-| `partition-transfer` | `AS_UDF_EVENT_PARTITION_TRANSFER` | `as_udf_event_transfer_info` | `_done` |
-| `cluster-change` | `AS_UDF_EVENT_CLUSTER_CHANGE` | `as_udf_event_cluster_info` | `_done` |
-| `node-lifecycle` | `AS_UDF_EVENT_NODE_LIFECYCLE` | `as_udf_event_lifecycle_info` | `_done` |
-| `timer` | `AS_UDF_EVENT_TIMER` | `as_udf_event_timer_info(args, argc, &t)` | `_done`; runs as a record UDF |
-| `xdr-merge` | `AS_UDF_EVENT_XDR_MERGE` | `as_udf_event_decode` (`conflict_trigger` for `trigger=conflict`); `as_udf_cmp_stored`, `as_udf_stored_bytes` for a data-only tie-break | `as_udf_resolve_keep_local`, `_take_remote`, `_policy`, `_delete`, `_record` |
+## The answers
 
-`as_udf_answer(verdict, code, message, bins, ttl)` is the general form behind the helpers;
-`AS_UDF_EVENT_HANDLER(name, "kind", "(params) -> answer")` the general form behind the declarations.
+| Answer | What the server does |
+| --- | --- |
+| `as_udf_resolve_keep_local()` | keeps the local record and drops the incoming write |
+| `as_udf_resolve_take_remote()` | applies the incoming write whole |
+| `as_udf_resolve_policy()` | lets the namespace's policy decide, as it would have without the handler |
+| `as_udf_resolve_delete()` | removes the record on this cluster; a merge that deletes has to delete on both sides for the two to agree |
+| `as_udf_resolve_record(bins, ttl)` | writes the final record: `bins` is a built map in which a bin absent or nil is deleted, `ttl` a TTL with a write's meaning, or -1 to keep the one the incoming write asked for |
 
-## Timers
+Each returns the status the handler returns. A record answer with no bins left in it is the handler's
+failure, not a delete.
 
-A timer handler runs as a record UDF, on the record the timer was set on. So it is the one handler in
-which the `as_udf_rec_` family works: it reads with `as_udf_rec_bin`, stages with `as_udf_rec_set_int`
-and the rest, and saves with `as_udf_rec_save()` like any record UDF. `as_udf_timer_set("tick", 4, 200)`
-re-arms it; `as_udf_timer_cancel` cancels. Both are refused in any other handler.
-
-```c
-AS_UDF_EVENT_TIMER(tick)
-{
-	as_udf_timer_info t;
-	if (as_udf_event_timer_info(args, argc, &t) != AS_UDF_OK) return as_udf_failf("tick: not a timer");
-
-	as_udf_value ticks;
-	int64_t n = as_udf_rec_bin("ticks", &ticks) == AS_UDF_OK && ticks.kind == AS_UDF_INT ? ticks.payload : 0;
-	n++;
-
-	as_udf_rec_set_int("ticks", 5, n);
-	as_udf_rec_save();
-
-	if (n < 3) as_udf_timer_set("tick", 4, 200);
-
-	return as_udf_answer_done();
-}
-```
-
-## The modules
-
-`examples/guard/guard.c`:
-
-```c
-{{#include ../../../aerospike-udf-sdk-wasm-c/examples/guard/guard.c}}
-```
+## The module
 
 `examples/resolver/resolver.c`, the account merge with `as_udf_event_remote_newer` ordering the two sides
 the way the server's bin convergence does:

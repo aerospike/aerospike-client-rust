@@ -59,7 +59,7 @@ Everything about the record is a method on it. The reading methods are `const` a
 not, so a function that takes `const udf::Record&` cannot change the record. Only the SDK makes a
 `Record`, and it cannot be copied, so a read-only record stays read-only. What is left in the `udf`
 namespace is what is not about the record: `now()`, `log`, `fail`, `result_of`, the `Map` and `List`
-builders, timers.
+builders.
 
 `udf::Record` and the `udf::EventRecord` an event handler is given both derive from `udf::ReadRecord`,
 which carries the reading methods. A helper written against it reads a bin the same way in a UDF and in

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Generate the two tutorial chapters of the book from their templates and the tutorial sources.
+"""Generate the tutorial chapter of the book from its template and the tutorial sources.
 
-The tutorials show every step in all five languages. The code lives in real source files under
+The tutorial shows every step in all five languages. The code lives in real source files under
 `tutorial/`, one per language, each step between `ANCHOR: name` and `ANCHOR_END: name` comments, so the
 snippets are compiled, not typed into a page:
 
@@ -11,9 +11,9 @@ snippets are compiled, not typed into a page:
     tutorial/cpp/tutorial.cpp   clang++ --target=wasm32 -std=c++20 -fsyntax-only -I<cpp sdk>/include -I<c sdk>/include
     tutorial/java/Tutorial.java javac against the SDK, with its annotation processor
 
-The templates `tutorial/record-udfs.md` and `tutorial/events.md` are the prose. A line `{{snippet name}}`
+The template `tutorial/record-udfs.md` is the prose. A line `{{snippet name}}`
 becomes that step in every language, one labelled block after another; `{{snippet name: c}}` (any list of
-languages) only those. The output goes to `src/record-udfs/tutorial.md` and `src/events/tutorial.md`.
+languages) only those. The output goes to `src/record-udfs/tutorial.md`.
 """
 import os
 import re
@@ -33,7 +33,6 @@ LANGS = [
 
 PAGES = [
     ('record-udfs.md', os.path.join('src', 'record-udfs', 'tutorial.md')),
-    ('events.md', os.path.join('src', 'events', 'tutorial.md')),
 ]
 
 ANCHOR = re.compile(r'^\s*//\s*ANCHOR(_END)?:\s*(\w+)\s*$')

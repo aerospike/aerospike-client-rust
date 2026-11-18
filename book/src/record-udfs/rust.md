@@ -71,7 +71,7 @@ arguments: a client does not pass it, the arity check does not count it, and the
 exports does not list it. Write it exactly so, with `Record` imported under that name.
 
 Everything about the record is a method on it. What is left on the crate itself is what is not about the
-record: `now()`, `log_at`, `fail`, the `list` and `map` builders, timers.
+record: `now()`, `log_at`, `fail`, the `list` and `map` builders.
 
 `Record` and the `EventRecord` an event handler is given both implement `ReadRecord`, so a helper that
 takes `&impl ReadRecord` reads a bin the same way in a UDF and in a handler.

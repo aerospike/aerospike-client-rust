@@ -24,7 +24,7 @@ WASM_FLAGS = -x c++ -std=c++20 --target=wasm32 -nostdlib -nostdinc++ -ffreestand
 ifeq ($(SIMD),1)
   WASM_FLAGS += -msimd128
 endif
-EXAMPLES = vector resolver guard counter pncounter twopset lwwset crdt udf
+EXAMPLES = vector resolver counter pncounter twopset lwwset crdt udf
 WASM = $(foreach e,$(EXAMPLES),examples/$(e)/$(e)_cpp.wasm)
 FIXTURES = ../tests/fixtures/wasm
 

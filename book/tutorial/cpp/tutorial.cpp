@@ -10,8 +10,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-// The C++ side of the book's tutorials. The pages record-udfs/tutorial.md and events/tutorial.md include
-// the code between the ANCHOR comments, so what the book shows is what compiles here.
+// The C++ side of the book's tutorials. The page record-udfs/tutorial.md includes the code between the
+// ANCHOR comments, so what the book shows is what compiles here.
 
 // ANCHOR: setup
 #include "aerospike_udf.hpp"
@@ -161,90 +161,3 @@ UDF_FUNCTION(close, udf::Result<void>, udf::Record& rec)
 	return {};
 }
 // ANCHOR_END: close
-
-// ANCHOR: no_overdraft
-UDF_ON_BEFORE_WRITE(no_overdraft)
-{
-	(void)before; (void)write;
-
-	udf::Optional<int64_t> balance = after.as_int("balance");   // empty when absent or nil
-
-	if (balance && *balance < 0) {
-		return udf::Decision::reject(22, "balance may not go negative");
-	}
-
-	return udf::Decision::accept();
-}
-// ANCHOR_END: no_overdraft
-
-// ANCHOR: stamp
-UDF_ON_BEFORE_WRITE(stamp)
-{
-	udf::Map out(2);
-
-	out.put("writes", before.as_int("writes").value_or(0) + 1)
-	    .put("source", write.source_view());
-
-	// Every bin the write produced, with the two above on top.
-	return udf::Decision::record(after.with_bins(out));
-}
-// ANCHOR_END: stamp
-
-// ANCHOR: keep_locked
-UDF_ON_BEFORE_DELETE(keep_locked)
-{
-	(void)del;
-
-	if (record.as_bool("locked").value_or(false)) {
-		return udf::Gate::refuse(22, "record is locked");
-	}
-
-	return udf::Gate::allow();
-}
-// ANCHOR_END: keep_locked
-
-// ANCHOR: hide_secret
-UDF_ON_AFTER_READ(hide_secret)
-{
-	(void)read;
-
-	if (!record.has("secret")) return udf::ReadResult::unchanged();
-
-	udf::Map out(1);
-
-	out.put_null("secret");   // nil in an answer: no such bin
-
-	return udf::ReadResult::record(record.with_bins(out));
-}
-// ANCHOR_END: hide_secret
-
-// ANCHOR: keep_marked
-UDF_ON_BEFORE_EXPIRE(keep_marked)
-{
-	(void)expire;
-
-	if (record.as_bool("keep").value_or(false)) {
-		return udf::Expiry::keep(3600);
-	}
-
-	return udf::Expiry::expire();
-}
-// ANCHOR_END: keep_marked
-
-// ANCHOR: tick
-UDF_ON_TIMER(tick)
-{
-	(void)timer;
-
-	int64_t n = record.int_or("ticks", 0) + 1;   // a timer handler is handed the record, writable
-
-	UDF_TRY(record.set("ticks", n));
-	UDF_TRY(record.save());
-
-	if (n < 3) {
-		udf::timer_set("tick", 200);   // run again in 200 ms
-	}
-
-	return {};
-}
-// ANCHOR_END: tick

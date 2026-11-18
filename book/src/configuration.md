@@ -1,7 +1,7 @@
 # Configuration
 
-Everything the engine needs sits in one stanza of `aerospike.conf`, and everything the event system needs
-is runtime state kept in SMD, so there is less here than the size of the feature suggests.
+Everything the engine needs sits in one stanza of `aerospike.conf`, and everything the `xdr-merge` event
+needs is runtime state kept in SMD, so there is less here than the size of the feature suggests.
 
 ## The `mod-wamr` stanza
 
@@ -34,10 +34,11 @@ mod-wamr {
 The UDF directory is not set here: the server keeps one directory of registered UDF files, named by the
 `mod-lua` stanza's `user-path`, and `mod-wamr` reads the same one.
 
-WASM UDFs themselves need no feature key. The event system does: `asdb-event-system true` in the
+WASM UDFs themselves need no feature key. The `xdr-merge` event does: `asdb-event-system true` in the
 Enterprise feature key file (`feature-key-file`, or `FEATURE_KEY_FILE` in the container), alongside
 `asdb-xdr` and the others. Without it the server starts, runs UDFs, and refuses every event binding; see
-the event system chapter. For now the check is commented out, since no issued key carries it yet.
+[the event's chapter](events/README.md). For now the check is commented out, since no issued key carries
+it yet.
 
 Which tier a server has is decided when it is built, and for now it is fixed per architecture rather than
 read from the configuration: WAMR's own Fast JIT on x86-64, the interpreter on aarch64 (`make
@@ -96,37 +97,22 @@ cache tag, and is refused while an event binding refers to the module.
 
 {{#include diagrams/module-lifecycle.svg}}
 
-## What the events need
+## What the merge event needs
 
-The event system is configured at run time, through info commands, and its state lives in two SMD
-modules that are written beside the others under the server's SMD directory:
+The `xdr-merge` event is configured at run time, through info commands, and its state lives in one SMD
+module, written beside the others under the server's SMD directory:
 
 | File | Holds |
 | --- | --- |
 | `event.smd` | the bindings: one entry per `event-set`, replicated to every node and replayed at startup |
-| `timer.smd` | the timers: one entry per pending timer, removed when it fires |
 
 Two settings elsewhere matter to it:
 
-- **Security.** On an Enterprise server with security enabled, `event-set`, `event-remove`,
-  `event-timer-set` and `event-timer-remove` need the `event-admin` privilege, which is part of
-  `data-admin`. A fresh node's bootstrap `admin` user has only `user-admin`; grant it `data-admin` (and
-  `read-write-udf`, to register modules) and log in again, since a session's permissions refresh every few
-  minutes. The listing commands need nothing.
-- **`nsup-period`.** The `before-expire` and `before-evict` events fire from the namespace supervisor, so
-  they run as often as it does. The default is two minutes; a test that wants to see an expiry lowers it
-  with `set-config:context=namespace;id=<ns>;nsup-period=1` and restores it.
-
-`xdr-merge` fires on the cluster that receives XDR writes. It needs that cluster's `xdr { src-id }` set
-(`event-set` refuses the binding otherwise) and the source to ship its id: under bin convergence
-(`conflict-resolve-writes true` with bin LUTs shipped) it already does, and otherwise `ship-src-id true`
-in the source's `xdr` stanza, a dynamic setting, sends it with every record. A binding with
-`trigger=conflict` also needs bin convergence. `before-ship` fires only on a node that ships to a DC.
-Nothing else in the catalogue needs any configuration beyond the binding.
-
-## The container used in this repository
-
-`_temp/asd-image-wasm/aerospike.conf` is the configuration the tests run against: an Enterprise build from
-the `wasm` branch with the stanza above, `wamrc` and its LLVM beside the binary, a `test` namespace and a
-strong-consistency `testsc` one. `aerospike-security.conf` beside it is the same node with `security {}`
-on and the ports moved to 3100, for the privilege tests.
+- **Security.** On an Enterprise server with security enabled, `event-set` and `event-remove` need the
+  `event-admin` privilege, which is part of `data-admin`. A fresh node's bootstrap `admin` user has only
+  `user-admin`; grant it `data-admin` (and `read-write-udf`, to register modules) and log in again, since
+  a session's permissions refresh every few minutes. The listing commands need nothing.
+- **XDR.** The event needs to know which cluster wrote what. This cluster's `xdr` stanza must have a
+  `src-id`, or `event-set` refuses the binding, and the cluster that ships to it must send its own:
+  under bin convergence the id travels with the bin LUTs; otherwise `ship-src-id true` in the source's
+  `dc` / `namespace` stanza (dynamic) sends it with every record.

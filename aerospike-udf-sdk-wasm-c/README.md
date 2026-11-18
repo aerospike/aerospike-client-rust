@@ -63,16 +63,14 @@ with their metadata, per-bin LUTs and deletes, and `conflict_trigger` for a bind
 `trigger=conflict` - `as_udf_event_bin(&c.local, "visits", &v)` reads a bin of one side,
 `as_udf_event_remote_newer(&c, "visits")` orders the two sides the way the server's bin convergence does,
 `as_udf_cmp_stored(&a, &b)` compares two values' stored bytes for a data-only tie-break, and
-`as_udf_resolve_record(map, -1)` (or `_keep_local`, `_take_remote`, `_policy`) answers.
+`as_udf_resolve_record(map, -1)` (or `_keep_local`, `_take_remote`, `_policy`, `_delete`) answers.
 `examples/resolver/resolver.c` is the account merge the Rust and Go SDKs also carry; the client test holds
-the three to the same answer. The other kinds are declared with `AS_UDF_EVENT_<KIND>(name)` and read with
-`as_udf_event_desc`, `as_udf_event_get_record` and the `as_udf_event_*_info` decoders; `examples/guard`
-has one of each. The contract and the rules a handler must keep (pure, convergent) are in the Rust SDK's
-README under "Events".
+the three to the same answer. `xdr-merge` is the one event there is. The contract and the rules a handler
+must keep (pure, convergent) are in the Rust SDK's README under "Events".
 
-## The example
+## The examples
 
 `examples/vector/vector.c` is an exact top-k over packed `f32` vectors - the same module as the Rust and Go
 ones, step for step, so the three can be timed against each other. `make` builds it;
 `tests/src/udf_vector.rs` in the client asserts the three agree with Lua and with a local computation, and
-times them.
+times them. `make` also builds `examples/resolver/resolver.c`, the `xdr-merge` handler above.

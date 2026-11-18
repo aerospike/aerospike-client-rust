@@ -18,8 +18,8 @@ import java.util.Map;
 import org.teavm.interop.Address;
 
 /**
- * The record a call is about. A {@code @Function} method, a stream's {@code record} method and a timer
- * handler take it as their first parameter, and everything a UDF does to the record is a method of it:
+ * The record a call is about. A {@code @Function} method and a stream's {@code record} method take it as
+ * their first parameter, and everything a UDF does to the record is a method of it:
  * reading a bin, writing one, the record's metadata, saving and deleting.
  *
  * <pre>

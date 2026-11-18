@@ -15,7 +15,6 @@ package com.aerospike.udf.processor;
 import java.io.IOException;
 import java.io.Writer;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -43,7 +42,7 @@ import javax.tools.JavaFileObject;
 
 /**
  * Generates the exports of a module from its annotations: for every class carrying {@code @Function} or
- * {@code @On.*} methods, or annotated {@code @Stream} itself, a class {@code <Class>Exports} in the same
+ * {@code @On.XdrMerge} methods, or annotated {@code @Stream} itself, a class {@code <Class>Exports} in the same
  * package with one TeaVM {@code @Export} method per UDF or handler, which decodes the arguments into the
  * method's parameters and delivers its return, one {@code __udf_sig_<name>} export per name, and the
  * module's {@code main}. A method whose first parameter is the SDK's {@code Record} is handed the record of
@@ -56,7 +55,7 @@ public final class ExportsProcessor extends AbstractProcessor {
     private static final String FUNCTION = SDK + "Function";
     private static final String STREAM = SDK + "Stream";
     private static final String NULLABLE = SDK + "Nullable";
-    private static final String ON = SDK + "On.";
+    private static final String XDR_MERGE = SDK + "On.XdrMerge";
 
     private static final String UDF = SDK + "Udf";
     private static final String VALUE = SDK + "Value";
@@ -65,62 +64,13 @@ public final class ExportsProcessor extends AbstractProcessor {
         SDK + "MapBuilder", SDK + "ListBuilder", SDK + "MapValue", SDK + "ListValue"
     };
     private static final String PARAMS = SDK + "Params";
-    private static final String EVENTS = SDK + "Events";
     private static final String CONFLICT = SDK + "Conflict";
     private static final String EVENT_RECORD = SDK + "EventRecord";
+    private static final String RESOLUTION = SDK + "Resolution";
     private static final String UDF_EXCEPTION = SDK + "UdfException";
 
-    /** One event kind: its annotation, the server's name for it, the handler's parameters and answer. */
-    private static final class Kind {
-        final String annotation;
-        final String event;
-        final String constant;
-        final String[] params;
-        final String answer;
-        final String[] records;
-
-        Kind(String annotation, String event, String constant, String[] params, String answer, String... records) {
-            this.annotation = annotation;
-            this.event = event;
-            this.constant = constant;
-            this.params = params;
-            this.answer = answer;
-            this.records = records;
-        }
-    }
-
-    private static final Map<String, Kind> KINDS = new HashMap<>();
-
-    static {
-        String[] write = { EVENT_RECORD, EVENT_RECORD, EVENTS + ".WriteInfo" };
-        String[] delete = { EVENT_RECORD, EVENTS + ".DeleteInfo" };
-        String[] expire = { EVENT_RECORD, EVENTS + ".ExpireInfo" };
-        String[] truncate = { EVENTS + ".TruncateInfo" };
-
-        kind("BeforeWrite", "before-write", "PARAMS_BEFORE_WRITE", write, SDK + "Decision", "before", "after");
-        kind("AfterWrite", "after-write", "PARAMS_AFTER_WRITE", write, null, "before", "after");
-        kind("BeforeDelete", "before-delete", "PARAMS_BEFORE_DELETE", delete, SDK + "Gate", "record");
-        kind("AfterDelete", "after-delete", "PARAMS_AFTER_DELETE", delete, null, "record");
-        kind("BeforeExpire", "before-expire", "PARAMS_BEFORE_EXPIRE", expire, SDK + "Expiry", "record");
-        kind("BeforeEvict", "before-evict", "PARAMS_BEFORE_EVICT", expire, SDK + "Eviction", "record");
-        kind("AfterRead", "after-read", "PARAMS_AFTER_READ", new String[] { EVENT_RECORD, EVENTS + ".ReadInfo" },
-                SDK + "ReadResult", "record");
-        kind("BeforeTruncate", "before-truncate", "PARAMS_BEFORE_TRUNCATE", truncate, SDK + "Gate");
-        kind("AfterTruncate", "after-truncate", "PARAMS_AFTER_TRUNCATE", truncate, null);
-        kind("BeforeShip", "before-ship", "PARAMS_BEFORE_SHIP", new String[] { EVENT_RECORD, EVENTS + ".ShipInfo" },
-                SDK + "ShipDecision", "record");
-        kind("PartitionTransfer", "partition-transfer", "PARAMS_PARTITION_TRANSFER",
-                new String[] { EVENTS + ".TransferInfo" }, null);
-        kind("ClusterChange", "cluster-change", "PARAMS_CLUSTER_CHANGE", new String[] { EVENTS + ".ClusterInfo" }, null);
-        kind("NodeLifecycle", "node-lifecycle", "PARAMS_NODE_LIFECYCLE", new String[] { EVENTS + ".LifecycleInfo" }, null);
-        kind("Timer", "timer", "PARAMS_TIMER", new String[] { EVENTS + ".TimerInfo" }, null);
-        kind("XdrMerge", "xdr-merge", null, new String[] { EVENT_RECORD, EVENT_RECORD, CONFLICT }, SDK + "Resolution");
-    }
-
-    private static void kind(String annotation, String event, String constant, String[] params, String answer,
-            String... records) {
-        KINDS.put(ON + annotation, new Kind(annotation, event, constant, params, answer, records));
-    }
+    /** What an xdr-merge handler takes: the current record, the incoming write, the description. */
+    private static final String[] HANDLER_PARAMS = { EVENT_RECORD, EVENT_RECORD, CONFLICT };
 
     private enum Role { FUNCTION, RECORD, END, HANDLER }
 
@@ -130,14 +80,12 @@ public final class ExportsProcessor extends AbstractProcessor {
         final Role role;
         final String name;
         final String params;
-        final Kind kind;
 
-        Export(ExecutableElement method, Role role, String name, String params, Kind kind) {
+        Export(ExecutableElement method, Role role, String name, String params) {
             this.method = method;
             this.role = role;
             this.name = name;
             this.params = params;
-            this.kind = kind;
         }
 
         boolean raw() {
@@ -171,7 +119,7 @@ public final class ExportsProcessor extends AbstractProcessor {
             case FUNCTION:
                 return "Function";
             case HANDLER:
-                return "On." + kind.annotation;
+                return "On.XdrMerge";
             default:
                 return "Stream";
             }
@@ -204,7 +152,7 @@ public final class ExportsProcessor extends AbstractProcessor {
 
         names.add(FUNCTION);
         names.add(STREAM);
-        names.addAll(KINDS.keySet());
+        names.add(XDR_MERGE);
 
         return names;
     }
@@ -271,8 +219,8 @@ public final class ExportsProcessor extends AbstractProcessor {
                 error(owner, "a @Stream class has a record method and an end method");
             }
             else {
-                exports.add(new Export(record, Role.RECORD, name, string(stream, "params"), null));
-                exports.add(new Export(end, Role.END, name, string(stream, "endParams"), null));
+                exports.add(new Export(record, Role.RECORD, name, string(stream, "params")));
+                exports.add(new Export(end, Role.END, name, string(stream, "endParams")));
                 names.add(name);
             }
         }
@@ -288,7 +236,7 @@ public final class ExportsProcessor extends AbstractProcessor {
             for (AnnotationMirror mirror : method.getAnnotationMirrors()) {
                 String type = qualifiedName(mirror.getAnnotationType());
 
-                if (!type.equals(FUNCTION) && !KINDS.containsKey(type)) {
+                if (!type.equals(FUNCTION) && !type.equals(XDR_MERGE)) {
                     continue;
                 }
 
@@ -305,8 +253,8 @@ public final class ExportsProcessor extends AbstractProcessor {
                 }
 
                 export = type.equals(FUNCTION)
-                        ? new Export(method, Role.FUNCTION, name, string(mirror, "params"), null)
-                        : new Export(method, Role.HANDLER, name, "", KINDS.get(type));
+                        ? new Export(method, Role.FUNCTION, name, string(mirror, "params"))
+                        : new Export(method, Role.HANDLER, name, "");
             }
 
             if (export != null) {
@@ -350,7 +298,7 @@ public final class ExportsProcessor extends AbstractProcessor {
             return;
         }
 
-        if (e.kind != null) {
+        if (e.role == Role.HANDLER) {
             checkHandler(e);
             return;
         }
@@ -380,35 +328,27 @@ public final class ExportsProcessor extends AbstractProcessor {
     }
 
     private void checkHandler(Export e) {
-        // A timer handler runs as a record UDF, so it is the one handler that takes the record of the call.
-        boolean timer = e.kind.event.equals("timer");
-        List<? extends VariableElement> params = timer ? e.arguments() : e.method.getParameters();
-        boolean ok = params.size() == e.kind.params.length;
+        List<? extends VariableElement> params = e.method.getParameters();
+        boolean ok = params.size() == HANDLER_PARAMS.length;
 
         for (int i = 0; ok && i < params.size(); i++) {
-            ok = typeName(params.get(i).asType()).equals(e.kind.params[i]);
+            ok = typeName(params.get(i).asType()).equals(HANDLER_PARAMS[i]);
         }
 
         TypeMirror ret = e.method.getReturnType();
 
-        if (e.kind.answer == null) {
-            ok &= ret.getKind() == TypeKind.VOID;
-        }
-        else {
-            ok &= ret.getKind() == TypeKind.DECLARED && typeName(ret).equals(e.kind.answer);
-        }
+        ok &= ret.getKind() == TypeKind.DECLARED && typeName(ret).equals(RESOLUTION);
 
         if (!ok) {
-            StringBuilder want = new StringBuilder(e.kind.answer == null ? "void " : simple(e.kind.answer) + " ");
+            StringBuilder want = new StringBuilder(simple(RESOLUTION) + " ");
 
-            want.append(e.method.getSimpleName()).append(timer ? "(Record, " : "(");
+            want.append(e.method.getSimpleName()).append("(");
 
-            for (int i = 0; i < e.kind.params.length; i++) {
-                want.append(i > 0 ? ", " : "").append(simple(e.kind.params[i]));
+            for (int i = 0; i < HANDLER_PARAMS.length; i++) {
+                want.append(i > 0 ? ", " : "").append(simple(HANDLER_PARAMS[i]));
             }
 
-            error(e.method, "a @On." + e.kind.annotation + " handler is " + want + "), or the raw int ("
-                    + "int args, int argc)");
+            error(e.method, "a @On.XdrMerge handler is " + want + "), or the raw int (int args, int argc)");
         }
     }
 
@@ -602,7 +542,7 @@ public final class ExportsProcessor extends AbstractProcessor {
             String receiver = e.instance() ? "INSTANCE" : target;
             String params;
 
-            if (e.kind != null) {
+            if (e.role == Role.HANDLER) {
                 params = handler(out, e, id, receiver);
             }
             else {
@@ -612,13 +552,8 @@ public final class ExportsProcessor extends AbstractProcessor {
             if (e.role == Role.FUNCTION) {
                 signature(out, e.name, id, "fn " + e.name + params + " -> value");
             }
-            else if (e.kind != null) {
-                String text = e.kind.constant == null
-                        ? CONFLICT + ".signature(\"" + e.name + "\")"
-                        : EVENTS + ".signature(\"" + e.kind.event + "\", \"" + e.name + "\", " + EVENTS + "."
-                                + e.kind.constant + ")";
-
-                signatureBytes(out, e.name, id, text);
+            else if (e.role == Role.HANDLER) {
+                signatureBytes(out, e.name, id, CONFLICT + ".signature(\"" + e.name + "\")");
             }
             else {
                 String[] halves = streams.computeIfAbsent(e.name, k -> new String[2]);
@@ -720,10 +655,9 @@ public final class ExportsProcessor extends AbstractProcessor {
         return sig.toString();
     }
 
-    /** An event handler's export. */
+    /** An xdr-merge handler's export. */
     private String handler(StringBuilder out, Export e, String id, String receiver) {
         String method = receiver + "." + e.method.getSimpleName();
-        Kind k = e.kind;
 
         out.append("\n    @Export(name = \"").append(e.name).append("\")\n");
         out.append("    public static int ").append(prefix(e)).append(id).append("(int args, int argc) {\n");
@@ -737,62 +671,13 @@ public final class ExportsProcessor extends AbstractProcessor {
             return "";
         }
 
-        List<String> actuals = new ArrayList<>();
-        String fail = "            return " + UDF + ".fail(\"" + e.name + ": not a"
-                + ("aeioux".indexOf(k.event.charAt(0)) >= 0 ? "n " : " ") + k.event + " event\");\n";
-
-        if (k.constant == null) {
-            out.append("        ").append(CONFLICT).append(" conflict = new ").append(CONFLICT).append("();\n\n");
-            out.append("        if (!conflict.decode(args, argc)) {\n").append(fail).append("        }\n\n");
-            actuals.add("conflict.local");
-            actuals.add("conflict.remote");
-            actuals.add("conflict");
-        }
-        else if (k.event.equals("timer")) {
-            out.append("        ").append(EVENTS).append(".TimerInfo timer = new ").append(EVENTS).append(".TimerInfo();\n\n");
-            out.append("        if (!timer.decode(args, argc)) {\n").append(fail).append("        }\n\n");
-
-            if (e.takesRecord()) {
-                actuals.add(PARAMS + ".record()");
-            }
-
-            actuals.add("timer");
-        }
-        else {
-            out.append("        ").append(VALUE).append(" desc = ").append(EVENTS).append(".desc(args, argc);\n");
-
-            for (int i = 0; i < k.records.length; i++) {
-                out.append("        ").append(EVENT_RECORD).append(" record").append(i).append(" = ")
-                        .append(EVENTS).append(".side(desc, \"").append(k.records[i]).append("\", ").append(i)
-                        .append(");\n");
-                actuals.add("record" + i);
-            }
-
-            String info = k.params[k.params.length - 1];
-
-            out.append("        ").append(info).append(" info = new ").append(info).append("();\n\n");
-            out.append("        if (desc == null");
-
-            for (int i = 0; i < k.records.length; i++) {
-                out.append(" || record").append(i).append(" == null");
-            }
-
-            out.append(" || !info.decode(desc)) {\n").append(fail).append("        }\n\n");
-            actuals.add("info");
-        }
-
-        String call = method + "(" + String.join(", ", actuals) + ")";
-
+        out.append("        ").append(CONFLICT).append(" conflict = new ").append(CONFLICT).append("();\n\n");
+        out.append("        if (!conflict.decode(args, argc)) {\n");
+        out.append("            return ").append(UDF).append(".fail(\"").append(e.name)
+                .append(": not an xdr-merge event\");\n");
+        out.append("        }\n\n");
         out.append("        try {\n");
-
-        if (k.answer == null) {
-            out.append("            ").append(call).append(";\n");
-            out.append("            return ").append(EVENTS).append(".done();\n");
-        }
-        else {
-            out.append("            return ").append(call).append(".deliver();\n");
-        }
-
+        out.append("            return ").append(method).append("(conflict.local, conflict.remote, conflict).deliver();\n");
         catches(out, e.name);
         out.append("    }\n");
 
@@ -866,7 +751,7 @@ public final class ExportsProcessor extends AbstractProcessor {
         return ((TypeElement) t.asElement()).getQualifiedName().toString();
     }
 
-    /** The qualified name of a declared type (`com.aerospike.udf.Events.WriteInfo`), or the type's text. */
+    /** The qualified name of a declared type (`com.aerospike.udf.EventRecord`), or the type's text. */
     private static String typeName(TypeMirror t) {
         return t.getKind() == TypeKind.DECLARED ? qualifiedName((DeclaredType) t) : t.toString();
     }

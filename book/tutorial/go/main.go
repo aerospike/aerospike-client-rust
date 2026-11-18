@@ -10,8 +10,8 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-// The Go side of the book's tutorials. The pages record-udfs/tutorial.md and events/tutorial.md include
-// the code between the ANCHOR comments, so what the book shows is what compiles here.
+// The Go side of the book's tutorial. The page record-udfs/tutorial.md includes the code between the
+// ANCHOR comments, so what the book shows is what compiles here.
 package main
 
 //go:generate go run github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk-wasm-go/cmd/udfgen
@@ -244,105 +244,5 @@ func closeAccount(rec *udf.Record) error {
 }
 
 // ANCHOR_END: close
-
-// ANCHOR: no_overdraft
-// Refuses a write that leaves a negative balance.
-//
-//udf:on before-write no_overdraft
-func noOverdraft(_, after *udf.EventRecord, _ udf.WriteInfo) (udf.Decision, error) {
-	if amount, ok := after.Int("balance"); ok && amount < 0 { // ok is false when absent or nil
-		return udf.Reject(22, "balance may not go negative"), nil
-	}
-
-	return udf.Accept(), nil
-}
-
-// ANCHOR_END: no_overdraft
-
-// ANCHOR: stamp
-// Counts the write and records where it came from.
-//
-//udf:on before-write stamp
-func stamp(before, after *udf.EventRecord, w udf.WriteInfo) (udf.Decision, error) {
-	writes, _ := before.Int("writes")
-
-	out := udf.NewMap(2).
-		Put("writes", writes+1).
-		Put("source", w.Source)
-
-	// Every bin the write produced, with the two above on top.
-	return udf.AcceptRecord(after.WithBins(out)), out.Err()
-}
-
-// ANCHOR_END: stamp
-
-// ANCHOR: keep_locked
-// Refuses to delete a locked record.
-//
-//udf:on before-delete keep_locked
-func keepLocked(rec *udf.EventRecord, _ udf.DeleteInfo) (udf.Gate, error) {
-	if locked, _ := rec.Bool("locked"); locked {
-		return udf.Refuse(22, "record is locked"), nil
-	}
-
-	return udf.Allow(), nil
-}
-
-// ANCHOR_END: keep_locked
-
-// ANCHOR: hide_secret
-// Reads never see the secret bin.
-//
-//udf:on after-read hide_secret
-func hideSecret(rec *udf.EventRecord, _ udf.ReadInfo) (udf.ReadResult, error) {
-	if !rec.Has("secret") {
-		return udf.Unchanged(), nil
-	}
-
-	out := udf.NewMap(1).Put("secret", nil) // nil in an answer: no such bin
-
-	return udf.ReadRecord(rec.WithBins(out)), out.Err()
-}
-
-// ANCHOR_END: hide_secret
-
-// ANCHOR: keep_marked
-// A record marked keep gets another hour.
-//
-//udf:on before-expire keep_marked
-func keepMarked(rec *udf.EventRecord, _ udf.ExpireInfo) (udf.Expiry, error) {
-	if keep, _ := rec.Bool("keep"); keep {
-		return udf.Keep(3600), nil
-	}
-
-	return udf.Expire(), nil
-}
-
-// ANCHOR_END: keep_marked
-
-// ANCHOR: tick
-// Counts a tick and re-arms itself, up to three.
-//
-//udf:on timer tick
-func tick(rec *udf.Record, _ udf.TimerInfo) error {
-	ticks, _ := rec.Int("ticks") // a timer runs as a record UDF: it gets the record, and may write it
-	n := ticks + 1
-
-	if err := rec.Set("ticks", n); err != nil {
-		return err
-	}
-
-	if err := rec.Save(); err != nil {
-		return err
-	}
-
-	if n < 3 {
-		udf.TimerSet("tick", 200) // run again in 200 ms
-	}
-
-	return nil
-}
-
-// ANCHOR_END: tick
 
 func main() {}

@@ -19,132 +19,50 @@ import (
 )
 
 //==========================================================
-// Events, the typed tier: what a `//udf:on` handler reads and returns. A handler is a function with the
-// kind's parameters returning the kind's answer and an error (or just an error for the kinds that answer
-// nothing); the generated export decodes the event, calls it and delivers the answer.
+// The xdr-merge event, the typed tier: what a `//udf:on xdr-merge` handler reads and returns. A handler is
+// a function taking the current record, the incoming record and the conflict, and returning a Resolution
+// and an error; the generated export decodes the event, calls it and delivers the answer.
 //
 
-// The answers.
-
-// Answer is what the kinds' answer types have in common; Deliver sets it as the call's result.
-type Answer struct {
+// Resolution is what an xdr-merge handler returns: keep the current record, apply the incoming write
+// whole, let the namespace's policy decide, or the final record.
+type Resolution struct {
 	verdict string
-	code    int64
-	message string
 	bins    int32
 	ttl     int64
 	err     error
 }
 
-// Deliver sets the answer as the result and returns the status an export returns. Called by the
-// generated export.
-func (a Answer) Deliver() int32 {
-	if a.err != nil {
-		return FailErr(a.err)
-	}
-	return answer(a.verdict, a.code, a.message, a.bins, a.ttl)
+// Verdict is the resolution's verdict word, such as "keep-local" or "record".
+func (r Resolution) Verdict() string { return r.verdict }
+
+func recordOf(m *Map, ttl int64) Resolution {
+	return Resolution{verdict: "record", bins: m.handle, ttl: ttl, err: m.err}
 }
-
-// Verdict is the answer's verdict word, such as "accept" or "reject".
-func (a Answer) Verdict() string { return a.verdict }
-
-func withBinsOf(verdict string, m *Map, ttl int64) Answer {
-	return Answer{verdict: verdict, bins: m.handle, ttl: ttl, err: m.err}
-}
-
-// Decision is what a before-write handler returns.
-type Decision struct{ Answer }
-
-// Accept lets the write proceed as it is.
-func Accept() Decision { return Decision{Answer{verdict: "accept", ttl: -1}} }
-
-// Reject fails the write with this result code (a server code 1..255; 22 is "forbidden") and message.
-func Reject(code int64, message string) Decision {
-	return Decision{Answer{verdict: "reject", code: code, message: message, ttl: -1}}
-}
-
-// AcceptRecord writes these bins instead; a bin absent from the map, or nil, is deleted.
-func AcceptRecord(bins *Map) Decision { return Decision{withBinsOf("record", bins, -1)} }
-
-// AcceptRecordTTL is AcceptRecord with a TTL in seconds (0 for the namespace default).
-func AcceptRecordTTL(bins *Map, ttl int64) Decision { return Decision{withBinsOf("record", bins, ttl)} }
-
-// Gate is what a before-delete or before-truncate handler returns.
-type Gate struct{ Answer }
-
-// Allow lets the delete or truncate proceed.
-func Allow() Gate { return Gate{Answer{verdict: "allow", ttl: -1}} }
-
-// Refuse refuses the delete or truncate with this result code and message.
-func Refuse(code int64, message string) Gate {
-	return Gate{Answer{verdict: "refuse", code: code, message: message, ttl: -1}}
-}
-
-// Expiry is what a before-expire handler returns.
-type Expiry struct{ Answer }
-
-// Expire lets the record expire.
-func Expire() Expiry { return Expiry{Answer{verdict: "expire", ttl: -1}} }
-
-// Keep keeps the record, with this many more seconds to live.
-func Keep(ttl int64) Expiry { return Expiry{Answer{verdict: "keep", ttl: ttl}} }
-
-// Eviction is what a before-evict handler returns.
-type Eviction struct{ Answer }
-
-// Evict lets the record be evicted.
-func Evict() Eviction { return Eviction{Answer{verdict: "evict", ttl: -1}} }
-
-// Protect keeps the record from this eviction.
-func Protect() Eviction { return Eviction{Answer{verdict: "protect", ttl: -1}} }
-
-// ReadResult is what an after-read handler returns.
-type ReadResult struct{ Answer }
-
-// Unchanged answers the read with the record as it is.
-func Unchanged() ReadResult { return ReadResult{Answer{verdict: "unchanged", ttl: -1}} }
-
-// ReadRecord answers the read with these bins instead, whole; a nil leaves a bin out.
-func ReadRecord(bins *Map) ReadResult { return ReadResult{withBinsOf("record", bins, -1)} }
-
-// ShipDecision is what a before-ship handler returns.
-type ShipDecision struct{ Answer }
-
-// Ship ships the record as it is.
-func Ship() ShipDecision { return ShipDecision{Answer{verdict: "ship", ttl: -1}} }
-
-// Skip does not ship the record.
-func Skip() ShipDecision { return ShipDecision{Answer{verdict: "skip", ttl: -1}} }
-
-// ShipRecord ships these bins instead, whole; a nil leaves a bin out.
-func ShipRecord(bins *Map) ShipDecision { return ShipDecision{withBinsOf("record", bins, -1)} }
-
-// Resolution is what an xdr-merge handler returns: keep the current record, apply the incoming write
-// whole, let the namespace's policy decide, or the final record.
-type Resolution struct{ Answer }
 
 // KeepLocal keeps the local record; the incoming write is dropped.
-func KeepLocal() Resolution { return Resolution{Answer{verdict: "keep-local", ttl: -1}} }
+func KeepLocal() Resolution { return Resolution{verdict: "keep-local", ttl: -1} }
 
 // TakeRemote applies the incoming write whole, as if it had won every bin.
-func TakeRemote() Resolution { return Resolution{Answer{verdict: "take-remote", ttl: -1}} }
+func TakeRemote() Resolution { return Resolution{verdict: "take-remote", ttl: -1} }
 
 // Policy lets the namespace's policy decide, as it would have without the event.
-func Policy() Resolution { return Resolution{Answer{verdict: "policy", ttl: -1}} }
+func Policy() Resolution { return Resolution{verdict: "policy", ttl: -1} }
 
 // DeleteRecord removes the record on this cluster. The other cluster decides for itself, so a merge that
 // deletes has to delete on both sides for the two to agree. A record resolution with no bins left in it
 // is not this: it is the handler's failure.
-func DeleteRecord() Resolution { return Resolution{Answer{verdict: "delete", ttl: -1}} }
+func DeleteRecord() Resolution { return Resolution{verdict: "delete", ttl: -1} }
 
 // Resolve is the final record: these bins, whole - a bin not in the map, or nil, is deleted - keeping
 // the TTL the incoming write asked for.
-func Resolve(bins *Map) Resolution { return Resolution{withBinsOf("record", bins, -1)} }
+func Resolve(bins *Map) Resolution { return recordOf(bins, -1) }
 
 // ResolveTTL is Resolve with a TTL in seconds: 0 for the namespace default.
-func ResolveTTL(bins *Map, ttl int64) Resolution { return Resolution{withBinsOf("record", bins, ttl)} }
+func ResolveTTL(bins *Map, ttl int64) Resolution { return recordOf(bins, ttl) }
 
-// Deliver sets a resolution as the result; the record form is the merge's own answer shape.
+// Deliver sets the resolution as the result and returns the status an export returns: the verdict word,
+// or the record form with its bins and TTL. Called by the generated export.
 func (r Resolution) Deliver() int32 {
 	if r.err != nil {
 		return FailErr(r.err)
@@ -155,10 +73,6 @@ func (r Resolution) Deliver() int32 {
 	}
 	return resolveRecord(r.bins, r.ttl)
 }
-
-// Done is the answer of the kinds that answer nothing; the generated export delivers it after a handler
-// returning only an error.
-func Done() int32 { return answer("ok", 0, "", 0, -1) }
 
 //==========================================================
 // The event record, typed.

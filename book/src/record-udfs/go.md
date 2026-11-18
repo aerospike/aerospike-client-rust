@@ -93,7 +93,7 @@ removing it changes nothing a client sees.
 
 Everything about the record is a method on it. There is no bin object: a bin is addressed by its name.
 What is left on the package is what is not about the record: `udf.Now()`, `udf.Log`, `udf.Fail`, the
-`Result*` calls, the `NewMap` and `NewList` builders, timers.
+`Result*` calls, the `NewMap` and `NewList` builders.
 
 There is one `Record` type. Go has no read-only reference, so the same `*udf.Record` is handed out where
 the record may be written and where it may only be read. The per-record method of a
@@ -117,13 +117,13 @@ func balance(rec *udf.Record) int64 {
 	return balanceOf(rec)
 }
 
-//udf:on before-delete keep_funded
-func keepFunded(rec *udf.EventRecord, _ udf.DeleteInfo) (udf.Gate, error) {
-	if balanceOf(rec) > 0 {
-		return udf.Refuse(22, "the account still holds a balance"), nil
+//udf:on xdr-merge keep_richer
+func keepRicher(local, remote *udf.EventRecord, _ *udf.Conflict) (udf.Resolution, error) {
+	if balanceOf(remote) > balanceOf(local) {
+		return udf.TakeRemote(), nil
 	}
 
-	return udf.Allow(), nil
+	return udf.KeepLocal(), nil
 }
 ```
 

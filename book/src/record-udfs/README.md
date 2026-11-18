@@ -63,9 +63,7 @@ digest, set the TTL, and tell whether the record exists. It can write to the ser
 
 A record UDF runs under the transaction's deadline and is stopped by the watchdog when that expires. It
 has 256 handles for cursors and built collections per call, 32 arguments at most, and the module's
-`max-memory` of linear memory. It cannot read or write another record; a function that needs to act on
-another key later can set a [timer](../events/README.md#timers) on its own record and let the timer
-handler do the work.
+`max-memory` of linear memory. It cannot read or write another record.
 
 ## Calling from a client
 

@@ -475,17 +475,17 @@ static inline void as_udf_logf(int32_t level, const char* message)
 /*==========================================================
  * Events.
  *
- * An event handler is a function the server calls at a point in its own processing. The first event,
- * `xdr-merge`, hands it the local record and the incoming XDR write as two records (`which` 0 and 1, read
- * through as_udf_event_bin, never the record imports) and a description of the conflict, and takes back a
- * verdict or the final record. Declare one with AS_UDF_EVENT_XDR_MERGE, which also emits the signature
- * `event xdr-merge/1 ...` that `event-set` checks before binding. A handler must be pure and symmetric:
- * both DCs resolve the same pair with the sides swapped and must land on the same record. The order helpers
- * (as_udf_event_remote_newer) are symmetric; "mine first" is not.
+ * An event handler is a function the server calls at a point in its own processing. There is one event,
+ * `xdr-merge`: the server hands the handler the local record and the incoming XDR write as two records
+ * (`which` 0 and 1, read through as_udf_event_bin, never the record imports) and a description of the
+ * conflict, and takes back a verdict or the final record. Declare one with AS_UDF_EVENT_XDR_MERGE, which also
+ * emits the signature `event xdr-merge/1 ...` that `event-set` checks before binding. A handler must be pure
+ * and symmetric: both DCs resolve the same pair with the sides swapped and must land on the same record. The
+ * order helpers (as_udf_event_remote_newer) are symmetric; "mine first" is not.
  */
 
 /* A bin of one of an event's records, as a 16-byte value in `out` (`cap` at least 16): `which` is 0 for the
- * first record the event hands over, 1 for the second. Returns AS_UDF_OK, AS_UDF_NOT_FOUND when that record or
+ * current record, 1 for the incoming one. Returns AS_UDF_OK, AS_UDF_NOT_FOUND when that record or
  * bin is not there, or AS_UDF_ERR when `cap` is too small. */
 AS_UDF_IMPORT(event_bin_value) int32_t as_udf_event_bin_value(int32_t which, const char* name, int32_t name_len, void* out, int32_t cap);
 
@@ -534,6 +534,21 @@ static inline int64_t as_udf_map_int(const as_udf_value* m, const char* key, int
 	return v.kind == AS_UDF_INT ? v.payload : dflt;
 }
 
+/* A short string entry of a map into `out` (NUL-terminated); "" when absent. */
+static inline void as_udf_map_str(const as_udf_value* m, const char* key, char* out, int32_t cap)
+{
+	as_udf_value v = as_udf_map_get(m, key);
+	int32_t n = v.kind == AS_UDF_STR ? as_udf_bytes(&v, out, cap - 1) : -1;
+	out[n < 0 ? 0 : n] = '\0';
+}
+
+/* A boolean entry of a map by string key; false when there is none or it is not a boolean. */
+static inline bool as_udf_map_bool(const as_udf_value* m, const char* key)
+{
+	as_udf_value v = as_udf_map_get(m, key);
+	return v.kind == AS_UDF_BOOL && v.payload != 0;
+}
+
 /* Whether a string value reads as `text`. */
 static inline bool as_udf_str_is(const as_udf_value* v, const char* text)
 {
@@ -562,7 +577,7 @@ static inline bool as_udf_event_side(const as_udf_value* conflict, const char* k
 	return out->bins.kind == AS_UDF_LIST;
 }
 
-/* Decode an event call's arguments. Returns AS_UDF_OK, or AS_UDF_ERR when they are not a conflict. */
+/* Decode an xdr-merge call's arguments. Returns AS_UDF_OK, or AS_UDF_ERR when they are not a conflict. */
 static inline int32_t as_udf_event_decode(int32_t args, int32_t argc, as_udf_conflict* out)
 {
 	as_udf_value a[1];
@@ -679,343 +694,6 @@ static inline int32_t as_udf_resolve_record(int32_t bins, int64_t ttl)
 	if (ttl >= 0) as_udf_map_put_str_int(out, "ttl", 3, ttl);
 	return as_udf_result_handle(out) == AS_UDF_OK ? 0 : as_udf_failf("resolve: could not return the record");
 }
-
-/*----------------------------------------------------------
- * The other events. Each handler is `int32_t name(int32_t args, int32_t argc)`; as_udf_event_desc reads
- * the description, the as_udf_event_*_info helpers read its parts, as_udf_event_bin reads a record's bins
- * (`which` 0 for the first record the event hands over, 1 for the second), and the as_udf_answer_* helpers
- * deliver the answer. Declare a handler with AS_UDF_EVENT_HANDLER, which also emits its signature.
- */
-
-/* Set a timer on the record in hand: the set's `timer` handler runs on this record `delay_ms` milliseconds from
- * now, under `name` (1 to 63 bytes). Returns AS_UDF_OK, or AS_UDF_REFUSED when the name is out of range, there
- * is no record in hand, or the server does not take the timer. */
-AS_UDF_IMPORT(timer_set) int32_t as_udf_timer_set(const char* name, int32_t name_len, int64_t delay_ms);
-/* Cancel the timer `name` on the record in hand. Returns AS_UDF_OK, or AS_UDF_REFUSED when the name is out of
- * range, there is no record in hand, or the server does not cancel it. */
-AS_UDF_IMPORT(timer_cancel) int32_t as_udf_timer_cancel(const char* name, int32_t name_len);
-
-/* The description map of an event call. AS_UDF_ERR when the arguments are not one. */
-static inline int32_t as_udf_event_desc(int32_t args, int32_t argc, as_udf_value* desc)
-{
-	as_udf_value a[1];
-	if (as_udf_args(args, argc, a, 1) < 1 || a[0].kind != AS_UDF_MAP) return AS_UDF_ERR;
-	*desc = a[0];
-	return AS_UDF_OK;
-}
-
-/* A record of the description (`before`, `after`, `record`), readable with as_udf_event_bin. */
-static inline int32_t as_udf_event_get_record(const as_udf_value* desc, const char* key, int32_t which, as_udf_event_record* out)
-{
-	return as_udf_event_side(desc, key, which, out) ? AS_UDF_OK : AS_UDF_ERR;
-}
-
-/* A short string entry of a map into `out` (NUL-terminated); "" when absent. */
-static inline void as_udf_map_str(const as_udf_value* m, const char* key, char* out, int32_t cap)
-{
-	as_udf_value v = as_udf_map_get(m, key);
-	int32_t n = v.kind == AS_UDF_STR ? as_udf_bytes(&v, out, cap - 1) : -1;
-	out[n < 0 ? 0 : n] = '\0';
-}
-
-/* A boolean entry of a map by string key; false when there is none or it is not a boolean. */
-static inline bool as_udf_map_bool(const as_udf_value* m, const char* key)
-{
-	as_udf_value v = as_udf_map_get(m, key);
-	return v.kind == AS_UDF_BOOL && v.payload != 0;
-}
-
-/* The `write` part of a before-write or after-write description. */
-typedef struct as_udf_write_info_s {
-	char source[8];      /* client, batch, udf, ops, xdr */
-	int64_t generation;  /* the generation the client asked to match, 0 for none */
-	int64_t ttl;         /* the TTL the write asked for, with a write's meaning */
-	bool create;         /* the record did not exist */
-	bool durable_delete;
-} as_udf_write_info;
-
-/* Read the `write` part of a description into `out`. AS_UDF_ERR when the description has none; a field that is
- * missing, or a string too long for its buffer, reads as 0, false or "". */
-static inline int32_t as_udf_event_write_info(const as_udf_value* desc, as_udf_write_info* out)
-{
-	as_udf_value m = as_udf_map_get(desc, "write");
-	if (m.kind != AS_UDF_MAP) return AS_UDF_ERR;
-	as_udf_map_str(&m, "source", out->source, (int32_t)sizeof(out->source));
-	out->generation = as_udf_map_int(&m, "generation", 0);
-	out->ttl = as_udf_map_int(&m, "ttl", 0);
-	out->create = as_udf_map_bool(&m, "create");
-	out->durable_delete = as_udf_map_bool(&m, "durable-delete");
-	return AS_UDF_OK;
-}
-
-/* The `delete` part of a before-delete or after-delete description: where the delete came from, and whether it
- * is durable. */
-typedef struct as_udf_delete_info_s {
-	char source[8];
-	bool durable;
-} as_udf_delete_info;
-
-/* Read the `delete` part of a description into `out`. AS_UDF_ERR when the description has none; missing fields
- * read as in as_udf_event_write_info. */
-static inline int32_t as_udf_event_delete_info(const as_udf_value* desc, as_udf_delete_info* out)
-{
-	as_udf_value m = as_udf_map_get(desc, "delete");
-	if (m.kind != AS_UDF_MAP) return AS_UDF_ERR;
-	as_udf_map_str(&m, "source", out->source, (int32_t)sizeof(out->source));
-	out->durable = as_udf_map_bool(&m, "durable");
-	return AS_UDF_OK;
-}
-
-/* The `truncate` part of a before-truncate or after-truncate description. */
-typedef struct as_udf_truncate_info_s {
-	char ns[32];
-	char set[64]; /* "" for the whole namespace */
-	int64_t lut;  /* records last updated before this (ms since the epoch) go */
-} as_udf_truncate_info;
-
-/* Read the `truncate` part of a description into `out`. AS_UDF_ERR when the description has none; missing
- * fields read as in as_udf_event_write_info. */
-static inline int32_t as_udf_event_truncate_info(const as_udf_value* desc, as_udf_truncate_info* out)
-{
-	as_udf_value m = as_udf_map_get(desc, "truncate");
-	if (m.kind != AS_UDF_MAP) return AS_UDF_ERR;
-	as_udf_map_str(&m, "namespace", out->ns, (int32_t)sizeof(out->ns));
-	as_udf_map_str(&m, "set", out->set, (int32_t)sizeof(out->set));
-	out->lut = as_udf_map_int(&m, "lut", 0);
-	return AS_UDF_OK;
-}
-
-/* The `expire` part of a before-expire description, or the `evict` part of a before-evict one. */
-typedef struct as_udf_expire_info_s {
-	int64_t void_time;       /* when the record was due, seconds since the Aerospike epoch */
-	int64_t now;
-	int64_t evict_void_time; /* before-evict only: records due before this are being evicted */
-} as_udf_expire_info;
-
-/* Read the `expire` part of a description, or its `evict` part when there is no `expire`, into `out`.
- * AS_UDF_ERR when the description has neither; a missing field reads as 0. */
-static inline int32_t as_udf_event_expire_info(const as_udf_value* desc, as_udf_expire_info* out)
-{
-	as_udf_value m = as_udf_map_get(desc, "expire");
-	if (m.kind != AS_UDF_MAP) m = as_udf_map_get(desc, "evict");
-	if (m.kind != AS_UDF_MAP) return AS_UDF_ERR;
-	out->void_time = as_udf_map_int(&m, "void-time", 0);
-	out->now = as_udf_map_int(&m, "now", 0);
-	out->evict_void_time = as_udf_map_int(&m, "evict-void-time", 0);
-	return AS_UDF_OK;
-}
-
-/* The `read` part of an after-read description: where the read came from, and what it asked for. */
-typedef struct as_udf_read_info_s {
-	char source[8];
-	bool all; /* every bin was asked for, not named ones */
-} as_udf_read_info;
-
-/* Read the `read` part of a description into `out`. AS_UDF_ERR when the description has none; missing fields
- * read as in as_udf_event_write_info. */
-static inline int32_t as_udf_event_read_info(const as_udf_value* desc, as_udf_read_info* out)
-{
-	as_udf_value m = as_udf_map_get(desc, "read");
-	if (m.kind != AS_UDF_MAP) return AS_UDF_ERR;
-	as_udf_map_str(&m, "source", out->source, (int32_t)sizeof(out->source));
-	out->all = as_udf_map_bool(&m, "all");
-	return AS_UDF_OK;
-}
-
-/* The `ship` part of a before-ship description: the name of the DC. */
-typedef struct as_udf_ship_info_s {
-	char dc[32];
-} as_udf_ship_info;
-
-/* Read the `ship` part of a description into `out`. AS_UDF_ERR when the description has none. */
-static inline int32_t as_udf_event_ship_info(const as_udf_value* desc, as_udf_ship_info* out)
-{
-	as_udf_value m = as_udf_map_get(desc, "ship");
-	if (m.kind != AS_UDF_MAP) return AS_UDF_ERR;
-	as_udf_map_str(&m, "dc", out->dc, (int32_t)sizeof(out->dc));
-	return AS_UDF_OK;
-}
-
-/* The `lifecycle` part of a node-lifecycle description. */
-typedef struct as_udf_lifecycle_info_s {
-	char phase[32]; /* service-ready, shutdown, binding-deployed */
-	char node[17];  /* this node's id, hex */
-	as_udf_value binding; /* binding-deployed: a map of event, namespace, set, name, module, function; else AS_UDF_ABSENT */
-} as_udf_lifecycle_info;
-
-/* Read the `lifecycle` part of a description into `out`. AS_UDF_ERR when the description has none; missing
- * fields read as in as_udf_event_write_info. */
-static inline int32_t as_udf_event_lifecycle_info(const as_udf_value* desc, as_udf_lifecycle_info* out)
-{
-	as_udf_value m = as_udf_map_get(desc, "lifecycle");
-	if (m.kind != AS_UDF_MAP) return AS_UDF_ERR;
-	as_udf_map_str(&m, "phase", out->phase, (int32_t)sizeof(out->phase));
-	as_udf_map_str(&m, "node", out->node, (int32_t)sizeof(out->node));
-	out->binding = as_udf_map_get(&m, "binding");
-	return AS_UDF_OK;
-}
-
-/* The `cluster` part of a cluster-change description: the description's `key`, `size` and `self` entries and
- * its list of nodes. */
-typedef struct as_udf_cluster_info_s {
-	char key[17];
-	int64_t size;
-	char self[17];
-	as_udf_value nodes; /* list of hex node ids in succession order */
-} as_udf_cluster_info;
-
-/* Read the `cluster` part of a description into `out`. AS_UDF_ERR when the description has none; missing fields
- * read as in as_udf_event_write_info, and `nodes` as AS_UDF_ABSENT. */
-static inline int32_t as_udf_event_cluster_info(const as_udf_value* desc, as_udf_cluster_info* out)
-{
-	as_udf_value m = as_udf_map_get(desc, "cluster");
-	if (m.kind != AS_UDF_MAP) return AS_UDF_ERR;
-	as_udf_map_str(&m, "key", out->key, (int32_t)sizeof(out->key));
-	as_udf_map_str(&m, "self", out->self, (int32_t)sizeof(out->self));
-	out->size = as_udf_map_int(&m, "size", 0);
-	out->nodes = as_udf_map_get(&m, "nodes");
-	return AS_UDF_OK;
-}
-
-/* The `transfer` part of a partition-transfer description: the namespace, the partition, the direction and the
- * peer. */
-typedef struct as_udf_transfer_info_s {
-	char ns[32];
-	int64_t partition;
-	bool arrived; /* true: arrived here; false: departed */
-	char peer[17];
-} as_udf_transfer_info;
-
-/* Read the `transfer` part of a description into `out`. AS_UDF_ERR when the description has none; missing
- * fields read as in as_udf_event_write_info. */
-static inline int32_t as_udf_event_transfer_info(const as_udf_value* desc, as_udf_transfer_info* out)
-{
-	as_udf_value m = as_udf_map_get(desc, "transfer");
-	if (m.kind != AS_UDF_MAP) return AS_UDF_ERR;
-	char dir[16];
-	as_udf_map_str(&m, "namespace", out->ns, (int32_t)sizeof(out->ns));
-	as_udf_map_str(&m, "direction", dir, (int32_t)sizeof(dir));
-	as_udf_map_str(&m, "peer", out->peer, (int32_t)sizeof(out->peer));
-	out->partition = as_udf_map_int(&m, "partition", 0);
-	out->arrived = dir[0] == 'a';
-	return AS_UDF_OK;
-}
-
-/* A timer handler's argument: the timer that came due. The handler runs as a record UDF on the record. */
-typedef struct as_udf_timer_info_s {
-	char name[64];
-	int64_t due;
-	int64_t now;
-} as_udf_timer_info;
-
-/* Decode a timer handler's arguments into `out`. AS_UDF_ERR when they are not a timer's description; a missing
- * field reads as 0 or "". */
-static inline int32_t as_udf_event_timer_info(int32_t args, int32_t argc, as_udf_timer_info* out)
-{
-	as_udf_value a[1];
-	if (as_udf_args(args, argc, a, 1) < 1 || a[0].kind != AS_UDF_MAP) return AS_UDF_ERR;
-	as_udf_map_str(&a[0], "name", out->name, (int32_t)sizeof(out->name));
-	out->due = as_udf_map_int(&a[0], "due", 0);
-	out->now = as_udf_map_int(&a[0], "now", 0);
-	return AS_UDF_OK;
-}
-
-/* The generic answer: a verdict word, with a code, a message, a bins map and a TTL where the kind takes
- * them (0, NULL, 0 and -1 for none). Returns the status the handler returns. */
-static inline int32_t as_udf_answer(const char* verdict, int32_t code, const char* message, int32_t bins, int64_t ttl)
-{
-	if (code == 0 && message == NULL && bins == 0 && ttl < 0) {
-		as_udf_result_str(verdict, as_udf_strlen(verdict));
-		return 0;
-	}
-	int32_t out = as_udf_map_new(5);
-	if (out <= 0) return as_udf_failf("answer: could not build the answer");
-	as_udf_map_put_str_str(out, "verdict", 7, verdict, as_udf_strlen(verdict));
-	if (code != 0) as_udf_map_put_str_int(out, "code", 4, code);
-	if (message != NULL) as_udf_map_put_str_str(out, "message", 7, message, as_udf_strlen(message));
-	if (bins != 0) as_udf_map_put_str_handle(out, "bins", 4, bins);
-	if (ttl >= 0) as_udf_map_put_str_int(out, "ttl", 3, ttl);
-	return as_udf_result_handle(out) == AS_UDF_OK ? 0 : as_udf_failf("answer: could not return the answer");
-}
-
-/* The words each kind takes. before-write: accept / reject / record; before-delete, before-truncate: allow /
- * refuse; before-expire: expire / keep (ttl); before-evict: evict / protect; after-read: unchanged / record;
- * before-ship: ship / skip / record; the after- and once-per-node events and timers: ok. */
-
-/* before-write: let the write proceed as it is. Returns the status the handler returns. */
-static inline int32_t as_udf_answer_accept(void) { return as_udf_answer("accept", 0, NULL, 0, -1); }
-/* before-write: fail the write with a result code and a NUL-terminated message (0 and NULL for none). Returns
- * the status the handler returns. */
-static inline int32_t as_udf_answer_reject(int32_t code, const char* message) { return as_udf_answer("reject", code, message, 0, -1); }
-/* before-write, after-read, before-ship: answer with this record instead. `bins` is the handle of a built map;
- * `ttl` is a TTL with a write's meaning, or -1 for none. Returns the status the handler returns. */
-static inline int32_t as_udf_answer_record(int32_t bins, int64_t ttl) { return as_udf_answer("record", 0, NULL, bins, ttl); }
-/* before-delete, before-truncate: let it proceed. Returns the status the handler returns. */
-static inline int32_t as_udf_answer_allow(void) { return as_udf_answer("allow", 0, NULL, 0, -1); }
-/* before-delete, before-truncate: refuse with a result code and a NUL-terminated message (0 and NULL for none).
- * Returns the status the handler returns. */
-static inline int32_t as_udf_answer_refuse(int32_t code, const char* message) { return as_udf_answer("refuse", code, message, 0, -1); }
-/* before-expire: let the record expire. Returns the status the handler returns. */
-static inline int32_t as_udf_answer_expire(void) { return as_udf_answer("expire", 0, NULL, 0, -1); }
-/* before-expire: keep the record, for `ttl` seconds more or, with -1, without naming a TTL. Returns the status
- * the handler returns. */
-static inline int32_t as_udf_answer_keep(int64_t ttl) { return as_udf_answer("keep", 0, NULL, 0, ttl); }
-/* before-evict: let the record be evicted. Returns the status the handler returns. */
-static inline int32_t as_udf_answer_evict(void) { return as_udf_answer("evict", 0, NULL, 0, -1); }
-/* before-evict: keep the record. Returns the status the handler returns. */
-static inline int32_t as_udf_answer_protect(void) { return as_udf_answer("protect", 0, NULL, 0, -1); }
-/* after-read: answer the read with the record as it is. Returns the status the handler returns. */
-static inline int32_t as_udf_answer_unchanged(void) { return as_udf_answer("unchanged", 0, NULL, 0, -1); }
-/* before-ship: ship the record as it is. Returns the status the handler returns. */
-static inline int32_t as_udf_answer_ship(void) { return as_udf_answer("ship", 0, NULL, 0, -1); }
-/* before-ship: do not ship the record. Returns the status the handler returns. */
-static inline int32_t as_udf_answer_skip(void) { return as_udf_answer("skip", 0, NULL, 0, -1); }
-/* The after- events, the once-per-node events and timers: answer `ok`. Returns the status the handler returns. */
-static inline int32_t as_udf_answer_done(void) { return as_udf_answer("ok", 0, NULL, 0, -1); }
-
-/* Declare an event handler of any kind: `AS_UDF_EVENT_HANDLER(name, "before-write",
- * "(before: record, after: record, write: write) -> decision") { ... }`. The kind and version go into the
- * signature `event <kind>/1 name(...)` that `event-set` checks. */
-#define AS_UDF_EVENT_HANDLER(name, kind, params)                                                        \
-	AS_UDF_SIGNATURE(name, "event " kind "/1 " #name params)                                             \
-	AS_UDF_EXPORT(name) int32_t name(int32_t args, int32_t argc)
-
-/* Declare a before-write handler: `AS_UDF_EVENT_BEFORE_WRITE(name) { ... }`, with `args` and `argc` in scope.
- * Also emits its signature. Answer with as_udf_answer_accept, as_udf_answer_reject or as_udf_answer_record. */
-#define AS_UDF_EVENT_BEFORE_WRITE(name) AS_UDF_EVENT_HANDLER(name, "before-write", "(before: record, after: record, write: write) -> decision")
-/* Declare a before-delete handler, as AS_UDF_EVENT_BEFORE_WRITE does. Answer with as_udf_answer_allow or
- * as_udf_answer_refuse. */
-#define AS_UDF_EVENT_BEFORE_DELETE(name) AS_UDF_EVENT_HANDLER(name, "before-delete", "(record: record, delete: delete) -> gate")
-/* Declare a after-write handler, as AS_UDF_EVENT_BEFORE_WRITE does. Answer with as_udf_answer_done. */
-#define AS_UDF_EVENT_AFTER_WRITE(name) AS_UDF_EVENT_HANDLER(name, "after-write", "(before: record, after: record, write: write) -> ()")
-/* Declare a after-delete handler, as AS_UDF_EVENT_BEFORE_WRITE does. Answer with as_udf_answer_done. */
-#define AS_UDF_EVENT_AFTER_DELETE(name) AS_UDF_EVENT_HANDLER(name, "after-delete", "(record: record, delete: delete) -> ()")
-/* Declare a before-expire handler, as AS_UDF_EVENT_BEFORE_WRITE does. Answer with as_udf_answer_expire or
- * as_udf_answer_keep. */
-#define AS_UDF_EVENT_BEFORE_EXPIRE(name) AS_UDF_EVENT_HANDLER(name, "before-expire", "(record: record, expire: expire) -> expiry")
-/* Declare a before-evict handler, as AS_UDF_EVENT_BEFORE_WRITE does. Answer with as_udf_answer_evict or
- * as_udf_answer_protect. */
-#define AS_UDF_EVENT_BEFORE_EVICT(name) AS_UDF_EVENT_HANDLER(name, "before-evict", "(record: record, evict: evict) -> eviction")
-/* Declare a after-read handler, as AS_UDF_EVENT_BEFORE_WRITE does. Answer with as_udf_answer_unchanged or
- * as_udf_answer_record. */
-#define AS_UDF_EVENT_AFTER_READ(name) AS_UDF_EVENT_HANDLER(name, "after-read", "(record: record, read: read) -> read-result")
-/* Declare a before-truncate handler, as AS_UDF_EVENT_BEFORE_WRITE does. Answer with as_udf_answer_allow or
- * as_udf_answer_refuse. */
-#define AS_UDF_EVENT_BEFORE_TRUNCATE(name) AS_UDF_EVENT_HANDLER(name, "before-truncate", "(truncate: truncate) -> gate")
-/* Declare a after-truncate handler, as AS_UDF_EVENT_BEFORE_WRITE does. Answer with as_udf_answer_done. */
-#define AS_UDF_EVENT_AFTER_TRUNCATE(name) AS_UDF_EVENT_HANDLER(name, "after-truncate", "(truncate: truncate) -> ()")
-/* Declare a before-ship handler, as AS_UDF_EVENT_BEFORE_WRITE does. Answer with as_udf_answer_ship,
- * as_udf_answer_skip or as_udf_answer_record. */
-#define AS_UDF_EVENT_BEFORE_SHIP(name) AS_UDF_EVENT_HANDLER(name, "before-ship", "(record: record, ship: ship) -> ship-decision")
-/* Declare a partition-transfer handler, as AS_UDF_EVENT_BEFORE_WRITE does. Answer with as_udf_answer_done. */
-#define AS_UDF_EVENT_PARTITION_TRANSFER(name) AS_UDF_EVENT_HANDLER(name, "partition-transfer", "(transfer: transfer) -> ()")
-/* Declare a cluster-change handler, as AS_UDF_EVENT_BEFORE_WRITE does. Answer with as_udf_answer_done. */
-#define AS_UDF_EVENT_CLUSTER_CHANGE(name) AS_UDF_EVENT_HANDLER(name, "cluster-change", "(cluster: cluster) -> ()")
-/* Declare a node-lifecycle handler, as AS_UDF_EVENT_BEFORE_WRITE does. Answer with as_udf_answer_done. */
-#define AS_UDF_EVENT_NODE_LIFECYCLE(name) AS_UDF_EVENT_HANDLER(name, "node-lifecycle", "(lifecycle: lifecycle) -> ()")
-/* Declare a timer handler, as AS_UDF_EVENT_BEFORE_WRITE does. Read the timer with as_udf_event_timer_info and
- * answer with as_udf_answer_done. */
-#define AS_UDF_EVENT_TIMER(name) AS_UDF_EVENT_HANDLER(name, "timer", "(timer: timer) -> ()")
 
 /* Declare an xdr-merge handler: `AS_UDF_EVENT_XDR_MERGE(name) { ... }` with `args` and `argc` in
  * scope for as_udf_event_decode. */

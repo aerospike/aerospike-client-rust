@@ -92,8 +92,7 @@ for it; nothing does that for WASM.
 ## Events
 
 An event handler is a function the server calls at a point in its own processing rather than at a
-client's request: `before-write`, `before-delete`, `before-expire`, `after-read`, `timer`, `xdr-merge` and
-ten others, each an arm of `event!`. The one with the most to say is `xdr-merge`: every incoming XDR write
+client's request. There is one event, `xdr-merge`, declared with `event!`: every incoming XDR write
 to a record that exists on this node is handed, with the current record, to the handler bound to the
 namespace or set, and the handler decides the final record.
 
@@ -114,8 +113,9 @@ event! {
 not exist. `Conflict` says what triggered the event (`Trigger::Always` or `Trigger::Conflict`), which
 policy the handler stands in for and which bins would lose under it, and `pair()` reads a bin from both
 sides into a `Both<T>` with the merges a resolver reaches for: `max`, `min`, `sum`, `merge(f)`, `newer`,
-`older`, `ordered()`. `Resolution` is `KeepLocal`, `TakeRemote`, `Policy` or `Record { bins, ttl }`, where
-the bins are the whole record; a record equal to the current one writes nothing.
+`older`, `ordered()`. `Resolution` is `KeepLocal`, `TakeRemote`, `Policy`, `Delete` or
+`Record { bins, ttl }`, where the bins are the whole record; a record equal to the current one writes
+nothing.
 
 Two rules, enforced by nothing but the two DCs disagreeing forever if they are broken. **Pure**: no clock
 (`now()` fails in a handler), no other records, no record-level LUT or generation (the payload carries
@@ -132,10 +132,9 @@ a clock) and `examples/crdt` are this, and the book's CRDT tutorial walks them i
 function `xdr-merge`, arguments `[incoming bins, incoming metadata, other bins?]`) runs a handler against
 a real record and reports `symmetric`, `idempotent` and, given the third record, `associative`.
 
-The macro exports the handler and a signature `event <kind>/1 ...`, which `event-set` checks before
+The macro exports the handler and a signature `event xdr-merge/1 ...`, which `event-set` checks before
 binding: the version is the contract this SDK was written against, and a server that does not serve it
-refuses the binding rather than handing the handler a payload it would misread. `examples/guard` is the
-worked example for the other kinds.
+refuses the binding rather than handing the handler a payload it would misread.
 
 ## The other languages
 

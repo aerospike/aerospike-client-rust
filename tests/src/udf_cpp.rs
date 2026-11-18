@@ -14,7 +14,7 @@
 //! derive the exports and signatures from a function's parameter types. `counter_cpp.wasm` drives the
 //! generated argument decoding through every rejection, and `udf_cpp.wasm`
 //! (`aerospike-udf-sdk-wasm-cpp/examples/udf`) is the SDK's fixture, one function per corner of the record
-//! API, held here to the Rust fixture tests' expectations. The guard, resolver, counter and CRDT modules
+//! API, held here to the Rust fixture tests' expectations. The resolver, counter and CRDT modules
 //! sit in the agreement tests of `events.rs` and `xdr_merge.rs`. The fixtures are built as
 //! `aerospike-udf-sdk-wasm-cpp/README.md` says.
 

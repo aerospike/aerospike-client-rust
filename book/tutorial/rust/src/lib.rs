@@ -10,13 +10,13 @@
 // License for the specific language governing permissions and limitations under
 // the License.
 
-//! The Rust side of the book's tutorials. The pages `record-udfs/tutorial.md` and `events/tutorial.md`
-//! include the code between the `ANCHOR` comments, so what the book shows is what compiles here.
+//! The Rust side of the book's tutorials. The page `record-udfs/tutorial.md` includes the code between
+//! the `ANCHOR` comments, so what the book shows is what compiles here.
 
 #![no_std]
 
 // ANCHOR: setup
-use aerospike_udf_sdk_wasm::{self as as_udf, event, export, Decision, Error, Expiry, Gate, ReadResult, Record, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, export, Error, Record, Value};
 // ANCHOR_END: setup
 
 export! {
@@ -157,85 +157,6 @@ export! {
         Ok(Value::Nil)
     }
     // ANCHOR_END: close
-}
-
-event! {
-    // ANCHOR: no_overdraft
-    on before_write
-    fn no_overdraft(_before: EventRecord, after: EventRecord, _write: Write) -> Result<Decision, Error> {
-        match after.int("balance")? {                   // None when the bin is absent or nil
-            Some(balance) if balance < 0 => {
-                Ok(Decision::Reject { code: 22, message: "balance may not go negative" })
-            }
-            _ => Ok(Decision::Accept),
-        }
-    }
-    // ANCHOR_END: no_overdraft
-
-    // ANCHOR: stamp
-    on before_write
-    fn stamp(before: EventRecord, after: EventRecord, write: Write) -> Result<Decision, Error> {
-        let out = as_udf::map(2)?;
-
-        out.insert("writes", before.int("writes")?.unwrap_or(0) + 1)?;
-        out.insert("source", write.source().as_str())?;
-
-        // Every bin the write produced, with the two above on top.
-        Ok(Decision::Record { bins: after.with_bins(out)?, ttl: None })
-    }
-    // ANCHOR_END: stamp
-
-    // ANCHOR: keep_locked
-    on before_delete
-    fn keep_locked(record: EventRecord, _delete: Delete) -> Result<Gate, Error> {
-        if matches!(record.bin("locked"), Ok(Value::Bool(true))) {
-            return Ok(Gate::Refuse { code: 22, message: "record is locked" });
-        }
-
-        Ok(Gate::Allow)
-    }
-    // ANCHOR_END: keep_locked
-
-    // ANCHOR: hide_secret
-    on after_read
-    fn hide_secret(record: EventRecord, _read: Read) -> Result<ReadResult, Error> {
-        if record.bin("secret").is_err() {
-            return Ok(ReadResult::Unchanged);
-        }
-
-        let out = as_udf::map(1)?;
-        out.insert("secret", Value::Nil)?;                 // nil in an answer: no such bin
-
-        Ok(ReadResult::Record { bins: record.with_bins(out)? })
-    }
-    // ANCHOR_END: hide_secret
-
-    // ANCHOR: keep_marked
-    on before_expire
-    fn keep_marked(record: EventRecord, _expire: Expire) -> Result<Expiry, Error> {
-        if matches!(record.bin("keep"), Ok(Value::Bool(true))) {
-            return Ok(Expiry::Keep { ttl: Some(3600) });
-        }
-
-        Ok(Expiry::Expire)
-    }
-    // ANCHOR_END: keep_marked
-
-    // ANCHOR: tick
-    on timer
-    fn tick(rec: &mut Record, timer: Timer) -> Result<(), Error> {
-        let ticks = rec.int("ticks")?.unwrap_or(0) + 1; // a timer runs on a record, which it is handed
-
-        rec.set("ticks", ticks)?;
-        rec.save()?;
-
-        if timer.is("tick") && ticks < 3 {
-            as_udf::timer_set("tick", 200)?;            // run again in 200 ms
-        }
-
-        Ok(())
-    }
-    // ANCHOR_END: tick
 }
 
 /// A `no_std` cdylib needs a panic handler; a trap is what the host reports best.

@@ -45,6 +45,22 @@ func MapGet(m Value, key string) Value
 
 MapGet is a map entry by string key; a value of Absent kind when there is none or m is not a map.
 
+#### `MapStr`
+
+```go
+func MapStr(m Value, key string) string
+```
+
+MapStr is a string entry of a map, or "" when absent.
+
+#### `MapBool`
+
+```go
+func MapBool(m Value, key string) bool
+```
+
+MapBool is a boolean entry of a map, false when absent.
+
 #### `MapInt`
 
 ```go
@@ -102,298 +118,6 @@ func EachStr(list Value, buf []byte, fn func(name []byte, v Value))
 
 EachStr calls fn with every string of a stored list, as bytes into buf.
 
-#### `TimerSet`
-
-```go
-func TimerSet(name string, delayMs int64) int32
-```
-
-TimerSet runs this set's timer handler on the record in hand delayMs from now, under name. Only from a
-record UDF or a timer handler.
-
-#### `TimerCancel`
-
-```go
-func TimerCancel(name string) int32 { return timerCancel(strptr(name), int32(len(name))) }
-```
-
-TimerCancel cancels a timer set on the record in hand.
-
-#### `EventDesc`
-
-```go
-func EventDesc(handle, argc int32, out *Value) bool
-```
-
-EventDesc is the description map of an event call; false when the arguments are not one.
-
-#### `EventSide`
-
-```go
-func EventSide(desc Value, key string, which int32, out *EventRecord) bool
-```
-
-EventSide fills an EventRecord from the description's entry (`before`, `after`, `record`, `local`,
-`remote`); which is the index the record is read by.
-
-#### `MapStr`
-
-```go
-func MapStr(m Value, key string) string
-```
-
-MapStr is a string entry of a map, or "" when absent.
-
-#### `MapBool`
-
-```go
-func MapBool(m Value, key string) bool
-```
-
-MapBool is a boolean entry of a map, false when absent.
-
-#### `WriteInfo`
-
-```go
-type WriteInfo struct {
-	Source        string // client, batch, udf, ops, xdr
-	Generation    int64  // the generation the client asked to match, 0 for none
-	TTL           int64  // the TTL the write asked for, with a write's meaning
-	Create        bool   // the record did not exist
-	DurableDelete bool
-}
-```
-
-WriteInfo describes the write a before-write or after-write handler is asked about.
-
-#### `EventWriteInfo`
-
-```go
-func EventWriteInfo(desc Value, out *WriteInfo) bool
-```
-
-EventWriteInfo reads the description's `write` entry into out. False when the description has none; a
-field the entry lacks is left at its zero value.
-
-#### `DeleteInfo`
-
-```go
-type DeleteInfo struct {
-	Source  string
-	Durable bool
-}
-```
-
-DeleteInfo describes the delete a before-delete or after-delete handler is asked about.
-
-#### `EventDeleteInfo`
-
-```go
-func EventDeleteInfo(desc Value, out *DeleteInfo) bool
-```
-
-EventDeleteInfo reads the description's `delete` entry into out. False when the description has none.
-
-#### `TruncateInfo`
-
-```go
-type TruncateInfo struct {
-	Namespace string
-	Set       string // "" for the whole namespace
-	LUT       int64  // records last updated before this (ms since the epoch) go
-}
-```
-
-TruncateInfo describes the truncate a before-truncate or after-truncate handler is asked about.
-
-#### `EventTruncateInfo`
-
-```go
-func EventTruncateInfo(desc Value, out *TruncateInfo) bool
-```
-
-EventTruncateInfo reads the description's `truncate` entry into out. False when the description has
-none.
-
-#### `ExpireInfo`
-
-```go
-type ExpireInfo struct {
-	VoidTime      int64 // when the record was due, seconds since the Aerospike epoch
-	Now           int64
-	EvictVoidTime int64 // before-evict: records due before this are being evicted
-}
-```
-
-ExpireInfo describes an expiry (before-expire) or an eviction (before-evict).
-
-#### `EventExpireInfo`
-
-```go
-func EventExpireInfo(desc Value, out *ExpireInfo) bool
-```
-
-EventExpireInfo reads the description's `expire` entry, or its `evict` entry when there is no `expire`,
-into out. False when the description has neither. EvictVoidTime is 0 when the entry carries none.
-
-#### `ReadInfo`
-
-```go
-type ReadInfo struct {
-	Source string
-	All    bool // every bin was asked for, not named ones
-}
-```
-
-ReadInfo describes the read an after-read handler is asked about.
-
-#### `EventReadInfo`
-
-```go
-func EventReadInfo(desc Value, out *ReadInfo) bool
-```
-
-EventReadInfo reads the description's `read` entry into out. False when the description has none.
-
-#### `ShipInfo`
-
-```go
-type ShipInfo struct {
-	DC string
-}
-```
-
-ShipInfo describes the shipment a before-ship handler is asked about: DC is the destination DC's name.
-
-#### `EventShipInfo`
-
-```go
-func EventShipInfo(desc Value, out *ShipInfo) bool
-```
-
-EventShipInfo reads the description's `ship` entry into out. False when the description has none.
-
-#### `LifecycleInfo`
-
-```go
-type LifecycleInfo struct {
-	Phase   string // service-ready, shutdown, binding-deployed
-	Node    string // this node's id, hex
-	Binding Value  // binding-deployed: a map of event, namespace, set, name, module, function; else Absent
-}
-```
-
-LifecycleInfo describes the phase a node-lifecycle handler is told of.
-
-#### `EventLifecycleInfo`
-
-```go
-func EventLifecycleInfo(desc Value, out *LifecycleInfo) bool
-```
-
-EventLifecycleInfo reads the description's `lifecycle` entry into out. False when the description has
-none.
-
-#### `ClusterInfo`
-
-```go
-type ClusterInfo struct {
-	Key   string
-	Size  int64
-	Self  string
-	Nodes Value // list of hex node ids in succession order
-}
-```
-
-ClusterInfo describes the cluster a cluster-change handler is told of, after a rebalance: the cluster
-key in hex, the cluster size, this node's id and the node ids.
-
-#### `EventClusterInfo`
-
-```go
-func EventClusterInfo(desc Value, out *ClusterInfo) bool
-```
-
-EventClusterInfo reads the description's `cluster` entry into out. False when the description has none.
-
-#### `TransferInfo`
-
-```go
-type TransferInfo struct {
-	Namespace string
-	Partition int64
-	Arrived   bool // true: arrived here; false: departed
-	Peer      string
-}
-```
-
-TransferInfo describes the transfer a partition-transfer handler is told of: a partition that arrived
-at this node or departed from it.
-
-#### `EventTransferInfo`
-
-```go
-func EventTransferInfo(desc Value, out *TransferInfo) bool
-```
-
-EventTransferInfo reads the description's `transfer` entry into out. False when the description has
-none. Arrived is true only for the direction `arrived`.
-
-#### `TimerInfo`
-
-```go
-type TimerInfo struct {
-	Name string
-	Due  int64
-	Now  int64
-}
-```
-
-TimerInfo is a timer handler's argument: the timer that came due. The handler runs as a record UDF, so
-it takes the *Record first, which it may write and save, and then this.
-
-#### `EventTimerInfo`
-
-```go
-func EventTimerInfo(handle, argc int32, out *TimerInfo) bool
-```
-
-EventTimerInfo reads a timer handler's arguments into out. False when the first argument is not the
-timer's description map.
-
-#### `EventSignature`
-
-```go
-func EventSignature(kind, name, params string) []byte
-```
-
-EventSignature is the signature text for a handler of `kind` with the given parameter text, for example
-EventSignature("before-write", "guard", "(before: record, after: record, write: write) -> decision").
-NUL-terminated; keep it in a package-level variable and serve it with Signature.
-
-#### `constants: ParamsBeforeWrite, ParamsBeforeDelete, ParamsAfterWrite, ParamsAfterDelete, ParamsBeforeExpire, ParamsBeforeEvict, …`
-
-```go
-const (
-	ParamsBeforeWrite       = "(before: record, after: record, write: write) -> decision"
-	ParamsBeforeDelete      = "(record: record, delete: delete) -> gate"
-	ParamsAfterWrite        = "(before: record, after: record, write: write) -> ()"
-	ParamsAfterDelete       = "(record: record, delete: delete) -> ()"
-	ParamsBeforeExpire      = "(record: record, expire: expire) -> expiry"
-	ParamsBeforeEvict       = "(record: record, evict: evict) -> eviction"
-	ParamsAfterRead         = "(record: record, read: read) -> read-result"
-	ParamsBeforeTruncate    = "(truncate: truncate) -> gate"
-	ParamsAfterTruncate     = "(truncate: truncate) -> ()"
-	ParamsBeforeShip        = "(record: record, ship: ship) -> ship-decision"
-	ParamsPartitionTransfer = "(transfer: transfer) -> ()"
-	ParamsClusterChange     = "(cluster: cluster) -> ()"
-	ParamsNodeLifecycle     = "(lifecycle: lifecycle) -> ()"
-	ParamsTimer             = "(timer: timer) -> ()"
-)
-```
-
-The parameter text of each kind, for EventSignature.
-
 #### `XdrMergeSignature`
 
 ```go
@@ -403,219 +127,32 @@ func XdrMergeSignature(name string) []byte
 XdrMergeSignature is the signature text an xdr-merge handler exports under `__udf_sig_<name>`,
 NUL-terminated. Keep it in a package-level variable and serve it with Signature.
 
-#### `Answer`
+#### `Resolution`
 
 ```go
-type Answer struct {
+type Resolution struct {
 	verdict string
-	code    int64
-	message string
 	bins    int32
 	ttl     int64
 	err     error
 }
 ```
 
-Answer is what the kinds' answer types have in common; Deliver sets it as the call's result.
-
-#### `Answer.Deliver`
-
-```go
-func (a Answer) Deliver() int32
-```
-
-Deliver sets the answer as the result and returns the status an export returns. Called by the
-generated export.
-
-#### `Answer.Verdict`
-
-```go
-func (a Answer) Verdict() string { return a.verdict }
-```
-
-Verdict is the answer's verdict word, such as "accept" or "reject".
-
-#### `Decision`
-
-```go
-type Decision struct{ Answer }
-```
-
-Decision is what a before-write handler returns.
-
-#### `Accept`
-
-```go
-func Accept() Decision { return Decision{Answer{verdict: "accept", ttl: -1}} }
-```
-
-Accept lets the write proceed as it is.
-
-#### `Reject`
-
-```go
-func Reject(code int64, message string) Decision
-```
-
-Reject fails the write with this result code (a server code 1..255; 22 is "forbidden") and message.
-
-#### `AcceptRecord`
-
-```go
-func AcceptRecord(bins *Map) Decision { return Decision{withBinsOf("record", bins, -1)} }
-```
-
-AcceptRecord writes these bins instead; a bin absent from the map, or nil, is deleted.
-
-#### `AcceptRecordTTL`
-
-```go
-func AcceptRecordTTL(bins *Map, ttl int64) Decision { return Decision{withBinsOf("record", bins, ttl)} }
-```
-
-AcceptRecordTTL is AcceptRecord with a TTL in seconds (0 for the namespace default).
-
-#### `Gate`
-
-```go
-type Gate struct{ Answer }
-```
-
-Gate is what a before-delete or before-truncate handler returns.
-
-#### `Allow`
-
-```go
-func Allow() Gate { return Gate{Answer{verdict: "allow", ttl: -1}} }
-```
-
-Allow lets the delete or truncate proceed.
-
-#### `Refuse`
-
-```go
-func Refuse(code int64, message string) Gate
-```
-
-Refuse refuses the delete or truncate with this result code and message.
-
-#### `Expiry`
-
-```go
-type Expiry struct{ Answer }
-```
-
-Expiry is what a before-expire handler returns.
-
-#### `Expire`
-
-```go
-func Expire() Expiry { return Expiry{Answer{verdict: "expire", ttl: -1}} }
-```
-
-Expire lets the record expire.
-
-#### `Keep`
-
-```go
-func Keep(ttl int64) Expiry { return Expiry{Answer{verdict: "keep", ttl: ttl}} }
-```
-
-Keep keeps the record, with this many more seconds to live.
-
-#### `Eviction`
-
-```go
-type Eviction struct{ Answer }
-```
-
-Eviction is what a before-evict handler returns.
-
-#### `Evict`
-
-```go
-func Evict() Eviction { return Eviction{Answer{verdict: "evict", ttl: -1}} }
-```
-
-Evict lets the record be evicted.
-
-#### `Protect`
-
-```go
-func Protect() Eviction { return Eviction{Answer{verdict: "protect", ttl: -1}} }
-```
-
-Protect keeps the record from this eviction.
-
-#### `ReadResult`
-
-```go
-type ReadResult struct{ Answer }
-```
-
-ReadResult is what an after-read handler returns.
-
-#### `Unchanged`
-
-```go
-func Unchanged() ReadResult { return ReadResult{Answer{verdict: "unchanged", ttl: -1}} }
-```
-
-Unchanged answers the read with the record as it is.
-
-#### `ReadRecord`
-
-```go
-func ReadRecord(bins *Map) ReadResult { return ReadResult{withBinsOf("record", bins, -1)} }
-```
-
-ReadRecord answers the read with these bins instead, whole; a nil leaves a bin out.
-
-#### `ShipDecision`
-
-```go
-type ShipDecision struct{ Answer }
-```
-
-ShipDecision is what a before-ship handler returns.
-
-#### `Ship`
-
-```go
-func Ship() ShipDecision { return ShipDecision{Answer{verdict: "ship", ttl: -1}} }
-```
-
-Ship ships the record as it is.
-
-#### `Skip`
-
-```go
-func Skip() ShipDecision { return ShipDecision{Answer{verdict: "skip", ttl: -1}} }
-```
-
-Skip does not ship the record.
-
-#### `ShipRecord`
-
-```go
-func ShipRecord(bins *Map) ShipDecision { return ShipDecision{withBinsOf("record", bins, -1)} }
-```
-
-ShipRecord ships these bins instead, whole; a nil leaves a bin out.
-
-#### `Resolution`
-
-```go
-type Resolution struct{ Answer }
-```
-
 Resolution is what an xdr-merge handler returns: keep the current record, apply the incoming write
 whole, let the namespace's policy decide, or the final record.
+
+#### `Resolution.Verdict`
+
+```go
+func (r Resolution) Verdict() string { return r.verdict }
+```
+
+Verdict is the resolution's verdict word, such as "keep-local" or "record".
 
 #### `KeepLocal`
 
 ```go
-func KeepLocal() Resolution { return Resolution{Answer{verdict: "keep-local", ttl: -1}} }
+func KeepLocal() Resolution { return Resolution{verdict: "keep-local", ttl: -1} }
 ```
 
 KeepLocal keeps the local record; the incoming write is dropped.
@@ -623,7 +160,7 @@ KeepLocal keeps the local record; the incoming write is dropped.
 #### `TakeRemote`
 
 ```go
-func TakeRemote() Resolution { return Resolution{Answer{verdict: "take-remote", ttl: -1}} }
+func TakeRemote() Resolution { return Resolution{verdict: "take-remote", ttl: -1} }
 ```
 
 TakeRemote applies the incoming write whole, as if it had won every bin.
@@ -631,7 +168,7 @@ TakeRemote applies the incoming write whole, as if it had won every bin.
 #### `Policy`
 
 ```go
-func Policy() Resolution { return Resolution{Answer{verdict: "policy", ttl: -1}} }
+func Policy() Resolution { return Resolution{verdict: "policy", ttl: -1} }
 ```
 
 Policy lets the namespace's policy decide, as it would have without the event.
@@ -639,7 +176,7 @@ Policy lets the namespace's policy decide, as it would have without the event.
 #### `DeleteRecord`
 
 ```go
-func DeleteRecord() Resolution { return Resolution{Answer{verdict: "delete", ttl: -1}} }
+func DeleteRecord() Resolution { return Resolution{verdict: "delete", ttl: -1} }
 ```
 
 DeleteRecord removes the record on this cluster. The other cluster decides for itself, so a merge that
@@ -649,7 +186,7 @@ is not this: it is the handler's failure.
 #### `Resolve`
 
 ```go
-func Resolve(bins *Map) Resolution { return Resolution{withBinsOf("record", bins, -1)} }
+func Resolve(bins *Map) Resolution { return recordOf(bins, -1) }
 ```
 
 Resolve is the final record: these bins, whole - a bin not in the map, or nil, is deleted - keeping
@@ -658,7 +195,7 @@ the TTL the incoming write asked for.
 #### `ResolveTTL`
 
 ```go
-func ResolveTTL(bins *Map, ttl int64) Resolution { return Resolution{withBinsOf("record", bins, ttl)} }
+func ResolveTTL(bins *Map, ttl int64) Resolution { return recordOf(bins, ttl) }
 ```
 
 ResolveTTL is Resolve with a TTL in seconds: 0 for the namespace default.
@@ -669,16 +206,8 @@ ResolveTTL is Resolve with a TTL in seconds: 0 for the namespace default.
 func (r Resolution) Deliver() int32
 ```
 
-Deliver sets a resolution as the result; the record form is the merge's own answer shape.
-
-#### `Done`
-
-```go
-func Done() int32 { return answer("ok", 0, "", 0, -1) }
-```
-
-Done is the answer of the kinds that answer nothing; the generated export delivers it after a handler
-returning only an error.
+Deliver sets the resolution as the result and returns the status an export returns: the verdict word,
+or the record form with its bins and TTL. Called by the generated export.
 
 #### `EventRecord.Bin`
 

@@ -86,13 +86,10 @@ at compile time, inside `javac`, before TeaVM runs.
   builds one instance, so the class's fields are the stream's state; `record` returns `void`, `end` the
   partial. `record` may take the `Record` first, as a function does; a stream's records are read-only,
   and a write to one throws. `end` runs after the last record and takes none.
-- **`@On.<Kind>("name")`** on a method: an event handler, one annotation per kind (`@On.BeforeWrite`,
-  `@On.BeforeDelete`, ..., `@On.Timer`, `@On.XdrMerge`), whose parameters are the records and the info the
-  kind hands over and whose return is the kind's answer: `Decision` for a write (`accept()`, `reject(code,
-  message)`, `record(bins)`), `Gate` for a delete or truncate, `Expiry`, `Eviction`, `ReadResult`,
-  `ShipDecision`, `Resolution` for the merge (`keepLocal()`, `takeRemote()`, `policy()`, `record(bins)`),
-  and `void` for the after- and once-per-node kinds and timers. A timer handler runs as a record UDF, so
-  it is the one handler that takes the `Record` first, before its `TimerInfo`, and may write it. A handler
+- **`@On.XdrMerge("name")`** on a method: an event handler. The server has one event kind, `xdr-merge`,
+  the merge of an incoming XDR write with the current record. The parameters are what it hands over,
+  `(EventRecord current, EventRecord incoming, Conflict conflict)`, and the return is its answer, a
+  `Resolution`: `keepLocal()`, `takeRemote()`, `policy()`, `delete()` or `record(bins[, ttl])`. A handler
   with other parameters or another return is a compile error.
 - **Instance methods.** An exported method may be an instance method; the generated class then builds one
   instance of the module's class (a no-argument constructor it can reach) and calls through it, so state
@@ -135,14 +132,14 @@ per export, and `main`. Name it as the TeaVM `mainClass`; the annotated class ne
   `addGeoJson` / `putGeoJson`, `addAll` / `putAll` from a stored collection (by position) or from a
   `java.util` one, `MapBuilder.containsKey`; written to a bin, returned as the result, nested, or handed
   back from a handler. They are builders, not collections: what went in is not read back.
-- **`Udf`**: what is not about the record: `now()`, `log`, the builder factories, `timerSet` /
-  `timerCancel`, and for a function in the raw form the `result*` calls and `fail`.
-- **Events**: `EventRecord` for a record the event hands over (the same readers as `Record`, plus
-  `binNames()`, `deletedBins()`, `binLut` / `binSrc`, and `withBins(out)` to keep the rest of a record
-  under a few decided bins), the `Events.*Info` classes for the kind's own entry, the answer types; the
-  merge through `Conflict` (`pair()` into `Pair` and `Both` with `newer`, `older`, `max`, `min`, `merge`,
-  `withNewer`; `involvesDelete`, `lost`, ...). `examples/guard` and `examples/resolver` are the worked
-  examples, held to the same behaviour as the other languages' by the client tests.
+- **`Udf`**: what is not about the record: `now()`, `log`, the builder factories, and for a function in
+  the raw form the `result*` calls and `fail`.
+- **Events**: `EventRecord` for each side of a merge (the same readers as `Record`, plus `binNames()`,
+  `deletedBins()`, `binLut` / `binSrc`, and `withBins(out)` to keep the rest of a record under a few
+  decided bins), `Resolution` for the answer, and the merge itself through `Conflict` (`pair()` into
+  `Pair` and `Both` with `newer`, `older`, `max`, `min`, `merge`, `withNewer`; `involvesDelete`, `lost`,
+  ...). `examples/resolver` is the worked example, held to the same behaviour as the other languages' by
+  the client tests.
 - **`LowLevel`**: the server's calls one at a time, for a hot path that must allocate nothing: names as
   `byte[]`, `bin(name, value)` into a `Value` the caller owns and reuses, `enter` / `next` / `close` over
   a caller-owned window, `newMap` and the `mapPut*` / `listPush*` calls over `int` handles, the record's
@@ -208,7 +205,6 @@ the call the same way, and `Udf.fail(message)` is the status-code way to say why
 - `examples/vector`: the exact top-k over packed float vectors that the Rust, C and Go SDKs also carry,
   digest for digest and bit for bit, a `@Stream` class in the raw form on `LowLevel`;
   `tests/src/udf_vector.rs` holds the five engines (Lua included) to one answer and times them.
-- `examples/guard`: before-write, before-delete, before-truncate and timer handlers.
 - `examples/resolver`: the account merge on `xdr-merge`, over `Pair` and `Both`.
 - `examples/counter`: the smallest CRDT, a grow-only counter on `xdr-merge`; read it first. The client
   test `generated_exports_decode_arguments` drives its generated exports through every rejection.

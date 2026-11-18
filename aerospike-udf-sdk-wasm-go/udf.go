@@ -23,7 +23,7 @@
 // The record a UDF is called on is a *Record, the function's first parameter when it wants one; every
 // read, write and piece of metadata of the record is a method on it, and Save writes what was staged.
 // What is left on the package is what is not about the record: the clock, the log, results, the list and
-// map builders, values, arguments, timers and the events.
+// map builders, values, arguments and the xdr-merge event.
 //
 // TinyGo brings a runtime and an allocator, so unlike the Rust SDK's default build nothing here is
 // allocation-free by construction. Package-level arrays keep a hot path allocation-free when that matters.
@@ -485,7 +485,7 @@ func Signature(text *[]byte) int32 {
 //==========================================================
 // Events.
 //
-// An event handler is a function the server calls at a point in its own processing. The first event,
+// An event handler is a function the server calls at a point in its own processing. The one event,
 // `xdr-merge`, hands it the local record and the incoming XDR write as two records (Which 0 and 1, read
 // through EventRecord, never the record imports) and a description of the conflict, and takes back a
 // verdict or the final record. Export the handler under its name and its signature under
@@ -531,6 +531,26 @@ func MapGet(m Value, key string) Value {
 		get(m, key, &v)
 	}
 	return v
+}
+
+// MapStr is a string entry of a map, or "" when absent.
+func MapStr(m Value, key string) string {
+	v := MapGet(m, key)
+	if v.Kind != KindStr {
+		return ""
+	}
+	var buf [128]byte
+	n := Bytes(v, buf[:])
+	if n < 0 {
+		return ""
+	}
+	return string(buf[:n])
+}
+
+// MapBool is a boolean entry of a map, false when absent.
+func MapBool(m Value, key string) bool {
+	v := MapGet(m, key)
+	return v.Kind == KindBool && v.Payload != 0
 }
 
 // MapInt is an integer map entry, or dflt.
@@ -647,321 +667,6 @@ func resolveRecord(bins int32, ttl int64) int32 {
 	}
 	return 0
 }
-
-//----------------------------------------------------------
-// The other events. Each handler is an exported `func name(args, argc int32) int32`; EventDesc reads the
-// description, the *Info decoders read its parts, EventRecord reads a record (Which 0 for the first record
-// the event hands over, 1 for the second), and Answer delivers the answer. Export the signature
-// EventSignature gives under `__udf_sig_<name>`.
-//
-
-//go:wasmimport aerospike timer_set
-func timerSet(name unsafe.Pointer, nameLen int32, delayMs int64) int32
-
-//go:wasmimport aerospike timer_cancel
-func timerCancel(name unsafe.Pointer, nameLen int32) int32
-
-// TimerSet runs this set's timer handler on the record in hand delayMs from now, under name. Only from a
-// record UDF or a timer handler.
-func TimerSet(name string, delayMs int64) int32 {
-	return timerSet(strptr(name), int32(len(name)), delayMs)
-}
-
-// TimerCancel cancels a timer set on the record in hand.
-func TimerCancel(name string) int32 { return timerCancel(strptr(name), int32(len(name))) }
-
-// EventDesc is the description map of an event call; false when the arguments are not one.
-func EventDesc(handle, argc int32, out *Value) bool {
-	var a [1]Value
-	if Args(handle, argc, a[:]) < 1 || a[0].Kind != KindMap {
-		return false
-	}
-	*out = a[0]
-	return true
-}
-
-// EventSide fills an EventRecord from the description's entry (`before`, `after`, `record`, `local`,
-// `remote`); which is the index the record is read by.
-func EventSide(desc Value, key string, which int32, out *EventRecord) bool {
-	return eventSide(desc, key, which, out)
-}
-
-// MapStr is a string entry of a map, or "" when absent.
-func MapStr(m Value, key string) string {
-	v := MapGet(m, key)
-	if v.Kind != KindStr {
-		return ""
-	}
-	var buf [128]byte
-	n := Bytes(v, buf[:])
-	if n < 0 {
-		return ""
-	}
-	return string(buf[:n])
-}
-
-// MapBool is a boolean entry of a map, false when absent.
-func MapBool(m Value, key string) bool {
-	v := MapGet(m, key)
-	return v.Kind == KindBool && v.Payload != 0
-}
-
-// WriteInfo describes the write a before-write or after-write handler is asked about.
-type WriteInfo struct {
-	Source        string // client, batch, udf, ops, xdr
-	Generation    int64  // the generation the client asked to match, 0 for none
-	TTL           int64  // the TTL the write asked for, with a write's meaning
-	Create        bool   // the record did not exist
-	DurableDelete bool
-}
-
-// EventWriteInfo reads the description's `write` entry into out. False when the description has none; a
-// field the entry lacks is left at its zero value.
-func EventWriteInfo(desc Value, out *WriteInfo) bool {
-	m := MapGet(desc, "write")
-	if m.Kind != KindMap {
-		return false
-	}
-	out.Source = MapStr(m, "source")
-	out.Generation = MapInt(m, "generation", 0)
-	out.TTL = MapInt(m, "ttl", 0)
-	out.Create = MapBool(m, "create")
-	out.DurableDelete = MapBool(m, "durable-delete")
-	return true
-}
-
-// DeleteInfo describes the delete a before-delete or after-delete handler is asked about.
-type DeleteInfo struct {
-	Source  string
-	Durable bool
-}
-
-// EventDeleteInfo reads the description's `delete` entry into out. False when the description has none.
-func EventDeleteInfo(desc Value, out *DeleteInfo) bool {
-	m := MapGet(desc, "delete")
-	if m.Kind != KindMap {
-		return false
-	}
-	out.Source = MapStr(m, "source")
-	out.Durable = MapBool(m, "durable")
-	return true
-}
-
-// TruncateInfo describes the truncate a before-truncate or after-truncate handler is asked about.
-type TruncateInfo struct {
-	Namespace string
-	Set       string // "" for the whole namespace
-	LUT       int64  // records last updated before this (ms since the epoch) go
-}
-
-// EventTruncateInfo reads the description's `truncate` entry into out. False when the description has
-// none.
-func EventTruncateInfo(desc Value, out *TruncateInfo) bool {
-	m := MapGet(desc, "truncate")
-	if m.Kind != KindMap {
-		return false
-	}
-	out.Namespace = MapStr(m, "namespace")
-	out.Set = MapStr(m, "set")
-	out.LUT = MapInt(m, "lut", 0)
-	return true
-}
-
-// ExpireInfo describes an expiry (before-expire) or an eviction (before-evict).
-type ExpireInfo struct {
-	VoidTime      int64 // when the record was due, seconds since the Aerospike epoch
-	Now           int64
-	EvictVoidTime int64 // before-evict: records due before this are being evicted
-}
-
-// EventExpireInfo reads the description's `expire` entry, or its `evict` entry when there is no `expire`,
-// into out. False when the description has neither. EvictVoidTime is 0 when the entry carries none.
-func EventExpireInfo(desc Value, out *ExpireInfo) bool {
-	m := MapGet(desc, "expire")
-	if m.Kind != KindMap {
-		m = MapGet(desc, "evict")
-	}
-	if m.Kind != KindMap {
-		return false
-	}
-	out.VoidTime = MapInt(m, "void-time", 0)
-	out.Now = MapInt(m, "now", 0)
-	out.EvictVoidTime = MapInt(m, "evict-void-time", 0)
-	return true
-}
-
-// ReadInfo describes the read an after-read handler is asked about.
-type ReadInfo struct {
-	Source string
-	All    bool // every bin was asked for, not named ones
-}
-
-// EventReadInfo reads the description's `read` entry into out. False when the description has none.
-func EventReadInfo(desc Value, out *ReadInfo) bool {
-	m := MapGet(desc, "read")
-	if m.Kind != KindMap {
-		return false
-	}
-	out.Source = MapStr(m, "source")
-	out.All = MapBool(m, "all")
-	return true
-}
-
-// ShipInfo describes the shipment a before-ship handler is asked about: DC is the destination DC's name.
-type ShipInfo struct {
-	DC string
-}
-
-// EventShipInfo reads the description's `ship` entry into out. False when the description has none.
-func EventShipInfo(desc Value, out *ShipInfo) bool {
-	m := MapGet(desc, "ship")
-	if m.Kind != KindMap {
-		return false
-	}
-	out.DC = MapStr(m, "dc")
-	return true
-}
-
-// LifecycleInfo describes the phase a node-lifecycle handler is told of.
-type LifecycleInfo struct {
-	Phase   string // service-ready, shutdown, binding-deployed
-	Node    string // this node's id, hex
-	Binding Value  // binding-deployed: a map of event, namespace, set, name, module, function; else Absent
-}
-
-// EventLifecycleInfo reads the description's `lifecycle` entry into out. False when the description has
-// none.
-func EventLifecycleInfo(desc Value, out *LifecycleInfo) bool {
-	m := MapGet(desc, "lifecycle")
-	if m.Kind != KindMap {
-		return false
-	}
-	out.Phase = MapStr(m, "phase")
-	out.Node = MapStr(m, "node")
-	out.Binding = MapGet(m, "binding")
-	return true
-}
-
-// ClusterInfo describes the cluster a cluster-change handler is told of, after a rebalance: the cluster
-// key in hex, the cluster size, this node's id and the node ids.
-type ClusterInfo struct {
-	Key   string
-	Size  int64
-	Self  string
-	Nodes Value // list of hex node ids in succession order
-}
-
-// EventClusterInfo reads the description's `cluster` entry into out. False when the description has none.
-func EventClusterInfo(desc Value, out *ClusterInfo) bool {
-	m := MapGet(desc, "cluster")
-	if m.Kind != KindMap {
-		return false
-	}
-	out.Key = MapStr(m, "key")
-	out.Self = MapStr(m, "self")
-	out.Size = MapInt(m, "size", 0)
-	out.Nodes = MapGet(m, "nodes")
-	return true
-}
-
-// TransferInfo describes the transfer a partition-transfer handler is told of: a partition that arrived
-// at this node or departed from it.
-type TransferInfo struct {
-	Namespace string
-	Partition int64
-	Arrived   bool // true: arrived here; false: departed
-	Peer      string
-}
-
-// EventTransferInfo reads the description's `transfer` entry into out. False when the description has
-// none. Arrived is true only for the direction `arrived`.
-func EventTransferInfo(desc Value, out *TransferInfo) bool {
-	m := MapGet(desc, "transfer")
-	if m.Kind != KindMap {
-		return false
-	}
-	out.Namespace = MapStr(m, "namespace")
-	out.Partition = MapInt(m, "partition", 0)
-	out.Arrived = MapStr(m, "direction") == "arrived"
-	out.Peer = MapStr(m, "peer")
-	return true
-}
-
-// TimerInfo is a timer handler's argument: the timer that came due. The handler runs as a record UDF, so
-// it takes the *Record first, which it may write and save, and then this.
-type TimerInfo struct {
-	Name string
-	Due  int64
-	Now  int64
-}
-
-// EventTimerInfo reads a timer handler's arguments into out. False when the first argument is not the
-// timer's description map.
-func EventTimerInfo(handle, argc int32, out *TimerInfo) bool {
-	var a [1]Value
-	if Args(handle, argc, a[:]) < 1 || a[0].Kind != KindMap {
-		return false
-	}
-	out.Name = MapStr(a[0], "name")
-	out.Due = MapInt(a[0], "due", 0)
-	out.Now = MapInt(a[0], "now", 0)
-	return true
-}
-
-// answer delivers a verdict word with a code, a message, a bins map and a TTL where the kind takes them
-// (0, "", 0 and -1 for none). Returns the status the handler returns.
-func answer(verdict string, code int64, message string, bins int32, ttl int64) int32 {
-	if code == 0 && message == "" && bins == 0 && ttl < 0 {
-		ResultStr(verdict)
-		return 0
-	}
-	out := NewMap(5)
-	if out.err != nil {
-		return Fail("answer: could not build the answer")
-	}
-	mapPutStr(out.handle, "verdict", verdict)
-	if code != 0 {
-		mapPutInt(out.handle, "code", code)
-	}
-	if message != "" {
-		mapPutStr(out.handle, "message", message)
-	}
-	if bins != 0 {
-		mapPutHandle(out.handle, "bins", bins)
-	}
-	if ttl >= 0 {
-		mapPutInt(out.handle, "ttl", ttl)
-	}
-	if resultHandle(out.handle) != OK {
-		return Fail("answer: could not return the answer")
-	}
-	return 0
-}
-
-// EventSignature is the signature text for a handler of `kind` with the given parameter text, for example
-// EventSignature("before-write", "guard", "(before: record, after: record, write: write) -> decision").
-// NUL-terminated; keep it in a package-level variable and serve it with Signature.
-func EventSignature(kind, name, params string) []byte {
-	return []byte("event " + kind + "/1 " + name + params + "\x00")
-}
-
-// The parameter text of each kind, for EventSignature.
-const (
-	ParamsBeforeWrite       = "(before: record, after: record, write: write) -> decision"
-	ParamsBeforeDelete      = "(record: record, delete: delete) -> gate"
-	ParamsAfterWrite        = "(before: record, after: record, write: write) -> ()"
-	ParamsAfterDelete       = "(record: record, delete: delete) -> ()"
-	ParamsBeforeExpire      = "(record: record, expire: expire) -> expiry"
-	ParamsBeforeEvict       = "(record: record, evict: evict) -> eviction"
-	ParamsAfterRead         = "(record: record, read: read) -> read-result"
-	ParamsBeforeTruncate    = "(truncate: truncate) -> gate"
-	ParamsAfterTruncate     = "(truncate: truncate) -> ()"
-	ParamsBeforeShip        = "(record: record, ship: ship) -> ship-decision"
-	ParamsPartitionTransfer = "(transfer: transfer) -> ()"
-	ParamsClusterChange     = "(cluster: cluster) -> ()"
-	ParamsNodeLifecycle     = "(lifecycle: lifecycle) -> ()"
-	ParamsTimer             = "(timer: timer) -> ()"
-)
 
 // XdrMergeSignature is the signature text an xdr-merge handler exports under `__udf_sig_<name>`,
 // NUL-terminated. Keep it in a package-level variable and serve it with Signature.

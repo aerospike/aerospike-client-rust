@@ -63,8 +63,8 @@ catches it and delivers its message with `Udf#fail`, the way a hand-written expo
 public final class Record implements RecordReader
 ```
 
-The record a call is about. A `@Function` method, a stream's `record` method and a timer
-handler take it as their first parameter, and everything a UDF does to the record is a method of it:
+The record a call is about. A `@Function` method and a stream's `record` method take it as
+their first parameter, and everything a UDF does to the record is a method of it:
 reading a bin, writing one, the record's metadata, saving and deleting.
 ```text
 @Function("visit")
@@ -1771,7 +1771,7 @@ public final class Udf
 
 Aerospike WASM UDFs in Java, for the server's mod-wamr engine, compiled with TeaVM's linear-memory
 WebAssembly backend. This class is what a UDF reaches for that is not about the record: the clock, the
-server's log, the builders of lists and maps, timers, and - for a function written in the raw form -
+server's log, the builders of lists and maps, and - for a function written in the raw form -
 the result and the failure. Everything about the record is a method of the `Record` a function
 takes as its first parameter.
 ```text
@@ -1858,23 +1858,6 @@ public static MapBuilder map(int capacity)
 ```
 
 As `map()`, with room for `capacity` entries to begin with.
-
-#### `Udf.timerSet`
-
-```java
-public static void timerSet(String name, long delayMs)
-```
-
-Runs this set's timer handler on the record in hand `delayMs` from now, under `name`;
-throws `UdfException` when the host refuses, as it does where there is no record to set it on.
-
-#### `Udf.timerCancel`
-
-```java
-public static boolean timerCancel(String name)
-```
-
-Cancels the timer set on the record in hand under `name`; false when the host refuses.
 
 #### `Udf.resultNil`
 
