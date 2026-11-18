@@ -31,6 +31,10 @@ extern "C" {
     fn raw_set_str(name: *const u8, name_len: u32, value: *const u8, value_len: u32) -> i32;
     #[link_name = "set_list_ints"]
     fn raw_set_list_ints(name: *const u8, name_len: u32, values: *const u8, values_sz: u32) -> i32;
+    #[link_name = "set_geojson"]
+    fn raw_set_geojson(name: *const u8, name_len: u32, value: *const u8, value_len: u32) -> i32;
+    #[link_name = "rec_update"]
+    fn raw_rec_update() -> i32;
 }
 
 as_udf::export! {
@@ -394,6 +398,23 @@ as_udf::export! {
 
         out.push(len)?;
         out.push(gone)?;
+
+        Ok(out.into_value())
+    }
+
+    /// Stage text that is not a GeoJSON document as a GeoJSON bin, save, and answer what each step said.
+    ///
+    /// Staging takes any text; it is the save that builds the bin, and the server does not build a
+    /// geospatial bin from a document it could not have been sent as a write.
+    fn bad_geo(rec: &mut Record) -> Result<Value, Error> {
+        let _ = rec;
+        let text = b"not a document";
+        let out = as_udf::list(2)?;
+
+        unsafe {
+            out.push(i64::from(raw_set_geojson(b"geo".as_ptr(), 3, text.as_ptr(), text.len() as u32)))?;
+            out.push(i64::from(raw_rec_update()))?;
+        }
 
         Ok(out.into_value())
     }

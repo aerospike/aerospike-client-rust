@@ -166,6 +166,16 @@ int32_t as_udf_resolve_policy(void) { as_udf_result_str("policy", 6); return 0; 
 Answer `policy`: the namespace's policy decides, as it would have without the event. Returns the status the
 handler returns.
 
+#### `as_udf_resolve_delete`
+
+```c
+int32_t as_udf_resolve_delete(void) { as_udf_result_str("delete", 6); return 0; }
+```
+
+Answer `delete`: the record is removed on this cluster. The other cluster decides for itself, so a merge
+that deletes has to delete on both sides for the two to agree. A record answer with no bins left in it is
+not this: it is the handler's failure. Returns the status the handler returns.
+
 #### `as_udf_resolve_record`
 
 ```c

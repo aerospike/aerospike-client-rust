@@ -636,6 +636,16 @@ func Policy() Resolution { return Resolution{Answer{verdict: "policy", ttl: -1}}
 
 Policy lets the namespace's policy decide, as it would have without the event.
 
+#### `DeleteRecord`
+
+```go
+func DeleteRecord() Resolution { return Resolution{Answer{verdict: "delete", ttl: -1}} }
+```
+
+DeleteRecord removes the record on this cluster. The other cluster decides for itself, so a merge that
+deletes has to delete on both sides for the two to agree. A record resolution with no bins left in it
+is not this: it is the handler's failure.
+
 #### `Resolve`
 
 ```go

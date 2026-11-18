@@ -78,7 +78,7 @@ each. It prefers one side, so an `xdr-merge` handler uses `Pair.WithNewer` inste
 | `//udf:on cluster-change` | `c udf.ClusterInfo` | `error` |
 | `//udf:on node-lifecycle` | `l udf.LifecycleInfo` | `error` |
 | `//udf:on timer` | `rec *udf.Record, t udf.TimerInfo`; runs as a record UDF | `error` |
-| `//udf:on xdr-merge` | `current, incoming *udf.EventRecord, c *udf.Conflict` | `udf.Resolution`: `KeepLocal()`, `TakeRemote()`, `Policy()`, `Resolve(bins)`, `ResolveTTL(bins, ttl)` |
+| `//udf:on xdr-merge` | `current, incoming *udf.EventRecord, c *udf.Conflict` | `udf.Resolution`: `KeepLocal()`, `TakeRemote()`, `Policy()`, `DeleteRecord()`, `Resolve(bins)`, `ResolveTTL(bins, ttl)` |
 
 Every answer-returning handler returns `(Answer, error)`; the others return `error`. A `record` answer
 takes a `*udf.Map`; a bin absent from it, or nil, is deleted. A TTL is in seconds, 0 for the namespace

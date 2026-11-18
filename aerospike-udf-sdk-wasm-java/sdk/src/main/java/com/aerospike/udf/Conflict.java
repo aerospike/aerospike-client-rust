@@ -124,6 +124,15 @@ public final class Conflict {
     }
 
     /**
+     * Answers {@code delete}: the record is removed on this cluster. The other cluster decides for itself,
+     * so a merge that deletes has to delete on both sides for the two to agree. Returns 0.
+     */
+    public static int delete() {
+        Udf.resultStr("delete");
+        return 0;
+    }
+
+    /**
      * The final record: {@code bins} (a built map; a bin absent or nil is deleted) and a TTL with a write's
      * meaning, or -1 to keep the one the incoming write asked for.
      */

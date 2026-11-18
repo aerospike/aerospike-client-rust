@@ -349,6 +349,16 @@ public static Resolution policy()
 
 Let the namespace's policy decide, as it would have without the event.
 
+#### `Resolution.delete`
+
+```java
+public static Resolution delete()
+```
+
+Remove the record on this cluster. The other cluster decides for itself, so a merge that deletes has
+to delete on both sides for the two to agree. A record resolution with no bins left in it is not
+this: it is the handler's failure.
+
 #### `Resolution.record`
 
 ```java
@@ -753,6 +763,15 @@ public static int policy()
 ```
 
 Answers `policy`: the namespace's policy decides, as it would have without the event. Returns 0.
+
+#### `Conflict.delete`
+
+```java
+public static int delete()
+```
+
+Answers `delete`: the record is removed on this cluster. The other cluster decides for itself,
+so a merge that deletes has to delete on both sides for the two to agree. Returns 0.
 
 #### `Conflict.record`
 

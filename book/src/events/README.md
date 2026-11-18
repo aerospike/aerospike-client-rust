@@ -39,7 +39,7 @@ event-set:event=before-write;namespace=test;set=accounts;module=guard;function=g
 | `name` | this binding among others of its kind on the scope; defaults to the function name |
 | `order` | a chain of bindings runs ascending by `order`, then by name |
 | `exp` or `ael` | a filter expression, see below |
-| `on-failure` | `policy` (default): a handler that fails is counted and the operation proceeds as it would have; `fail`: the operation fails; `abandon` (`xdr-merge` only): the write is dropped as a lost conflict |
+| `on-failure` | `policy` (default): a handler that fails is counted and the operation proceeds as it would have; `fail` (not for `xdr-merge`): the operation fails; `abandon` (`xdr-merge` only): the write is dropped as a lost conflict |
 | `trigger` | `xdr-merge` only: `always` (default), every incoming XDR write to an existing record; `conflict`, only those in which a bin would lose under bin convergence |
 | `timeout` | the handler's own budget in milliseconds, within the operation's deadline; 0 (default) means the deadline alone |
 
@@ -72,7 +72,7 @@ event=before-write:namespace=test:set=accounts:name=guard_account:order=0:module
 | `rejected` | refusals: a rejected write, a refused delete or truncate, a kept expiry, a protected eviction, a skipped shipment |
 | `record` | answers that replaced the record |
 | `policy` | answers that let the operation proceed as it would have (`accept`, `allow`, `expire`, ...), and successful runs of the events that answer nothing |
-| `keep-local`, `take-remote` | the `xdr-merge` verdicts; a `record` answer equal to the current record counts as `keep-local` |
+| `keep-local`, `take-remote`, `delete` | the `xdr-merge` verdicts; a `record` answer equal to the current record counts as `keep-local` |
 | `fallback` | handler failures and unrecognised answers |
 | `dropped` | after-events the queue had no room for |
 
@@ -232,8 +232,8 @@ its id: under bin convergence it travels with the bin LUTs; otherwise `ship-src-
 | --- | --- |
 | Records | `current` (this node's), `incoming` (as shipped) |
 | Description | `trigger` (`always`, `conflict`), `policy` (`bin-lut` under bin convergence, else `replace`), `mode` (`live`, `dry-run`), `lost` (the incoming bin names that would lose under bin convergence); each side with `ttl`, `src-id`, `bins`, `deleted` (bin deletes or tombstones) and, where kept, `bin-luts` and `bin-srcs`; `current` adds `tombstone`, `incoming` adds `partial` (the write carries only changed bins) and `deleted-record` |
-| Answers | `record {bins, ttl}`; `keep-local`; `take-remote` (the incoming bins over the current record); `policy` (what would have happened without the event) |
-| On failure | `policy`, `fail`, and for this kind only `abandon`: the write is dropped and the source told `lost-conflict`, which it counts as success, so a deterministic failure is not retried forever |
+| Answers | `record {bins, ttl}`; `keep-local`; `take-remote` (the incoming bins over the current record); `delete` (the record is removed on this cluster); `policy` (what would have happened without the event) |
+| On failure | `policy`, and for this kind only `abandon`: the write is dropped and the source told `lost-conflict`, which it counts as success. `fail` is refused for this kind: the source does not send a failed write again, so it would drop the write as `abandon` does and report it as lost |
 | One binding per scope | yes |
 
 A `record` answer equal to the current record writes nothing and answers the source `lost-conflict`,
@@ -242,6 +242,21 @@ it is not shipped back, and under bin convergence is stamped bin by bin with the
 LUTs and the source id that wrote it, which is what lets the other DC, merging the mirror pair, land on
 the same record. The record-level `gen` and `lut` are 0 on both sides and `now` fails in the handler:
 each cluster sets its own, and a merge that reads them cannot converge.
+
+**What makes an answer a failure.** The answer is checked before it is taken, and what is wrong with it
+is the handler's failure, which `on-failure` decides. A `record` answer fails when its `bins` is not a
+map; when a bin's name is not a string of 1 to 15 bytes with no zero byte in it; when its `ttl` is not an
+integer in a write's range; when a GeoJSON value is not a document the server would accept as a write;
+when its values alone are larger than the namespace's `max-record-size`; and **when it has no bins
+left** - an empty map, or one whose values are all nil. A record of nothing is not a deletion: a merge
+that built nothing by mistake must not remove what it merged. A handler that means to remove the record
+answers `delete`. The removal happens on the cluster that merged and on no other, so a merge that
+deletes has to reach the same answer on both sides.
+
+**Masking.** A handler is given both records' bins as they are stored, with no masking rule applied,
+whoever wrote the incoming record. It has to: it merges real values and what it returns is stored. A
+handler bound to a masked set is therefore code that sees that set unmasked, and binding one is an
+operator's decision to trust it with that.
 
 A merge must be **pure** (no clock, no other records) and **convergent**: DC A merges (A's record, B's
 write) while DC B merges (B's record, A's write), in any order and any number of times, and both must land

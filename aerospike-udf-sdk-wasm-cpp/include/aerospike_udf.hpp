@@ -1574,7 +1574,11 @@ struct Resolution : Answer {
 	static Resolution take_remote() { return Resolution{{"take-remote"}}; }
 	// Leaves the outcome to the policy the handler stands in for.
 	static Resolution policy() { return Resolution{{"policy"}}; }
+	// Removes the record on this cluster. The other cluster decides for itself, so a merge that deletes
+	// has to delete on both sides for the two to agree. (`delete` is a keyword, as for Record.)
+	static Resolution delete_record() { return Resolution{{"delete"}}; }
 	// The final record: these bins, whole; a bin absent or nil is deleted. ttl -1 keeps the incoming write's.
+	// At least one bin must be left: a record of no bins is the handler's failure, not a deletion.
 	static Resolution record(const Map& bins, int64_t ttl = -1) { return Resolution{{"record", 0, nullptr, bins.handle(), ttl, bins.error()}}; }
 
 	// Delivers the resolution and returns the status the export returns: the verdict word, or for record()

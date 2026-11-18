@@ -663,6 +663,10 @@ static inline int32_t as_udf_resolve_take_remote(void) { as_udf_result_str("take
 /* Answer `policy`: the namespace's policy decides, as it would have without the event. Returns the status the
  * handler returns. */
 static inline int32_t as_udf_resolve_policy(void) { as_udf_result_str("policy", 6); return 0; }
+/* Answer `delete`: the record is removed on this cluster. The other cluster decides for itself, so a merge
+ * that deletes has to delete on both sides for the two to agree. A record answer with no bins left in it is
+ * not this: it is the handler's failure. Returns the status the handler returns. */
+static inline int32_t as_udf_resolve_delete(void) { as_udf_result_str("delete", 6); return 0; }
 
 /* The final record: `bins` (a built map; a bin absent or nil is deleted) and a TTL with a write's meaning,
  * or -1 to keep the one the incoming write asked for. */

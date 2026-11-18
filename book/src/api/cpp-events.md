@@ -503,6 +503,15 @@ static Resolution policy()
 
 Leaves the outcome to the policy the handler stands in for.
 
+#### `Resolution::delete_record`
+
+```cpp
+static Resolution delete_record()
+```
+
+Removes the record on this cluster. The other cluster decides for itself, so a merge that deletes
+has to delete on both sides for the two to agree. (`delete` is a keyword, as for Record.)
+
 #### `Resolution::record`
 
 ```cpp
@@ -510,6 +519,7 @@ static Resolution record(const Map& bins, int64_t ttl = -1)
 ```
 
 The final record: these bins, whole; a bin absent or nil is deleted. ttl -1 keeps the incoming write's.
+At least one bin must be left: a record of no bins is the handler's failure, not a deletion.
 
 #### `Resolution::deliver`
 

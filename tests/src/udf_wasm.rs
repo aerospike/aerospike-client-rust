@@ -663,6 +663,42 @@ async fn a_wasm_udf_reads_what_it_staged_and_what_it_read_before() {
     );
 }
 
+/// Text that is not a GeoJSON document is not saved as a GeoJSON bin.
+///
+/// The save used to build the bin anyway - a geospatial bin with nothing in it to index - and say so in
+/// the server's log. It fails now, as the same document sent as a client's write always has.
+#[aerospike_macro::test]
+async fn a_wasm_udf_cannot_save_a_geojson_bin_that_is_not_geojson() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("wasm_badgeo_{}", common::rand_str(6));
+
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+
+    client.put(&write, &key, &[as_bin!("n", 1)]).await.unwrap();
+
+    if let Err(reason) = register(&client, package, &key).await {
+        skipped("a_wasm_udf_cannot_save_a_geojson_bin_that_is_not_geojson", &reason);
+        return;
+    }
+
+    let result = client.execute_udf(&write, &key, package, "bad_geo", &[]).await;
+
+    // Staging is accepted (0) and the save is refused (-4); a UDF whose write failed fails as a whole
+    // on some paths, which says the same thing.
+    match &result {
+        Ok(value) => assert_eq!(value, &Some(as_list!(0, -4)), "the save of a bad document should be refused"),
+        Err(e) => assert!(format!("{e:?}").to_lowercase().contains("geo"), "an unexpected failure: {e:?}"),
+    }
+
+    let record = client.get(&ReadPolicy::default(), &key, Bins::All).await.unwrap();
+
+    assert!(!record.bins.contains_key("geo"), "the bad document was stored: {:?}", record.bins);
+    assert_eq!(record.bins.get("n"), Some(&Value::Int(1)), "and the record is as it was");
+}
+
 /// A stream UDF cannot write to the records it is shown, by any host call.
 #[aerospike_macro::test]
 async fn a_wasm_stream_udf_cannot_write() {

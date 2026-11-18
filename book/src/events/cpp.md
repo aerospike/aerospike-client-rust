@@ -62,7 +62,7 @@ answers for the map being built. It prefers one side, so an `xdr-merge` handler 
 | `UDF_ON_CLUSTER_CHANGE` | `cluster` (`ClusterInfo`) | `void` |
 | `UDF_ON_NODE_LIFECYCLE` | `lifecycle` (`LifecycleInfo`) | `void` |
 | `UDF_ON_TIMER` | `record` (`udf::Record&`, writable), `timer` (`TimerInfo`); runs as a record UDF | `void` |
-| `UDF_ON_XDR_MERGE` | `current, incoming` (`EventRecord`), `conflict` (`Conflict`) | `Resolution`: `keep_local()`, `take_remote()`, `policy()`, `record(bins[, ttl])` |
+| `UDF_ON_XDR_MERGE` | `current, incoming` (`EventRecord`), `conflict` (`Conflict`) | `Resolution`: `keep_local()`, `take_remote()`, `policy()`, `delete_record()`, `record(bins[, ttl])` |
 
 A `record` answer takes a `udf::Map`; a bin absent from it, or nil, is deleted, and the map's own error, if
 a put was refused, fails the call. A TTL is in seconds, 0 for the namespace default. The info structs are

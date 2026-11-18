@@ -147,15 +147,10 @@ enum Want {
     Taken,
     /// The handler's own record: exactly these bin names.
     Record(&'static [&'static str]),
-    /// The handler failed, so the binding's `on-failure` decides: `policy` takes, `abandon` keeps and the
-    /// source counts a success, and `fail` fails the write. **A failed write is not sent again**: the
-    /// source counts it as abandoned, so under `fail` too the record is kept, and the two clusters differ
-    /// until the record is next written.
+    /// The handler failed, so the binding's `on-failure` decides: `policy` takes, and `abandon` keeps and
+    /// the source counts a success. There is no third way: failing the write would not get it sent again.
     Failed,
-    /// A well-formed record that the namespace cannot store: the write fails whatever the binding says,
-    /// and the source does not retry it.
-    Refused,
-    /// A record with no bins left in it, which is no record: it is deleted on the receiving side.
+    /// The handler answered `delete`: the record is removed on the receiving side.
     Gone,
 }
 
@@ -188,6 +183,8 @@ const CASES: &[(&str, i64, Want)] = &[
     ("m-keep", 0, Want::Kept),
     ("m-take", 0, Want::Taken),
     ("m-take-ttl", 100, Want::Taken),
+    ("delete", 0, Want::Gone),
+    ("m-delete", 0, Want::Gone),
     // A record.
     ("r-ok", 7, Want::Record(&["merged"])),
     ("r-kinds", 0, Want::Record(&["i", "d", "t", "s", "e", "b", "g", "l", "m"])),
@@ -197,7 +194,6 @@ const CASES: &[(&str, i64, Want)] = &[
     ("r-ttl", 0xffff_ffff, Want::Record(&["merged"])),
     ("r-deep", 30, Want::Record(&["merged"])),
     ("r-deep", 60, Want::Record(&["merged"])),
-    ("r-geo-bad", 0, Want::Record(&["merged"])),
     ("r-big", 64, Want::Record(&["merged"])),
     ("r-many", 100, Want::Record(&[])),
     // A record that cannot be stored as it is given.
@@ -211,10 +207,13 @@ const CASES: &[(&str, i64, Want)] = &[
     ("r-noname", 0, Want::Failed),
     ("r-intkey", 0, Want::Failed),
     ("r-many", 40000, Want::Failed),
-    ("r-big", 20000, Want::Refused),
-    // A record of nothing.
-    ("r-empty", 0, Want::Gone),
-    ("r-nil", 0, Want::Gone),
+    // Larger than the namespace stores as a record, and a document the server would not take as a write.
+    ("r-big", 20000, Want::Failed),
+    ("r-geo-bad", 0, Want::Failed),
+    // A record of nothing is not a deletion: a merge that built nothing by mistake must not remove what
+    // it merged. `delete` is how a handler says it.
+    ("r-empty", 0, Want::Failed),
+    ("r-nil", 0, Want::Failed),
 ];
 
 fn describe(found: &Option<HashMap<String, Value>>) -> String {
@@ -299,7 +298,6 @@ async fn answers_under(policy: &str) {
             Want::Taken => "taken",
             Want::Record(_) => "record",
             Want::Failed => failed,
-            Want::Refused => "kept",
             Want::Gone => "gone",
         };
         // A write that is still on its way reads as "kept"; give each the time to be anything else.
@@ -326,15 +324,12 @@ async fn answers_under(policy: &str) {
 
     assert_eq!(unbind(&c2, set_name).await, "ok");
 
-    // What the source was told. A kept record and an abandoned merge are successes to it; a failed write
-    // is one it gives up on, and it gives up on exactly the ones the handler failed.
+    // What the source was told: nothing it had to give up on. A kept record and an abandoned merge are
+    // successes to it, and no answer a handler can give fails the write.
     let abandoned = xdr_stat(&c1, "abandoned").await - abandoned_before;
-    let n_failed = CASES.iter().filter(|(_, _, w)| *w == Want::Failed).count() as u64;
-    let n_refused = CASES.iter().filter(|(_, _, w)| *w == Want::Refused).count() as u64;
-    let expected_abandoned = if policy == "fail" { n_failed + n_refused } else { n_refused };
 
-    if abandoned != expected_abandoned {
-        wrong.push(format!("the source abandoned {abandoned} writes, not {expected_abandoned}"));
+    if abandoned != 0 {
+        wrong.push(format!("the source abandoned {abandoned} writes"));
     }
 
     // And shipping goes on: a record written now arrives.
@@ -368,9 +363,34 @@ async fn every_answer_under_on_failure_abandon() {
     answers_under("abandon").await;
 }
 
+/// `on-failure=fail` is not offered for this event. A merge that fails the write does not get the write
+/// another try - the cluster that sent it gives up - so it would keep the local record exactly as
+/// `abandon` does, and say something else.
 #[aerospike_macro::test]
-async fn every_answer_under_on_failure_fail() {
-    answers_under("fail").await;
+async fn on_failure_fail_is_not_offered() {
+    let Some((c1, c2)) = clients("on_failure_fail_is_not_offered").await else { return };
+    let set_name = &format!("nofail_{}", common::rand_str(6));
+    let package = &format!("merge_probe_{}", common::rand_str(6));
+
+    register(&c2, PROBE, package).await;
+
+    let command = format!("event-set:event=xdr-merge;namespace=test;set={set_name};module={package};function=probe;on-failure=fail");
+    let answer = format!("{:?}", c2.info(&AdminPolicy::default(), &[command.as_str()]).await);
+
+    assert!(
+        answer.contains("on-failure=fail is not for xdr-merge") && !answer.contains("\"ok\""),
+        "binding with on-failure=fail: {answer}"
+    );
+    assert!(!info(&c2, "event-list").await.contains(&format!(":set={set_name}:")), "and nothing is bound");
+
+    for policy in ["policy", "abandon"] {
+        bind(&c2, set_name, package, "probe", &format!(";on-failure={policy}")).await;
+        assert_eq!(unbind(&c2, set_name).await, "ok");
+    }
+
+    alive(&c1, &c2, "at the end").await;
+
+    let _ = c2.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
 }
 
 //==========================================================
@@ -516,6 +536,18 @@ async fn a_merge_fires_once_and_is_not_shipped_back() {
 
     let _ = c2.delete(&write, &kept).await;
 
+    // A handler that answers `delete` to a write removes the record where it merged, and is counted.
+    let doomed = as_key!("test", set_name.as_str(), 3);
+
+    c2.put(&write, &doomed, &[as_bin!("base", 1)]).await.unwrap();
+    assert!(wait_for(&c1, &doomed, SHIP_LAG, |b| b.is_some()).await.is_some(), "created on dc1 by shipping");
+    c1.put(&write, &doomed, &[as_bin!("do", "delete")]).await.unwrap();
+    assert!(wait_for(&c2, &doomed, SHIP_LAG, |b| b.is_none()).await.is_none(), "`delete` did not remove the record");
+    assert_eq!(counter(&c2, set_name, "delete").await, 1, "and it is counted as a delete");
+    assert!(bins(&c1, &doomed).await.is_some(), "on the cluster that merged, and no other");
+
+    let _ = c1.delete(&write, &doomed).await;
+
     alive(&c1, &c2, "at the end").await;
 
     for c in [&c1, &c2] {
@@ -581,8 +613,8 @@ async fn the_binding_changes_while_merges_run() {
                 0 => format!("event-set:event=xdr-merge;namespace=test;set={set_name};module={package};function=probe;on-failure=abandon;timeout=100"),
                 1 => format!("event-remove:event=xdr-merge;namespace=test;set={set_name}"),
                 2 => format!("event-set:event=xdr-merge;namespace=test;set={set_name};module={package};function=probe;on-failure=policy;timeout=100"),
-                3 => format!("event-set:event=xdr-merge;namespace=test;set={set_name};module={other};function=merge_counter;on-failure=fail"),
-                4 => format!("event-set:event=xdr-merge;namespace=test;set={set_name};module={package};function=probe;on-failure=fail;timeout=100"),
+                3 => format!("event-set:event=xdr-merge;namespace=test;set={set_name};module={other};function=merge_counter;on-failure=abandon"),
+                4 => format!("event-set:event=xdr-merge;namespace=test;set={set_name};module={package};function=probe;on-failure=policy"),
                 _ => String::new(),
             };
 

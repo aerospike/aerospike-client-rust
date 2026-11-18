@@ -475,7 +475,13 @@ pub enum Resolution {
     TakeRemote,
     /// Let the namespace's policy decide, as it would have without the event.
     Policy,
-    /// The final record: these bins, whole - a bin not in the map, or set to nil, is deleted - and
+    /// The final record is no record: it is removed on this cluster. The other cluster decides for itself,
+    /// so a merge that deletes has to delete on both sides for the two to agree.
+    Delete,
+    /// The final record: these bins, whole - a bin not in the map, or set to nil, is deleted. **At least
+    /// one bin must be left**: a record of no bins is the handler's failure, not a deletion, so that a
+    /// merge which built nothing by mistake does not remove what it merged. Say [`Resolution::Delete`]
+    /// to remove the record. With the bins comes
     /// optionally a TTL with a write's meaning: seconds, `0` for the namespace default,
     /// `u32::MAX` for never expire, subject to the namespace's rule on TTL reductions. `None` keeps the
     /// TTL the incoming write asked for.

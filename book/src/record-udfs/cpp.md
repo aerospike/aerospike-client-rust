@@ -308,6 +308,11 @@ bit-identical with the Rust, C, Go and Java modules. The record half:
 {{#include ../../../aerospike-udf-sdk-wasm-cpp/examples/vector/vector.cpp:388:407}}
 ```
 
+> **A GeoJSON bin is saved only if it is GeoJSON.** Staging takes any text; the save builds the
+> bin, and fails if the text is not a document the server would accept as a write.
+> And after any save that fails, a list, map or blob value read before it answers an error: read
+> the bin again.
+
 ## API reference
 
 Generated from `aerospike-udf-sdk-wasm-cpp/include/aerospike_udf.hpp`: the public types, their methods and

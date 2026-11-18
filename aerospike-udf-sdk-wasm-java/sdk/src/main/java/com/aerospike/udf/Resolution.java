@@ -37,6 +37,15 @@ public final class Resolution extends Answer {
     }
 
     /**
+     * Remove the record on this cluster. The other cluster decides for itself, so a merge that deletes has
+     * to delete on both sides for the two to agree. A record resolution with no bins left in it is not
+     * this: it is the handler's failure.
+     */
+    public static Resolution delete() {
+        return new Resolution("delete", 0, -1);
+    }
+
+    /**
      * The final record: these bins, whole - a bin not in the map, or set to nil, is deleted - keeping the
      * TTL the incoming write asked for.
      */

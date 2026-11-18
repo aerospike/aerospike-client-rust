@@ -59,7 +59,7 @@ the record's values. `as_udf_map_get`, `as_udf_map_int`, `as_udf_map_str`, `as_u
 | `cluster-change` | `AS_UDF_EVENT_CLUSTER_CHANGE` | `as_udf_event_cluster_info` | `_done` |
 | `node-lifecycle` | `AS_UDF_EVENT_NODE_LIFECYCLE` | `as_udf_event_lifecycle_info` | `_done` |
 | `timer` | `AS_UDF_EVENT_TIMER` | `as_udf_event_timer_info(args, argc, &t)` | `_done`; runs as a record UDF |
-| `xdr-merge` | `AS_UDF_EVENT_XDR_MERGE` | `as_udf_event_decode` (`conflict_trigger` for `trigger=conflict`); `as_udf_cmp_stored`, `as_udf_stored_bytes` for a data-only tie-break | `as_udf_resolve_keep_local`, `_take_remote`, `_policy`, `_record` |
+| `xdr-merge` | `AS_UDF_EVENT_XDR_MERGE` | `as_udf_event_decode` (`conflict_trigger` for `trigger=conflict`); `as_udf_cmp_stored`, `as_udf_stored_bytes` for a data-only tie-break | `as_udf_resolve_keep_local`, `_take_remote`, `_policy`, `_delete`, `_record` |
 
 `as_udf_answer(verdict, code, message, bins, ttl)` is the general form behind the helpers;
 `AS_UDF_EVENT_HANDLER(name, "kind", "(params) -> answer")` the general form behind the declarations.

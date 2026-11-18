@@ -187,12 +187,13 @@ unsafe fn answer() -> i32 {
         b"m-verdict-nul" => answer_map(text(b"record\0x"), one_bin(val_int(1)), 0),
 
         // A verdict by name: the three there are, and ones there are not.
-        b"policy" | b"keep-local" | b"take-remote" | b"record" | b"banana" | b"" | b"KEEP-LOCAL" => {
+        b"policy" | b"keep-local" | b"take-remote" | b"delete" | b"record" | b"banana" | b"" | b"KEEP-LOCAL" => {
             result_str(what.as_ptr(), what.len() as u32);
         }
         b"m-keep" => answer_map(text(b"keep-local"), one_bin(val_int(1)), 0),
         b"m-take" => answer_map(text(b"take-remote"), 0, 0),
         b"m-take-ttl" => answer_map(text(b"take-remote"), 0, val_int(n)),
+        b"m-delete" => answer_map(text(b"delete"), one_bin(val_int(1)), 0),
 
         // A record, with bins that are not bins.
         b"r-nobins" => answer_map(text(b"record"), 0, 0),

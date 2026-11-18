@@ -58,7 +58,7 @@ returns `Decision.record(after.withBins(out))`. It prefers one side, so an `xdr-
 | `@On.ClusterChange` | `Events.ClusterInfo cluster` | `void` |
 | `@On.NodeLifecycle` | `Events.LifecycleInfo lifecycle` | `void` |
 | `@On.Timer` | `Record rec, Events.TimerInfo timer`; runs as a record UDF | `void` |
-| `@On.XdrMerge` | `EventRecord current, EventRecord incoming, Conflict conflict` | `Resolution`: `keepLocal()`, `takeRemote()`, `policy()`, `record(bins[, ttl])` |
+| `@On.XdrMerge` | `EventRecord current, EventRecord incoming, Conflict conflict` | `Resolution`: `keepLocal()`, `takeRemote()`, `policy()`, `delete()`, `record(bins[, ttl])` |
 
 A `record` answer takes a `MapBuilder`; a bin absent from it, or nil, is deleted. A TTL is in seconds, 0
 for the namespace default. For `xdr-merge`, `conflict.conflictTrigger` says the binding has

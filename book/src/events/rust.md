@@ -56,7 +56,7 @@ resolved in your module, so they are not imported; the answer enums you construc
 | `on cluster_change` | `fn f(cluster: Cluster) -> Result<(), Error>` | `Ok(())` |
 | `on node_lifecycle` | `fn f(phase: Lifecycle) -> Result<(), Error>` | `Ok(())` |
 | `on timer` | `fn f(timer: Timer) -> Result<(), Error>` | `Ok(())`; runs as a record UDF |
-| `on xdr_merge` | `fn f(local: EventRecord, remote: EventRecord, conflict: Conflict) -> Result<Resolution, Error>` | `Resolution::KeepLocal`, `TakeRemote`, `Policy`, `Record { bins, ttl }` |
+| `on xdr_merge` | `fn f(local: EventRecord, remote: EventRecord, conflict: Conflict) -> Result<Resolution, Error>` | `Resolution::KeepLocal`, `TakeRemote`, `Policy`, `Delete`, `Record { bins, ttl }` |
 
 ## Records
 

@@ -412,6 +412,11 @@ through `params`. The record half:
 {{#include ../../../aerospike-udf-sdk-wasm-java/examples/vector/src/main/java/com/aerospike/udf/examples/Vector.java:record}}
 ```
 
+> **A GeoJSON bin is saved only if it is GeoJSON.** Staging takes any text; the save builds the
+> bin, and fails if the text is not a document the server would accept as a write.
+> And after any save that fails, a list, map or blob value read before it answers an error: read
+> the bin again.
+
 ## API reference
 
 Generated from the SDK's classes: every public item of the record UDF surface, with its comment. The
