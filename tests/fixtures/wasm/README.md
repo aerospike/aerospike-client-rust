@@ -31,6 +31,15 @@ pin down what the record's verbs do (a save with nothing staged, removing a bin,
 deleting the record) and the two host calls added with them (one element of a stored list by index, and a
 built map asked for a key). Each language's suite has the two tests that call them.
 
+The Rust fixture alone has `staged_read`, `stale_read` and the `poke` aggregation, which call host calls
+directly to do what the SDK's types do not allow: read a bin after staging a value over it, keep a value
+across a write to its bin, and write from a stream. They test the server, not the SDK.
+
+`merge_probe.wasm` is `aerospike-udf-sdk-wasm/examples/merge_probe`: an `xdr-merge` handler that gives
+whatever answer the incoming record's `do` bin names, well-formed or not, and signature exports that are
+not signatures. `tests/src/xdr_merge_limits.rs` uses it between two clusters; it is a test instrument, not
+an example of a merge.
+
 The functions the tests call — `abi_probe`, `increment`, `add_all`, `describe`, `nested`, `sum_list`,
 `packed_probe`, `cursor_probe`, `write_lists`, `last_of_doc`, `copy_vals`, `relist`, `copy_hll`,
 `geo_roundtrip`, `hog`, `echo`, `tag`, `bulk`, `copy_list`, and the `sum`/`stats` aggregations — are what makes

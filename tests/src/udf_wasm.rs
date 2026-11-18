@@ -611,6 +611,130 @@ async fn a_wasm_udf_cannot_outgrow_its_memory_limit() {
 /// module cannot take part in it. Through a plain `query()` with an aggregate function set, the caller instead
 /// receives the per-node partials and combines them, which is what this does.
 ///
+/// A read after a write the call has not saved, and a value kept across a write to its bin.
+///
+/// Both went wrong in the server, not the SDK. A list, map or blob bin was read from where it is stored
+/// without asking whether a value was staged over it, so a UDF that wrote such a bin and read it back
+/// got what was there before. And a string bin is handed to a guest as a position in a value the record
+/// owns, which the record frees when the bin is written again: the guest's handle then read freed memory.
+#[aerospike_macro::test]
+async fn a_wasm_udf_reads_what_it_staged_and_what_it_read_before() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("wasm_staged_{}", common::rand_str(6));
+
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+    let text = "a string long enough to live on the heap, and to be noticed if it changes";
+
+    client
+        .put(
+            &write,
+            &key,
+            &[
+                as_bin!("sl", as_list!(1, 2, 3)),
+                as_bin!("sm", as_map!("k" => 1)),
+                as_bin!("s", text),
+            ],
+        )
+        .await
+        .unwrap();
+
+    if let Err(reason) = register(&client, package, &key).await {
+        skipped("a_wasm_udf_reads_what_it_staged_and_what_it_read_before", &reason);
+        return;
+    }
+
+    let result = client.execute_udf(&write, &key, package, "staged_read", &[]).await.unwrap();
+
+    assert_eq!(
+        result,
+        Some(as_list!(1, 1)),
+        "a list of one staged over a list of three reads as one, and a removed map is gone"
+    );
+
+    let result = client.execute_udf(&write, &key, package, "stale_read", &[]).await.unwrap();
+
+    assert_eq!(
+        result,
+        Some(Value::Bool(true)),
+        "a string read before its bin was written 64 times over is still that string"
+    );
+}
+
+/// A stream UDF cannot write to the records it is shown, by any host call.
+#[aerospike_macro::test]
+async fn a_wasm_stream_udf_cannot_write() {
+    use futures::StreamExt;
+
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("wasm_poke_{}", common::rand_str(6));
+
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+
+    client.put(&write, &key, &[as_bin!("n", 1)]).await.unwrap();
+
+    if let Err(reason) = register(&client, package, &key).await {
+        skipped("a_wasm_stream_udf_cannot_write", &reason);
+        return;
+    }
+
+    const RECORDS: i64 = 20;
+
+    for i in 2..=RECORDS {
+        let key = as_key!(namespace, set_name, i);
+
+        client.put(&write, &key, &[as_bin!("n", i)]).await.unwrap();
+    }
+
+    let mut statement = Statement::new(namespace, set_name, Bins::All);
+
+    statement.set_aggregate_function(package, "poke", &[]);
+
+    let records = client
+        .query(&QueryPolicy::default(), PartitionFilter::all(), statement)
+        .await
+        .unwrap();
+
+    let mut refused = 0i64;
+    let mut written = 0i64;
+    let mut stream = records.into_stream();
+
+    while let Some(record) = stream.next().await {
+        let record = record.unwrap();
+
+        for (_, value) in record.bins.iter() {
+            let pairs: Vec<(Value, Value)> = match value {
+                Value::HashMap(map) => map.clone().into_iter().collect(),
+                Value::OrderedMap(map) => map.clone().into_iter().collect(),
+                Value::SortedMap(map) => map.clone().into_iter().collect(),
+                _ => continue,
+            };
+
+            for (name, n) in pairs {
+                if let (Value::String(name), Value::Int(n)) = (&name, &n) {
+                    match name.as_str() {
+                        "refused" => refused += n,
+                        "written" => written += n,
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    assert_eq!(written, 0, "a stream UDF wrote to a record");
+    assert_eq!(refused, RECORDS, "every record's write is refused");
+
+    let record = client.get(&ReadPolicy::default(), &key, Bins::All).await.unwrap();
+
+    assert!(!record.bins.contains_key("poked"), "and no record gained a bin");
+}
+
 #[aerospike_macro::test]
 async fn a_wasm_stream_udf_aggregates() {
     use futures::StreamExt;

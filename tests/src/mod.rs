@@ -74,6 +74,7 @@ mod udf_wasm_sandbox;
 mod value_order;
 mod vector;
 mod xdr_merge;
+mod xdr_merge_limits;
 
 pub(crate) async fn count_results(rs: Arc<Recordset>) -> usize {
     let mut count = 0;

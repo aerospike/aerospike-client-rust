@@ -18,6 +18,21 @@ use alloc::{format, string::String, vec::Vec};
 
 use aerospike_udf_sdk_wasm::{self as as_udf, Args, Coll, Error, Level, List, Record, Str, Value};
 
+// The host calls themselves, for the three functions below that do what the SDK's own types do not allow:
+// keep a value across a write to its bin, and write from a stream. A module is not obliged to use the
+// SDK, so the server has to be right about both without it.
+#[link(wasm_import_module = "aerospike")]
+extern "C" {
+    #[link_name = "bin_value"]
+    fn raw_bin_value(name: *const u8, name_len: u32, out: *mut u8, out_cap: u32) -> i32;
+    #[link_name = "cursor_bytes_at"]
+    fn raw_cursor_bytes_at(source: i32, at: u32, out: *mut u8, out_cap: u32) -> i32;
+    #[link_name = "set_str"]
+    fn raw_set_str(name: *const u8, name_len: u32, value: *const u8, value_len: u32) -> i32;
+    #[link_name = "set_list_ints"]
+    fn raw_set_list_ints(name: *const u8, name_len: u32, values: *const u8, values_sz: u32) -> i32;
+}
+
 as_udf::export! {
     /// Read a bin, write it back incremented, and return the new value.
     ///
@@ -360,6 +375,66 @@ as_udf::export! {
         Ok(out.into_value())
     }
 
+    /// What a read gives after a write the call has not saved: the staged value, never the stored one.
+    ///
+    /// `sl` is stored as a list of three and `sm` as a map. The answer is how long `sl` reads once a list
+    /// of one is staged over it, and whether `sm` is gone once it is removed.
+    fn staged_read(rec: &mut Record) -> Result<Value, Error> {
+        let one = as_udf::list(1)?;
+
+        one.push(9i64)?;
+        rec.set("sl", one)?;
+
+        let len = rec.list("sl")?.map_or(-1, |l| l.len() as i64);
+
+        rec.remove("sm")?;
+
+        let gone = i64::from(rec.map("sm")?.is_none());
+        let out = as_udf::list(2)?;
+
+        out.push(len)?;
+        out.push(gone)?;
+
+        Ok(out.into_value())
+    }
+
+    /// A string read before its bin is written again, read once more afterwards: whether it is still the
+    /// string it was.
+    ///
+    /// Through the host calls directly, because the SDK's borrows do not allow the order. The bin is
+    /// written many times over, so that whatever let go of the first value has had every chance to see
+    /// its memory used again.
+    fn stale_read(rec: &mut Record) -> Result<Value, Error> {
+        let _ = rec;
+        let mut value = [0u8; 16];
+        let mut before = [0u8; 96];
+        let mut after = [0u8; 96];
+
+        unsafe {
+            if raw_bin_value(b"s".as_ptr(), 1, value.as_mut_ptr(), 16) != 0 {
+                return Err(Error::Custom("no string bin `s`"));
+            }
+
+            let mut payload = [0u8; 8];
+
+            payload.copy_from_slice(&value[8..16]);
+
+            let payload = i64::from_le_bytes(payload);
+            let (source, at) = ((payload >> 32) as i32, payload as u32);
+            let n = raw_cursor_bytes_at(source, at, before.as_mut_ptr(), 96);
+
+            for i in 0..64u8 {
+                let text = [b'A' + (i % 26); 80];
+
+                raw_set_str(b"s".as_ptr(), 1, text.as_ptr(), 80);
+            }
+
+            let m = raw_cursor_bytes_at(source, at, after.as_mut_ptr(), 96);
+
+            Ok(Value::Bool(n > 0 && n == m && before == after))
+        }
+    }
+
     /// Two bins written through the packed writers: no value built per element.
     fn write_lists(rec: &mut Record) -> Result<Value, Error> {
         rec.set_ints("w", &[5, -1, 1 << 40])?;
@@ -551,6 +626,10 @@ static mut SEEN: i64 = 0;
 /// The running total for `sumnested`.
 static mut NESTED: i64 = 0;
 
+/// What `poke` was answered: refusals, and anything else.
+static mut REFUSED: i64 = 0;
+static mut WRITTEN: i64 = 0;
+
 as_udf::stream! {
     /// Sum bin `n` across every record the query matched.
     ///
@@ -592,6 +671,38 @@ as_udf::stream! {
 
             unsafe {
                 out.insert("count", SEEN)?.insert("sum", TOTAL)?;
+            }
+
+            Ok(out.into_value())
+        }
+    }
+
+    /// Try to write to every record a query matched, and count what the server said.
+    ///
+    /// A stream's record is the query's, and read-only. This goes by the one host call that does not use
+    /// the record's own write hook, which is the one that has to refuse of its own accord.
+    fn poke {
+        record(rec: &Record) -> Result<(), Error> {
+            let _ = rec;
+            let values = [1i64, 2, 3];
+            let rc = unsafe { raw_set_list_ints(b"poked".as_ptr(), 5, values.as_ptr().cast(), 24) };
+
+            unsafe {
+                if rc == -4 {
+                    REFUSED += 1;
+                } else {
+                    WRITTEN += 1;
+                }
+            }
+
+            Ok(())
+        }
+
+        end() -> Result<Value, Error> {
+            let out = as_udf::map(2)?;
+
+            unsafe {
+                out.insert("refused", REFUSED)?.insert("written", WRITTEN)?;
             }
 
             Ok(out.into_value())
