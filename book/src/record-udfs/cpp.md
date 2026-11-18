@@ -58,7 +58,7 @@ on the `UDF_FUNCTION` line.
 Everything about the record is a method on it. The reading methods are `const` and the writing ones are
 not, so a function that takes `const udf::Record&` cannot change the record. Only the SDK makes a
 `Record`, and it cannot be copied, so a read-only record stays read-only. What is left in the `udf`
-namespace is what is not about the record: `now()`, `log`, `fail`, `result_of`, the `Map` and `List`
+namespace is what is not about the record: `now()`, `log`, `fail`, `result`, the `Map` and `List`
 builders.
 
 `udf::Record` and the `udf::EventRecord` an event handler is given both derive from `udf::ReadRecord`,
@@ -110,7 +110,7 @@ arguments once and keep them, as the vector example does.
 Bins are addressed by name; there is no bin object. `rec.bin("name")` returns a `Result<Value>` whose
 error names the bin: the form for a bin that must be there. Chain the value's own reader when the kind
 must hold too, `UDF_TRY(UDF_TRY(rec.bin("balance")).as_int())`. The typed readers are for a bin that may
-not be there: `rec.as_int("name")`, `as_double`, `as_bool`, `as_text<N>`, `as_bytes<N>` and the untyped
+not be there: `rec.as_int("name")`, `as_double`, `as_bool`, `as_string<N>`, `as_blob<N>` and the untyped
 `get` each return an `Optional`, empty for a bin that is absent or nil, and for the typed ones also for a
 bin of another kind. The `Or` forms take a default instead: `int_or("name", 0)`, `double_or`, `bool_or`.
 `has("name")` says whether the bin is there, `floats_into("name", ptr, n)` reads a blob of floats into
@@ -139,7 +139,7 @@ UDF_FUNCTION(withdraw, udf::Result<int64_t>, udf::Record& rec, int64_t amount)
 read from a record, which goes back by position, keeping its kind). `set_blob("name", ptr, n)` stages
 bytes and `set_geojson("name", doc)` a document kept as the geospatial kind, not a string.
 `rec.remove("name")` stages the removal of a bin. Setting `udf::Value::nil()` does the same, since a bin
-cannot hold nil, and there is no `set_null`. `rec.set_ttl(seconds)` sets the TTL of the write. Each
+cannot hold nil, and there is no `set_nil`. `rec.set_ttl(seconds)` sets the TTL of the write. Each
 returns a `Result<void>`.
 
 **Nothing staged reaches the server until `rec.save()`.** A function that returns without saving has
@@ -180,8 +180,8 @@ UDF_FUNCTION(close_account, udf::Result<void>, udf::Record& rec)
 ## Values and ranges
 
 Every read is a `udf::Value`, the C struct with accessors: `kind()` (a `udf::Kind`: `Int`, `Str`, `List`,
-`Map`, `GeoJson`, `Absent`, ...), the `is_int()` ... `is_null()` tests, `as_int()`, `as_double()`,
-`as_bool()`, `as_text<N>()`, `as_bytes<N>()`, `floats_into()`, each a `Result`. A stored string or
+`Map`, `GeoJson`, `Absent`, ...), the `is_int()` ... `is_nil()` tests (and `is_null()`, true of a nil and of an absent value alike), `as_int()`, `as_double()`,
+`as_bool()`, `as_string<N>()`, `as_blob<N>()`, `floats_into()`, each a `Result`. A stored string or
 collection is held by position, never copied until asked.
 
 A stored list or map answers without a walk: `size()` and `empty()`; on a map `get(key)` for an entry by
@@ -238,7 +238,7 @@ needs a string from the host reads it into a `Text<N>` of the size it allows.
 `udf::Map m(capacity)` and `udf::List l(capacity)` build a map or list on the host, to be written to a
 bin, returned as the result, nested, or handed back from an event handler. `put(key, v)` and `add(v)` are
 overloaded for every kind (`int64_t`, `double`, `bool`, `StrView`, a literal, `const Value&`, `const Map&`,
-`const List&`); `put` takes a `StrView` or an `int64_t` key; `put_null`, `add_null`, `put_blob`,
+`const List&`); `put` takes a `StrView` or an `int64_t` key; `put_nil`, `add_nil`, `put_blob`,
 `put_geojson`, `add_geojson`; `put_all(stored)` and `add_all(stored)` copy a stored collection by position;
 `put_entries` and `add_values` take an array of values in one import. They chain, each is one import, and
 the first refusal is kept and answered by `error()` or `result()`, which a UDF returning the collection
@@ -269,8 +269,8 @@ UDF_FUNCTION(describe, udf::Result<udf::Map>, const udf::Record& rec)
 On the record: `rec.exists()`, `rec.generation()`, `rec.ttl()` (0 for a record that does not expire),
 `rec.last_update_time()`, `rec.size()` (the stored size in bytes), `rec.bin_count()`, `rec.set_name()` (a
 `Text<64>`, empty when the record is in no set), `rec.key_type()` with `rec.key_int()` and
-`rec.key_bytes(buf, cap)` for the user key of a record written with `send_key`, and
-`rec.digest(buf, cap)`. Not on the record: `udf::now()`, the server's clock, which an event handler may
+`rec.key_bytes(buf, cap)` for the user key of a record written with `send_key`, `rec.key(buf, cap)` for
+that key as one `Value`, and `rec.digest(buf, cap)`. Not on the record: `udf::now()`, the server's clock, which an event handler may
 not read, and `udf::log(level, message)`.
 
 ## The low-level tier

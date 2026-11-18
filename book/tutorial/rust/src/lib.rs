@@ -50,7 +50,7 @@ export! {
     // ANCHOR: rename
     fn rename(rec: &mut Record, name: &str) -> Result<Value, Error> {
         let mut buf = [0u8; 64];
-        let owner = rec.bin("owner")?.text()?;          // the string, still in the record
+        let owner = rec.bin("owner")?.string()?;        // the string, still in the record
 
         if owner.as_str(&mut buf)? == name {            // its bytes, copied into `buf`
             return Ok(Value::Bool(false));

@@ -7,7 +7,8 @@
 //! `purgedBefore`, and, once a purge has dropped a marker, the version floor `versionFloor`. Both data
 //! centres take writes; when a write from one arrives at the other, `xdr_merge` decides each device from
 //! values in the data alone - the version, whether it is a removal, and finally the stored bytes - so both
-//! sides compute the same record without a clock, a LUT or a writer id, in any delivery order.
+//! sides compute the same record without a clock, a last update time or a writer id, in any delivery
+//! order.
 //!
 //! Bindings:
 //!
@@ -177,13 +178,13 @@ event! {
     /// wins per device, and the result is the sorted live list plus the markers still inside the purge
     /// horizon. Every other bin is the incoming one's, as XDR would have applied it.
     on xdr_merge
-    fn xdr_merge(current: EventRecord, incoming: EventRecord, _conflict: Conflict) -> Result<Resolution, Error> {
+    fn xdr_merge(current: EventRecord, incoming: EventRecord) -> Result<Resolution, Error> {
         let out = as_udf::map(8)?;
 
         // Other bins: as XDR does today.
         let mut nbuf = [0u8; 32];
 
-        for name in incoming.bins().iter() {
+        for name in incoming.bin_names().iter() {
             let name = name?;
             let name = name.as_str(&mut nbuf)?;
 

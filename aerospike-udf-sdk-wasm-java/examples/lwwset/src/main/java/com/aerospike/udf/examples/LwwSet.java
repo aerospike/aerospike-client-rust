@@ -12,7 +12,6 @@
 
 package com.aerospike.udf.examples;
 
-import com.aerospike.udf.Conflict;
 import com.aerospike.udf.EventRecord;
 import com.aerospike.udf.Function;
 import com.aerospike.udf.ListBuilder;
@@ -89,7 +88,7 @@ public final class LwwSet {
             }
 
             for (MapValue.Entry e : map) {
-                offer(e.getKey().asString(), e.getValue().asLong());
+                offer(e.getKey().asString(), e.getValue().asInt());
             }
         }
 
@@ -109,7 +108,7 @@ public final class LwwSet {
 
     /** The merge: for every tag of each map, the later stamp. Every other bin is the incoming one's. */
     @On.XdrMerge("merge_lwwset")
-    static Resolution mergeLwwSet(EventRecord current, EventRecord incoming, Conflict conflict) {
+    static Resolution mergeLwwSet(EventRecord current, EventRecord incoming) {
         MapBuilder out = Udf.map(2);
 
         for (String bin : new String[] {"addedAt", "removedAt"}) {

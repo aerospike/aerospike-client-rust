@@ -22,7 +22,7 @@ import com.aerospike.udf.Record;
 public final class Counter {
     @Function("increment")
     static long increment(Record rec, long by) {
-        long n = rec.getLong("n", 0) + by;
+        long n = rec.getInt("n", 0) + by;
 
         rec.set("n", n);
         rec.save();
@@ -39,7 +39,7 @@ return as the result; the `__udf_sig_increment` export, whose text `fn increment
 derives from the parameter types; and the module's `main`, which TeaVM wants as an entry point. Nothing in
 the generated class is yours to edit, and nothing in yours refers to it except the build.
 
-`rec` is the record the call is about. `getLong("n", 0)` reads bin `n` as an integer, 0 when it is
+`rec` is the record the call is about. `getInt("n", 0)` reads bin `n` as an integer, 0 when it is
 absent. `set` stages a write and `save()` writes what is staged, creating the record if it does not
 exist. Every call that can fail throws `UdfException`, which the generated export turns into the failure
 the client sees.
@@ -121,38 +121,39 @@ takes a `RecordReader` reads a bin the same way in a UDF and in a handler:
 
 ```java
 static long balanceOf(RecordReader rec) {
-    return rec.getLong("balance", 0);
+    return rec.getInt("balance", 0);
 }
 ```
 
 ## Reading
 
 `rec.get("name")` returns the bin as a `Value`, or `null` when the record has no such bin. The typed
-readers say what the UDF expects: `getLong`, `getDouble`, `getBoolean`, `getString`, `getBytes` (a string
+readers say what the UDF expects: `getInt`, `getDouble`, `getBool`, `getString`, `getBlob` (a string
 or blob's bytes), `getList`, `getMap`, and `getFloats(name, float[])` for a blob of 32-bit floats read
 straight into the array. Each comes in two forms. Without a default the bin must be there:
-`rec.getLong("n")` throws `UdfException` naming the bin when it is absent. With a default,
-`rec.getLong("n", 0)` answers the default for an absent bin. Both throw for a bin of another kind.
-`rec.hasBin("name")` says whether there is one.
+`rec.getInt("n")` throws `UdfException` naming the bin when it is absent. With a default,
+`rec.getInt("n", 0)` answers the default for an absent bin. Both throw for a bin of another kind.
+`rec.has("name")` says whether there is one, and `rec.bin("name")` is `get` for a bin that has to be
+there: it throws when the record has no such bin.
 
 A `Value` is one value, read-only. `kind()` gives its kind as one of `Value.NIL`, `BOOL`, `INT`,
 `DOUBLE`, `STR`, `BLOB`, `LIST`, `MAP`, `GEOJSON`, `HLL`, `ABSENT`. The tests `isInt()`, `isString()`,
-`isList()`, `isMap()`, `isNull()` and the rest say the same one at a time. The readers `asLong()`,
-`asDouble()`, `asBoolean()`, `asString()`, `asBytes()`, `asList()`, `asMap()` each throw when the kind is
+`isList()`, `isMap()`, `isNull()` and the rest say the same one at a time. The readers `asInt()`,
+`asDouble()`, `asBool()`, `asString()`, `asBlob()`, `asList()`, `asMap()` each throw when the kind is
 another. A stored string or collection is held by position and is not copied until it is asked for.
 
 ## Lists and maps
 
 A list the server holds is a `ListValue` and a map is a `MapValue`. Both read the data where it is.
 
-A `ListValue` has `size()`, `isEmpty()`, `get(index)`, the typed `getLong(index)`, `getString(index)` and
+A `ListValue` has `size()`, `isEmpty()`, `get(index)`, the typed `getInt(index)`, `getString(index)` and
 so on, and `contains(text)` or `contains(number)`. It is an `Iterable<Value>`. `get(index)` is one call
 to the server, which steps over the elements before it without decoding them. An index past the end
 throws.
 
 A `MapValue` has `get(key)`, which answers `null` for a key the map does not have, `containsKey(key)`,
-`size()`, `isEmpty()`, and the typed readers in the same two forms as the record's: `getLong(key)` throws
-when there is no such key, `getLong(key, dflt)` answers the default. A key is a `String` or a `long`. It
+`size()`, `isEmpty()`, and the typed readers in the same two forms as the record's: `getInt(key)` throws
+when there is no such key, `getInt(key, dflt)` answers the default. A key is a `String` or a `long`. It
 is an `Iterable<MapValue.Entry>`, and an entry has `getKey()` and `getValue()`. A wrong kind throws
 `UdfException` naming the key or the index.
 
@@ -162,7 +163,7 @@ static long sumList(Record rec) {
     long total = 0;
 
     for (Value v : rec.getList("l")) {
-        total += v.asLong();        // throws, and fails the call, on anything but an int
+        total += v.asInt();         // throws, and fails the call, on anything but an int
     }
 
     return total;
@@ -173,7 +174,7 @@ static long maxCount(Record rec) {
     long max = 0;
 
     for (MapValue.Entry e : rec.getMap("counts")) {
-        max = Math.max(max, e.getValue().asLong());   // e.getKey() is the site
+        max = Math.max(max, e.getValue().asInt());    // e.getKey() is the site
     }
 
     return max;
@@ -181,7 +182,7 @@ static long maxCount(Record rec) {
 
 @Function("limit_for")
 static long limitFor(Record rec, String kind) {
-    return rec.getMap("limits").getLong(kind, 0);     // 0 when the map has no such key
+    return rec.getMap("limits").getInt(kind, 0);      // 0 when the map has no such key
 }
 ```
 
@@ -197,8 +198,8 @@ element. So `break` and `return` hold nothing:
 @Function("first_over")
 static long firstOver(Record rec, long limit) {
     for (Value v : rec.getList("l")) {
-        if (v.asLong() > limit) {
-            return v.asLong();
+        if (v.asInt() > limit) {
+            return v.asInt();
         }
     }
 
@@ -241,7 +242,7 @@ bin, with no value built per element. They take effect at once, without a save.
 `Udf.list()` and `Udf.map()` start a list or map on the server and return a `ListBuilder` or a
 `MapBuilder`. A built collection is written to a bin, returned as the result, nested in another
 collection, or handed back from an event handler. `add` and `put` take every kind (`long`, `double`,
-`boolean`, `String`, `byte[]` as a blob, `Value`, another builder). `addNull` and `putNull` add a nil,
+`boolean`, `String`, `byte[]` as a blob, `Value`, another builder). `addNil` and `putNil` add a nil,
 `addGeoJson` and `putGeoJson` a GeoJSON. A map's `put` takes a `String` or a `long` key. They chain, each
 is one call to the server, and each throws when the server refuses it. `addAll(stored)` and
 `putAll(stored)` copy a stored list or map by position. `MapBuilder.containsKey(key)` asks a map being
@@ -331,7 +332,7 @@ static long peek() {
         return 0;
     }
 
-    return SLOT.asLong();
+    return SLOT.asInt();
 }
 ```
 
@@ -370,7 +371,7 @@ public static int udf_increment(int args, int argc) {
         int n = Params.args(args, argc, ARGS_udf_increment);
         Params.arity("increment", 1, argc);
         Udf.resultInt(Counter.increment(Params.record(),
-                Params.int64(ARGS_udf_increment, n, 0, "increment", "by")));
+                Params.argInt(ARGS_udf_increment, n, 0, "increment", "by")));
         return 0;
     }
     catch (UdfException e) {

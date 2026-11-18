@@ -47,7 +47,7 @@ UDF_FUNCTION(withdraw, udf::Result<int64_t>, udf::Record& rec, int64_t amount)
 // ANCHOR: rename
 UDF_FUNCTION(rename, udf::Result<bool>, udf::Record& rec, udf::Text<64> name)
 {
-	udf::Text<64> owner = UDF_TRY(UDF_TRY(rec.bin("owner")).as_text<64>());   // copied out of the record
+	udf::Text<64> owner = UDF_TRY(UDF_TRY(rec.bin("owner")).as_string<64>());   // copied out of the record
 
 	if (owner == name.view()) return false;
 

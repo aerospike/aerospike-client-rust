@@ -51,9 +51,9 @@ pub enum Value<'a> {
     Bool(bool),
     Int(i64),
     Double(f64),
-    Str(Text<'a>),
+    String(Text<'a>),
     Blob(Blob<'a>),
-    /// A GeoJson document, which reads and writes as its text. Distinct from [`Value::Str`] on purpose: the
+    /// A GeoJson document, which reads and writes as its text. Distinct from [`Value::String`] on purpose: the
     /// particle type is what makes a bin geospatially indexable, and writing a document back as a string
     /// would silently make it unqueryable.
     GeoJson(Text<'a>),
@@ -156,10 +156,10 @@ pub fn bool(&self) -> Result<bool, Error>
 
 The boolean, or `Err(WrongType)` for any other kind.
 
-#### `Value<'a>::text`
+#### `Value<'a>::string`
 
 ```rust
-pub fn text(&self) -> Result<Text<'a>, Error>
+pub fn string(&self) -> Result<Text<'a>, Error>
 ```
 
 The text of a string or a GeoJson document.
@@ -204,6 +204,71 @@ pub fn is_nil(&self) -> bool
 ```
 
 Whether this is [`Value::Nil`].
+
+#### `Value<'a>::is_int`
+
+```rust
+pub fn is_int(&self) -> bool
+```
+
+Whether this is an integer.
+
+#### `Value<'a>::is_double`
+
+```rust
+pub fn is_double(&self) -> bool
+```
+
+Whether this is a double.
+
+#### `Value<'a>::is_bool`
+
+```rust
+pub fn is_bool(&self) -> bool
+```
+
+Whether this is a boolean.
+
+#### `Value<'a>::is_string`
+
+```rust
+pub fn is_string(&self) -> bool
+```
+
+Whether this is a string. A GeoJson document is not one, though it reads as text.
+
+#### `Value<'a>::is_blob`
+
+```rust
+pub fn is_blob(&self) -> bool
+```
+
+Whether this is a blob. An HLL is not one.
+
+#### `Value<'a>::is_list`
+
+```rust
+pub fn is_list(&self) -> bool
+```
+
+Whether this is a list.
+
+#### `Value<'a>::is_map`
+
+```rust
+pub fn is_map(&self) -> bool
+```
+
+Whether this is a map.
+
+#### `Value<'a>::is_stored`
+
+```rust
+pub fn is_stored(&self) -> bool
+```
+
+Whether this is a string, blob, GeoJson document, HLL, list or map the host holds, as opposed to
+a scalar or something the guest built.
 
 #### `Value<'_>::stored_bytes`
 
@@ -692,6 +757,14 @@ pub fn get(&self, name: &str) -> Result<Option<Value<'static>>, Error>
 
 A bin that may be absent: `None` when it is absent or nil.
 
+#### `Record::has`
+
+```rust
+pub fn has(&self, name: &str) -> bool
+```
+
+Whether the record has the bin.
+
 #### `Record::int`
 
 ```rust
@@ -699,6 +772,31 @@ pub fn int(&self, name: &str) -> Result<Option<i64>, Error>
 ```
 
 An integer bin, or `None` when the bin is absent or nil. A bin of another kind is `Err(WrongType)`.
+
+#### `Record::int_or`
+
+```rust
+pub fn int_or(&self, name: &str, default: i64) -> Result<i64, Error>
+```
+
+An integer bin, or `default` when it is absent or nil. A bin of another kind is still
+`Err(WrongType)`.
+
+#### `Record::double_or`
+
+```rust
+pub fn double_or(&self, name: &str, default: f64) -> Result<f64, Error>
+```
+
+A double bin, or `default` when it is absent or nil.
+
+#### `Record::bool_or`
+
+```rust
+pub fn bool_or(&self, name: &str, default: bool) -> Result<bool, Error>
+```
+
+A boolean bin, or `default` when it is absent or nil.
 
 #### `Record::double`
 
@@ -716,10 +814,10 @@ pub fn bool(&self, name: &str) -> Result<Option<bool>, Error>
 
 A boolean bin, or `None` when absent or nil.
 
-#### `Record::text`
+#### `Record::string`
 
 ```rust
-pub fn text(&self, name: &str) -> Result<Option<Text<'static>>, Error>
+pub fn string(&self, name: &str) -> Result<Option<Text<'static>>, Error>
 ```
 
 A string bin's text, or `None` when absent or nil.
@@ -778,6 +876,24 @@ pub fn set_value(&mut self, name: &str, value: &Value<'_>) -> Result<(), Error>
 ```
 
 [`set`](Record::set) for a value held by reference.
+
+#### `Record::set_blob`
+
+```rust
+pub fn set_blob(&mut self, name: &str, value: &[u8]) -> Result<(), Error>
+```
+
+Write bytes to a bin as a blob. Staged, like [`set`](Record::set), which does the same for a
+`&[u8]`; this form says the kind at the call.
+
+#### `Record::set_geojson`
+
+```rust
+pub fn set_geojson(&mut self, name: &str, value: &str) -> Result<(), Error>
+```
+
+Write a GeoJson document to a bin from its text. Staged, like [`set`](Record::set). A document
+written with `set` from a `&str` would be a string, which no geospatial index reads.
 
 #### `Record::remove`
 
@@ -1130,10 +1246,10 @@ pub fn now() -> Result<i64, Error>
 The server's clock, in milliseconds since the Unix epoch. Refused in an event handler, where a decision
 that reads the clock cannot converge across clusters; a handler takes its times from the data.
 
-#### `log_at`
+#### `log`
 
 ```rust
-pub fn log_at(level: Level, message: &str)
+pub fn log(level: Level, message: &str)
 ```
 
 Write a line to the server log, under the UDF context.
@@ -1399,14 +1515,6 @@ pub fn literal(&mut self, text: &str) -> i32
 
 Serve `text` as the signature, whatever it says.
 
-#### `Signature::event`
-
-```rust
-pub fn event(&mut self, kind: &str, name: &str) -> i32
-```
-
-`event xdr-merge/1 name(local: record, remote: record, conflict: conflict) -> resolution`
-
 #### `impl Default for Signature`
 
 ```rust
@@ -1486,15 +1594,19 @@ The server has one event, `xdr-merge`, and the macro one arm for it, of exactly 
 ```ignore
 event! {
 on xdr_merge
-fn resolve_account(local: EventRecord, remote: EventRecord, conflict: Conflict) -> Result<Resolution, Error> {
+fn resolve_account(current: EventRecord, incoming: EventRecord) -> Result<Resolution, Error> {
+let pair = Pair::of(current, incoming);
 let out = as_udf::map(2)?;
-out.insert("visits", conflict.pair().int("visits")?.max())?;
-Ok(Resolution::Record { bins: local.with_bins(out)?, ttl: None })
+out.insert("visits", pair.int("visits")?.max())?;
+Ok(Resolution::Record { bins: pair.with_newer(out)?, ttl: None })
 }
 }
 ```
 
-The parameter types are part of the arm, so a handler with another signature does not compile. The macro
+The handler takes the record this cluster holds and the one that arrived over XDR, in that order, and
+nothing else: what there is to know about the merge is asked of the record it is true of
+([`EventRecord::is_delete`], [`EventRecord::is_tombstone`] and their neighbours). The parameter types
+are part of the arm, so a handler with another signature does not compile. The macro
 exports the handler under its name, which `event-set` refers to, and `__udf_sig_<name>` reading
 `event xdr-merge/1 ...`, which `event-set` checks before binding: the number is the version of the
 contract this SDK was written against, and a server that does not serve it refuses the binding.

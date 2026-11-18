@@ -157,9 +157,9 @@ carries it out when the call returns, so inside the call the record still answer
 | --- | --- | --- | --- | --- | --- |
 | Take the record | `rec: &mut Record` or `&Record`, first | `rec *udf.Record`, first | implied | `udf::Record& rec` or `const udf::Record&`, first | `Record rec`, first |
 | Read a bin of any kind | `rec.bin(name)` | `rec.Get(name)` | `as_udf_rec_bin(name, &v)` | `rec.get(name)` | `rec.get(name)` |
-| Integer with a default | `rec.int(name)?.unwrap_or(d)` | `rec.Int(name)`, test the bool | test `v.kind` | `rec.int_or(name, d)` | `rec.getLong(name, d)` |
-| Required, typed | `rec.bin(name)?` then `.int()?` `.double()?` `.bool()?` `.text()?` | `rec.Bin(name)` then `Int()` `Float64()` `Bool()` `Str()` | test `v.kind`, read `v.payload` | `rec.bin(name)` then `as_int()` `as_double()` `as_bool()` `as_text<N>()` | `rec.getLong(name)` `getDouble` `getBoolean` `getString` |
-| Write a bin | `rec.set(name, v)` | `rec.Set(name, v)` | `as_udf_rec_set_int` `as_udf_rec_set_str` ... | `rec.set(name, v)` | `rec.set(name, v)` |
+| Integer with a default | `rec.int_or(name, d)?` | `rec.IntOr(name, d)` | `as_udf_rec_int_or(name, d)` | `rec.int_or(name, d)` | `rec.getInt(name, d)` |
+| Required, typed | `rec.bin(name)?` then `.int()?` `.double()?` `.bool()?` `.string()?` | `rec.Bin(name)` then `Int()` `Double()` `Bool()` `String()` | test `v.kind`, read `v.payload` | `rec.bin(name)` then `as_int()` `as_double()` `as_bool()` `as_string<N>()` | `rec.getInt(name)` `getDouble` `getBool` `getString` |
+| Write a bin | `rec.set(name, v)` | `rec.Set(name, v)` | `as_udf_rec_set_int` `as_udf_rec_set_string` ... | `rec.set(name, v)` | `rec.set(name, v)` |
 | Save | `rec.save()` | `rec.Save()` | `as_udf_rec_save()` | `rec.save()` | `rec.save()` |
 | Fail the call | `Err(Error::Custom(msg))` | return an `error` | `return as_udf_failf(msg)` | `return udf::error(status, msg)` | `throw new UdfException(msg)` |
 | Walk a list | `.list()?.iter()` | `range rec.List(name)` | cursor | `for (udf::Value v : rec.list(name))` | `for (Value v : rec.getList(name))` |

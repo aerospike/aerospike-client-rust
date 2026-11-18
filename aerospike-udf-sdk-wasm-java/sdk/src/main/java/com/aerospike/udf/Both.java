@@ -12,89 +12,101 @@
 
 package com.aerospike.udf;
 
+import java.util.Arrays;
+import java.util.List;
 import java.util.function.BinaryOperator;
 
 /**
- * A bin on both sides of a conflict, either of which may be missing (null), with the merges a resolver
+ * A bin on both sides of a merge, either of which may be missing (null), with the merges a resolver
  * reaches for: the Java face of the Rust SDK's {@code Both<T>}. {@link Pair} builds one per bin.
  */
 public final class Both<T> {
     /** The current record's value, or null when it has no such bin or the bin is nil. */
-    public final T local;
+    public final T current;
     /** The incoming write's value, likewise. */
-    public final T remote;
-    private final long localLut;
-    private final long remoteLut;
-    private final long localSrc;
-    private final long remoteSrc;
+    public final T incoming;
+    private final long currentLastUpdateTime;
+    private final long incomingLastUpdateTime;
+    private final long currentSourceId;
+    private final long incomingSourceId;
 
-    Both(T local, T remote, long localLut, long remoteLut, long localSrc, long remoteSrc) {
-        this.local = local;
-        this.remote = remote;
-        this.localLut = localLut;
-        this.remoteLut = remoteLut;
-        this.localSrc = localSrc;
-        this.remoteSrc = remoteSrc;
+    Both(T current, T incoming, long currentLastUpdateTime, long incomingLastUpdateTime, long currentSourceId,
+            long incomingSourceId) {
+        this.current = current;
+        this.incoming = incoming;
+        this.currentLastUpdateTime = currentLastUpdateTime;
+        this.incomingLastUpdateTime = incomingLastUpdateTime;
+        this.currentSourceId = currentSourceId;
+        this.incomingSourceId = incomingSourceId;
     }
 
     /**
-     * Whether the remote side wrote this bin later: by the bin's LUT where the server keeps one, the
+     * Whether the incoming side wrote this bin later: by the bin's LUT where the server keeps one, the
      * record's otherwise, and on a tie by source id - the order the server's own bin convergence uses, so
      * "newer" means the same on both DCs even when the clocks agreed to the millisecond.
      */
-    public boolean remoteNewer() {
-        return remoteLut > localLut || (remoteLut == localLut && remoteSrc > localSrc);
+    public boolean incomingIsNewer() {
+        return incomingLastUpdateTime > currentLastUpdateTime
+                || (incomingLastUpdateTime == currentLastUpdateTime && incomingSourceId > currentSourceId);
     }
 
     /** The side written later; whichever exists when only one does. */
     public T newer() {
-        return remoteNewer() ? or(remote, local) : or(local, remote);
+        return incomingIsNewer() ? or(incoming, current) : or(current, incoming);
     }
 
     /** The side written earlier; whichever exists when only one does. */
     public T older() {
-        return remoteNewer() ? or(local, remote) : or(remote, local);
+        return incomingIsNewer() ? or(current, incoming) : or(incoming, current);
     }
 
-    /** The local value when there is one, else the remote. */
-    public T localOrRemote() {
-        return or(local, remote);
+    /**
+     * Both sides as a list of two, the older and then the newer, either of which may be null: the order
+     * both DCs agree on, for a merge whose result depends on the order its inputs are taken in.
+     */
+    public List<T> ordered() {
+        return incomingIsNewer() ? Arrays.asList(current, incoming) : Arrays.asList(incoming, current);
     }
 
-    /** The remote value when there is one, else the local. */
-    public T remoteOrLocal() {
-        return or(remote, local);
+    /** The current value when there is one, else the incoming. */
+    public T currentOrIncoming() {
+        return or(current, incoming);
+    }
+
+    /** The incoming value when there is one, else the current. */
+    public T incomingOrCurrent() {
+        return or(incoming, current);
     }
 
     /** Combines the two when both exist; the one that exists otherwise. */
     public T merge(BinaryOperator<T> f) {
-        if (local != null && remote != null) {
-            return f.apply(local, remote);
+        if (current != null && incoming != null) {
+            return f.apply(current, incoming);
         }
 
-        return or(local, remote);
+        return or(current, incoming);
     }
 
     /** The larger of the two; the one that exists when only one does. For a {@code Comparable} T. */
     @SuppressWarnings("unchecked")
     public T max() {
-        return merge((l, r) -> ((Comparable<T>) r).compareTo(l) > 0 ? r : l);
+        return merge((c, i) -> ((Comparable<T>) i).compareTo(c) > 0 ? i : c);
     }
 
     /** The smaller of the two; the one that exists when only one does. For a {@code Comparable} T. */
     @SuppressWarnings("unchecked")
     public T min() {
-        return merge((l, r) -> ((Comparable<T>) r).compareTo(l) < 0 ? r : l);
+        return merge((c, i) -> ((Comparable<T>) i).compareTo(c) < 0 ? i : c);
     }
 
     /** The sum of a {@code Both<Long>}, a missing side counting as zero. */
     public long sumInt() {
-        return (local == null ? 0 : (Long) local) + (remote == null ? 0 : (Long) remote);
+        return (current == null ? 0 : (Long) current) + (incoming == null ? 0 : (Long) incoming);
     }
 
     /** The sum of a {@code Both<Double>}, a missing side counting as zero. */
     public double sumDouble() {
-        return (local == null ? 0.0 : (Double) local) + (remote == null ? 0.0 : (Double) remote);
+        return (current == null ? 0.0 : (Double) current) + (incoming == null ? 0.0 : (Double) incoming);
     }
 
     private static <T> T or(T a, T b) {

@@ -47,7 +47,7 @@ func (t table) offer(site string, count int64) {
 // Every entry of a stored map.
 func (t table) offerAll(stored udf.Value) error {
 	for k, v := range stored.Map() {
-		site, err := k.Str()
+		site, err := k.String()
 		if err != nil {
 			return err
 		}
@@ -87,7 +87,7 @@ func (t table) toMap() *udf.Map {
 // The merge: for every site of each map, the larger amount. Every other bin is the incoming one's.
 //
 //udf:on xdr-merge merge_pncounter
-func mergePnCounter(current, incoming *udf.EventRecord, _ *udf.Conflict) (udf.Resolution, error) {
+func mergePnCounter(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 	out := udf.NewMap(2)
 
 	for _, bin := range []string{"inc", "dec"} {

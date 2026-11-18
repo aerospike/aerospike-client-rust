@@ -212,7 +212,7 @@ public final class MapBuilder {
     }
 
     /** A nil entry: in a record an event handler answers with, "no such bin". */
-    public MapBuilder putNull(String key) {
+    public MapBuilder putNil(String key) {
         Slots.scalar(Slots.PAIR, Slots.SIZE, Value.NIL, 0, 0);
         return entry(key);
     }
@@ -308,7 +308,7 @@ public final class MapBuilder {
     }
 
     /** A nil entry under an integer key. */
-    public MapBuilder putNull(long key) {
+    public MapBuilder putNil(long key) {
         Slots.scalar(Slots.PAIR, Slots.SIZE, Value.NIL, 0, 0);
         return entry(key);
     }
@@ -323,7 +323,7 @@ public final class MapBuilder {
             Value key = e.getKey();
 
             if (key.isInt()) {
-                put(key.asLong(), e.getValue());
+                put(key.asInt(), e.getValue());
             }
             else {
                 put(key.asString(), e.getValue());

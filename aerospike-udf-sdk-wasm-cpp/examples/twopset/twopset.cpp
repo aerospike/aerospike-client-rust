@@ -81,7 +81,7 @@ struct Tags {
 	udf::Result<void> offer_all(const udf::Value& stored)
 	{
 		for (udf::Value item : stored.list()) {
-			Tag tag = UDF_TRY(item.as_text<TAG_MAX>());
+			Tag tag = UDF_TRY(item.as_string<TAG_MAX>());
 
 			UDF_TRY(insert(tag.view()));
 		}

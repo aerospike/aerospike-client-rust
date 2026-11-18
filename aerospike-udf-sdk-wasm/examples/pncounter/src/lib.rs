@@ -103,7 +103,7 @@ impl Counts {
 event! {
     /// The merge: for every site of each map, the larger amount. Every other bin is the incoming one's.
     on xdr_merge
-    fn merge_pncounter(current: EventRecord, incoming: EventRecord, _conflict: Conflict) -> Result<Resolution, Error> {
+    fn merge_pncounter(current: EventRecord, incoming: EventRecord) -> Result<Resolution, Error> {
         let out = as_udf::map(2)?;
 
         for bin in ["inc", "dec"] {

@@ -24,7 +24,7 @@ import org.teavm.interop.Address;
  * <pre>
  * {@literal @}Function("increment")
  * static long increment(Record rec, long by) {
- *     long n = rec.getLong("n", 0) + by;
+ *     long n = rec.getInt("n", 0) + by;
  *
  *     rec.set("n", n);
  *     rec.save();
@@ -109,7 +109,7 @@ public final class Udf {
     }
 
     /** Sets a string as the result. */
-    public static void resultStr(String s) {
+    public static void resultString(String s) {
         byte[] b = LowLevel.bytes(s);
         Natives.resultStr(Address.ofData(b), b.length);
     }

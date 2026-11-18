@@ -25,7 +25,7 @@ import org.teavm.interop.Address;
  * <pre>
  * {@literal @}Function("visit")
  * static long visit(Record rec, String page) {
- *     long visits = rec.getLong("visits", 0) + 1;
+ *     long visits = rec.getInt("visits", 0) + 1;
  *
  *     rec.set("visits", visits);
  *     rec.set("last", page);
@@ -35,10 +35,10 @@ import org.teavm.interop.Address;
  * }
  * </pre>
  *
- * <p><b>Reading.</b> {@link #get} gives a bin of any kind, or null. The typed readers
- * ({@link #getLong(String)}, {@link #getString(String)}, {@link #getList(String)} and the rest) throw
- * {@link UdfException} naming the bin when it is absent or of another kind; given a default, they answer
- * it for an absent bin and still throw for a wrong kind. See {@link RecordReader}.
+ * <p><b>Reading.</b> {@link #get} gives a bin of any kind, or null; {@link #bin} gives it or throws. The
+ * typed readers ({@link #getInt(String)}, {@link #getString(String)}, {@link #getList(String)} and the
+ * rest) throw {@link UdfException} naming the bin when it is absent or of another kind; given a default,
+ * they answer it for an absent bin and still throw for a wrong kind. See {@link RecordReader}.
  *
  * <p><b>Writing.</b> {@code set} stages a bin, {@link #remove} stages its removal, and {@link #save}
  * writes what is staged, creating the record when it does not exist. {@link #delete} deletes the record.
@@ -139,12 +139,23 @@ public final class Record implements RecordReader {
     }
 
     @Override
-    public boolean hasBin(String name) {
+    public Value bin(String name) {
+        Value x = get(name);
+
+        if (x == null) {
+            throw Reads.problem(Reads.NONE, "bin ", name, "readable");
+        }
+
+        return x;
+    }
+
+    @Override
+    public boolean has(String name) {
         return Reads.state(read(name), v, v.kind()) == Reads.HIT;
     }
 
     @Override
-    public long getLong(String name) {
+    public long getInt(String name) {
         int rc = read(name);
 
         if (rc == LowLevel.OK && v.kind() == Value.INT) {
@@ -155,7 +166,7 @@ public final class Record implements RecordReader {
     }
 
     @Override
-    public long getLong(String name, long dflt) {
+    public long getInt(String name, long dflt) {
         int rc = read(name);
 
         if (rc == LowLevel.OK && v.kind() == Value.INT) {
@@ -192,7 +203,7 @@ public final class Record implements RecordReader {
     }
 
     @Override
-    public boolean getBoolean(String name) {
+    public boolean getBool(String name) {
         int rc = read(name);
 
         if (rc == LowLevel.OK && v.kind() == Value.BOOL) {
@@ -203,7 +214,7 @@ public final class Record implements RecordReader {
     }
 
     @Override
-    public boolean getBoolean(String name, boolean dflt) {
+    public boolean getBool(String name, boolean dflt) {
         int rc = read(name);
 
         if (rc == LowLevel.OK && v.kind() == Value.BOOL) {
@@ -228,8 +239,8 @@ public final class Record implements RecordReader {
     }
 
     @Override
-    public byte[] getBytes(String name) {
-        byte[] b = getBytes(name, null);
+    public byte[] getBlob(String name) {
+        byte[] b = getBlob(name, null);
 
         if (b == null) {
             throw Reads.problem(Reads.NONE, "bin ", name, "a string or blob");
@@ -239,7 +250,7 @@ public final class Record implements RecordReader {
     }
 
     @Override
-    public byte[] getBytes(String name, byte[] dflt) {
+    public byte[] getBlob(String name, byte[] dflt) {
         int state = Reads.state(read(name), v, v.kind());
 
         if (state == Reads.NONE) {
@@ -250,7 +261,7 @@ public final class Record implements RecordReader {
             throw Reads.problem(state == Reads.HIT ? Reads.WRONG : state, "bin ", name, "a string or blob");
         }
 
-        return v.asBytes();
+        return v.asBlob();
     }
 
     @Override

@@ -69,20 +69,30 @@ type RecordReader interface {
 	Has(name string) bool
 	// Int is an integer bin; false when absent, nil or of another kind.
 	Int(name string) (int64, bool)
-	// Float64 is a double bin; false when absent, nil or of another kind. An integer is not widened.
-	Float64(name string) (float64, bool)
+	// Double is a double bin; false when absent, nil or of another kind. An integer is not widened.
+	Double(name string) (float64, bool)
 	// Bool is a boolean bin; false when absent, nil or of another kind.
 	Bool(name string) (bool, bool)
-	// Str is the text of a string bin, copied out; false when absent, nil or of another kind.
-	Str(name string) (string, bool)
-	// Bytes is the bytes of a blob bin, copied out; false when absent, nil or of another kind.
-	Bytes(name string) ([]byte, bool)
+	// String is the text of a string bin, copied out; false when absent, nil or of another kind.
+	String(name string) (string, bool)
+	// Blob is the bytes of a blob bin, copied out; false when absent, nil or of another kind.
+	Blob(name string) ([]byte, bool)
+	// IntOr is an integer bin, or dflt when it is absent, nil or of another kind.
+	IntOr(name string, dflt int64) int64
+	// DoubleOr is a double bin, or dflt when it is absent, nil or of another kind.
+	DoubleOr(name string, dflt float64) float64
+	// BoolOr is a boolean bin, or dflt when it is absent, nil or of another kind.
+	BoolOr(name string, dflt bool) bool
 	// List walks a list bin; nothing when absent or not a list.
 	List(name string) iter.Seq[Value]
 	// Map walks a map bin's entries, key then value; nothing when absent or not a map.
 	Map(name string) iter.Seq2[Value, Value]
+	// BinCount is how many bins the record has.
+	BinCount() int64
 	// Generation is the record's modification count.
 	Generation() int64
+	// TTL is the record's time to live, in seconds.
+	TTL() int64
 	// LastUpdateTime is when the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC).
 	LastUpdateTime() int64
 }
@@ -97,12 +107,12 @@ func readInt(r RecordReader, name string) (int64, bool) {
 	return v.Payload, true
 }
 
-func readFloat64(r RecordReader, name string) (float64, bool) {
+func readDouble(r RecordReader, name string) (float64, bool) {
 	v, ok := r.Get(name)
 	if !ok || v.Kind != KindDouble {
 		return 0, false
 	}
-	return v.Double(), true
+	return v.double(), true
 }
 
 func readBool(r RecordReader, name string) (bool, bool) {
@@ -113,22 +123,43 @@ func readBool(r RecordReader, name string) (bool, bool) {
 	return v.Payload != 0, true
 }
 
-func readStr(r RecordReader, name string) (string, bool) {
+func readString(r RecordReader, name string) (string, bool) {
 	v, ok := r.Get(name)
 	if !ok || v.Kind != KindStr {
 		return "", false
 	}
-	s, err := v.Str()
+	s, err := v.String()
 	return s, err == nil
 }
 
-func readBytes(r RecordReader, name string) ([]byte, bool) {
+func readBlob(r RecordReader, name string) ([]byte, bool) {
 	v, ok := r.Get(name)
 	if !ok || v.Kind != KindBlob {
 		return nil, false
 	}
-	b, err := v.Bytes()
+	b, err := v.Blob()
 	return b, err == nil
+}
+
+func readIntOr(r RecordReader, name string, dflt int64) int64 {
+	if x, ok := r.Int(name); ok {
+		return x
+	}
+	return dflt
+}
+
+func readDoubleOr(r RecordReader, name string, dflt float64) float64 {
+	if x, ok := r.Double(name); ok {
+		return x
+	}
+	return dflt
+}
+
+func readBoolOr(r RecordReader, name string, dflt bool) bool {
+	if x, ok := r.Bool(name); ok {
+		return x
+	}
+	return dflt
 }
 
 // Record is the record a UDF was called on.
@@ -211,18 +242,27 @@ func (r *Record) Has(name string) bool {
 // Int is an integer bin; false when absent, nil or of another kind.
 func (r *Record) Int(name string) (int64, bool) { return readInt(r, name) }
 
-// Float64 is a double bin; false when absent, nil or of another kind. An integer bin is not widened.
-func (r *Record) Float64(name string) (float64, bool) { return readFloat64(r, name) }
+// Double is a double bin; false when absent, nil or of another kind. An integer bin is not widened.
+func (r *Record) Double(name string) (float64, bool) { return readDouble(r, name) }
 
 // Bool is a boolean bin; false when absent, nil or of another kind.
 func (r *Record) Bool(name string) (bool, bool) { return readBool(r, name) }
 
-// Str is the text of a string bin, copied out; false when absent, nil or of another kind.
-func (r *Record) Str(name string) (string, bool) { return readStr(r, name) }
+// String is the text of a string bin, copied out; false when absent, nil or of another kind.
+func (r *Record) String(name string) (string, bool) { return readString(r, name) }
 
-// Bytes is the bytes of a blob bin, copied out; false when absent, nil or of another kind. The bytes of
-// a GeoJSON or HLL bin are read through Get and Value.Bytes.
-func (r *Record) Bytes(name string) ([]byte, bool) { return readBytes(r, name) }
+// Blob is the bytes of a blob bin, copied out; false when absent, nil or of another kind. The bytes of
+// a GeoJSON or HLL bin are read through Get and Value.Blob.
+func (r *Record) Blob(name string) ([]byte, bool) { return readBlob(r, name) }
+
+// IntOr is an integer bin, or dflt when it is absent, nil or of another kind.
+func (r *Record) IntOr(name string, dflt int64) int64 { return readIntOr(r, name, dflt) }
+
+// DoubleOr is a double bin, or dflt when it is absent, nil or of another kind, an integer included.
+func (r *Record) DoubleOr(name string, dflt float64) float64 { return readDoubleOr(r, name, dflt) }
+
+// BoolOr is a boolean bin, or dflt when it is absent, nil or of another kind.
+func (r *Record) BoolOr(name string, dflt bool) bool { return readBoolOr(r, name, dflt) }
 
 // List walks the list in a bin; nothing when the bin is absent or not a list.
 func (r *Record) List(name string) iter.Seq[Value] {
@@ -284,7 +324,7 @@ func (r *Record) Set(name string, value any) error {
 	case KindInt:
 		rc = setInt(n, nl, v.Payload)
 	case KindDouble:
-		rc = setDouble(n, nl, v.Double())
+		rc = setDouble(n, nl, v.double())
 	case KindBool:
 		rc = setBool(n, nl, int32(v.Payload))
 	case KindNil:
@@ -318,13 +358,24 @@ func (r *Record) SetInts(name string, values []int64) error {
 	return writeError(setListInts(strptr(name), int32(len(name)), p, int32(len(values)*8)), "could not write bin "+name)
 }
 
-// SetFloat64s is SetInts for doubles.
-func (r *Record) SetFloat64s(name string, values []float64) error {
+// SetDoubles is SetInts for doubles.
+func (r *Record) SetDoubles(name string, values []float64) error {
 	var p unsafe.Pointer
 	if len(values) > 0 {
 		p = unsafe.Pointer(&values[0])
 	}
 	return writeError(setListDoubles(strptr(name), int32(len(name)), p, int32(len(values)*8)), "could not write bin "+name)
+}
+
+// SetBlob writes bytes to a bin as a blob, staged until Save; Set with a []byte does the same.
+func (r *Record) SetBlob(name string, value []byte) error {
+	return writeError(setBlob(strptr(name), int32(len(name)), ptr(value), int32(len(value))), "could not write bin "+name)
+}
+
+// SetGeoJSON writes a GeoJSON document to a bin as the geospatially indexable kind, staged until Save;
+// Set with a GeoJSONValue does the same.
+func (r *Record) SetGeoJSON(name string, doc string) error {
+	return writeError(setGeoJSON(strptr(name), int32(len(name)), strptr(doc), int32(len(doc))), "could not write bin "+name)
 }
 
 // Remove removes a bin, staged until Save like a write.
@@ -378,7 +429,7 @@ func (r *Record) Key(buf []byte) (Value, bool) {
 		return IntValue(keyInt()), true
 	case KindStr:
 		if n := keyBytes(ptr(buf), int32(len(buf))); n >= 0 {
-			return StrBytesValue(buf[:n]), true
+			return StringBytesValue(buf[:n]), true
 		}
 	case KindBlob:
 		if n := keyBytes(ptr(buf), int32(len(buf))); n >= 0 {

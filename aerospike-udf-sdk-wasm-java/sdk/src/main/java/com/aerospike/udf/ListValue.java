@@ -32,10 +32,10 @@ import org.teavm.interop.Address;
  *     }
  * }
  *
- * long first = tags.getLong(0);
+ * long first = tags.getInt(0);
  * </pre>
  *
- * <p>The typed readers ({@link #getLong(int)} and the rest) throw {@link UdfException} naming the index
+ * <p>The typed readers ({@link #getInt(int)} and the rest) throw {@link UdfException} naming the index
  * when the element is of another kind, and so does every reader for an index past the end. A list is
  * read-only: to change one, build another ({@link ListBuilder}) and write that. {@link #toList} copies
  * the whole list out as a {@code java.util.List}.
@@ -97,7 +97,7 @@ public final class ListValue implements Iterable<Value> {
     }
 
     /** The integer at {@code index}; throws {@link UdfException} naming the index when it is not one. */
-    public long getLong(int index) {
+    public long getInt(int index) {
         return at(index, Value.INT, "an int").payload();
     }
 
@@ -107,7 +107,7 @@ public final class ListValue implements Iterable<Value> {
     }
 
     /** The boolean at {@code index}. */
-    public boolean getBoolean(int index) {
+    public boolean getBool(int index) {
         return at(index, Value.BOOL, "a bool").payload() != 0;
     }
 
@@ -117,14 +117,14 @@ public final class ListValue implements Iterable<Value> {
     }
 
     /** The bytes of the string, blob, GeoJSON or HLL at {@code index}, copied out. */
-    public byte[] getBytes(int index) {
+    public byte[] getBlob(int index) {
         Value v = at(index, SCRATCH);
 
         if (!v.isStored() || v.isList() || v.isMap()) {
             throw new UdfException("element " + index + " of the list is not a string or blob");
         }
 
-        return v.asBytes();
+        return v.asBlob();
     }
 
     /** The list at {@code index}. */

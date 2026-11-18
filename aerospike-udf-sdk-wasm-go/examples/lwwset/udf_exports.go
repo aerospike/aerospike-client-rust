@@ -6,11 +6,11 @@ import udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk-wasm-go
 
 //export merge_lwwset
 func udfExport_merge_lwwset(args, argc int32) int32 {
-	var c udf.Conflict
-	if !udf.DecodeConflict(args, argc, &c) {
+	var current, incoming udf.EventRecord
+	if !udf.DecodeMerge(args, argc, &current, &incoming) {
 		return udf.Fail("merge_lwwset: not an xdr-merge event")
 	}
-	r, err := mergeLwwSet(&c.Local, &c.Remote, &c)
+	r, err := mergeLwwSet(&current, &incoming)
 	if err != nil {
 		return udf.FailErr(err)
 	}

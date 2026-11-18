@@ -38,7 +38,7 @@ type tags map[string]bool
 // Every item of a stored list.
 func (t tags) offerAll(stored udf.Value) error {
 	for item := range stored.List() {
-		tag, err := item.Str()
+		tag, err := item.String()
 		if err != nil {
 			return err
 		}
@@ -73,7 +73,7 @@ func (t tags) toList(except tags) *udf.List {
 // The merge: the union of each list. Every other bin is the incoming one's.
 //
 //udf:on xdr-merge merge_twopset
-func mergeTwoPSet(current, incoming *udf.EventRecord, _ *udf.Conflict) (udf.Resolution, error) {
+func mergeTwoPSet(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 	out := udf.NewMap(2)
 
 	for _, bin := range []string{"added", "removed"} {

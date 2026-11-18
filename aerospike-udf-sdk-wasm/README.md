@@ -99,8 +99,8 @@ namespace or set, and the handler decides the final record.
 ```rust
 event! {
     on xdr_merge
-    fn merge_account(local: EventRecord, remote: EventRecord, conflict: Conflict) -> Result<Resolution, Error> {
-        let pair = conflict.pair();
+    fn merge_account(current: EventRecord, incoming: EventRecord) -> Result<Resolution, Error> {
+        let pair = Pair::of(current, incoming);
         let out = as_udf::map(4)?;
         if let Some(visits) = pair.int("visits")?.max() { out.insert("visits", visits)?; }
         Ok(Resolution::Record { bins: pair.with_newer(out)?, ttl: None })
@@ -108,20 +108,22 @@ event! {
 }
 ```
 
-`EventRecord` is a read-only record with its metadata (`ttl`, `source_id`, and per bin `bin_lut` and
-`bin_source_id` where the server keeps them) and bins read as `Option`s, since on either side a bin may
-not exist. `Conflict` says what triggered the event (`Trigger::Always` or `Trigger::Conflict`), which
-policy the handler stands in for and which bins would lose under it, and `pair()` reads a bin from both
+`EventRecord` is a read-only record with its metadata (`ttl`, `source_id`, and per bin `bin_last_update_time`
+and `bin_source_id` where the server keeps them) and bins read as `Option`s, since on either side a bin may
+not exist. What the server knows about the merge is asked of the record it is true of:
+`incoming.is_delete()`, `incoming.is_partial()`, `incoming.lost_bins()` (the bins that would lose under
+bin convergence), `current.is_tombstone()`, and on either `uses_bin_convergence()`.
+`Pair::of(current, incoming)` reads a bin from both
 sides into a `Both<T>` with the merges a resolver reaches for: `max`, `min`, `sum`, `merge(f)`, `newer`,
-`older`, `ordered()`. `Resolution` is `KeepLocal`, `TakeRemote`, `Policy`, `Delete` or
+`older`, `ordered()`, and its two members are `current` and `incoming`. `Resolution` is `KeepLocal`, `TakeRemote`, `Policy`, `Delete` or
 `Record { bins, ttl }`, where the bins are the whole record; a record equal to the current one writes
 nothing.
 
 Two rules, enforced by nothing but the two DCs disagreeing forever if they are broken. **Pure**: no clock
-(`now()` fails in a handler), no other records, no record-level LUT or generation (the payload carries
+(`now()` fails in a handler), no other records, no record-level last update time or generation (the payload carries
 none). **Convergent**: DC A merges (A's record, B's write) while DC B merges (B's record, A's write), and
 the answers must match, in any delivery order and however many times a write is delivered. There are two
-ways to keep it. The time-based way: `newer`/`older`/`ordered` order the sides by a bin's own LUT and then
+ways to keep it. The time-based way: `newer`/`older`/`ordered` order the sides by a bin's own last update time and then
 source id, the way the server's bin convergence does, which is symmetric where "mine first" is not, and
 is why `EventRecord::with_bins` carries a warning and `Pair::with_newer` is the one to use; `examples/resolver`
 is this. The data-only way: versions and removal markers in the record itself, with

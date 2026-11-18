@@ -118,8 +118,8 @@ func balance(rec *udf.Record) int64 {
 }
 
 //udf:on xdr-merge keep_richer
-func keepRicher(local, remote *udf.EventRecord, _ *udf.Conflict) (udf.Resolution, error) {
-	if balanceOf(remote) > balanceOf(local) {
+func keepRicher(current, incoming *udf.EventRecord) (udf.Resolution, error) {
+	if balanceOf(incoming) > balanceOf(current) {
 		return udf.TakeRemote(), nil
 	}
 
@@ -132,8 +132,9 @@ func keepRicher(local, remote *udf.EventRecord, _ *udf.Conflict) (udf.Resolution
 `rec.Bin("name")` returns the bin as a `udf.Value`, or an error naming the bin when the record has none.
 It is the form for a bin that must be there. The others are for a bin that may not be. `rec.Get("name")`
 returns the value and whether there is one, false for an absent or nil bin. The typed readers
-`rec.Int("name")`, `Float64`, `Bool`, `Str` and `Bytes` (a blob's bytes) return the Go value and false
-when the bin is absent, nil or of another kind. `rec.List("name")` and `rec.Map("name")` range over a
+`rec.Int("name")`, `Double`, `Bool`, `String` and `Blob` (a blob's bytes) return the Go value and false
+when the bin is absent, nil or of another kind; `rec.IntOr("name", 0)`, `DoubleOr` and `BoolOr` return a
+default instead. `rec.List("name")` and `rec.Map("name")` range over a
 collection bin and yield nothing when it is absent. `rec.Has("name")` says whether the bin is there, and
 `rec.BinCount()` how many there are.
 
@@ -186,7 +187,7 @@ record is locked for the whole call nothing comes between the check and the save
 `rec.Delete()` deletes the record. It needs no save, and whatever was staged goes with the record. The
 server carries it out when the call returns, so `rec.Exists()` keeps its answer for the rest of the call.
 
-`rec.SetInts("name", []int64{..})` and `rec.SetFloat64s("name", []float64{..})` write a slice straight
+`rec.SetInts("name", []int64{..})` and `rec.SetDoubles("name", []float64{..})` write a slice straight
 into a list, in one import, with no value built per element. They take effect at once, without a save.
 
 Every one of these returns an `error`. It says the name is empty or longer than 15 bytes, or that the
@@ -220,8 +221,8 @@ func closeAccount(rec *udf.Record) error {
 
 Every read is a `udf.Value`: `Kind` (a `udf.Kind`: `KindNil`, `KindBool`, `KindInt`, `KindDouble`,
 `KindStr`, `KindBlob`, `KindList`, `KindMap`, `KindGeoJSON`, `KindHLL`, `KindAbsent`), `Len`, `Payload`,
-with the accessors `Int()`, `Float64()`, `Bool()`, `Str()`, `Bytes()`, each `(T, error)`, and the
-`IsInt()`, `IsStr()`, `IsList()`, `IsMap()`, `IsNull()` tests. A stored string or collection is held by
+with the accessors `Int()`, `Double()`, `Bool()`, `String()`, `Blob()`, each `(T, error)`, and the
+`IsInt()`, `IsString()`, `IsList()`, `IsMap()`, `IsNull()` tests. A stored string or collection is held by
 position, never copied until asked. `Len` is a list's element count or a map's entry count, known without
 a walk. `Lookup(key)` and `LookupInt(key)` read one entry of a stored map, and `Index(i)` one element of a
 stored list, each in one import, with false when there is none.
@@ -255,7 +256,7 @@ func busiestSite(rec *udf.Record) (string, error) {
 	for site, v := range rec.Map("counts") {
 		if n, err := v.Int(); err == nil && n > best {
 			best = n
-			where, _ = site.Str() // the entry's key
+			where, _ = site.String() // the entry's key
 		}
 	}
 
@@ -327,7 +328,7 @@ not read it.
 A few calls allocate nothing, for a path that runs once per record of a query. `udf.Args` decodes the
 arguments into a window the caller owns. `udf.Bytes(v, buf)` copies a value's bytes into a buffer.
 `rec.Get`, `rec.Digest(buf)` and `rec.Key(buf)` read the record without building an error or a string.
-The `udf.IntValue`, `StrValue`, `BlobValue` and `DoubleValue` constructors make values for a batch, which
+The `udf.IntValue`, `StringValue`, `BlobValue` and `DoubleValue` constructors make values for a batch, which
 `PutEntries` and `AddValues` hand the host in one import. `udf.Fail` and the scalar `Result*` calls
 finish a call. The vector example's per-record path is written on these, because it reads its arguments
 once per stream and scores from a `[maxDim]float32` field; nothing else needs to be.
@@ -340,7 +341,7 @@ them too.
 ## What is different about Go
 
 - **Allocation.** TinyGo brings a runtime and a garbage collector, so a Go module is not allocation-free by
-  construction. The typed tier allocates a little per call (a `*Map`, a string per `Str()`), which is
+  construction. The typed tier allocates a little per call (a `*Map`, a string per `String()`), which is
   fine for a record UDF or a handler; a stream's hot path stays on the calls that take a buffer and on
   fields it reuses. `-gc=leaking` is fine for an instance that lives for one call or one query.
 - **Errors, not panics.** A panic traps the module (`-panic=trap`), and the host reports only that it
@@ -365,7 +366,7 @@ func udfExport_increment(args, argc int32) int32 {
 	if err := udf.Arity("increment", 1, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	p0, err := udf.ArgInt64(a[:], n, 0, "increment", "by")
+	p0, err := udf.ArgInt(a[:], n, 0, "increment", "by")
 	if err != nil {
 		return udf.FailErr(err)
 	}

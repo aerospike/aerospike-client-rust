@@ -133,7 +133,7 @@ func valueOf(v any) (Value, bool) {
 	case bool:
 		return BoolValue(x), true
 	case string:
-		return StrValue(x), true
+		return StringValue(x), true
 	case []byte:
 		return BlobValue(x), true
 	case Value:
@@ -186,7 +186,7 @@ func (m *Map) PutAll(stored Value) *Map {
 	for k, v := range stored.Map() {
 		if k.Kind == KindInt {
 			m.Put(k.Payload, v)
-		} else if s, err := k.Str(); err == nil {
+		} else if s, err := k.String(); err == nil {
 			m.Put(s, v)
 		} else if m.err == nil {
 			m.err = err
@@ -259,7 +259,7 @@ func (l *List) AddAll(stored Value) *List {
 // Contains reports whether a stored list of strings holds text.
 func Contains(list Value, text string) bool {
 	for v := range list.List() {
-		if StrIs(v, text) {
+		if StringIs(v, text) {
 			return true
 		}
 	}
@@ -278,7 +278,7 @@ func mapPutIValue(m int32, key int64, v Value) int32 {
 	case KindInt:
 		return mapPut(m, valInt(key), valInt(v.Payload))
 	case KindDouble:
-		return mapPut(m, valInt(key), valDouble(v.Double()))
+		return mapPut(m, valInt(key), valDouble(v.double()))
 	case KindBool:
 		return mapPut(m, valInt(key), valBool(int32(v.Payload)))
 	case KindNil:

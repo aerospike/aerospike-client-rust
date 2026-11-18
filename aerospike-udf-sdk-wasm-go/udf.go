@@ -269,8 +269,8 @@ func (v Value) Src() int32 { return int32(v.Payload >> 32) }
 // At is the offset in that source.
 func (v Value) At() int32 { return int32(v.Payload & 0xffffffff) }
 
-// Double is the payload as a float64.
-func (v Value) Double() float64 { return math.Float64frombits(uint64(v.Payload)) }
+// double is the payload as a float64, whatever the kind; Double is the checked form.
+func (v Value) double() float64 { return math.Float64frombits(uint64(v.Payload)) }
 
 // IntValue is an integer as a value of the guest's, for a batch.
 func IntValue(i int64) Value { return Value{Kind: KindInt, Payload: i} }
@@ -280,9 +280,9 @@ func DoubleValue(d float64) Value {
 	return Value{Kind: KindDouble, Payload: int64(math.Float64bits(d))}
 }
 
-// StrValue is a string of the guest's as a value, for a batch. It holds the address of s's bytes, not a
+// StringValue is a string of the guest's as a value, for a batch. It holds the address of s's bytes, not a
 // copy, so s must stay alive until the host has taken the value.
-func StrValue(s string) Value {
+func StringValue(s string) Value {
 	return Value{Kind: KindGuestStr, Len: uint32(len(s)), Payload: int64(uintptr(unsafe.Pointer(unsafe.StringData(s))))}
 }
 
@@ -298,8 +298,8 @@ func BlobValue(b []byte) Value {
 // handleValue is a built list or map as a value, by its handle; Map.Value and List.Value are its public face.
 func handleValue(h int32) Value { return Value{Kind: KindHandle, Payload: int64(h)} }
 
-// StrBytesValue is a string value over bytes the caller holds, without making a Go string of them.
-func StrBytesValue(b []byte) Value {
+// StringBytesValue is a string value over bytes the caller holds, without making a Go string of them.
+func StringBytesValue(b []byte) Value {
 	if len(b) == 0 {
 		return Value{Kind: KindGuestStr}
 	}
@@ -379,7 +379,7 @@ func listPushValue(list int32, v Value) int32 {
 	case KindInt:
 		return listPushInt(list, v.Payload)
 	case KindDouble:
-		return listPush(list, valDouble(v.Double()))
+		return listPush(list, valDouble(v.double()))
 	case KindBool:
 		return listPush(list, valBool(int32(v.Payload)))
 	case KindNil:
@@ -423,7 +423,7 @@ func mapPutValue(m int32, key string, v Value) int32 {
 	case KindInt:
 		return mapPutStrInt(m, strptr(key), int32(len(key)), v.Payload)
 	case KindDouble:
-		return mapPutStrHandle(m, strptr(key), int32(len(key)), valDouble(v.Double()))
+		return mapPutStrHandle(m, strptr(key), int32(len(key)), valDouble(v.double()))
 	case KindBool:
 		return mapPutStrHandle(m, strptr(key), int32(len(key)), valBool(int32(v.Payload)))
 	case KindNil:
@@ -460,8 +460,8 @@ func ResultBool(v bool) {
 	}
 }
 
-// ResultStr sets a string as the call's result; the host copies the bytes.
-func ResultStr(s string) { resultStr(strptr(s), int32(len(s))) }
+// ResultString sets a string as the call's result; the host copies the bytes.
+func ResultString(s string) { resultStr(strptr(s), int32(len(s))) }
 
 // ResultBlob sets a blob as the call's result; the host copies the bytes.
 func ResultBlob(b []byte) { resultBlob(ptr(b), int32(len(b))) }
@@ -486,42 +486,39 @@ func Signature(text *[]byte) int32 {
 // Events.
 //
 // An event handler is a function the server calls at a point in its own processing. The one event,
-// `xdr-merge`, hands it the local record and the incoming XDR write as two records (Which 0 and 1, read
-// through EventRecord, never the record imports) and a description of the conflict, and takes back a
-// verdict or the final record. Export the handler under its name and its signature under
-// `__udf_sig_<name>` (see XdrMergeSignature), which `event-set` checks before binding. A handler must be
-// pure and symmetric: both DCs resolve the same pair with the sides swapped and must land on the same
-// record. Conflict.RemoteNewer is symmetric; "mine first" is not.
+// `xdr-merge`, hands it the current record and the incoming XDR write as two records (read through
+// EventRecord, never the record imports), and takes back a verdict or the final record. What the
+// server says about the merge beyond the two records' bins - a record delete, a partial write, the bins
+// that would lose - is a fact about one of the two, and is read from that record. Export the handler under
+// its name and its signature under `__udf_sig_<name>` (see XdrMergeSignature), which `event-set` checks
+// before binding. A handler must be pure and symmetric: both DCs resolve the same pair with the sides
+// swapped and must land on the same record. Pair.IncomingIsNewer is symmetric; "mine first" is not.
 //
 
 //go:wasmimport aerospike event_bin_value
 func eventBinValue(which int32, name unsafe.Pointer, nameLen int32, out unsafe.Pointer, cap int32) int32
 
-// EventRecord is one side of a conflict.
+// EventRecord is one of the two records of a merge: the current one, as it is on this cluster, or the
+// incoming one, as it arrived over XDR.
 type EventRecord struct {
-	Which   int32 // 0 local, 1 remote
-	Gen     int64
-	LUT     int64
-	TTL     int64
-	SrcID   int64
-	Bins    Value // list of bin names
-	Deleted Value // list of bin names this side deleted; Absent kind when none
-	BinLUTs Value // map name -> LUT per bin, when the server keeps one; Absent kind otherwise
-	BinSrcs Value // map name -> source id, likewise
-}
+	which              int32 // 0 current, 1 incoming
+	generation         int64
+	lastUpdateTime     int64
+	ttl                int64
+	sourceID           int64
+	binNames           Value // list of bin names
+	deletedBins        Value // list of bin names this side deleted; Absent kind when none
+	binLastUpdateTimes Value // map name -> last update time per bin, when the server keeps one; Absent kind otherwise
+	binSourceIDs       Value // map name -> source id, likewise
 
-// Conflict is what the event is about.
-type Conflict struct {
-	Description         Value // the whole map, for anything not decoded here
-	Lost                Value // list: the incoming bins that would lose
-	DryRun              bool
-	ConflictTrigger     bool        // bound with trigger=conflict: a bin would lose under bin convergence
-	BinConvergence      bool        // the policy stood in for is bin-lut rather than a plain apply
-	RemotePartial       bool        // the incoming write carries only changed bins
-	RemoteDeletedRecord bool        // the incoming write is a record delete; Remote has no bins
-	LocalTombstone      bool        // the current record is a tombstone: exists, no bins
-	Local               EventRecord // the current record
-	Remote              EventRecord // the incoming record
+	// What the server says of the merge, each kept on the record it is true of and read through the
+	// method of the same name. On the other record they are the zero value, so the method answers false
+	// or walks nothing.
+	lost           Value // the incoming bins that would lose under bin convergence
+	isDelete       bool
+	partial        bool
+	tombstone      bool
+	binConvergence bool
 }
 
 // MapGet is a map entry by string key; a value of Absent kind when there is none or m is not a map.
@@ -533,8 +530,8 @@ func MapGet(m Value, key string) Value {
 	return v
 }
 
-// MapStr is a string entry of a map, or "" when absent.
-func MapStr(m Value, key string) string {
+// MapString is a string entry of a map, or "" when absent.
+func MapString(m Value, key string) string {
 	v := MapGet(m, key)
 	if v.Kind != KindStr {
 		return ""
@@ -562,8 +559,8 @@ func MapInt(m Value, key string, dflt int64) int64 {
 	return v.Payload
 }
 
-// StrIs reports whether a stored string value reads as text.
-func StrIs(v Value, text string) bool {
+// StringIs reports whether a stored string value reads as text.
+func StringIs(v Value, text string) bool {
 	if v.Kind != KindStr {
 		return false
 	}
@@ -575,59 +572,59 @@ func StrIs(v Value, text string) bool {
 	return string(buf[:n]) == text
 }
 
-func eventSide(conflict Value, key string, which int32, out *EventRecord) bool {
-	m := MapGet(conflict, key)
+func eventSide(description Value, key string, which int32, out *EventRecord) bool {
+	m := MapGet(description, key)
 	if m.Kind != KindMap {
 		return false
 	}
-	out.Which = which
-	out.Gen = MapInt(m, "gen", 0)
-	out.LUT = MapInt(m, "lut", 0)
-	out.TTL = MapInt(m, "ttl", 0)
-	out.SrcID = MapInt(m, "src-id", 0)
-	out.Bins = MapGet(m, "bins")
-	out.Deleted = MapGet(m, "deleted")
-	out.BinLUTs = MapGet(m, "bin-luts")
-	out.BinSrcs = MapGet(m, "bin-srcs")
-	return out.Bins.Kind == KindList
+	*out = EventRecord{lost: Value{Kind: KindAbsent}}
+	out.which = which
+	out.generation = MapInt(m, "gen", 0)
+	out.lastUpdateTime = MapInt(m, "lut", 0)
+	out.ttl = MapInt(m, "ttl", 0)
+	out.sourceID = MapInt(m, "src-id", 0)
+	out.binNames = MapGet(m, "bins")
+	out.deletedBins = MapGet(m, "deleted")
+	out.binLastUpdateTimes = MapGet(m, "bin-luts")
+	out.binSourceIDs = MapGet(m, "bin-srcs")
+	return out.binNames.Kind == KindList
 }
 
-// DecodeConflict reads an event call's arguments into out. False when they are not a conflict.
-func DecodeConflict(handle, argc int32, out *Conflict) bool {
+// DecodeMerge reads an xdr-merge call's arguments into the two records. False when they are not that
+// event. The generated export of a `//udf:on xdr-merge` handler calls it; a raw handler, which is handed
+// (args, argc) as they come, calls it first to get the records it then reads.
+func DecodeMerge(args, argc int32, current, incoming *EventRecord) bool {
 	var a [1]Value
-	if Args(handle, argc, a[:]) < 1 || a[0].Kind != KindMap {
+	if Args(args, argc, a[:]) < 1 || a[0].Kind != KindMap {
 		return false
 	}
-	out.Description = a[0]
-	out.Lost = MapGet(a[0], "lost")
-	out.DryRun = StrIs(MapGet(a[0], "mode"), "dry-run")
-	out.ConflictTrigger = StrIs(MapGet(a[0], "trigger"), "conflict")
-	out.BinConvergence = StrIs(MapGet(a[0], "policy"), "bin-lut")
-	if !eventSide(a[0], "current", 0, &out.Local) || !eventSide(a[0], "incoming", 1, &out.Remote) {
+	if !eventSide(a[0], "current", 0, current) || !eventSide(a[0], "incoming", 1, incoming) {
 		return false
 	}
-	remote := MapGet(a[0], "incoming")
-	out.RemotePartial = MapBool(remote, "partial")
-	out.RemoteDeletedRecord = MapBool(remote, "deleted-record")
-	out.LocalTombstone = MapBool(MapGet(a[0], "current"), "tombstone")
+	convergence := StringIs(MapGet(a[0], "policy"), "bin-lut")
+	current.binConvergence = convergence
+	incoming.binConvergence = convergence
+	current.tombstone = MapBool(MapGet(a[0], "current"), "tombstone")
+	side := MapGet(a[0], "incoming")
+	incoming.partial = MapBool(side, "partial")
+	incoming.isDelete = MapBool(side, "deleted-record")
+	incoming.lost = MapGet(a[0], "lost")
 	return true
 }
 
-// BinLUT is when this side last wrote the bin: per bin where the server keeps one, the record's otherwise.
-func (r *EventRecord) BinLUT(name string) int64 { return MapInt(r.BinLUTs, name, r.LUT) }
-
-// BinSrc is the source id that wrote the bin, likewise.
-func (r *EventRecord) BinSrc(name string) int64 { return MapInt(r.BinSrcs, name, r.SrcID) }
-
-// RemoteNewer reports whether the remote side wrote the bin later: by LUT, then source id - the order the
-// server's bin convergence uses, so both DCs answer the same.
-func (c *Conflict) RemoteNewer(name string) bool {
-	ll, rl := c.Local.BinLUT(name), c.Remote.BinLUT(name)
-	return rl > ll || (rl == ll && c.Remote.BinSrc(name) > c.Local.BinSrc(name))
+// BinLastUpdateTime is when this side last wrote the bin: per bin where the server keeps one, the
+// record's otherwise.
+func (r *EventRecord) BinLastUpdateTime(name string) int64 {
+	return MapInt(r.binLastUpdateTimes, name, r.lastUpdateTime)
 }
 
-// EachStr calls fn with every string of a stored list, as bytes into buf.
-func EachStr(list Value, buf []byte, fn func(name []byte, v Value)) {
+// BinSourceID is the source id that wrote the bin, likewise.
+func (r *EventRecord) BinSourceID(name string) int64 {
+	return MapInt(r.binSourceIDs, name, r.sourceID)
+}
+
+// EachString calls fn with every string of a stored list, as bytes into buf.
+func EachString(list Value, buf []byte, fn func(name []byte, v Value)) {
 	if list.Kind != KindList {
 		return
 	}
@@ -671,5 +668,5 @@ func resolveRecord(bins int32, ttl int64) int32 {
 // XdrMergeSignature is the signature text an xdr-merge handler exports under `__udf_sig_<name>`,
 // NUL-terminated. Keep it in a package-level variable and serve it with Signature.
 func XdrMergeSignature(name string) []byte {
-	return []byte("event xdr-merge/1 " + name + "(current: record, incoming: record, conflict: conflict) -> resolution\x00")
+	return []byte("event xdr-merge/1 " + name + "(current: record, incoming: record) -> resolution\x00")
 }

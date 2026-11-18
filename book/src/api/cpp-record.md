@@ -188,7 +188,8 @@ Whether the value is an explicit nil.
 constexpr bool is_null() const
 ```
 
-Whether the value is nil or absent.
+Whether there is nothing to read: the value is nil or it is absent. Not another name for is_nil(),
+which is false of an absent value.
 
 #### `Value::is_int`
 
@@ -214,10 +215,10 @@ constexpr bool is_bool() const
 
 Whether the value is a boolean.
 
-#### `Value::is_str`
+#### `Value::is_string`
 
 ```cpp
-constexpr bool is_str() const
+constexpr bool is_string() const
 ```
 
 Whether the value is a stored string. A string built by Value::of is of kind GuestStr and is not one.
@@ -321,10 +322,10 @@ Result<bool> as_bool() const
 
 The boolean, or a type-mismatch error when the value is not a bool.
 
-#### `Value::as_text`
+#### `Value::as_string`
 
 ```cpp
-Result<Text<N>> as_text() const
+Result<Text<N>> as_string() const
 ```
 
 The text of a stored string into an inline Text&lt;N&gt;; an error when it does not fit.
@@ -337,10 +338,10 @@ Result<int32_t> bytes_into(void* out, int32_t cap) const
 
 The bytes of a stored string, blob, GeoJSON or HLL into a buffer. Returns how many.
 
-#### `Value::as_bytes`
+#### `Value::as_blob`
 
 ```cpp
-Result<Bytes<N>> as_bytes() const
+Result<Bytes<N>> as_blob() const
 ```
 
 The bytes of a stored string, blob, GeoJSON or HLL into an inline Bytes&lt;N&gt;. An error when the value is
@@ -709,7 +710,7 @@ Value value() const
 ```
 
 The map as a Value of kind Handle, to nest it in a batch (List::add_values, Map::put_entries) or to
-pass it to result_of.
+pass it to udf::result().
 
 #### `Map::empty`
 
@@ -826,10 +827,10 @@ Map& put_geojson(StrView key, StrView doc)
 
 Puts a GeoJSON document under a string key, as the GeoJSON kind, not as a string.
 
-#### `Map::put_null`
+#### `Map::put_nil`
 
 ```cpp
-Map& put_null(StrView key)
+Map& put_nil(StrView key)
 ```
 
 A nil entry: in a record answer, "no such bin".
@@ -972,7 +973,7 @@ Value value() const
 ```
 
 The list as a Value of kind Handle, to nest it in a batch (List::add_values, Map::put_entries) or to
-pass it to result_of.
+pass it to udf::result().
 
 #### `List::add`
 
@@ -1064,10 +1065,10 @@ List& add_geojson(StrView doc)
 
 Appends a GeoJSON document, as the GeoJSON kind, not as a string.
 
-#### `List::add_null`
+#### `List::add_nil`
 
 ```cpp
-List& add_null()
+List& add_nil()
 ```
 
 Appends a nil element.
@@ -1150,19 +1151,19 @@ Optional<bool> as_bool(StrView name) const
 
 The bin as a boolean; nothing when the record has no such bin, it is nil or it is of another kind.
 
-#### `ReadRecord::as_text`
+#### `ReadRecord::as_string`
 
 ```cpp
-template <size_t N> Optional<Text<N>> as_text(StrView name) const
+template <size_t N> Optional<Text<N>> as_string(StrView name) const
 ```
 
 The bin's string as an inline Text&lt;N&gt;; nothing when the record has no such bin, it is nil, it is not a
 string or it does not fit in N bytes.
 
-#### `ReadRecord::as_bytes`
+#### `ReadRecord::as_blob`
 
 ```cpp
-template <size_t N> Optional<Bytes<N>> as_bytes(StrView name) const
+template <size_t N> Optional<Bytes<N>> as_blob(StrView name) const
 ```
 
 The bytes of a string, blob, GeoJSON or HLL bin as an inline Bytes&lt;N&gt;; nothing when the record has no
@@ -1252,10 +1253,10 @@ inline void log(int32_t level, StrView message)
 Writes a message to the server's log at AS_UDF_LOG_WARN, AS_UDF_LOG_INFO or AS_UDF_LOG_DEBUG; any
 other level logs as debug. The server keeps the first 511 bytes.
 
-#### `result_of`
+#### `result`
 
 ```cpp
-inline Result<void> result_of(const Value& v)
+inline Result<void> result(const Value& v)
 ```
 
 Sets a value of any kind as the result.

@@ -380,9 +380,9 @@ func (t *TopK) End(handle, argc int32) int32 {
 	for i := 0; i < topk.n; i++ {
 		h := &topk.hits[i]
 		pairs := [6]udf.Value{
-			udf.StrValue(keyScore), udf.DoubleValue(h.score),
-			udf.StrValue(keyDigest), udf.BlobValue(h.digest[:]),
-			udf.StrValue(keyKey), udf.StrBytesValue(h.key[:h.keyLen]),
+			udf.StringValue(keyScore), udf.DoubleValue(h.score),
+			udf.StringValue(keyDigest), udf.BlobValue(h.digest[:]),
+			udf.StringValue(keyKey), udf.StringBytesValue(h.key[:h.keyLen]),
 		}
 
 		if hits.Add(udf.NewMap(3).PutEntries(pairs[:])).Err() != nil {

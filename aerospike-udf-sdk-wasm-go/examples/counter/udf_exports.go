@@ -6,11 +6,11 @@ import udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk-wasm-go
 
 //export merge_counter
 func udfExport_merge_counter(args, argc int32) int32 {
-	var c udf.Conflict
-	if !udf.DecodeConflict(args, argc, &c) {
+	var current, incoming udf.EventRecord
+	if !udf.DecodeMerge(args, argc, &current, &incoming) {
 		return udf.Fail("merge_counter: not an xdr-merge event")
 	}
-	r, err := mergeCounter(&c.Local, &c.Remote, &c)
+	r, err := mergeCounter(&current, &incoming)
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -33,7 +33,7 @@ func udfExport_increment(args, argc int32) int32 {
 	if err != nil {
 		return udf.FailErr(err)
 	}
-	p1, err := udf.ArgInt64(a[:], n, 1, "increment", "n")
+	p1, err := udf.ArgInt(a[:], n, 1, "increment", "n")
 	if err != nil {
 		return udf.FailErr(err)
 	}

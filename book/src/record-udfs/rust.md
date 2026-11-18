@@ -71,7 +71,7 @@ arguments: a client does not pass it, the arity check does not count it, and the
 exports does not list it. Write it exactly so, with `Record` imported under that name.
 
 Everything about the record is a method on it. What is left on the crate itself is what is not about the
-record: `now()`, `log_at`, `fail`, the `list` and `map` builders.
+record: `now()`, `log`, `fail`, the `list` and `map` builders.
 
 `Record` and the `EventRecord` an event handler is given both implement `ReadRecord`, so a helper that
 takes `&impl ReadRecord` reads a bin the same way in a UDF and in a handler.
@@ -79,11 +79,13 @@ takes `&impl ReadRecord` reads a bin the same way in a UDF and in a handler.
 ## Reading
 
 `rec.bin("name")` returns a `Value` or `Err(Error::Absent)`: the form for a bin that must be there. The
-typed readers are for one that may not be: `rec.int("name")`, `double`, `bool`, `text`, `blob`, `list`,
+typed readers are for one that may not be: `rec.int("name")`, `double`, `bool`, `string`, `blob`, `list`,
 `map` and the untyped `get` each return `Ok(None)` for an absent or nil bin and `Err(Error::WrongType)`
-for a bin of another kind. A `Value` is an enum over the kinds, with
+for a bin of another kind; `int_or("name", d)`, `double_or` and `bool_or` give a default in place of the
+`None`, and `rec.has("name")` says whether the bin is there at all. A `Value` is an enum over the kinds, with
 accessors that return `Err(Error::WrongType)` when asked for the wrong one: `int()`, `double()`, `bool()`,
-`text()`, `blob()`, `list()`, `map()`. A string is a `Text` that knows its length and where it sits;
+`string()`, `blob()`, `list()`, `map()`, beside the tests `is_int()`, `is_string()` and their neighbours.
+A string is a `Text` that knows its length and where it sits;
 `as_str(&mut buf)` fetches it into a buffer you own, `Str<N>` is an owned string of a declared capacity,
 and with the `alloc` feature `to_string()` gives a `String`. The same for blobs with `Blob`, `Bytes<N>`
 and `Vec<u8>`.
@@ -170,7 +172,7 @@ whole error handling.
 On the record: `rec.exists()`, `rec.generation()`, `rec.ttl()` (`None` for a record that never expires),
 `rec.last_update_time()`, `rec.size()`, `rec.bin_count()`, `rec.set_name(&mut buf)`, `rec.key(&mut buf)`
 (the user key when the record was written with `send_key`, `Err(Absent)` otherwise) and
-`rec.digest(&mut buf)`. Not on the record: `as_udf::now()` and `as_udf::log_at(level, message)`.
+`rec.digest(&mut buf)`. Not on the record: `as_udf::now()` and `as_udf::log(level, message)`.
 
 ## The allocator
 

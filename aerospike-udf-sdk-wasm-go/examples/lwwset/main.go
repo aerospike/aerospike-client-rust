@@ -45,7 +45,7 @@ func (s stamps) offer(tag string, at int64) {
 // Every entry of a stored map.
 func (s stamps) offerAll(stored udf.Value) error {
 	for k, v := range stored.Map() {
-		tag, err := k.Str()
+		tag, err := k.String()
 		if err != nil {
 			return err
 		}
@@ -74,7 +74,7 @@ func (s stamps) toMap() *udf.Map {
 // The merge: for every tag of each map, the later stamp. Every other bin is the incoming one's.
 //
 //udf:on xdr-merge merge_lwwset
-func mergeLwwSet(current, incoming *udf.EventRecord, _ *udf.Conflict) (udf.Resolution, error) {
+func mergeLwwSet(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 	out := udf.NewMap(2)
 
 	for _, bin := range []string{"addedAt", "removedAt"} {

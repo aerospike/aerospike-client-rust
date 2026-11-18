@@ -52,7 +52,7 @@ that true.
 ## How the server checks it
 
 The `xdr-merge` event fires when a shipped write arrives for a record that already exists locally. The
-bound handler is given the local record, the incoming one and a `Conflict`, and answers a `Resolution`:
+bound handler is given the local record and the incoming one, and answers a `Resolution`:
 keep the local record, take the remote one, defer to the policy, or write a record of its own. Every
 step here answers with a record of its own, built from the two.
 

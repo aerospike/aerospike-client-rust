@@ -66,7 +66,7 @@ The three directives are the Go face of the Rust SDK's `export!`, `stream!` and 
   The variable is the stream's state; `Record` returns nothing or an `error`, `End` the partial. `Record`
   may take the `*udf.Record` first, to read: a stream's record refuses every write. `End` takes none.
 - **`//udf:on xdr-merge <name>`** on a function: the handler of the one event, the merge of an incoming
-  XDR write with the record it meets. It is `func(local, remote *udf.EventRecord, c *udf.Conflict)
+  XDR write with the record it meets. It is `func(current, incoming *udf.EventRecord)
   (udf.Resolution, error)`, and the resolution is `KeepLocal()`, `TakeRemote()`, `Policy()`,
   `DeleteRecord()`, or the final record: `Resolve(bins)`, `ResolveTTL(bins, ttl)`. A handler with other
   parameters or another return, or another kind after `on`, is a generation error naming the file and
@@ -81,11 +81,12 @@ The three directives are the Go face of the Rust SDK's `export!`, `stream!` and 
 
 - **`*udf.Record`**: the record the call is on, and everything about it. Reading: `Bin(name)` for a bin
   that must be there (`(Value, error)`, the error naming the bin), `Get(name)` for one that may not be
-  (`(Value, bool)`, false for absent or nil), the typed `Int`, `Float64`, `Bool`, `Str`, `Bytes` as `(T,
-  bool)`, `List(name)` / `Map(name)` to range over, `Has`, `BinCount`. Writing: `Set(name, value)` over
+  (`(Value, bool)`, false for absent or nil), the typed `Int`, `Double`, `Bool`, `String`, `Blob` as `(T,
+  bool)`, `IntOr` / `DoubleOr` / `BoolOr` with a default, `List(name)` / `Map(name)` to range over, `Has`,
+  `BinCount`. Writing: `Set(name, value)` over
   every kind (a Go scalar, string, `[]byte`, a `udf.Value` read from a record, a built `*udf.Map` /
-  `*udf.List`, `udf.GeoJSONValue(doc)`; `nil` removes the bin), `SetInts` / `SetFloat64s` for a packed
-  list in one import, `Remove(name)`. Metadata: `Exists`, `Generation`, `TTL`, `SetTTL`,
+  `*udf.List`, `udf.GeoJSONValue(doc)`; `nil` removes the bin), `SetInts` / `SetDoubles` for a packed
+  list in one import, `SetBlob` and `SetGeoJSON` by name, `Remove(name)`. Metadata: `Exists`, `Generation`, `TTL`, `SetTTL`,
   `LastUpdateTime`, `Size`, `SetName`, `Key(buf)`, `Digest(buf)`. And `Save()`, which writes the staged
   bins and creates the record when there is none, and `Delete()`. There is no bin object and no
   create/update/commit: a bin is a name, and `Save` is the one way a staged write takes effect.
@@ -95,8 +96,8 @@ The three directives are the Go face of the Rust SDK's `export!`, `stream!` and 
 - **`udf.RecordReader`**: the reading methods as an interface, implemented by `*udf.Record` and
   `*udf.EventRecord`, so one helper reads a bin from the record of a UDF or from a side of an event;
   `examples/counter` gathers its counts that way in both its write UDFs and its merge.
-- **`udf.Value`**: the 16-byte value every read is, with `Int()`, `Float64()`, `Bool()`, `Str()`,
-  `Bytes()`, `Floats()`, `Lookup(key)`, `Index(i)` for one element of a stored list in one import, the
+- **`udf.Value`**: the 16-byte value every read is, with `Int()`, `Double()`, `Bool()`, `String()`,
+  `Blob()`, `Floats()`, `Lookup(key)`, `Index(i)` for one element of a stored list in one import, the
   `Is*` tests, and **`List()` / `Map()`** as Go 1.23 iterators
   (`for v := range v.List()`, `for k, v := range v.Map()`, 32 per import, the cursor released when the loop
   ends or breaks). `Kind` is a typed enum: `udf.KindInt`, `udf.KindMap`, ...
@@ -107,11 +108,14 @@ The three directives are the Go face of the Rust SDK's `export!`, `stream!` and 
   answered by `Err()`. Written to a bin, returned as the result, nested, or handed back from a handler.
 - **Not about the record**, so on the package: `udf.Now`, `udf.Log`, `udf.Fail`, the `Result*` calls.
 - **The merge**: `*udf.EventRecord` for each of the two records the event hands over, read-only (the
-  `RecordReader` methods, a `Names` iterator, `WithBins(out)` to keep the rest of a record under a few
-  decided bins), and `*udf.Conflict` for what is being decided (`Pair()` into `udf.Pair` and
-  `udf.Both[T]` with `Newer`, `Older`, `Ordered`, `Merge`, `WithNewer`, and `udf.Max` / `Min` / `Sum` over
-  a `Both`; `InvolvesDelete`, `Lost`, ...). `examples/resolver` is the worked example, held to the same
-  behaviour as the other languages' by the client tests.
+  `RecordReader` methods, `SourceID`, `BinLastUpdateTime(name)` and `BinSourceID(name)`, the `BinNames`
+  and `DeletedBins` iterators, `WithBins(out)` to keep the rest of a record under a few decided bins). What the server says of the merge is on the record it is true of: `incoming.IsDelete()`,
+  `incoming.IsPartial()`, `incoming.LostBins()`, `current.IsTombstone()`, and `UsesBinConvergence()` on
+  either. `udf.PairOf(current, incoming)` is the two side by side, a `udf.Pair`, read into
+  `udf.Both[T]` (its sides are `Current` and `Incoming`) with `IncomingIsNewer`, `Newer`, `Older`,
+  `Ordered`, `CurrentOrIncoming`, `IncomingOrCurrent`, `Merge`, and `udf.Max` / `Min` / `Sum` over a
+  `Both`; `Pair.WithNewer(out)` keeps the rest of the record from whichever side wrote each bin later. `examples/resolver` is the worked example, held to the same behaviour as the other
+  languages' by the client tests.
 - **Under the typed tier**, for a hot path that must not allocate: `udf.Args` into a caller-owned
   window, `udf.Bytes(v, buf)` to copy a value's bytes into a buffer, `Record.Get`, `Record.Digest(buf)`
   and `Record.Key(buf)`, the `udf.*Value` constructors for a batch, `udf.Fail` and the scalar `Result*`

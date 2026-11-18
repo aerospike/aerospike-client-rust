@@ -12,7 +12,6 @@
 
 package com.aerospike.udf.examples;
 
-import com.aerospike.udf.Conflict;
 import com.aerospike.udf.EventRecord;
 import com.aerospike.udf.Function;
 import com.aerospike.udf.ListBuilder;
@@ -115,7 +114,7 @@ public final class TwoPSet {
 
     /** The merge: the union of each list. Every other bin is the incoming one's. */
     @On.XdrMerge("merge_twopset")
-    static Resolution mergeTwoPSet(EventRecord current, EventRecord incoming, Conflict conflict) {
+    static Resolution mergeTwoPSet(EventRecord current, EventRecord incoming) {
         MapBuilder out = Udf.map(2);
 
         for (String bin : new String[] {"added", "removed"}) {

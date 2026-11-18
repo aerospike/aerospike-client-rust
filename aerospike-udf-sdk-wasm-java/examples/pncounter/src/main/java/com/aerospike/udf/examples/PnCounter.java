@@ -12,7 +12,6 @@
 
 package com.aerospike.udf.examples;
 
-import com.aerospike.udf.Conflict;
 import com.aerospike.udf.EventRecord;
 import com.aerospike.udf.Function;
 import com.aerospike.udf.MapBuilder;
@@ -85,7 +84,7 @@ public final class PnCounter {
             }
 
             for (MapValue.Entry e : map) {
-                offer(e.getKey().asString(), e.getValue().asLong());
+                offer(e.getKey().asString(), e.getValue().asInt());
             }
         }
 
@@ -127,7 +126,7 @@ public final class PnCounter {
 
     /** The merge: for every site of each map, the larger amount. Every other bin is the incoming one's. */
     @On.XdrMerge("merge_pncounter")
-    static Resolution mergePnCounter(EventRecord current, EventRecord incoming, Conflict conflict) {
+    static Resolution mergePnCounter(EventRecord current, EventRecord incoming) {
         MapBuilder out = Udf.map(2);
 
         for (String bin : new String[] {"inc", "dec"}) {

@@ -48,7 +48,7 @@ signature a client reads by executing `__udf_sig_name`.
 C has no objects, so the record of the call is a family of functions. Every function that acts on it
 starts with `as_udf_rec_`: reading a bin, staging a write, removing a bin, the metadata, saving and
 deleting. The records an event hands over have their own family, `as_udf_event_`. What carries neither
-prefix is not about a record: `as_udf_current_time`, `as_udf_log`, `as_udf_fail`, `as_udf_result_*`, the
+prefix is not about a record: `as_udf_now`, `as_udf_log`, `as_udf_fail`, `as_udf_result_*`, the
 list and map builders.
 
 A function that does not touch the record calls none of them. The record is not one of the call's
@@ -67,11 +67,18 @@ The kinds are `AS_UDF_NIL`, `AS_UDF_BOOL`, `AS_UDF_INT`, `AS_UDF_DOUBLE`, `AS_UD
 
 - `as_udf_rec_bin("name", &v)` reads a bin of any kind. It returns `AS_UDF_NOT_FOUND` when the record has
   no such bin.
+- A bin of a known kind has a reader of its own: `as_udf_rec_int("name", &n)`, `as_udf_rec_double` and
+  `as_udf_rec_bool` fill the variable and return false when the bin is absent, nil or of another kind;
+  `as_udf_rec_string("name", buf, cap)` and `as_udf_rec_blob` copy the bytes out and return the length;
+  `as_udf_rec_list` and `as_udf_rec_map` give the collection as a value to walk.
+  `as_udf_rec_int_or("name", 0)`, `as_udf_rec_double_or` and `as_udf_rec_bool_or` take a default instead.
+  `as_udf_rec_has("name")` says whether the bin is there, and `as_udf_rec_get("name", &v)` is
+  `as_udf_rec_bin` that also answers false for a nil.
 - `as_udf_bytes(&v, buf, cap)` copies the bytes of a string, blob, GeoJSON or HLL value; returns the length.
 - `as_udf_cursor_enter_at(src, at)` opens a cursor over a list or map at a value's position;
   `as_udf_cursor_values(cur, out, cap)` fills `out` with the next values, 128 per import;
   `as_udf_cursor_close(cur)` gives the slot back.
-- `as_udf_coll_get(src, at, key, key_len, &v, sizeof v)` looks a string key up in a map; `as_udf_coll_get_i`
+- `as_udf_coll_get(src, at, key, key_len, &v, sizeof v)` looks a string key up in a map; `as_udf_coll_get_int`
   an integer key. `as_udf_map_get(&map, "key")` is the same lookup on a value, with a NUL-terminated key.
 - `as_udf_list_at(&list, index)` returns one element of a stored list by its index, in one import and
   without a cursor. Its kind is `AS_UDF_ABSENT` past the end or when the value is not a list.
@@ -109,7 +116,7 @@ sum_list(int32_t args, int32_t argc)
 
 ## Writing
 
-`as_udf_rec_set_int`, `_set_double`, `_set_bool`, `_set_str`, `_set_blob`, `_set_geojson`, `_set_handle`
+`as_udf_rec_set_int`, `_set_double`, `_set_bool`, `_set_string`, `_set_blob`, `_set_geojson`, `_set_handle`
 (a built collection) and `_set_at` (a value read from a record, by position) each stage a write to a bin.
 `as_udf_rec_remove(name, len)` stages the removal of a bin. There is no call that sets a bin to nil: a
 bin cannot hold nil, and removing it is the same thing. `as_udf_rec_set_ttl(seconds)` sets the TTL of the
@@ -129,7 +136,7 @@ the whole call, so nothing comes between the check and the save. Two details:
 The server carries it out when the call returns, so `as_udf_rec_exists()` keeps its answer for the rest
 of the call.
 
-`as_udf_rec_set_list_ints` and `as_udf_rec_set_list_doubles` pack an array straight into a list particle.
+`as_udf_rec_set_ints` and `as_udf_rec_set_doubles` pack an array straight into a list particle.
 They take effect at once, without a save.
 
 ```c
@@ -141,7 +148,7 @@ clear_note(int32_t args, int32_t argc)
 	as_udf_rec_remove("note", 4);                 /* staged, like a set */
 	if (as_udf_rec_save() != AS_UDF_OK) return as_udf_failf("clear_note: could not save");
 
-	as_udf_result_int(as_udf_rec_numbins());
+	as_udf_result_int(as_udf_rec_bin_count());
 	return 0;
 }
 
@@ -160,26 +167,26 @@ close_account(int32_t args, int32_t argc)
 
 ## Metadata
 
-On the record: `as_udf_rec_exists()`, `as_udf_rec_gen()`, `as_udf_rec_ttl()` (0 for a record that does
-not expire), `as_udf_rec_last_update()`, `as_udf_rec_size()`, `as_udf_rec_numbins()`,
+On the record: `as_udf_rec_exists()`, `as_udf_rec_generation()`, `as_udf_rec_ttl()` (0 for a record that does
+not expire), `as_udf_rec_last_update_time()`, `as_udf_rec_size()`, `as_udf_rec_bin_count()`,
 `as_udf_rec_set_name(buf, cap)`, which copies out the name of the record's set, `as_udf_rec_key_type()`
 with `as_udf_rec_key_int()` and `as_udf_rec_key_bytes(buf, cap)` for the user key of a record written
-with `send_key`, and `as_udf_rec_digest(buf, cap)`. Not on the record: `as_udf_current_time()` and
+with `send_key`, `as_udf_rec_key(buf, cap)` for that key as one value, and `as_udf_rec_digest(buf, cap)`. Not on the record: `as_udf_now()` and
 `as_udf_log(level, message, len)`.
 
 ## Building collections
 
 `as_udf_list_new(capacity)` and `as_udf_map_new(capacity)` return handles. `list_push_int`,
-`list_push_str`, `list_push` (a value handle from `as_udf_val_*`, or a collection handle), `list_push_at`
-(a stored value), `map_put_str_int`, `map_put_str_str`, `map_put_str_handle`, `map_put_str_at`,
-`map_put_i_at`, and `as_udf_map_put_value` for any kind. `list_push_values` and `map_put_entries` take an
-array of values in one import; build them with `as_udf_v_int`, `as_udf_v_double`, `as_udf_v_str`,
+`list_push_string`, `list_push` (a value handle from `as_udf_val_*`, or a collection handle), `list_push_at`
+(a stored value), `map_put_string_int`, `map_put_string_string`, `map_put_string_handle`,
+`map_put_string_at`, `map_put_int_at`, and `as_udf_map_put_value` for any kind. `list_push_values` and `map_put_entries` take an
+array of values in one import; build them with `as_udf_v_int`, `as_udf_v_double`, `as_udf_v_string`,
 `as_udf_v_blob`, `as_udf_v_handle`. `as_udf_result_handle(h)` returns a built collection;
 `as_udf_result_at(src, at)` returns a stored value by position.
 
-`as_udf_map_contains(handle, "key")` and `as_udf_map_contains_i(handle, key)` say whether a map the call
+`as_udf_map_contains(handle, "key")` and `as_udf_map_contains_int(handle, key)` say whether a map the call
 is building has a key. The host answers for the map it holds, so nothing is packed to ask.
-`as_udf_map_has` and `as_udf_map_has_i` are the imports under them, with the key's length passed.
+`as_udf_map_has` and `as_udf_map_has_int` are the imports under them, with the key's length passed.
 `as_udf_coll_size(handle)` is the number of entries of a built map or elements of a built list.
 
 ## A module to read: the vector top-k

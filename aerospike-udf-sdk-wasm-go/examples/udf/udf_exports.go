@@ -87,7 +87,7 @@ func udfExport_relist(args, argc int32) int32 {
 	if err := udf.Arity("relist", 1, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	p0, err := udf.ArgInt64(a[:], n, 0, "relist", "index")
+	p0, err := udf.ArgInt(a[:], n, 0, "relist", "index")
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -136,7 +136,7 @@ func udfExport_geo_result(args, argc int32) int32 {
 		return udf.FailErr(err)
 	}
 	r := geoResult()
-	if err := udf.ResultOf(r); err != nil {
+	if err := udf.Result(r); err != nil {
 		return udf.FailErr(err)
 	}
 	return 0
@@ -154,7 +154,7 @@ func udfExport_touch_ttl(args, argc int32) int32 {
 	if err := udf.Arity("touch_ttl", 1, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	p0, err := udf.ArgInt64(a[:], n, 0, "touch_ttl", "seconds")
+	p0, err := udf.ArgInt(a[:], n, 0, "touch_ttl", "seconds")
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -284,7 +284,7 @@ func udfExport_index_probe(args, argc int32) int32 {
 	if err != nil {
 		return udf.FailErr(err)
 	}
-	p1, err := udf.ArgInt64(a[:], n, 1, "index_probe", "index")
+	p1, err := udf.ArgInt(a[:], n, 1, "index_probe", "index")
 	if err != nil {
 		return udf.FailErr(err)
 	}

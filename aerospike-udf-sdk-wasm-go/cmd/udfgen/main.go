@@ -27,7 +27,7 @@
 // A typed function's parameters are int64, int, int32, float64, bool, string, []byte, udf.Value, their
 // pointer forms for an optional argument, or []udf.Value last for the rest; it returns nothing, an error, a
 // value, or a value and an error, the value being any of those types or *udf.Map / *udf.List. A handler
-// takes the two records and the conflict and returns a udf.Resolution and an error. A function declared
+// takes the two records, current then incoming, and returns a udf.Resolution and an error. A function declared
 // (args, argc int32) int32 is the raw form, exported as it is, with params giving the signature text.
 //
 // A udf:function, and a stream's Record method, may take the record first, as a *udf.Record, in the typed
@@ -56,7 +56,10 @@ const (
 	mergeAnswer = "udf.Resolution"
 )
 
-var mergeParams = []string{"*udf.EventRecord", "*udf.EventRecord", "*udf.Conflict"}
+var mergeParams = []string{"*udf.EventRecord", "*udf.EventRecord"}
+
+// The one shape of a typed handler, as an error states it.
+const mergeShape = "func(current, incoming *udf.EventRecord) (" + mergeAnswer + ", error)"
 
 type role int
 
@@ -385,11 +388,13 @@ func (g *generator) raw(fn *ast.FuncDecl) bool {
 	return len(types) == 2 && types[0] == "int32" && types[1] == "int32" && len(res) == 1 && res[0] == "int32"
 }
 
-// decoded is one parameter's decode call and signature text.
+// decoded is one parameter's decode call and signature text. conv is the Go type the decoded value is
+// converted to when the parameter's type is not the one the decoder gives, "" when it is.
 type decoded struct {
 	call string
 	sig  string
 	rest bool
+	conv string
 }
 
 // decode is the decoder of a parameter of type t, or nil when the type has no form.
@@ -405,36 +410,38 @@ func (g *generator) decode(name, t string, i, count int, fn, args string) *decod
 	}
 	switch t {
 	case "int64":
-		return &decoded{call("ArgInt64"), sig(false, "int"), false}
+		return &decoded{call: call("ArgInt"), sig: sig(false, "int")}
 	case "int":
-		return &decoded{call("ArgInt"), sig(false, "int"), false}
+		// An argument is a 64-bit integer; a parameter declared int takes it narrowed to the platform's
+		// int, without a range check.
+		return &decoded{call: call("ArgInt"), sig: sig(false, "int"), conv: "int"}
 	case "int32":
-		return &decoded{call("ArgInt32"), sig(false, "int"), false}
+		return &decoded{call: call("ArgInt32"), sig: sig(false, "int")}
 	case "float64":
-		return &decoded{call("ArgFloat64"), sig(false, "double"), false}
+		return &decoded{call: call("ArgDouble"), sig: sig(false, "double")}
 	case "bool":
-		return &decoded{call("ArgBool"), sig(false, "bool"), false}
+		return &decoded{call: call("ArgBool"), sig: sig(false, "bool")}
 	case "string":
-		return &decoded{call("ArgString"), sig(false, "str"), false}
+		return &decoded{call: call("ArgString"), sig: sig(false, "str")}
 	case "[]byte":
-		return &decoded{call("ArgBytes"), sig(false, "bytes"), false}
+		return &decoded{call: call("ArgBlob"), sig: sig(false, "bytes")}
 	case "udf.Value":
-		return &decoded{call("ArgValue"), sig(false, "any"), false}
+		return &decoded{call: call("ArgValue"), sig: sig(false, "any")}
 	case "*int64":
-		return &decoded{call("OptInt64"), sig(true, "int"), false}
+		return &decoded{call: call("OptInt"), sig: sig(true, "int")}
 	case "*float64":
-		return &decoded{call("OptFloat64"), sig(true, "double"), false}
+		return &decoded{call: call("OptDouble"), sig: sig(true, "double")}
 	case "*bool":
-		return &decoded{call("OptBool"), sig(true, "bool"), false}
+		return &decoded{call: call("OptBool"), sig: sig(true, "bool")}
 	case "*string":
-		return &decoded{call("OptString"), sig(true, "str"), false}
+		return &decoded{call: call("OptString"), sig: sig(true, "str")}
 	case "*udf.Value":
-		return &decoded{call("OptValue"), sig(true, "any"), false}
+		return &decoded{call: call("OptValue"), sig: sig(true, "any")}
 	case "[]udf.Value":
 		if i != count-1 {
 			return nil
 		}
-		return &decoded{fmt.Sprintf("udf.ArgRest(%s, n, %d)", args, i), name + ": any...", true}
+		return &decoded{call: fmt.Sprintf("udf.ArgRest(%s, n, %d)", args, i), sig: name + ": any...", rest: true}
 	}
 	return nil
 }
@@ -451,11 +458,11 @@ func deliver(t, r string) string {
 	case "bool":
 		return "udf.ResultBool(" + r + ")"
 	case "string":
-		return "udf.ResultStr(" + r + ")"
+		return "udf.ResultString(" + r + ")"
 	case "[]byte":
 		return "udf.ResultBlob(" + r + ")"
 	case "udf.Value":
-		return "if err := udf.ResultOf(" + r + "); err != nil {\n\t\treturn udf.FailErr(err)\n\t}"
+		return "if err := udf.Result(" + r + "); err != nil {\n\t\treturn udf.FailErr(err)\n\t}"
 	case "*udf.Map":
 		return "if err := udf.ResultMap(" + r + "); err != nil {\n\t\treturn udf.FailErr(err)\n\t}"
 	case "*udf.List":
@@ -595,6 +602,9 @@ func (g *generator) function(b *strings.Builder, e *export, id string) string {
 				// err is reused; Go wants at least one new variable on the left, which p is.
 			}
 		}
+		if d.conv != "" {
+			p = d.conv + "(" + p + ")"
+		}
 		actuals = append(actuals, p)
 		sig = append(sig, d.sig)
 	}
@@ -648,14 +658,14 @@ func (g *generator) handler(b *strings.Builder, e *export, id string) {
 		ok = types[i] == mergeParams[i]
 	}
 	if !ok {
-		g.errorf(e.fn.Pos(), "a udf:on %s handler is func(%s) (%s, error), or the raw func(args, argc int32) int32",
-			mergeEvent, strings.Join(mergeParams, ", "), mergeAnswer)
+		g.errorf(e.fn.Pos(), "a udf:on %s handler is %s, or the raw func(args, argc int32) int32",
+			mergeEvent, mergeShape)
 		return
 	}
 
-	fmt.Fprintf(b, "\tvar c udf.Conflict\n\tif !udf.DecodeConflict(args, argc, &c) {\n\t\treturn udf.Fail(%q)\n\t}\n",
+	fmt.Fprintf(b, "\tvar current, incoming udf.EventRecord\n\tif !udf.DecodeMerge(args, argc, &current, &incoming) {\n\t\treturn udf.Fail(%q)\n\t}\n",
 		e.name+": not an "+mergeEvent+" event")
-	fmt.Fprintf(b, "\tr, err := %s(&c.Local, &c.Remote, &c)\n\tif err != nil {\n\t\treturn udf.FailErr(err)\n\t}\n\treturn r.Deliver()\n}\n", g.call(e))
+	fmt.Fprintf(b, "\tr, err := %s(&current, &incoming)\n\tif err != nil {\n\t\treturn udf.FailErr(err)\n\t}\n\treturn r.Deliver()\n}\n", g.call(e))
 }
 
 func signature(b *strings.Builder, name, id, text string) {

@@ -156,7 +156,7 @@ public final class ListBuilder {
     }
 
     /** Appends nil. */
-    public ListBuilder addNull() {
+    public ListBuilder addNil() {
         Slots.scalar(Slots.ONE, 0, Value.NIL, 0, 0);
         return push();
     }

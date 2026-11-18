@@ -23,7 +23,8 @@ import (
 // the way the Rust SDK's Value::int() does; the kind tests are for a switch.
 //
 
-// IsNull reports whether the value is nil or absent.
+// IsNull reports whether there is nothing to read: the value is a stored nil or is absent. It is not
+// another name for IsNil, which is false of an absent value.
 func (v Value) IsNull() bool { return v.Kind == KindNil || v.Kind == KindAbsent }
 
 // IsNil reports whether the value is a nil, as distinct from absent.
@@ -35,14 +36,14 @@ func (v Value) IsAbsent() bool { return v.Kind == KindAbsent }
 // IsInt reports whether the value is an integer.
 func (v Value) IsInt() bool { return v.Kind == KindInt }
 
-// IsFloat64 reports whether the value is a double. An integer is not one, though Float64 widens it.
-func (v Value) IsFloat64() bool { return v.Kind == KindDouble }
+// IsDouble reports whether the value is a double. An integer is not one, though Double widens it.
+func (v Value) IsDouble() bool { return v.Kind == KindDouble }
 
 // IsBool reports whether the value is a boolean.
 func (v Value) IsBool() bool { return v.Kind == KindBool }
 
-// IsStr reports whether the value is a string the host holds.
-func (v Value) IsStr() bool { return v.Kind == KindStr }
+// IsString reports whether the value is a string the host holds.
+func (v Value) IsString() bool { return v.Kind == KindStr }
 
 // IsBlob reports whether the value is a plain blob the host holds; GeoJSON and HLL are kinds of their own.
 func (v Value) IsBlob() bool { return v.Kind == KindBlob }
@@ -74,11 +75,11 @@ func (v Value) Int() (int64, error) {
 	return v.Payload, nil
 }
 
-// Float64 is the value as a double, or an integer widened.
-func (v Value) Float64() (float64, error) {
+// Double is the value as a double, or an integer widened.
+func (v Value) Double() (float64, error) {
 	switch v.Kind {
 	case KindDouble:
-		return v.Double(), nil
+		return v.double(), nil
 	case KindInt:
 		return float64(v.Payload), nil
 	}
@@ -93,23 +94,23 @@ func (v Value) Bool() (bool, error) {
 	return v.Payload != 0, nil
 }
 
-// Str is the text of a stored string, copied out.
-func (v Value) Str() (string, error) {
+// String is the text of a string, copied out.
+func (v Value) String() (string, error) {
 	if v.Kind == KindGuestStr {
 		return unsafe.String((*byte)(unsafe.Pointer(uintptr(v.Payload))), int(v.Len)), nil
 	}
 	if v.Kind != KindStr {
 		return "", v.kindError("a string")
 	}
-	b, err := v.Bytes()
+	b, err := v.Blob()
 	if err != nil {
 		return "", err
 	}
 	return string(b), nil
 }
 
-// Bytes is the bytes of a stored string, blob, GeoJSON or HLL, copied out.
-func (v Value) Bytes() ([]byte, error) {
+// Blob is the bytes of a blob, copied out. A string, GeoJSON or HLL value gives its bytes the same way.
+func (v Value) Blob() ([]byte, error) {
 	switch v.Kind {
 	case KindGuestStr, KindGuestBlob, KindGuestGeoJSON:
 		out := make([]byte, v.Len)

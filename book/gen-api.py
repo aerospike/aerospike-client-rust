@@ -32,7 +32,7 @@ JAVA_FILES = [('record', 'Function.java'), ('record', 'Nullable.java'), ('record
               ('record', 'LowLevel.java'), ('record', 'Params.java'),
               ('stream', 'Stream.java'),
               ('events', 'On.java'), ('events', 'Resolution.java'),
-              ('events', 'EventRecord.java'), ('events', 'Conflict.java'), ('events', 'Pair.java'),
+              ('events', 'EventRecord.java'), ('events', 'Pair.java'),
               ('events', 'Both.java')]
 
 EVENT_SECTIONS = {'Events'}

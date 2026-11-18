@@ -103,6 +103,12 @@ its id: under bin convergence it travels with the bin LUTs; otherwise `ship-src-
 | On failure | `policy`, and for this kind only `abandon`: the write is dropped and the source told `lost-conflict`, which it counts as success. `fail` is refused for this kind: the source does not send a failed write again, so it would drop the write as `abandon` does and report it as lost |
 | One binding per scope | yes |
 
+The SDKs hand a handler the two records and nothing else. What it may need of the description is asked
+of the record it is about: `incoming` says whether it is a delete, whether it is partial and which of its
+bins would lose; `current` says whether it is a tombstone; either says whether bin convergence is on, and
+its source id, deleted bins and per-bin LUTs and sources. The `trigger` and `mode` entries are not shown
+to a handler: a merge is a function of the two records, and should answer the same in a dry run.
+
 A `record` answer equal to the current record writes nothing and answers the source `lost-conflict`,
 which it counts as success; so does `keep-local`. One that differs is committed whole as an XDR write, so
 it is not shipped back, and under bin convergence is stamped bin by bin with the later of the two sides'

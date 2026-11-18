@@ -206,7 +206,7 @@ extern "C" {
     #[link_name = "digest"]
     fn raw_digest(out: *mut u8, out_cap: i32) -> i32;
 
-    // Events: a bin of one of the event's two records, 0 the local one and 1 the remote.
+    // Events: a bin of one of the event's two records, 0 the current one and 1 the incoming.
     #[link_name = "event_bin_value"]
     fn raw_event_bin_value(which: i32, name: *const u8, name_len: i32, out: *mut u8, out_cap: i32) -> i32;
 
@@ -344,9 +344,9 @@ pub enum Value<'a> {
     Bool(bool),
     Int(i64),
     Double(f64),
-    Str(Text<'a>),
+    String(Text<'a>),
     Blob(Blob<'a>),
-    /// A GeoJson document, which reads and writes as its text. Distinct from [`Value::Str`] on purpose: the
+    /// A GeoJson document, which reads and writes as its text. Distinct from [`Value::String`] on purpose: the
     /// particle type is what makes a bin geospatially indexable, and writing a document back as a string
     /// would silently make it unqueryable.
     GeoJson(Text<'a>),
@@ -398,7 +398,7 @@ impl<'a> Value<'a> {
             1 => Value::Bool(payload != 0),
             2 => Value::Int(payload),
             3 => Value::Double(f64::from_bits(payload as u64)),
-            4 => Value::Str(Text::Stored { src, at, len }),
+            4 => Value::String(Text::Stored { src, at, len }),
             5 => Value::Blob(Blob::Stored { src, at, len }),
             6 => Value::List(Coll::Stored { src, at, len }),
             7 => Value::Map(Coll::Stored { src, at, len }),
@@ -416,7 +416,7 @@ impl<'a> Value<'a> {
             Value::Bool(_) => "a boolean",
             Value::Int(_) => "an integer",
             Value::Double(_) => "a double",
-            Value::Str(_) => "a string",
+            Value::String(_) => "a string",
             Value::Blob(_) => "a blob",
             Value::GeoJson(_) => "a geojson document",
             Value::List(_) => "a list",
@@ -459,9 +459,9 @@ impl<'a> Value<'a> {
     }
 
     /// The text of a string or a GeoJson document.
-    pub fn text(&self) -> Result<Text<'a>, Error> {
+    pub fn string(&self) -> Result<Text<'a>, Error> {
         match self {
-            Value::Str(t) | Value::GeoJson(t) => Ok(*t),
+            Value::String(t) | Value::GeoJson(t) => Ok(*t),
             _ => Err(Error::WrongType),
         }
     }
@@ -494,7 +494,7 @@ impl<'a> Value<'a> {
     /// A string's or GeoJson document's text, into a buffer you own. See [`Text::as_str`].
     pub fn as_str<'b>(&'b self, out: &'b mut [u8]) -> Result<&'b str, Error> {
         match self {
-            Value::Str(t) | Value::GeoJson(t) => t.as_str(out),
+            Value::String(t) | Value::GeoJson(t) => t.as_str(out),
             _ => Err(Error::WrongType),
         }
     }
@@ -503,6 +503,55 @@ impl<'a> Value<'a> {
     #[must_use]
     pub fn is_nil(&self) -> bool {
         matches!(self, Value::Nil)
+    }
+
+    /// Whether this is an integer.
+    #[must_use]
+    pub fn is_int(&self) -> bool {
+        matches!(self, Value::Int(_))
+    }
+
+    /// Whether this is a double.
+    #[must_use]
+    pub fn is_double(&self) -> bool {
+        matches!(self, Value::Double(_))
+    }
+
+    /// Whether this is a boolean.
+    #[must_use]
+    pub fn is_bool(&self) -> bool {
+        matches!(self, Value::Bool(_))
+    }
+
+    /// Whether this is a string. A GeoJson document is not one, though it reads as text.
+    #[must_use]
+    pub fn is_string(&self) -> bool {
+        matches!(self, Value::String(_))
+    }
+
+    /// Whether this is a blob. An HLL is not one.
+    #[must_use]
+    pub fn is_blob(&self) -> bool {
+        matches!(self, Value::Blob(_))
+    }
+
+    /// Whether this is a list.
+    #[must_use]
+    pub fn is_list(&self) -> bool {
+        matches!(self, Value::List(_))
+    }
+
+    /// Whether this is a map.
+    #[must_use]
+    pub fn is_map(&self) -> bool {
+        matches!(self, Value::Map(_))
+    }
+
+    /// Whether this is a string, blob, GeoJson document, HLL, list or map the host holds, as opposed to
+    /// a scalar or something the guest built.
+    #[must_use]
+    pub fn is_stored(&self) -> bool {
+        stored_position(self).is_some()
     }
 }
 
@@ -557,7 +606,7 @@ impl From<bool> for Value<'_> {
 
 impl<'a> From<&'a str> for Value<'a> {
     fn from(value: &'a str) -> Self {
-        Value::Str(Text::Guest(value))
+        Value::String(Text::Guest(value))
     }
 }
 
@@ -738,7 +787,7 @@ impl<const N: usize> core::fmt::Display for Str<N> {
 
 impl<'a, const N: usize> From<&'a Str<N>> for Value<'a> {
     fn from(value: &'a Str<N>) -> Self {
-        Value::Str(Text::Guest(value.as_str()))
+        Value::String(Text::Guest(value.as_str()))
     }
 }
 
@@ -1174,9 +1223,30 @@ pub trait ReadRecord {
         }
     }
 
+    /// Whether the record has the bin.
+    fn has(&self, name: &str) -> bool {
+        self.bin(name).is_ok()
+    }
+
     /// An integer bin, or `None`.
     fn int(&self, name: &str) -> Result<Option<i64>, Error> {
         self.get(name)?.map(|v| v.int()).transpose()
+    }
+
+    /// An integer bin, or `default` when it is absent or nil. A bin of another kind is still
+    /// `Err(WrongType)`.
+    fn int_or(&self, name: &str, default: i64) -> Result<i64, Error> {
+        Ok(self.int(name)?.unwrap_or(default))
+    }
+
+    /// A double bin, or `default` when it is absent or nil.
+    fn double_or(&self, name: &str, default: f64) -> Result<f64, Error> {
+        Ok(self.double(name)?.unwrap_or(default))
+    }
+
+    /// A boolean bin, or `default` when it is absent or nil.
+    fn bool_or(&self, name: &str, default: bool) -> Result<bool, Error> {
+        Ok(self.bool(name)?.unwrap_or(default))
     }
 
     /// A double bin, or `None`.
@@ -1190,8 +1260,8 @@ pub trait ReadRecord {
     }
 
     /// A string bin's text, or `None`.
-    fn text(&self, name: &str) -> Result<Option<Text<'static>>, Error> {
-        self.get(name)?.map(|v| v.text()).transpose()
+    fn string(&self, name: &str) -> Result<Option<Text<'static>>, Error> {
+        self.get(name)?.map(|v| v.string()).transpose()
     }
 
     /// A blob bin's bytes, or `None`.
@@ -1273,9 +1343,31 @@ impl Record {
         ReadRecord::get(self, name)
     }
 
+    /// Whether the record has the bin.
+    #[must_use]
+    pub fn has(&self, name: &str) -> bool {
+        ReadRecord::has(self, name)
+    }
+
     /// An integer bin, or `None` when the bin is absent or nil. A bin of another kind is `Err(WrongType)`.
     pub fn int(&self, name: &str) -> Result<Option<i64>, Error> {
         ReadRecord::int(self, name)
+    }
+
+    /// An integer bin, or `default` when it is absent or nil. A bin of another kind is still
+    /// `Err(WrongType)`.
+    pub fn int_or(&self, name: &str, default: i64) -> Result<i64, Error> {
+        ReadRecord::int_or(self, name, default)
+    }
+
+    /// A double bin, or `default` when it is absent or nil.
+    pub fn double_or(&self, name: &str, default: f64) -> Result<f64, Error> {
+        ReadRecord::double_or(self, name, default)
+    }
+
+    /// A boolean bin, or `default` when it is absent or nil.
+    pub fn bool_or(&self, name: &str, default: bool) -> Result<bool, Error> {
+        ReadRecord::bool_or(self, name, default)
     }
 
     /// A double bin, or `None` when absent or nil.
@@ -1289,8 +1381,8 @@ impl Record {
     }
 
     /// A string bin's text, or `None` when absent or nil.
-    pub fn text(&self, name: &str) -> Result<Option<Text<'static>>, Error> {
-        ReadRecord::text(self, name)
+    pub fn string(&self, name: &str) -> Result<Option<Text<'static>>, Error> {
+        ReadRecord::string(self, name)
     }
 
     /// A blob bin's bytes, or `None` when absent or nil.
@@ -1340,10 +1432,10 @@ impl Record {
                 Value::Bool(b) => raw_set_bool(n, nl, i32::from(*b)),
                 Value::Int(i) => raw_set_int(n, nl, *i),
                 Value::Double(d) => raw_set_double(n, nl, *d),
-                Value::Str(Text::Guest(s)) => raw_set_str(n, nl, s.as_ptr(), s.len() as i32),
+                Value::String(Text::Guest(s)) => raw_set_str(n, nl, s.as_ptr(), s.len() as i32),
                 Value::GeoJson(Text::Guest(s)) => raw_set_geojson(n, nl, s.as_ptr(), s.len() as i32),
                 Value::Blob(Blob::Guest(b)) => raw_set_blob(n, nl, b.as_ptr(), b.len() as i32),
-                Value::Str(Text::Stored { src, at, .. })
+                Value::String(Text::Stored { src, at, .. })
                 | Value::GeoJson(Text::Stored { src, at, .. })
                 | Value::Blob(Blob::Stored { src, at, .. })
                 | Value::Hll(Blob::Stored { src, at, .. })
@@ -1356,6 +1448,18 @@ impl Record {
         };
 
         status(rc)
+    }
+
+    /// Write bytes to a bin as a blob. Staged, like [`set`](Record::set), which does the same for a
+    /// `&[u8]`; this form says the kind at the call.
+    pub fn set_blob(&mut self, name: &str, value: &[u8]) -> Result<(), Error> {
+        self.set_value(name, &Value::Blob(Blob::Guest(value)))
+    }
+
+    /// Write a GeoJson document to a bin from its text. Staged, like [`set`](Record::set). A document
+    /// written with `set` from a `&str` would be a string, which no geospatial index reads.
+    pub fn set_geojson(&mut self, name: &str, value: &str) -> Result<(), Error> {
+        self.set_value(name, &Value::GeoJson(Text::Guest(value)))
     }
 
     /// Remove a bin. Staged, like [`set`](Record::set).
@@ -1449,7 +1553,7 @@ impl Record {
                 let written = bytes_result(rc, out.len())?;
 
                 match core::str::from_utf8(&out[..written]) {
-                    Ok(text) => Ok(Value::Str(Text::Guest(text))),
+                    Ok(text) => Ok(Value::String(Text::Guest(text))),
                     Err(_) => Ok(Value::Blob(Blob::Guest(&out[..written]))),
                 }
             }
@@ -1561,7 +1665,7 @@ impl List {
         let rc = unsafe {
             match &value {
                 Value::Int(i) => list_push_int(self.handle, *i),
-                Value::Str(Text::Guest(s)) => list_push_str(self.handle, s.as_ptr(), s.len() as i32),
+                Value::String(Text::Guest(s)) => list_push_str(self.handle, s.as_ptr(), s.len() as i32),
                 Value::List(Coll::Built(h)) | Value::Map(Coll::Built(h)) => list_push(self.handle, *h),
                 other => match stored_position(other) {
                     Some((src, at)) => list_push_at(self.handle, src, at as i32),
@@ -1692,7 +1796,7 @@ impl Map {
         let rc = unsafe {
             match &value {
                 Value::Int(i) => map_put_str_int(self.handle, k, kl, *i),
-                Value::Str(Text::Guest(s)) => map_put_str_str(self.handle, k, kl, s.as_ptr(), s.len() as i32),
+                Value::String(Text::Guest(s)) => map_put_str_str(self.handle, k, kl, s.as_ptr(), s.len() as i32),
                 Value::List(Coll::Built(h)) | Value::Map(Coll::Built(h)) => {
                     map_put_str_handle(self.handle, k, kl, *h)
                 }
@@ -1864,13 +1968,13 @@ impl Value<'_> {
             Value::Bool(b) => (1, 0, i64::from(*b)),
             Value::Int(i) => (2, 0, *i),
             Value::Double(d) => (3, 0, d.to_bits() as i64),
-            Value::Str(Text::Stored { src, at, len }) => (4, *len as u32, stored(*src, *at)),
+            Value::String(Text::Stored { src, at, len }) => (4, *len as u32, stored(*src, *at)),
             Value::Blob(Blob::Stored { src, at, len }) => (5, *len as u32, stored(*src, *at)),
             Value::List(Coll::Stored { src, at, len }) => (6, *len as u32, stored(*src, *at)),
             Value::Map(Coll::Stored { src, at, len }) => (7, *len as u32, stored(*src, *at)),
             Value::GeoJson(Text::Stored { src, at, len }) => (9, *len as u32, stored(*src, *at)),
             Value::Hll(Blob::Stored { src, at, len }) => (10, *len as u32, stored(*src, *at)),
-            Value::Str(Text::Guest(s)) => (GUEST_STR, s.len() as u32, s.as_ptr() as usize as i64),
+            Value::String(Text::Guest(s)) => (GUEST_STR, s.len() as u32, s.as_ptr() as usize as i64),
             Value::Blob(Blob::Guest(b)) => (GUEST_BLOB, b.len() as u32, b.as_ptr() as usize as i64),
             Value::GeoJson(Text::Guest(s)) => (GUEST_GEOJSON, s.len() as u32, s.as_ptr() as usize as i64),
             Value::List(Coll::Built(h)) | Value::Map(Coll::Built(h)) => (HANDLE, 0, i64::from(*h)),
@@ -1948,7 +2052,7 @@ impl Batch {
 // Where a value read from the record sits, for the `*_at` natives; None for anything of the guest's.
 fn stored_position(value: &Value<'_>) -> Option<(i32, u32)> {
     match value {
-        Value::Str(Text::Stored { src, at, .. })
+        Value::String(Text::Stored { src, at, .. })
         | Value::GeoJson(Text::Stored { src, at, .. })
         | Value::Blob(Blob::Stored { src, at, .. })
         | Value::Hll(Blob::Stored { src, at, .. })
@@ -1965,7 +2069,7 @@ unsafe fn val_of(value: &Value<'_>) -> Option<i32> {
         Value::Bool(b) => val_bool(i32::from(*b)),
         Value::Int(i) => val_int(*i),
         Value::Double(d) => val_double(*d),
-        Value::Str(Text::Guest(s)) => val_str(s.as_ptr(), s.len() as i32),
+        Value::String(Text::Guest(s)) => val_str(s.as_ptr(), s.len() as i32),
         Value::Blob(Blob::Guest(b)) => val_blob(b.as_ptr(), b.len() as i32),
         Value::GeoJson(Text::Guest(s)) => val_geojson(s.as_ptr(), s.len() as i32),
         _ => return None,
@@ -2003,7 +2107,7 @@ pub fn result(value: &Value<'_>) -> Result<(), Error> {
                 raw_result_double(*d);
                 OK
             }
-            Value::Str(Text::Guest(s)) => {
+            Value::String(Text::Guest(s)) => {
                 raw_result_str(s.as_ptr(), s.len() as i32);
                 OK
             }
@@ -2015,7 +2119,7 @@ pub fn result(value: &Value<'_>) -> Result<(), Error> {
                 raw_result_blob(b.as_ptr(), b.len() as i32);
                 OK
             }
-            Value::Str(Text::Stored { src, at, .. })
+            Value::String(Text::Stored { src, at, .. })
             | Value::GeoJson(Text::Stored { src, at, .. })
             | Value::Blob(Blob::Stored { src, at, .. })
             | Value::Hll(Blob::Stored { src, at, .. })
@@ -2052,7 +2156,7 @@ pub fn now() -> Result<i64, Error> {
 }
 
 /// Write a line to the server log, under the UDF context.
-pub fn log_at(level: Level, message: &str) {
+pub fn log(level: Level, message: &str) {
     unsafe { raw_log(level as i32, message.as_ptr(), message.len() as i32) };
 }
 
@@ -2229,7 +2333,7 @@ impl<'a> FromArg<'a> for &'a str {
 
     fn from_arg(args: &Args, index: usize, buf: &'a mut [u8]) -> Result<Self, ArgError> {
         match args.get(index) {
-            Some(Value::Str(Text::Stored { src, at, len })) => {
+            Some(Value::String(Text::Stored { src, at, len })) => {
                 if len > buf.len() {
                     return Err(ArgError::TooLong { len, max: buf.len() });
                 }
@@ -2256,7 +2360,7 @@ impl<'a> FromArg<'a> for &'a [u8] {
     fn from_arg(args: &Args, index: usize, buf: &'a mut [u8]) -> Result<Self, ArgError> {
         let (src, at, len) = match args.get(index) {
             Some(Value::Blob(Blob::Stored { src, at, len }))
-            | Some(Value::Str(Text::Stored { src, at, len })) => (src, at, len),
+            | Some(Value::String(Text::Stored { src, at, len })) => (src, at, len),
             Some(other) => return Err(ArgError::Expected("bytes", other.kind())),
             None => return Err(ArgError::Missing),
         };
@@ -2290,7 +2394,7 @@ impl<'a, const N: usize> FromArg<'a> for Str<N> {
 
     fn from_arg(args: &Args, index: usize, _buf: &'a mut [u8]) -> Result<Self, ArgError> {
         match args.get(index) {
-            Some(Value::Str(text)) => text.to_inline::<N>().map_err(|e| owned_arg_error(e, N, "a string")),
+            Some(Value::String(text)) => text.to_inline::<N>().map_err(|e| owned_arg_error(e, N, "a string")),
             Some(other) => Err(ArgError::Expected("a string", other.kind())),
             None => Err(ArgError::Missing),
         }
@@ -2319,7 +2423,7 @@ impl<'a> FromArg<'a> for alloc::string::String {
 
     fn from_arg(args: &Args, index: usize, _buf: &'a mut [u8]) -> Result<Self, ArgError> {
         match args.get(index) {
-            Some(Value::Str(text)) => text.to_string().map_err(|e| owned_arg_error(e, usize::MAX, "a string")),
+            Some(Value::String(text)) => text.to_string().map_err(|e| owned_arg_error(e, usize::MAX, "a string")),
             Some(other) => Err(ArgError::Expected("a string", other.kind())),
             None => Err(ArgError::Missing),
         }
@@ -2503,18 +2607,6 @@ impl Signature {
         self.address()
     }
 
-    /// `event xdr-merge/1 name(local: record, remote: record, conflict: conflict) -> resolution`
-    pub fn event(&mut self, kind: &str, name: &str) -> i32 {
-        if self.len == 0 {
-            let _ = write!(
-                self,
-                "event {kind} {name}(local: record, remote: record, conflict: conflict) -> resolution"
-            );
-        }
-
-        self.address()
-    }
-
     fn params(&mut self, params: &[Param]) {
         let _ = self.write_str("(");
 
@@ -2610,8 +2702,9 @@ pub fn reject_arity(function: &str, declared: usize, got: i32) -> i32 {
 // Events.
 //
 // A UDF bound to a point in the server's own processing. There is one such point, `xdr-merge`: the
-// handler is handed the record this node holds and the one XDR delivered, with a description of the
-// merge, and gives back the final record or a verdict. See `event!`.
+// handler is handed the record this node holds and the one XDR delivered, and gives back the final
+// record or a verdict. What the server says about the merge is said of one record or the other, so it
+// is read from them. See `event!`.
 //
 
 impl ReadRecord for EventRecord {
@@ -2637,10 +2730,15 @@ pub struct EventRecord {
     last_update_time: i64,
     ttl: i64,
     source_id: i64,
-    bins: Coll,
-    deleted: Coll,
-    bin_luts: Option<Coll>,
-    bin_srcs: Option<Coll>,
+    bin_names: Coll,
+    deleted_bins: Coll,
+    bin_last_update_times: Option<Coll>,
+    bin_source_ids: Option<Coll>,
+    delete: bool,
+    partial: bool,
+    tombstone: bool,
+    bin_convergence: bool,
+    lost: Coll,
 }
 
 impl EventRecord {
@@ -2663,9 +2761,31 @@ impl EventRecord {
         ReadRecord::get(self, name)
     }
 
+    /// Whether the record has the bin.
+    #[must_use]
+    pub fn has(&self, name: &str) -> bool {
+        ReadRecord::has(self, name)
+    }
+
     /// An integer bin, or `None` when the bin is absent or nil. A bin of another kind is `Err(WrongType)`.
     pub fn int(&self, name: &str) -> Result<Option<i64>, Error> {
         ReadRecord::int(self, name)
+    }
+
+    /// An integer bin, or `default` when it is absent or nil. A bin of another kind is still
+    /// `Err(WrongType)`.
+    pub fn int_or(&self, name: &str, default: i64) -> Result<i64, Error> {
+        ReadRecord::int_or(self, name, default)
+    }
+
+    /// A double bin, or `default` when it is absent or nil.
+    pub fn double_or(&self, name: &str, default: f64) -> Result<f64, Error> {
+        ReadRecord::double_or(self, name, default)
+    }
+
+    /// A boolean bin, or `default` when it is absent or nil.
+    pub fn bool_or(&self, name: &str, default: bool) -> Result<bool, Error> {
+        ReadRecord::bool_or(self, name, default)
     }
 
     /// A double bin, or `None` when absent or nil.
@@ -2679,8 +2799,8 @@ impl EventRecord {
     }
 
     /// A string bin's text, or `None` when absent or nil.
-    pub fn text(&self, name: &str) -> Result<Option<Text<'static>>, Error> {
-        ReadRecord::text(self, name)
+    pub fn string(&self, name: &str) -> Result<Option<Text<'static>>, Error> {
+        ReadRecord::string(self, name)
     }
 
     /// A blob bin's bytes, or `None` when absent or nil.
@@ -2700,8 +2820,8 @@ impl EventRecord {
 
     /// The names of this record's bins, as a stored list to iterate.
     #[must_use]
-    pub fn bins(&self) -> Coll {
-        self.bins
+    pub fn bin_names(&self) -> Coll {
+        self.bin_names
     }
 
     /// The record's generation. Zero on both sides of an `xdr-merge`: each cluster sets its own, and a merge
@@ -2730,20 +2850,27 @@ impl EventRecord {
         self.source_id
     }
 
-    /// The names of the bins this side deleted: for the incoming write, its bin-delete ops; for the local
-    /// record, its bin tombstones. A deleted bin reads as absent, so this is the only way to tell "never
-    /// had it" from "removed it", and [`bin_lut`](EventRecord::bin_lut) says when.
+    /// The names of the bins this side deleted: for the incoming write, its bin-delete ops; for the
+    /// current record, its bin tombstones. A deleted bin reads as absent, so this is the only way to tell
+    /// "never had it" from "removed it", and
+    /// [`bin_last_update_time`](EventRecord::bin_last_update_time) says when.
     #[must_use]
-    pub fn deleted(&self) -> Coll {
-        self.deleted
+    pub fn deleted_bins(&self) -> Coll {
+        self.deleted_bins
     }
 
-    /// When this side last wrote the bin, when the server knows per bin (bin convergence keeps a LUT per
-    /// bin); the record's LUT otherwise. This is what decides a bin under the `bin-lut` policy, so a merge
+    /// Whether this side deleted any bin.
+    #[must_use]
+    pub fn deleted_any(&self) -> bool {
+        !self.deleted_bins.is_empty()
+    }
+
+    /// When this side last wrote the bin, when the server knows per bin (bin convergence keeps a time per
+    /// bin); the record's last update time otherwise. This is what decides a bin under the `bin-lut` policy, so a merge
     /// that orders the sides per bin agrees with the policy on the bins it does not merge.
     #[must_use]
-    pub fn bin_lut(&self, name: &str) -> i64 {
-        self.bin_luts
+    pub fn bin_last_update_time(&self, name: &str) -> i64 {
+        self.bin_last_update_times
             .and_then(|m| m.get(name).ok())
             .and_then(|v| v.int().ok())
             .unwrap_or(self.last_update_time)
@@ -2752,22 +2879,60 @@ impl EventRecord {
     /// The source id that wrote the bin, per bin when known; the record's otherwise.
     #[must_use]
     pub fn bin_source_id(&self, name: &str) -> i64 {
-        self.bin_srcs
+        self.bin_source_ids
             .and_then(|m| m.get(name).ok())
             .and_then(|v| v.int().ok())
             .unwrap_or(self.source_id)
     }
 
+    /// Whether this is the incoming write and it is a record delete, in which case it has no bins. Always
+    /// false of the current record.
+    #[must_use]
+    pub fn is_delete(&self) -> bool {
+        self.delete
+    }
+
+    /// Whether this is the incoming write and it carries only the bins that changed (`bin-policy`), so a
+    /// bin it lacks may well exist on the other DC. Always false of the current record.
+    #[must_use]
+    pub fn is_partial(&self) -> bool {
+        self.partial
+    }
+
+    /// The names of the incoming bins that would lose under bin convergence, as a stored list. Empty for
+    /// the current record, whose bins are not the ones being applied.
+    #[must_use]
+    pub fn lost_bins(&self) -> Coll {
+        self.lost
+    }
+
+    /// Whether this is the current record and it is a tombstone: it exists, with no bins. Always false
+    /// of the incoming write; see [`is_delete`](EventRecord::is_delete) for that side.
+    #[must_use]
+    pub fn is_tombstone(&self) -> bool {
+        self.tombstone
+    }
+
+    /// Whether the policy the handler stands in for is bin convergence (`bin-lut`) rather than a plain
+    /// apply of the incoming bins (`replace`). Only under bin convergence does the server keep a time
+    /// per bin, so a time-based merge asks this before trusting
+    /// [`bin_last_update_time`](EventRecord::bin_last_update_time). It is a fact about the merge, and both
+    /// records give the same answer.
+    #[must_use]
+    pub fn uses_bin_convergence(&self) -> bool {
+        self.bin_convergence
+    }
+
     /// A new record built from this one's bins with `overrides` on top: every bin of this record goes in
     /// unless the map already has it. The bins travel by position, never through the guest.
     ///
-    /// This prefers one side, so a handler that uses it on `local` is not symmetric: the two DCs would
+    /// This prefers one side, so a handler that uses it on `current` is not symmetric: the two DCs would
     /// resolve the same pair to different records. [`Pair::with_newer`] is the symmetric form; use this one
     /// when the side is chosen by something both DCs agree on, such as the source id.
     pub fn with_bins(&self, overrides: Map) -> Result<Map, Error> {
         let mut buf = [0u8; 32];
 
-        for name in self.bins.iter() {
+        for name in self.bin_names.iter() {
             let name = name?;
             let name = name.as_str(&mut buf)?;
 
@@ -2782,135 +2947,59 @@ impl EventRecord {
     }
 }
 
-/// What the event is about: the kind of conflict, the policy that would have decided it, and the bins at
-/// stake.
-#[derive(Clone, Copy)]
-pub struct Conflict {
-    trigger: Trigger,
-    dry_run: bool,
-    bin_convergence: bool,
-    lost: Coll,
-    remote_partial: bool,
-    remote_deleted_record: bool,
-    local_tombstone: bool,
-    local: EventRecord,
-    remote: EventRecord,
-}
-
-/// What made the event fire.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Trigger {
-    /// Every incoming XDR write to a record that exists here (`trigger=always`, the default).
-    Always,
-    /// Only a write in which an incoming bin would lose under bin convergence (`trigger=conflict`).
-    Conflict,
-}
-
-impl Conflict {
-    /// What made the event fire: the binding's `trigger` setting.
-    #[must_use]
-    pub fn trigger(&self) -> Trigger {
-        self.trigger
-    }
-
-    /// A dry run from `__event__`: nothing will be written whatever the answer.
-    #[must_use]
-    pub fn is_dry_run(&self) -> bool {
-        self.dry_run
-    }
-
-    /// Whether the policy the handler stands in for is bin convergence (`bin-lut`) rather than a plain
-    /// apply of the incoming bins (`replace`).
-    #[must_use]
-    pub fn uses_bin_convergence(&self) -> bool {
-        self.bin_convergence
-    }
-
-    /// The incoming write is a record delete; `remote()` has no bins.
-    #[must_use]
-    pub fn incoming_is_delete(&self) -> bool {
-        self.remote_deleted_record
-    }
-
-    /// The current record is a tombstone: it exists, with no bins.
-    #[must_use]
-    pub fn current_is_tombstone(&self) -> bool {
-        self.local_tombstone
-    }
-
-    /// Whether either side deleted a bin: the incoming write carries a bin delete, or the local record has
-    /// a bin tombstone. Such a bin is absent on that side, and resurrecting it from the other side is the
-    /// classic merge mistake; see [`EventRecord::deleted`].
-    #[must_use]
-    pub fn involves_delete(&self) -> bool {
-        !self.local.deleted.is_empty() || !self.remote.deleted.is_empty()
-    }
-
-    /// The names of the incoming bins that would lose, as a stored list.
-    #[must_use]
-    pub fn lost_bins(&self) -> Coll {
-        self.lost
-    }
-
-    /// The names of bins the incoming write deletes; `remote().deleted()`.
-    #[must_use]
-    pub fn remote_deleted(&self) -> Coll {
-        self.remote.deleted
-    }
-
-    /// The record this node holds.
-    #[must_use]
-    pub fn local(&self) -> EventRecord {
-        self.local
-    }
-
-    /// The record XDR delivered: the incoming write.
-    #[must_use]
-    pub fn remote(&self) -> EventRecord {
-        self.remote
-    }
-
-    /// Whether the incoming write carries only the bins that changed (`bin-policy`), so a bin it lacks may
-    /// well exist on the other DC.
-    #[must_use]
-    pub fn remote_is_partial(&self) -> bool {
-        self.remote_partial
-    }
-
-    /// The two records side by side, for bin-wise merging.
-    #[must_use]
-    pub fn pair(&self) -> Pair {
-        Pair { local: self.local, remote: self.remote }
-    }
-}
-
-/// The two sides of a conflict, read bin by bin into a [`Both`].
+/// The two sides of a merge, read bin by bin into a [`Both`]. Made by [`Pair::of`].
 #[derive(Clone, Copy)]
 pub struct Pair {
-    local: EventRecord,
-    remote: EventRecord,
+    current: EventRecord,
+    incoming: EventRecord,
 }
 
 impl Pair {
+    /// The current record and the incoming write side by side, for bin-wise merging. Each record knows
+    /// which of the two it is, so the pair comes out the same if they are passed the other way round.
+    #[must_use]
+    pub fn of(current: EventRecord, incoming: EventRecord) -> Pair {
+        if current.which <= incoming.which {
+            Pair { current, incoming }
+        } else {
+            Pair { current: incoming, incoming: current }
+        }
+    }
+
     /// An integer bin on each side; a side where it is absent or nil is `None`. `Err(WrongType)` when either
     /// side holds another kind.
     pub fn int(&self, name: &str) -> Result<Both<i64>, Error> {
-        Ok(self.both(name, self.local.int(name)?, self.remote.int(name)?))
+        Ok(self.both(name, self.current.int(name)?, self.incoming.int(name)?))
     }
 
     /// A double bin on each side; a side where it is absent or nil is `None`.
     pub fn double(&self, name: &str) -> Result<Both<f64>, Error> {
-        Ok(self.both(name, self.local.double(name)?, self.remote.double(name)?))
+        Ok(self.both(name, self.current.double(name)?, self.incoming.double(name)?))
+    }
+
+    /// A boolean bin on each side; a side where it is absent or nil is `None`.
+    pub fn bool(&self, name: &str) -> Result<Both<bool>, Error> {
+        Ok(self.both(name, self.current.bool(name)?, self.incoming.bool(name)?))
     }
 
     /// A string bin's text on each side; a side where it is absent or nil is `None`.
-    pub fn text(&self, name: &str) -> Result<Both<Text<'static>>, Error> {
-        Ok(self.both(name, self.local.text(name)?, self.remote.text(name)?))
+    pub fn string(&self, name: &str) -> Result<Both<Text<'static>>, Error> {
+        Ok(self.both(name, self.current.string(name)?, self.incoming.string(name)?))
+    }
+
+    /// A blob bin's bytes on each side; a side where it is absent or nil is `None`.
+    pub fn blob(&self, name: &str) -> Result<Both<Blob<'static>>, Error> {
+        Ok(self.both(name, self.current.blob(name)?, self.incoming.blob(name)?))
     }
 
     /// A list bin on each side; a side where it is absent or nil is `None`.
     pub fn list(&self, name: &str) -> Result<Both<Coll>, Error> {
-        Ok(self.both(name, self.local.list(name)?, self.remote.list(name)?))
+        Ok(self.both(name, self.current.list(name)?, self.incoming.list(name)?))
+    }
+
+    /// A map bin on each side; a side where it is absent or nil is `None`.
+    pub fn map(&self, name: &str) -> Result<Both<Coll>, Error> {
+        Ok(self.both(name, self.current.map(name)?, self.incoming.map(name)?))
     }
 
     /// The bin as a value on each side; absent sides are `None`.
@@ -2921,7 +3010,7 @@ impl Pair {
             Err(e) => Err(e),
         };
 
-        Ok(self.both(name, side(&self.local)?, side(&self.remote)?))
+        Ok(self.both(name, side(&self.current)?, side(&self.incoming)?))
     }
 
     /// Every bin either side has that `overrides` lacks, from the side that wrote it later - which is what
@@ -2932,8 +3021,8 @@ impl Pair {
         let have = overrides.into_value();
         let have = have.map()?;
 
-        for side in [&self.local, &self.remote] {
-            for name in side.bins().iter() {
+        for side in [&self.current, &self.incoming] {
+            for name in side.bin_names().iter() {
                 let name = name?;
                 let name = name.as_str(&mut buf)?;
 
@@ -2950,87 +3039,91 @@ impl Pair {
         Ok(overrides)
     }
 
-    /// Whether the remote side wrote `name` later, per bin: the order the `bin-lut` policy uses.
+    /// Whether the incoming side wrote `name` later, per bin: the order the `bin-lut` policy uses.
     #[must_use]
-    pub fn remote_is_newer(&self, name: &str) -> bool {
-        let (ll, rl) = (self.local.bin_lut(name), self.remote.bin_lut(name));
+    pub fn incoming_is_newer(&self, name: &str) -> bool {
+        let current = self.current.bin_last_update_time(name);
+        let incoming = self.incoming.bin_last_update_time(name);
 
-        rl > ll || (rl == ll && self.remote.bin_source_id(name) > self.local.bin_source_id(name))
+        incoming > current
+            || (incoming == current && self.incoming.bin_source_id(name) > self.current.bin_source_id(name))
     }
 
-    fn both<T>(&self, name: &str, local: Option<T>, remote: Option<T>) -> Both<T> {
+    fn both<T>(&self, name: &str, current: Option<T>, incoming: Option<T>) -> Both<T> {
         Both {
-            local,
-            remote,
-            local_lut: self.local.bin_lut(name),
-            remote_lut: self.remote.bin_lut(name),
-            local_src: self.local.bin_source_id(name),
-            remote_src: self.remote.bin_source_id(name),
+            current,
+            incoming,
+            current_last_update_time: self.current.bin_last_update_time(name),
+            incoming_last_update_time: self.incoming.bin_last_update_time(name),
+            current_source_id: self.current.bin_source_id(name),
+            incoming_source_id: self.incoming.bin_source_id(name),
         }
     }
 }
 
-/// A bin on both sides of a conflict, either of which may be missing, with the merges a resolver reaches for.
+/// A bin on both sides of a merge, either of which may be missing, with the merges a resolver reaches for.
 pub struct Both<T> {
-    pub local: Option<T>,
-    pub remote: Option<T>,
-    local_lut: i64,
-    remote_lut: i64,
-    local_src: i64,
-    remote_src: i64,
+    pub current: Option<T>,
+    pub incoming: Option<T>,
+    current_last_update_time: i64,
+    incoming_last_update_time: i64,
+    current_source_id: i64,
+    incoming_source_id: i64,
 }
 
 impl<T> Both<T> {
-    /// Whether the remote side wrote this bin later: by the bin's LUT where the server keeps one, the
-    /// record's otherwise, and on a tie by source id - the order the server's own bin convergence uses, so
-    /// "newer" means the same on both DCs even when the clocks agreed to the millisecond.
+    /// Whether the incoming side wrote this bin later: by the bin's last update time where the server
+    /// keeps one, the record's otherwise, and on a tie by source id - the order the server's own bin
+    /// convergence uses, so "newer" means the same on both DCs even when the clocks agreed to the
+    /// millisecond.
     #[must_use]
-    pub fn remote_is_newer(&self) -> bool {
-        self.remote_lut > self.local_lut
-            || (self.remote_lut == self.local_lut && self.remote_src > self.local_src)
+    pub fn incoming_is_newer(&self) -> bool {
+        self.incoming_last_update_time > self.current_last_update_time
+            || (self.incoming_last_update_time == self.current_last_update_time
+                && self.incoming_source_id > self.current_source_id)
     }
 
     /// The side written later; whichever exists when only one does.
     pub fn newer(self) -> Option<T> {
-        if self.remote_is_newer() {
-            self.remote.or(self.local)
+        if self.incoming_is_newer() {
+            self.incoming.or(self.current)
         } else {
-            self.local.or(self.remote)
+            self.current.or(self.incoming)
         }
     }
 
     /// The side written earlier; whichever exists when only one does.
     pub fn older(self) -> Option<T> {
-        if self.remote_is_newer() {
-            self.local.or(self.remote)
+        if self.incoming_is_newer() {
+            self.current.or(self.incoming)
         } else {
-            self.remote.or(self.local)
+            self.incoming.or(self.current)
         }
     }
 
     /// Both sides, as `(older, newer)`: the order both DCs agree on, for a merge whose result depends on
     /// the order its inputs are taken in.
     pub fn ordered(self) -> (Option<T>, Option<T>) {
-        if self.remote_is_newer() {
-            (self.local, self.remote)
+        if self.incoming_is_newer() {
+            (self.current, self.incoming)
         } else {
-            (self.remote, self.local)
+            (self.incoming, self.current)
         }
     }
 
-    /// The local value when there is one, else the remote.
-    pub fn local_or_remote(self) -> Option<T> {
-        self.local.or(self.remote)
+    /// The current value when there is one, else the incoming.
+    pub fn current_or_incoming(self) -> Option<T> {
+        self.current.or(self.incoming)
     }
 
-    /// The remote value when there is one, else the local.
-    pub fn remote_or_local(self) -> Option<T> {
-        self.remote.or(self.local)
+    /// The incoming value when there is one, else the current.
+    pub fn incoming_or_current(self) -> Option<T> {
+        self.incoming.or(self.current)
     }
 
     /// Combine the two when both exist; the one that exists otherwise.
     pub fn merge(self, f: impl FnOnce(T, T) -> T) -> Option<T> {
-        match (self.local, self.remote) {
+        match (self.current, self.incoming) {
             (Some(l), Some(r)) => Some(f(l, r)),
             (l, r) => l.or(r),
         }
@@ -3053,7 +3146,7 @@ impl Both<i64> {
     /// The sum, a missing side counting as zero.
     #[must_use]
     pub fn sum(self) -> i64 {
-        self.local.unwrap_or(0) + self.remote.unwrap_or(0)
+        self.current.unwrap_or(0) + self.incoming.unwrap_or(0)
     }
 }
 
@@ -3061,13 +3154,13 @@ impl Both<f64> {
     /// The sum, a missing side counting as zero.
     #[must_use]
     pub fn sum(self) -> f64 {
-        self.local.unwrap_or(0.0) + self.remote.unwrap_or(0.0)
+        self.current.unwrap_or(0.0) + self.incoming.unwrap_or(0.0)
     }
 }
 
 /// What an `xdr-merge` handler answers.
 pub enum Resolution {
-    /// Keep the local record; the incoming write is dropped.
+    /// Keep the current record; the incoming write is dropped.
     KeepLocal,
     /// Apply the incoming write whole, as if it had won every bin.
     TakeRemote,
@@ -3094,15 +3187,26 @@ impl From<Map> for Resolution {
     }
 }
 
-/// Decode an event call's inputs. Used by [`event!`].
+/// Decode an event call's inputs into the two records. Used by [`event!`].
+///
+/// The server sends one argument, a map describing the merge. Each fact in it is true of one record or
+/// the other, and is attached to that one here; the binding's trigger and whether the call is a dry run
+/// are not passed on, because a merge that read them would answer differently for the same two records.
 #[doc(hidden)]
-pub fn xdr_merge_inputs(args_handle: i32, argc: i32) -> Result<(EventRecord, EventRecord, Conflict), Error> {
+pub fn xdr_merge_inputs(args_handle: i32, argc: i32) -> Result<(EventRecord, EventRecord), Error> {
     let args = Args::from_handle(args_handle, argc);
-    let conflict = args.get(0).ok_or(Error::Custom("event: the conflict description is missing"))?.map()?;
+    let merge = args.get(0).ok_or(Error::Custom("event: the merge description is missing"))?.map()?;
+
+    let mut kbuf = [0u8; 16];
+    let bin_convergence = merge.get("policy").ok().is_some_and(|v| v.as_str(&mut kbuf) == Ok("bin-lut"));
+    // A stored list that is empty: the server always sends `empty` for this purpose.
+    let empty = merge.get("empty")?.list()?;
 
     let side = |which: i32, key: &str| -> Result<EventRecord, Error> {
-        let m = conflict.get(key)?.map()?;
-        let bins = m.get("bins")?.list()?;
+        let m = merge.get(key)?.map()?;
+        let bin_names = m.get("bins")?.list()?;
+        let incoming = which == 1;
+        let flag = |name: &str| matches!(m.get(name), Ok(Value::Bool(true)));
 
         Ok(EventRecord {
             which,
@@ -3111,49 +3215,22 @@ pub fn xdr_merge_inputs(args_handle: i32, argc: i32) -> Result<(EventRecord, Eve
             last_update_time: m.get("lut").ok().and_then(|v| v.int().ok()).unwrap_or(0),
             ttl: m.get("ttl").ok().and_then(|v| v.int().ok()).unwrap_or(0),
             source_id: m.get("src-id")?.int()?,
-            bins,
-            deleted: match m.get("deleted") {
+            bin_names,
+            deleted_bins: match m.get("deleted") {
                 Ok(v) => v.list()?,
-                Err(_) => empty_list(conflict)?,
+                Err(_) => empty,
             },
-            bin_luts: m.get("bin-luts").ok().and_then(|v| v.map().ok()),
-            bin_srcs: m.get("bin-srcs").ok().and_then(|v| v.map().ok()),
+            bin_last_update_times: m.get("bin-luts").ok().and_then(|v| v.map().ok()),
+            bin_source_ids: m.get("bin-srcs").ok().and_then(|v| v.map().ok()),
+            delete: incoming && flag("deleted-record"),
+            partial: incoming && flag("partial"),
+            tombstone: !incoming && flag("tombstone"),
+            bin_convergence,
+            lost: if incoming { merge.get("lost")?.list()? } else { empty },
         })
     };
 
-    let local = side(0, "current")?;
-    let remote = side(1, "incoming")?;
-    let remote_map = conflict.get("incoming")?.map()?;
-    let current_map = conflict.get("current")?.map()?;
-
-    let mut kbuf = [0u8; 16];
-    let trigger = match conflict.get("trigger")?.as_str(&mut kbuf)? {
-        "conflict" => Trigger::Conflict,
-        _ => Trigger::Always,
-    };
-    let dry_run = conflict.get("mode").ok().is_some_and(|v| v.as_str(&mut kbuf) == Ok("dry-run"));
-    let bin_convergence = conflict.get("policy").ok().is_some_and(|v| v.as_str(&mut kbuf) == Ok("bin-lut"));
-
-    Ok((
-        local,
-        remote,
-        Conflict {
-            trigger,
-            dry_run,
-            bin_convergence,
-            lost: conflict.get("lost")?.list()?,
-            remote_partial: matches!(remote_map.get("partial"), Ok(Value::Bool(true))),
-            remote_deleted_record: matches!(remote_map.get("deleted-record"), Ok(Value::Bool(true))),
-            local_tombstone: matches!(current_map.get("tombstone"), Ok(Value::Bool(true))),
-            local,
-            remote,
-        },
-    ))
-}
-
-/// A stored list that is empty: the server always sends `empty` for this purpose.
-fn empty_list(conflict: Coll) -> Result<Coll, Error> {
-    conflict.get("empty")?.list()
+    Ok((side(0, "current")?, side(1, "incoming")?))
 }
 
 /// Deliver an event handler's answer. Used by [`event!`].
@@ -3343,15 +3420,19 @@ macro_rules! stream {
 /// ```ignore
 /// event! {
 ///     on xdr_merge
-///     fn resolve_account(local: EventRecord, remote: EventRecord, conflict: Conflict) -> Result<Resolution, Error> {
+///     fn resolve_account(current: EventRecord, incoming: EventRecord) -> Result<Resolution, Error> {
+///         let pair = Pair::of(current, incoming);
 ///         let out = as_udf::map(2)?;
-///         out.insert("visits", conflict.pair().int("visits")?.max())?;
-///         Ok(Resolution::Record { bins: local.with_bins(out)?, ttl: None })
+///         out.insert("visits", pair.int("visits")?.max())?;
+///         Ok(Resolution::Record { bins: pair.with_newer(out)?, ttl: None })
 ///     }
 /// }
 /// ```
 ///
-/// The parameter types are part of the arm, so a handler with another signature does not compile. The macro
+/// The handler takes the record this cluster holds and the one that arrived over XDR, in that order, and
+/// nothing else: what there is to know about the merge is asked of the record it is true of
+/// ([`EventRecord::is_delete`], [`EventRecord::is_tombstone`] and their neighbours). The parameter types
+/// are part of the arm, so a handler with another signature does not compile. The macro
 /// exports the handler under its name, which `event-set` refers to, and `__udf_sig_<name>` reading
 /// `event xdr-merge/1 ...`, which `event-set` checks before binding: the number is the version of the
 /// contract this SDK was written against, and a server that does not serve it refuses the binding.
@@ -3379,17 +3460,17 @@ macro_rules! event {
     (
         $(#[$meta:meta])*
         on xdr_merge
-        fn $name:ident($local:ident : EventRecord, $remote:ident : EventRecord, $conflict:ident : Conflict)
+        fn $name:ident($current:ident : EventRecord, $incoming:ident : EventRecord)
             -> Result<Resolution, Error> $body:block
         $($rest:tt)*
     ) => {
         $crate::event!(@sig $name, concat!("event xdr-merge/1 ", stringify!($name),
-            "(current: record, incoming: record, conflict: conflict) -> resolution"));
+            "(current: record, incoming: record) -> resolution"));
 
         $(#[$meta])*
         #[no_mangle]
         pub extern "C" fn $name(args_handle: i32, argc: i32) -> i32 {
-            let ($local, $remote, $conflict) = match $crate::xdr_merge_inputs(args_handle, argc) {
+            let ($current, $incoming) = match $crate::xdr_merge_inputs(args_handle, argc) {
                 Ok(inputs) => inputs,
                 Err(e) => {
                     $crate::fail(e.message());
@@ -3548,7 +3629,7 @@ mod tests {
         assert_eq!(Value::from_raw(&raw(3, 0, 2.5f64.to_bits() as i64)), Value::Double(2.5));
         assert_eq!(
             Value::from_raw(&raw(4, 3, (5i64 << 32) | 9)),
-            Value::Str(Text::Stored { src: 5, at: 9, len: 3 })
+            Value::String(Text::Stored { src: 5, at: 9, len: 3 })
         );
         assert_eq!(
             Value::from_raw(&raw(6, 2, 5i64 << 32)),
@@ -3587,7 +3668,7 @@ mod tests {
         let raw = Value::List(Coll::Built(7)).raw().unwrap();
         assert_eq!((kind(raw), payload(raw)), (HANDLE, 7));
 
-        let raw = Value::Str(Text::Stored { src: 5, at: 9, len: 3 }).raw().unwrap();
+        let raw = Value::String(Text::Stored { src: 5, at: 9, len: 3 }).raw().unwrap();
         assert_eq!((kind(raw), len(raw), payload(raw)), (4, 3, (5i64 << 32) | 9), "a stored value keeps its position");
 
         assert_eq!(Value::Int(-7).raw().map(payload), Some(-7));

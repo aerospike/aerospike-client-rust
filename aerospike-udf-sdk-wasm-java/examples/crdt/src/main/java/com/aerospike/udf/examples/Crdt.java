@@ -17,7 +17,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-import com.aerospike.udf.Conflict;
 import com.aerospike.udf.EventRecord;
 import com.aerospike.udf.Function;
 import com.aerospike.udf.ListBuilder;
@@ -127,14 +126,14 @@ public final class Crdt {
             throw new Malformed();
         }
 
-        return v.asLong();
+        return v.asInt();
     }
 
     /** An integer entry of a map, or {@code dflt} when it has none or holds something else there. */
     private static long intOr(MapValue m, String key, long dflt) {
         Value v = m == null ? null : m.get(key);
 
-        return v != null && v.isInt() ? v.asLong() : dflt;
+        return v != null && v.isInt() ? v.asInt() : dflt;
     }
 
     /** A map entry of a map, or null when it has none or holds something else there. */
@@ -159,7 +158,7 @@ public final class Crdt {
             return a.removed ? a : b;
         }
 
-        return a.value.compareStored(b.value) >= 0 ? a : b;
+        return a.value.cmpStored(b.value) >= 0 ? a : b;
     }
 
     /** The candidates seen so far, one per device: {@link #offer} keeps the higher. */
@@ -238,7 +237,7 @@ public final class Crdt {
      * Every other bin is the incoming one's, as XDR would have applied it.
      */
     @On.XdrMerge("xdr_merge")
-    static Resolution xdrMerge(EventRecord current, EventRecord incoming, Conflict c) {
+    static Resolution xdrMerge(EventRecord current, EventRecord incoming) {
         MapBuilder out = Udf.map(8);
 
         // Other bins: as XDR does today.
@@ -320,7 +319,7 @@ public final class Crdt {
             }
             else {
                 // The merge has no removals left: a nil deletes the bin, so a stale copy cannot come back.
-                out.putNull("devicesRemoved");
+                out.putNil("devicesRemoved");
             }
         }
 
@@ -472,7 +471,7 @@ public final class Crdt {
         }
 
         if (markers.isEmpty() && horizon == 0) {
-            if (rec.hasBin("devicesRemoved")) {
+            if (rec.has("devicesRemoved")) {
                 rec.remove("devicesRemoved");
             }
 

@@ -103,7 +103,7 @@ impl Tags {
 event! {
     /// The merge: the union of each list. Every other bin is the incoming one's.
     on xdr_merge
-    fn merge_twopset(current: EventRecord, incoming: EventRecord, _conflict: Conflict) -> Result<Resolution, Error> {
+    fn merge_twopset(current: EventRecord, incoming: EventRecord) -> Result<Resolution, Error> {
         let out = as_udf::map(2)?;
 
         for bin in ["added", "removed"] {

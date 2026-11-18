@@ -168,7 +168,7 @@ public final class Vector {
         k = 10;
 
         if (count > 3 && args[3].kind() == Value.INT) {
-            long kk = args[3].asLong();
+            long kk = args[3].asInt();
 
             if (kk < 1) {
                 kk = 1;

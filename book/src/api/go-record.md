@@ -94,14 +94,6 @@ func (v Value) At() int32 { return int32(v.Payload & 0xffffffff) }
 
 At is the offset in that source.
 
-#### `Value.Double`
-
-```go
-func (v Value) Double() float64 { return math.Float64frombits(uint64(v.Payload)) }
-```
-
-Double is the payload as a float64.
-
 #### `IntValue`
 
 ```go
@@ -118,13 +110,13 @@ func DoubleValue(d float64) Value
 
 DoubleValue is a double as a value of the guest's, for a batch.
 
-#### `StrValue`
+#### `StringValue`
 
 ```go
-func StrValue(s string) Value
+func StringValue(s string) Value
 ```
 
-StrValue is a string of the guest's as a value, for a batch. It holds the address of s's bytes, not a
+StringValue is a string of the guest's as a value, for a batch. It holds the address of s's bytes, not a
 copy, so s must stay alive until the host has taken the value.
 
 #### `BlobValue`
@@ -136,13 +128,13 @@ func BlobValue(b []byte) Value
 BlobValue is a blob of the guest's as a value, for a batch. It holds the address of b's bytes, not a
 copy, so b must stay alive until the host has taken the value.
 
-#### `StrBytesValue`
+#### `StringBytesValue`
 
 ```go
-func StrBytesValue(b []byte) Value
+func StringBytesValue(b []byte) Value
 ```
 
-StrBytesValue is a string value over bytes the caller holds, without making a Go string of them.
+StringBytesValue is a string value over bytes the caller holds, without making a Go string of them.
 
 #### `Bytes`
 
@@ -211,13 +203,13 @@ func ResultBool(v bool)
 
 ResultBool sets a boolean as the call's result.
 
-#### `ResultStr`
+#### `ResultString`
 
 ```go
-func ResultStr(s string) { resultStr(strptr(s), int32(len(s))) }
+func ResultString(s string) { resultStr(strptr(s), int32(len(s))) }
 ```
 
-ResultStr sets a string as the call's result; the host copies the bytes.
+ResultString sets a string as the call's result; the host copies the bytes.
 
 #### `ResultBlob`
 
@@ -294,20 +286,30 @@ type RecordReader interface {
 	Has(name string) bool
 	// Int is an integer bin; false when absent, nil or of another kind.
 	Int(name string) (int64, bool)
-	// Float64 is a double bin; false when absent, nil or of another kind. An integer is not widened.
-	Float64(name string) (float64, bool)
+	// Double is a double bin; false when absent, nil or of another kind. An integer is not widened.
+	Double(name string) (float64, bool)
 	// Bool is a boolean bin; false when absent, nil or of another kind.
 	Bool(name string) (bool, bool)
-	// Str is the text of a string bin, copied out; false when absent, nil or of another kind.
-	Str(name string) (string, bool)
-	// Bytes is the bytes of a blob bin, copied out; false when absent, nil or of another kind.
-	Bytes(name string) ([]byte, bool)
+	// String is the text of a string bin, copied out; false when absent, nil or of another kind.
+	String(name string) (string, bool)
+	// Blob is the bytes of a blob bin, copied out; false when absent, nil or of another kind.
+	Blob(name string) ([]byte, bool)
+	// IntOr is an integer bin, or dflt when it is absent, nil or of another kind.
+	IntOr(name string, dflt int64) int64
+	// DoubleOr is a double bin, or dflt when it is absent, nil or of another kind.
+	DoubleOr(name string, dflt float64) float64
+	// BoolOr is a boolean bin, or dflt when it is absent, nil or of another kind.
+	BoolOr(name string, dflt bool) bool
 	// List walks a list bin; nothing when absent or not a list.
 	List(name string) iter.Seq[Value]
 	// Map walks a map bin's entries, key then value; nothing when absent or not a map.
 	Map(name string) iter.Seq2[Value, Value]
+	// BinCount is how many bins the record has.
+	BinCount() int64
 	// Generation is the record's modification count.
 	Generation() int64
+	// TTL is the record's time to live, in seconds.
+	TTL() int64
 	// LastUpdateTime is when the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC).
 	LastUpdateTime() int64
 }
@@ -405,13 +407,13 @@ func (r *Record) Int(name string) (int64, bool) { return readInt(r, name) }
 
 Int is an integer bin; false when absent, nil or of another kind.
 
-#### `Record.Float64`
+#### `Record.Double`
 
 ```go
-func (r *Record) Float64(name string) (float64, bool) { return readFloat64(r, name) }
+func (r *Record) Double(name string) (float64, bool) { return readDouble(r, name) }
 ```
 
-Float64 is a double bin; false when absent, nil or of another kind. An integer bin is not widened.
+Double is a double bin; false when absent, nil or of another kind. An integer bin is not widened.
 
 #### `Record.Bool`
 
@@ -421,22 +423,46 @@ func (r *Record) Bool(name string) (bool, bool) { return readBool(r, name) }
 
 Bool is a boolean bin; false when absent, nil or of another kind.
 
-#### `Record.Str`
+#### `Record.String`
 
 ```go
-func (r *Record) Str(name string) (string, bool) { return readStr(r, name) }
+func (r *Record) String(name string) (string, bool) { return readString(r, name) }
 ```
 
-Str is the text of a string bin, copied out; false when absent, nil or of another kind.
+String is the text of a string bin, copied out; false when absent, nil or of another kind.
 
-#### `Record.Bytes`
+#### `Record.Blob`
 
 ```go
-func (r *Record) Bytes(name string) ([]byte, bool) { return readBytes(r, name) }
+func (r *Record) Blob(name string) ([]byte, bool) { return readBlob(r, name) }
 ```
 
-Bytes is the bytes of a blob bin, copied out; false when absent, nil or of another kind. The bytes of
-a GeoJSON or HLL bin are read through Get and Value.Bytes.
+Blob is the bytes of a blob bin, copied out; false when absent, nil or of another kind. The bytes of
+a GeoJSON or HLL bin are read through Get and Value.Blob.
+
+#### `Record.IntOr`
+
+```go
+func (r *Record) IntOr(name string, dflt int64) int64 { return readIntOr(r, name, dflt) }
+```
+
+IntOr is an integer bin, or dflt when it is absent, nil or of another kind.
+
+#### `Record.DoubleOr`
+
+```go
+func (r *Record) DoubleOr(name string, dflt float64) float64 { return readDoubleOr(r, name, dflt) }
+```
+
+DoubleOr is a double bin, or dflt when it is absent, nil or of another kind, an integer included.
+
+#### `Record.BoolOr`
+
+```go
+func (r *Record) BoolOr(name string, dflt bool) bool { return readBoolOr(r, name, dflt) }
+```
+
+BoolOr is a boolean bin, or dflt when it is absent, nil or of another kind.
 
 #### `Record.List`
 
@@ -491,13 +517,30 @@ func (r *Record) SetInts(name string, values []int64) error
 SetInts writes a slice of integers to a bin as a list in one import, no value built per element. The
 host applies it at once rather than staging it: Save is not needed for it.
 
-#### `Record.SetFloat64s`
+#### `Record.SetDoubles`
 
 ```go
-func (r *Record) SetFloat64s(name string, values []float64) error
+func (r *Record) SetDoubles(name string, values []float64) error
 ```
 
-SetFloat64s is SetInts for doubles.
+SetDoubles is SetInts for doubles.
+
+#### `Record.SetBlob`
+
+```go
+func (r *Record) SetBlob(name string, value []byte) error
+```
+
+SetBlob writes bytes to a bin as a blob, staged until Save; Set with a []byte does the same.
+
+#### `Record.SetGeoJSON`
+
+```go
+func (r *Record) SetGeoJSON(name string, doc string) error
+```
+
+SetGeoJSON writes a GeoJSON document to a bin as the geospatially indexable kind, staged until Save;
+Set with a GeoJSONValue does the same.
 
 #### `Record.Remove`
 
@@ -618,7 +661,8 @@ answers as it did before.
 func (v Value) IsNull() bool { return v.Kind == KindNil || v.Kind == KindAbsent }
 ```
 
-IsNull reports whether the value is nil or absent.
+IsNull reports whether there is nothing to read: the value is a stored nil or is absent. It is not
+another name for IsNil, which is false of an absent value.
 
 #### `Value.IsNil`
 
@@ -644,13 +688,13 @@ func (v Value) IsInt() bool { return v.Kind == KindInt }
 
 IsInt reports whether the value is an integer.
 
-#### `Value.IsFloat64`
+#### `Value.IsDouble`
 
 ```go
-func (v Value) IsFloat64() bool { return v.Kind == KindDouble }
+func (v Value) IsDouble() bool { return v.Kind == KindDouble }
 ```
 
-IsFloat64 reports whether the value is a double. An integer is not one, though Float64 widens it.
+IsDouble reports whether the value is a double. An integer is not one, though Double widens it.
 
 #### `Value.IsBool`
 
@@ -660,13 +704,13 @@ func (v Value) IsBool() bool { return v.Kind == KindBool }
 
 IsBool reports whether the value is a boolean.
 
-#### `Value.IsStr`
+#### `Value.IsString`
 
 ```go
-func (v Value) IsStr() bool { return v.Kind == KindStr }
+func (v Value) IsString() bool { return v.Kind == KindStr }
 ```
 
-IsStr reports whether the value is a string the host holds.
+IsString reports whether the value is a string the host holds.
 
 #### `Value.IsBlob`
 
@@ -708,13 +752,13 @@ func (v Value) Int() (int64, error)
 
 Int is the value as an integer.
 
-#### `Value.Float64`
+#### `Value.Double`
 
 ```go
-func (v Value) Float64() (float64, error)
+func (v Value) Double() (float64, error)
 ```
 
-Float64 is the value as a double, or an integer widened.
+Double is the value as a double, or an integer widened.
 
 #### `Value.Bool`
 
@@ -724,21 +768,21 @@ func (v Value) Bool() (bool, error)
 
 Bool is the value as a boolean.
 
-#### `Value.Str`
+#### `Value.String`
 
 ```go
-func (v Value) Str() (string, error)
+func (v Value) String() (string, error)
 ```
 
-Str is the text of a stored string, copied out.
+String is the text of a string, copied out.
 
-#### `Value.Bytes`
+#### `Value.Blob`
 
 ```go
-func (v Value) Bytes() ([]byte, error)
+func (v Value) Blob() ([]byte, error)
 ```
 
-Bytes is the bytes of a stored string, blob, GeoJSON or HLL, copied out.
+Blob is the bytes of a blob, copied out. A string, GeoJSON or HLL value gives its bytes the same way.
 
 #### `Value.Floats`
 
@@ -1013,13 +1057,13 @@ func ResultList(l *List) error
 ResultList sets a built list as the result. When the list kept a refusal while it was built, that error
 is returned and no result is set.
 
-#### `ResultOf`
+#### `Result`
 
 ```go
-func ResultOf(v Value) error
+func Result(v Value) error
 ```
 
-ResultOf sets a value of any kind as the result: a scalar by value, guest bytes, a built collection by
+Result sets a value of any kind as the result: a scalar by value, guest bytes, a built collection by
 handle, a stored value by position; nil or absent is nil.
 
 #### `Now`
@@ -1038,13 +1082,13 @@ func Arity(fn string, declared int, got int32) error
 
 Arity fails a call that passed more arguments than the function declares.
 
-#### `ArgInt64`
+#### `ArgInt`
 
 ```go
-func ArgInt64(a []Value, n int32, i int, fn, p string) (int64, error)
+func ArgInt(a []Value, n int32, i int, fn, p string) (int64, error)
 ```
 
-ArgInt64 is argument i as an integer. The error, which names the function fn and the parameter p, says
+ArgInt is argument i as an integer. The error, which names the function fn and the parameter p, says
 the argument is missing or is not an int.
 
 #### `ArgInt32`
@@ -1056,21 +1100,13 @@ func ArgInt32(a []Value, n int32, i int, fn, p string) (int32, error)
 ArgInt32 is argument i as a 32-bit integer; an error when it is missing, not an int, or does not fit 32
 bits.
 
-#### `ArgInt`
+#### `ArgDouble`
 
 ```go
-func ArgInt(a []Value, n int32, i int, fn, p string) (int, error)
+func ArgDouble(a []Value, n int32, i int, fn, p string) (float64, error)
 ```
 
-ArgInt is argument i as an int, with ArgInt64's errors. The conversion to int is not range checked.
-
-#### `ArgFloat64`
-
-```go
-func ArgFloat64(a []Value, n int32, i int, fn, p string) (float64, error)
-```
-
-ArgFloat64 is a double, or an int widened to one.
+ArgDouble is a double, or an int widened to one.
 
 #### `ArgBool`
 
@@ -1088,13 +1124,13 @@ func ArgString(a []Value, n int32, i int, fn, p string) (string, error)
 
 ArgString is argument i as a string, copied out; an error when it is missing or not a string.
 
-#### `ArgBytes`
+#### `ArgBlob`
 
 ```go
-func ArgBytes(a []Value, n int32, i int, fn, p string) ([]byte, error)
+func ArgBlob(a []Value, n int32, i int, fn, p string) ([]byte, error)
 ```
 
-ArgBytes is the bytes of a string or a blob.
+ArgBlob is the bytes of a string or a blob.
 
 #### `ArgValue`
 
@@ -1112,21 +1148,21 @@ func ArgRest(a []Value, n int32, i int) []Value
 
 ArgRest is every argument from i on.
 
-#### `OptInt64`
+#### `OptInt`
 
 ```go
-func OptInt64(a []Value, n int32, i int, fn, p string) (*int64, error)
+func OptInt(a []Value, n int32, i int, fn, p string) (*int64, error)
 ```
 
-OptInt64 is argument i as an integer, nil when it is absent or nil; an error when it is of another kind.
+OptInt is argument i as an integer, nil when it is absent or nil; an error when it is of another kind.
 
-#### `OptFloat64`
+#### `OptDouble`
 
 ```go
-func OptFloat64(a []Value, n int32, i int, fn, p string) (*float64, error)
+func OptDouble(a []Value, n int32, i int, fn, p string) (*float64, error)
 ```
 
-OptFloat64 is argument i as a double, or an int widened to one; nil when it is absent or nil, an error
+OptDouble is argument i as a double, or an int widened to one; nil when it is absent or nil, an error
 when it is of another kind.
 
 #### `OptBool`

@@ -293,9 +293,9 @@ as_udf::export! {
     /// `log` is the one import with no return value and no effect on the record, so a client-side assertion
     /// cannot check it; it needs a function of its own.
     fn chatter() -> Result<Value, Error> {
-        as_udf::log_at(Level::Warn, "chatter at warning");
-        as_udf::log_at(Level::Info, "chatter at info");
-        as_udf::log_at(Level::Debug, "chatter at debug");
+        as_udf::log(Level::Warn, "chatter at warning");
+        as_udf::log(Level::Info, "chatter at info");
+        as_udf::log(Level::Debug, "chatter at debug");
 
         Ok("logged".into())
     }
@@ -342,7 +342,7 @@ as_udf::export! {
 
         let mut text = [0u8; 32];
 
-        match m.get("s").and_then(|v| v.text()) {
+        match m.get("s").and_then(|v| v.string()) {
             Ok(t) => out.insert("s", t.as_str(&mut text).unwrap_or("?"))?,
             Err(_) => out.insert("s", "?")?,
         };
@@ -603,7 +603,7 @@ fn walk(c: Coll, out: &List) -> Result<(), Error> {
             Value::Bool(b) => out.push(b)?,
             Value::Int(i) => out.push(i)?,
             Value::Double(d) => out.push(d)?,
-            Value::Str(t) => out.push(t.as_str(&mut buf)?)?,
+            Value::String(t) => out.push(t.as_str(&mut buf)?)?,
             Value::Blob(b) | Value::Hll(b) => out.push(b.bytes(&mut buf)?)?,
             Value::GeoJson(t) => out.push(t.as_str(&mut buf)?)?,
             Value::List(inner) => {

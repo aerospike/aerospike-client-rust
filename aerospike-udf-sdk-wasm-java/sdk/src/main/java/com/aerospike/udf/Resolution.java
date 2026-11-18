@@ -65,14 +65,35 @@ public final class Resolution {
         return new Resolution("record", bins.handle(), ttl);
     }
 
-    /** Sets the resolution as the result of the call. Called by the generated export; returns the status. */
+    /**
+     * Sets the resolution as the result of the call and returns the status the export returns. The
+     * generated export of a typed handler calls it; a handler in the raw form
+     * {@code int name(int args, int argc)} ends with it, as in {@code return Resolution.keepLocal().deliver()}.
+     */
     public int deliver() {
         if (bins == 0) {
-            Udf.resultStr(verdict);
+            Udf.resultString(verdict);
             return 0;
         }
 
-        return Conflict.record(bins, ttl);
+        int out = LowLevel.newMap(3);
+
+        if (out <= 0) {
+            return Udf.fail("resolve: could not build the resolution");
+        }
+
+        MapBuilder answer = LowLevel.map(out).put("verdict", "record").put("bins", LowLevel.map(bins));
+
+        // A TTL has a write's meaning; without one the server keeps what the incoming write asked for.
+        if (ttl >= 0) {
+            answer.put("ttl", ttl);
+        }
+
+        if (LowLevel.resultHandle(out) != LowLevel.OK) {
+            return Udf.fail("resolve: could not return the record");
+        }
+
+        return 0;
     }
 
     /** The verdict word as the server reads it, such as {@code keep-local} or {@code record}. */

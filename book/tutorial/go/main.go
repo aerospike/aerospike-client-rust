@@ -30,7 +30,7 @@ import (
 //
 //udf:function visit
 func visit(rec *udf.Record, by int64) (int64, error) {
-	visits, _ := rec.Int("visits") // 0 when the bin is absent
+	visits := rec.IntOr("visits", 0) // 0 when the bin is absent
 	n := visits + by
 
 	if err := rec.Set("visits", n); err != nil { // staged, not yet written
@@ -80,7 +80,7 @@ func rename(rec *udf.Record, name string) (bool, error) {
 		return false, err
 	}
 
-	current, err := owner.Str() // copied out of the record
+	current, err := owner.String() // copied out of the record
 	if err != nil {
 		return false, err
 	}
@@ -205,7 +205,7 @@ func summary(rec *udf.Record) (*udf.Map, error) {
 //
 //udf:function renew
 func renew(rec *udf.Record, seconds int64) (int64, error) {
-	renewals, _ := rec.Int("renewals")
+	renewals := rec.IntOr("renewals", 0)
 	n := renewals + 1
 
 	if err := rec.Set("renewals", n); err != nil {

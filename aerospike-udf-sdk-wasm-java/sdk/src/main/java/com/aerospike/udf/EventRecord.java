@@ -17,8 +17,15 @@ import org.teavm.interop.Address;
 /**
  * One record an event hands over: each side of a merge, the current record and the incoming write. It is
  * read-only, and it reads like the record of a call - the same readers, through
- * {@link RecordReader} - with what an event adds: the names of its bins, the bins this side deleted, and,
- * where the server keeps them, when and by whom each bin was last written.
+ * {@link RecordReader} - with what an event adds: the names of its bins, the bins this side deleted,
+ * where the server keeps them, when and by whom each bin was last written, and the few facts about the
+ * merge that are facts about one side ({@link #isDelete}, {@link #isPartial} and {@link #lostBins} of the
+ * incoming write, {@link #isTombstone} of the current record). One asked of the side it is not about
+ * answers false, or an empty list.
+ *
+ * <p>A handler must be pure and convergent: both data centres merge the same two records with the sides
+ * swapped and must land on the same record. {@link Pair} orders a bin's two sides by its own LUT and then
+ * source id, which is symmetric; "mine first" is not.
  *
  * <p>A handler changes a record by answering with the bins it should have
  * ({@link Resolution#record}); {@link #withBins} fills such an answer with every bin of this record the
@@ -33,8 +40,13 @@ public final class EventRecord implements RecordReader {
     private long sourceId;
     private Value bins = Maps.NOTHING;
     private Value deleted = Maps.NOTHING;
-    private Value binLuts = Maps.NOTHING;
-    private Value binSrcs = Maps.NOTHING;
+    private Value binLastUpdateTimes = Maps.NOTHING;
+    private Value binSourceIds = Maps.NOTHING;
+    private Value lost = Maps.NOTHING;
+    private boolean delete;
+    private boolean partial;
+    private boolean tombstone;
+    private boolean binConvergence;
 
     /** What the typed readers read into, so that they allocate nothing. */
     private final Value v = new Value();
@@ -84,13 +96,50 @@ public final class EventRecord implements RecordReader {
     }
 
     /** When this side last wrote the bin: per bin where the server keeps one, the record's otherwise. */
-    public long binLut(String name) {
-        return Maps.getLong(binLuts, name, lastUpdateTime);
+    public long binLastUpdateTime(String name) {
+        return Maps.getInt(binLastUpdateTimes, name, lastUpdateTime);
     }
 
     /** The source id that wrote the bin: per bin where the server keeps one, the record's otherwise. */
-    public long binSrc(String name) {
-        return Maps.getLong(binSrcs, name, sourceId);
+    public long binSourceId(String name) {
+        return Maps.getInt(binSourceIds, name, sourceId);
+    }
+
+    /**
+     * Whether this is an incoming write that deletes the record, so that it has no bins. False of the
+     * current record.
+     */
+    public boolean isDelete() {
+        return delete;
+    }
+
+    /**
+     * Whether this is an incoming write that carries only the bins that changed, so that a bin it lacks may
+     * well exist on the other cluster. False of the current record.
+     */
+    public boolean isPartial() {
+        return partial;
+    }
+
+    /**
+     * The names of the incoming bins that would lose under bin convergence, as a list of strings. Empty
+     * for the current record.
+     */
+    public ListValue lostBins() {
+        return new ListValue(lost);
+    }
+
+    /** Whether this is a current record that exists but has no bins. False of the incoming write. */
+    public boolean isTombstone() {
+        return tombstone;
+    }
+
+    /**
+     * Whether per-bin timestamps are meaningful in this merge, for a time-based merge that wants to check
+     * before trusting {@link #binLastUpdateTime}. The same answer on both records.
+     */
+    public boolean usesBinConvergence() {
+        return binConvergence;
     }
 
     //==========================================================
@@ -157,17 +206,28 @@ public final class EventRecord implements RecordReader {
     }
 
     @Override
-    public boolean hasBin(String name) {
+    public Value bin(String name) {
+        Value x = get(name);
+
+        if (x == null) {
+            throw Reads.problem(Reads.NONE, "bin ", name, "readable");
+        }
+
+        return x;
+    }
+
+    @Override
+    public boolean has(String name) {
         return Reads.state(read(name), v, v.kind()) == Reads.HIT;
     }
 
     @Override
-    public long getLong(String name) {
+    public long getInt(String name) {
         return required(name, Value.INT, "an int").payload();
     }
 
     @Override
-    public long getLong(String name, long dflt) {
+    public long getInt(String name, long dflt) {
         Value x = optional(name, Value.INT, "an int");
 
         return x == null ? dflt : x.payload();
@@ -186,12 +246,12 @@ public final class EventRecord implements RecordReader {
     }
 
     @Override
-    public boolean getBoolean(String name) {
+    public boolean getBool(String name) {
         return required(name, Value.BOOL, "a bool").payload() != 0;
     }
 
     @Override
-    public boolean getBoolean(String name, boolean dflt) {
+    public boolean getBool(String name, boolean dflt) {
         Value x = optional(name, Value.BOOL, "a bool");
 
         return x == null ? dflt : x.payload() != 0;
@@ -210,8 +270,8 @@ public final class EventRecord implements RecordReader {
     }
 
     @Override
-    public byte[] getBytes(String name) {
-        byte[] b = getBytes(name, null);
+    public byte[] getBlob(String name) {
+        byte[] b = getBlob(name, null);
 
         if (b == null) {
             throw Reads.problem(Reads.NONE, "bin ", name, "a string or blob");
@@ -221,7 +281,7 @@ public final class EventRecord implements RecordReader {
     }
 
     @Override
-    public byte[] getBytes(String name, byte[] dflt) {
+    public byte[] getBlob(String name, byte[] dflt) {
         int state = Reads.state(read(name), v, v.kind());
 
         if (state == Reads.NONE) {
@@ -232,7 +292,7 @@ public final class EventRecord implements RecordReader {
             throw Reads.problem(state == Reads.HIT ? Reads.WRONG : state, "bin ", name, "a string or blob");
         }
 
-        return v.asBytes();
+        return v.asBlob();
     }
 
     @Override
@@ -261,7 +321,7 @@ public final class EventRecord implements RecordReader {
 
     // The boxed readers Pair builds a Both from: null for a side without the bin.
 
-    Long boxedLong(String name) {
+    Long boxedInt(String name) {
         Value x = optional(name, Value.INT, "an int");
 
         return x == null ? null : x.payload();
@@ -273,7 +333,7 @@ public final class EventRecord implements RecordReader {
         return x == null ? null : x.doubleBits();
     }
 
-    Boolean boxedBoolean(String name) {
+    Boolean boxedBool(String name) {
         Value x = optional(name, Value.BOOL, "a bool");
 
         return x == null ? null : x.payload() != 0;
@@ -307,23 +367,58 @@ public final class EventRecord implements RecordReader {
         return overrides;
     }
 
-    /** Fills this from a description's entry ({@code current}, {@code incoming}). */
-    boolean decode(Value desc, String key, int which) {
-        Value m = Maps.get(desc, key);
+    //==========================================================
+    // Decoding the event. The server hands a handler one argument, the description map; what it says is
+    // attached here to the record it is true of, and the map itself is never shown.
+    //
 
+    /**
+     * Reads an event call's arguments into the two records: the current one, read by index 0, into
+     * {@code current} and the incoming write, read by index 1, into {@code incoming}. False when the
+     * arguments are not an xdr-merge.
+     */
+    static boolean decode(int args, int argc, EventRecord current, EventRecord incoming) {
+        Value[] a = new Value[1];
+
+        if (LowLevel.args(args, argc, a) < 1 || a[0].kind() != Value.MAP) {
+            return false;
+        }
+
+        Value desc = a[0];
+        Value cur = Maps.get(desc, "current");
+        Value inc = Maps.get(desc, "incoming");
+
+        if (!current.fill(cur, 0) || !incoming.fill(inc, 1)) {
+            return false;
+        }
+
+        boolean binConvergence = Maps.is(desc, "policy", "bin-lut");
+
+        current.binConvergence = binConvergence;
+        current.tombstone = Maps.getBool(cur, "tombstone");
+        incoming.binConvergence = binConvergence;
+        incoming.partial = Maps.getBool(inc, "partial");
+        incoming.delete = Maps.getBool(inc, "deleted-record");
+        incoming.lost = Maps.get(desc, "lost");
+
+        return true;
+    }
+
+    /** Fills this from a description's entry ({@code current}, {@code incoming}). */
+    private boolean fill(Value m, int which) {
         if (m.kind() != Value.MAP) {
             return false;
         }
 
         this.which = which;
-        generation = Maps.getLong(m, "gen", 0);
-        lastUpdateTime = Maps.getLong(m, "lut", 0);
-        ttl = Maps.getLong(m, "ttl", 0);
-        sourceId = Maps.getLong(m, "src-id", 0);
+        generation = Maps.getInt(m, "gen", 0);
+        lastUpdateTime = Maps.getInt(m, "lut", 0);
+        ttl = Maps.getInt(m, "ttl", 0);
+        sourceId = Maps.getInt(m, "src-id", 0);
         bins = Maps.get(m, "bins");
         deleted = Maps.get(m, "deleted");
-        binLuts = Maps.get(m, "bin-luts");
-        binSrcs = Maps.get(m, "bin-srcs");
+        binLastUpdateTimes = Maps.get(m, "bin-luts");
+        binSourceIds = Maps.get(m, "bin-srcs");
 
         return bins.kind() == Value.LIST;
     }

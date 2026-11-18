@@ -43,9 +43,9 @@ func mismatch(fn string, i int, p, want string) error {
 	return errorf(TypeMismatch, fn, ": argument ", strconv.Itoa(i+1), " (", p, ") is not ", want)
 }
 
-// ArgInt64 is argument i as an integer. The error, which names the function fn and the parameter p, says
+// ArgInt is argument i as an integer. The error, which names the function fn and the parameter p, says
 // the argument is missing or is not an int.
-func ArgInt64(a []Value, n int32, i int, fn, p string) (int64, error) {
+func ArgInt(a []Value, n int32, i int, fn, p string) (int64, error) {
 	v, err := argAt(a, n, i, fn, p)
 	if err != nil {
 		return 0, err
@@ -59,7 +59,7 @@ func ArgInt64(a []Value, n int32, i int, fn, p string) (int64, error) {
 // ArgInt32 is argument i as a 32-bit integer; an error when it is missing, not an int, or does not fit 32
 // bits.
 func ArgInt32(a []Value, n int32, i int, fn, p string) (int32, error) {
-	x, err := ArgInt64(a, n, i, fn, p)
+	x, err := ArgInt(a, n, i, fn, p)
 	if err != nil {
 		return 0, err
 	}
@@ -69,21 +69,15 @@ func ArgInt32(a []Value, n int32, i int, fn, p string) (int32, error) {
 	return int32(x), nil
 }
 
-// ArgInt is argument i as an int, with ArgInt64's errors. The conversion to int is not range checked.
-func ArgInt(a []Value, n int32, i int, fn, p string) (int, error) {
-	x, err := ArgInt64(a, n, i, fn, p)
-	return int(x), err
-}
-
-// ArgFloat64 is a double, or an int widened to one.
-func ArgFloat64(a []Value, n int32, i int, fn, p string) (float64, error) {
+// ArgDouble is a double, or an int widened to one.
+func ArgDouble(a []Value, n int32, i int, fn, p string) (float64, error) {
 	v, err := argAt(a, n, i, fn, p)
 	if err != nil {
 		return 0, err
 	}
 	switch v.Kind {
 	case KindDouble:
-		return v.Double(), nil
+		return v.double(), nil
 	case KindInt:
 		return float64(v.Payload), nil
 	}
@@ -111,11 +105,11 @@ func ArgString(a []Value, n int32, i int, fn, p string) (string, error) {
 	if v.Kind != KindStr {
 		return "", mismatch(fn, i, p, "a string")
 	}
-	return v.Str()
+	return v.String()
 }
 
-// ArgBytes is the bytes of a string or a blob.
-func ArgBytes(a []Value, n int32, i int, fn, p string) ([]byte, error) {
+// ArgBlob is the bytes of a string or a blob.
+func ArgBlob(a []Value, n int32, i int, fn, p string) ([]byte, error) {
 	v, err := argAt(a, n, i, fn, p)
 	if err != nil {
 		return nil, err
@@ -123,7 +117,7 @@ func ArgBytes(a []Value, n int32, i int, fn, p string) ([]byte, error) {
 	if v.Kind != KindStr && v.Kind != KindBlob {
 		return nil, mismatch(fn, i, p, "a string or a blob")
 	}
-	return v.Bytes()
+	return v.Blob()
 }
 
 // ArgValue is any value, nil included.
@@ -143,22 +137,22 @@ func ArgRest(a []Value, n int32, i int) []Value {
 
 // The optional forms: nil when the argument is absent or nil.
 
-// OptInt64 is argument i as an integer, nil when it is absent or nil; an error when it is of another kind.
-func OptInt64(a []Value, n int32, i int, fn, p string) (*int64, error) {
+// OptInt is argument i as an integer, nil when it is absent or nil; an error when it is of another kind.
+func OptInt(a []Value, n int32, i int, fn, p string) (*int64, error) {
 	if argNone(a, n, i) {
 		return nil, nil
 	}
-	x, err := ArgInt64(a, n, i, fn, p)
+	x, err := ArgInt(a, n, i, fn, p)
 	return &x, err
 }
 
-// OptFloat64 is argument i as a double, or an int widened to one; nil when it is absent or nil, an error
+// OptDouble is argument i as a double, or an int widened to one; nil when it is absent or nil, an error
 // when it is of another kind.
-func OptFloat64(a []Value, n int32, i int, fn, p string) (*float64, error) {
+func OptDouble(a []Value, n int32, i int, fn, p string) (*float64, error) {
 	if argNone(a, n, i) {
 		return nil, nil
 	}
-	x, err := ArgFloat64(a, n, i, fn, p)
+	x, err := ArgDouble(a, n, i, fn, p)
 	return &x, err
 }
 

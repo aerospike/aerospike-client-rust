@@ -14,14 +14,14 @@ before binding. The parameter types are part of the kind, so a handler with anot
 compile. A handler returns a `Resolution`; an exception fails the call with its message.
 ```text
 @On.XdrMerge("merge_counter")
-static Resolution mergeCounter(EventRecord current, EventRecord incoming, Conflict conflict) {
+static Resolution mergeCounter(EventRecord current, EventRecord incoming) {
 ...
 return Resolution.record(out);
 }
 ```
 A handler may also take the raw form `int name(int args, int argc)`, exported as it is with only
-the signature generated; it decodes the call with `Conflict#decode` and answers with the
-`Conflict` verdict methods. The name is the method's when the annotation's value is empty.
+the signature generated; it reads the two records with `Pair#decode` and answers by returning a
+resolution's `Resolution#deliver`. The name is the method's when the annotation's value is empty.
 
 #### `On.XdrMerge`
 
@@ -29,8 +29,8 @@ the signature generated; it decodes the call with `Conflict#decode` and answers 
 public @interface XdrMerge
 ```
 
-`(EventRecord current, EventRecord incoming, Conflict conflict)`; answers keep-local, take-remote,
-policy, delete or record. The two records are `conflict.local` and `conflict.remote`.
+`(EventRecord current, EventRecord incoming)`: the record as it is on this cluster and the one
+that arrived over XDR; answers keep-local, take-remote, policy, delete or record.
 
 #### `Resolution`
 
@@ -99,7 +99,9 @@ As `record(MapBuilder)`, with a TTL in seconds: 0 for the namespace default.
 public int deliver()
 ```
 
-Sets the resolution as the result of the call. Called by the generated export; returns the status.
+Sets the resolution as the result of the call and returns the status the export returns. The
+generated export of a typed handler calls it; a handler in the raw form
+`int name(int args, int argc)` ends with it, as in `return Resolution.keepLocal().deliver()`.
 
 #### `Resolution.verdict`
 
@@ -117,8 +119,14 @@ public final class EventRecord implements RecordReader
 
 One record an event hands over: each side of a merge, the current record and the incoming write. It is
 read-only, and it reads like the record of a call - the same readers, through
-`RecordReader` - with what an event adds: the names of its bins, the bins this side deleted, and,
-where the server keeps them, when and by whom each bin was last written.
+`RecordReader` - with what an event adds: the names of its bins, the bins this side deleted,
+where the server keeps them, when and by whom each bin was last written, and the few facts about the
+merge that are facts about one side (`isDelete`, `isPartial` and `lostBins` of the
+incoming write, `isTombstone` of the current record). One asked of the side it is not about
+answers false, or an empty list.
+A handler must be pure and convergent: both data centres merge the same two records with the sides
+swapped and must land on the same record. `Pair` orders a bin's two sides by its own LUT and then
+source id, which is symmetric; "mine first" is not.
 A handler changes a record by answering with the bins it should have
 (`Resolution#record`); `withBins` fills such an answer with every bin of this record the
 handler did not decide.
@@ -177,21 +185,65 @@ public boolean deletedAny()
 
 Whether this side deleted any bin.
 
-#### `EventRecord.binLut`
+#### `EventRecord.binLastUpdateTime`
 
 ```java
-public long binLut(String name)
+public long binLastUpdateTime(String name)
 ```
 
 When this side last wrote the bin: per bin where the server keeps one, the record's otherwise.
 
-#### `EventRecord.binSrc`
+#### `EventRecord.binSourceId`
 
 ```java
-public long binSrc(String name)
+public long binSourceId(String name)
 ```
 
 The source id that wrote the bin: per bin where the server keeps one, the record's otherwise.
+
+#### `EventRecord.isDelete`
+
+```java
+public boolean isDelete()
+```
+
+Whether this is an incoming write that deletes the record, so that it has no bins. False of the
+current record.
+
+#### `EventRecord.isPartial`
+
+```java
+public boolean isPartial()
+```
+
+Whether this is an incoming write that carries only the bins that changed, so that a bin it lacks may
+well exist on the other cluster. False of the current record.
+
+#### `EventRecord.lostBins`
+
+```java
+public ListValue lostBins()
+```
+
+The names of the incoming bins that would lose under bin convergence, as a list of strings. Empty
+for the current record.
+
+#### `EventRecord.isTombstone`
+
+```java
+public boolean isTombstone()
+```
+
+Whether this is a current record that exists but has no bins. False of the incoming write.
+
+#### `EventRecord.usesBinConvergence`
+
+```java
+public boolean usesBinConvergence()
+```
+
+Whether per-bin timestamps are meaningful in this merge, for a time-based merge that wants to check
+before trusting `binLastUpdateTime`. The same answer on both records.
 
 #### `EventRecord.get`
 
@@ -201,22 +253,28 @@ public Value get(String name)
 
 The bin as a value, or null when this side has no such bin or holds nil in it (a bin it deleted).
 
-#### `EventRecord.hasBin`
+#### `EventRecord.bin`
 
 ```java
-public boolean hasBin(String name)
+public Value bin(String name)
 ```
 
-#### `EventRecord.getLong`
+#### `EventRecord.has`
 
 ```java
-public long getLong(String name)
+public boolean has(String name)
 ```
 
-#### `EventRecord.getLong`
+#### `EventRecord.getInt`
 
 ```java
-public long getLong(String name, long dflt)
+public long getInt(String name)
+```
+
+#### `EventRecord.getInt`
+
+```java
+public long getInt(String name, long dflt)
 ```
 
 #### `EventRecord.getDouble`
@@ -231,16 +289,16 @@ public double getDouble(String name)
 public double getDouble(String name, double dflt)
 ```
 
-#### `EventRecord.getBoolean`
+#### `EventRecord.getBool`
 
 ```java
-public boolean getBoolean(String name)
+public boolean getBool(String name)
 ```
 
-#### `EventRecord.getBoolean`
+#### `EventRecord.getBool`
 
 ```java
-public boolean getBoolean(String name, boolean dflt)
+public boolean getBool(String name, boolean dflt)
 ```
 
 #### `EventRecord.getString`
@@ -255,16 +313,16 @@ public String getString(String name)
 public String getString(String name, String dflt)
 ```
 
-#### `EventRecord.getBytes`
+#### `EventRecord.getBlob`
 
 ```java
-public byte[] getBytes(String name)
+public byte[] getBlob(String name)
 ```
 
-#### `EventRecord.getBytes`
+#### `EventRecord.getBlob`
 
 ```java
-public byte[] getBytes(String name, byte[] dflt)
+public byte[] getBlob(String name, byte[] dflt)
 ```
 
 #### `EventRecord.getList`
@@ -302,262 +360,103 @@ a `record` answer that changes a few bins and keeps the rest. This prefers one s
 `xdr-merge` handler that uses it on the current record is not symmetric;
 `Pair#withNewer` is the symmetric form.
 
-#### `Conflict`
-
-```java
-public final class Conflict
-```
-
-What an `xdr-merge` event is about: the current record (`local`, read by index 0), the
-incoming XDR write (`remote`, index 1), and the description. A handler must be pure and
-convergent: both data centres merge the same pair with the sides swapped and must land on the same record.
-`remoteNewer` orders a bin's two sides by its own LUT and then source id, which is symmetric;
-"mine first" is not.
-
-#### `Conflict.description`
-
-```java
-public Value description = new Value()
-```
-
-The whole description map, for anything not decoded here.
-
-#### `Conflict.lost`
-
-```java
-public Value lost = new Value()
-```
-
-The incoming bins that would lose under bin convergence, as a stored list.
-
-#### `Conflict.dryRun`
-
-```java
-public boolean dryRun
-```
-
-The call is a dry run of the merge, not a live one.
-
-#### `Conflict.conflictTrigger`
-
-```java
-public boolean conflictTrigger
-```
-
-Bound with `trigger=conflict`: a bin would lose under bin convergence.
-
-#### `Conflict.binConvergence`
-
-```java
-public boolean binConvergence
-```
-
-The policy stood in for is bin-lut rather than a plain apply.
-
-#### `Conflict.remotePartial`
-
-```java
-public boolean remotePartial
-```
-
-The incoming write carries only changed bins.
-
-#### `Conflict.remoteDeletedRecord`
-
-```java
-public boolean remoteDeletedRecord
-```
-
-The incoming write is a record delete; `remote` has no bins.
-
-#### `Conflict.localTombstone`
-
-```java
-public boolean localTombstone
-```
-
-The current record is a tombstone: exists, no bins.
-
-#### `Conflict.local`
-
-```java
-public final EventRecord local = new EventRecord()
-```
-
-The current record, this node's, read by index 0.
-
-#### `Conflict.remote`
-
-```java
-public final EventRecord remote = new EventRecord()
-```
-
-The incoming XDR write, as shipped, read by index 1.
-
-#### `Conflict.decode`
-
-```java
-public boolean decode(int args, int argc)
-```
-
-Reads an event call's arguments. False when they are not an xdr-merge.
-
-#### `Conflict.remoteNewer`
-
-```java
-public boolean remoteNewer(String name)
-```
-
-Whether the remote side wrote the bin later: by LUT, then source id - the order the server's bin
-convergence uses, so both data centres answer the same.
-
-#### `Conflict.involvesDelete`
-
-```java
-public boolean involvesDelete()
-```
-
-Whether either side deleted a bin: the incoming write carries a bin delete, or the current record has
-a bin tombstone. Such a bin is absent on that side, and resurrecting it from the other side is the
-classic merge mistake.
-
-#### `Conflict.remoteDeleted`
-
-```java
-public ListValue remoteDeleted()
-```
-
-The names of the bins the incoming write deletes; `remote.deletedBins()`.
-
-#### `Conflict.pair`
-
-```java
-public Pair pair()
-```
-
-The two records side by side, for bin-wise merging.
-
-#### `Conflict.keepLocal`
-
-```java
-public static int keepLocal()
-```
-
-Answers `keep-local`: the current record stays and the incoming write is dropped. Returns 0, the
-status the handler returns.
-
-#### `Conflict.takeRemote`
-
-```java
-public static int takeRemote()
-```
-
-Answers `take-remote`: the incoming write is applied whole. Returns 0.
-
-#### `Conflict.policy`
-
-```java
-public static int policy()
-```
-
-Answers `policy`: the namespace's policy decides, as it would have without the event. Returns 0.
-
-#### `Conflict.delete`
-
-```java
-public static int delete()
-```
-
-Answers `delete`: the record is removed on this cluster. The other cluster decides for itself,
-so a merge that deletes has to delete on both sides for the two to agree. Returns 0.
-
-#### `Conflict.record`
-
-```java
-public static int record(int bins, long ttl)
-```
-
-The final record: `bins` (a built map; a bin absent or nil is deleted) and a TTL with a write's
-meaning, or -1 to keep the one the incoming write asked for.
-
-#### `Conflict.signature`
-
-```java
-public static byte[] signature(String name)
-```
-
-The signature text an xdr-merge handler exports under `__udf_sig_<name>`, NUL-terminated.
-
 #### `Pair`
 
 ```java
 public final class Pair
 ```
 
-The two sides of a conflict, read bin by bin into a `Both`: the Java face of the Rust SDK's
-`Pair`. `Conflict#pair` gives one. A reader answers null for a side that has no such bin or
-holds nil, and throws `UdfException` for a bin of another kind.
+The two records of a merge side by side, read bin by bin into a `Both`: the Java face of the Rust
+SDK's `Pair`. `of` makes one from the two records a handler is given. A reader answers null
+for a side that has no such bin or holds nil, and throws `UdfException` for a bin of another kind.
 
-#### `Pair.local`
+#### `Pair.current`
 
 ```java
-public final EventRecord local
+public final EventRecord current
 ```
 
 The current record.
 
-#### `Pair.remote`
+#### `Pair.incoming`
 
 ```java
-public final EventRecord remote
+public final EventRecord incoming
 ```
 
 The incoming write.
 
-#### `Pair.int64`
+#### `Pair.of`
 
 ```java
-public Both<Long> int64(String name)
+public static Pair of(EventRecord current, EventRecord incoming)
+```
+
+The two records a handler is given, side by side: the current record, then the incoming write.
+
+#### `Pair.decode`
+
+```java
+public static Pair decode(int args, int argc)
+```
+
+Reads an event call's arguments into its two records, `current` the current one and
+`incoming` the incoming write; null when the arguments are not an xdr-merge. This is what the
+generated export of a typed handler calls, and what a handler in the raw form
+`int name(int args, int argc)` starts with.
+
+#### `Pair.getInt`
+
+```java
+public Both<Long> getInt(String name)
 ```
 
 An integer bin on each side.
 
-#### `Pair.float64`
+#### `Pair.getDouble`
 
 ```java
-public Both<Double> float64(String name)
+public Both<Double> getDouble(String name)
 ```
 
 A double bin on each side.
 
-#### `Pair.bool`
+#### `Pair.getBool`
 
 ```java
-public Both<Boolean> bool(String name)
+public Both<Boolean> getBool(String name)
 ```
 
 A boolean bin on each side.
 
-#### `Pair.str`
+#### `Pair.getString`
 
 ```java
-public Both<String> str(String name)
+public Both<String> getString(String name)
 ```
 
 A string bin on each side, its text copied out.
 
-#### `Pair.list`
+#### `Pair.getBlob`
 
 ```java
-public Both<ListValue> list(String name)
+public Both<byte[]> getBlob(String name)
+```
+
+The bytes of a string, blob, GeoJSON or HLL bin on each side, copied out.
+
+#### `Pair.getList`
+
+```java
+public Both<ListValue> getList(String name)
 ```
 
 A list bin on each side, read where it is stored.
 
-#### `Pair.map`
+#### `Pair.getMap`
 
 ```java
-public Both<MapValue> map(String name)
+public Both<MapValue> getMap(String name)
 ```
 
 A map bin on each side, read where it is stored.
@@ -570,13 +469,13 @@ public Both<Value> bin(String name)
 
 The bin as a value on each side; absent and nil sides are null.
 
-#### `Pair.remoteNewer`
+#### `Pair.incomingIsNewer`
 
 ```java
-public boolean remoteNewer(String name)
+public boolean incomingIsNewer(String name)
 ```
 
-Whether the remote side wrote `name` later, per bin: the order the bin-lut policy uses.
+Whether the incoming side wrote `name` later, per bin: the order the bin-lut policy uses.
 
 #### `Pair.withNewer`
 
@@ -595,32 +494,32 @@ Returns `overrides`.
 public final class Both<T>
 ```
 
-A bin on both sides of a conflict, either of which may be missing (null), with the merges a resolver
+A bin on both sides of a merge, either of which may be missing (null), with the merges a resolver
 reaches for: the Java face of the Rust SDK's `Both<T>`. `Pair` builds one per bin.
 
-#### `Both.local`
+#### `Both.current`
 
 ```java
-public final T local
+public final T current
 ```
 
 The current record's value, or null when it has no such bin or the bin is nil.
 
-#### `Both.remote`
+#### `Both.incoming`
 
 ```java
-public final T remote
+public final T incoming
 ```
 
 The incoming write's value, likewise.
 
-#### `Both.remoteNewer`
+#### `Both.incomingIsNewer`
 
 ```java
-public boolean remoteNewer()
+public boolean incomingIsNewer()
 ```
 
-Whether the remote side wrote this bin later: by the bin's LUT where the server keeps one, the
+Whether the incoming side wrote this bin later: by the bin's LUT where the server keeps one, the
 record's otherwise, and on a tie by source id - the order the server's own bin convergence uses, so
 "newer" means the same on both DCs even when the clocks agreed to the millisecond.
 
@@ -640,21 +539,30 @@ public T older()
 
 The side written earlier; whichever exists when only one does.
 
-#### `Both.localOrRemote`
+#### `Both.ordered`
 
 ```java
-public T localOrRemote()
+public List<T> ordered()
 ```
 
-The local value when there is one, else the remote.
+Both sides as a list of two, the older and then the newer, either of which may be null: the order
+both DCs agree on, for a merge whose result depends on the order its inputs are taken in.
 
-#### `Both.remoteOrLocal`
+#### `Both.currentOrIncoming`
 
 ```java
-public T remoteOrLocal()
+public T currentOrIncoming()
 ```
 
-The remote value when there is one, else the local.
+The current value when there is one, else the incoming.
+
+#### `Both.incomingOrCurrent`
+
+```java
+public T incomingOrCurrent()
+```
+
+The incoming value when there is one, else the current.
 
 #### `Both.merge`
 

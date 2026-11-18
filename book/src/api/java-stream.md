@@ -16,7 +16,7 @@ with the signature `stream <name>` followed by the two parameter lists.
 @Stream("sum")
 final class Sum {
 private long total;
-void record(Record rec, String bin) { total += rec.getLong(bin, 0); }
+void record(Record rec, String bin) { total += rec.getInt(bin, 0); }
 long end(String bin) { return total; }
 }
 ```

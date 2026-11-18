@@ -42,7 +42,7 @@ public final class Fixture {
         long total = 0;
 
         for (Value v : rec.getList("l")) {
-            total += v.asLong();
+            total += v.asInt();
         }
 
         return total;
@@ -59,23 +59,23 @@ public final class Fixture {
                 .put("ttl", rec.ttl());
         String set = rec.setName();
 
-        return set != null ? out.put("set", set) : out.putNull("set");
+        return set != null ? out.put("set", set) : out.putNil("set");
     }
 
     /** The typed readers over scalar bins, and a map walked entry by entry. */
     @Function("typed")
     static MapBuilder typed(Record rec) {
         MapBuilder out = Udf.map(8)
-                .put("i", rec.getLong("i"))
+                .put("i", rec.getInt("i"))
                 .put("d", rec.getDouble("d"))
                 .put("s", rec.getString("s"))
-                .put("b", rec.getBoolean("b"));
+                .put("b", rec.getBool("b"));
         long sum = 0;
         ListBuilder keys = Udf.list(4);
 
         for (MapValue.Entry e : rec.getMap("m")) {
             if (e.getValue().isInt()) {
-                sum += e.getValue().asLong();
+                sum += e.getValue().asInt();
             }
 
             keys.add(e.getKey());
@@ -267,7 +267,7 @@ public final class Fixture {
         long total = 0;
 
         for (Value v : list) {
-            total += v.asLong();
+            total += v.asInt();
         }
 
         return total;
@@ -279,7 +279,7 @@ public final class Fixture {
         long sum = 0;
 
         for (long k = 0; k < n; k++) {
-            sum += rec.getLong("i", 0);
+            sum += rec.getInt("i", 0);
         }
 
         return sum;
@@ -289,9 +289,9 @@ public final class Fixture {
     @Function("bench_set")
     static long benchSet(Record rec, long n) {
         for (long k = 0; k < n; k++) {
-            rec.set("i", rec.getLong("i", 0) + 1);
+            rec.set("i", rec.getInt("i", 0) + 1);
         }
 
-        return rec.getLong("i", 0);
+        return rec.getInt("i", 0);
     }
 }

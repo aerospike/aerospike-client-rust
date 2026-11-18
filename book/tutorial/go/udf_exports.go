@@ -11,7 +11,7 @@ func udfExport_visit(args, argc int32) int32 {
 	if err := udf.Arity("visit", 1, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	p0, err := udf.ArgInt64(a[:], n, 0, "visit", "by")
+	p0, err := udf.ArgInt(a[:], n, 0, "visit", "by")
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -35,7 +35,7 @@ func udfExport_withdraw(args, argc int32) int32 {
 	if err := udf.Arity("withdraw", 1, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	p0, err := udf.ArgInt64(a[:], n, 0, "withdraw", "amount")
+	p0, err := udf.ArgInt(a[:], n, 0, "withdraw", "amount")
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -143,7 +143,7 @@ func udfExport_log_payment(args, argc int32) int32 {
 	if err := udf.Arity("log_payment", 1, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	p0, err := udf.ArgInt64(a[:], n, 0, "log_payment", "amount")
+	p0, err := udf.ArgInt(a[:], n, 0, "log_payment", "amount")
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -187,7 +187,7 @@ func udfExport_renew(args, argc int32) int32 {
 	if err := udf.Arity("renew", 1, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	p0, err := udf.ArgInt64(a[:], n, 0, "renew", "seconds")
+	p0, err := udf.ArgInt(a[:], n, 0, "renew", "seconds")
 	if err != nil {
 		return udf.FailErr(err)
 	}

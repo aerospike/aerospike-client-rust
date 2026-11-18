@@ -28,8 +28,7 @@ visit(int32_t args, int32_t argc)
 	as_udf_value by;
 	if (as_udf_args(args, argc, &by, 1) < 1 || by.kind != AS_UDF_INT) return as_udf_failf("visit: by must be an integer");
 
-	as_udf_value v;
-	int64_t n = as_udf_rec_bin("visits", &v) == AS_UDF_OK && v.kind == AS_UDF_INT ? v.payload : 0;   /* 0 when absent */
+	int64_t n = as_udf_rec_int_or("visits", 0);                            /* 0 when absent */
 	n += by.payload;
 
 	as_udf_rec_set_int("visits", 6, n);                                    /* staged, not yet written */
@@ -80,12 +79,12 @@ rename(int32_t args, int32_t argc)
 	as_udf_value owner;
 	if (as_udf_rec_bin("owner", &owner) != AS_UDF_OK || owner.kind != AS_UDF_STR) return as_udf_failf("rename: no string bin owner");
 
-	if (as_udf_str_is(&owner, name)) {
+	if (as_udf_string_is(&owner, name)) {
 		as_udf_result_bool(0);
 		return 0;
 	}
 
-	as_udf_rec_set_str("owner", 5, name, len);
+	as_udf_rec_set_string("owner", 5, name, len);
 	if (as_udf_rec_save() != AS_UDF_OK) return as_udf_failf("rename: could not save");
 
 	as_udf_result_bool(1);
@@ -226,9 +225,9 @@ summary(int32_t args, int32_t argc)
 
 	as_udf_map_put_value(out, "owner", &owner);                        /* a stored value goes in as it is */
 	as_udf_map_put_value(out, "balance", &balance);
-	as_udf_map_put_str_int(out, "generation", 10, as_udf_rec_gen());
-	as_udf_map_put_str_int(out, "bins", 4, as_udf_rec_numbins());
-	as_udf_map_put_str_int(out, "ttl", 3, as_udf_rec_ttl());
+	as_udf_map_put_string_int(out, "generation", 10, as_udf_rec_generation());
+	as_udf_map_put_string_int(out, "bins", 4, as_udf_rec_bin_count());
+	as_udf_map_put_string_int(out, "ttl", 3, as_udf_rec_ttl());
 
 	as_udf_result_handle(out);
 	return 0;
@@ -243,8 +242,7 @@ renew(int32_t args, int32_t argc)
 	as_udf_value seconds;
 	if (as_udf_args(args, argc, &seconds, 1) < 1 || seconds.kind != AS_UDF_INT) return as_udf_failf("renew: seconds must be an integer");
 
-	as_udf_value v;
-	int64_t n = as_udf_rec_bin("renewals", &v) == AS_UDF_OK && v.kind == AS_UDF_INT ? v.payload : 0;
+	int64_t n = as_udf_rec_int_or("renewals", 0);
 	n++;
 
 	as_udf_rec_set_int("renewals", 8, n);

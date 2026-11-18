@@ -82,11 +82,11 @@ func typed(rec *udf.Record) (*udf.Map, error) {
 	if err != nil {
 		return nil, err
 	}
-	d, ok := rec.Float64("d")
+	d, ok := rec.Double("d")
 	if !ok {
 		return nil, errors.New("bin `d` is not a double")
 	}
-	s, ok := rec.Str("s")
+	s, ok := rec.String("s")
 	if !ok {
 		return nil, errors.New("bin `s` is not a string")
 	}
@@ -117,7 +117,7 @@ func writeLists(rec *udf.Record) (int64, error) {
 	if err := rec.SetInts("w", []int64{5, -1, 1 << 40}); err != nil {
 		return 0, err
 	}
-	if err := rec.SetFloat64s("wd", []float64{0.5, -4.0}); err != nil {
+	if err := rec.SetDoubles("wd", []float64{0.5, -4.0}); err != nil {
 		return 0, err
 	}
 	if err := rec.Set("flag", true); err != nil {

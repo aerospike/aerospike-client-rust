@@ -88,16 +88,17 @@ typedef struct tags_s {
 static void push_tag(const char* name, const as_udf_value* v, void* udata)
 {
 	tags* t = (tags*)udata;
-	if (t->second && as_udf_list_has_str(&t->first, name)) return;
+	if (t->second && as_udf_list_has_string(&t->first, name)) return;
 	as_udf_list_push_at(t->list, as_udf_value_src(v), as_udf_value_at(v));
 }
 
 /* Deletes: a bin the later writer deleted goes out as nil. */
 typedef struct deletes_s {
-	const as_udf_conflict* c;
+	const as_udf_event_record* current;
+	const as_udf_event_record* incoming;
 	int32_t out;
 	done* d;
-	bool by_remote;
+	bool by_incoming;
 } deletes;
 
 static void apply_delete(const char* name, const as_udf_value* v, void* udata)
@@ -105,15 +106,16 @@ static void apply_delete(const char* name, const as_udf_value* v, void* udata)
 	(void)v;
 	deletes* x = (deletes*)udata;
 	/* A put replaces, so a bin already decided above (the profile) is overridden here, as it should be. */
-	if (as_udf_event_remote_newer(x->c, name) == x->by_remote) {
-		as_udf_map_put_str_handle(x->out, name, as_udf_strlen(name), as_udf_val_nil());
+	if (as_udf_event_incoming_is_newer(x->current, x->incoming, name) == x->by_incoming) {
+		as_udf_map_put_string_handle(x->out, name, as_udf_strlen(name), as_udf_val_nil());
 		done_add(x->d, name);
 	}
 }
 
 /* Everything else: the newer side's value, by position. */
 typedef struct rest_s {
-	const as_udf_conflict* c;
+	const as_udf_event_record* current;
+	const as_udf_event_record* incoming;
 	int32_t out;
 	done* d;
 } rest;
@@ -123,8 +125,8 @@ static void put_newer(const char* name, const as_udf_value* v, void* udata)
 	(void)v;
 	rest* x = (rest*)udata;
 	if (done_has(x->d, name)) return;
-	const as_udf_event_record* side = as_udf_event_remote_newer(x->c, name) ? &x->c->remote : &x->c->local;
-	const as_udf_event_record* other = side == &x->c->remote ? &x->c->local : &x->c->remote;
+	const as_udf_event_record* side = as_udf_event_incoming_is_newer(x->current, x->incoming, name) ? x->incoming : x->current;
+	const as_udf_event_record* other = side == x->incoming ? x->current : x->incoming;
 	as_udf_value val;
 	if (as_udf_event_bin(side, name, &val) != AS_UDF_OK || val.kind == AS_UDF_NIL) {
 		if (as_udf_event_bin(other, name, &val) != AS_UDF_OK || val.kind == AS_UDF_NIL) return;
@@ -135,27 +137,27 @@ static void put_newer(const char* name, const as_udf_value* v, void* udata)
 
 AS_UDF_EVENT_XDR_MERGE(merge_account)
 {
-	as_udf_conflict c;
-	if (as_udf_event_decode(args, argc, &c) != AS_UDF_OK) return as_udf_failf("merge_account: not a conflict");
+	as_udf_event_record current, incoming;
+	if (as_udf_event_decode(args, argc, &current, &incoming) != AS_UDF_OK) return as_udf_failf("merge_account: not an xdr-merge");
 
 	int32_t out = as_udf_map_new(8);
 	if (out <= 0) return as_udf_failf("merge_account: could not build the record");
 	done d = { .n = 0 };
 
 	/* visits: the larger of the two counts. */
-	as_udf_value lv, rv;
-	bool has_l = as_udf_event_bin(&c.local, "visits", &lv) == AS_UDF_OK && lv.kind == AS_UDF_INT;
-	bool has_r = as_udf_event_bin(&c.remote, "visits", &rv) == AS_UDF_OK && rv.kind == AS_UDF_INT;
-	if (has_l || has_r) {
-		int64_t visits = has_l && has_r ? (rv.payload > lv.payload ? rv.payload : lv.payload) : has_l ? lv.payload : rv.payload;
-		as_udf_map_put_str_int(out, "visits", 6, visits);
+	as_udf_value cv, iv;
+	bool has_c = as_udf_event_bin(&current, "visits", &cv) == AS_UDF_OK && cv.kind == AS_UDF_INT;
+	bool has_i = as_udf_event_bin(&incoming, "visits", &iv) == AS_UDF_OK && iv.kind == AS_UDF_INT;
+	if (has_c || has_i) {
+		int64_t visits = has_c && has_i ? (iv.payload > cv.payload ? iv.payload : cv.payload) : has_c ? cv.payload : iv.payload;
+		as_udf_map_put_string_int(out, "visits", 6, visits);
 		done_add(&d, "visits");
 	}
 
 	/* tags: the union, older side first - the order both DCs agree on. */
-	bool remote_newer = as_udf_event_remote_newer(&c, "tags");
-	const as_udf_event_record* older = remote_newer ? &c.local : &c.remote;
-	const as_udf_event_record* newer = remote_newer ? &c.remote : &c.local;
+	bool incoming_newer = as_udf_event_incoming_is_newer(&current, &incoming, "tags");
+	const as_udf_event_record* older = incoming_newer ? &current : &incoming;
+	const as_udf_event_record* newer = incoming_newer ? &incoming : &current;
 	tags t = { .list = as_udf_list_new(16), .second = false };
 	if (t.list <= 0) return as_udf_failf("merge_account: could not build the tags");
 	as_udf_value older_tags = { AS_UDF_ABSENT, 0, 0 }, newer_tags = { AS_UDF_ABSENT, 0, 0 };
@@ -165,13 +167,13 @@ AS_UDF_EVENT_XDR_MERGE(merge_account)
 	each_name(&older_tags, push_tag, &t);
 	t.second = true;
 	each_name(&newer_tags, push_tag, &t);
-	as_udf_map_put_str_handle(out, "tags", 4, t.list);
+	as_udf_map_put_string_handle(out, "tags", 4, t.list);
 	done_add(&d, "tags");
 
 	/* profile: last writer wins, by the bin's LUT. */
 	{
-		const as_udf_event_record* side = as_udf_event_remote_newer(&c, "profile") ? &c.remote : &c.local;
-		const as_udf_event_record* other = side == &c.remote ? &c.local : &c.remote;
+		const as_udf_event_record* side = as_udf_event_incoming_is_newer(&current, &incoming, "profile") ? &incoming : &current;
+		const as_udf_event_record* other = side == &incoming ? &current : &incoming;
 		as_udf_value p;
 		if ((as_udf_event_bin(side, "profile", &p) == AS_UDF_OK && p.kind != AS_UDF_NIL) ||
 				(as_udf_event_bin(other, "profile", &p) == AS_UDF_OK && p.kind != AS_UDF_NIL)) {
@@ -181,15 +183,15 @@ AS_UDF_EVENT_XDR_MERGE(merge_account)
 	}
 
 	/* A bin deleted by the later writer stays deleted. */
-	deletes dl = { .c = &c, .out = out, .d = &d, .by_remote = false };
-	each_name(&c.local.deleted, apply_delete, &dl);
-	dl.by_remote = true;
-	each_name(&c.remote.deleted, apply_delete, &dl);
+	deletes dl = { .current = &current, .incoming = &incoming, .out = out, .d = &d, .by_incoming = false };
+	each_name(&current.deleted_bins, apply_delete, &dl);
+	dl.by_incoming = true;
+	each_name(&incoming.deleted_bins, apply_delete, &dl);
 
 	/* Everything else: the newer side's. */
-	rest r = { .c = &c, .out = out, .d = &d };
-	each_name(&c.local.bins, put_newer, &r);
-	each_name(&c.remote.bins, put_newer, &r);
+	rest r = { .current = &current, .incoming = &incoming, .out = out, .d = &d };
+	each_name(&current.bin_names, put_newer, &r);
+	each_name(&incoming.bin_names, put_newer, &r);
 
 	return as_udf_resolve_record(out, -1);
 }

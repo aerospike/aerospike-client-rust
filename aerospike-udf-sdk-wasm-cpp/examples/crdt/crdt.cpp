@@ -109,7 +109,7 @@ static udf::Result<Id> id_of(const udf::Value& entry)
 
 	if (!id) return udf::error(AS_UDF_NOT_FOUND, "an entry has no deviceId");
 
-	return id->as_text<64>();
+	return id->as_string<64>();
 }
 
 static udf::Result<int64_t> int_field(const udf::Value& m, udf::StrView key)
@@ -157,7 +157,7 @@ static udf::Result<void> offer_markers(const udf::Value& removed, int64_t& horiz
 	for (udf::Entry e : markers->map()) {
 		Candidate c;
 
-		c.id = UDF_TRY(e.key.as_text<64>());
+		c.id = UDF_TRY(e.key.as_string<64>());
 		c.version = UDF_TRY(int_field(e.value, "version"));
 		c.removed = true;
 		c.value = e.value;
@@ -177,8 +177,8 @@ UDF_ON_XDR_MERGE(xdr_merge)
 	udf::Map out(8);
 
 	// Other bins: as XDR does today.
-	for (udf::Value name : incoming.names()) {
-		udf::Text<64> n = UDF_TRY(name.as_text<64>());
+	for (udf::Value name : incoming.bin_names()) {
+		udf::Text<64> n = UDF_TRY(name.as_string<64>());
 
 		if (n == "devices" || n == "devicesRemoved") continue;
 
@@ -247,7 +247,7 @@ UDF_ON_XDR_MERGE(xdr_merge)
 		else {
 			// The merge has no removals left: the bin stays out, so with_bins below cannot bring a stale
 			// copy back.
-			out.put_null("devicesRemoved");
+			out.put_nil("devicesRemoved");
 		}
 	}
 
@@ -371,7 +371,7 @@ static udf::Result<void> store_removed(udf::Record& rec, udf::StrView drop, cons
 	if (udf::Optional<udf::Value> removed = rec.get(DEVICES_REMOVED)) {
 		if (udf::Optional<udf::Value> existing = removed->get("markers")) {
 			for (udf::Entry e : existing->map()) {
-				Id id = UDF_TRY(e.key.as_text<64>());
+				Id id = UDF_TRY(e.key.as_string<64>());
 
 				if ((drop.len > 0 && id == drop) || (add != nullptr && id == add->id)) continue;
 

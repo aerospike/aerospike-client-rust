@@ -64,13 +64,16 @@ public final class ExportsProcessor extends AbstractProcessor {
         SDK + "MapBuilder", SDK + "ListBuilder", SDK + "MapValue", SDK + "ListValue"
     };
     private static final String PARAMS = SDK + "Params";
-    private static final String CONFLICT = SDK + "Conflict";
+    private static final String PAIR = SDK + "Pair";
     private static final String EVENT_RECORD = SDK + "EventRecord";
     private static final String RESOLUTION = SDK + "Resolution";
     private static final String UDF_EXCEPTION = SDK + "UdfException";
 
-    /** What an xdr-merge handler takes: the current record, the incoming write, the description. */
-    private static final String[] HANDLER_PARAMS = { EVENT_RECORD, EVENT_RECORD, CONFLICT };
+    /** What an xdr-merge handler takes: the current record and the incoming write, and nothing else. */
+    private static final String[] HANDLER_PARAMS = { EVENT_RECORD, EVENT_RECORD };
+
+    /** The names the two records go by in the expected shape an error states, and in the signature. */
+    private static final String[] HANDLER_NAMES = { "current", "incoming" };
 
     private enum Role { FUNCTION, RECORD, END, HANDLER }
 
@@ -345,10 +348,12 @@ public final class ExportsProcessor extends AbstractProcessor {
             want.append(e.method.getSimpleName()).append("(");
 
             for (int i = 0; i < HANDLER_PARAMS.length; i++) {
-                want.append(i > 0 ? ", " : "").append(simple(HANDLER_PARAMS[i]));
+                want.append(i > 0 ? ", " : "").append(simple(HANDLER_PARAMS[i])).append(" ")
+                        .append(HANDLER_NAMES[i]);
             }
 
-            error(e.method, "a @On.XdrMerge handler is " + want + "), or the raw int (int args, int argc)");
+            error(e.method, "a @On.XdrMerge handler is exactly " + want + "), or the raw int "
+                    + e.method.getSimpleName() + "(int args, int argc)");
         }
     }
 
@@ -362,7 +367,7 @@ public final class ExportsProcessor extends AbstractProcessor {
         String name = p.getSimpleName().toString();
         boolean nullable = annotation(p, NULLABLE) != null;
 
-        String call = PARAMS + "." + (nullable ? "opt" : "") + "%s(" + args + ", n, " + i + ", \"" + fn + "\", \""
+        String call = PARAMS + "." + (nullable ? "opt" : "arg") + "%s(" + args + ", n, " + i + ", \"" + fn + "\", \""
                 + name + "\")";
         String sig = name + (nullable ? "?: " : ": ");
 
@@ -378,19 +383,19 @@ public final class ExportsProcessor extends AbstractProcessor {
 
             switch (t.getKind()) {
             case LONG:
-                return new Param(String.format(call, "int64"), sig + "int", false);
+                return new Param(String.format(call, "Int"), sig + "int", false);
             case INT:
-                return new Param(String.format(call, "int32"), sig + "int", false);
+                return new Param(String.format(call, "Int32"), sig + "int", false);
             case DOUBLE:
-                return new Param(String.format(call, "float64"), sig + "double", false);
+                return new Param(String.format(call, "Double"), sig + "double", false);
             default:
-                return new Param(String.format(call, "bool"), sig + "bool", false);
+                return new Param(String.format(call, "Bool"), sig + "bool", false);
             }
         case ARRAY: {
             TypeMirror component = ((ArrayType) t).getComponentType();
 
             if (component.getKind() == TypeKind.BYTE) {
-                return new Param(String.format(call, nullable ? "Bytes" : "bytes"), sig + "bytes", false);
+                return new Param(String.format(call, "Blob"), sig + "bytes", false);
             }
 
             if (typeName(component).equals(VALUE)) {
@@ -404,7 +409,7 @@ public final class ExportsProcessor extends AbstractProcessor {
                     return null;
                 }
 
-                return new Param(PARAMS + ".rest(" + args + ", n, " + i + ")", name + ": any...", true);
+                return new Param(PARAMS + ".argRest(" + args + ", n, " + i + ")", name + ": any...", true);
             }
 
             break;
@@ -414,17 +419,17 @@ public final class ExportsProcessor extends AbstractProcessor {
 
             switch (q) {
             case "java.lang.Long":
-                return new Param(String.format(call, nullable ? "Int64" : "int64"), sig + "int", false);
+                return new Param(String.format(call, "Int"), sig + "int", false);
             case "java.lang.Integer":
-                return new Param(String.format(call, nullable ? "Int32" : "int32"), sig + "int", false);
+                return new Param(String.format(call, "Int32"), sig + "int", false);
             case "java.lang.Double":
-                return new Param(String.format(call, nullable ? "Float64" : "float64"), sig + "double", false);
+                return new Param(String.format(call, "Double"), sig + "double", false);
             case "java.lang.Boolean":
-                return new Param(String.format(call, nullable ? "Bool" : "bool"), sig + "bool", false);
+                return new Param(String.format(call, "Bool"), sig + "bool", false);
             case "java.lang.String":
-                return new Param(String.format(call, nullable ? "Str" : "str"), sig + "str", false);
+                return new Param(String.format(call, "String"), sig + "str", false);
             case VALUE:
-                return new Param(String.format(call, nullable ? "Any" : "any"), sig + "any", false);
+                return new Param(String.format(call, "Value"), sig + "any", false);
             default:
                 break;
             }
@@ -460,12 +465,12 @@ public final class ExportsProcessor extends AbstractProcessor {
             return UDF + ".resultBool(" + call + ");";
         case ARRAY:
             return ((ArrayType) ret).getComponentType().getKind() == TypeKind.BYTE
-                    ? PARAMS + ".resultBytes(" + call + ");" : null;
+                    ? PARAMS + ".resultBlob(" + call + ");" : null;
         case DECLARED: {
             String q = typeName(ret);
 
             if (q.equals("java.lang.String")) {
-                return PARAMS + ".resultStr(" + call + ");";
+                return PARAMS + ".resultString(" + call + ");";
             }
 
             if (q.equals(VALUE)) {
@@ -553,7 +558,8 @@ public final class ExportsProcessor extends AbstractProcessor {
                 signature(out, e.name, id, "fn " + e.name + params + " -> value");
             }
             else if (e.role == Role.HANDLER) {
-                signatureBytes(out, e.name, id, CONFLICT + ".signature(\"" + e.name + "\")");
+                signature(out, e.name, id, "event xdr-merge/1 " + e.name
+                        + "(current: record, incoming: record) -> resolution");
             }
             else {
                 String[] halves = streams.computeIfAbsent(e.name, k -> new String[2]);
@@ -671,13 +677,13 @@ public final class ExportsProcessor extends AbstractProcessor {
             return "";
         }
 
-        out.append("        ").append(CONFLICT).append(" conflict = new ").append(CONFLICT).append("();\n\n");
-        out.append("        if (!conflict.decode(args, argc)) {\n");
+        out.append("        ").append(PAIR).append(" event = ").append(PAIR).append(".decode(args, argc);\n\n");
+        out.append("        if (event == null) {\n");
         out.append("            return ").append(UDF).append(".fail(\"").append(e.name)
                 .append(": not an xdr-merge event\");\n");
         out.append("        }\n\n");
         out.append("        try {\n");
-        out.append("            return ").append(method).append("(conflict.local, conflict.remote, conflict).deliver();\n");
+        out.append("            return ").append(method).append("(event.current, event.incoming).deliver();\n");
         catches(out, e.name);
         out.append("    }\n");
 

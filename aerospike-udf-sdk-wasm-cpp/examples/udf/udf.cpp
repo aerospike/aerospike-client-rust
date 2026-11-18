@@ -50,7 +50,7 @@ UDF_FUNCTION(describe, udf::Result<udf::Map>, const udf::Record& rec)
 		out.put("set", set.view());
 	}
 	else {
-		out.put_null("set");
+		out.put_nil("set");
 	}
 
 	UDF_TRY(out.result());
@@ -64,7 +64,7 @@ UDF_FUNCTION(typed, udf::Result<udf::Map>, const udf::Record& rec)
 {
 	int64_t i = UDF_TRY(UDF_TRY(rec.bin("i")).as_int());
 	double d = UDF_TRY(UDF_TRY(rec.bin("d")).as_double());
-	udf::Optional<udf::Text<64>> s = rec.as_text<64>("s");
+	udf::Optional<udf::Text<64>> s = rec.as_string<64>("s");
 	bool b = rec.bool_or("b", false);
 
 	if (!s) return udf::error(AS_UDF_NOT_FOUND, "typed: bin s is not a string");

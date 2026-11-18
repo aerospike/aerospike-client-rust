@@ -31,7 +31,7 @@
 // The record a UDF is called on is an object, udf::Record, that the function takes as its first parameter:
 // `udf::Record& rec` to write it, `const udf::Record& rec` to read it, and no such parameter when it does
 // not touch the record. Everything about the record is a method on it; what stays in the namespace is what
-// is not about the record: now(), log(), fail(), result_of() and the Map and List builders.
+// is not about the record: now(), log(), fail(), result() and the Map and List builders.
 
 extern "C" {
 #include "aerospike_udf.h"
@@ -341,7 +341,8 @@ struct Value : as_udf_value {
 	constexpr bool is_absent() const { return kind() == Kind::Absent; }
 	// Whether the value is an explicit nil.
 	constexpr bool is_nil() const { return kind() == Kind::Nil; }
-	// Whether the value is nil or absent.
+	// Whether there is nothing to read: the value is nil or it is absent. Not another name for is_nil(),
+	// which is false of an absent value.
 	constexpr bool is_null() const { return is_nil() || is_absent(); }
 	// Whether the value is an integer.
 	constexpr bool is_int() const { return kind() == Kind::Int; }
@@ -350,7 +351,7 @@ struct Value : as_udf_value {
 	// Whether the value is a boolean.
 	constexpr bool is_bool() const { return kind() == Kind::Bool; }
 	// Whether the value is a stored string. A string built by Value::of is of kind GuestStr and is not one.
-	constexpr bool is_str() const { return kind() == Kind::Str; }
+	constexpr bool is_string() const { return kind() == Kind::Str; }
 	// Whether the value is a stored blob. A blob built by Value::blob is of kind GuestBlob and is not one.
 	constexpr bool is_blob() const { return kind() == Kind::Blob; }
 	// Whether the value is a stored list.
@@ -402,10 +403,10 @@ struct Value : as_udf_value {
 
 	// The text of a stored string into an inline Text<N>; an error when it does not fit.
 	template <size_t N>
-	Result<Text<N>> as_text() const
+	Result<Text<N>> as_string() const
 	{
 		if (kind() == Kind::GuestStr) return Text<N>(StrView{(const char*)(uintptr_t)payload, (int32_t)len});
-		if (!is_str()) return kind_error("a string");
+		if (!is_string()) return kind_error("a string");
 		Text<N> t;
 		if (len > N) return error(AS_UDF_NEEDED_BASE, "the string does not fit");
 		int32_t n = as_udf_bytes(this, t.buf, (int32_t)N);
@@ -427,7 +428,7 @@ struct Value : as_udf_value {
 	// The bytes of a stored string, blob, GeoJSON or HLL into an inline Bytes<N>. An error when the value is
 	// of another kind or does not fit in N bytes.
 	template <size_t N>
-	Result<Bytes<N>> as_bytes() const
+	Result<Bytes<N>> as_blob() const
 	{
 		Bytes<N> b;
 		Result<int32_t> n = bytes_into(b.buf, (int32_t)N);
@@ -446,7 +447,7 @@ struct Value : as_udf_value {
 	}
 
 	// Whether a stored string reads as text.
-	bool is(StrView text) const { return is_str() && (int32_t)len == text.len && str_eq_stored(text); }
+	bool is(StrView text) const { return is_string() && (int32_t)len == text.len && str_eq_stored(text); }
 
 	// A stored value's bytes as the server stores them, msgpack header included: the encoding a convergent
 	// merge compares when nothing else tells two candidates apart.
@@ -472,7 +473,7 @@ struct Value : as_udf_value {
 	Optional<Value> get(int64_t key) const
 	{
 		Value out;
-		if (!is_map() || as_udf_coll_get_i(src(), offset(), key, &out, (int32_t)sizeof(out)) != AS_UDF_OK) return {};
+		if (!is_map() || as_udf_coll_get_int(src(), offset(), key, &out, (int32_t)sizeof(out)) != AS_UDF_OK) return {};
 		return out;
 	}
 
@@ -727,7 +728,7 @@ public:
 	// The number of entries the map holds, asked of the host; negative when the handle is not a valid one.
 	int32_t size() const { return as_udf_coll_size(handle_); }
 	// The map as a Value of kind Handle, to nest it in a batch (List::add_values, Map::put_entries) or to
-	// pass it to result_of.
+	// pass it to udf::result().
 	Value value() const { return Value::handle(handle_); }
 
 	// Whether the map holds no entry, which is also what a map that could not be built answers.
@@ -737,41 +738,41 @@ public:
 	// nothing is packed and the check is fit for a loop.
 	bool contains(StrView key) const { return as_udf_map_has(handle_, key.data, key.len) > 0; }
 	// Whether the map holds an entry under an integer key.
-	bool contains(int64_t key) const { return as_udf_map_has_i(handle_, key) > 0; }
+	bool contains(int64_t key) const { return as_udf_map_has_int(handle_, key) > 0; }
 
 	// Puts an integer under a string key. Like every put, returns the map for chaining and keeps the first
 	// failure for error().
-	Map& put(StrView key, int64_t v) { return check(as_udf_map_put_str_int(handle_, key.data, key.len, v), key); }
+	Map& put(StrView key, int64_t v) { return check(as_udf_map_put_string_int(handle_, key.data, key.len, v), key); }
 	// Puts an int under a string key, widened to 64 bits.
 	Map& put(StrView key, int v) { return put(key, (int64_t)v); }
 	// Puts a double under a string key.
-	Map& put(StrView key, double v) { return check(as_udf_map_put_str_handle(handle_, key.data, key.len, as_udf_val_double(v)), key); }
+	Map& put(StrView key, double v) { return check(as_udf_map_put_string_handle(handle_, key.data, key.len, as_udf_val_double(v)), key); }
 	// Puts a boolean under a string key.
-	Map& put(StrView key, bool v) { return check(as_udf_map_put_str_handle(handle_, key.data, key.len, as_udf_val_bool(v ? 1 : 0)), key); }
+	Map& put(StrView key, bool v) { return check(as_udf_map_put_string_handle(handle_, key.data, key.len, as_udf_val_bool(v ? 1 : 0)), key); }
 	// Puts a string under a string key.
-	Map& put(StrView key, StrView v) { return check(as_udf_map_put_str_str(handle_, key.data, key.len, v.data, v.len), key); }
+	Map& put(StrView key, StrView v) { return check(as_udf_map_put_string_string(handle_, key.data, key.len, v.data, v.len), key); }
 	// Puts a NUL-terminated string under a string key.
 	Map& put(StrView key, const char* v) { return put(key, StrView(v)); }
 	// Puts a value of any kind under a string key: a scalar, guest bytes, a handle, or a stored value taken
 	// by position and keeping its kind. An absent value is refused. The key is cut to 63 bytes.
 	Map& put(StrView key, const Value& v) { return check(as_udf_map_put_value(handle_, c_str(key), &v), key); }
 	// Nests a built map under a string key. A failure already kept by `v` carries over to this map.
-	Map& put(StrView key, const Map& v) { return check(as_udf_map_put_str_handle(handle_, key.data, key.len, v.handle_), key).carry(v.err_); }
+	Map& put(StrView key, const Map& v) { return check(as_udf_map_put_string_handle(handle_, key.data, key.len, v.handle_), key).carry(v.err_); }
 	// Nests a built list under a string key. A failure already kept by `v` carries over to this map.
 	inline Map& put(StrView key, const List& v);
 	// Puts `n` bytes at `b` as a blob under a string key.
-	Map& put_blob(StrView key, const void* b, int32_t n) { return check(as_udf_map_put_str_handle(handle_, key.data, key.len, as_udf_val_blob(b, n)), key); }
+	Map& put_blob(StrView key, const void* b, int32_t n) { return check(as_udf_map_put_string_handle(handle_, key.data, key.len, as_udf_val_blob(b, n)), key); }
 	// Puts a GeoJSON document under a string key, as the GeoJSON kind, not as a string.
-	Map& put_geojson(StrView key, StrView doc) { return check(as_udf_map_put_str_handle(handle_, key.data, key.len, as_udf_val_geojson(doc.data, doc.len)), key); }
+	Map& put_geojson(StrView key, StrView doc) { return check(as_udf_map_put_string_handle(handle_, key.data, key.len, as_udf_val_geojson(doc.data, doc.len)), key); }
 	// A nil entry: in a record answer, "no such bin".
-	Map& put_null(StrView key) { return check(as_udf_map_put_str_handle(handle_, key.data, key.len, as_udf_val_nil()), key); }
+	Map& put_nil(StrView key) { return check(as_udf_map_put_string_handle(handle_, key.data, key.len, as_udf_val_nil()), key); }
 
 	// Integer keys.
 	Map& put(int64_t key, int64_t v) { return check(as_udf_map_put(handle_, as_udf_val_int(key), as_udf_val_int(v)), "an integer key"); }
 	// Puts an int under an integer key, widened to 64 bits.
 	Map& put(int64_t key, int v) { return put(key, (int64_t)v); }
 	// Puts a string under an integer key.
-	Map& put(int64_t key, StrView v) { return check(as_udf_map_put(handle_, as_udf_val_int(key), as_udf_val_str(v.data, v.len)), "an integer key"); }
+	Map& put(int64_t key, StrView v) { return check(as_udf_map_put(handle_, as_udf_val_int(key), as_udf_val_string(v.data, v.len)), "an integer key"); }
 	// Puts a NUL-terminated string under an integer key.
 	Map& put(int64_t key, const char* v) { return put(key, StrView(v)); }
 	// Puts a value of any kind under an integer key: a scalar, guest bytes, a handle, or a stored value
@@ -790,7 +791,7 @@ public:
 				put(e.key.payload, e.value);
 			}
 			else {
-				Result<Text<64>> k = e.key.as_text<64>();
+				Result<Text<64>> k = e.key.as_string<64>();
 				if (!k) { carry(k.error()); break; }
 				put(k->view(), e.value);
 			}
@@ -826,12 +827,12 @@ private:
 		case Kind::Double: return as_udf_map_put(handle_, as_udf_val_int(key), as_udf_val_double(v.as_double_bits()));
 		case Kind::Bool: return as_udf_map_put(handle_, as_udf_val_int(key), as_udf_val_bool((int32_t)v.payload));
 		case Kind::Nil: return as_udf_map_put(handle_, as_udf_val_int(key), as_udf_val_nil());
-		case Kind::GuestStr: return as_udf_map_put(handle_, as_udf_val_int(key), as_udf_val_str((const char*)(uintptr_t)v.payload, (int32_t)v.len));
+		case Kind::GuestStr: return as_udf_map_put(handle_, as_udf_val_int(key), as_udf_val_string((const char*)(uintptr_t)v.payload, (int32_t)v.len));
 		case Kind::GuestBlob: return as_udf_map_put(handle_, as_udf_val_int(key), as_udf_val_blob((const void*)(uintptr_t)v.payload, (int32_t)v.len));
 		case Kind::GuestGeoJson: return as_udf_map_put(handle_, as_udf_val_int(key), as_udf_val_geojson((const char*)(uintptr_t)v.payload, (int32_t)v.len));
 		case Kind::Handle: return as_udf_map_put(handle_, as_udf_val_int(key), (int32_t)v.payload);
 		case Kind::Absent: return AS_UDF_NOT_FOUND;
-		default: return as_udf_map_put_i_at(handle_, key, v.src(), v.offset());
+		default: return as_udf_map_put_int_at(handle_, key, v.src(), v.offset());
 		}
 	}
 
@@ -878,7 +879,7 @@ public:
 	// Whether the list holds no element, which is also what a list that could not be built answers.
 	bool empty() const { return size() <= 0; }
 	// The list as a Value of kind Handle, to nest it in a batch (List::add_values, Map::put_entries) or to
-	// pass it to result_of.
+	// pass it to udf::result().
 	Value value() const { return Value::handle(handle_); }
 
 	// Appends an integer. Like every add, returns the list for chaining and keeps the first failure for
@@ -891,7 +892,7 @@ public:
 	// Appends a boolean.
 	List& add(bool v) { return check(as_udf_list_push(handle_, as_udf_val_bool(v ? 1 : 0))); }
 	// Appends a string.
-	List& add(StrView v) { return check(as_udf_list_push_str(handle_, v.data, v.len)); }
+	List& add(StrView v) { return check(as_udf_list_push_string(handle_, v.data, v.len)); }
 	// Appends a NUL-terminated string.
 	List& add(const char* v) { return add(StrView(v)); }
 	// Appends a value of any kind: a scalar, guest bytes, a handle, or a stored value taken by position and
@@ -906,7 +907,7 @@ public:
 	// Appends a GeoJSON document, as the GeoJSON kind, not as a string.
 	List& add_geojson(StrView doc) { return check(as_udf_list_push(handle_, as_udf_val_geojson(doc.data, doc.len))); }
 	// Appends a nil element.
-	List& add_null() { return check(as_udf_list_push(handle_, as_udf_val_nil())); }
+	List& add_nil() { return check(as_udf_list_push(handle_, as_udf_val_nil())); }
 
 	// Every element of a stored list, by position.
 	List& add_all(const Value& stored)
@@ -934,7 +935,7 @@ private:
 		case Kind::Double: return as_udf_list_push(handle_, as_udf_val_double(v.as_double_bits()));
 		case Kind::Bool: return as_udf_list_push(handle_, as_udf_val_bool((int32_t)v.payload));
 		case Kind::Nil: return as_udf_list_push(handle_, as_udf_val_nil());
-		case Kind::GuestStr: return as_udf_list_push_str(handle_, (const char*)(uintptr_t)v.payload, (int32_t)v.len);
+		case Kind::GuestStr: return as_udf_list_push_string(handle_, (const char*)(uintptr_t)v.payload, (int32_t)v.len);
 		case Kind::GuestBlob: return as_udf_list_push(handle_, as_udf_val_blob((const void*)(uintptr_t)v.payload, (int32_t)v.len));
 		case Kind::GuestGeoJson: return as_udf_list_push(handle_, as_udf_val_geojson((const char*)(uintptr_t)v.payload, (int32_t)v.len));
 		case Kind::Handle: return as_udf_list_push(handle_, (int32_t)v.payload);
@@ -960,7 +961,7 @@ private:
 	friend class Map;
 };
 
-inline Map& Map::put(StrView key, const List& v) { return check(as_udf_map_put_str_handle(handle_, key.data, key.len, v.handle_), key).carry(v.err_); }
+inline Map& Map::put(StrView key, const List& v) { return check(as_udf_map_put_string_handle(handle_, key.data, key.len, v.handle_), key).carry(v.err_); }
 inline Map& Map::put(int64_t key, const List& v) { return check(as_udf_map_put(handle_, as_udf_val_int(key), v.handle_), "an integer key").carry(v.err_); }
 
 //==========================================================
@@ -1008,21 +1009,21 @@ public:
 	Optional<bool> as_bool(StrView name) const { Optional<Value> v = get(name); if (!v || !v->is_bool()) return {}; return v->payload != 0; }
 	// The bin's string as an inline Text<N>; nothing when the record has no such bin, it is nil, it is not a
 	// string or it does not fit in N bytes.
-	template <size_t N> Optional<Text<N>> as_text(StrView name) const
+	template <size_t N> Optional<Text<N>> as_string(StrView name) const
 	{
 		Optional<Value> v = get(name);
 		if (!v) return {};
-		Result<Text<N>> t = v->template as_text<N>();
+		Result<Text<N>> t = v->template as_string<N>();
 		if (!t) return {};
 		return *t;
 	}
 	// The bytes of a string, blob, GeoJSON or HLL bin as an inline Bytes<N>; nothing when the record has no
 	// such bin, it is nil, it is of another kind or it does not fit in N bytes.
-	template <size_t N> Optional<Bytes<N>> as_bytes(StrView name) const
+	template <size_t N> Optional<Bytes<N>> as_blob(StrView name) const
 	{
 		Optional<Value> v = get(name);
 		if (!v) return {};
-		Result<Bytes<N>> b = v->template as_bytes<N>();
+		Result<Bytes<N>> b = v->template as_blob<N>();
 		if (!b) return {};
 		return *b;
 	}
@@ -1097,7 +1098,7 @@ public:
 	// Stages a boolean.
 	Result<void> set(StrView name, bool v) { return check(name, as_udf_rec_set_bool(name.data, name.len, v ? 1 : 0)); }
 	// Stages a string.
-	Result<void> set(StrView name, StrView v) { return check(name, as_udf_rec_set_str(name.data, name.len, v.data, v.len)); }
+	Result<void> set(StrView name, StrView v) { return check(name, as_udf_rec_set_string(name.data, name.len, v.data, v.len)); }
 	// Stages a NUL-terminated string.
 	Result<void> set(StrView name, const char* v) { return set(name, StrView(v)); }
 	// Stages a built map as the bin's value. Fails with the map's own error when one of its puts failed.
@@ -1110,9 +1111,9 @@ public:
 	Result<void> set_geojson(StrView name, StrView doc) { return check(name, as_udf_rec_set_geojson(name.data, name.len, doc.data, doc.len)); }
 	// A list of integers from an array of `count` elements, in one import, no value built per element.
 	// Written at once, not staged: it needs no save().
-	Result<void> set_ints(StrView name, const int64_t* vals, int32_t count) { return check(name, as_udf_rec_set_list_ints(name.data, name.len, vals, count * 8)); }
+	Result<void> set_ints(StrView name, const int64_t* vals, int32_t count) { return check(name, as_udf_rec_set_ints(name.data, name.len, vals, count * 8)); }
 	// A list of doubles from an array of `count` elements, in one import. Written at once, like set_ints.
-	Result<void> set_doubles(StrView name, const double* vals, int32_t count) { return check(name, as_udf_rec_set_list_doubles(name.data, name.len, vals, count * 8)); }
+	Result<void> set_doubles(StrView name, const double* vals, int32_t count) { return check(name, as_udf_rec_set_doubles(name.data, name.len, vals, count * 8)); }
 
 	// A value: one read from a record by position, keeping its kind; or a scalar, guest bytes, a handle. A
 	// nil removes the bin, as remove() does: a bin cannot hold nil.
@@ -1123,7 +1124,7 @@ public:
 		case Kind::Double: return set(name, v.as_double_bits());
 		case Kind::Bool: return set(name, v.payload != 0);
 		case Kind::Nil: return remove(name);
-		case Kind::GuestStr: return check(name, as_udf_rec_set_str(name.data, name.len, (const char*)(uintptr_t)v.payload, (int32_t)v.len));
+		case Kind::GuestStr: return check(name, as_udf_rec_set_string(name.data, name.len, (const char*)(uintptr_t)v.payload, (int32_t)v.len));
 		case Kind::GuestBlob: return check(name, as_udf_rec_set_blob(name.data, name.len, (const void*)(uintptr_t)v.payload, (int32_t)v.len));
 		case Kind::GuestGeoJson: return check(name, as_udf_rec_set_geojson(name.data, name.len, (const char*)(uintptr_t)v.payload, (int32_t)v.len));
 		case Kind::Handle: return check(name, as_udf_rec_set_handle(name.data, name.len, (int32_t)v.payload));
@@ -1143,16 +1144,16 @@ public:
 	// Whether the record exists on the server.
 	bool exists() const { return as_udf_rec_exists() != 0; }
 	// The record's generation, its modification count.
-	int64_t generation() const { return as_udf_rec_gen(); }
+	int64_t generation() const { return as_udf_rec_generation(); }
 	// The record's remaining time to live in seconds; 0 when it does not expire.
 	int64_t ttl() const { return as_udf_rec_ttl(); }
 	// When the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC), which is how the
 	// server stores it. Not on the same scale as now(), which counts from the Unix epoch.
-	int64_t last_update_time() const { return as_udf_rec_last_update(); }
+	int64_t last_update_time() const { return as_udf_rec_last_update_time(); }
 	// The record's stored size in bytes.
 	int64_t size() const { return as_udf_rec_size(); }
 	// The number of bins the record has.
-	int64_t bin_count() const { return as_udf_rec_numbins(); }
+	int64_t bin_count() const { return as_udf_rec_bin_count(); }
 
 	// The record's set name, into a Text; empty when it is in no set.
 	Text<64> set_name() const
@@ -1181,6 +1182,10 @@ public:
 	// The bytes of a string or blob user key into `out`. Returns the length; AS_UDF_NOT_FOUND when the
 	// record stores no key, a status at or below AS_UDF_NEEDED_BASE when `cap` is too small.
 	int32_t key_bytes(void* out, int32_t cap) const { return as_udf_rec_key_bytes(out, cap); }
+	// The record's user key as a value: an integer in the value itself, a string or blob copied into `out`
+	// and viewed there, so `out` has to outlive the value. Absent when the record stores no key or the key
+	// does not fit in `cap` bytes.
+	Value key(void* out, int32_t cap) const { return Value(as_udf_rec_key(out, cap)); }
 	// The record's digest, 20 bytes, into `out`. Returns the length, or a negative status: at or below
 	// AS_UDF_NEEDED_BASE when `cap` is too small.
 	int32_t digest(void* out, int32_t cap) const { return as_udf_rec_digest(out, cap); }
@@ -1231,7 +1236,7 @@ struct RecordAccess {
 //
 
 // The server's clock in ms since the Unix epoch, or -1 inside an event handler, where it is refused.
-inline int64_t now() { return as_udf_current_time(); }
+inline int64_t now() { return as_udf_now(); }
 
 // Fails the call with a message and returns the status an export returns.
 inline int32_t fail(StrView message)
@@ -1249,14 +1254,14 @@ inline int32_t fail(Error e) { return fail(StrView(e.message != nullptr ? e.mess
 inline void log(int32_t level, StrView message) { as_udf_log(level, message.data, message.len); }
 
 // Sets a value of any kind as the result.
-inline Result<void> result_of(const Value& v)
+inline Result<void> result(const Value& v)
 {
 	switch (v.kind()) {
 	case Kind::Int: as_udf_result_int(v.payload); break;
 	case Kind::Double: as_udf_result_double(v.as_double_bits()); break;
 	case Kind::Bool: as_udf_result_bool((int32_t)v.payload); break;
 	case Kind::Nil: case Kind::Absent: as_udf_result_nil(); break;
-	case Kind::GuestStr: as_udf_result_str((const char*)(uintptr_t)v.payload, (int32_t)v.len); break;
+	case Kind::GuestStr: as_udf_result_string((const char*)(uintptr_t)v.payload, (int32_t)v.len); break;
 	case Kind::GuestBlob: as_udf_result_blob((const void*)(uintptr_t)v.payload, (int32_t)v.len); break;
 	case Kind::GuestGeoJson: as_udf_result_geojson((const char*)(uintptr_t)v.payload, (int32_t)v.len); break;
 	case Kind::Handle: {
@@ -1279,7 +1284,10 @@ inline Result<void> result_of(const Value& v)
 
 // One record the event hands over, read-only, with its metadata; the C struct underneath. Its bins are
 // read with ReadRecord's methods, the ones udf::Record has: get(), has(), bin(), the typed readers with and
-// without a default, list() and map().
+// without a default, list() and map(). An xdr-merge hands over two, `current` and `incoming`, and what the
+// server says of the merge is asked of the record it is about: is_delete(), is_partial() and lost_bins() of
+// the incoming one, is_tombstone() of the current one, uses_bin_convergence() of either. Everything is
+// asked through a method: each one hides the C field of the same name.
 struct EventRecord : as_udf_event_record, ReadRecord<EventRecord> {
 	// What ReadRecord reads through: the bin of this side as the host hands it out. False when the side
 	// has no such bin.
@@ -1288,25 +1296,52 @@ struct EventRecord : as_udf_event_record, ReadRecord<EventRecord> {
 		return as_udf_event_bin_value(which, name.data, name.len, &out, (int32_t)sizeof(out)) == AS_UDF_OK;
 	}
 
-	// The record's bin names.
-	ListRange names() const { return ListRange(Value(bins)); }
+	// The record's generation. Zero on both sides of an xdr-merge: each cluster sets its own, and a merge
+	// must not read it.
+	int64_t generation() const { return as_udf_event_record::generation; }
+	// When the record was last written. Zero on both sides of an xdr-merge, for the same reason as
+	// generation(); bin_last_update_time() is what orders the two sides.
+	int64_t last_update_time() const { return as_udf_event_record::last_update_time; }
+	// The record's time to live in seconds; 0 when it does not expire.
+	int64_t ttl() const { return as_udf_event_record::ttl; }
+	// The XDR source id of the cluster that wrote this version of the record.
+	int64_t source_id() const { return as_udf_event_record::source_id; }
 
-	// When this side last wrote the bin: the bin's own LUT where the server keeps one, the record's LUT
-	// otherwise. The name is cut to 63 bytes.
-	int64_t bin_lut(StrView name) const { return as_udf_map_int(&bin_luts, Map_c_str(name), lut); }
+	// The record's bin names.
+	ListRange bin_names() const { return ListRange(Value(as_udf_event_record::bin_names)); }
+	// The names of the bins this side deleted. A deleted bin reads as absent, so this is the one way to
+	// tell a bin that was removed from one that was never there. Empty when it deleted none.
+	ListRange deleted_bins() const { return ListRange(Value(as_udf_event_record::deleted_bins)); }
+	// Whether this side deleted any bin: deleted_bins() is not empty.
+	bool deleted_any() const { return !deleted_bins().empty(); }
+
+	// When this side last wrote the bin: the bin's own last-update time where the server keeps one, the
+	// record's otherwise. The name is cut to 63 bytes.
+	int64_t bin_last_update_time(StrView name) const { return as_udf_map_int(&bin_last_update_times, Map_c_str(name), as_udf_event_record::last_update_time); }
 	// The source id of this side's last write of the bin: the bin's own where the server keeps one, the
 	// record's otherwise. The name is cut to 63 bytes.
-	int64_t bin_src(StrView name) const { return as_udf_map_int(&bin_srcs, Map_c_str(name), src_id); }
+	int64_t bin_source_id(StrView name) const { return as_udf_map_int(&bin_source_ids, Map_c_str(name), as_udf_event_record::source_id); }
 
-	// Whether this side deleted any bin: its `deleted` list is present and not empty.
-	bool deleted_any() const { return deleted.kind == AS_UDF_LIST && deleted.len > 0; }
+	// Whether the incoming write is a record delete, in which case this record has no bins. False on the
+	// current record.
+	bool is_delete() const { return as_udf_event_record::is_delete; }
+	// Whether the incoming write carries only the bins that changed, so that a bin this record lacks may
+	// well exist on the other cluster. False on the current record.
+	bool is_partial() const { return as_udf_event_record::is_partial; }
+	// The names of the incoming bins that would lose under bin convergence. Empty on the current record.
+	ListRange lost_bins() const { return ListRange(Value(as_udf_event_record::lost_bins)); }
+	// Whether the current record is a tombstone: it exists but has no bins. False on the incoming record.
+	bool is_tombstone() const { return as_udf_event_record::is_tombstone; }
+	// Whether per-bin timestamps are meaningful, for a time-based merge to check before it trusts
+	// bin_last_update_time(). The same answer on both records.
+	bool uses_bin_convergence() const { return as_udf_event_record::uses_bin_convergence; }
 
 	// `overrides` with every bin of this record it lacks put on top, by position: the Rust SDK's
 	// with_bins. It prefers one side, so an xdr-merge handler uses Pair::with_newer instead.
 	Map& with_bins(Map& overrides) const
 	{
-		for (Value name : names()) {
-			Result<Text<64>> n = name.as_text<64>();
+		for (Value name : bin_names()) {
+			Result<Text<64>> n = name.as_string<64>();
 			if (!n) continue;
 			if (overrides.contains(n->view())) continue;
 			Value v;
@@ -1328,83 +1363,124 @@ private:
 
 static_assert(sizeof(EventRecord) == sizeof(as_udf_event_record), "EventRecord adds no state");
 
-// A bin on both sides of a conflict, either of which may be missing: the Rust SDK's Both<T>.
+// The two sides of a bin in the order both clusters agree on, as Both::ordered() gives them: the side that
+// wrote the bin earlier, then the side that wrote it later. `auto [older, newer] = both.ordered();`
+template <class T>
+struct Ordered {
+	Optional<T> older;
+	Optional<T> newer;
+};
+
+struct Pair;
+
+// A bin on both sides of a merge, either of which may be missing: the Rust SDK's Both<T>. Made by a Pair,
+// which also gives it what orders the two sides.
 template <class T>
 struct Both {
-	Optional<T> local;
-	Optional<T> remote;
-	int64_t local_lut = 0;
-	int64_t remote_lut = 0;
-	int64_t local_src = 0;
-	int64_t remote_src = 0;
+	Optional<T> current;
+	Optional<T> incoming;
 
-	// Whether the remote side wrote this bin later: by the bin's LUT, then source id - the order the server's
-	// own bin convergence uses.
-	bool remote_newer() const { return remote_lut > local_lut || (remote_lut == local_lut && remote_src > local_src); }
+	// Whether the incoming side wrote this bin later: by the bin's last-update time, then source id - the
+	// order the server's own bin convergence uses.
+	bool incoming_is_newer() const
+	{
+		return incoming_last_update_time_ > current_last_update_time_ ||
+		       (incoming_last_update_time_ == current_last_update_time_ && incoming_source_id_ > current_source_id_);
+	}
 
 	// The value of the side that wrote the bin later, or the other side's when that side has none; nothing
 	// when neither has one.
-	Optional<T> newer() const { return remote_newer() ? remote_or_local() : local_or_remote(); }
+	Optional<T> newer() const { return incoming_is_newer() ? incoming_or_current() : current_or_incoming(); }
 	// The value of the side that wrote the bin earlier, or the other side's when that side has none;
 	// nothing when neither has one.
-	Optional<T> older() const { return remote_newer() ? local_or_remote() : remote_or_local(); }
-	// The local value when there is one, the remote otherwise. It prefers a side, so it is not symmetric.
-	Optional<T> local_or_remote() const { return local ? local : remote; }
-	// The remote value when there is one, the local otherwise. It prefers a side, so it is not symmetric.
-	Optional<T> remote_or_local() const { return remote ? remote : local; }
+	Optional<T> older() const { return incoming_is_newer() ? current_or_incoming() : incoming_or_current(); }
+	// Both sides, the one that wrote the bin earlier first: the order both clusters agree on, for a merge
+	// whose result depends on the order its inputs are taken in. A side with no value stays empty.
+	Ordered<T> ordered() const { return incoming_is_newer() ? Ordered<T>{current, incoming} : Ordered<T>{incoming, current}; }
+	// The current value when there is one, the incoming otherwise. It prefers a side, so it is not symmetric.
+	Optional<T> current_or_incoming() const { return current ? current : incoming; }
+	// The incoming value when there is one, the current otherwise. It prefers a side, so it is not symmetric.
+	Optional<T> incoming_or_current() const { return incoming ? incoming : current; }
 
-	// `f(local, remote)` when both sides have a value; otherwise the one value there is, or nothing. The
-	// result is symmetric only when `f` is commutative.
+	// `f(current, incoming)` when both sides have a value; otherwise the one value there is, or nothing.
+	// The result is symmetric only when `f` is commutative.
 	template <class F>
 	Optional<T> merge(F f) const
 	{
-		if (local && remote) return f(*local, *remote);
-		return local_or_remote();
+		if (current && incoming) return f(*current, *incoming);
+		return current_or_incoming();
 	}
 
 	// The larger of the two values, or the one there is; nothing when neither side has one.
-	Optional<T> max() const { return merge([](const T& l, const T& r) { return r > l ? r : l; }); }
+	Optional<T> max() const { return merge([](const T& c, const T& i) { return i > c ? i : c; }); }
 	// The smaller of the two values, or the one there is; nothing when neither side has one.
-	Optional<T> min() const { return merge([](const T& l, const T& r) { return r < l ? r : l; }); }
+	Optional<T> min() const { return merge([](const T& c, const T& i) { return i < c ? i : c; }); }
 	// The sum of both sides, a missing side counting as a value-initialised T (zero for a number).
-	T sum() const { return local.value_or(T()) + remote.value_or(T()); }
+	T sum() const { return current.value_or(T()) + incoming.value_or(T()); }
+
+private:
+	friend struct Pair;
+
+	int64_t current_last_update_time_ = 0;
+	int64_t incoming_last_update_time_ = 0;
+	int64_t current_source_id_ = 0;
+	int64_t incoming_source_id_ = 0;
 };
 
-// The two sides of a conflict, read bin by bin into a Both.
+// The two records of an xdr-merge side by side, read bin by bin into a Both. Made from the two records the
+// handler is given: `udf::Pair pair = udf::Pair::of(current, incoming);`. It refers to them, so it lives no
+// longer than they do.
 struct Pair {
-	const EventRecord& local;
-	const EventRecord& remote;
+	const EventRecord& current;
+	const EventRecord& incoming;
 
-	// An integer bin on both sides, with each side's LUT and source id for it. A side is empty where the
-	// bin is missing, nil or of another kind.
-	Both<int64_t> as_int(StrView name) const { return both(name, local.as_int(name), remote.as_int(name)); }
+	// The pair of the two records of a merge. Each record knows which one it is, so the two may be given in
+	// either order: of(current, incoming) and of(incoming, current) are the same pair.
+	static Pair of(const EventRecord& a, const EventRecord& b) { return a.which <= b.which ? Pair{a, b} : Pair{b, a}; }
+
+	// An integer bin on both sides, with what orders the two sides for it. A side is empty where the bin
+	// is missing, nil or of another kind.
+	Both<int64_t> as_int(StrView name) const { return both(name, current.as_int(name), incoming.as_int(name)); }
 	// A double bin on both sides, likewise. An integer bin is not widened and reads as empty.
-	Both<double> as_double(StrView name) const { return both(name, local.as_double(name), remote.as_double(name)); }
+	Both<double> as_double(StrView name) const { return both(name, current.as_double(name), incoming.as_double(name)); }
 	// A boolean bin on both sides, likewise.
-	Both<bool> as_bool(StrView name) const { return both(name, local.as_bool(name), remote.as_bool(name)); }
+	Both<bool> as_bool(StrView name) const { return both(name, current.as_bool(name), incoming.as_bool(name)); }
+	// A string bin on both sides, each as an inline Text<N>. A side is empty where the bin is missing, nil,
+	// not a string or longer than N bytes.
+	template <size_t N> Both<Text<N>> as_string(StrView name) const { return both(name, current.as_string<N>(name), incoming.as_string<N>(name)); }
+	// The bytes of a string, blob, GeoJSON or HLL bin on both sides, each as an inline Bytes<N>. A side is
+	// empty where the bin is missing, nil, of another kind or longer than N bytes.
+	template <size_t N> Both<Bytes<N>> as_blob(StrView name) const { return both(name, current.as_blob<N>(name), incoming.as_blob<N>(name)); }
 	// A bin of any kind on both sides, as values. A side is empty where the bin is missing or nil.
-	Both<Value> bin(StrView name) const { return both(name, local.get(name), remote.get(name)); }
+	Both<Value> bin(StrView name) const { return both(name, current.get(name), incoming.get(name)); }
 	// A list bin on both sides, as values to walk. A side is empty where the bin is missing or not a list.
 	Both<Value> list(StrView name) const
 	{
-		Optional<Value> l = local.get(name), r = remote.get(name);
-		return both(name, l && l->is_list() ? l : Optional<Value>(), r && r->is_list() ? r : Optional<Value>());
+		Optional<Value> c = current.get(name), i = incoming.get(name);
+		return both(name, c && c->is_list() ? c : Optional<Value>(), i && i->is_list() ? i : Optional<Value>());
+	}
+	// A map bin on both sides, as values to walk or look up in. A side is empty where the bin is missing or
+	// not a map.
+	Both<Value> map(StrView name) const
+	{
+		Optional<Value> c = current.get(name), i = incoming.get(name);
+		return both(name, c && c->is_map() ? c : Optional<Value>(), i && i->is_map() ? i : Optional<Value>());
 	}
 
-	// Whether the remote side wrote the bin later: by the bin's LUT, then by source id.
-	bool remote_newer(StrView name) const
+	// Whether the incoming side wrote the bin later: by the bin's last-update time, then by source id.
+	bool incoming_is_newer(StrView name) const
 	{
-		int64_t ll = local.bin_lut(name), rl = remote.bin_lut(name);
-		return rl > ll || (rl == ll && remote.bin_src(name) > local.bin_src(name));
+		int64_t ct = current.bin_last_update_time(name), it = incoming.bin_last_update_time(name);
+		return it > ct || (it == ct && incoming.bin_source_id(name) > current.bin_source_id(name));
 	}
 
 	// Every bin either side has that `overrides` lacks, from the side that wrote it later: symmetric.
 	Map& with_newer(Map& overrides) const
 	{
-		const EventRecord* sides[2] = {&local, &remote};
+		const EventRecord* sides[2] = {&current, &incoming};
 		for (const EventRecord* side : sides) {
-			for (Value name : side->names()) {
-				Result<Text<64>> n = name.as_text<64>();
+			for (Value name : side->bin_names()) {
+				Result<Text<64>> n = name.as_string<64>();
 				if (!n || overrides.contains(n->view())) continue;
 				Optional<Value> v = bin(n->view()).newer();
 				if (v) overrides.put(n->view(), *v);
@@ -1415,34 +1491,18 @@ struct Pair {
 
 private:
 	template <class T>
-	Both<T> both(StrView name, Optional<T> l, Optional<T> r) const
+	Both<T> both(StrView name, Optional<T> c, Optional<T> i) const
 	{
 		Both<T> b;
-		b.local = l;
-		b.remote = r;
-		b.local_lut = local.bin_lut(name);
-		b.remote_lut = remote.bin_lut(name);
-		b.local_src = local.bin_src(name);
-		b.remote_src = remote.bin_src(name);
+		b.current = c;
+		b.incoming = i;
+		b.current_last_update_time_ = current.bin_last_update_time(name);
+		b.incoming_last_update_time_ = incoming.bin_last_update_time(name);
+		b.current_source_id_ = current.bin_source_id(name);
+		b.incoming_source_id_ = incoming.bin_source_id(name);
 		return b;
 	}
 };
-
-// What an xdr-merge is about; the C struct with the typed records and the pair.
-struct Conflict : as_udf_conflict {
-	// The record the cluster holds now: the local side.
-	const EventRecord& current() const { return static_cast<const EventRecord&>(local); }
-	// The record the incoming XDR write carries: the remote side.
-	const EventRecord& incoming() const { return static_cast<const EventRecord&>(remote); }
-	// Both records as a Pair, the current one as local and the incoming one as remote.
-	Pair pair() const { return Pair{current(), incoming()}; }
-	// Whether either side deleted at least one bin.
-	bool involves_delete() const { return current().deleted_any() || incoming().deleted_any(); }
-	// The names of the incoming bins that would lose, as a stored list to walk with list().
-	Value lost_bins() const { return Value(lost); }
-};
-
-static_assert(sizeof(Conflict) == sizeof(as_udf_conflict), "Conflict adds no state");
 
 // What an xdr-merge handler returns: one of the verdicts, or the final record. It is built by its
 // functions and delivered by the generated export.
@@ -1477,7 +1537,7 @@ struct Resolution {
 	{
 		if (err.failed()) return fail(err);
 		if (bins == 0) {
-			as_udf_result_str(verdict, detail::cstrlen(verdict));
+			as_udf_result_string(verdict, detail::cstrlen(verdict));
 			return 0;
 		}
 		return as_udf_resolve_record(bins, ttl);
@@ -1573,9 +1633,9 @@ template <size_t N> struct Param<Text<N>> {
 	static Result<Text<N>> decode(const Value* a, int32_t n, int32_t i, const char* fn, const char* p)
 	{
 		if (i >= n || a[i].is_absent()) return missing(fn, i, p);
-		if (!a[i].is_str()) return mismatch(fn, i, p, "a string");
+		if (!a[i].is_string()) return mismatch(fn, i, p, "a string");
 		if (a[i].len > N) return Error{AS_UDF_NEEDED_BASE, message().add(fn).add(": argument ").add((int64_t)i + 1).add(" (").add(p).add(") is ").add((int64_t)a[i].len).add(" bytes, at most ").add((int64_t)N).buf};
-		return a[i].as_text<N>();
+		return a[i].as_string<N>();
 	}
 };
 
@@ -1586,9 +1646,9 @@ template <size_t N> struct Param<Bytes<N>> {
 	static Result<Bytes<N>> decode(const Value* a, int32_t n, int32_t i, const char* fn, const char* p)
 	{
 		if (i >= n || a[i].is_absent()) return missing(fn, i, p);
-		if (!a[i].is_str() && !a[i].is_blob()) return mismatch(fn, i, p, "a string or a blob");
+		if (!a[i].is_string() && !a[i].is_blob()) return mismatch(fn, i, p, "a string or a blob");
 		if (a[i].len > N) return Error{AS_UDF_NEEDED_BASE, message().add(fn).add(": argument ").add((int64_t)i + 1).add(" (").add(p).add(") is ").add((int64_t)a[i].len).add(" bytes, at most ").add((int64_t)N).buf};
-		return a[i].as_bytes<N>();
+		return a[i].as_blob<N>();
 	}
 };
 
@@ -1638,9 +1698,9 @@ template <> struct Deliver<int64_t> { static Result<void> go(int64_t v) { as_udf
 template <> struct Deliver<int32_t> { static Result<void> go(int32_t v) { as_udf_result_int(v); return {}; } };
 template <> struct Deliver<double> { static Result<void> go(double v) { as_udf_result_double(v); return {}; } };
 template <> struct Deliver<bool> { static Result<void> go(bool v) { as_udf_result_bool(v ? 1 : 0); return {}; } };
-template <> struct Deliver<StrView> { static Result<void> go(StrView v) { as_udf_result_str(v.data, v.len); return {}; } };
-template <size_t N> struct Deliver<Text<N>> { static Result<void> go(const Text<N>& v) { as_udf_result_str(v.buf, v.len); return {}; } };
-template <> struct Deliver<Value> { static Result<void> go(const Value& v) { return result_of(v); } };
+template <> struct Deliver<StrView> { static Result<void> go(StrView v) { as_udf_result_string(v.data, v.len); return {}; } };
+template <size_t N> struct Deliver<Text<N>> { static Result<void> go(const Text<N>& v) { as_udf_result_string(v.buf, v.len); return {}; } };
+template <> struct Deliver<Value> { static Result<void> go(const Value& v) { return result(v); } };
 template <> struct Deliver<Map> {
 	static Result<void> go(const Map& m)
 	{
@@ -2006,17 +2066,18 @@ int32_t invoke(const char* fn, const ParamNames& names, int32_t args, int32_t ar
 #define UDF_HANDLER_SIG(name, kind, params) UDF_SIG_EXPORT(name, ::udf::detail::literal_signature("event " kind "/1 " #name params))
 
 // An xdr-merge handler: `UDF_ON_XDR_MERGE(name) { ... }` defines
-// `Result<Resolution> name(const EventRecord& current, const EventRecord& incoming, const Conflict& conflict)`.
-// The export decodes the event and delivers the resolution.
+// `Result<Resolution> name(const EventRecord& current, const EventRecord& incoming)`: the record as it is on
+// this cluster and the one that arrived over XDR. The export decodes the event into the two and delivers
+// the resolution.
 #define UDF_ON_XDR_MERGE(name)                                                                           \
-	static ::udf::Result<::udf::Resolution> name##_udf_impl(const ::udf::EventRecord&, const ::udf::EventRecord&, const ::udf::Conflict&); \
+	static ::udf::Result<::udf::Resolution> name##_udf_impl(const ::udf::EventRecord&, const ::udf::EventRecord&); \
 	extern "C" __attribute__((export_name(#name))) int32_t udf_export_##name(int32_t args, int32_t argc)  \
 	{                                                                                                    \
-		::udf::Conflict c;                                                                               \
-		if (as_udf_event_decode(args, argc, &c) != AS_UDF_OK) return ::udf::fail(#name ": not an xdr-merge event"); \
-		::udf::Result<::udf::Resolution> r = name##_udf_impl(c.current(), c.incoming(), c);               \
+		::udf::EventRecord current, incoming;                                                            \
+		if (as_udf_event_decode(args, argc, &current, &incoming) != AS_UDF_OK) return ::udf::fail(#name ": not an xdr-merge event"); \
+		::udf::Result<::udf::Resolution> r = name##_udf_impl(current, incoming);                         \
 		if (!r) return ::udf::fail(r.error());                                                           \
 		return r->deliver();                                                                             \
 	}                                                                                                    \
-	UDF_HANDLER_SIG(name, "xdr-merge", "(current: record, incoming: record, conflict: conflict) -> resolution") \
-	static ::udf::Result<::udf::Resolution> name##_udf_impl(const ::udf::EventRecord& current, const ::udf::EventRecord& incoming, const ::udf::Conflict& conflict)
+	UDF_HANDLER_SIG(name, "xdr-merge", "(current: record, incoming: record) -> resolution")               \
+	static ::udf::Result<::udf::Resolution> name##_udf_impl(const ::udf::EventRecord& current, const ::udf::EventRecord& incoming)

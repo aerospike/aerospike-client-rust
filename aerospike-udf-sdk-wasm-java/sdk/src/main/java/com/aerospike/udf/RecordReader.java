@@ -19,7 +19,7 @@ package com.aerospike.udf;
  *
  * <pre>
  * static long balanceOf(RecordReader rec) {
- *     return rec.getLong("balance", 0);
+ *     return rec.getInt("balance", 0);
  * }
  * </pre>
  *
@@ -32,14 +32,17 @@ public interface RecordReader {
     /** The bin as a value of whatever kind it is, or null when the record has no such bin. */
     Value get(String name);
 
+    /** The bin as a value of whatever kind it is; throws {@link UdfException} when the record has no such bin. */
+    Value bin(String name);
+
     /** Whether the record has the bin. */
-    boolean hasBin(String name);
+    boolean has(String name);
 
     /** An integer bin; throws {@link UdfException} when it is absent or of another kind. */
-    long getLong(String name);
+    long getInt(String name);
 
     /** An integer bin, or {@code dflt} when it is absent; throws when it is of another kind. */
-    long getLong(String name, long dflt);
+    long getInt(String name, long dflt);
 
     /** A double bin; throws when it is absent or of another kind. An integer bin is not widened. */
     double getDouble(String name);
@@ -48,10 +51,10 @@ public interface RecordReader {
     double getDouble(String name, double dflt);
 
     /** A boolean bin; throws when it is absent or of another kind. */
-    boolean getBoolean(String name);
+    boolean getBool(String name);
 
     /** A boolean bin, or {@code dflt} when it is absent; throws when it is of another kind. */
-    boolean getBoolean(String name, boolean dflt);
+    boolean getBool(String name, boolean dflt);
 
     /** The text of a string bin, copied out; throws when it is absent or of another kind. */
     String getString(String name);
@@ -60,10 +63,10 @@ public interface RecordReader {
     String getString(String name, String dflt);
 
     /** The bytes of a string, blob, GeoJSON or HLL bin, copied out; throws when it is absent or a scalar or collection. */
-    byte[] getBytes(String name);
+    byte[] getBlob(String name);
 
     /** The bytes of a string, blob, GeoJSON or HLL bin, or {@code dflt} when it is absent. */
-    byte[] getBytes(String name, byte[] dflt);
+    byte[] getBlob(String name, byte[] dflt);
 
     /** A list bin, to index and iterate where it is stored; throws when it is absent or of another kind. */
     ListValue getList(String name);

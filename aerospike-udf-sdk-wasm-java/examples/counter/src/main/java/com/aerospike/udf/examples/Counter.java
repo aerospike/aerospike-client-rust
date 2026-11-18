@@ -12,7 +12,6 @@
 
 package com.aerospike.udf.examples;
 
-import com.aerospike.udf.Conflict;
 import com.aerospike.udf.EventRecord;
 import com.aerospike.udf.Function;
 import com.aerospike.udf.MapBuilder;
@@ -82,7 +81,7 @@ public final class Counter {
         }
 
         for (MapValue.Entry e : map) {
-            offer(e.getKey().asString(), e.getValue().asLong());
+            offer(e.getKey().asString(), e.getValue().asInt());
         }
     }
 
@@ -109,7 +108,7 @@ public final class Counter {
 
     /** The merge: for every site, the larger of the two counts. Every other bin is the incoming one's. */
     @On.XdrMerge("merge_counter")
-    static Resolution mergeCounter(EventRecord current, EventRecord incoming, Conflict conflict) {
+    static Resolution mergeCounter(EventRecord current, EventRecord incoming) {
         size = 0;
         offerAll(current.getMap("counts", null));
         offerAll(incoming.getMap("counts", null));

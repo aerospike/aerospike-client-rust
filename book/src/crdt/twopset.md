@@ -45,7 +45,7 @@ maximum changed to a union:
 ```rust
 event! {
     on xdr_merge
-    fn merge_twopset(current: EventRecord, incoming: EventRecord, _conflict: Conflict) -> Result<Resolution, Error> {
+    fn merge_twopset(current: EventRecord, incoming: EventRecord) -> Result<Resolution, Error> {
         let out = as_udf::map(2)?;
 
         for bin in ["added", "removed"] {
@@ -70,7 +70,7 @@ The same in Java, with the sorted table as a small class:
 
 ```java
 @On.XdrMerge("merge_twopset")
-static Resolution mergeTwoPSet(EventRecord current, EventRecord incoming, Conflict conflict) {
+static Resolution mergeTwoPSet(EventRecord current, EventRecord incoming) {
     MapBuilder out = Udf.map(2);
 
     for (String bin : new String[] {"added", "removed"}) {
@@ -88,7 +88,7 @@ In Go, where a `map[string]bool` is the set and `sort.Strings` puts the output i
 
 ```go
 //udf:on xdr-merge merge_twopset
-func mergeTwoPSet(current, incoming *udf.EventRecord, _ *udf.Conflict) (udf.Resolution, error) {
+func mergeTwoPSet(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 	out := udf.NewMap(2)
 
 	for _, bin := range []string{"added", "removed"} {

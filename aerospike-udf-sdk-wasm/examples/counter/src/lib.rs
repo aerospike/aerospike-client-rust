@@ -4,8 +4,8 @@
 //! (`increment("dc1", 3)`), and the counter's value is the sum of every entry (`value()`). When a write
 //! from one site arrives at the other, `merge_counter` keeps, for every site, the larger of the two counts.
 //! A site's count only ever grows, so the larger one is always the later one: the merge needs no clock, no
-//! LUT and no writer id, and it is commutative, idempotent and associative by construction, which the
-//! server's dry run checks on real bytes.
+//! last update time and no writer id, and it is commutative, idempotent and associative by construction,
+//! which the server's dry run checks on real bytes.
 //!
 //! ```text
 //! event-set:event=xdr-merge;namespace=test;set=counters;module=counter;function=merge_counter;on-failure=abandon
@@ -87,7 +87,7 @@ impl Counts {
 event! {
     /// The merge: for every site, the larger of the two counts. Every other bin is the incoming one's.
     on xdr_merge
-    fn merge_counter(current: EventRecord, incoming: EventRecord, _conflict: Conflict) -> Result<Resolution, Error> {
+    fn merge_counter(current: EventRecord, incoming: EventRecord) -> Result<Resolution, Error> {
         let mut counts = Counts::new();
 
         counts.offer_all(current.map("counts")?)?;

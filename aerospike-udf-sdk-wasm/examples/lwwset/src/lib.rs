@@ -96,7 +96,7 @@ impl Stamps {
 event! {
     /// The merge: for every tag of each map, the later stamp. Every other bin is the incoming one's.
     on xdr_merge
-    fn merge_lwwset(current: EventRecord, incoming: EventRecord, _conflict: Conflict) -> Result<Resolution, Error> {
+    fn merge_lwwset(current: EventRecord, incoming: EventRecord) -> Result<Resolution, Error> {
         let out = as_udf::map(2)?;
 
         for bin in ["addedAt", "removedAt"] {

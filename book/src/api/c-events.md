@@ -14,39 +14,26 @@ bin is not there, or AS_UDF_ERR when `cap` is too small.
 
 ```c
 typedef struct as_udf_event_record_s {
-	int32_t which;            /* 0 local, 1 remote */
-	int64_t gen;
-	int64_t lut;
+	int32_t which;            /* 0 current, 1 incoming */
+	int64_t generation;
+	int64_t last_update_time;
 	int64_t ttl;
-	int64_t src_id;
-	as_udf_value bins;        /* list of bin names */
-	as_udf_value deleted;     /* list of bin names this side deleted (AS_UDF_ABSENT when none) */
-	as_udf_value bin_luts;    /* map name -> LUT, per bin, when the server keeps one (else AS_UDF_ABSENT) */
-	as_udf_value bin_srcs;    /* map name -> source id, likewise */
+	int64_t source_id;
+	as_udf_value bin_names;   /* list of bin names */
+	as_udf_value deleted_bins; /* list of bin names this side deleted (AS_UDF_ABSENT when none) */
+	as_udf_value bin_last_update_times; /* map name -> last-update time, per bin, when the server keeps one (else AS_UDF_ABSENT) */
+	as_udf_value bin_source_ids; /* map name -> source id, likewise */
+	as_udf_value lost_bins;   /* incoming: list of the names of its bins that would lose under bin convergence */
+	bool is_delete;           /* incoming: the write is a record delete, so this record has no bins */
+	bool is_partial;          /* incoming: the write carries only the bins that changed */
+	bool is_tombstone;        /* current: the record exists but has no bins */
+	bool uses_bin_convergence; /* either, the same on both: per-bin LUTs are meaningful */
 } as_udf_event_record;
 ```
 
-One side of the conflict.
-
-#### `as_udf_conflict`
-
-```c
-typedef struct as_udf_conflict_s {
-	as_udf_value description; /* the whole map, for anything not decoded below */
-	as_udf_value lost;        /* list: the incoming bins that would lose */
-	bool dry_run;
-	bool conflict_trigger;    /* bound with trigger=conflict: a bin would lose under bin convergence */
-	bool bin_convergence;     /* the policy stood in for is bin-lut rather than a plain apply */
-	bool remote_partial;      /* the incoming write carries only changed bins */
-	bool remote_deleted_record; /* the incoming write is a record delete; remote has no bins */
-	bool local_tombstone;     /* the current record is a tombstone: exists, no bins */
-	as_udf_event_record local;  /* the current record */
-	as_udf_event_record remote; /* the incoming record */
-} as_udf_conflict;
-```
-
-An xdr-merge call, decoded by as_udf_event_decode: the two records and what the description says of the
-conflict.
+One of the two records of an xdr-merge, as as_udf_event_decode fills it: its metadata, its bin names, and
+the facts of the merge that are about this record. A fact that is about the other record is false here,
+and `lost_bins` is AS_UDF_ABSENT on the current record.
 
 #### `as_udf_map_get`
 
@@ -64,46 +51,41 @@ int64_t as_udf_map_int(const as_udf_value* m, const char* key, int64_t dflt)
 
 An integer entry of a map by string key; `dflt` when there is none or it is not an integer.
 
-#### `as_udf_map_str`
+#### `as_udf_string_is`
 
 ```c
-void as_udf_map_str(const as_udf_value* m, const char* key, char* out, int32_t cap)
-```
-
-A short string entry of a map into `out` (NUL-terminated); "" when absent.
-
-#### `as_udf_map_bool`
-
-```c
-bool as_udf_map_bool(const as_udf_value* m, const char* key)
-```
-
-A boolean entry of a map by string key; false when there is none or it is not a boolean.
-
-#### `as_udf_str_is`
-
-```c
-bool as_udf_str_is(const as_udf_value* v, const char* text)
+bool as_udf_string_is(const as_udf_value* v, const char* text)
 ```
 
 Whether a string value reads as `text`.
 
+#### `as_udf_event_flag`
+
+```c
+bool as_udf_event_flag(const as_udf_value* m, const char* key)
+```
+
+Whether a description map has a true boolean under `key`.
+
 #### `as_udf_event_side`
 
 ```c
-bool as_udf_event_side(const as_udf_value* conflict, const char* key, int32_t which, as_udf_event_record* out)
+bool as_udf_event_side(const as_udf_value* description, const char* key, int32_t which, as_udf_event_record* out)
 ```
 
-Decode the record under `key` of a description into `out`, marked as record `which` for as_udf_event_bin.
-False when the entry is not a map or carries no list of bins.
+Decode the record under `key` of the call's description into `out`, marked as record `which` for
+as_udf_event_bin, with the facts that are about that record. False when the entry is not a map or carries
+no list of bins. Plumbing of as_udf_event_decode.
 
 #### `as_udf_event_decode`
 
 ```c
-int32_t as_udf_event_decode(int32_t args, int32_t argc, as_udf_conflict* out)
+int32_t as_udf_event_decode(int32_t args, int32_t argc, as_udf_event_record* current, as_udf_event_record* incoming)
 ```
 
-Decode an xdr-merge call's arguments. Returns AS_UDF_OK, or AS_UDF_ERR when they are not a conflict.
+Decode an xdr-merge call's arguments into its two records: `current`, the record as it is on this cluster,
+and `incoming`, the one that arrived over XDR. Returns AS_UDF_OK, or AS_UDF_ERR when the arguments are not
+those of an xdr-merge.
 
 #### `as_udf_event_bin`
 
@@ -113,36 +95,150 @@ int32_t as_udf_event_bin(const as_udf_event_record* r, const char* name, as_udf_
 
 A bin of one side. AS_UDF_NOT_FOUND when that side has no such bin.
 
-#### `as_udf_event_bin_lut`
+#### `as_udf_event_has`
 
 ```c
-int64_t as_udf_event_bin_lut(const as_udf_event_record* r, const char* name)
+bool as_udf_event_has(const as_udf_event_record* r, const char* name)
 ```
 
-When this side last wrote the bin: per bin where the server keeps one, the record's LUT otherwise.
+Whether one side has the bin, a nil one included.
 
-#### `as_udf_event_bin_src`
+#### `as_udf_event_get`
 
 ```c
-int64_t as_udf_event_bin_src(const as_udf_event_record* r, const char* name)
+bool as_udf_event_get(const as_udf_event_record* r, const char* name, as_udf_value* out)
+```
+
+A bin of one side that holds something, as a value. False, with `out` of kind AS_UDF_ABSENT, when that side
+has no such bin or the bin is nil.
+
+#### `as_udf_event_int`
+
+```c
+bool as_udf_event_int(const as_udf_event_record* r, const char* name, int64_t* out)
+```
+
+A bin of one side as an integer, into `out`. False, with `out` untouched, when that side has no such bin, it
+is nil or it is of another kind.
+
+#### `as_udf_event_double`
+
+```c
+bool as_udf_event_double(const as_udf_event_record* r, const char* name, double* out)
+```
+
+A bin of one side as a double, into `out`. False, with `out` untouched, when that side has no such bin, it is
+nil or it is of another kind: an integer bin is not widened.
+
+#### `as_udf_event_bool`
+
+```c
+bool as_udf_event_bool(const as_udf_event_record* r, const char* name, bool* out)
+```
+
+A bin of one side as a boolean, into `out`. False, with `out` untouched, when that side has no such bin, it
+is nil or it is of another kind.
+
+#### `as_udf_event_string`
+
+```c
+int32_t as_udf_event_string(const as_udf_event_record* r, const char* name, char* out, int32_t cap)
+```
+
+Copy a string bin of one side into `out`, without a terminator. Returns the length, a needed-length status
+when `cap` is too small, AS_UDF_NOT_FOUND for no such bin, or AS_UDF_TYPE_MISMATCH when it is not a string.
+
+#### `as_udf_event_blob`
+
+```c
+int32_t as_udf_event_blob(const as_udf_event_record* r, const char* name, void* out, int32_t cap)
+```
+
+Copy a blob bin of one side into `out`. Returns the length, a needed-length status when `cap` is too small,
+AS_UDF_NOT_FOUND for no such bin, or AS_UDF_TYPE_MISMATCH when it is not a blob.
+
+#### `as_udf_event_list`
+
+```c
+bool as_udf_event_list(const as_udf_event_record* r, const char* name, as_udf_value* out)
+```
+
+A list bin of one side, as a value to walk by position. False when that side has no such bin or it is not a
+list.
+
+#### `as_udf_event_map`
+
+```c
+bool as_udf_event_map(const as_udf_event_record* r, const char* name, as_udf_value* out)
+```
+
+A map bin of one side, as a value to read by position. False when that side has no such bin or it is not a
+map.
+
+#### `as_udf_event_int_or`
+
+```c
+int64_t as_udf_event_int_or(const as_udf_event_record* r, const char* name, int64_t dflt)
+```
+
+The integer of a bin of one side, or `dflt` when the bin is absent, nil or of another kind.
+
+#### `as_udf_event_double_or`
+
+```c
+double as_udf_event_double_or(const as_udf_event_record* r, const char* name, double dflt)
+```
+
+The double of a bin of one side, or `dflt` when the bin is absent, nil or of another kind. An integer bin is
+not widened: it gives the default.
+
+#### `as_udf_event_bool_or`
+
+```c
+bool as_udf_event_bool_or(const as_udf_event_record* r, const char* name, bool dflt)
+```
+
+The boolean of a bin of one side, or `dflt` when the bin is absent, nil or of another kind.
+
+#### `as_udf_event_deleted_any`
+
+```c
+bool as_udf_event_deleted_any(const as_udf_event_record* r)
+```
+
+Whether this side deleted any bin: its `deleted_bins` list is there and not empty.
+
+#### `as_udf_event_bin_last_update_time`
+
+```c
+int64_t as_udf_event_bin_last_update_time(const as_udf_event_record* r, const char* name)
+```
+
+When this side last wrote the bin: per bin where the server keeps one, the record's last-update time
+otherwise.
+
+#### `as_udf_event_bin_source_id`
+
+```c
+int64_t as_udf_event_bin_source_id(const as_udf_event_record* r, const char* name)
 ```
 
 The id of the source that last wrote the bin on this side: per bin where the server keeps one, the record's
 source id otherwise.
 
-#### `as_udf_event_remote_newer`
+#### `as_udf_event_incoming_is_newer`
 
 ```c
-bool as_udf_event_remote_newer(const as_udf_conflict* c, const char* name)
+bool as_udf_event_incoming_is_newer(const as_udf_event_record* current, const as_udf_event_record* incoming, const char* name)
 ```
 
-Whether the remote side wrote the bin later: by LUT, then source id - the order the server's bin
-convergence uses, so both DCs answer the same.
+Whether the incoming record wrote the bin later than the current one: by LUT, then source id - the order
+the server's bin convergence uses, so both DCs answer the same.
 
-#### `as_udf_list_has_str`
+#### `as_udf_list_has_string`
 
 ```c
-bool as_udf_list_has_str(const as_udf_value* list, const char* text)
+bool as_udf_list_has_string(const as_udf_value* list, const char* text)
 ```
 
 Whether a list of strings (by position) holds `text`.
@@ -156,10 +252,20 @@ int32_t as_udf_map_put_value(int32_t handle, const char* key, const as_udf_value
 Put any value under a string key: a scalar by value, guest bytes by address, a stored value by position, a
 built collection by handle.
 
+#### `as_udf_event_with_bins`
+
+```c
+int32_t as_udf_event_with_bins(const as_udf_event_record* r, int32_t overrides)
+```
+
+Put every bin of one side that the built map `overrides` lacks into it, by position, and return the map's
+handle: that record with `overrides` on top. It prefers a side, so two clusters that each use it on their
+own current record do not converge; use it on a side both agree on.
+
 #### `as_udf_resolve_keep_local`
 
 ```c
-int32_t as_udf_resolve_keep_local(void) { as_udf_result_str("keep-local", 10); return 0; }
+int32_t as_udf_resolve_keep_local(void) { as_udf_result_string("keep-local", 10); return 0; }
 ```
 
 Answer `keep-local`: the local record stays and the incoming write is dropped. Returns the status the handler
@@ -168,7 +274,7 @@ returns.
 #### `as_udf_resolve_take_remote`
 
 ```c
-int32_t as_udf_resolve_take_remote(void) { as_udf_result_str("take-remote", 11); return 0; }
+int32_t as_udf_resolve_take_remote(void) { as_udf_result_string("take-remote", 11); return 0; }
 ```
 
 Answer `take-remote`: the incoming write is applied whole. Returns the status the handler returns.
@@ -176,7 +282,7 @@ Answer `take-remote`: the incoming write is applied whole. Returns the status th
 #### `as_udf_resolve_policy`
 
 ```c
-int32_t as_udf_resolve_policy(void) { as_udf_result_str("policy", 6); return 0; }
+int32_t as_udf_resolve_policy(void) { as_udf_result_string("policy", 6); return 0; }
 ```
 
 Answer `policy`: the namespace's policy decides, as it would have without the event. Returns the status the
@@ -185,7 +291,7 @@ handler returns.
 #### `as_udf_resolve_delete`
 
 ```c
-int32_t as_udf_resolve_delete(void) { as_udf_result_str("delete", 6); return 0; }
+int32_t as_udf_resolve_delete(void) { as_udf_result_string("delete", 6); return 0; }
 ```
 
 Answer `delete`: the record is removed on this cluster. The other cluster decides for itself, so a merge
@@ -205,7 +311,7 @@ or -1 to keep the one the incoming write asked for.
 
 ```c
 #define AS_UDF_EVENT_XDR_MERGE(name)                                                                       \
-	AS_UDF_SIGNATURE(name, "event xdr-merge/1 " #name "(current: record, incoming: record, conflict: conflict) -> resolution") \
+	AS_UDF_SIGNATURE(name, "event xdr-merge/1 " #name "(current: record, incoming: record) -> resolution") \
 	AS_UDF_EXPORT(name) int32_t name(int32_t args, int32_t argc)
 ```
 

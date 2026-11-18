@@ -23,8 +23,8 @@ import (
 )
 
 //udf:on xdr-merge merge_account
-func mergeAccount(local, remote *udf.EventRecord, conflict *udf.Conflict) (udf.Resolution, error) {
-	pair := conflict.Pair()
+func mergeAccount(current, incoming *udf.EventRecord) (udf.Resolution, error) {
+	pair := udf.PairOf(current, incoming)
 	out := udf.NewMap(8)
 
 	// A count each DC advanced on its own: both sides' increments are real, so the merge is the larger
@@ -44,7 +44,7 @@ func mergeAccount(local, remote *udf.EventRecord, conflict *udf.Conflict) (udf.R
 
 	if hasNewer {
 		for tag := range newer.List() {
-			text, err := tag.Str()
+			text, err := tag.String()
 
 			if err != nil {
 				return udf.Resolution{}, err
@@ -58,7 +58,7 @@ func mergeAccount(local, remote *udf.EventRecord, conflict *udf.Conflict) (udf.R
 
 	out.Put("tags", tags)
 
-	// A document one side rewrote whole: last writer wins, by LUT, which both DCs agree on.
+	// A document one side rewrote whole: last writer wins, by last update time, which both DCs agree on.
 	if profile, ok := pair.Bin("profile").Newer(); ok {
 		out.Put("profile", profile)
 	}
@@ -66,22 +66,22 @@ func mergeAccount(local, remote *udf.EventRecord, conflict *udf.Conflict) (udf.R
 	// A bin one side deleted stays deleted when the delete is the later write for that bin: a nil in the
 	// returned record is "no such bin". Without this, the other side's copy would come back through
 	// WithNewer below - the resurrection every merge has to guard against.
-	applyDeletes(pair, out, local, false)
-	applyDeletes(pair, out, remote, true)
+	applyDeletes(pair, out, current, false)
+	applyDeletes(pair, out, incoming, true)
 
 	// Everything else is the newer side's - the policy's answer for a bin this handler has no opinion on.
-	// `local.WithBins(out)` would read more naturally and be wrong: it prefers a side, and the other DC
+	// `current.WithBins(out)` would read more naturally and be wrong: it prefers a side, and the other DC
 	// prefers the other side.
 	return udf.Resolve(pair.WithNewer(out)), out.Err()
 }
 
-func applyDeletes(pair udf.Pair, out *udf.Map, side *udf.EventRecord, byRemote bool) {
+func applyDeletes(pair udf.Pair, out *udf.Map, side *udf.EventRecord, byIncoming bool) {
 	if !side.DeletedAny() {
 		return
 	}
 
-	for name := range side.Deleted.List() {
-		if bin, err := name.Str(); err == nil && pair.RemoteNewer(bin) == byRemote {
+	for bin := range side.DeletedBins() {
+		if pair.IncomingIsNewer(bin) == byIncoming {
 			out.Put(bin, nil)
 		}
 	}

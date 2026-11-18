@@ -71,7 +71,7 @@ public final class Params {
      * {@link UdfException} when it is missing or of another kind; {@code fn} and {@code p} are the function
      * and parameter names its message gives. Every reader here takes the same five.
      */
-    public static long int64(Value[] a, int n, int i, String fn, String p) {
+    public static long argInt(Value[] a, int n, int i, String fn, String p) {
         Value v = at(a, n, i, fn, p);
 
         if (v.kind() != Value.INT) {
@@ -82,8 +82,8 @@ public final class Params {
     }
 
     /** An integer argument that fits in 32 bits; one that does not is a mismatch. */
-    public static int int32(Value[] a, int n, int i, String fn, String p) {
-        long x = int64(a, n, i, fn, p);
+    public static int argInt32(Value[] a, int n, int i, String fn, String p) {
+        long x = argInt(a, n, i, fn, p);
 
         if (x != (int) x) {
             throw mismatch(fn, i, p, "a 32-bit int");
@@ -93,7 +93,7 @@ public final class Params {
     }
 
     /** A double, or an int widened to one. */
-    public static double float64(Value[] a, int n, int i, String fn, String p) {
+    public static double argDouble(Value[] a, int n, int i, String fn, String p) {
         Value v = at(a, n, i, fn, p);
 
         if (v.kind() == Value.DOUBLE) {
@@ -108,7 +108,7 @@ public final class Params {
     }
 
     /** A boolean argument. */
-    public static boolean bool(Value[] a, int n, int i, String fn, String p) {
+    public static boolean argBool(Value[] a, int n, int i, String fn, String p) {
         Value v = at(a, n, i, fn, p);
 
         if (v.kind() != Value.BOOL) {
@@ -119,7 +119,7 @@ public final class Params {
     }
 
     /** The text of a string argument, copied out. */
-    public static String str(Value[] a, int n, int i, String fn, String p) {
+    public static String argString(Value[] a, int n, int i, String fn, String p) {
         Value v = at(a, n, i, fn, p);
 
         if (v.kind() != Value.STR) {
@@ -132,7 +132,7 @@ public final class Params {
     }
 
     /** The bytes of a string or a blob. */
-    public static byte[] bytes(Value[] a, int n, int i, String fn, String p) {
+    public static byte[] argBlob(Value[] a, int n, int i, String fn, String p) {
         Value v = at(a, n, i, fn, p);
 
         if (v.kind() != Value.STR && v.kind() != Value.BLOB) {
@@ -143,12 +143,12 @@ public final class Params {
     }
 
     /** Any value, nil included. */
-    public static Value any(Value[] a, int n, int i, String fn, String p) {
+    public static Value argValue(Value[] a, int n, int i, String fn, String p) {
         return at(a, n, i, fn, p);
     }
 
     /** Every argument from {@code i} on. */
-    public static Value[] rest(Value[] a, int n, int i) {
+    public static Value[] argRest(Value[] a, int n, int i) {
         int k = Math.max(0, n - i);
         Value[] out = new Value[k];
 
@@ -161,38 +161,38 @@ public final class Params {
     // Nullable parameters: null when the argument is absent or nil.
     //
 
-    /** As {@link #int64}, or null when the argument is absent or nil. */
-    public static Long optInt64(Value[] a, int n, int i, String fn, String p) {
-        return none(a, n, i) ? null : int64(a, n, i, fn, p);
+    /** As {@link #argInt}, or null when the argument is absent or nil. */
+    public static Long optInt(Value[] a, int n, int i, String fn, String p) {
+        return none(a, n, i) ? null : argInt(a, n, i, fn, p);
     }
 
-    /** As {@link #int32}, or null when the argument is absent or nil. */
+    /** As {@link #argInt32}, or null when the argument is absent or nil. */
     public static Integer optInt32(Value[] a, int n, int i, String fn, String p) {
-        return none(a, n, i) ? null : int32(a, n, i, fn, p);
+        return none(a, n, i) ? null : argInt32(a, n, i, fn, p);
     }
 
-    /** As {@link #float64}, or null when the argument is absent or nil. */
-    public static Double optFloat64(Value[] a, int n, int i, String fn, String p) {
-        return none(a, n, i) ? null : float64(a, n, i, fn, p);
+    /** As {@link #argDouble}, or null when the argument is absent or nil. */
+    public static Double optDouble(Value[] a, int n, int i, String fn, String p) {
+        return none(a, n, i) ? null : argDouble(a, n, i, fn, p);
     }
 
-    /** As {@link #bool}, or null when the argument is absent or nil. */
+    /** As {@link #argBool}, or null when the argument is absent or nil. */
     public static Boolean optBool(Value[] a, int n, int i, String fn, String p) {
-        return none(a, n, i) ? null : bool(a, n, i, fn, p);
+        return none(a, n, i) ? null : argBool(a, n, i, fn, p);
     }
 
-    /** As {@link #str}, or null when the argument is absent or nil. */
-    public static String optStr(Value[] a, int n, int i, String fn, String p) {
-        return none(a, n, i) ? null : str(a, n, i, fn, p);
+    /** As {@link #argString}, or null when the argument is absent or nil. */
+    public static String optString(Value[] a, int n, int i, String fn, String p) {
+        return none(a, n, i) ? null : argString(a, n, i, fn, p);
     }
 
-    /** As {@link #bytes}, or null when the argument is absent or nil. */
-    public static byte[] optBytes(Value[] a, int n, int i, String fn, String p) {
-        return none(a, n, i) ? null : bytes(a, n, i, fn, p);
+    /** As {@link #argBlob}, or null when the argument is absent or nil. */
+    public static byte[] optBlob(Value[] a, int n, int i, String fn, String p) {
+        return none(a, n, i) ? null : argBlob(a, n, i, fn, p);
     }
 
     /** The argument as it is, or null when it is absent or nil. */
-    public static Value optAny(Value[] a, int n, int i, String fn, String p) {
+    public static Value optValue(Value[] a, int n, int i, String fn, String p) {
         return none(a, n, i) ? null : a[i];
     }
 
@@ -239,17 +239,17 @@ public final class Params {
     }
 
     /** Delivers a string as the result; null is nil. */
-    public static void resultStr(String s) {
+    public static void resultString(String s) {
         if (s == null) {
             Udf.resultNil();
         }
         else {
-            Udf.resultStr(s);
+            Udf.resultString(s);
         }
     }
 
     /** Delivers a byte array as a blob result; null is nil. */
-    public static void resultBytes(byte[] b) {
+    public static void resultBlob(byte[] b) {
         if (b == null) {
             Udf.resultNil();
         }

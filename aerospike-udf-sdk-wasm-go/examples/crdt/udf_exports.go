@@ -6,11 +6,11 @@ import udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk-wasm-go
 
 //export xdr_merge
 func udfExport_xdr_merge(args, argc int32) int32 {
-	var c udf.Conflict
-	if !udf.DecodeConflict(args, argc, &c) {
+	var current, incoming udf.EventRecord
+	if !udf.DecodeMerge(args, argc, &current, &incoming) {
 		return udf.Fail("xdr_merge: not an xdr-merge event")
 	}
-	r, err := xdrMerge(&c.Local, &c.Remote, &c)
+	r, err := xdrMerge(&current, &incoming)
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -61,7 +61,7 @@ func udfExport_remove_device(args, argc int32) int32 {
 	if err != nil {
 		return udf.FailErr(err)
 	}
-	p1, err := udf.ArgInt64(a[:], n, 1, "remove_device", "now")
+	p1, err := udf.ArgInt(a[:], n, 1, "remove_device", "now")
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -85,7 +85,7 @@ func udfExport_purge_devices(args, argc int32) int32 {
 	if err := udf.Arity("purge_devices", 1, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	p0, err := udf.ArgInt64(a[:], n, 0, "purge_devices", "now")
+	p0, err := udf.ArgInt(a[:], n, 0, "purge_devices", "now")
 	if err != nil {
 		return udf.FailErr(err)
 	}

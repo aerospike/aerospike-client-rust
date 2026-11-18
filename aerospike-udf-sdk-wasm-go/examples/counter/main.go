@@ -45,7 +45,7 @@ func (t table) offer(site string, count int64) {
 // Every entry of a stored counts map.
 func (t table) offerAll(stored udf.Value) error {
 	for k, v := range stored.Map() {
-		site, err := k.Str()
+		site, err := k.String()
 		if err != nil {
 			return err
 		}
@@ -95,7 +95,7 @@ func (t table) toMap() *udf.Map {
 // The merge: for every site, the larger of the two counts. Every other bin is the incoming one's.
 //
 //udf:on xdr-merge merge_counter
-func mergeCounter(current, incoming *udf.EventRecord, _ *udf.Conflict) (udf.Resolution, error) {
+func mergeCounter(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 	t := table{}
 
 	for _, side := range []*udf.EventRecord{current, incoming} {

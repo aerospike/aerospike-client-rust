@@ -73,7 +73,7 @@ larger value per key:
 ```rust
 event! {
     on xdr_merge
-    fn merge_lwwset(current: EventRecord, incoming: EventRecord, _conflict: Conflict) -> Result<Resolution, Error> {
+    fn merge_lwwset(current: EventRecord, incoming: EventRecord) -> Result<Resolution, Error> {
         let out = as_udf::map(2)?;
 
         for bin in ["addedAt", "removedAt"] {
@@ -93,7 +93,7 @@ The same in Java:
 
 ```java
 @On.XdrMerge("merge_lwwset")
-static Resolution mergeLwwSet(EventRecord current, EventRecord incoming, Conflict conflict) {
+static Resolution mergeLwwSet(EventRecord current, EventRecord incoming) {
     MapBuilder out = Udf.map(2);
 
     for (String bin : new String[] {"addedAt", "removedAt"}) {
@@ -111,7 +111,7 @@ In Go:
 
 ```go
 //udf:on xdr-merge merge_lwwset
-func mergeLwwSet(current, incoming *udf.EventRecord, _ *udf.Conflict) (udf.Resolution, error) {
+func mergeLwwSet(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 	out := udf.NewMap(2)
 
 	for _, bin := range []string{"addedAt", "removedAt"} {

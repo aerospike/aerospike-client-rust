@@ -40,7 +40,7 @@ In Rust, the counter's merge inside a loop over the two bins:
 ```rust
 event! {
     on xdr_merge
-    fn merge_pncounter(current: EventRecord, incoming: EventRecord, _conflict: Conflict) -> Result<Resolution, Error> {
+    fn merge_pncounter(current: EventRecord, incoming: EventRecord) -> Result<Resolution, Error> {
         let out = as_udf::map(2)?;
 
         for bin in ["inc", "dec"] {
@@ -64,7 +64,7 @@ The same in Java, where the table is a small class with one static instance reus
 
 ```java
 @On.XdrMerge("merge_pncounter")
-static Resolution mergePnCounter(EventRecord current, EventRecord incoming, Conflict conflict) {
+static Resolution mergePnCounter(EventRecord current, EventRecord incoming) {
     MapBuilder out = Udf.map(2);
 
     for (String bin : new String[] {"inc", "dec"}) {
@@ -82,7 +82,7 @@ In Go, with a fresh `table` map per bin:
 
 ```go
 //udf:on xdr-merge merge_pncounter
-func mergePnCounter(current, incoming *udf.EventRecord, _ *udf.Conflict) (udf.Resolution, error) {
+func mergePnCounter(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 	out := udf.NewMap(2)
 
 	for _, bin := range []string{"inc", "dec"} {

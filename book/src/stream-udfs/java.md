@@ -19,7 +19,7 @@ final class SumN {
         Value v = rec.get("n");
 
         if (v != null && v.isInt()) {
-            total += v.asLong();
+            total += v.asInt();
             count++;
         }
     }

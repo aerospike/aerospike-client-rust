@@ -31,6 +31,14 @@ pub fn get(&self, name: &str) -> Result<Option<Value<'static>>, Error>
 
 A bin that may be absent: `None` when it is absent or nil.
 
+#### `EventRecord::has`
+
+```rust
+pub fn has(&self, name: &str) -> bool
+```
+
+Whether the record has the bin.
+
 #### `EventRecord::int`
 
 ```rust
@@ -38,6 +46,31 @@ pub fn int(&self, name: &str) -> Result<Option<i64>, Error>
 ```
 
 An integer bin, or `None` when the bin is absent or nil. A bin of another kind is `Err(WrongType)`.
+
+#### `EventRecord::int_or`
+
+```rust
+pub fn int_or(&self, name: &str, default: i64) -> Result<i64, Error>
+```
+
+An integer bin, or `default` when it is absent or nil. A bin of another kind is still
+`Err(WrongType)`.
+
+#### `EventRecord::double_or`
+
+```rust
+pub fn double_or(&self, name: &str, default: f64) -> Result<f64, Error>
+```
+
+A double bin, or `default` when it is absent or nil.
+
+#### `EventRecord::bool_or`
+
+```rust
+pub fn bool_or(&self, name: &str, default: bool) -> Result<bool, Error>
+```
+
+A boolean bin, or `default` when it is absent or nil.
 
 #### `EventRecord::double`
 
@@ -55,10 +88,10 @@ pub fn bool(&self, name: &str) -> Result<Option<bool>, Error>
 
 A boolean bin, or `None` when absent or nil.
 
-#### `EventRecord::text`
+#### `EventRecord::string`
 
 ```rust
-pub fn text(&self, name: &str) -> Result<Option<Text<'static>>, Error>
+pub fn string(&self, name: &str) -> Result<Option<Text<'static>>, Error>
 ```
 
 A string bin's text, or `None` when absent or nil.
@@ -87,10 +120,10 @@ pub fn map(&self, name: &str) -> Result<Option<Coll>, Error>
 
 A map bin, or `None` when absent or nil.
 
-#### `EventRecord::bins`
+#### `EventRecord::bin_names`
 
 ```rust
-pub fn bins(&self) -> Coll
+pub fn bin_names(&self) -> Coll
 ```
 
 The names of this record's bins, as a stored list to iterate.
@@ -129,24 +162,33 @@ pub fn source_id(&self) -> i64
 
 The XDR source id of the DC that wrote this version.
 
-#### `EventRecord::deleted`
+#### `EventRecord::deleted_bins`
 
 ```rust
-pub fn deleted(&self) -> Coll
+pub fn deleted_bins(&self) -> Coll
 ```
 
-The names of the bins this side deleted: for the incoming write, its bin-delete ops; for the local
-record, its bin tombstones. A deleted bin reads as absent, so this is the only way to tell "never
-had it" from "removed it", and [`bin_lut`](EventRecord::bin_lut) says when.
+The names of the bins this side deleted: for the incoming write, its bin-delete ops; for the
+current record, its bin tombstones. A deleted bin reads as absent, so this is the only way to tell
+"never had it" from "removed it", and
+[`bin_last_update_time`](EventRecord::bin_last_update_time) says when.
 
-#### `EventRecord::bin_lut`
+#### `EventRecord::deleted_any`
 
 ```rust
-pub fn bin_lut(&self, name: &str) -> i64
+pub fn deleted_any(&self) -> bool
 ```
 
-When this side last wrote the bin, when the server knows per bin (bin convergence keeps a LUT per
-bin); the record's LUT otherwise. This is what decides a bin under the `bin-lut` policy, so a merge
+Whether this side deleted any bin.
+
+#### `EventRecord::bin_last_update_time`
+
+```rust
+pub fn bin_last_update_time(&self, name: &str) -> i64
+```
+
+When this side last wrote the bin, when the server knows per bin (bin convergence keeps a time per
+bin); the record's last update time otherwise. This is what decides a bin under the `bin-lut` policy, so a merge
 that orders the sides per bin agrees with the policy on the bins it does not merge.
 
 #### `EventRecord::bin_source_id`
@@ -157,6 +199,54 @@ pub fn bin_source_id(&self, name: &str) -> i64
 
 The source id that wrote the bin, per bin when known; the record's otherwise.
 
+#### `EventRecord::is_delete`
+
+```rust
+pub fn is_delete(&self) -> bool
+```
+
+Whether this is the incoming write and it is a record delete, in which case it has no bins. Always
+false of the current record.
+
+#### `EventRecord::is_partial`
+
+```rust
+pub fn is_partial(&self) -> bool
+```
+
+Whether this is the incoming write and it carries only the bins that changed (`bin-policy`), so a
+bin it lacks may well exist on the other DC. Always false of the current record.
+
+#### `EventRecord::lost_bins`
+
+```rust
+pub fn lost_bins(&self) -> Coll
+```
+
+The names of the incoming bins that would lose under bin convergence, as a stored list. Empty for
+the current record, whose bins are not the ones being applied.
+
+#### `EventRecord::is_tombstone`
+
+```rust
+pub fn is_tombstone(&self) -> bool
+```
+
+Whether this is the current record and it is a tombstone: it exists, with no bins. Always false
+of the incoming write; see [`is_delete`](EventRecord::is_delete) for that side.
+
+#### `EventRecord::uses_bin_convergence`
+
+```rust
+pub fn uses_bin_convergence(&self) -> bool
+```
+
+Whether the policy the handler stands in for is bin convergence (`bin-lut`) rather than a plain
+apply of the incoming bins (`replace`). Only under bin convergence does the server keep a time
+per bin, so a time-based merge asks this before trusting
+[`bin_last_update_time`](EventRecord::bin_last_update_time). It is a fact about the merge, and both
+records give the same answer.
+
 #### `EventRecord::with_bins`
 
 ```rust
@@ -166,131 +256,9 @@ pub fn with_bins(&self, overrides: Map) -> Result<Map, Error>
 A new record built from this one's bins with `overrides` on top: every bin of this record goes in
 unless the map already has it. The bins travel by position, never through the guest.
 
-This prefers one side, so a handler that uses it on `local` is not symmetric: the two DCs would
+This prefers one side, so a handler that uses it on `current` is not symmetric: the two DCs would
 resolve the same pair to different records. [`Pair::with_newer`] is the symmetric form; use this one
 when the side is chosen by something both DCs agree on, such as the source id.
-
-#### `Conflict`
-
-```rust
-pub struct Conflict
-```
-
-What the event is about: the kind of conflict, the policy that would have decided it, and the bins at
-stake.
-
-#### `Trigger`
-
-```rust
-pub enum Trigger {
-    /// Every incoming XDR write to a record that exists here (`trigger=always`, the default).
-    Always,
-    /// Only a write in which an incoming bin would lose under bin convergence (`trigger=conflict`).
-    Conflict,
-}
-```
-
-What made the event fire.
-
-#### `Conflict::trigger`
-
-```rust
-pub fn trigger(&self) -> Trigger
-```
-
-What made the event fire: the binding's `trigger` setting.
-
-#### `Conflict::is_dry_run`
-
-```rust
-pub fn is_dry_run(&self) -> bool
-```
-
-A dry run from `__event__`: nothing will be written whatever the answer.
-
-#### `Conflict::uses_bin_convergence`
-
-```rust
-pub fn uses_bin_convergence(&self) -> bool
-```
-
-Whether the policy the handler stands in for is bin convergence (`bin-lut`) rather than a plain
-apply of the incoming bins (`replace`).
-
-#### `Conflict::incoming_is_delete`
-
-```rust
-pub fn incoming_is_delete(&self) -> bool
-```
-
-The incoming write is a record delete; `remote()` has no bins.
-
-#### `Conflict::current_is_tombstone`
-
-```rust
-pub fn current_is_tombstone(&self) -> bool
-```
-
-The current record is a tombstone: it exists, with no bins.
-
-#### `Conflict::involves_delete`
-
-```rust
-pub fn involves_delete(&self) -> bool
-```
-
-Whether either side deleted a bin: the incoming write carries a bin delete, or the local record has
-a bin tombstone. Such a bin is absent on that side, and resurrecting it from the other side is the
-classic merge mistake; see [`EventRecord::deleted`].
-
-#### `Conflict::lost_bins`
-
-```rust
-pub fn lost_bins(&self) -> Coll
-```
-
-The names of the incoming bins that would lose, as a stored list.
-
-#### `Conflict::remote_deleted`
-
-```rust
-pub fn remote_deleted(&self) -> Coll
-```
-
-The names of bins the incoming write deletes; `remote().deleted()`.
-
-#### `Conflict::local`
-
-```rust
-pub fn local(&self) -> EventRecord
-```
-
-The record this node holds.
-
-#### `Conflict::remote`
-
-```rust
-pub fn remote(&self) -> EventRecord
-```
-
-The record XDR delivered: the incoming write.
-
-#### `Conflict::remote_is_partial`
-
-```rust
-pub fn remote_is_partial(&self) -> bool
-```
-
-Whether the incoming write carries only the bins that changed (`bin-policy`), so a bin it lacks may
-well exist on the other DC.
-
-#### `Conflict::pair`
-
-```rust
-pub fn pair(&self) -> Pair
-```
-
-The two records side by side, for bin-wise merging.
 
 #### `Pair`
 
@@ -298,7 +266,16 @@ The two records side by side, for bin-wise merging.
 pub struct Pair
 ```
 
-The two sides of a conflict, read bin by bin into a [`Both`].
+The two sides of a merge, read bin by bin into a [`Both`]. Made by [`Pair::of`].
+
+#### `Pair::of`
+
+```rust
+pub fn of(current: EventRecord, incoming: EventRecord) -> Pair
+```
+
+The current record and the incoming write side by side, for bin-wise merging. Each record knows
+which of the two it is, so the pair comes out the same if they are passed the other way round.
 
 #### `Pair::int`
 
@@ -317,13 +294,29 @@ pub fn double(&self, name: &str) -> Result<Both<f64>, Error>
 
 A double bin on each side; a side where it is absent or nil is `None`.
 
-#### `Pair::text`
+#### `Pair::bool`
 
 ```rust
-pub fn text(&self, name: &str) -> Result<Both<Text<'static>>, Error>
+pub fn bool(&self, name: &str) -> Result<Both<bool>, Error>
+```
+
+A boolean bin on each side; a side where it is absent or nil is `None`.
+
+#### `Pair::string`
+
+```rust
+pub fn string(&self, name: &str) -> Result<Both<Text<'static>>, Error>
 ```
 
 A string bin's text on each side; a side where it is absent or nil is `None`.
+
+#### `Pair::blob`
+
+```rust
+pub fn blob(&self, name: &str) -> Result<Both<Blob<'static>>, Error>
+```
+
+A blob bin's bytes on each side; a side where it is absent or nil is `None`.
 
 #### `Pair::list`
 
@@ -332,6 +325,14 @@ pub fn list(&self, name: &str) -> Result<Both<Coll>, Error>
 ```
 
 A list bin on each side; a side where it is absent or nil is `None`.
+
+#### `Pair::map`
+
+```rust
+pub fn map(&self, name: &str) -> Result<Both<Coll>, Error>
+```
+
+A map bin on each side; a side where it is absent or nil is `None`.
 
 #### `Pair::bin`
 
@@ -351,38 +352,39 @@ Every bin either side has that `overrides` lacks, from the side that wrote it la
 the policy would have kept - so a handler merges the bins it knows about and leaves the rest as they
 would have been. Symmetric: both DCs order the two sides the same way.
 
-#### `Pair::remote_is_newer`
+#### `Pair::incoming_is_newer`
 
 ```rust
-pub fn remote_is_newer(&self, name: &str) -> bool
+pub fn incoming_is_newer(&self, name: &str) -> bool
 ```
 
-Whether the remote side wrote `name` later, per bin: the order the `bin-lut` policy uses.
+Whether the incoming side wrote `name` later, per bin: the order the `bin-lut` policy uses.
 
 #### `Both`
 
 ```rust
 pub struct Both<T> {
-    pub local: Option<T>,
-    pub remote: Option<T>,
-    local_lut: i64,
-    remote_lut: i64,
-    local_src: i64,
-    remote_src: i64,
+    pub current: Option<T>,
+    pub incoming: Option<T>,
+    current_last_update_time: i64,
+    incoming_last_update_time: i64,
+    current_source_id: i64,
+    incoming_source_id: i64,
 }
 ```
 
-A bin on both sides of a conflict, either of which may be missing, with the merges a resolver reaches for.
+A bin on both sides of a merge, either of which may be missing, with the merges a resolver reaches for.
 
-#### `Both<T>::remote_is_newer`
+#### `Both<T>::incoming_is_newer`
 
 ```rust
-pub fn remote_is_newer(&self) -> bool
+pub fn incoming_is_newer(&self) -> bool
 ```
 
-Whether the remote side wrote this bin later: by the bin's LUT where the server keeps one, the
-record's otherwise, and on a tie by source id - the order the server's own bin convergence uses, so
-"newer" means the same on both DCs even when the clocks agreed to the millisecond.
+Whether the incoming side wrote this bin later: by the bin's last update time where the server
+keeps one, the record's otherwise, and on a tie by source id - the order the server's own bin
+convergence uses, so "newer" means the same on both DCs even when the clocks agreed to the
+millisecond.
 
 #### `Both<T>::newer`
 
@@ -409,21 +411,21 @@ pub fn ordered(self) -> (Option<T>, Option<T>)
 Both sides, as `(older, newer)`: the order both DCs agree on, for a merge whose result depends on
 the order its inputs are taken in.
 
-#### `Both<T>::local_or_remote`
+#### `Both<T>::current_or_incoming`
 
 ```rust
-pub fn local_or_remote(self) -> Option<T>
+pub fn current_or_incoming(self) -> Option<T>
 ```
 
-The local value when there is one, else the remote.
+The current value when there is one, else the incoming.
 
-#### `Both<T>::remote_or_local`
+#### `Both<T>::incoming_or_current`
 
 ```rust
-pub fn remote_or_local(self) -> Option<T>
+pub fn incoming_or_current(self) -> Option<T>
 ```
 
-The remote value when there is one, else the local.
+The incoming value when there is one, else the current.
 
 #### `Both<T>::merge`
 
@@ -469,7 +471,7 @@ The sum, a missing side counting as zero.
 
 ```rust
 pub enum Resolution {
-    /// Keep the local record; the incoming write is dropped.
+    /// Keep the current record; the incoming write is dropped.
     KeepLocal,
     /// Apply the incoming write whole, as if it had won every bin.
     TakeRemote,

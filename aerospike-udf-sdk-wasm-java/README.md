@@ -14,7 +14,7 @@ import com.aerospike.udf.Record;
 public final class Counter {
     @Function("increment")
     static long increment(Record rec, long by) {
-        long n = rec.getLong("n", 0) + by;
+        long n = rec.getInt("n", 0) + by;
 
         rec.set("n", n);
         rec.save();
@@ -88,9 +88,10 @@ at compile time, inside `javac`, before TeaVM runs.
   and a write to one throws. `end` runs after the last record and takes none.
 - **`@On.XdrMerge("name")`** on a method: an event handler. The server has one event kind, `xdr-merge`,
   the merge of an incoming XDR write with the current record. The parameters are what it hands over,
-  `(EventRecord current, EventRecord incoming, Conflict conflict)`, and the return is its answer, a
-  `Resolution`: `keepLocal()`, `takeRemote()`, `policy()`, `delete()` or `record(bins[, ttl])`. A handler
-  with other parameters or another return is a compile error.
+  `(EventRecord current, EventRecord incoming)`, the record as it is on this cluster and the one that
+  arrived over XDR, and the return is its answer, a `Resolution`: `keepLocal()`, `takeRemote()`,
+  `policy()`, `delete()` or `record(bins[, ttl])`. A handler with other parameters or another return is a
+  compile error that states this shape.
 - **Instance methods.** An exported method may be an instance method; the generated class then builds one
   instance of the module's class (a no-argument constructor it can reach) and calls through it, so state
   is ordinary fields.
@@ -105,10 +106,11 @@ per export, and `main`. Name it as the TeaVM `mainClass`; the annotated class ne
 ## Shape of the API
 
 - **`Record`**: the record a call is about, and everything a UDF does to it. Bins are addressed by name.
-  `get(name)` gives a bin as a `Value`, or null; the typed readers (`getLong`, `getDouble`, `getBoolean`,
-  `getString`, `getBytes`, `getList`, `getMap`, and `getFloats(name, float[])` for a vector) throw
-  `UdfException` naming the bin when it is absent or of another kind, and given a default
-  (`getLong("n", 0)`) answer it for an absent bin. `set(name, value)` stages a bin of any kind (a scalar,
+  `get(name)` gives a bin as a `Value`, or null, `bin(name)` gives it or throws, and `has(name)` says
+  whether it is there; the typed readers (`getInt`, `getDouble`, `getBool`, `getString`, `getBlob`,
+  `getList`, `getMap`, and `getFloats(name, float[])` for a vector) throw `UdfException` naming the bin
+  when it is absent or of another kind, and given a default (`getInt("n", 0)`) answer it for an absent
+  bin. `set(name, value)` stages a bin of any kind (a scalar,
   a string, a blob, a `Value`, a builder, a stored list or map, a `java.util.List` or `Map`),
   `setGeoJson` a GeoJSON one, `remove(name)` stages a removal, and `save()` writes what is staged,
   creating the record when it does not exist. `setInts(long[])` and `setDoubles(double[])` write a packed
@@ -117,29 +119,32 @@ per export, and `main`. Name it as the TeaVM `mainClass`; the annotated class ne
   There is one `Record` type: a write where the record is read-only (a stream's records) throws.
 - **`RecordReader`**: the readers `Record` and `EventRecord` share, so a helper that only reads bins takes
   either.
-- **`Value`**: one value, read-only: `kind()`, the `is*` tests, `asLong()`, `asDouble()`, `asBoolean()`,
-  `asString()`, `asBytes()`, `asList()`, `asMap()`, `toObject()`; `Value.ofInt`, `ofStr`, `ofGeoJson` and
-  the rest make one of the guest's own.
+- **`Value`**: one value, read-only: `kind()`, the `is*` tests, `asInt()`, `asDouble()`, `asBool()`,
+  `asString()`, `asBlob()`, `asList()`, `asMap()`, `toObject()`; `Value.ofInt`, `ofString`, `ofGeoJson`
+  and the rest make one of the guest's own.
 - **`ListValue` and `MapValue`**: a stored list or map, read where it is. A list has `size()`,
-  `isEmpty()`, `get(index)` and the typed `getLong(index)` and so on, `contains`, and is an
+  `isEmpty()`, `get(index)` and the typed `getInt(index)` and so on, `contains`, and is an
   `Iterable<Value>`; a map has `get(key)` (null for no such key), `containsKey`, the typed
-  `getLong(key)` / `getLong(key, dflt)` and so on for string and integer keys, and is an
+  `getInt(key)` / `getInt(key, dflt)` and so on for string and integer keys, and is an
   `Iterable<MapValue.Entry>`. Every element a loop yields is a fresh `Value`, safe to keep, and a loop
   may be left early. A wrong kind throws `UdfException` naming the key or the index. `toList()` and
   `toMap()` copy the whole collection out as `java.util` ones.
 - **`ListBuilder` and `MapBuilder`**: a list or map being built on the server, started with `Udf.list()`
-  and `Udf.map()`: chained `add` / `put` of every kind, string and integer keys, `addNull` / `putNull`,
+  and `Udf.map()`: chained `add` / `put` of every kind, string and integer keys, `addNil` / `putNil`,
   `addGeoJson` / `putGeoJson`, `addAll` / `putAll` from a stored collection (by position) or from a
   `java.util` one, `MapBuilder.containsKey`; written to a bin, returned as the result, nested, or handed
   back from a handler. They are builders, not collections: what went in is not read back.
 - **`Udf`**: what is not about the record: `now()`, `log`, the builder factories, and for a function in
   the raw form the `result*` calls and `fail`.
 - **Events**: `EventRecord` for each side of a merge (the same readers as `Record`, plus `binNames()`,
-  `deletedBins()`, `binLut` / `binSrc`, and `withBins(out)` to keep the rest of a record under a few
-  decided bins), `Resolution` for the answer, and the merge itself through `Conflict` (`pair()` into
-  `Pair` and `Both` with `newer`, `older`, `max`, `min`, `merge`, `withNewer`; `involvesDelete`, `lost`,
-  ...). `examples/resolver` is the worked example, held to the same behaviour as the other languages' by
-  the client tests.
+  `deletedBins()`, `binLastUpdateTime` / `binSourceId`, and `withBins(out)` to keep the rest of a record
+  under a few decided bins; and what the merge says of one side: `isDelete()`, `isPartial()` and
+  `lostBins()` of the incoming write, `isTombstone()` of the current record, `usesBinConvergence()` of
+  either), `Resolution` for the answer, and the merge itself through `Pair.of(current, incoming)` (`Pair`
+  and `Both` with `current`, `incoming`, `newer`, `older`, `ordered`, `max`, `min`, `merge`,
+  `withNewer`). A handler in the raw form reads the two records with `Pair.decode(args, argc)` and
+  returns a resolution's `deliver()`. `examples/resolver` is the worked example, held to the same
+  behaviour as the other languages' by the client tests.
 - **`LowLevel`**: the server's calls one at a time, for a hot path that must allocate nothing: names as
   `byte[]`, `bin(name, value)` into a `Value` the caller owns and reuses, `enter` / `next` / `close` over
   a caller-owned window, `newMap` and the `mapPut*` / `listPush*` calls over `int` handles, the record's
@@ -150,7 +155,7 @@ per export, and `main`. Name it as the TeaVM `mainClass`; the annotated class ne
 ### Names are encoded once
 
 A bin name crosses to the server as UTF-8 bytes. `Record` (and the map classes, for keys) keeps the
-encoded form of the names it has seen, found by the string itself, so `rec.getLong("ticks")` on a string
+encoded form of the names it has seen, found by the string itself, so `rec.getInt("ticks")` on a string
 literal allocates nothing and needs no constant declared for the name. The last eight names used are
 matched by identity, which is the whole cost for a literal; a module that rotates through more than eight
 in one call pays a hash lookup for the others. `tests/src/udf_java.rs` has the measurement

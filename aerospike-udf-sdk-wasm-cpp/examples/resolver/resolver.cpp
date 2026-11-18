@@ -22,24 +22,24 @@
 // A bin one side deleted stays deleted when the delete is the later write for that bin: a nil in the
 // returned record is "no such bin". Without this, the other side's copy would come back through
 // with_newer below - the resurrection every merge has to guard against.
-static void apply_deletes(const udf::Pair& pair, udf::Map& out, const udf::EventRecord& side, bool by_remote)
+static void apply_deletes(const udf::Pair& pair, udf::Map& out, const udf::EventRecord& side, bool by_incoming)
 {
 	if (!side.deleted_any()) {
 		return;
 	}
 
-	for (udf::Value name : udf::Value(side.deleted).list()) {
-		udf::Result<udf::Text<64>> bin = name.as_text<64>();
+	for (udf::Value name : side.deleted_bins()) {
+		udf::Result<udf::Text<64>> bin = name.as_string<64>();
 
-		if (bin && pair.remote_newer(bin->view()) == by_remote) {
-			out.put_null(bin->view());
+		if (bin && pair.incoming_is_newer(bin->view()) == by_incoming) {
+			out.put_nil(bin->view());
 		}
 	}
 }
 
 UDF_ON_XDR_MERGE(merge_account)
 {
-	udf::Pair pair = conflict.pair();
+	udf::Pair pair = udf::Pair::of(current, incoming);
 	udf::Map out(8);
 
 	// A count each DC advanced on its own: both sides' increments are real, so the merge is the larger
@@ -50,9 +50,7 @@ UDF_ON_XDR_MERGE(merge_account)
 
 	// A set each DC added to: the union. Its order is part of the result, so it is the order both DCs
 	// agree on - the older side's tags, then the newer side's new ones - never "mine first".
-	udf::Both<udf::Value> sides = pair.list("tags");
-	udf::Optional<udf::Value> older = sides.remote_newer() ? sides.local : sides.remote;
-	udf::Optional<udf::Value> newer = sides.remote_newer() ? sides.remote : sides.local;
+	auto [older, newer] = pair.list("tags").ordered();
 	udf::List tags(16);
 
 	if (older) {
@@ -61,7 +59,7 @@ UDF_ON_XDR_MERGE(merge_account)
 
 	if (newer) {
 		for (udf::Value tag : newer->list()) {
-			udf::Text<64> text = UDF_TRY(tag.as_text<64>());
+			udf::Text<64> text = UDF_TRY(tag.as_string<64>());
 
 			if (!older || !udf::contains(*older, text.view())) {
 				tags.add(tag);

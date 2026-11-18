@@ -84,7 +84,7 @@ is what XDR would have written on its own.
 ```rust
 event! {
     on xdr_merge
-    fn xdr_merge(current: EventRecord, incoming: EventRecord, _conflict: Conflict) -> Result<Resolution, Error> {
+    fn xdr_merge(current: EventRecord, incoming: EventRecord) -> Result<Resolution, Error> {
         ...
         for side in [&current, &incoming] {
             if let Some(devices) = side.list("devices")? {
@@ -195,11 +195,11 @@ private static Candidate higher(Candidate a, Candidate b) {
         return a.removed ? a : b;
     }
 
-    return a.value.compareStored(b.value) >= 0 ? a : b;
+    return a.value.cmpStored(b.value) >= 0 ? a : b;
 }
 ```
 
-`Value.compareStored` compares the two candidates' stored bytes without copying either. The candidates are
+`Value.cmpStored` compares the two candidates' stored bytes without copying either. The candidates are
 collected the same way, sorted by `deviceId` bytes, and written out as the live list plus the markers
 inside the higher horizon, a dropped marker's version folded into the floor. What differs is the
 language:
@@ -219,7 +219,7 @@ language:
   a thrown `UdfException` that names the function, which the generated export delivers as the failure
   message.
 - **The handler's shape.** `@On.XdrMerge("xdr_merge")` on `static Resolution xdrMerge(EventRecord current,
-  EventRecord incoming, Conflict c)`, returning `Resolution.record(current.withBins(out))` over the
+  EventRecord incoming)`, returning `Resolution.record(current.withBins(out))` over the
   `MapBuilder` it filled, and `@Function` on the three write UDFs, each taking the `Record` first and then
   typed parameters, staging its bins with `rec.set` and writing them with `rec.save()`. The processor
   generates `CrdtExports`.
@@ -267,7 +267,7 @@ func higher(a, b candidate) candidate {
   `e.PutAll(old.value)` then `e.PutAll(changes)` is the "old entry with the changes on top" of
   `update_device`. The first refusal surfaces through `Err()`.
 - **The handler's shape.** `//udf:on xdr-merge xdr_merge` on `func xdrMerge(current, incoming
-  *udf.EventRecord, _ *udf.Conflict) (udf.Resolution, error)`, returning
+  *udf.EventRecord) (udf.Resolution, error)`, returning
   `udf.Resolve(current.WithBins(out))`, and `//udf:function` on the three write UDFs. `udfgen` writes
   `udf_exports.go`.
 
@@ -297,7 +297,7 @@ static const Candidate& higher(const Candidate& a, const Candidate& b)
   chains, and `e.put_all(entries[i].value)` then `e.put_all(changes)` is the "old entry with the changes on
   top"; `UDF_TRY(e.result())` surfaces a refused put.
 - **The handler's shape.** `UDF_ON_XDR_MERGE(xdr_merge)` defines
-  `Result<Resolution> xdr_merge(const EventRecord& current, const EventRecord& incoming, const Conflict&)`,
+  `Result<Resolution> xdr_merge(const EventRecord& current, const EventRecord& incoming)`,
   returning `udf::Resolution::record(current.with_bins(out))`, and `UDF_FUNCTION` the three write UDFs,
   `fn update_device(id: str[64], changes: any) -> value` among the signatures the macros derive.
 

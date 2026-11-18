@@ -43,11 +43,11 @@ final class Convert {
             return v.asString();
         case Value.GEOJSON:
         case Value.GUEST_GEOJSON:
-            return new String(v.asBytes(), StandardCharsets.UTF_8);
+            return new String(v.asBlob(), StandardCharsets.UTF_8);
         case Value.BLOB:
         case Value.HLL:
         case Value.GUEST_BLOB:
-            return v.asBytes();
+            return v.asBlob();
         case Value.LIST:
             return toList(v);
         case Value.MAP:
@@ -107,7 +107,7 @@ final class Convert {
     /** Appends a Java object to a list being built, by what it is. */
     static void add(ListBuilder list, Object o) {
         if (o == null) {
-            list.addNull();
+            list.addNil();
         }
         else if (o instanceof Long || o instanceof Integer || o instanceof Short || o instanceof Byte) {
             list.add(((Number) o).longValue());
@@ -169,7 +169,7 @@ final class Convert {
         }
 
         if (o instanceof String) {
-            return Value.ofStr((String) o);
+            return Value.ofString((String) o);
         }
 
         if (o instanceof byte[]) {

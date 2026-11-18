@@ -105,7 +105,7 @@ func idOf(entry udf.Value) (string, error) {
 	if !ok {
 		return "", errors.New("an entry has no deviceId")
 	}
-	return id.Str()
+	return id.String()
 }
 
 func intField(m udf.Value, key string) (int64, error) {
@@ -157,7 +157,7 @@ func offerMarkers(b best, removed udf.Value, horizon, floor *int64) error {
 	}
 
 	for key, marker := range markers.Map() {
-		id, err := key.Str()
+		id, err := key.String()
 		if err != nil {
 			return err
 		}
@@ -179,11 +179,11 @@ func offerMarkers(b best, removed udf.Value, horizon, floor *int64) error {
 // Every other bin is the incoming one's, as XDR would have applied it.
 //
 //udf:on xdr-merge xdr_merge
-func xdrMerge(current, incoming *udf.EventRecord, _ *udf.Conflict) (udf.Resolution, error) {
+func xdrMerge(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 	out := udf.NewMap(8)
 
 	// Other bins: as XDR does today.
-	for name := range incoming.Names() {
+	for name := range incoming.BinNames() {
 		if name == "devices" || name == "devicesRemoved" {
 			continue
 		}
@@ -370,7 +370,7 @@ func storeRemoved(rec *udf.Record, drop string, add *marker, now *int64) error {
 	if removed, ok := rec.Get("devicesRemoved"); ok {
 		if existing, ok := removed.Lookup("markers"); ok {
 			for key, m := range existing.Map() {
-				id, err := key.Str()
+				id, err := key.String()
 				if err != nil {
 					return err
 				}

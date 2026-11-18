@@ -362,7 +362,7 @@ fn offer(rec: &Record, s: &mut State, score: f64) -> Result<(), Error> {
 
     hit.key_len = match rec.key(&mut kbuf) {
         Ok(Value::Int(i)) => itoa(i, &mut hit.key),
-        Ok(Value::Str(Text::Guest(t))) => {
+        Ok(Value::String(Text::Guest(t))) => {
             let n = t.len().min(KEY_MAX);
 
             hit.key[..n].copy_from_slice(&t.as_bytes()[..n]);

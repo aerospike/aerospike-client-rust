@@ -69,17 +69,17 @@ reading a bin, writing one, the record's metadata, saving and deleting.
 ```text
 @Function("visit")
 static long visit(Record rec, String page) {
-long visits = rec.getLong("visits", 0) + 1;
+long visits = rec.getInt("visits", 0) + 1;
 rec.set("visits", visits);
 rec.set("last", page);
 rec.save();
 return visits;
 }
 ```
-**Reading.** `get` gives a bin of any kind, or null. The typed readers
-(`getLong(String)`, `getString(String)`, `getList(String)` and the rest) throw
-`UdfException` naming the bin when it is absent or of another kind; given a default, they answer
-it for an absent bin and still throw for a wrong kind. See `RecordReader`.
+**Reading.** `get` gives a bin of any kind, or null; `bin` gives it or throws. The
+typed readers (`getInt(String)`, `getString(String)`, `getList(String)` and the
+rest) throw `UdfException` naming the bin when it is absent or of another kind; given a default,
+they answer it for an absent bin and still throw for a wrong kind. See `RecordReader`.
 **Writing.** `set` stages a bin, `remove` stages its removal, and `save`
 writes what is staged, creating the record when it does not exist. `delete` deletes the record.
 Nothing is written until `save`, with one exception the server makes: `setInts` and
@@ -96,22 +96,28 @@ passed as a string literal is encoded once, not once per call, and a reader allo
 public Value get(String name)
 ```
 
-#### `Record.hasBin`
+#### `Record.bin`
 
 ```java
-public boolean hasBin(String name)
+public Value bin(String name)
 ```
 
-#### `Record.getLong`
+#### `Record.has`
 
 ```java
-public long getLong(String name)
+public boolean has(String name)
 ```
 
-#### `Record.getLong`
+#### `Record.getInt`
 
 ```java
-public long getLong(String name, long dflt)
+public long getInt(String name)
+```
+
+#### `Record.getInt`
+
+```java
+public long getInt(String name, long dflt)
 ```
 
 #### `Record.getDouble`
@@ -126,16 +132,16 @@ public double getDouble(String name)
 public double getDouble(String name, double dflt)
 ```
 
-#### `Record.getBoolean`
+#### `Record.getBool`
 
 ```java
-public boolean getBoolean(String name)
+public boolean getBool(String name)
 ```
 
-#### `Record.getBoolean`
+#### `Record.getBool`
 
 ```java
-public boolean getBoolean(String name, boolean dflt)
+public boolean getBool(String name, boolean dflt)
 ```
 
 #### `Record.getString`
@@ -150,16 +156,16 @@ public String getString(String name)
 public String getString(String name, String dflt)
 ```
 
-#### `Record.getBytes`
+#### `Record.getBlob`
 
 ```java
-public byte[] getBytes(String name)
+public byte[] getBlob(String name)
 ```
 
-#### `Record.getBytes`
+#### `Record.getBlob`
 
 ```java
-public byte[] getBytes(String name, byte[] dflt)
+public byte[] getBlob(String name, byte[] dflt)
 ```
 
 #### `Record.getList`
@@ -437,7 +443,7 @@ Reading a record: what the record of a call (`Record`) and a record an event han
 on both.
 ```text
 static long balanceOf(RecordReader rec) {
-return rec.getLong("balance", 0);
+return rec.getInt("balance", 0);
 }
 ```
 The readers come in two forms. Without a default, the bin must be there: the reader throws
@@ -460,7 +466,7 @@ The `is*` tests say what the value is, `kind` gives the same as one of the const
 this class, and each `as*` reader throws `UdfException` when the value is of another kind.
 A value read from the record, from an argument or from an iteration is never changed afterwards, so it
 can be kept for the rest of the call.
-`ofInt`, `ofStr` and the other factories make a value of the guest's own, for a
+`ofInt`, `ofString` and the other factories make a value of the guest's own, for a
 builder, a bin or a result.
 
 #### `Value.ABSENT`
@@ -648,10 +654,10 @@ public boolean isDouble()
 
 Whether the value is a double.
 
-#### `Value.isBoolean`
+#### `Value.isBool`
 
 ```java
-public boolean isBoolean()
+public boolean isBool()
 ```
 
 Whether the value is a boolean.
@@ -704,10 +710,10 @@ public boolean isStored()
 
 Whether the value is a string, blob, GeoJSON, HLL, list or map the host holds (read by position).
 
-#### `Value.asLong`
+#### `Value.asInt`
 
 ```java
-public long asLong()
+public long asInt()
 ```
 
 The integer; throws `UdfException` when the value is of another kind.
@@ -720,10 +726,10 @@ public double asDouble()
 
 The double; throws `UdfException` when the value is of another kind. An integer is not widened.
 
-#### `Value.asBoolean`
+#### `Value.asBool`
 
 ```java
-public boolean asBoolean()
+public boolean asBool()
 ```
 
 The boolean; throws `UdfException` when the value is of another kind.
@@ -736,19 +742,19 @@ public String asString()
 
 The text of a string, copied out; throws `UdfException` when the value is of another kind.
 
-#### `Value.asBytes`
+#### `Value.asBlob`
 
 ```java
-public byte[] asBytes()
+public byte[] asBlob()
 ```
 
 The bytes of a string, blob, GeoJSON or HLL, copied out; throws `UdfException` when the value
 is of another kind.
 
-#### `Value.readBytes`
+#### `Value.readBlob`
 
 ```java
-public int readBytes(byte[] into)
+public int readBlob(byte[] into)
 ```
 
 Copies the bytes of a stored string, blob, GeoJSON or HLL into `into`, which the caller keeps
@@ -791,10 +797,10 @@ The value as a plain Java object, copied out whole: `Long`, `Double`, `Boolean`,
 `String` (a GeoJSON document as its text), `byte[]`, a `java.util.List` or a
 `java.util.Map` of the same, and `null` for nil or absent.
 
-#### `Value.compareStored`
+#### `Value.cmpStored`
 
 ```java
-public int compareStored(Value other)
+public int cmpStored(Value other)
 ```
 
 Compares two stored values byte by byte, as memcmp would on their stored encodings, without copying
@@ -833,10 +839,10 @@ public static Value ofNil()
 
 A nil value.
 
-#### `Value.ofStr`
+#### `Value.ofString`
 
 ```java
-public static Value ofStr(String s)
+public static Value ofString(String s)
 ```
 
 A string of the guest's, encoded as UTF-8.
@@ -873,9 +879,9 @@ if (tag.asString().equals(wanted)) {
 break;            // leaving early is fine
 }
 }
-long first = tags.getLong(0);
+long first = tags.getInt(0);
 ```
-The typed readers (`getLong(int)` and the rest) throw `UdfException` naming the index
+The typed readers (`getInt(int)` and the rest) throw `UdfException` naming the index
 when the element is of another kind, and so does every reader for an index past the end. A list is
 read-only: to change one, build another (`ListBuilder`) and write that. `toList` copies
 the whole list out as a `java.util.List`.
@@ -913,10 +919,10 @@ public Value get(int index)
 The element at `index`, counted from 0; throws `UdfException` when the list has no such
 element. The server steps over the elements before it without decoding them.
 
-#### `ListValue.getLong`
+#### `ListValue.getInt`
 
 ```java
-public long getLong(int index)
+public long getInt(int index)
 ```
 
 The integer at `index`; throws `UdfException` naming the index when it is not one.
@@ -929,10 +935,10 @@ public double getDouble(int index)
 
 The double at `index`; an integer is not widened.
 
-#### `ListValue.getBoolean`
+#### `ListValue.getBool`
 
 ```java
-public boolean getBoolean(int index)
+public boolean getBool(int index)
 ```
 
 The boolean at `index`.
@@ -945,10 +951,10 @@ public String getString(int index)
 
 The text of the string at `index`, copied out.
 
-#### `ListValue.getBytes`
+#### `ListValue.getBlob`
 
 ```java
-public byte[] getBytes(int index)
+public byte[] getBlob(int index)
 ```
 
 The bytes of the string, blob, GeoJSON or HLL at `index`, copied out.
@@ -1014,10 +1020,10 @@ by its key, which is a string or an integer, and every entry in the order the se
 read where it is, so nothing is copied until an entry is asked for.
 ```text
 MapValue device = rec.getMap("device");
-long version = device.getLong("version", 0);     // 0 when there is no such key
+long version = device.getInt("version", 0);     // 0 when there is no such key
 String id = device.getString("deviceId");        // throws when there is no such key
 for (MapValue.Entry e : rec.getMap("counts")) {
-total += e.getValue().asLong();
+total += e.getValue().asInt();
 }
 ```
 `get(String)` answers `null` for a key the map does not have, as a `java.util.Map`
@@ -1098,18 +1104,18 @@ public boolean containsKey(String key)
 
 Whether the map has `key`.
 
-#### `MapValue.getLong`
+#### `MapValue.getInt`
 
 ```java
-public long getLong(String key)
+public long getInt(String key)
 ```
 
 The integer under `key`; throws `UdfException` when there is none or it is not one.
 
-#### `MapValue.getLong`
+#### `MapValue.getInt`
 
 ```java
-public long getLong(String key, long dflt)
+public long getInt(String key, long dflt)
 ```
 
 The integer under `key`, or `dflt` when there is none; throws when it is of another kind.
@@ -1130,18 +1136,18 @@ public double getDouble(String key, double dflt)
 
 The double under `key`, or `dflt` when there is none.
 
-#### `MapValue.getBoolean`
+#### `MapValue.getBool`
 
 ```java
-public boolean getBoolean(String key)
+public boolean getBool(String key)
 ```
 
 The boolean under `key`.
 
-#### `MapValue.getBoolean`
+#### `MapValue.getBool`
 
 ```java
-public boolean getBoolean(String key, boolean dflt)
+public boolean getBool(String key, boolean dflt)
 ```
 
 The boolean under `key`, or `dflt` when there is none.
@@ -1162,18 +1168,18 @@ public String getString(String key, String dflt)
 
 The text of the string under `key`, or `dflt` when there is none.
 
-#### `MapValue.getBytes`
+#### `MapValue.getBlob`
 
 ```java
-public byte[] getBytes(String key)
+public byte[] getBlob(String key)
 ```
 
 The bytes of the string, blob, GeoJSON or HLL under `key`, copied out.
 
-#### `MapValue.getBytes`
+#### `MapValue.getBlob`
 
 ```java
-public byte[] getBytes(String key, byte[] dflt)
+public byte[] getBlob(String key, byte[] dflt)
 ```
 
 The bytes under `key`, or `dflt` when there is none.
@@ -1226,18 +1232,18 @@ public boolean containsKey(long key)
 
 Whether the map has the integer `key`.
 
-#### `MapValue.getLong`
+#### `MapValue.getInt`
 
 ```java
-public long getLong(long key)
+public long getInt(long key)
 ```
 
 The integer under the integer `key`; throws when there is none or it is not one.
 
-#### `MapValue.getLong`
+#### `MapValue.getInt`
 
 ```java
-public long getLong(long key, long dflt)
+public long getInt(long key, long dflt)
 ```
 
 The integer under the integer `key`, or `dflt` when there is none.
@@ -1258,18 +1264,18 @@ public double getDouble(long key, double dflt)
 
 The double under the integer `key`, or `dflt` when there is none.
 
-#### `MapValue.getBoolean`
+#### `MapValue.getBool`
 
 ```java
-public boolean getBoolean(long key)
+public boolean getBool(long key)
 ```
 
 The boolean under the integer `key`.
 
-#### `MapValue.getBoolean`
+#### `MapValue.getBool`
 
 ```java
-public boolean getBoolean(long key, boolean dflt)
+public boolean getBool(long key, boolean dflt)
 ```
 
 The boolean under the integer `key`, or `dflt` when there is none.
@@ -1290,18 +1296,18 @@ public String getString(long key, String dflt)
 
 The text of the string under the integer `key`, or `dflt` when there is none.
 
-#### `MapValue.getBytes`
+#### `MapValue.getBlob`
 
 ```java
-public byte[] getBytes(long key)
+public byte[] getBlob(long key)
 ```
 
 The bytes of the string, blob, GeoJSON or HLL under the integer `key`, copied out.
 
-#### `MapValue.getBytes`
+#### `MapValue.getBlob`
 
 ```java
-public byte[] getBytes(long key, byte[] dflt)
+public byte[] getBlob(long key, byte[] dflt)
 ```
 
 The bytes under the integer `key`, or `dflt` when there is none.
@@ -1470,10 +1476,10 @@ public ListBuilder add(Map<?, ?> value)
 
 Appends a `java.util.Map` as one nested map, its entries as `MapBuilder#putAll(Map)` takes them.
 
-#### `ListBuilder.addNull`
+#### `ListBuilder.addNil`
 
 ```java
-public ListBuilder addNull()
+public ListBuilder addNil()
 ```
 
 Appends nil.
@@ -1640,10 +1646,10 @@ public MapBuilder put(String key, Map<?, ?> value)
 
 A `java.util.Map` as a nested map under a string key.
 
-#### `MapBuilder.putNull`
+#### `MapBuilder.putNil`
 
 ```java
-public MapBuilder putNull(String key)
+public MapBuilder putNil(String key)
 ```
 
 A nil entry: in a record an event handler answers with, "no such bin".
@@ -1736,10 +1742,10 @@ public MapBuilder put(long key, Map<?, ?> value)
 
 A `java.util.Map` as a nested map under an integer key.
 
-#### `MapBuilder.putNull`
+#### `MapBuilder.putNil`
 
 ```java
-public MapBuilder putNull(long key)
+public MapBuilder putNil(long key)
 ```
 
 A nil entry under an integer key.
@@ -1777,7 +1783,7 @@ takes as its first parameter.
 ```text
 @Function("increment")
 static long increment(Record rec, long by) {
-long n = rec.getLong("n", 0) + by;
+long n = rec.getInt("n", 0) + by;
 rec.set("n", n);
 rec.save();
 return n;
@@ -1891,10 +1897,10 @@ public static void resultBool(boolean v)
 
 Sets a boolean as the result.
 
-#### `Udf.resultStr`
+#### `Udf.resultString`
 
 ```java
-public static void resultStr(String s)
+public static void resultString(String s)
 ```
 
 Sets a string as the result.
@@ -2603,79 +2609,79 @@ public static void arity(String fn, int declared, int got)
 
 Fails a call that passed more arguments than the function declares, unless it takes the rest.
 
-#### `Params.int64`
+#### `Params.argInt`
 
 ```java
-public static long int64(Value[] a, int n, int i, String fn, String p)
+public static long argInt(Value[] a, int n, int i, String fn, String p)
 ```
 
 Argument `i`, counted from 0, of the `n` in `a`, as an integer. Throws
 `UdfException` when it is missing or of another kind; `fn` and `p` are the function
 and parameter names its message gives. Every reader here takes the same five.
 
-#### `Params.int32`
+#### `Params.argInt32`
 
 ```java
-public static int int32(Value[] a, int n, int i, String fn, String p)
+public static int argInt32(Value[] a, int n, int i, String fn, String p)
 ```
 
 An integer argument that fits in 32 bits; one that does not is a mismatch.
 
-#### `Params.float64`
+#### `Params.argDouble`
 
 ```java
-public static double float64(Value[] a, int n, int i, String fn, String p)
+public static double argDouble(Value[] a, int n, int i, String fn, String p)
 ```
 
 A double, or an int widened to one.
 
-#### `Params.bool`
+#### `Params.argBool`
 
 ```java
-public static boolean bool(Value[] a, int n, int i, String fn, String p)
+public static boolean argBool(Value[] a, int n, int i, String fn, String p)
 ```
 
 A boolean argument.
 
-#### `Params.str`
+#### `Params.argString`
 
 ```java
-public static String str(Value[] a, int n, int i, String fn, String p)
+public static String argString(Value[] a, int n, int i, String fn, String p)
 ```
 
 The text of a string argument, copied out.
 
-#### `Params.bytes`
+#### `Params.argBlob`
 
 ```java
-public static byte[] bytes(Value[] a, int n, int i, String fn, String p)
+public static byte[] argBlob(Value[] a, int n, int i, String fn, String p)
 ```
 
 The bytes of a string or a blob.
 
-#### `Params.any`
+#### `Params.argValue`
 
 ```java
-public static Value any(Value[] a, int n, int i, String fn, String p)
+public static Value argValue(Value[] a, int n, int i, String fn, String p)
 ```
 
 Any value, nil included.
 
-#### `Params.rest`
+#### `Params.argRest`
 
 ```java
-public static Value[] rest(Value[] a, int n, int i)
+public static Value[] argRest(Value[] a, int n, int i)
 ```
 
 Every argument from `i` on.
 
-#### `Params.optInt64`
+#### `Params.optInt`
 
 ```java
-public static Long optInt64(Value[] a, int n, int i, String fn, String p)
+public static Long optInt(Value[] a, int n, int i, String fn, String p)
 ```
 
-As `int64`, or null when the argument is absent or nil.
+As `argInt`, or null when the argument is absent or nil.
 
 #### `Params.optInt32`
 
@@ -2683,15 +2689,15 @@ As `int64`, or null when the argument is absent or nil.
 public static Integer optInt32(Value[] a, int n, int i, String fn, String p)
 ```
 
-As `int32`, or null when the argument is absent or nil.
+As `argInt32`, or null when the argument is absent or nil.
 
-#### `Params.optFloat64`
+#### `Params.optDouble`
 
 ```java
-public static Double optFloat64(Value[] a, int n, int i, String fn, String p)
+public static Double optDouble(Value[] a, int n, int i, String fn, String p)
 ```
 
-As `float64`, or null when the argument is absent or nil.
+As `argDouble`, or null when the argument is absent or nil.
 
 #### `Params.optBool`
 
@@ -2699,28 +2705,28 @@ As `float64`, or null when the argument is absent or nil.
 public static Boolean optBool(Value[] a, int n, int i, String fn, String p)
 ```
 
-As `bool`, or null when the argument is absent or nil.
+As `argBool`, or null when the argument is absent or nil.
 
-#### `Params.optStr`
+#### `Params.optString`
 
 ```java
-public static String optStr(Value[] a, int n, int i, String fn, String p)
+public static String optString(Value[] a, int n, int i, String fn, String p)
 ```
 
-As `str`, or null when the argument is absent or nil.
+As `argString`, or null when the argument is absent or nil.
 
-#### `Params.optBytes`
+#### `Params.optBlob`
 
 ```java
-public static byte[] optBytes(Value[] a, int n, int i, String fn, String p)
+public static byte[] optBlob(Value[] a, int n, int i, String fn, String p)
 ```
 
-As `bytes`, or null when the argument is absent or nil.
+As `argBlob`, or null when the argument is absent or nil.
 
-#### `Params.optAny`
+#### `Params.optValue`
 
 ```java
-public static Value optAny(Value[] a, int n, int i, String fn, String p)
+public static Value optValue(Value[] a, int n, int i, String fn, String p)
 ```
 
 The argument as it is, or null when it is absent or nil.
@@ -2782,18 +2788,18 @@ public static void result(Map<?, ?> m)
 
 Delivers a `java.util.Map` as a map result, its entries as a builder takes them; null is nil.
 
-#### `Params.resultStr`
+#### `Params.resultString`
 
 ```java
-public static void resultStr(String s)
+public static void resultString(String s)
 ```
 
 Delivers a string as the result; null is nil.
 
-#### `Params.resultBytes`
+#### `Params.resultBlob`
 
 ```java
-public static void resultBytes(byte[] b)
+public static void resultBlob(byte[] b)
 ```
 
 Delivers a byte array as a blob result; null is nil.

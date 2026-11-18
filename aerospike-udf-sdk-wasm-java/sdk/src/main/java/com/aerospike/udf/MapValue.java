@@ -26,11 +26,11 @@ import org.teavm.interop.Address;
  * <pre>
  * MapValue device = rec.getMap("device");
  *
- * long version = device.getLong("version", 0);     // 0 when there is no such key
+ * long version = device.getInt("version", 0);     // 0 when there is no such key
  * String id = device.getString("deviceId");        // throws when there is no such key
  *
  * for (MapValue.Entry e : rec.getMap("counts")) {
- *     total += e.getValue().asLong();
+ *     total += e.getValue().asInt();
  * }
  * </pre>
  *
@@ -187,12 +187,12 @@ public final class MapValue implements Iterable<MapValue.Entry> {
     }
 
     /** The integer under {@code key}; throws {@link UdfException} when there is none or it is not one. */
-    public long getLong(String key) {
+    public long getInt(String key) {
         return required(find(key, SCRATCH), key, Value.INT, "an int").payload();
     }
 
     /** The integer under {@code key}, or {@code dflt} when there is none; throws when it is of another kind. */
-    public long getLong(String key, long dflt) {
+    public long getInt(String key, long dflt) {
         Value v = optional(find(key, SCRATCH), key, Value.INT, "an int");
 
         return v == null ? dflt : v.payload();
@@ -211,12 +211,12 @@ public final class MapValue implements Iterable<MapValue.Entry> {
     }
 
     /** The boolean under {@code key}. */
-    public boolean getBoolean(String key) {
+    public boolean getBool(String key) {
         return required(find(key, SCRATCH), key, Value.BOOL, "a bool").payload() != 0;
     }
 
     /** The boolean under {@code key}, or {@code dflt} when there is none. */
-    public boolean getBoolean(String key, boolean dflt) {
+    public boolean getBool(String key, boolean dflt) {
         Value v = optional(find(key, SCRATCH), key, Value.BOOL, "a bool");
 
         return v == null ? dflt : v.payload() != 0;
@@ -235,18 +235,18 @@ public final class MapValue implements Iterable<MapValue.Entry> {
     }
 
     /** The bytes of the string, blob, GeoJSON or HLL under {@code key}, copied out. */
-    public byte[] getBytes(String key) {
+    public byte[] getBlob(String key) {
         int state = Reads.state(find(key, SCRATCH), SCRATCH, SCRATCH.kind());
 
         if (state != Reads.HIT) {
             throw Reads.problem(state, "key ", key, "a string or blob");
         }
 
-        return bytesOf(SCRATCH, key).asBytes();
+        return bytesOf(SCRATCH, key).asBlob();
     }
 
     /** The bytes under {@code key}, or {@code dflt} when there is none. */
-    public byte[] getBytes(String key, byte[] dflt) {
+    public byte[] getBlob(String key, byte[] dflt) {
         int state = Reads.state(find(key, SCRATCH), SCRATCH, SCRATCH.kind());
 
         if (state == Reads.NONE) {
@@ -257,7 +257,7 @@ public final class MapValue implements Iterable<MapValue.Entry> {
             throw Reads.problem(state, "key ", key, "a string or blob");
         }
 
-        return bytesOf(SCRATCH, key).asBytes();
+        return bytesOf(SCRATCH, key).asBlob();
     }
 
     /** The list under {@code key}. */
@@ -333,12 +333,12 @@ public final class MapValue implements Iterable<MapValue.Entry> {
     }
 
     /** The integer under the integer {@code key}; throws when there is none or it is not one. */
-    public long getLong(long key) {
+    public long getInt(long key) {
         return required(find(key, SCRATCH), key, Value.INT, "an int").payload();
     }
 
     /** The integer under the integer {@code key}, or {@code dflt} when there is none. */
-    public long getLong(long key, long dflt) {
+    public long getInt(long key, long dflt) {
         Value v = optional(find(key, SCRATCH), key, Value.INT, "an int");
 
         return v == null ? dflt : v.payload();
@@ -357,12 +357,12 @@ public final class MapValue implements Iterable<MapValue.Entry> {
     }
 
     /** The boolean under the integer {@code key}. */
-    public boolean getBoolean(long key) {
+    public boolean getBool(long key) {
         return required(find(key, SCRATCH), key, Value.BOOL, "a bool").payload() != 0;
     }
 
     /** The boolean under the integer {@code key}, or {@code dflt} when there is none. */
-    public boolean getBoolean(long key, boolean dflt) {
+    public boolean getBool(long key, boolean dflt) {
         Value v = optional(find(key, SCRATCH), key, Value.BOOL, "a bool");
 
         return v == null ? dflt : v.payload() != 0;
@@ -381,18 +381,18 @@ public final class MapValue implements Iterable<MapValue.Entry> {
     }
 
     /** The bytes of the string, blob, GeoJSON or HLL under the integer {@code key}, copied out. */
-    public byte[] getBytes(long key) {
+    public byte[] getBlob(long key) {
         int state = Reads.state(find(key, SCRATCH), SCRATCH, SCRATCH.kind());
 
         if (state != Reads.HIT) {
             throw Reads.problem(state, "key ", Long.toString(key), "a string or blob");
         }
 
-        return bytesOf(SCRATCH, Long.toString(key)).asBytes();
+        return bytesOf(SCRATCH, Long.toString(key)).asBlob();
     }
 
     /** The bytes under the integer {@code key}, or {@code dflt} when there is none. */
-    public byte[] getBytes(long key, byte[] dflt) {
+    public byte[] getBlob(long key, byte[] dflt) {
         int state = Reads.state(find(key, SCRATCH), SCRATCH, SCRATCH.kind());
 
         if (state == Reads.NONE) {
@@ -403,7 +403,7 @@ public final class MapValue implements Iterable<MapValue.Entry> {
             throw Reads.problem(state, "key ", Long.toString(key), "a string or blob");
         }
 
-        return bytesOf(SCRATCH, Long.toString(key)).asBytes();
+        return bytesOf(SCRATCH, Long.toString(key)).asBlob();
     }
 
     /** The list under the integer {@code key}. */

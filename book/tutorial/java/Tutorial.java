@@ -29,7 +29,7 @@ public final class Tutorial {
     // ANCHOR: visit
     @Function("visit")
     static long visit(Record rec, long by) {
-        long n = rec.getLong("visits", 0) + by;   // 0 when the bin is absent
+        long n = rec.getInt("visits", 0) + by;    // 0 when the bin is absent
 
         rec.set("visits", n);                     // staged, not yet written
         rec.save();                               // creates the record when there is none
@@ -41,7 +41,7 @@ public final class Tutorial {
     // ANCHOR: withdraw
     @Function("withdraw")
     static long withdraw(Record rec, long amount) {
-        long balance = rec.getLong("balance");    // throws when absent or not an integer
+        long balance = rec.getInt("balance");    // throws when absent or not an integer
 
         if (amount > balance) {
             throw new UdfException("insufficient funds");
@@ -74,7 +74,7 @@ public final class Tutorial {
         long sum = 0;
 
         for (Value payment : rec.getList("history")) {
-            sum += payment.asLong();
+            sum += payment.asInt();
         }
 
         return sum;
@@ -84,7 +84,7 @@ public final class Tutorial {
     // ANCHOR: limit_for
     @Function("limit_for")
     static long limitFor(Record rec, String kind) {
-        return rec.getMap("limits").getLong(kind, 0);   // 0 when the map has no such key
+        return rec.getMap("limits").getInt(kind, 0);   // 0 when the map has no such key
     }
     // ANCHOR_END: limit_for
 
@@ -94,7 +94,7 @@ public final class Tutorial {
         long sum = 0;
 
         for (MapValue.Entry e : rec.getMap("limits")) {
-            sum += e.getValue().asLong();
+            sum += e.getValue().asInt();
         }
 
         return sum;
@@ -117,7 +117,7 @@ public final class Tutorial {
     // ANCHOR: summary
     @Function("summary")
     static MapBuilder summary(Record rec) {
-        if (!rec.hasBin("owner") || !rec.hasBin("balance")) {
+        if (!rec.has("owner") || !rec.has("balance")) {
             throw new UdfException("no owner or balance");
         }
 
@@ -133,7 +133,7 @@ public final class Tutorial {
     // ANCHOR: renew
     @Function("renew")
     static long renew(Record rec, long seconds) {
-        long n = rec.getLong("renewals", 0) + 1;
+        long n = rec.getInt("renewals", 0) + 1;
 
         rec.set("renewals", n);
         rec.setTtl((int) seconds);   // takes effect with the save; throws when it is refused

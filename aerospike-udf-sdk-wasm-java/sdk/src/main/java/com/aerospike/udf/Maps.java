@@ -56,7 +56,7 @@ final class Maps {
     }
 
     /** An integer entry, or {@code dflt} when there is none or it is not an integer. */
-    static long getLong(Value m, String key, long dflt) {
+    static long getInt(Value m, String key, long dflt) {
         return find(m, key, SCRATCH) && SCRATCH.kind() == Value.INT ? SCRATCH.payload() : dflt;
     }
 
@@ -66,7 +66,7 @@ final class Maps {
     }
 
     /** Whether an entry is the boolean true; false when there is none or it is of another kind. */
-    static boolean getBoolean(Value m, String key) {
+    static boolean getBool(Value m, String key) {
         return find(m, key, SCRATCH) && SCRATCH.kind() == Value.BOOL && SCRATCH.payload() != 0;
     }
 

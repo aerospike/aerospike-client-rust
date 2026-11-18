@@ -27,23 +27,23 @@ import java.lang.annotation.Target;
  *
  * <pre>
  * {@literal @}On.XdrMerge("merge_counter")
- * static Resolution mergeCounter(EventRecord current, EventRecord incoming, Conflict conflict) {
+ * static Resolution mergeCounter(EventRecord current, EventRecord incoming) {
  *     ...
  *     return Resolution.record(out);
  * }
  * </pre>
  *
  * <p>A handler may also take the raw form {@code int name(int args, int argc)}, exported as it is with only
- * the signature generated; it decodes the call with {@link Conflict#decode} and answers with the
- * {@link Conflict} verdict methods. The name is the method's when the annotation's value is empty.
+ * the signature generated; it reads the two records with {@link Pair#decode} and answers by returning a
+ * resolution's {@link Resolution#deliver}. The name is the method's when the annotation's value is empty.
  */
 public final class On {
     private On() {
     }
 
     /**
-     * {@code (EventRecord current, EventRecord incoming, Conflict conflict)}; answers keep-local, take-remote,
-     * policy, delete or record. The two records are {@code conflict.local} and {@code conflict.remote}.
+     * {@code (EventRecord current, EventRecord incoming)}: the record as it is on this cluster and the one
+     * that arrived over XDR; answers keep-local, take-remote, policy, delete or record.
      */
     @Target(ElementType.METHOD)
     @Retention(RetentionPolicy.SOURCE)

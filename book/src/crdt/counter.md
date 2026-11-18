@@ -31,7 +31,7 @@ In Rust:
 ```rust
 event! {
     on xdr_merge
-    fn merge_counter(current: EventRecord, incoming: EventRecord, _conflict: Conflict) -> Result<Resolution, Error> {
+    fn merge_counter(current: EventRecord, incoming: EventRecord) -> Result<Resolution, Error> {
         let mut counts = Counts::new();
 
         counts.offer_all(current.map("counts")?)?;
@@ -54,7 +54,7 @@ The same in Java:
 
 ```java
 @On.XdrMerge("merge_counter")
-static Resolution mergeCounter(EventRecord current, EventRecord incoming, Conflict conflict) {
+static Resolution mergeCounter(EventRecord current, EventRecord incoming) {
     size = 0;
     offerAll(current.getMap("counts", null));
     offerAll(incoming.getMap("counts", null));
@@ -76,7 +76,7 @@ And in Go:
 
 ```go
 //udf:on xdr-merge merge_counter
-func mergeCounter(current, incoming *udf.EventRecord, _ *udf.Conflict) (udf.Resolution, error) {
+func mergeCounter(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 	t := table{}
 
 	for _, side := range []*udf.EventRecord{current, incoming} {

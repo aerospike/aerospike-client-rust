@@ -69,6 +69,20 @@ Decided 2026-11-17 and 2026-11-18. Described in [Security](security.md) and
 | **`max-memory` is capped at 2 GiB.** | A length of 4 GiB minus one wrapped in 32-bit arithmetic. |
 | **The limits are read once, at start.** | There is no code path that changes them under running calls, and so none to get wrong. |
 
+## One vocabulary across the languages
+
+Decided 2026-11-18. Described in each language's page.
+
+| Decision | Why |
+| --- | --- |
+| **The same thing has the same words in every SDK**, in the casing and grammar the language asks for. | The SDKs had grown apart: a string bin was read with `text`, `Str`, `as_text` or `getString`, depending on the language, and a module ported from one to another had to be relearned. |
+| **The type words are the server's**: `int`, `double`, `bool`, `string`, `blob`, `list`, `map`, `geojson`, `nil`. Rust reads `rec.int(..)`, Go `rec.Int(..)`, C++ `rec.as_int(..)`, Java `rec.getInt(..)`, C `as_udf_rec_int(..)`. | Each language's own words (`long`, `Float64`, `bytes`) were considered. They are consistent inside a language and different across them, and the integer is 64 bits whatever a language calls it. |
+| **Record metadata is spelled out**: `generation`, `last_update_time`, `source_id`, `bin_last_update_time`, `bin_source_id`, `bin_count`, `bin_names`, `deleted_bins`. | `gen`, `lut` and `src` were the wire's abbreviations showing through. |
+| **The two sides of a merge are `current` and `incoming` everywhere**, in `Pair` and `Both` as in the handler's parameters. **The verdicts stay `keep-local` and `take-remote`.** | Those two are the words the server checks. Renaming the helpers and not the wire would have made the SDK say one thing and send another. |
+| **Every language has the same set of readers and helpers**, where it can express them. C has the record-level ones and no `Pair`. | A helper present in one language and not the next read as a missing feature. |
+| **What a language cannot say, it says once, differently**: C++ has `delete_record()` because `delete` is a keyword; Java has `sumInt` and `sumDouble` and argument readers named `argInt`; Rust keeps the type names `Text` and `Blob` beside the method `string()`; `is_null` stays where it means nil or absent. | Each is forced by the language, and is the only departure of its kind. |
+| **Collection verbs stay each language's own**, as decided above; **names on the wire did not change.** | A Java programmer expects `put` and a Rust one `insert`. Host imports, export names and signature text belong to the server's contract. |
+
 ## The `xdr-merge` event
 
 Decided 2026-11-18. Described in [The event system](events/README.md#xdr-merge).
@@ -82,6 +96,7 @@ Decided 2026-11-18. Described in [The event system](events/README.md#xdr-merge).
 | **An incoming XDR delete is offered to the handler.** | It was, but only on a path that a namespace shipping to another cluster does not take, so between two clusters the handler was never asked. |
 | **A handler sees both records unmasked.** | It merges real values and what it returns is stored; masking what it reads would make it store masked values. Refusing to bind on a masked set, and skipping the handler there, were considered. Binding a handler to a masked set is the operator's decision to trust it. |
 | **An invalid GeoJSON document, and a record whose values alone exceed `max-record-size`, are handler failures.** | Both used to be found out by the write, which then failed whatever the binding said, or were stored. |
+| **A handler takes the two records and nothing else.** There was a third parameter, a description of the conflict. What a merge can need from it is now asked of the record it is about: whether the incoming write is a delete or carries only changed bins, which of its bins would lose under bin convergence, whether the current record is a tombstone, and whether per-bin timestamps mean anything. Whether the call is a dry run, and the binding's trigger, are no longer shown. | Six of the seven merges written for this engine ignored the parameter, and the seventh used it to get back the two records it already had. A merge that reads how it was called, and not only what it was given, is one that can answer differently for the same two records. An optional third parameter was considered and turned down: one shape to document, and one for the code generators to accept. The contract version stays 1, since what the server sends did not change. |
 | **A signature's text is cleaned before it is quoted to an operator, and its version is read whole.** | The text is the module's. A version of 4294967297 had bound as version 1. |
 
 ## One event

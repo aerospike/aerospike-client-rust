@@ -17,7 +17,7 @@ import java.nio.charset.StandardCharsets;
 /**
  * Bin names and map keys as the UTF-8 bytes the host takes, encoded once per name rather than once per
  * call. A module names its bins with the same few string literals on every call, so the bytes of a name
- * are found by the string itself: {@code rec.getLong("ticks")} allocates nothing, and for the names a
+ * are found by the string itself: {@code rec.getInt("ticks")} allocates nothing, and for the names a
  * call used last it costs a few comparisons of references.
  *
  * <p>There are two tiers. The eight names used most recently are held in fields and matched by identity,

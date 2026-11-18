@@ -64,14 +64,14 @@ func ResultList(l *List) error {
 	return statusError(resultHandle(l.handle), "could not return the list")
 }
 
-// ResultOf sets a value of any kind as the result: a scalar by value, guest bytes, a built collection by
+// Result sets a value of any kind as the result: a scalar by value, guest bytes, a built collection by
 // handle, a stored value by position; nil or absent is nil.
-func ResultOf(v Value) error {
+func Result(v Value) error {
 	switch v.Kind {
 	case KindInt:
 		resultInt(v.Payload)
 	case KindDouble:
-		resultDouble(v.Double())
+		resultDouble(v.double())
 	case KindBool:
 		resultBool(int32(v.Payload))
 	case KindNil, KindAbsent:

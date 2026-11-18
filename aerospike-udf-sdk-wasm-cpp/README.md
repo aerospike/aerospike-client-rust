@@ -55,10 +55,10 @@ WASM tier has no SIMD (Fast JIT, the x86-64 default) refuses a module built with
   UDF, exported as `name_record` and `name_end` with the signature `stream name { record(...) end(...) }`;
   state in statics. The record half may take `const udf::Record& rec` first, and only const: a stream's
   record takes no write, and `udf::Record&` there does not compile. The end half has no record.
-- **`UDF_ON_XDR_MERGE(name)`**: an `xdr-merge` event handler, with the event's parameters under fixed
-  names (`current`, `incoming`, `conflict`) and returning a `udf::Result<udf::Resolution>`:
-  `keep_local()`, `take_remote()`, `policy()`, `delete_record()` or `record(bins[, ttl])`. The two records
-  are read-only `udf::EventRecord`s.
+- **`UDF_ON_XDR_MERGE(name)`**: an `xdr-merge` event handler, with the event's two parameters under
+  fixed names (`current`, the record as it is on this cluster, and `incoming`, the one that arrived over
+  XDR) and returning a `udf::Result<udf::Resolution>`: `keep_local()`, `take_remote()`, `policy()`,
+  `delete_record()` or `record(bins[, ttl])`. The two records are read-only `udf::EventRecord`s.
 - **The raw form**: `UDF_FUNCTION_RAW(name, "(params)")` and `UDF_STREAM_RAW(name, "(record)", "(end)")`
   declare `(int32_t args, int32_t argc)` functions exported as they are, for a hot path that reads its
   arguments once and keeps them, as `examples/vector` does.
@@ -70,15 +70,16 @@ WASM tier has no SIMD (Fast JIT, the x86-64 default) refuses a module built with
   - Reading (const): `get(name)` as an `Optional<Value>`, nothing when the bin is absent or nil;
     `bin(name)` for the bin that must be there, a `Result<Value>` whose error names the bin, chained with
     the value's own reader when the kind must hold too (`UDF_TRY(UDF_TRY(rec.bin("n")).as_int())`); the
-    typed readers `as_int(name)`, `as_double`, `as_bool`, `as_text<N>`, `as_bytes<N>`, each an `Optional`
+    typed readers `as_int(name)`, `as_double`, `as_bool`, `as_string<N>`, `as_blob<N>`, each an `Optional`
     that is empty when the bin is absent, nil or of another kind; `int_or(name, 0)`, `double_or`, `bool_or`
     for a default; `has(name)`; `floats_into`; `list(name)` / `map(name)` to range over.
   - Writing (not const): `set(name, value)` overloads for every kind, `set_blob`, `set_geojson`,
-    `set_ints`, `set_doubles`, and `remove(name)` to remove a bin. There is no `set_null`: a bin cannot hold
+    `set_ints`, `set_doubles`, and `remove(name)` to remove a bin. There is no `set_nil`: a bin cannot hold
     nil, and `set(name, udf::Value::nil())` removes it as `remove` does. Writes are staged until `save()`;
     the two bulk list writes take effect at once.
   - Metadata (const): `exists`, `generation`, `ttl`, `last_update_time`, `size`, `bin_count`, `set_name`,
-    `key_type` / `key_int` / `key_bytes`, `digest`; and `set_ttl`, which is a write.
+    `key(buf, cap)` (the user key as a `Value`, over `key_type` / `key_int` / `key_bytes`), `digest`; and
+    `set_ttl`, which is a write.
   - Lifecycle: `save()` writes what was staged and creates the record when it does not exist;
     `delete_record()` deletes it, with no save. `delete` is a C++ keyword, and the name keeps the verb the
     other SDKs use while staying clear of `remove(name)`, which removes one bin.
@@ -88,25 +89,33 @@ WASM tier has no SIMD (Fast JIT, the x86-64 default) refuses a module built with
   a helper written as `template <class R> ... (const udf::ReadRecord<R>& rec)` reads from the record of a
   call and from either side of an event. `examples/counter` loads its table that way.
 - **`udf::Value`**: the 16-byte value every read is, with `kind()`, the `is_*` tests, `as_int()`,
-  `as_double()`, `as_bool()`, `as_text<N>()`, `as_bytes<N>()`, `floats_into()`, `cmp_stored()`; for a
+  `as_double()`, `as_bool()`, `as_string<N>()`, `as_blob<N>()`, `floats_into()`, `cmp_stored()`
+  (`is_null()` is not `is_nil()`: it is true of a nil and of an absent value alike); for a
   stored collection `size()`, `empty()`, `get(key)` and `contains(key)` on a map, `at(index)` on a list
   (one import, no walk); and **`list()` / `map()`** as ranges: `for (udf::Value v : v.list())`,
   `for (udf::Entry e : v.map())`, 32 per import, the cursor released when the loop ends or breaks.
 - **`udf::Map` and `udf::List`**: collections built on the host, with chainable `put` / `add` overloads for
-  every kind, string and integer keys, `put_null`, `put_geojson`, `put_all` / `add_all` by position; the
+  every kind, string and integer keys, `put_nil`, `put_geojson`, `put_all` / `add_all` by position; the
   first refusal is kept and answered by `error()` / `result()`. `size()` and `empty()` on both, and
   `Map::contains(key)` for a string or an integer key, answered by the host for the map being built.
   Written to a bin, returned as the result, nested, or handed back from a handler.
 - **Strings**: `udf::StrView` (a pointer and a length over bytes the caller keeps alive) and
   `udf::Text<N>` (an inline buffer), both comparing bytewise; nothing allocates.
 - **What is not about the record** stays in the namespace: `udf::now`, `udf::log`, `udf::fail`,
-  `udf::result_of`.
+  `udf::result`.
 - **The `xdr-merge` event**: `udf::EventRecord` for each of the two records the event hands over (the
-  reading methods of `ReadRecord`, `names()`, `with_bins(out)` to keep the rest of a record under a few
-  decided bins) and `udf::Resolution` for the answer; the merge through `udf::Conflict` (`pair()` into
-  `Pair` and `Both<T>` with `newer`, `older`, `max`, `min`, `sum`, `merge`, `with_newer`;
-  `involves_delete`, `lost_bins`). `examples/resolver` is the worked example, held to the same behaviour
-  as the other languages' by the client tests.
+  reading methods of `ReadRecord`; `generation()`, `last_update_time()`, `ttl()`, `source_id()`;
+  `bin_names()`, `deleted_bins()`, `deleted_any()`; `bin_last_update_time(name)` and `bin_source_id(name)`;
+  `with_bins(out)` to keep the rest of a record under a few decided bins) and `udf::Resolution` for the
+  answer. What the server says of the merge is asked of the
+  record it is about: `incoming.is_delete()`, `incoming.is_partial()`, `incoming.lost_bins()`,
+  `current.is_tombstone()`, and `uses_bin_convergence()` on either. The merge bin by bin goes through
+  `udf::Pair pair = udf::Pair::of(current, incoming);`: its typed readers (`as_int`, `as_double`,
+  `as_bool`, `as_string<N>`, `as_blob<N>`, `bin`, `list`, `map`) each give a `Both<T>` with the two sides
+  as `current` and `incoming` and `incoming_is_newer`, `newer`, `older`, `ordered`, `current_or_incoming`,
+  `incoming_or_current`, `max`, `min`, `sum`, `merge`; `pair.incoming_is_newer(name)` and
+  `pair.with_newer(out)` are asked of the pair itself. `examples/resolver` is the worked example, held to the same behaviour as the
+  other languages' by the client tests.
 - **The low-level tier**: the whole C header, under the C++ one. `udf::Map::wrap` / `List::wrap` bridge a
   handle to the typed collections, and `udf::Value` is layout-compatible with `as_udf_value`.
 

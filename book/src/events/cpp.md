@@ -3,14 +3,16 @@
 A C++ event handler is a function defined by the `UDF_ON_XDR_MERGE` macro, with the parameters the event
 hands over and returning its answer in a `udf::Result`: the C++ face of the Rust SDK's `event!`. The macro
 writes the export that decodes the event into those parameters and delivers the answer, and the
-`__udf_sig_<name>` export reading `event xdr-merge/1 ...`, which `event-set` checks before binding. The
-parameter names are fixed (`current`, `incoming`, `conflict`), so a handler body reads them by those
-names. An error returned fails the call with its message.
+`__udf_sig_<name>` export reading
+`event xdr-merge/1 name(current: record, incoming: record) -> resolution`, which `event-set` checks before
+binding. The two parameter names are fixed, `current` for the record as it is on this cluster and
+`incoming` for the one that arrived over XDR, so a handler body reads them by those names. An error
+returned fails the call with its message.
 
 ```cpp
 UDF_ON_XDR_MERGE(merge_account)
 {
-	udf::Pair pair = conflict.pair();
+	udf::Pair pair = udf::Pair::of(current, incoming);
 	udf::Map out(4);
 
 	if (udf::Optional<int64_t> visits = pair.as_int("visits").max()) {   // both sides' increments are real
@@ -26,15 +28,27 @@ UDF_ON_XDR_MERGE(merge_account)
 A `udf::EventRecord` is one record the event hands over, read-only, the C struct underneath. It reads its
 bins with the methods of `udf::ReadRecord`, the same ones `udf::Record` has in a record UDF: `get(name)`
 is the bin as an `Optional<Value>`, empty for absent or nil; `bin(name)` is the bin that must be there, a
-`Result<Value>`; `as_int(name)`, `as_double`, `as_bool`, `as_text<N>` and `as_bytes<N>` answer an
+`Result<Value>`; `as_int(name)`, `as_double`, `as_bool`, `as_string<N>` and `as_blob<N>` answer an
 `Optional` of the type, empty for absent, nil or another kind; `int_or(name, 0)`, `double_or` and
 `bool_or` take a default; `has(name)` says whether the bin is there; `list(name)` and `map(name)` give a
 range over a collection bin. A helper written as `template <class R> ... (const udf::ReadRecord<R>& rec)`
 serves a handler and a UDF alike, as `load` does in `examples/counter`. An `EventRecord` has none of the
-writing methods, and a handler is not handed a `udf::Record`. `names()` ranges over the record's bin
-names. `bins`, `deleted`, `bin_luts`, `bin_srcs` are the lists and maps from the description,
-`bin_lut(name)` and `bin_src(name)` fall back to the record's values, and `gen`, `lut`, `ttl`, `src_id` are
-its metadata.
+writing methods, and a handler is not handed a `udf::Record`. Everything else about the record is a
+method too: `bin_names()` ranges over the record's bin names and `deleted_bins()` over the names of the
+bins this side deleted, `bin_last_update_time(name)` and `bin_source_id(name)` answer for one bin and fall
+back to the record's values where the server keeps none per bin, and `generation()`, `last_update_time()`,
+`ttl()` and `source_id()` are its metadata.
+
+What the server says of the merge is asked of the record it is about. A method asked of the other record
+answers false, or an empty list:
+
+| Method | What it says |
+| --- | --- |
+| `incoming.is_delete()` | the incoming write is a record delete, so `incoming` has no bins |
+| `incoming.is_partial()` | the incoming write carries only the bins that changed, so a bin it lacks may well exist on the other cluster |
+| `incoming.lost_bins()` | a range over the names of the incoming bins that would lose under bin convergence |
+| `current.is_tombstone()` | the current record exists but has no bins |
+| `uses_bin_convergence()` | on either record, the same answer: per-bin timestamps are meaningful, for a time-based merge to check before it trusts `bin_last_update_time` |
 
 `rec.with_bins(out)` is the Rust SDK's `with_bins`: every bin of the record that the `udf::Map` `out` lacks
 goes in by position, so a handler that decides two bins and keeps the rest of one record writes those two
@@ -46,7 +60,7 @@ the other bins uses `Pair::with_newer` instead, which takes each from the side t
 
 | Macro | Parameters | Returns `udf::Result` of |
 | --- | --- | --- |
-| `UDF_ON_XDR_MERGE` | `current, incoming` (`EventRecord`), `conflict` (`Conflict`) | `Resolution`: `keep_local()`, `take_remote()`, `policy()`, `delete_record()`, `record(bins[, ttl])` |
+| `UDF_ON_XDR_MERGE` | `current`, `incoming` (`const EventRecord&`) | `Resolution`: `keep_local()`, `take_remote()`, `policy()`, `delete_record()`, `record(bins[, ttl])` |
 
 `keep_local()` keeps the current record, `take_remote()` takes the incoming write, and `policy()` leaves
 the outcome to the namespace's policy, as if there were no handler. `delete_record()` removes the record
@@ -54,20 +68,22 @@ on this cluster; the other cluster decides for itself, so a merge that deletes h
 sides for the two to agree. A `record` answer takes a `udf::Map` of the final bins; a bin absent from it,
 or nil, is deleted, at least one bin must be left, and the map's own error, if a put was refused, fails
 the call. Its TTL is in seconds, 0 for the namespace default, and when left out the incoming write's is
-kept. `conflict.conflict_trigger` says the binding has `trigger=conflict`, `conflict.lost_bins()` names
-the incoming bins that would lose, and `Value::cmp_stored` / `stored_bytes_into` compare stored bytes for
-a data-only tie-break; the two records are also `conflict.current()` and `conflict.incoming()`.
+kept. `Value::cmp_stored` / `stored_bytes_into` compare stored bytes for a data-only tie-break.
 
 ## Merging bin by bin
 
-`conflict.pair()` reads the two sides bin by bin into a `udf::Both<T>`, the Rust SDK's `Pair` and `Both`:
-`pair.as_int(name)`, `as_double`, `as_bool`, `bin` and `list` give the bin on each side (`local`,
-`remote`, each an `Optional`), and `Both` carries the merges a resolver reaches for: `remote_newer()`, by
-the bin's LUT and then source id, the order the server's own bin convergence uses; `newer()` and
-`older()`; `max()`, `min()`, `sum()`, `merge(f)`; `local_or_remote()`, `remote_or_local()`.
+`udf::Pair pair = udf::Pair::of(current, incoming);` puts the two records side by side and reads them bin
+by bin into a `udf::Both<T>`, the Rust SDK's `Pair` and `Both`. Each record knows which one it is, so the
+two may be given in either order. `pair.as_int(name)`, `as_double`, `as_bool`, `as_string<N>`,
+`as_blob<N>`, `bin`, `list` and `map` give the bin on each side (`current`, `incoming`, each an
+`Optional`), and `Both` carries the merges a resolver reaches for: `incoming_is_newer()`, by the bin's
+last-update time and then source id, the order the server's own bin convergence uses; `newer()` and
+`older()`, and `ordered()` for both at once (`auto [older, newer] = both.ordered();`); `max()`, `min()`,
+`sum()`, `merge(f)`; `current_or_incoming()`, `incoming_or_current()`.
 `pair.with_newer(out)` fills in every bin the handler had no opinion on from the side that wrote it
-later, which is symmetric, and `pair.remote_newer(name)` orders one bin. `conflict.involves_delete()` says
-a bin was deleted on either side, the mistake every merge has to guard against.
+later, which is symmetric, and `pair.incoming_is_newer(name)` orders one bin. `deleted_any()` on a record says
+it deleted a bin, the case every merge has to guard against: `with_newer` alone would bring the other
+side's copy back.
 
 ```cpp
 if (udf::Optional<int64_t> visits = pair.as_int("visits").max()) {   // both sides' increments are real
@@ -82,8 +98,8 @@ return udf::Resolution::record(pair.with_newer(out));   // the rest as the polic
 ## The raw form
 
 The C header's macro and helpers are there under the C++ ones: `AS_UDF_EVENT_XDR_MERGE(name)` declares
-`int32_t name(int32_t args, int32_t argc)` with the signature, `as_udf_event_decode` decodes the conflict
-by hand, and `udf::Resolution::keep_local().deliver()` (or the C `as_udf_resolve_keep_local()`) sets the
+`int32_t name(int32_t args, int32_t argc)` with the signature, `as_udf_event_decode(args, argc, &current,
+&incoming)` fills the two records by hand (a `udf::EventRecord` is an `as_udf_event_record`), and `udf::Resolution::keep_local().deliver()` (or the C `as_udf_resolve_keep_local()`) sets the
 result and returns the status to return. The C chapter is the reference for that form.
 
 ## The modules

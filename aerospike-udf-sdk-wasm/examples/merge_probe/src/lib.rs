@@ -44,7 +44,7 @@ extern "C" {
     fn host_fail(message: *const u8, message_len: u32);
 }
 
-as_udf::event!(@sig probe, "event xdr-merge/1 probe(current: record, incoming: record, conflict: conflict) -> resolution");
+as_udf::event!(@sig probe, "event xdr-merge/1 probe(current: record, incoming: record) -> resolution");
 
 /// A bin of one side as its 16-byte value, or none.
 unsafe fn side_bin(which: i32, name: &[u8]) -> Option<[u8; 16]> {
@@ -88,12 +88,12 @@ unsafe fn asked<'a>(buf: &'a mut [u8; 32]) -> (&'a [u8], i64) {
     (&buf[..6], 0)
 }
 
-unsafe fn text(s: &[u8]) -> i32 {
+unsafe fn string(s: &[u8]) -> i32 {
     val_str(s.as_ptr(), s.len() as u32)
 }
 
 unsafe fn put(map: i32, key: &[u8], value: i32) {
-    map_put(map, text(key), value);
+    map_put(map, string(key), value);
 }
 
 /// `{verdict: <verdict>, bins: <bins>, ttl: <ttl>}`, with a part left out when its handle is zero.
@@ -116,7 +116,7 @@ unsafe fn answer_map(verdict: i32, bins: i32, ttl: i32) {
 }
 
 unsafe fn record(bins: i32) {
-    answer_map(text(b"record"), bins, 0);
+    answer_map(string(b"record"), bins, 0);
 }
 
 /// A map of one bin, `merged`, holding `value`.
@@ -184,19 +184,19 @@ unsafe fn answer() -> i32 {
             result_handle(map_new(0));
         }
         b"m-verdict-int" => answer_map(val_int(5), 0, 0),
-        b"m-verdict-nul" => answer_map(text(b"record\0x"), one_bin(val_int(1)), 0),
+        b"m-verdict-nul" => answer_map(string(b"record\0x"), one_bin(val_int(1)), 0),
 
         // A verdict by name: the three there are, and ones there are not.
         b"policy" | b"keep-local" | b"take-remote" | b"delete" | b"record" | b"banana" | b"" | b"KEEP-LOCAL" => {
             result_str(what.as_ptr(), what.len() as u32);
         }
-        b"m-keep" => answer_map(text(b"keep-local"), one_bin(val_int(1)), 0),
-        b"m-take" => answer_map(text(b"take-remote"), 0, 0),
-        b"m-take-ttl" => answer_map(text(b"take-remote"), 0, val_int(n)),
-        b"m-delete" => answer_map(text(b"delete"), one_bin(val_int(1)), 0),
+        b"m-keep" => answer_map(string(b"keep-local"), one_bin(val_int(1)), 0),
+        b"m-take" => answer_map(string(b"take-remote"), 0, 0),
+        b"m-take-ttl" => answer_map(string(b"take-remote"), 0, val_int(n)),
+        b"m-delete" => answer_map(string(b"delete"), one_bin(val_int(1)), 0),
 
         // A record, with bins that are not bins.
-        b"r-nobins" => answer_map(text(b"record"), 0, 0),
+        b"r-nobins" => answer_map(string(b"record"), 0, 0),
         b"r-bins-int" => record(val_int(5)),
         b"r-bins-list" => record(list_new(0)),
         b"r-bins-nil" => record(val_nil()),
@@ -218,13 +218,13 @@ unsafe fn answer() -> i32 {
             let point = b"{\"type\":\"Point\",\"coordinates\":[1.0,2.0]}";
 
             list_push(list, val_int(1));
-            list_push(list, text(b"two"));
+            list_push(list, string(b"two"));
             put(inner, b"k", val_double(1.5));
             put(bins, b"i", val_int(i64::MIN));
             put(bins, b"d", val_double(-0.0));
             put(bins, b"t", val_bool(1));
-            put(bins, b"s", text(b"text"));
-            put(bins, b"e", text(b""));
+            put(bins, b"s", string(b"text"));
+            put(bins, b"e", string(b""));
             put(bins, b"b", val_blob(b"\0\x01\x02".as_ptr(), 3));
             put(bins, b"g", val_geojson(point.as_ptr(), point.len() as u32));
             put(bins, b"l", list);
@@ -319,8 +319,8 @@ unsafe fn answer() -> i32 {
         }
 
         // A record with a time to live of `n`, and with one that is not a number.
-        b"r-ttl" => answer_map(text(b"record"), one_bin(val_int(1)), val_int(n)),
-        b"r-ttl-str" => answer_map(text(b"record"), one_bin(val_int(1)), text(b"soon")),
+        b"r-ttl" => answer_map(string(b"record"), one_bin(val_int(1)), val_int(n)),
+        b"r-ttl-str" => answer_map(string(b"record"), one_bin(val_int(1)), string(b"soon")),
 
         _ => result_str(b"policy".as_ptr(), 6),
     }
@@ -399,7 +399,7 @@ signature!(sig_trap, "__udf_sig_s_trap", core::arch::wasm32::unreachable());
 signature!(
     sig_ghost,
     "__udf_sig_s_ghost",
-    b"event xdr-merge/1 s_ghost(current: record, incoming: record, conflict: conflict) -> resolution\0".as_ptr() as i32
+    b"event xdr-merge/1 s_ghost(current: record, incoming: record) -> resolution\0".as_ptr() as i32
 );
 
 #[panic_handler]

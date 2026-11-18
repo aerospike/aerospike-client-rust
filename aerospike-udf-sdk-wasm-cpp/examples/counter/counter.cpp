@@ -69,7 +69,7 @@ struct Table {
 	udf::Result<void> offer_all(const udf::Value& stored)
 	{
 		for (udf::Entry e : stored.map()) {
-			Site site = UDF_TRY(e.key.as_text<SITE_MAX>());
+			Site site = UDF_TRY(e.key.as_string<SITE_MAX>());
 			int64_t count = UDF_TRY(e.value.as_int());
 
 			UDF_TRY(offer(site.view(), count));

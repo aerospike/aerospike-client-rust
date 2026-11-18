@@ -20,8 +20,8 @@ import (
 
 //==========================================================
 // The xdr-merge event, the typed tier: what a `//udf:on xdr-merge` handler reads and returns. A handler is
-// a function taking the current record, the incoming record and the conflict, and returning a Resolution
-// and an error; the generated export decodes the event, calls it and delivers the answer.
+// a function taking the current record and the incoming record, and returning a Resolution and an error;
+// the generated export decodes the event, calls it and delivers the answer.
 //
 
 // Resolution is what an xdr-merge handler returns: keep the current record, apply the incoming write
@@ -40,7 +40,7 @@ func recordOf(m *Map, ttl int64) Resolution {
 	return Resolution{verdict: "record", bins: m.handle, ttl: ttl, err: m.err}
 }
 
-// KeepLocal keeps the local record; the incoming write is dropped.
+// KeepLocal keeps the current record; the incoming write is dropped.
 func KeepLocal() Resolution { return Resolution{verdict: "keep-local", ttl: -1} }
 
 // TakeRemote applies the incoming write whole, as if it had won every bin.
@@ -68,7 +68,7 @@ func (r Resolution) Deliver() int32 {
 		return FailErr(r.err)
 	}
 	if r.bins == 0 {
-		ResultStr(r.verdict)
+		ResultString(r.verdict)
 		return 0
 	}
 	return resolveRecord(r.bins, r.ttl)
@@ -87,7 +87,7 @@ var _ RecordReader = (*Record)(nil)
 // side has none by that name.
 func (r *EventRecord) Bin(name string) (Value, error) {
 	var v Value
-	rc := eventBinValue(r.Which, strptr(name), int32(len(name)), unsafe.Pointer(&v), 16)
+	rc := eventBinValue(r.which, strptr(name), int32(len(name)), unsafe.Pointer(&v), 16)
 	if rc == NotFound {
 		return Value{Kind: KindAbsent}, errorf(rc, "bin ", name, " is absent")
 	}
@@ -100,7 +100,7 @@ func (r *EventRecord) Bin(name string) (Value, error) {
 // Get is the bin as a value; false when the side has no such bin or it is nil.
 func (r *EventRecord) Get(name string) (Value, bool) {
 	var v Value
-	if eventBinValue(r.Which, strptr(name), int32(len(name)), unsafe.Pointer(&v), 16) != OK || v.Kind == KindNil {
+	if eventBinValue(r.which, strptr(name), int32(len(name)), unsafe.Pointer(&v), 16) != OK || v.Kind == KindNil {
 		return Value{Kind: KindAbsent}, false
 	}
 	return v, true
@@ -109,29 +109,46 @@ func (r *EventRecord) Get(name string) (Value, bool) {
 // Has reports whether the side has the bin, nil included.
 func (r *EventRecord) Has(name string) bool {
 	var v Value
-	return eventBinValue(r.Which, strptr(name), int32(len(name)), unsafe.Pointer(&v), 16) == OK
+	return eventBinValue(r.which, strptr(name), int32(len(name)), unsafe.Pointer(&v), 16) == OK
 }
 
 // Int is an int bin; false when absent, nil or of another kind.
 func (r *EventRecord) Int(name string) (int64, bool) { return readInt(r, name) }
 
-// Float64 is a double bin; false when absent, nil or of another kind. An integer bin is not widened.
-func (r *EventRecord) Float64(name string) (float64, bool) { return readFloat64(r, name) }
+// Double is a double bin; false when absent, nil or of another kind. An integer bin is not widened.
+func (r *EventRecord) Double(name string) (float64, bool) { return readDouble(r, name) }
 
 // Bool is a boolean bin; false when absent, nil or of another kind.
 func (r *EventRecord) Bool(name string) (bool, bool) { return readBool(r, name) }
 
-// Str is the text of a string bin, copied out; false when absent, nil, of another kind, or unreadable.
-func (r *EventRecord) Str(name string) (string, bool) { return readStr(r, name) }
+// String is the text of a string bin, copied out; false when absent, nil, of another kind, or unreadable.
+func (r *EventRecord) String(name string) (string, bool) { return readString(r, name) }
 
-// Bytes is the bytes of a blob bin, copied out; false when absent, nil or of another kind.
-func (r *EventRecord) Bytes(name string) ([]byte, bool) { return readBytes(r, name) }
+// Blob is the bytes of a blob bin, copied out; false when absent, nil or of another kind.
+func (r *EventRecord) Blob(name string) ([]byte, bool) { return readBlob(r, name) }
 
-// Generation is this side's modification count: the Gen field, as RecordReader asks for it.
-func (r *EventRecord) Generation() int64 { return r.Gen }
+// IntOr is an int bin, or dflt when it is absent, nil or of another kind.
+func (r *EventRecord) IntOr(name string, dflt int64) int64 { return readIntOr(r, name, dflt) }
 
-// LastUpdateTime is when this side was last written: the LUT field, as RecordReader asks for it.
-func (r *EventRecord) LastUpdateTime() int64 { return r.LUT }
+// DoubleOr is a double bin, or dflt when it is absent, nil or of another kind, an integer included.
+func (r *EventRecord) DoubleOr(name string, dflt float64) float64 { return readDoubleOr(r, name, dflt) }
+
+// BoolOr is a boolean bin, or dflt when it is absent, nil or of another kind.
+func (r *EventRecord) BoolOr(name string, dflt bool) bool { return readBoolOr(r, name, dflt) }
+
+// Generation is this side's modification count.
+func (r *EventRecord) Generation() int64 { return r.generation }
+
+// LastUpdateTime is when this side was last written, in ms since the Aerospike epoch (2010-01-01 UTC).
+func (r *EventRecord) LastUpdateTime() int64 { return r.lastUpdateTime }
+
+// TTL is this side's time to live, in seconds: what the current record has left, and what the incoming
+// write asks for.
+func (r *EventRecord) TTL() int64 { return r.ttl }
+
+// SourceID is the id of the cluster that wrote this side, the tie-break when two last update times are
+// equal.
+func (r *EventRecord) SourceID() int64 { return r.sourceID }
 
 // List walks a list bin; nothing when absent or not a list.
 func (r *EventRecord) List(name string) iter.Seq[Value] {
@@ -145,15 +162,26 @@ func (r *EventRecord) Map(name string) iter.Seq2[Value, Value] {
 	return v.Map()
 }
 
-// Names walks the record's bin names.
-func (r *EventRecord) Names() iter.Seq[string] {
+// names walks a stored list of bin names as strings; nothing when the value is not a list.
+func names(list Value) iter.Seq[string] {
 	return func(yield func(string) bool) {
-		for v := range r.Bins.List() {
-			if s, err := v.Str(); err == nil && !yield(s) {
+		for v := range list.List() {
+			if s, err := v.String(); err == nil && !yield(s) {
 				return
 			}
 		}
 	}
+}
+
+// BinNames walks the record's bin names.
+func (r *EventRecord) BinNames() iter.Seq[string] { return names(r.binNames) }
+
+// BinCount is how many bins this side has.
+func (r *EventRecord) BinCount() int64 {
+	if r.binNames.Kind != KindList {
+		return 0
+	}
+	return int64(r.binNames.Len)
 }
 
 // WithBins is overrides with every bin of this record it lacks put on top, by position: the Rust SDK's
@@ -161,7 +189,7 @@ func (r *EventRecord) Names() iter.Seq[string] {
 // xdr-merge handler that uses it on the current record is not symmetric; Pair.WithNewer is the symmetric
 // form. Returns overrides.
 func (r *EventRecord) WithBins(overrides *Map) *Map {
-	for name := range r.Names() {
+	for name := range r.BinNames() {
 		if overrides.Contains(name) {
 			continue
 		}
@@ -172,109 +200,142 @@ func (r *EventRecord) WithBins(overrides *Map) *Map {
 	return overrides
 }
 
+// DeletedBins walks the names of the bins this side deleted; nothing when it deleted none.
+func (r *EventRecord) DeletedBins() iter.Seq[string] { return names(r.deletedBins) }
+
 // DeletedAny reports whether this side deleted any bin.
 func (r *EventRecord) DeletedAny() bool {
-	return r.Deleted.Kind == KindList && r.Deleted.Len > 0
+	return r.deletedBins.Kind == KindList && r.deletedBins.Len > 0
 }
+
+// IsDelete reports whether the incoming write is a record delete, in which case the incoming record has
+// no bins. Always false of the current record.
+func (r *EventRecord) IsDelete() bool { return r.isDelete }
+
+// IsPartial reports whether the incoming write carries only the bins that changed, so a bin it lacks may
+// well exist on the other cluster. Always false of the current record.
+func (r *EventRecord) IsPartial() bool { return r.partial }
+
+// LostBins walks the names of the incoming bins that would lose under bin convergence. Nothing of the
+// current record.
+func (r *EventRecord) LostBins() iter.Seq[string] { return names(r.lost) }
+
+// IsTombstone reports whether the current record is a tombstone: it exists and has no bins. Always false
+// of the incoming record, whose delete is IsDelete.
+func (r *EventRecord) IsTombstone() bool { return r.tombstone }
+
+// UsesBinConvergence reports whether the namespace converges bin by bin, which is when the per-bin
+// timestamps behind BinLastUpdateTime mean something; without it that is the record's for every bin. A
+// fact about the merge, so both records answer the same.
+func (r *EventRecord) UsesBinConvergence() bool { return r.binConvergence }
 
 //==========================================================
-// The conflict, typed.
+// The two records, side by side.
 //
 
-// InvolvesDelete reports whether either side deleted a bin: the incoming write carries a bin delete, or
-// the current record has a bin tombstone. Resurrecting such a bin from the other side is the classic
-// merge mistake.
-func (c *Conflict) InvolvesDelete() bool { return c.Local.DeletedAny() || c.Remote.DeletedAny() }
-
-// RemoteDeleted is the names of the bins the incoming write deletes, as a stored list.
-func (c *Conflict) RemoteDeleted() Value { return c.Remote.Deleted }
-
-// Pair is the two records side by side, for bin-wise merging.
-func (c *Conflict) Pair() Pair { return Pair{Local: &c.Local, Remote: &c.Remote} }
-
-// Pair is the two sides of a conflict, read bin by bin into a Both: the Go face of the Rust SDK's Pair.
+// Pair is the two records of a merge, read bin by bin into a Both: the Go face of the Rust SDK's Pair.
+// Make one with PairOf.
 type Pair struct {
-	Local  *EventRecord
-	Remote *EventRecord
+	Current  *EventRecord
+	Incoming *EventRecord
 }
 
-// Both is a bin on both sides of a conflict, either of which may be missing, with the merges a resolver
+// PairOf is the two records a handler was given, side by side, for bin-wise merging.
+func PairOf(current, incoming *EventRecord) Pair { return Pair{Current: current, Incoming: incoming} }
+
+// Both is a bin on both sides of a merge, either of which may be missing, with the merges a resolver
 // reaches for. Max, Min and Sum are functions, since a method cannot add a constraint the type lacks.
 type Both[T any] struct {
-	Local     T
-	Remote    T
-	HasLocal  bool
-	HasRemote bool
-	localLUT  int64
-	remoteLUT int64
-	localSrc  int64
-	remoteSrc int64
+	Current        T
+	Incoming       T
+	HasCurrent     bool
+	HasIncoming    bool
+	currentTime    int64
+	incomingTime   int64
+	currentSource  int64
+	incomingSource int64
 }
 
-func both[T any](p Pair, name string, l T, hasL bool, r T, hasR bool) Both[T] {
+func both[T any](p Pair, name string, c T, hasC bool, i T, hasI bool) Both[T] {
 	return Both[T]{
-		Local: l, Remote: r, HasLocal: hasL, HasRemote: hasR,
-		localLUT: p.Local.BinLUT(name), remoteLUT: p.Remote.BinLUT(name),
-		localSrc: p.Local.BinSrc(name), remoteSrc: p.Remote.BinSrc(name),
+		Current: c, Incoming: i, HasCurrent: hasC, HasIncoming: hasI,
+		currentTime: p.Current.BinLastUpdateTime(name), incomingTime: p.Incoming.BinLastUpdateTime(name),
+		currentSource: p.Current.BinSourceID(name), incomingSource: p.Incoming.BinSourceID(name),
 	}
 }
 
 // Int is an int bin on each side; a side where it is absent, nil or of another kind is missing.
 func (p Pair) Int(name string) Both[int64] {
-	l, hl := p.Local.Int(name)
-	r, hr := p.Remote.Int(name)
+	l, hl := p.Current.Int(name)
+	r, hr := p.Incoming.Int(name)
 	return both(p, name, l, hl, r, hr)
 }
 
-// Float64 is a double bin on each side; a side where it is absent, nil or of another kind, an integer
+// Double is a double bin on each side; a side where it is absent, nil or of another kind, an integer
 // included, is missing.
-func (p Pair) Float64(name string) Both[float64] {
-	l, hl := p.Local.Float64(name)
-	r, hr := p.Remote.Float64(name)
+func (p Pair) Double(name string) Both[float64] {
+	l, hl := p.Current.Double(name)
+	r, hr := p.Incoming.Double(name)
 	return both(p, name, l, hl, r, hr)
 }
 
 // Bool is a boolean bin on each side; a side where it is absent, nil or of another kind is missing.
 func (p Pair) Bool(name string) Both[bool] {
-	l, hl := p.Local.Bool(name)
-	r, hr := p.Remote.Bool(name)
+	l, hl := p.Current.Bool(name)
+	r, hr := p.Incoming.Bool(name)
 	return both(p, name, l, hl, r, hr)
 }
 
-// Str is the text of a string bin on each side, copied out; a side where it is absent, nil or of another
+// String is the text of a string bin on each side, copied out; a side where it is absent, nil or of
+// another kind is missing.
+func (p Pair) String(name string) Both[string] {
+	l, hl := p.Current.String(name)
+	r, hr := p.Incoming.String(name)
+	return both(p, name, l, hl, r, hr)
+}
+
+// Blob is the bytes of a blob bin on each side, copied out; a side where it is absent, nil or of another
 // kind is missing.
-func (p Pair) Str(name string) Both[string] {
-	l, hl := p.Local.Str(name)
-	r, hr := p.Remote.Str(name)
+func (p Pair) Blob(name string) Both[[]byte] {
+	l, hl := p.Current.Blob(name)
+	r, hr := p.Incoming.Blob(name)
 	return both(p, name, l, hl, r, hr)
 }
 
 // Bin is the bin as a value on each side; absent and nil sides are missing.
 func (p Pair) Bin(name string) Both[Value] {
-	l, hl := p.Local.Get(name)
-	r, hr := p.Remote.Get(name)
+	l, hl := p.Current.Get(name)
+	r, hr := p.Incoming.Get(name)
 	return both(p, name, l, hl, r, hr)
 }
 
 // List is a list bin on each side, as stored values to range over.
 func (p Pair) List(name string) Both[Value] {
-	l, hl := p.Local.Get(name)
-	r, hr := p.Remote.Get(name)
+	l, hl := p.Current.Get(name)
+	r, hr := p.Incoming.Get(name)
 	return both(p, name, l, hl && l.Kind == KindList, r, hr && r.Kind == KindList)
 }
 
-// RemoteNewer reports whether the remote side wrote name later, per bin: the order the bin-lut policy uses.
-func (p Pair) RemoteNewer(name string) bool {
-	ll, rl := p.Local.BinLUT(name), p.Remote.BinLUT(name)
-	return rl > ll || (rl == ll && p.Remote.BinSrc(name) > p.Local.BinSrc(name))
+// Map is a map bin on each side, as stored values to range over.
+func (p Pair) Map(name string) Both[Value] {
+	l, hl := p.Current.Get(name)
+	r, hr := p.Incoming.Get(name)
+	return both(p, name, l, hl && l.Kind == KindMap, r, hr && r.Kind == KindMap)
+}
+
+// IncomingIsNewer reports whether the incoming side wrote name later, per bin: the order the bin-lut
+// policy uses.
+func (p Pair) IncomingIsNewer(name string) bool {
+	ll, rl := p.Current.BinLastUpdateTime(name), p.Incoming.BinLastUpdateTime(name)
+	return rl > ll || (rl == ll && p.Incoming.BinSourceID(name) > p.Current.BinSourceID(name))
 }
 
 // WithNewer is overrides with every bin either side has that it lacks, from the side that wrote it later -
 // which is what the policy would have kept - so a handler merges the bins it knows about and leaves the
 // rest as they would have been. Symmetric: both DCs order the two sides the same way. Returns overrides.
 func (p Pair) WithNewer(overrides *Map) *Map {
-	for _, side := range [2]*EventRecord{p.Local, p.Remote} {
-		for name := range side.Names() {
+	for _, side := range [2]*EventRecord{p.Current, p.Incoming} {
+		for name := range side.BinNames() {
 			if overrides.Contains(name) {
 				continue
 			}
@@ -286,59 +347,60 @@ func (p Pair) WithNewer(overrides *Map) *Map {
 	return overrides
 }
 
-// RemoteNewer reports whether the remote side wrote this bin later: by the bin's LUT where the server
-// keeps one, the record's otherwise, and on a tie by source id - the order the server's own bin
-// convergence uses, so "newer" means the same on both DCs even when the clocks agreed to the millisecond.
-func (b Both[T]) RemoteNewer() bool {
-	return b.remoteLUT > b.localLUT || (b.remoteLUT == b.localLUT && b.remoteSrc > b.localSrc)
+// IncomingIsNewer reports whether the incoming side wrote this bin later: by the bin's last update time
+// where the server keeps one, the record's otherwise, and on a tie by source id - the order the server's
+// own bin convergence uses, so "newer" means the same on both DCs even when the clocks agreed to the
+// millisecond.
+func (b Both[T]) IncomingIsNewer() bool {
+	return b.incomingTime > b.currentTime || (b.incomingTime == b.currentTime && b.incomingSource > b.currentSource)
 }
 
 // Newer is the side written later; whichever exists when only one does.
 func (b Both[T]) Newer() (T, bool) {
-	if b.RemoteNewer() {
-		return b.RemoteOrLocal()
+	if b.IncomingIsNewer() {
+		return b.IncomingOrCurrent()
 	}
-	return b.LocalOrRemote()
+	return b.CurrentOrIncoming()
 }
 
 // Older is the side written earlier; whichever exists when only one does.
 func (b Both[T]) Older() (T, bool) {
-	if b.RemoteNewer() {
-		return b.LocalOrRemote()
+	if b.IncomingIsNewer() {
+		return b.CurrentOrIncoming()
 	}
-	return b.RemoteOrLocal()
+	return b.IncomingOrCurrent()
 }
 
 // Ordered is both sides as (older, newer), each with whether it exists: the order both DCs agree on.
 func (b Both[T]) Ordered() (older T, hasOlder bool, newer T, hasNewer bool) {
-	if b.RemoteNewer() {
-		return b.Local, b.HasLocal, b.Remote, b.HasRemote
+	if b.IncomingIsNewer() {
+		return b.Current, b.HasCurrent, b.Incoming, b.HasIncoming
 	}
-	return b.Remote, b.HasRemote, b.Local, b.HasLocal
+	return b.Incoming, b.HasIncoming, b.Current, b.HasCurrent
 }
 
-// LocalOrRemote is the local side when it exists, the remote side otherwise; false when neither exists.
-func (b Both[T]) LocalOrRemote() (T, bool) {
-	if b.HasLocal {
-		return b.Local, true
+// CurrentOrIncoming is the current side when it exists, the incoming side otherwise; false when neither exists.
+func (b Both[T]) CurrentOrIncoming() (T, bool) {
+	if b.HasCurrent {
+		return b.Current, true
 	}
-	return b.Remote, b.HasRemote
+	return b.Incoming, b.HasIncoming
 }
 
-// RemoteOrLocal is the remote side when it exists, the local side otherwise; false when neither exists.
-func (b Both[T]) RemoteOrLocal() (T, bool) {
-	if b.HasRemote {
-		return b.Remote, true
+// IncomingOrCurrent is the incoming side when it exists, the current side otherwise; false when neither exists.
+func (b Both[T]) IncomingOrCurrent() (T, bool) {
+	if b.HasIncoming {
+		return b.Incoming, true
 	}
-	return b.Local, b.HasLocal
+	return b.Current, b.HasCurrent
 }
 
 // Merge combines the two when both exist; the one that exists otherwise.
 func (b Both[T]) Merge(f func(l, r T) T) (T, bool) {
-	if b.HasLocal && b.HasRemote {
-		return f(b.Local, b.Remote), true
+	if b.HasCurrent && b.HasIncoming {
+		return f(b.Current, b.Incoming), true
 	}
-	return b.LocalOrRemote()
+	return b.CurrentOrIncoming()
 }
 
 // Max is the larger of the two; the one that exists when only one does.
@@ -354,11 +416,11 @@ func Min[T cmp.Ordered](b Both[T]) (T, bool) {
 // Sum is the sum, a missing side counting as zero.
 func Sum[T int64 | float64](b Both[T]) T {
 	var s T
-	if b.HasLocal {
-		s += b.Local
+	if b.HasCurrent {
+		s += b.Current
 	}
-	if b.HasRemote {
-		s += b.Remote
+	if b.HasIncoming {
+		s += b.Incoming
 	}
 	return s
 }

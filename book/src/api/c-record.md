@@ -7,7 +7,9 @@
 ```
 
 Declares a host import: the function that follows is resolved from the `aerospike` import module under
-`name`.
+`name`. The C function is named beside it and need not match: the import keeps the host's word (`set_str`,
+`gen`, `numbins`) while the function takes the SDK's (`as_udf_rec_set_string`, `as_udf_rec_generation`,
+`as_udf_rec_bin_count`).
 
 #### `bin_value`
 
@@ -45,7 +47,7 @@ Stage a boolean into a bin: any non-zero `value` is true. Statuses as as_udf_rec
 #### `set_str`
 
 ```c
-int32_t as_udf_rec_set_str(const char* name, int32_t name_len, const char* value, int32_t value_len)
+int32_t as_udf_rec_set_string(const char* name, int32_t name_len, const char* value, int32_t value_len)
 ```
 
 Stage a string into a bin: `value_len` bytes, no terminator needed, copied by the host. Statuses as
@@ -102,7 +104,7 @@ empty or longer than 15 bytes, or AS_UDF_REFUSED when the record does not take t
 #### `set_list_ints`
 
 ```c
-int32_t as_udf_rec_set_list_ints(const char* name, int32_t name_len, const int64_t* vals, int32_t vals_len)
+int32_t as_udf_rec_set_ints(const char* name, int32_t name_len, const int64_t* vals, int32_t vals_len)
 ```
 
 Write an array of 64-bit integers to a bin as a list, with `vals_len` the size of the array in bytes. Applied
@@ -113,11 +115,11 @@ rejects the write.
 #### `set_list_doubles`
 
 ```c
-int32_t as_udf_rec_set_list_doubles(const char* name, int32_t name_len, const double* vals, int32_t vals_len)
+int32_t as_udf_rec_set_doubles(const char* name, int32_t name_len, const double* vals, int32_t vals_len)
 ```
 
 Write an array of doubles to a bin as a list, with `vals_len` the size of the array in bytes. Applied at
-once and with the statuses of as_udf_rec_set_list_ints.
+once and with the statuses of as_udf_rec_set_ints.
 
 #### `cursor_values`
 
@@ -180,7 +182,7 @@ AS_UDF_ABSENT), or AS_UDF_ERR for a bad source, offset or `cap`. The search is l
 #### `coll_get_i`
 
 ```c
-int32_t as_udf_coll_get_i(int32_t src, int32_t at, int64_t key, void* out, int32_t cap)
+int32_t as_udf_coll_get_int(int32_t src, int32_t at, int64_t key, void* out, int32_t cap)
 ```
 
 Look up an integer key in the map at offset `at` of source `src`. Output and statuses as as_udf_coll_get.
@@ -261,7 +263,7 @@ when `handle` is not a built map. Asks the host directly, so the map is not pack
 #### `map_has_i`
 
 ```c
-int32_t as_udf_map_has_i(int32_t handle, int64_t key)
+int32_t as_udf_map_has_int(int32_t handle, int64_t key)
 ```
 
 Whether a map the call built has an integer key. Answers as as_udf_map_has.
@@ -302,7 +304,7 @@ Nil as a value of its own. Returns its handle, or 0 when none is free.
 #### `val_str`
 
 ```c
-int32_t as_udf_val_str(const char* value, int32_t value_len)
+int32_t as_udf_val_string(const char* value, int32_t value_len)
 ```
 
 A string as a value of its own: `value_len` bytes, copied by the host. Returns its handle, or 0 when none is
@@ -346,7 +348,7 @@ not a built list.
 #### `list_push_str`
 
 ```c
-int32_t as_udf_list_push_str(int32_t handle, const char* value, int32_t value_len)
+int32_t as_udf_list_push_string(int32_t handle, const char* value, int32_t value_len)
 ```
 
 Append a string to a built list without a value handle: `value_len` bytes, copied by the host. Returns
@@ -364,7 +366,7 @@ AS_UDF_ERR when `handle` is not a built map or either handle is not usable.
 #### `map_put_str_int`
 
 ```c
-int32_t as_udf_map_put_str_int(int32_t handle, const char* key, int32_t key_len, int64_t value)
+int32_t as_udf_map_put_string_int(int32_t handle, const char* key, int32_t key_len, int64_t value)
 ```
 
 Put an integer under a string key of a built map. Returns AS_UDF_OK, or AS_UDF_ERR when `handle` is not a
@@ -373,7 +375,7 @@ built map.
 #### `map_put_str_str`
 
 ```c
-int32_t as_udf_map_put_str_str(int32_t handle, const char* key, int32_t key_len, const char* value, int32_t value_len)
+int32_t as_udf_map_put_string_string(int32_t handle, const char* key, int32_t key_len, const char* value, int32_t value_len)
 ```
 
 Put a string under a string key of a built map; both are copied by the host. Returns AS_UDF_OK, or AS_UDF_ERR
@@ -382,7 +384,7 @@ when `handle` is not a built map.
 #### `map_put_str_handle`
 
 ```c
-int32_t as_udf_map_put_str_handle(int32_t handle, const char* key, int32_t key_len, int32_t value)
+int32_t as_udf_map_put_string_handle(int32_t handle, const char* key, int32_t key_len, int32_t value)
 ```
 
 Put the value behind handle `value` under a string key of a built map, which takes it over. Returns
@@ -400,7 +402,7 @@ decoding it. Returns AS_UDF_OK, or AS_UDF_ERR when `handle` is not a built list 
 #### `map_put_str_at`
 
 ```c
-int32_t as_udf_map_put_str_at(int32_t handle, const char* key, int32_t key_len, int32_t src, int32_t at)
+int32_t as_udf_map_put_string_at(int32_t handle, const char* key, int32_t key_len, int32_t src, int32_t at)
 ```
 
 Put the stored value at offset `at` of source `src` under a string key of a built map. Returns AS_UDF_OK, or
@@ -409,7 +411,7 @@ AS_UDF_ERR when `handle` is not a built map or the position is bad.
 #### `map_put_i_at`
 
 ```c
-int32_t as_udf_map_put_i_at(int32_t handle, int64_t key, int32_t src, int32_t at)
+int32_t as_udf_map_put_int_at(int32_t handle, int64_t key, int32_t src, int32_t at)
 ```
 
 Put the stored value at offset `at` of source `src` under an integer key of a built map. Returns AS_UDF_OK,
@@ -470,7 +472,7 @@ Set the call's result to a boolean: any non-zero `value` is true.
 #### `result_str`
 
 ```c
-void as_udf_result_str(const char* value, int32_t value_len)
+void as_udf_result_string(const char* value, int32_t value_len)
 ```
 
 Set the call's result to a string: `value_len` bytes, copied by the host.
@@ -521,7 +523,7 @@ Mark the call as failed with a message for the client: `message_len` bytes, of w
 #### `gen`
 
 ```c
-int64_t as_udf_rec_gen(void)
+int64_t as_udf_rec_generation(void)
 ```
 
 The record's generation.
@@ -537,7 +539,7 @@ The record's remaining lifetime in seconds; 0 for a record that does not expire.
 #### `last_update`
 
 ```c
-int64_t as_udf_rec_last_update(void)
+int64_t as_udf_rec_last_update_time(void)
 ```
 
 When the record was last written, in milliseconds, as the server stores it: counted from the Aerospike epoch
@@ -554,7 +556,7 @@ The record's stored size in bytes.
 #### `numbins`
 
 ```c
-int64_t as_udf_rec_numbins(void)
+int64_t as_udf_rec_bin_count(void)
 ```
 
 How many bins the record has.
@@ -562,7 +564,7 @@ How many bins the record has.
 #### `current_time`
 
 ```c
-int64_t as_udf_current_time(void)
+int64_t as_udf_now(void)
 ```
 
 The server's wall clock, in milliseconds since the Unix epoch. Returns -1 in an event handler, where the
@@ -967,10 +969,10 @@ bool as_udf_map_contains(int32_t handle, const char* key)
 Whether a map the call built has the NUL-terminated string key. False for a handle that is not a built
 map.
 
-#### `as_udf_map_contains_i`
+#### `as_udf_map_contains_int`
 
 ```c
-bool as_udf_map_contains_i(int32_t handle, int64_t key)
+bool as_udf_map_contains_int(int32_t handle, int64_t key)
 ```
 
 Whether a map the call built has the integer key. False for a handle that is not a built map.
@@ -1025,10 +1027,10 @@ as_udf_value as_udf_v_double(double d) { as_udf_value v = { AS_UDF_DOUBLE, 0, 0 
 
 A double as a 16-byte value, for a batch.
 
-#### `as_udf_v_str`
+#### `as_udf_v_string`
 
 ```c
-as_udf_value as_udf_v_str(const char* s, int32_t len) { as_udf_value v = { AS_UDF_GUEST_STR, (uint32_t)len, (int64_t)(uintptr_t)s }; return v; }
+as_udf_value as_udf_v_string(const char* s, int32_t len) { as_udf_value v = { AS_UDF_GUEST_STR, (uint32_t)len, (int64_t)(uintptr_t)s }; return v; }
 ```
 
 A string of the guest's as a 16-byte value, for a batch. Only the address travels, so the bytes must stay
@@ -1050,6 +1052,119 @@ as_udf_value as_udf_v_handle(int32_t h) { as_udf_value v = { AS_UDF_HANDLE, 0, h
 ```
 
 A value built on the host as a 16-byte value, for a batch: a list or map nested in another.
+
+#### `as_udf_rec_has`
+
+```c
+bool as_udf_rec_has(const char* name)
+```
+
+Whether the record has the bin, a nil one included.
+
+#### `as_udf_rec_get`
+
+```c
+bool as_udf_rec_get(const char* name, as_udf_value* out)
+```
+
+A bin that holds something, as a value. False, with `out` of kind AS_UDF_ABSENT, when the record has no such
+bin or the bin is nil.
+
+#### `as_udf_rec_int`
+
+```c
+bool as_udf_rec_int(const char* name, int64_t* out)
+```
+
+The bin as an integer, into `out`. False, with `out` untouched, when the record has no such bin, it is nil or
+it is of another kind.
+
+#### `as_udf_rec_double`
+
+```c
+bool as_udf_rec_double(const char* name, double* out)
+```
+
+The bin as a double, into `out`. False, with `out` untouched, when the record has no such bin, it is nil or
+it is of another kind: an integer bin is not widened.
+
+#### `as_udf_rec_bool`
+
+```c
+bool as_udf_rec_bool(const char* name, bool* out)
+```
+
+The bin as a boolean, into `out`. False, with `out` untouched, when the record has no such bin, it is nil or
+it is of another kind.
+
+#### `as_udf_rec_string`
+
+```c
+int32_t as_udf_rec_string(const char* name, char* out, int32_t cap)
+```
+
+Copy a string bin into `out`, without a terminator. Returns the length, a needed-length status when `cap` is
+too small, AS_UDF_NOT_FOUND for no such bin, or AS_UDF_TYPE_MISMATCH when the bin is not a string.
+
+#### `as_udf_rec_blob`
+
+```c
+int32_t as_udf_rec_blob(const char* name, void* out, int32_t cap)
+```
+
+Copy a blob bin into `out`. Returns the length, a needed-length status when `cap` is too small,
+AS_UDF_NOT_FOUND for no such bin, or AS_UDF_TYPE_MISMATCH when the bin is not a blob.
+
+#### `as_udf_rec_list`
+
+```c
+bool as_udf_rec_list(const char* name, as_udf_value* out)
+```
+
+A list bin, as a value to walk by position. False when the record has no such bin or it is not a list.
+
+#### `as_udf_rec_map`
+
+```c
+bool as_udf_rec_map(const char* name, as_udf_value* out)
+```
+
+A map bin, as a value to read by position. False when the record has no such bin or it is not a map.
+
+#### `as_udf_rec_int_or`
+
+```c
+int64_t as_udf_rec_int_or(const char* name, int64_t dflt)
+```
+
+The bin's integer, or `dflt` when the bin is absent, nil or of another kind.
+
+#### `as_udf_rec_double_or`
+
+```c
+double as_udf_rec_double_or(const char* name, double dflt)
+```
+
+The bin's double, or `dflt` when the bin is absent, nil or of another kind. An integer bin is not widened: it
+gives the default.
+
+#### `as_udf_rec_bool_or`
+
+```c
+bool as_udf_rec_bool_or(const char* name, bool dflt)
+```
+
+The bin's boolean, or `dflt` when the bin is absent, nil or of another kind.
+
+#### `as_udf_rec_key`
+
+```c
+as_udf_value as_udf_rec_key(void* out, int32_t cap)
+```
+
+The record's user key as a value: an integer in the value itself, a string or blob copied into `out` and
+viewed there, so `out` has to outlive the value. Of kind AS_UDF_ABSENT when the record was stored without a
+key or the key does not fit in `cap` bytes.
 
 #### `as_udf_failf`
 

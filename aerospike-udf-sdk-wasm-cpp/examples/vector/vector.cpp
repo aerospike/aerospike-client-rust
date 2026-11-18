@@ -367,9 +367,9 @@ topk_end_udf_impl(int32_t args, int32_t argc)
 		const hit* h = &S.hits[i];
 		int32_t entry = as_udf_map_new(3);
 		as_udf_value pairs[6] = {
-			as_udf_v_str("score", 5), as_udf_v_double(h->score),
-			as_udf_v_str("digest", 6), as_udf_v_blob(h->digest, DIGEST),
-			as_udf_v_str("key", 3), as_udf_v_str(h->key, (int32_t)h->key_len),
+			as_udf_v_string("score", 5), as_udf_v_double(h->score),
+			as_udf_v_string("digest", 6), as_udf_v_blob(h->digest, DIGEST),
+			as_udf_v_string("key", 3), as_udf_v_string(h->key, (int32_t)h->key_len),
 		};
 
 		if (entry <= 0 || as_udf_map_put_entries(entry, pairs, (int32_t)sizeof(pairs)) != 3 ||
@@ -378,9 +378,9 @@ topk_end_udf_impl(int32_t args, int32_t argc)
 		}
 	}
 
-	as_udf_map_put_str_handle(out, "hits", 4, hits);
-	as_udf_map_put_str_int(out, "skipped_dim", 11, S.skipped_dim);
-	as_udf_map_put_str_int(out, "skipped_none", 12, S.skipped_none);
+	as_udf_map_put_string_handle(out, "hits", 4, hits);
+	as_udf_map_put_string_int(out, "skipped_dim", 11, S.skipped_dim);
+	as_udf_map_put_string_int(out, "skipped_none", 12, S.skipped_none);
 
 	return as_udf_result_handle(out) == AS_UDF_OK ? 0 : as_udf_failf("topk: could not return the partial");
 }

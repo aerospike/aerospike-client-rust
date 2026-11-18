@@ -28,7 +28,7 @@ import org.teavm.interop.Address;
  * A value read from the record, from an argument or from an iteration is never changed afterwards, so it
  * can be kept for the rest of the call.
  *
- * <p>{@link #ofInt}, {@link #ofStr} and the other factories make a value of the guest's own, for a
+ * <p>{@link #ofInt}, {@link #ofString} and the other factories make a value of the guest's own, for a
  * builder, a bin or a result.
  */
 public final class Value {
@@ -131,7 +131,7 @@ public final class Value {
     }
 
     /** Whether the value is a boolean. */
-    public boolean isBoolean() {
+    public boolean isBool() {
         return kind == BOOL;
     }
 
@@ -174,7 +174,7 @@ public final class Value {
     }
 
     /** The integer; throws {@link UdfException} when the value is of another kind. */
-    public long asLong() {
+    public long asInt() {
         if (kind != INT) {
             throw not("an int");
         }
@@ -194,7 +194,7 @@ public final class Value {
     }
 
     /** The boolean; throws {@link UdfException} when the value is of another kind. */
-    public boolean asBoolean() {
+    public boolean asBool() {
         if (kind != BOOL) {
             throw not("a bool");
         }
@@ -212,14 +212,14 @@ public final class Value {
             throw not("a string");
         }
 
-        return new String(asBytes(), StandardCharsets.UTF_8);
+        return new String(asBlob(), StandardCharsets.UTF_8);
     }
 
     /**
      * The bytes of a string, blob, GeoJSON or HLL, copied out; throws {@link UdfException} when the value
      * is of another kind.
      */
-    public byte[] asBytes() {
+    public byte[] asBlob() {
         if (kind == GUEST_STR || kind == GUEST_BLOB || kind == GUEST_GEOJSON) {
             byte[] out = new byte[bytesLen];
             System.arraycopy(bytes, 0, out, 0, bytesLen);
@@ -244,7 +244,7 @@ public final class Value {
      * and reuses, and returns how many there were. Throws {@link UdfException} when the value is of another
      * kind or does not fit.
      */
-    public int readBytes(byte[] into) {
+    public int readBlob(byte[] into) {
         if (!isStored() || kind == LIST || kind == MAP) {
             throw not("a string or blob");
         }
@@ -309,7 +309,7 @@ public final class Value {
      * either: negative, zero or positive. It is the last resort of a convergent merge, which needs some
      * order that both sides compute alike. Throws {@link UdfException} when either is not a stored value.
      */
-    public int compareStored(Value other) {
+    public int cmpStored(Value other) {
         if (!isStored() || !other.isStored()) {
             throw new UdfException("only stored values compare by their bytes");
         }
@@ -342,7 +342,7 @@ public final class Value {
     }
 
     /** A string of the guest's, encoded as UTF-8. */
-    public static Value ofStr(String s) {
+    public static Value ofString(String s) {
         byte[] b = s.getBytes(StandardCharsets.UTF_8);
         return new Value().guest(GUEST_STR, b, b.length);
     }
