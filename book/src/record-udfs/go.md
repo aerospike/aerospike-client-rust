@@ -252,7 +252,9 @@ the end, no such key), an error when the value is not a list or map.
 
 `List()` and `Map()` on a `Value` are Go 1.23 iterators, the Rust SDK's `iter()` and `entries()`: a list
 ranges over its values, a map over key and value, 32 per import, and the cursor is released when the loop
-ends, breaks or returns. Lists nest: a value that is itself a list can be ranged over inside the loop. A
+ends, breaks, returns or panics: the range statement tells the iterator it is done, so a loop left early
+holds nothing. A walk taken through `iter.Pull` holds its cursor until its `stop` is called, as `iter.Pull`
+asks of any iterator. Lists nest: a value that is itself a list can be ranged over inside the loop. A
 walk that cannot go on (the call's memory on the server is spent) fails the call rather than end short in
 silence.
 

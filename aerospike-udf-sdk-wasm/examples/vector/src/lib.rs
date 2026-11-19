@@ -37,7 +37,7 @@
 
 #![no_std]
 
-use aerospike_udf_sdk_wasm::{self as as_udf, Args, Blob, Error, Record, Text, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, Args, Blob, Error, Map, Record, Return, Text, Value};
 
 const MAX_DIM: usize = 2048;
 /// Bounded by the per-call handle table: each hit of the partial is one built map.
@@ -424,7 +424,7 @@ fn record(args: i32, argc: i32) -> Result<(), Error> {
     offer(&rec, s, score(s.metric, measured))
 }
 
-fn end() -> Result<Value<'static>, Error> {
+fn end() -> Result<Map, Error> {
     let s = state();
     let out = as_udf::map(3)?;
     let hits = as_udf::list(s.n)?;
@@ -445,7 +445,7 @@ fn end() -> Result<Value<'static>, Error> {
         .insert("skipped_dim", s.skipped_dim)?
         .insert("skipped_none", s.skipped_none)?;
 
-    Ok(out.into_value())
+    Ok(out)
 }
 
 #[no_mangle]
@@ -461,7 +461,8 @@ pub extern "C" fn topk_record(args: i32, argc: i32) -> i32 {
 
 #[no_mangle]
 pub extern "C" fn topk_end(_args: i32, _argc: i32) -> i32 {
-    match end().and_then(|v| as_udf::result(&v)) {
+    // Delivered, then dropped: the host keeps its own reference to the map, and its handle goes back.
+    match end().deliver() {
         Ok(()) => 0,
         Err(e) => {
             as_udf::fail(e.message());

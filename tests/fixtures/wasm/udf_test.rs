@@ -16,7 +16,7 @@ extern crate alloc;
 
 use alloc::{format, string::String, vec::Vec};
 
-use aerospike_udf_sdk_wasm::{self as as_udf, Args, Coll, Error, Level, List, Record, Resolution, Str, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, Args, Coll, Error, Level, List, Map, Record, Resolution, Str, Value};
 
 // The host calls themselves, for the three functions below that do what the SDK's own types do not allow:
 // keep a value across a write to its bin, and write from a stream. A module is not obliged to use the
@@ -102,7 +102,7 @@ as_udf::export! {
     }
 
     /// Everything the record knows about itself, as a map.
-    fn describe(rec: &Record) -> Result<Value, Error> {
+    fn describe(rec: &Record) -> Result<Map, Error> {
         let out = as_udf::map(6)?;
 
         out.insert("generation", rec.generation())?
@@ -129,13 +129,13 @@ as_udf::export! {
             None => out.insert("ttl", Value::Nil)?,
         };
 
-        Ok(out.into_value())
+        Ok(out)
     }
 
     /// A nested value, to prove collections survive the trip in both directions.
     ///
     /// The same shape the other SDKs return: `[1, "two", [true, nil], {"three": 3.5}]`.
-    fn nested() -> Result<Value, Error> {
+    fn nested() -> Result<List, Error> {
         let inner = as_udf::list(2)?;
 
         inner.push(true)?.push(Value::Nil)?;
@@ -148,7 +148,7 @@ as_udf::export! {
 
         out.push(1)?.push("two")?.push(&inner)?.push(&tail)?;
 
-        Ok(out.into_value())
+        Ok(out)
     }
 
     /// Say which guest ABI linked, by calling an import that only this one has.
@@ -204,7 +204,7 @@ as_udf::export! {
     }
 
     /// One element of a list bin by its index, and whether a map the call builds knows its keys.
-    fn index_probe(rec: &Record, name: &str, index: i64) -> Result<Value, Error> {
+    fn index_probe(rec: &Record, name: &str, index: i64) -> Result<Map, Error> {
         let out = as_udf::map(4)?;
         let list = rec.bin(name)?.list()?;
 
@@ -229,7 +229,7 @@ as_udf::export! {
 
         out.insert("knows", knows)?.insert("invents", invents)?;
 
-        Ok(out.into_value())
+        Ok(out)
     }
 
     /// Return nothing at all, which is nil.
@@ -331,7 +331,7 @@ as_udf::export! {
     ///
     /// Every entry is one of the accessors, so the test that reads this back checks the whole family
     /// against the values the client wrote. -1 (or "?") means an accessor declined.
-    fn packed_probe(rec: &Record) -> Result<Value, Error> {
+    fn packed_probe(rec: &Record) -> Result<Map, Error> {
         let out = as_udf::map(16)?;
         let l = rec.bin("l")?.list()?;
         let d = rec.bin("d")?.list()?;
@@ -371,28 +371,28 @@ as_udf::export! {
         out.insert("bulk", under("l").and_then(|v| v.list()).map_or(-1, sum_ints))?;
         out.insert("run", sum_ints(l))?;
 
-        Ok(out.into_value())
+        Ok(out)
     }
 
     /// Walk bin `doc` and flatten everything it meets into one list.
     ///
     /// Nested collections are bracketed with their length, so the test can see the descent and that the
     /// parent walk resumes after the child.
-    fn cursor_probe(rec: &Record) -> Result<Value, Error> {
+    fn cursor_probe(rec: &Record) -> Result<List, Error> {
         let out = as_udf::list(32)?;
         let doc = rec.bin("doc")?.list()?;
 
         out.push(doc.len() as i64)?;
         walk(doc, &out)?;
 
-        Ok(out.into_value())
+        Ok(out)
     }
 
     /// What a read gives after a write the call has not saved: the staged value, never the stored one.
     ///
     /// `sl` is stored as a list of three and `sm` as a map. The answer is how long `sl` reads once a list
     /// of one is staged over it, and whether `sm` is gone once it is removed.
-    fn staged_read(rec: &mut Record) -> Result<Value, Error> {
+    fn staged_read(rec: &mut Record) -> Result<List, Error> {
         let one = as_udf::list(1)?;
 
         one.push(9i64)?;
@@ -408,14 +408,14 @@ as_udf::export! {
         out.push(len)?;
         out.push(gone)?;
 
-        Ok(out.into_value())
+        Ok(out)
     }
 
     /// Stage text that is not a GeoJSON document as a GeoJSON bin, save, and answer what each step said.
     ///
     /// Staging takes any text; it is the save that builds the bin, and the server does not build a
     /// geospatial bin from a document it could not have been sent as a write.
-    fn bad_geo(rec: &mut Record) -> Result<Value, Error> {
+    fn bad_geo(rec: &mut Record) -> Result<List, Error> {
         let _ = rec;
         let text = b"not a document";
         let out = as_udf::list(2)?;
@@ -425,7 +425,7 @@ as_udf::export! {
             out.push(i64::from(raw_rec_update()))?;
         }
 
-        Ok(out.into_value())
+        Ok(out)
     }
 
     /// A string read before its bin is written again, read once more afterwards: whether it is still the
@@ -492,7 +492,7 @@ as_udf::export! {
     /// `[doc[index], <geojson>, {1: "one", "first": doc[0]}]` - the stored values go into the builders by
     /// position, built by the server from the record's bytes; the GeoJson stays a GeoJson rather than
     /// becoming a string.
-    fn relist(rec: &Record, index: i64) -> Result<Value, Error> {
+    fn relist(rec: &Record, index: i64) -> Result<List, Error> {
         let doc = rec.bin("doc")?.list()?;
         let picked = doc.iter().nth(index as usize).ok_or(Error::Absent)??;
         let first = doc.iter().next().ok_or(Error::Absent)??;
@@ -504,7 +504,7 @@ as_udf::export! {
             .push(Value::GeoJson("{\"type\":\"Point\",\"coordinates\":[1.0,2.0]}".into()))?
             .push(&inner)?;
 
-        Ok(out.into_value())
+        Ok(out)
     }
 
     /// Copy HLL bin `h` to bin `h2`, by position, and report its size.
@@ -537,7 +537,7 @@ as_udf::export! {
     /// parameter would have refused anything past 256 bytes. The string is written into bin `echo` too.
     /// (A function whose whole answer is a string it built returns it owned, `-> Result<String, Error>`;
     /// this one answers a list, which copies the text when it is pushed.)
-    fn echo(rec: &mut Record, text: String) -> Result<Value, Error> {
+    fn echo(rec: &mut Record, text: String) -> Result<List, Error> {
         let mut marked = text;
 
         marked.push('!');
@@ -548,7 +548,7 @@ as_udf::export! {
 
         out.push(marked.as_str())?.push(marked.len() as i64)?;
 
-        Ok(out.into_value())
+        Ok(out)
     }
 
     /// Write a short label into bin `tag`: a `Str<8>` parameter, so a longer argument is rejected before
@@ -562,7 +562,7 @@ as_udf::export! {
 
     /// Build `[ints, labels, {label: i}]` with `count` of each, a window per import call rather than one
     /// import per element: `extend` over iterators of integers, borrowed strings and pairs.
-    fn bulk(count: i64) -> Result<Value, Error> {
+    fn bulk(count: i64) -> Result<List, Error> {
         let labels: Vec<String> = (0..count).map(|i| format!("v{i}")).collect();
         let ints = as_udf::list(count as usize)?;
         let strs = as_udf::list(count as usize)?;
@@ -576,12 +576,12 @@ as_udf::export! {
 
         out.push(&ints)?.push(&strs)?.push(&by_label)?;
 
-        Ok(out.into_value())
+        Ok(out)
     }
 
     /// Copy list bin `doc` and map bin `m` into new collections element by element, by position, a window
     /// at a time: `extend` straight over a stored collection's iterator. Returns `[copy of doc, copy of m]`.
-    fn copy_list(rec: &Record) -> Result<Value, Error> {
+    fn copy_list(rec: &Record) -> Result<List, Error> {
         let doc = rec.bin("doc")?.list()?;
         let m = rec.bin("m")?.map()?;
         let list_copy = as_udf::list(doc.len())?;
@@ -594,7 +594,7 @@ as_udf::export! {
 
         out.push(&list_copy)?.push(&map_copy)?;
 
-        Ok(out.into_value())
+        Ok(out)
     }
 
     /// Build `count` maps, each holding a list, nest each in one outer list by reference, then walk every
@@ -602,7 +602,7 @@ as_udf::export! {
     ///
     /// Every map, list and iterator gives its handle back when it is dropped, so the call holds a few at a
     /// time however large `count` is: what bounds it is the call's memory, not a number of handles.
-    fn churn(count: i64) -> Result<Value, Error> {
+    fn churn(count: i64) -> Result<List, Error> {
         let out = as_udf::list(0)?;
 
         for i in 0..count {
@@ -630,7 +630,7 @@ as_udf::export! {
 
         answer.push(out.as_value().list()?.len() as i64)?.push(sum)?;
 
-        Ok(answer.into_value())
+        Ok(answer)
     }
 
     /// Build a list of `maps` small maps, `{"i": i}`, and walk every nested list of the bin `nested`, each
@@ -638,7 +638,7 @@ as_udf::export! {
     ///
     /// Thousands of handles in one call: the host's table grows past its inline slots as it needs to, and
     /// what the SDK gives back on drop is reused.
-    fn many_handles(rec: &mut Record, maps: i64) -> Result<Value, Error> {
+    fn many_handles(rec: &mut Record, maps: i64) -> Result<List, Error> {
         let out = as_udf::list(0)?;
 
         for i in 0..maps {
@@ -663,7 +663,46 @@ as_udf::export! {
 
         answer.push(out.as_value().list()?.len() as i64)?.push(lists)?.push(sum)?;
 
-        Ok(answer.into_value())
+        Ok(answer)
+    }
+
+    /// Build `levels` maps, each the only entry of the one above it, from the top down: the root first,
+    /// then each level put into the one made just before it, which is already inside the rest of the
+    /// chain. Saves the chain as the bin `deep`, reads it back level by level, and answers
+    /// `[levels built, levels read]`.
+    ///
+    /// The host lets a call nest 64 levels, in whatever order it builds them; the put that would make the
+    /// 65th is refused, and the call fails with nothing saved.
+    fn deep_maps(rec: &mut Record, levels: i64) -> Result<List, Error> {
+        let root = as_udf::map(1)?;
+        let mut at = as_udf::map(1)?;
+
+        root.insert("d", &at)?;
+
+        for _ in 2..levels {
+            let next = as_udf::map(1)?;
+
+            at.insert("d", &next)?;
+            at = next;
+        }
+
+        at.insert("leaf", 1i64)?;
+        rec.set("deep", &root)?;
+        rec.save()?;
+
+        let mut read = 0i64;
+        let mut level = Some(rec.bin("deep")?);
+
+        while let Some(value) = level {
+            read += 1;
+            level = value.map()?.get("d")?;
+        }
+
+        let answer = as_udf::list(2)?;
+
+        answer.push(levels)?.push(read)?;
+
+        Ok(answer)
     }
 
     /// Stage a bin, save, then fail the call. A test reads the record afterwards to see whether a save
@@ -683,7 +722,7 @@ as_udf::export! {
     }
 
     /// `bin_count` before a write is staged, once it is staged, and once it is saved.
-    fn count_staged(rec: &mut Record) -> Result<Value, Error> {
+    fn count_staged(rec: &mut Record) -> Result<List, Error> {
         let out = as_udf::list(3)?;
 
         out.push(rec.bin_count())?;
@@ -692,11 +731,11 @@ as_udf::export! {
         rec.save()?;
         out.push(rec.bin_count())?;
 
-        Ok(out.into_value())
+        Ok(out)
     }
 
     /// What every metadata call answers. Exists to pin down what they say on a key with no record.
-    fn meta_probe(rec: &Record) -> Result<Value, Error> {
+    fn meta_probe(rec: &Record) -> Result<Map, Error> {
         let out = as_udf::map(8)?;
 
         out.insert("exists", Value::Bool(rec.exists()))?;
@@ -707,12 +746,12 @@ as_udf::export! {
         out.insert("bins", rec.bin_count())?;
         out.insert("has", Value::Bool(rec.has("a")))?;
 
-        Ok(out.into_value())
+        Ok(out)
     }
 
     /// One write verb chosen by name, with what it answered and whether the record exists afterwards
     /// as the call sees it. Exists to pin down the verbs on a key with no record.
-    fn verb_probe(rec: &mut Record, verb: &str) -> Result<Value, Error> {
+    fn verb_probe(rec: &mut Record, verb: &str) -> Result<List, Error> {
         let answer = match verb {
             "set_ints" => rec.set_ints("v", &[1, 2]),
             "set_doubles" => rec.set_doubles("v", &[1.5]),
@@ -733,7 +772,7 @@ as_udf::export! {
         })?;
         out.push(Value::Bool(rec.exists()))?;
 
-        Ok(out.into_value())
+        Ok(out)
     }
 }
 
@@ -860,14 +899,14 @@ as_udf::stream! {
             Ok(())
         }
 
-        end() -> Result<Value, Error> {
+        end() -> Result<Map, Error> {
             let out = as_udf::map(2)?;
 
             unsafe {
                 out.insert("count", SEEN)?.insert("sum", TOTAL)?;
             }
 
-            Ok(out.into_value())
+            Ok(out)
         }
     }
 
@@ -892,14 +931,14 @@ as_udf::stream! {
             Ok(())
         }
 
-        end() -> Result<Value, Error> {
+        end() -> Result<Map, Error> {
             let out = as_udf::map(2)?;
 
             unsafe {
                 out.insert("refused", REFUSED)?.insert("written", WRITTEN)?;
             }
 
-            Ok(out.into_value())
+            Ok(out)
         }
     }
 

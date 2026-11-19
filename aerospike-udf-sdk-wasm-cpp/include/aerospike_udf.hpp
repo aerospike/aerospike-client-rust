@@ -2257,7 +2257,9 @@ template <> struct Param<int32_t> {
 	{
 		Result<int64_t> v = Param<int64_t>::decode(a, n, i, fn, p);
 		if (!v) return v.error();
-		if ((int64_t)(int32_t)*v != *v) return mismatch(fn, i, p, "a 32-bit int");
+		if ((int64_t)(int32_t)*v != *v) {
+			return Error{AS_UDF_TYPE_MISMATCH, message().add(fn).add(": argument ").add((int64_t)i + 1).add(" (").add(p).add(") is out of range for a 32-bit int").buf};
+		}
 		return (int32_t)*v;
 	}
 };
@@ -2307,7 +2309,7 @@ template <size_t N> struct Param<Bytes<N>> {
 	static Result<Bytes<N>> decode(const Value* a, int32_t n, int32_t i, const char* fn, const char* p)
 	{
 		if (i >= n || a[i].is_absent()) return missing(fn, i, p);
-		if (!a[i].is_string() && !a[i].is_blob()) return mismatch(fn, i, p, "a string or a blob");
+		if (!a[i].is_string() && !a[i].is_blob()) return mismatch(fn, i, p, "a blob");
 		if (a[i].len > N) return Error{AS_UDF_NEEDED_BASE - (int32_t)a[i].len, message().add(fn).add(": argument ").add((int64_t)i + 1).add(" (").add(p).add(") is ").add((int64_t)a[i].len).add(" bytes, at most ").add((int64_t)N).buf};
 		Result<Optional<Bytes<N>>> b = a[i].template as_bytes<N>();
 		if (!b) return b.error();

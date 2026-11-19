@@ -135,7 +135,8 @@ per export, and `main`. Name it as the TeaVM `mainClass`; the annotated class ne
   nil entry) / `getInt(key, dflt)` and so on for string and integer keys of any length, and is an
   `Iterable<MapValue.Entry>`. Every element a loop yields is a fresh `Value`, safe to keep, and a loop
   may be left early. A wrong kind throws `UdfException` naming the key or the index. `asValue()` hands
-  the collection on; a view of nothing (a side's deleted bins when it deleted none) is an empty one. `toList()` and
+  the collection on; a view of nothing (a side's deleted bins when it deleted none) is an empty one, one
+  empty list and one empty map per call however many views ask. `toList()` and
   `toMap()` copy the whole collection out as `java.util` ones.
 - **`ListBuilder` and `MapBuilder`**: a list or map being built on the server, started with `Udf.list()`
   and `Udf.map()`: chained `add` / `put` of every kind, string and integer keys, `addNil` / `putNil`,
@@ -178,16 +179,16 @@ in one call pays a hash lookup for the others. `tests/src/udf_java.rs` has the m
 
 ### Leaving a loop early
 
-A for-each over a `ListValue` or a `MapValue` reads the collection from the server a window at a time,
-128 values per call, and gives the server's cursor back as soon as the last window has been read. For a
-collection that fits one window (128 elements, 64 entries) that is before the loop sees its first
-element, so `break` and `return` hold nothing. A longer collection keeps its cursor between windows; a
-loop over one that is left early leaves that cursor open until the call returns, when the server releases
-every handle the call held (per record, in a stream). It costs a little of the call's memory until then,
-so the one thing to avoid is leaving a loop over a long collection early thousands of times in one call.
-`forEach` on a `ListValue` or `MapValue` gives the cursor back however it ends, an exception included, and
-every walk the SDK makes for itself (`contains`, `withBins`, `withNewer`, `putAll`, `addAll`, the
-`java.util` conversions) does too.
+A for-each over a `ListValue` or a `MapValue` holds no cursor while the loop runs: the iterator reads the
+position of every element from the server, 128 values per call, and gives the server's cursor back before
+it hands out the first one. So `break`, `return` and an exception hold nothing, whatever the collection's
+length. The positions are 16-byte values in a Java array, 16 bytes per element and 32 per map entry (16 KB
+for a list of 1000), kept as long as the iterator is; the elements' data is not copied. `forEach` on a
+`ListValue` or `MapValue` reads a window at a time instead (2 KB whatever the length) and gives the cursor
+back however it ends, an exception included, and so does every walk the SDK makes for itself (`contains`,
+`withBins`, `withNewer`, `putAll`, `addAll`, the `java.util` conversions). What holds a handle in a call is
+what the code opened and has not closed: a `ListBuilder` or `MapBuilder` until `close`, a cursor from
+`LowLevel.enter` until `LowLevel.close`.
 
 ## Which TeaVM, and why
 

@@ -2102,7 +2102,7 @@ fn status(rc: i32) -> Result<(), Error> {
 /// let recent = as_udf::list(3)?;
 ///
 /// recent.push(42)?.push("text")?.push(rec.bin("last")?)?;
-/// rec.set("recent", recent)?;
+/// rec.set("recent", &recent)?;
 /// rec.save()?;
 /// ```
 ///
@@ -2148,15 +2148,16 @@ pub fn map(capacity: usize) -> Result<Map, Error> {
 /// A list under construction, made by [`list`]. It lives on the host; this is its handle, and it owns it.
 /// Elements are added with [`push`](List::push) and [`extend`](List::extend) through `&self`, and the list is
 /// finished by handing it over: to [`Record::set`] or to another collection by reference (`rec.set("b",
-/// &list)`, `outer.push(&list)`), or as the UDF's result by value (`Ok(list.into())`). It can still be added
-/// to after it was handed over by reference, and what it was handed to sees the additions, because the host
-/// shares the list rather than copying it.
+/// &list)`, `outer.push(&list)`), or as the UDF's result by value (`-> Result<List, Error>`, or
+/// `Ok(list.into())` into an [`Output`]). It can still be added to after it was handed over by reference, and
+/// what it was handed to sees the additions, because the host shares the list rather than copying it.
 ///
 /// **Dropping it gives the handle back**, so a loop that builds a list per iteration and hands each one over
 /// by reference holds one at a time, and is bounded by the call's memory budget, not by a count. What it was
-/// handed to keeps the list: the host holds its own reference. A list turned into a value
-/// ([`into_value`](List::into_value), `list.into()`) is no longer dropped: its handle stays until the call
-/// ends, because the value may still name it.
+/// handed to keeps the list: the host holds its own reference. The only way to a [`Value`] of it is
+/// borrowing (`&list`, [`as_value`](List::as_value)), so no value outlives the handle it names. A list
+/// returned from a UDF is dropped by [`export!`] once the host has taken the result, which the host keeps by
+/// its own reference: nothing a UDF writes holds a list's handle past its last use.
 #[derive(Debug)]
 pub struct List {
     handle: i32,
@@ -2220,17 +2221,6 @@ impl List {
         Ok(self)
     }
 
-    /// The finished list, as a value to return or store: a [`Value::List`] holding the same host list.
-    /// `list.into()` does the same. The handle is kept until the call ends, since the value names it; to
-    /// store or nest a list and give its handle back, pass `&list` instead.
-    #[must_use]
-    pub fn into_value(self) -> Value<'static> {
-        let handle = self.handle;
-
-        core::mem::forget(self);
-        Value::List(Coll::Built(handle))
-    }
-
     /// The list as a value borrowed from it, for [`Record::set`] or a push into another collection, which
     /// take their own reference to the list: the list still gives its handle back when dropped. `&list`
     /// converts the same way.
@@ -2250,11 +2240,11 @@ impl Drop for List {
 /// A map under construction, made by [`map`], keyed by strings or integers. It lives on the host; this is its
 /// handle, and it owns it. Entries are added with [`insert`](Map::insert) and [`extend`](Map::extend) through
 /// `&self`, and the map is finished by handing it over: to [`Record::set`] or to another collection by
-/// reference (`&map`), or as the UDF's result by value (`Ok(map.into())`). Whatever order entries go in, the
-/// map is ordered by key.
+/// reference (`&map`), or as the UDF's result by value (`-> Result<Map, Error>`, or `Ok(map.into())` into an
+/// [`Output`] or a [`Resolution`]). Whatever order entries go in, the map is ordered by key.
 ///
-/// **Dropping it gives the handle back**, as for a [`List`]; a map turned into a value keeps its handle until
-/// the call ends.
+/// **Dropping it gives the handle back**, as for a [`List`]: a value of it is only ever borrowed (`&map`,
+/// [`as_value`](Map::as_value)), and a map returned from a UDF is dropped once the host has taken the result.
 #[derive(Debug)]
 pub struct Map {
     handle: i32,
@@ -2386,17 +2376,6 @@ impl Map {
         Ok(self)
     }
 
-    /// The finished map, as a value to return or store: a [`Value::Map`] holding the same host map.
-    /// `map.into()` does the same. The handle is kept until the call ends, since the value names it; to
-    /// store or nest a map and give its handle back, pass `&map` instead.
-    #[must_use]
-    pub fn into_value(self) -> Value<'static> {
-        let handle = self.handle;
-
-        core::mem::forget(self);
-        Value::Map(Coll::Built(handle))
-    }
-
     /// The map as a value borrowed from it, for [`Record::set`] or a push into another collection, which
     /// take their own reference to the map: the map still gives its handle back when dropped. `&map`
     /// converts the same way.
@@ -2410,20 +2389,6 @@ impl Map {
 impl Drop for Map {
     fn drop(&mut self) {
         unsafe { raw_cursor_close(self.handle) };
-    }
-}
-
-/// The finished list as a value, as [`List::into_value`] gives it.
-impl From<List> for Value<'_> {
-    fn from(value: List) -> Self {
-        value.into_value()
-    }
-}
-
-/// The finished map as a value, as [`Map::into_value`] gives it.
-impl From<Map> for Value<'_> {
-    fn from(value: Map) -> Self {
-        value.into_value()
     }
 }
 
@@ -2470,8 +2435,9 @@ macro_rules! pushable {
 
 // By reference only for anything with bytes of the guest's: a batch keeps the address until it is flushed,
 // so an owned string yielded by an iterator would be freed before the host read it. A built collection goes
-// either way: by reference it is given back when dropped, by value its handle stays until the call ends.
-pushable!(Value<'a>, i64, f64, bool, &'a str, &'a [u8], List, Map, &'a List, &'a Map);
+// by reference only too, so that its handle is given back when it is dropped: one pushed by value would have
+// nothing left to give it back.
+pushable!(Value<'a>, i64, f64, bool, &'a str, &'a [u8], &'a List, &'a Map);
 
 /// A [`Str`] by reference, pushed as a string that borrows its text.
 impl<'a, const N: usize> Pushable<'a> for &'a Str<N> {
@@ -2755,6 +2721,85 @@ impl<T: Return> Return for Result<T, Error> {
     }
 }
 
+/// A list the function built, returned as a list. The host takes its own reference to it, and the list's
+/// handle is given back as `deliver` returns, so the result holds nothing of the call's.
+impl Return for List {
+    fn deliver(self) -> Result<(), Error> {
+        result(&self.as_value())
+    }
+}
+
+/// A map the function built, returned as a map, with its handle given back as for a [`List`].
+impl Return for Map {
+    fn deliver(self) -> Result<(), Error> {
+        result(&self.as_value())
+    }
+}
+
+/// What a UDF returns when that is sometimes a collection it built and sometimes another value: a scalar, a
+/// value read from the record, a list or a map. `.into()` makes one from a [`List`], a [`Map`] or anything
+/// that converts to a [`Value`], so every branch reads `Ok(x.into())`.
+///
+/// ```ignore
+/// export! {
+///     fn recent(rec: &Record, n: i64) -> Result<Output, Error> {
+///         if n == 0 {
+///             return Ok(Value::Nil.into());
+///         }
+///
+///         let out = as_udf::list(n as usize)?;
+///
+///         out.extend(rec.bin("history")?.list()?.iter().take(n as usize))?;
+///
+///         Ok(out.into())
+///     }
+/// }
+/// ```
+///
+/// The list or map is owned, not named by a value: [`export!`] delivers it and drops it, which gives its
+/// handle back once the host holds its own reference to the result. A function that only ever returns a
+/// built collection declares `Result<List, Error>` or `Result<Map, Error>` instead.
+pub enum Output<'a> {
+    /// Any value: a scalar, guest bytes, a value read from the record.
+    Value(Value<'a>),
+    /// A list the function built.
+    List(List),
+    /// A map the function built.
+    Map(Map),
+}
+
+/// The list, owned by the output, so it is dropped once delivered.
+impl From<List> for Output<'_> {
+    fn from(list: List) -> Self {
+        Output::List(list)
+    }
+}
+
+/// The map, owned by the output, so it is dropped once delivered.
+impl From<Map> for Output<'_> {
+    fn from(map: Map) -> Self {
+        Output::Map(map)
+    }
+}
+
+/// Anything that converts to a [`Value`]: `Value::Nil.into()`, `42.into()`, `rec.bin("n")?.into()`.
+impl<'a, T: Into<Value<'a>>> From<T> for Output<'a> {
+    fn from(value: T) -> Self {
+        Output::Value(value.into())
+    }
+}
+
+/// Delivers what it holds, and drops a built collection afterwards.
+impl Return for Output<'_> {
+    fn deliver(self) -> Result<(), Error> {
+        match self {
+            Output::Value(value) => value.deliver(),
+            Output::List(list) => list.deliver(),
+            Output::Map(map) => map.deliver(),
+        }
+    }
+}
+
 /// Fail the call with a message the client will see. The [`export!`] macro does this with the `Err` a UDF
 /// returns, passing [`Error::message`]; call it directly only in an export written without the macro, and
 /// return `1` from the export afterwards, as the macro does.
@@ -2923,15 +2968,21 @@ impl Args {
     }
 }
 
-/// Why an argument could not become the parameter it was declared as.
+/// Why an argument could not become the parameter it was declared as. [`export!`] turns it into the
+/// message the call fails with, worded the same in every SDK, with the argument counted from 1:
+/// `<fn>: argument <N> (<param>) is missing`, `... is not <a kind>`, `... is <len> bytes, at most <max>`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArgError {
     /// The call did not supply it.
     Missing,
-    /// It is not the declared kind: what was wanted, and what came.
-    Expected(&'static str, &'static str),
+    /// It is not the declared kind: what was wanted, as the message says it (`an int`, `a double`,
+    /// `a bool`, `a string`, `a blob`, `a list or a map`; `a UTF-8 string` for a string whose bytes are not
+    /// UTF-8, which only a `&str` or `String` parameter refuses).
+    Expected(&'static str),
     /// A string or blob longer than the parameter allows: how long it is, and the most the parameter takes.
     TooLong { len: usize, max: usize },
+    /// The host could not hand its bytes over.
+    Unreadable,
 }
 
 /// How many bytes the buffer a `&str` or `&[u8]` parameter borrows holds. [`Str`] and [`Bytes`] declare
@@ -2971,7 +3022,7 @@ impl<'a> FromArg<'a> for i64 {
     fn from_arg(args: &Args, index: usize, _buf: &'a mut [u8]) -> Result<Self, ArgError> {
         match args.get(index) {
             Some(Value::Int(i)) => Ok(i),
-            Some(other) => Err(ArgError::Expected("an integer", other.kind())),
+            Some(_) => Err(ArgError::Expected("an int")),
             None => Err(ArgError::Missing),
         }
     }
@@ -2984,7 +3035,7 @@ impl<'a> FromArg<'a> for f64 {
     fn from_arg(args: &Args, index: usize, _buf: &'a mut [u8]) -> Result<Self, ArgError> {
         match args.get(index) {
             Some(Value::Double(d)) => Ok(d),
-            Some(other) => Err(ArgError::Expected("a double", other.kind())),
+            Some(_) => Err(ArgError::Expected("a double")),
             None => Err(ArgError::Missing),
         }
     }
@@ -2997,7 +3048,7 @@ impl<'a> FromArg<'a> for bool {
     fn from_arg(args: &Args, index: usize, _buf: &'a mut [u8]) -> Result<Self, ArgError> {
         match args.get(index) {
             Some(Value::Bool(b)) => Ok(b),
-            Some(other) => Err(ArgError::Expected("a boolean", other.kind())),
+            Some(_) => Err(ArgError::Expected("a bool")),
             None => Err(ArgError::Missing),
         }
     }
@@ -3018,12 +3069,12 @@ impl<'a> FromArg<'a> for &'a str {
 
                 match fetch_bytes(src, at, buf) {
                     Ok(n) => core::str::from_utf8(&buf[..n])
-                        .map_err(|_| ArgError::Expected("a utf-8 string", "a string")),
+                        .map_err(|_| ArgError::Expected("a UTF-8 string")),
                     Err(Error::TooSmall(n)) => Err(ArgError::TooLong { len: n, max: buf.len() }),
-                    Err(_) => Err(ArgError::Expected("a string", "a malformed value")),
+                    Err(_) => Err(ArgError::Unreadable),
                 }
             }
-            Some(other) => Err(ArgError::Expected("a string", other.kind())),
+            Some(_) => Err(ArgError::Expected("a string")),
             None => Err(ArgError::Missing),
         }
     }
@@ -3039,7 +3090,7 @@ impl<'a> FromArg<'a> for &'a [u8] {
         let (src, at, len) = match args.get(index) {
             Some(Value::Blob(Blob::Stored { src, at, len }))
             | Some(Value::String(Text::Stored { src, at, len })) => (src, at, len),
-            Some(other) => return Err(ArgError::Expected("bytes", other.kind())),
+            Some(_) => return Err(ArgError::Expected("a blob")),
             None => return Err(ArgError::Missing),
         };
 
@@ -3050,17 +3101,17 @@ impl<'a> FromArg<'a> for &'a [u8] {
         match fetch_bytes(src, at, buf) {
             Ok(n) => Ok(&buf[..n]),
             Err(Error::TooSmall(n)) => Err(ArgError::TooLong { len: n, max: buf.len() }),
-            Err(_) => Err(ArgError::Expected("bytes", "a malformed value")),
+            Err(_) => Err(ArgError::Unreadable),
         }
     }
 }
 
-// Why a string or blob argument could not become the owned parameter: too long, not UTF-8, or malformed.
-fn owned_arg_error(e: Error, max: usize, wanted: &'static str) -> ArgError {
+// Why a string or blob argument could not become the owned parameter: too long, not UTF-8, or unreadable.
+fn owned_arg_error(e: Error, max: usize) -> ArgError {
     match e {
         Error::TooSmall(len) => ArgError::TooLong { len, max },
-        Error::Malformed => ArgError::Expected("a utf-8 string", wanted),
-        _ => ArgError::Expected(wanted, "a malformed value"),
+        Error::Malformed => ArgError::Expected("a UTF-8 string"),
+        _ => ArgError::Unreadable,
     }
 }
 
@@ -3072,8 +3123,8 @@ impl<'a, const N: usize> FromArg<'a> for Str<N> {
 
     fn from_arg(args: &Args, index: usize, _buf: &'a mut [u8]) -> Result<Self, ArgError> {
         match args.get(index) {
-            Some(Value::String(text)) => text.to_inline::<N>().map_err(|e| owned_arg_error(e, N, "a string")),
-            Some(other) => Err(ArgError::Expected("a string", other.kind())),
+            Some(Value::String(text)) => text.to_inline::<N>().map_err(|e| owned_arg_error(e, N)),
+            Some(_) => Err(ArgError::Expected("a string")),
             None => Err(ArgError::Missing),
         }
     }
@@ -3087,8 +3138,8 @@ impl<'a, const N: usize> FromArg<'a> for Bytes<N> {
 
     fn from_arg(args: &Args, index: usize, _buf: &'a mut [u8]) -> Result<Self, ArgError> {
         match args.get(index) {
-            Some(Value::Blob(blob)) => blob.to_inline::<N>().map_err(|e| owned_arg_error(e, N, "bytes")),
-            Some(other) => Err(ArgError::Expected("bytes", other.kind())),
+            Some(Value::Blob(blob)) => blob.to_inline::<N>().map_err(|e| owned_arg_error(e, N)),
+            Some(_) => Err(ArgError::Expected("a blob")),
             None => Err(ArgError::Missing),
         }
     }
@@ -3101,8 +3152,8 @@ impl<'a> FromArg<'a> for alloc::string::String {
 
     fn from_arg(args: &Args, index: usize, _buf: &'a mut [u8]) -> Result<Self, ArgError> {
         match args.get(index) {
-            Some(Value::String(text)) => text.to_string().map_err(|e| owned_arg_error(e, usize::MAX, "a string")),
-            Some(other) => Err(ArgError::Expected("a string", other.kind())),
+            Some(Value::String(text)) => text.to_string().map_err(|e| owned_arg_error(e, usize::MAX)),
+            Some(_) => Err(ArgError::Expected("a string")),
             None => Err(ArgError::Missing),
         }
     }
@@ -3116,8 +3167,8 @@ impl<'a> FromArg<'a> for alloc::vec::Vec<u8> {
 
     fn from_arg(args: &Args, index: usize, _buf: &'a mut [u8]) -> Result<Self, ArgError> {
         match args.get(index) {
-            Some(Value::Blob(blob)) => blob.to_vec().map_err(|e| owned_arg_error(e, usize::MAX, "bytes")),
-            Some(other) => Err(ArgError::Expected("bytes", other.kind())),
+            Some(Value::Blob(blob)) => blob.to_vec().map_err(|e| owned_arg_error(e, usize::MAX)),
+            Some(_) => Err(ArgError::Expected("a blob")),
             None => Err(ArgError::Missing),
         }
     }
@@ -3139,7 +3190,7 @@ impl<'a> FromArg<'a> for Coll {
     fn from_arg(args: &Args, index: usize, _buf: &'a mut [u8]) -> Result<Self, ArgError> {
         match args.get(index) {
             Some(Value::List(c)) | Some(Value::Map(c)) => Ok(c),
-            Some(other) => Err(ArgError::Expected("a list or a map", other.kind())),
+            Some(_) => Err(ArgError::Expected("a list or a map")),
             None => Err(ArgError::Missing),
         }
     }
@@ -3399,21 +3450,18 @@ impl core::fmt::Write for Signature {
 }
 
 /// Reject a call over one of its arguments, with a message naming the function, the position, the parameter
-/// and what was wrong. Used by [`export!`].
+/// and what was wrong. `index` counts from 0, as [`Args::get`] does; the message counts from 1, as every
+/// SDK's does. Used by [`export!`].
 #[doc(hidden)]
 pub fn reject_argument(function: &str, index: usize, parameter: &str, error: ArgError) -> i32 {
     let mut m = Message::new();
+    let n = index + 1;
 
     let _ = match error {
-        ArgError::Missing => write!(m, "{function}: argument {index} ({parameter}) is missing"),
-        ArgError::Expected(wanted, got) => write!(
-            m,
-            "{function}: argument {index} ({parameter}): expected {wanted}, got {got}"
-        ),
-        ArgError::TooLong { len, max } => write!(
-            m,
-            "{function}: argument {index} ({parameter}) is {len} bytes, at most {max}"
-        ),
+        ArgError::Missing => write!(m, "{function}: argument {n} ({parameter}) is missing"),
+        ArgError::Expected(wanted) => write!(m, "{function}: argument {n} ({parameter}) is not {wanted}"),
+        ArgError::TooLong { len, max } => write!(m, "{function}: argument {n} ({parameter}) is {len} bytes, at most {max}"),
+        ArgError::Unreadable => write!(m, "{function}: argument {n} ({parameter}) could not be read"),
     };
 
     fail(m.as_str());
@@ -3431,7 +3479,7 @@ pub fn decode_args(function: &str, handle: i32, argc: i32) -> Result<Args, i32> 
             let mut m = Message::new();
 
             if argc > 0 && argc as usize > MAX_ARGS {
-                let _ = write!(m, "{function}: {argc} arguments, at most {MAX_ARGS} in a call");
+                let _ = write!(m, "{function} takes at most {MAX_ARGS} arguments, got {argc}");
             } else {
                 let _ = write!(m, "{function}: the arguments could not be read: {}", e.message());
             }
@@ -4233,7 +4281,10 @@ pub fn deliver_resolution(r: Result<Resolution, Error>) -> i32 {
 /// `Result<Value, Error>` is the general form: a [`Value`] is any kind of result. A function that builds a
 /// string or blob returns it owned instead, because a `Value` only borrows one: `Result<String, Error>` or
 /// `Result<Vec<u8>, Error>` with the `alloc` feature, `Result<Str<N>, Error>` or `Result<Bytes<N>, Error>`
-/// without. A function that cannot fail may leave the `Result` off and return any of these directly. The
+/// without. A function that builds a list or map returns it owned too, `Result<List, Error>` or
+/// `Result<Map, Error>`, or `Result<Output, Error>` when some branches return another value
+/// (`Ok(list.into())` there): the macro gives the collection's handle back once the host has taken the
+/// result. A function that cannot fail may leave the `Result` off and return any of these directly. The
 /// return type is anything that is [`Return`], written with `Value`, `Error` and the rest in scope under
 /// those names. The signature export says `-> value` for all of them.
 ///
@@ -4246,7 +4297,14 @@ pub fn deliver_resolution(r: Result<Resolution, Error>) -> i32 {
 /// remaining argument. A string or blob longer than its parameter allows is rejected from its reported
 /// length, before any copy. A call with more arguments than parameters is rejected unless the last parameter
 /// is [`Args`], and a call with more than [`MAX_ARGS`] (128) arguments in all is rejected whatever the
-/// parameters are, with a message naming the limit and the count: no argument is dropped.
+/// parameters are, with a message naming the limit and the count: no argument is dropped. The count is
+/// checked first, before any argument is decoded.
+///
+/// The messages are word for word those of the other SDKs, with arguments counted from 1:
+/// `add: argument 1 (by) is missing`, `add: argument 1 (by) is not an int` (the kinds are `an int`,
+/// `a double`, `a bool`, `a string`, `a blob`, and `a list or a map` for a [`Coll`]),
+/// `add: argument 2 (name) is 300 bytes, at most 256`, `add takes at most 2 arguments, got 3` and
+/// `add_all takes at most 128 arguments, got 129`.
 ///
 /// # The signature export
 ///
@@ -4507,12 +4565,23 @@ macro_rules! udf_body {
      $outcome:tt) => {{
         $crate::udf_record!([$($record)*]);
 
+        // More arguments than the function declares fails the call before any is decoded, as in every SDK:
+        // the most is the count of parameters, or MAX_ARGS when the last one takes the rest.
+        let __most: usize = if false $(|| <$ty as $crate::FromArg>::REST)* {
+            $crate::MAX_ARGS
+        } else {
+            0 $(+ { let _ = stringify!($arg); 1 })*
+        };
+
+        if $argc > 0 && $argc as usize > __most {
+            return $crate::reject_arity(stringify!($name), __most, $argc);
+        }
+
         let __args = match $crate::decode_args(stringify!($name), $args_handle, $argc) {
             Ok(args) => args,
             Err(failed) => return failed,
         };
         let mut __index: usize = 0;
-        let mut __rest = false;
 
         $(
             // A buffer named like the parameter, which the parameter then shadows: a string parameter
@@ -4523,13 +4592,10 @@ macro_rules! udf_body {
                 Err(e) => return $crate::reject_argument(stringify!($name), __index, stringify!($arg), e),
             };
 
-            __rest |= <$ty as $crate::FromArg>::REST;
             __index += 1;
         )*
 
-        if !__rest && __args.len() > __index {
-            return $crate::reject_arity(stringify!($name), __index, $argc);
-        }
+        let _ = __index;
 
         $crate::udf_outcome!($outcome, (|| $body)())
     }};

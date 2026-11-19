@@ -39,7 +39,7 @@ type.
 **Rust**
 
 ```rust
-use aerospike_udf_sdk_wasm::{self as as_udf, export, Error, Record, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, export, Error, Map, Record, Value};
 ```
 
 **Go**
@@ -753,7 +753,7 @@ fn log_payment(rec: &mut Record, amount: i64) -> Result<Value, Error> {
     let out = as_udf::list(count)?;
     out.extend(history.iter())?.push(amount)?;      // the stored elements, then the new one
 
-    rec.set("history", out)?;
+    rec.set("history", &out)?;
     rec.save()?;
 
     Ok(Value::Int(count as i64))
@@ -862,7 +862,7 @@ count and time to live here, and also its size, last update time, set name, key 
 **Rust**
 
 ```rust
-fn summary(rec: &Record) -> Result<Value, Error> {
+fn summary(rec: &Record) -> Result<Map, Error> {
     let out = as_udf::map(5)?;
 
     out.insert("owner", rec.bin("owner")?)?         // a stored value goes in as it is
@@ -871,7 +871,7 @@ fn summary(rec: &Record) -> Result<Value, Error> {
         .insert("bins", rec.bin_count())?
         .insert("ttl", rec.ttl().map_or(-1, i64::from))?;
 
-    Ok(out.into_value())
+    Ok(out) // delivered, then dropped: the host keeps the map, and its handle goes back
 }
 ```
 

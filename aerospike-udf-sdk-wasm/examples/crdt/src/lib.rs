@@ -321,13 +321,13 @@ fn last_version(rec: &Record, entries: &[Option<(Id, Value<'static>)>], id: &str
 }
 
 /// Store `entries` plus an optional built entry under `id`, sorted by id, less any entry under `id`.
-fn store_devices(
+fn store_devices<'a>(
     rec: &mut Record,
-    entries: &[Option<(Id, Value<'static>)>],
+    entries: &[Option<(Id, Value<'a>)>],
     without: &str,
-    add: Option<(Id, Value<'static>)>,
+    add: Option<(Id, Value<'a>)>,
 ) -> Result<(), Error> {
-    let mut all: [Option<(Id, Value<'static>)>; MAX_DEVICES] = [None; MAX_DEVICES];
+    let mut all: [Option<(Id, Value<'a>)>; MAX_DEVICES] = [None; MAX_DEVICES];
     let mut n = 0;
 
     for e in entries.iter().flatten() {
@@ -461,7 +461,8 @@ export! {
         }
 
         entry.insert("deviceId", id)?.insert("version", version)?;
-        store_devices(rec, &entries[..n], id, Some((Id::new(id)?, entry.into_value())))?;
+        // Lent, not given: the entry's handle goes back when it is dropped at the end of this function.
+        store_devices(rec, &entries[..n], id, Some((Id::new(id)?, entry.as_value())))?;
 
         if marker_version(rec, id)?.is_some() {
             store_removed(rec, Some(id), None, None)?;

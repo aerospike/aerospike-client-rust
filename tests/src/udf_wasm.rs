@@ -1312,7 +1312,7 @@ async fn a_wasm_udf_rejects_arguments_that_do_not_match_its_signature() {
     let text = error.to_string();
 
     assert!(
-        text.contains("add_all: argument 0 (name): expected a string, got an integer"),
+        text.contains("add_all: argument 1 (name) is not a string"),
         "the rejection names the parameter and the kinds: {text}"
     );
 
@@ -1539,7 +1539,7 @@ async fn a_wasm_udf_sizes_its_string_parameters() {
     let text = error.to_string();
 
     assert!(
-        text.contains("tag: argument 0 (label) is 9 bytes, at most 8"),
+        text.contains("tag: argument 1 (label) is 9 bytes, at most 8"),
         "the rejection names the limit: {text}"
     );
 
@@ -1920,6 +1920,74 @@ async fn a_wasm_udf_at_the_edges_the_reference_states() {
     }
 
     let _ = client.remove_udf(&admin, &format!("{package}.wasm")).await;
+}
+
+/// How many maps deep `value` is along the key `d`: a map without `d` is one.
+fn deep_levels(value: &Value) -> usize {
+    let key = Value::from("d");
+    let next = match value {
+        Value::HashMap(m) => m.get(&key),
+        Value::OrderedMap(m) => m.get(&key),
+        Value::SortedMap(m) => m.get(&key),
+        _ => return 0,
+    };
+
+    1 + next.map_or(0, deep_levels)
+}
+
+/// **A guest builds top-down to the limit, and no further.** `deep_maps(n)` makes a root map, then puts each
+/// new map into the one made just before it - a collection that is already inside the chain - and saves the
+/// chain as a bin. The host bounds nesting by each collection's depth and height, not by whether anything
+/// else holds it, so 64 levels built this way are written, saved, read back by the guest and by the client;
+/// the put that would make the 65th is refused, and that call fails with nothing saved.
+#[aerospike_macro::test]
+async fn a_wasm_udf_builds_maps_top_down_to_the_nesting_limit() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("wasm_nest_{}", common::rand_str(6));
+    let write = WritePolicy::default();
+    let read = ReadPolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+    let refused = as_key!(namespace, set_name, 2);
+
+    client.put(&write, &key, &[as_bin!("a", 1)]).await.unwrap();
+    client.put(&write, &refused, &[as_bin!("a", 1)]).await.unwrap();
+
+    if let Err(reason) = register(&client, package, &key).await {
+        skipped("a_wasm_udf_builds_maps_top_down_to_the_nesting_limit", &reason);
+        return;
+    }
+
+    let result = client
+        .execute_udf(&write, &key, package, "deep_maps", &[Value::Int(64)])
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result,
+        Some(Value::List(vec![Value::Int(64), Value::Int(64)])),
+        "64 levels built from the top down, saved, and read back by the guest"
+    );
+
+    let record = client.get(&read, &key, Bins::All).await.unwrap();
+    let deep = record.bins.get("deep").expect("the bin was saved");
+
+    assert_eq!(deep_levels(deep), 64, "and the client reads 64 levels");
+
+    let failed = client
+        .execute_udf(&write, &refused, package, "deep_maps", &[Value::Int(65)])
+        .await;
+
+    assert!(failed.is_err(), "the 65th level is refused: {failed:?}");
+
+    let record = client.get(&read, &refused, Bins::All).await.unwrap();
+
+    assert!(!record.bins.contains_key("deep"), "and nothing was saved");
+
+    let _ = client.delete(&write, &key).await;
+    let _ = client.delete(&write, &refused).await;
+    let _ = client.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
 }
 
 /// **A call holds as many handles as its memory pays for.** `many_handles` builds a list of 5000 small maps

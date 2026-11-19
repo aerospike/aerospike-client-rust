@@ -52,7 +52,11 @@ call; a missing key or an index past the end is `Ok(None)`. Typed readers do not
 whatever their kind. A list or map you build is a `List` (`push`, `extend`) or a `Map` (`insert`, `extend`, `contains_key`).
 Each owns its handle on the host and gives it back when dropped, as an iterator gives back its cursor; set or
 nest one by reference (`rec.set("x", &list)`, `outer.push(&inner)`), since the host keeps its own reference,
-and return one by value. A call is bounded by its memory on the server, not by a count of handles.
+and return one by value (`-> Result<List, Error>`, or `Ok(list.into())` into an `Output` when other branches
+return other values); the macro drops it once the host has taken the result. A `List` or `Map` never becomes a
+`Value` that outlives it, so nothing holds a handle past its use: what holds one is a live builder or a live
+iterator, until it is dropped. A call is bounded by its memory on the server, not by a count of
+handles.
 
 **Every failure is an `Error`**, and a UDF is `fn name(params) -> Result<Value, Error>`: `Ok` is the result the
 client receives, `Err` fails the call with the error's message, `Error::Custom` carries your own, and
@@ -61,9 +65,12 @@ client receives, `Err` fails the call with the error's message, `Error::Custom` 
 
 **Arguments are typed in the signature.** `export!` decodes `i64`, `f64`, `bool`, `&str`, `&[u8]`, `Str<N>`,
 `Bytes<N>`, `String`, `Vec<u8>`, `Value`, `Coll`, `Option<T>` and a trailing `Args`, checks the count and the
-kinds, and rejects a mismatched call before the body runs — `withdraw: argument 0 (amount): expected an
-integer, got a string`, or `is 300 bytes, at most 64` for a string past its parameter's capacity. A call
-takes at most 128 arguments in all; one with more fails, naming the limit and the count.
+kinds, and rejects a mismatched call before the body runs — `withdraw: argument 1 (amount) is not an int`,
+`withdraw: argument 1 (amount) is missing`, or `... is 300 bytes, at most 64` for a string past its
+parameter's capacity. Arguments count from 1, and the messages are word for word those of the Go, C, C++ and
+Java SDKs. A call with more arguments than the function declares fails before any is decoded
+(`withdraw takes at most 2 arguments, got 3`), and a call takes at most 128 arguments in all (`... takes at
+most 128 arguments, got 129`); no argument is ever dropped.
 
 **A module describes its exports.** Beside each UDF the macros export `__udf_sig_<name>`, which the server
 serves as a string when a client executes it like any other function, without running a body:

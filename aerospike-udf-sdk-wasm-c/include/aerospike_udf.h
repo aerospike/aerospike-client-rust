@@ -859,7 +859,11 @@ static inline int32_t as_udf_as_blob(const as_udf_value* v, void* out, int32_t c
  * if (n < 1 || a[0].kind != AS_UDF_STR) return as_udf_fail_str("the first argument is a bin name");
  * int64_t by = n > 1 && a[1].kind == AS_UDF_INT ? a[1].payload : 1;
  * ```
- * A function that takes any number reads into an array of AS_UDF_MAX_ARGS and fails when `argc` is over it.
+ * A function that takes any number reads into an array of AS_UDF_MAX_ARGS and fails when `argc` is over it. The
+ * other SDKs check arguments for the function and fail with the same words in each, arguments counted from 1:
+ * "add_to takes at most 2 arguments, got 3", "add_to: argument 1 (bin) is missing", "... is not a string",
+ * "... is out of range for a 32-bit int", "... is 300 bytes, at most 256". A C function that wants to answer
+ * as they do writes those messages itself.
  */
 static inline int32_t as_udf_args(int32_t handle, int32_t argc, as_udf_value* out, int32_t cap)
 {

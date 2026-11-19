@@ -306,6 +306,9 @@ public final class LowLevel {
      * tell, and a function that does not want to ignore them fails the call on it.
      */
     public static int args(int handle, int argc, Value[] out) {
+        // Every call reads its arguments first: what a previous call built for the SDK's own use is gone.
+        Maps.newCall();
+
         if (handle <= 0 || argc <= 0 || out.length == 0) {
             return 0;
         }

@@ -10,7 +10,7 @@
 
 #![no_std]
 
-use aerospike_udf_sdk_wasm::{self as as_udf, export, stream, Error, Record, Str, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, export, stream, Error, Map, Record, Str, Value};
 
 /// The balance, or zero for an account that has none yet. A balance that is not an integer is the
 /// caller's data problem, reported as such.
@@ -23,7 +23,7 @@ export! {
     /// balance would go negative - the client sees the message.
     ///
     /// `amount: i64` and `dry_run: Option<bool>` are checked before this body runs: a string where the
-    /// amount should be is rejected as `withdraw: argument 0 (amount): expected an integer, got a string`.
+    /// amount should be is rejected as `withdraw: argument 1 (amount) is not an int`.
     fn withdraw(rec: &mut Record, amount: i64, dry_run: Option<bool>) -> Result<Value, Error> {
         let balance = balance(rec)?;
 
@@ -77,8 +77,8 @@ export! {
     }
 
     /// The account as one map: the balance, how many postings it keeps, and the largest of them. Read-only,
-    /// and built on the host - a map the guest fills by key and returns as a value.
-    fn summary(rec: &Record) -> Result<Value, Error> {
+    /// and built on the host - a map the guest fills by key and returns.
+    fn summary(rec: &Record) -> Result<Map, Error> {
         let mut count = 0i64;
         let mut largest = 0i64;
 
@@ -97,7 +97,7 @@ export! {
             .insert("postings", count)?
             .insert("largest", largest)?;
 
-        Ok(out.into_value())
+        Ok(out)
     }
 }
 
@@ -120,12 +120,12 @@ stream! {
 
             Ok(())
         }
-        end() -> Result<Value, Error> {
+        end() -> Result<Map, Error> {
             let out = as_udf::map(2)?;
 
             out.insert("total", unsafe { TOTAL })?.insert("accounts", unsafe { ACCOUNTS })?;
 
-            Ok(out.into_value())
+            Ok(out)
         }
     }
 }

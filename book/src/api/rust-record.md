@@ -1526,7 +1526,7 @@ is fine. The `List` gives its handle back when it is dropped; what it was handed
 let recent = as_udf::list(3)?;
 
 recent.push(42)?.push("text")?.push(rec.bin("last")?)?;
-rec.set("recent", recent)?;
+rec.set("recent", &recent)?;
 rec.save()?;
 ```
 
@@ -1566,15 +1566,16 @@ pub struct List
 A list under construction, made by `list`. It lives on the host; this is its handle, and it owns it.
 Elements are added with `push` and `extend` through `&self`, and the list is
 finished by handing it over: to `Record::set` or to another collection by reference (`rec.set("b",
-&list)`, `outer.push(&list)`), or as the UDF's result by value (`Ok(list.into())`). It can still be added
-to after it was handed over by reference, and what it was handed to sees the additions, because the host
-shares the list rather than copying it.
+&list)`, `outer.push(&list)`), or as the UDF's result by value (`-> Result<List, Error>`, or
+`Ok(list.into())` into an `Output`). It can still be added to after it was handed over by reference, and
+what it was handed to sees the additions, because the host shares the list rather than copying it.
 
 **Dropping it gives the handle back**, so a loop that builds a list per iteration and hands each one over
 by reference holds one at a time, and is bounded by the call's memory budget, not by a count. What it was
-handed to keeps the list: the host holds its own reference. A list turned into a value
-(`into_value`, `list.into()`) is no longer dropped: its handle stays until the call
-ends, because the value may still name it.
+handed to keeps the list: the host holds its own reference. The only way to a `Value` of it is
+borrowing (`&list`, `as_value`), so no value outlives the handle it names. A list
+returned from a UDF is dropped by `export!` once the host has taken the result, which the host keeps by
+its own reference: nothing a UDF writes holds a list's handle past its last use.
 
 #### `List::push`
 
@@ -1609,16 +1610,6 @@ window. The first `Err` item stops the extend with that error, a value that cann
 `Err(WrongType)`, and one the host does not take with `Err(Refused)`, as in `push`; the
 items before it are in.
 
-#### `List::into_value`
-
-```rust
-pub fn into_value(self) -> Value<'static>
-```
-
-The finished list, as a value to return or store: a `Value::List` holding the same host list.
-`list.into()` does the same. The handle is kept until the call ends, since the value names it; to
-store or nest a list and give its handle back, pass `&list` instead.
-
 #### `List::as_value`
 
 ```rust
@@ -1646,11 +1637,11 @@ pub struct Map
 A map under construction, made by `map`, keyed by strings or integers. It lives on the host; this is its
 handle, and it owns it. Entries are added with `insert` and `extend` through
 `&self`, and the map is finished by handing it over: to `Record::set` or to another collection by
-reference (`&map`), or as the UDF's result by value (`Ok(map.into())`). Whatever order entries go in, the
-map is ordered by key.
+reference (`&map`), or as the UDF's result by value (`-> Result<Map, Error>`, or `Ok(map.into())` into an
+`Output` or a `Resolution`). Whatever order entries go in, the map is ordered by key.
 
-**Dropping it gives the handle back**, as for a `List`; a map turned into a value keeps its handle until
-the call ends.
+**Dropping it gives the handle back**, as for a `List`: a value of it is only ever borrowed (`&map`,
+`as_value`), and a map returned from a UDF is dropped once the host has taken the result.
 
 #### `MapKey`
 
@@ -1718,16 +1709,6 @@ in practice - or a `Result<(Value, Value), Error>` as `Coll::entries` yields the
 with that error, a key or value that cannot be in a collection with `Err(WrongType)`, and an entry
 the host does not take with `Err(Refused)`; the entries before it are in.
 
-#### `Map::into_value`
-
-```rust
-pub fn into_value(self) -> Value<'static>
-```
-
-The finished map, as a value to return or store: a `Value::Map` holding the same host map.
-`map.into()` does the same. The handle is kept until the call ends, since the value names it; to
-store or nest a map and give its handle back, pass `&map` instead.
-
 #### `Map::as_value`
 
 ```rust
@@ -1745,22 +1726,6 @@ impl Drop for Map
 ```
 
 Gives the map's handle back to the host. What the map was set into or pushed into keeps it.
-
-#### `impl From<List> for Value<'_>`
-
-```rust
-impl From<List> for Value<'_>
-```
-
-The finished list as a value, as `List::into_value` gives it.
-
-#### `impl From<Map> for Value<'_>`
-
-```rust
-impl From<Map> for Value<'_>
-```
-
-The finished map as a value, as `Map::into_value` gives it.
 
 #### `impl From<&'a List> for Value<'a>`
 
@@ -1939,6 +1904,92 @@ impl<T: Return> Return for Result<T, Error>
 
 The usual form: `Ok` delivers what it holds, `Err` is passed on and fails the call.
 
+#### `impl Return for List`
+
+```rust
+impl Return for List
+```
+
+A list the function built, returned as a list. The host takes its own reference to it, and the list's
+handle is given back as `deliver` returns, so the result holds nothing of the call's.
+
+#### `impl Return for Map`
+
+```rust
+impl Return for Map
+```
+
+A map the function built, returned as a map, with its handle given back as for a `List`.
+
+#### `Output`
+
+```rust
+pub enum Output<'a> {
+    /// Any value: a scalar, guest bytes, a value read from the record.
+    Value(Value<'a>),
+    /// A list the function built.
+    List(List),
+    /// A map the function built.
+    Map(Map),
+}
+```
+
+What a UDF returns when that is sometimes a collection it built and sometimes another value: a scalar, a
+value read from the record, a list or a map. `.into()` makes one from a `List`, a `Map` or anything
+that converts to a `Value`, so every branch reads `Ok(x.into())`.
+
+```rust
+export! {
+    fn recent(rec: &Record, n: i64) -> Result<Output, Error> {
+        if n == 0 {
+            return Ok(Value::Nil.into());
+        }
+
+        let out = as_udf::list(n as usize)?;
+
+        out.extend(rec.bin("history")?.list()?.iter().take(n as usize))?;
+
+        Ok(out.into())
+    }
+}
+```
+
+The list or map is owned, not named by a value: `export!` delivers it and drops it, which gives its
+handle back once the host holds its own reference to the result. A function that only ever returns a
+built collection declares `Result<List, Error>` or `Result<Map, Error>` instead.
+
+#### `impl From<List> for Output<'_>`
+
+```rust
+impl From<List> for Output<'_>
+```
+
+The list, owned by the output, so it is dropped once delivered.
+
+#### `impl From<Map> for Output<'_>`
+
+```rust
+impl From<Map> for Output<'_>
+```
+
+The map, owned by the output, so it is dropped once delivered.
+
+#### `impl From<T> for Output<'a>`
+
+```rust
+impl<'a, T: Into<Value<'a>>> From<T> for Output<'a>
+```
+
+Anything that converts to a `Value`: `Value::Nil.into()`, `42.into()`, `rec.bin("n")?.into()`.
+
+#### `impl Return for Output<'_>`
+
+```rust
+impl Return for Output<'_>
+```
+
+Delivers what it holds, and drops a built collection afterwards.
+
 #### `fail`
 
 ```rust
@@ -2089,14 +2140,20 @@ the end gives an empty view.
 pub enum ArgError {
     /// The call did not supply it.
     Missing,
-    /// It is not the declared kind: what was wanted, and what came.
-    Expected(&'static str, &'static str),
+    /// It is not the declared kind: what was wanted, as the message says it (`an int`, `a double`,
+    /// `a bool`, `a string`, `a blob`, `a list or a map`; `a UTF-8 string` for a string whose bytes are not
+    /// UTF-8, which only a `&str` or `String` parameter refuses).
+    Expected(&'static str),
     /// A string or blob longer than the parameter allows: how long it is, and the most the parameter takes.
     TooLong { len: usize, max: usize },
+    /// The host could not hand its bytes over.
+    Unreadable,
 }
 ```
 
-Why an argument could not become the parameter it was declared as.
+Why an argument could not become the parameter it was declared as. `export!` turns it into the
+message the call fails with, worded the same in every SDK, with the argument counted from 1:
+`<fn>: argument <N> (<param>) is missing`, `... is not <a kind>`, `... is <len> bytes, at most <max>`.
 
 #### `ARG_BUF`
 
@@ -2265,7 +2322,10 @@ message naming the parameter - before the body runs. `Ok(value)` becomes the res
 `Result<Value, Error>` is the general form: a `Value` is any kind of result. A function that builds a
 string or blob returns it owned instead, because a `Value` only borrows one: `Result<String, Error>` or
 `Result<Vec<u8>, Error>` with the `alloc` feature, `Result<Str<N>, Error>` or `Result<Bytes<N>, Error>`
-without. A function that cannot fail may leave the `Result` off and return any of these directly. The
+without. A function that builds a list or map returns it owned too, `Result<List, Error>` or
+`Result<Map, Error>`, or `Result<Output, Error>` when some branches return another value
+(`Ok(list.into())` there): the macro gives the collection's handle back once the host has taken the
+result. A function that cannot fail may leave the `Result` off and return any of these directly. The
 return type is anything that is `Return`, written with `Value`, `Error` and the rest in scope under
 those names. The signature export says `-> value` for all of them.
 
@@ -2278,7 +2338,14 @@ parameter's own); `Str<N>` and `Bytes<N>` for a string or blob of up to `N` byte
 remaining argument. A string or blob longer than its parameter allows is rejected from its reported
 length, before any copy. A call with more arguments than parameters is rejected unless the last parameter
 is `Args`, and a call with more than `MAX_ARGS` (128) arguments in all is rejected whatever the
-parameters are, with a message naming the limit and the count: no argument is dropped.
+parameters are, with a message naming the limit and the count: no argument is dropped. The count is
+checked first, before any argument is decoded.
+
+The messages are word for word those of the other SDKs, with arguments counted from 1:
+`add: argument 1 (by) is missing`, `add: argument 1 (by) is not an int` (the kinds are `an int`,
+`a double`, `a bool`, `a string`, `a blob`, and `a list or a map` for a `Coll`),
+`add: argument 2 (name) is 300 bytes, at most 256`, `add takes at most 2 arguments, got 3` and
+`add_all takes at most 128 arguments, got 129`.
 
 **The signature export**
 

@@ -34,7 +34,7 @@ extern crate alloc;
 use alloc::{format, string::String, vec, vec::Vec};
 
 use aerospike_udf_sdk_wasm::{
-    self as as_udf, Args, Coll, Error, EventRecord, Pair, Record, Resolution, Return, Text, Value,
+    self as as_udf, Args, Coll, Error, EventRecord, Output, Pair, Record, Resolution, Return, Text, Value,
 };
 
 //==========================================================
@@ -61,25 +61,25 @@ fn status(r: Result<(), Error>) -> &'static str {
 }
 
 /// `[tag]`
-fn only(tag: &str) -> Result<Value<'static>, Error> {
+fn only(tag: &str) -> Result<Output<'static>, Error> {
     let out = as_udf::list(1)?;
 
     out.push(tag)?;
 
-    Ok(out.into_value())
+    Ok(out.into())
 }
 
 /// `["some", value]`
-fn some<'a>(value: impl Into<Value<'a>>) -> Result<Value<'static>, Error> {
+fn some<'a>(value: impl Into<Value<'a>>) -> Result<Output<'static>, Error> {
     let out = as_udf::list(2)?;
 
     out.push("some")?.push(value)?;
 
-    Ok(out.into_value())
+    Ok(out.into())
 }
 
 /// What a typed reader gave: `["some", value]`, `["none"]`, or the error's tag.
-fn read<'a, T: Into<Value<'a>>>(r: Result<Option<T>, Error>) -> Result<Value<'static>, Error> {
+fn read<'a, T: Into<Value<'a>>>(r: Result<Option<T>, Error>) -> Result<Output<'static>, Error> {
     match r {
         Ok(Some(value)) => some(value),
         Ok(None) => only("none"),
@@ -88,7 +88,7 @@ fn read<'a, T: Into<Value<'a>>>(r: Result<Option<T>, Error>) -> Result<Value<'st
 }
 
 /// What a reader with a default gave: `["some", value]`, or the error's tag.
-fn read_or<'a, T: Into<Value<'a>>>(r: Result<T, Error>) -> Result<Value<'static>, Error> {
+fn read_or<'a, T: Into<Value<'a>>>(r: Result<T, Error>) -> Result<Output<'static>, Error> {
     match r {
         Ok(value) => some(value),
         Err(e) => only(tag(e)),
@@ -191,7 +191,7 @@ fn with_mixed<R>(i: i64, f: impl FnOnce(Value<'_>) -> R) -> R {
 /// [`Value`] only borrows a string, so the owned kinds are returned as themselves; each is delivered as the
 /// SDK delivers it.
 enum Made {
-    Value(Value<'static>),
+    Value(Output<'static>),
     Text(String),
     Bytes(Vec<u8>),
 }
@@ -225,7 +225,7 @@ fn mk_value(what: &str, n: i64) -> Result<Made, Error> {
                 out.push(i)?;
             }
 
-            out.into_value()
+            out.into()
         }
         "list_mixed" => {
             let out = as_udf::list(room)?;
@@ -234,7 +234,7 @@ fn mk_value(what: &str, n: i64) -> Result<Made, Error> {
                 with_mixed(i, |v| out.push(v).map(|_| ()))?;
             }
 
-            out.into_value()
+            out.into()
         }
         "map_str" => {
             let out = as_udf::map(room)?;
@@ -243,7 +243,7 @@ fn mk_value(what: &str, n: i64) -> Result<Made, Error> {
                 out.insert(format!("k{i}").as_str(), i)?;
             }
 
-            out.into_value()
+            out.into()
         }
         "map_int" => {
             let out = as_udf::map(room)?;
@@ -252,7 +252,7 @@ fn mk_value(what: &str, n: i64) -> Result<Made, Error> {
                 out.insert(i, format!("v{i}").as_str())?;
             }
 
-            out.into_value()
+            out.into()
         }
         "map_mixed" => {
             let out = as_udf::map(room)?;
@@ -261,7 +261,7 @@ fn mk_value(what: &str, n: i64) -> Result<Made, Error> {
                 with_mixed(i, |v| out.insert(format!("k{i}").as_str(), v).map(|_| ()))?;
             }
 
-            out.into_value()
+            out.into()
         }
         "nested" => {
             let mut out = as_udf::list(1)?;
@@ -276,7 +276,7 @@ fn mk_value(what: &str, n: i64) -> Result<Made, Error> {
                 out = outer;
             }
 
-            out.into_value()
+            out.into()
         }
         "string" => return Ok(Made::Text("x".repeat(room))),
         "blob" => return Ok(Made::Bytes((0..room).map(|i| (i & 0xff) as u8).collect())),
@@ -306,7 +306,7 @@ const LONG: &str = match core::str::from_utf8(&XS) {
 
 as_udf::export! {
     /// Read bin `name` with one reader of the record.
-    fn rd(rec: &Record, name: String, how: String) -> Result<Value, Error> {
+    fn rd(rec: &Record, name: String, how: String) -> Result<Output, Error> {
         let name = name.as_str();
 
         match how.as_str() {
@@ -332,7 +332,7 @@ as_udf::export! {
     /// `v` is taken as the rest of the arguments, of which there may be one: an optional parameter would
     /// make a `v` that was not passed and one passed as nil the same `None`, and `set` writes a nil (which
     /// removes the bin) but has nothing to write when there is no `v`.
-    fn wr(rec: &mut Record, name: String, how: String, v: Args) -> Result<Value, Error> {
+    fn wr(rec: &mut Record, name: String, how: String, v: Args) -> Result<Output, Error> {
         if v.len() > 1 {
             return Err(Error::Custom("wr takes at most 3 arguments"));
         }
@@ -364,11 +364,11 @@ as_udf::export! {
 
         out.push(status(staged))?.push(saved)?.push(rec.bin_count())?;
 
-        Ok(out.into_value())
+        Ok(out.into())
     }
 
     /// Everything the record says about itself, as a map.
-    fn meta(rec: &Record) -> Result<Value, Error> {
+    fn meta(rec: &Record) -> Result<Output, Error> {
         let out = as_udf::map(8)?;
 
         out.insert("exists", rec.exists())?
@@ -402,11 +402,11 @@ as_udf::export! {
 
         out.insert("digest", rec.digest(&mut digest)?.len() as i64)?;
 
-        Ok(out.into_value())
+        Ok(out.into())
     }
 
     /// The kind of a value and the value passed back: `[kind, v]`, and its length for a list or map.
-    fn val(v: Value) -> Result<Value, Error> {
+    fn val(v: Value) -> Result<Output, Error> {
         let out = as_udf::list(3)?;
 
         out.push(kind(&v))?.push(v)?;
@@ -415,7 +415,7 @@ as_udf::export! {
             out.push(coll.len() as i64)?;
         }
 
-        Ok(out.into_value())
+        Ok(out.into())
     }
 
     /// Build a value with the builders, an element per call, and answer it.
@@ -427,7 +427,7 @@ as_udf::export! {
     }
 
     /// Walk the list or map in bin `name` with iteration and lookup.
-    fn walk(rec: &Record, name: String) -> Result<Value, Error> {
+    fn walk(rec: &Record, name: String) -> Result<Output, Error> {
         let coll = match rec.get(name.as_str()) {
             Ok(Some(value)) => value,
             Ok(None) => return only("none"),
@@ -496,11 +496,11 @@ as_udf::export! {
             _ => return only("wrong"),
         }
 
-        Ok(out.into_value())
+        Ok(out.into())
     }
 
     /// The arguments as they were decoded: `[a, b, count, kinds...]`.
-    fn ar(a: i64, b: Option<String>, rest: Args) -> Result<Value, Error> {
+    fn ar(a: i64, b: Option<String>, rest: Args) -> Result<Output, Error> {
         let out = as_udf::list(3 + rest.len())?;
 
         out.push(a)?;
@@ -516,11 +516,11 @@ as_udf::export! {
             out.push(kind(&v))?;
         }
 
-        Ok(out.into_value())
+        Ok(out.into())
     }
 
     /// What staging, saving, deleting and failing do to the record.
-    fn life(rec: &mut Record, what: String) -> Result<Value, Error> {
+    fn life(rec: &mut Record, what: String) -> Result<Output, Error> {
         match what.as_str() {
             "staged" => {
                 if let Err(e) = rec.set("t", 1) {
@@ -536,7 +536,7 @@ as_udf::export! {
 
                 out.push(rec.bin_count())?;
 
-                Ok(out.into_value())
+                Ok(out.into())
             }
             "save_twice" => {
                 if let Err(e) = rec.set("t", 1) {
@@ -554,7 +554,7 @@ as_udf::export! {
 
                 out.push(first)?.push(second)?;
 
-                Ok(out.into_value())
+                Ok(out.into())
             }
             "delete" => {
                 let deleted = status(rec.delete());
@@ -562,7 +562,7 @@ as_udf::export! {
 
                 out.push(deleted)?.push(rec.exists())?;
 
-                Ok(out.into_value())
+                Ok(out.into())
             }
             "ttl" => {
                 // A TTL is staged like a bin: it is the save that writes it.
@@ -575,7 +575,7 @@ as_udf::export! {
 
                 out.push("ok")?.push(saved)?;
 
-                Ok(out.into_value())
+                Ok(out.into())
             }
             "fail_after_save" => {
                 if let Err(e) = rec.set("t", 9) {
@@ -591,35 +591,35 @@ as_udf::export! {
     }
 
     /// A result of each kind, answered as itself.
-    fn res(kind: String) -> Result<Value, Error> {
+    fn res(kind: String) -> Result<Output, Error> {
         match kind.as_str() {
-            "nil" => Ok(Value::Nil),
-            "int" => Ok(Value::Int(i64::MIN)),
-            "double" => Ok(Value::Double(1e308)),
-            "bool" => Ok(Value::Bool(true)),
-            "string" => Ok(Value::from("")),
-            "blob" => Ok(Value::from(&[0u8; 0][..])),
-            "geojson" => Ok(Value::GeoJson(Text::from(POINT))),
-            "list" => Ok(as_udf::list(0)?.into_value()),
-            "map" => Ok(as_udf::map(0)?.into_value()),
+            "nil" => Ok(Value::Nil.into()),
+            "int" => Ok(Value::Int(i64::MIN).into()),
+            "double" => Ok(Value::Double(1e308).into()),
+            "bool" => Ok(Value::Bool(true).into()),
+            "string" => Ok(Value::from("").into()),
+            "blob" => Ok(Value::from(&[0u8; 0][..]).into()),
+            "geojson" => Ok(Value::GeoJson(Text::from(POINT)).into()),
+            "list" => Ok(as_udf::list(0)?.into()),
+            "map" => Ok(as_udf::map(0)?.into()),
             "fail_long" => Err(Error::Custom(LONG)),
             _ => Err(Error::Custom("res: unknown kind")),
         }
     }
 
     /// A string of any length: `[len, s, first]`.
-    fn txt(s: String) -> Result<Value, Error> {
+    fn txt(s: String) -> Result<Output, Error> {
         let out = as_udf::list(3)?;
 
         out.push(s.len() as i64)?
             .push(s.as_str())?
             .push(s.as_bytes().first().map_or(-1, |b| i64::from(*b)))?;
 
-        Ok(out.into_value())
+        Ok(out.into())
     }
 
     /// Compare the stored values of two bins.
-    fn cmp(rec: &Record, a: String, b: String) -> Result<Value, Error> {
+    fn cmp(rec: &Record, a: String, b: String) -> Result<Output, Error> {
         let (a, b) = match (rec.get(a.as_str()), rec.get(b.as_str())) {
             (Ok(Some(a)), Ok(Some(b))) => (a, b),
             (Err(e), _) | (_, Err(e)) => return only(tag(e)),
@@ -657,7 +657,7 @@ as_udf::stream! {
             Ok(())
         }
 
-        end() -> Result<Value, Error> {
+        end() -> Result<Output, Error> {
             let out = as_udf::list(2)?;
 
             unsafe {
@@ -668,7 +668,7 @@ as_udf::stream! {
                 SUM = 0;
             }
 
-            Ok(out.into_value())
+            Ok(out.into())
         }
     }
 }

@@ -47,6 +47,10 @@ format). `AS_UDF_SIGNATURE(name, "text")` exports the signature a client reads b
 A UDF takes at most 128 arguments (`AS_UDF_MAX_ARGS`), and a call with more than a function declares has
 to fail rather than run on the first few. `as_udf_args` reads into an array the function sizes, so the
 function checks `argc` itself: `if (argc > 2) return as_udf_fail_str("f takes at most 2 arguments");`.
+The other SDKs check arguments for the function, with the same words in each: `f takes at most 2 arguments,
+got 3`, `f: argument 1 (name) is missing`, `f: argument 1 (name) is not a string` (arguments count from 1),
+`f: argument 2 (n) is out of range for a 32-bit int`, `f: argument 1 (name) is 300 bytes, at most 256`. A C
+module that wants to answer as they do writes those messages itself; the `apitest` example does.
 
 ## The record
 

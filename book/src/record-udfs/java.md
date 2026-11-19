@@ -196,10 +196,9 @@ static long limitFor(Record rec, String kind) {
 Every element a loop yields is a fresh `Value`, so one can be kept after the loop moves on. Loops nest:
 an element that is itself a list or map is walked the same way.
 
-**A loop may be left early.** A for-each reads the collection from the server a window at a time, 128
-values per call, and gives the server's cursor back as soon as the last window is read. For a collection
-that fits one window, which is 128 elements or 64 entries, that is before the loop sees its first
-element. So `break` and `return` hold nothing:
+**A loop may be left early.** A for-each reads the position of every element from the server, 128 values
+per call, and gives the server's cursor back before the loop sees its first element. So `break`,
+`return` and an exception hold nothing, whatever the collection's length:
 
 ```java
 @Function("first_over")
@@ -214,12 +213,13 @@ static long firstOver(Record rec, long limit) {
 }
 ```
 
-One case still holds something. A collection longer than one window keeps its cursor between windows. A
-loop over one that is left early leaves that cursor open until the call returns, when the server releases
-every handle the call held. That costs a little of the call's memory until then. The thing to avoid is
-leaving a loop over a long collection early thousands of times in one call. `forEach` on a `ListValue` or
-`MapValue` gives the cursor back however it ends, an exception included, and so does every walk the SDK
-makes for itself.
+The positions are what the loop costs: 16 bytes of the module's memory per element, 32 per map entry, in
+a Java array kept as long as the iterator is; the elements' data is not copied. `forEach` on a
+`ListValue` or `MapValue` reads a window at a time instead (2 KB whatever the length) and gives the cursor
+back however it ends, an exception included, and so does every walk the SDK makes for itself. What holds
+a handle in a call is what the code opened and has not closed: a builder until `close`, a cursor from
+`LowLevel.enter` until `LowLevel.close`. `asValue()` on a view of nothing (a side's deleted bins when it
+deleted none) answers an empty list or map that is one per call, however many views ask.
 
 ## Writing
 

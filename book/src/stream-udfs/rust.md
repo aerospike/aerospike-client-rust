@@ -9,7 +9,7 @@
 ```rust
 #![no_std]
 
-use aerospike_udf_sdk_wasm::{self as as_udf, stream, Error, Record, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, stream, Error, Map, Record};
 
 static mut TOTAL: i64 = 0;
 static mut COUNT: i64 = 0;
@@ -28,14 +28,14 @@ stream! {
             Ok(())
         }
 
-        end() -> Result<Value, Error> {
+        end() -> Result<Map, Error> {
             let out = as_udf::map(2)?;
 
             unsafe {
                 out.insert("total", TOTAL)?.insert("count", COUNT)?;
             }
 
-            Ok(out.into_value())
+            Ok(out)
         }
     }
 }

@@ -208,8 +208,8 @@ func walkFailed(what string, rc int32) {
 
 // List walks a stored list, one Value per element, in order; nothing when the value is not a list
 // (IsList tells, and Record.List answers an error for a bin of another kind). It is a Go iterator, to
-// range over. The elements come 32 per import, and the cursor is released when the loop ends or
-// breaks.
+// range over. The elements come 32 per import, and the cursor is released when the loop ends,
+// breaks, returns or panics, so a loop left early holds nothing; through iter.Pull, when stop is called.
 //
 // Lists nest: an element that is itself a list or map can be ranged over inside the loop, since the
 // inner cursor closes before the outer steps on. A cursor is a handle on the host, given back when the

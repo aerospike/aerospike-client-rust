@@ -55,7 +55,7 @@ func mismatch(fn string, i int, p, want string) error {
 // The Arg functions all take the same five parameters. a and n are the slice Args filled and the count
 // it returned. i is the argument's index, from 0. fn is the UDF's name and p the parameter's, and they
 // are used only in the error, which reads "<fn>: argument <i+1> (<p>) is missing" or "... is not an
-// int". The error is an *Error with Status NotFound for a missing argument and TypeMismatch for one of
+// int": the message counts arguments from 1, and is word for word what every SDK says. The error is an *Error with Status NotFound for a missing argument and TypeMismatch for one of
 // another kind; a nil passed where an int is wanted is of another kind. A double is not narrowed.
 //
 // The generated exports call these. An export in the raw form can too:
@@ -78,14 +78,15 @@ func ArgInt(a []Value, n int32, i int, fn, p string) (int64, error) {
 }
 
 // ArgInt32 is argument i as a 32-bit integer; an error when it is missing, not an int, or does not fit
-// 32 bits, which is reported as "is not a 32-bit int". The parameters are ArgInt's.
+// 32 bits, which is reported as "<fn>: argument <i+1> (<p>) is out of range for a 32-bit int", with
+// Status TypeMismatch. The parameters are ArgInt's.
 func ArgInt32(a []Value, n int32, i int, fn, p string) (int32, error) {
 	x, err := ArgInt(a, n, i, fn, p)
 	if err != nil {
 		return 0, err
 	}
 	if int64(int32(x)) != x {
-		return 0, mismatch(fn, i, p, "a 32-bit int")
+		return 0, errorf(TypeMismatch, fn, ": argument ", strconv.Itoa(i+1), " (", p, ") is out of range for a 32-bit int")
 	}
 	return int32(x), nil
 }
@@ -130,14 +131,15 @@ func ArgString(a []Value, n int32, i int, fn, p string) (string, error) {
 }
 
 // ArgBlob is the bytes of argument i, which may be a string or a blob, copied into a new slice the
-// caller owns; an error when it is missing or of any other kind. The parameters are ArgInt's.
+// caller owns; an error when it is missing or of any other kind, which reads "... is not a blob" (a
+// string is taken all the same). The parameters are ArgInt's.
 func ArgBlob(a []Value, n int32, i int, fn, p string) ([]byte, error) {
 	v, err := argAt(a, n, i, fn, p)
 	if err != nil {
 		return nil, err
 	}
 	if v.Kind != KindStr && v.Kind != KindBlob {
-		return nil, mismatch(fn, i, p, "a string or a blob")
+		return nil, mismatch(fn, i, p, "a blob")
 	}
 	return v.Blob()
 }

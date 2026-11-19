@@ -77,8 +77,6 @@ public final class MapValue implements Iterable<MapValue.Entry> {
     private static final Value SCRATCH = new Value();
 
     private final Value map;
-    /** What {@link #asValue} answers for a view of nothing: an empty map, built when first asked for. */
-    private Value empty;
 
     /** A view of {@code map}, which is a stored map, or of nothing at all, which reads as empty. */
     MapValue(Value map) {
@@ -99,18 +97,16 @@ public final class MapValue implements Iterable<MapValue.Entry> {
      * The map as the one value it is, to hand on: into a bin, a builder or the result, by position, so the
      * server copies it without its entries passing through the guest. A view of nothing (a list of names the
      * server did not send, say) answers an empty map, built for the purpose; never an absent value, which no
-     * bin, builder or result takes.
+     * bin, builder or result takes. That empty map is one per call, shared by every view of nothing and made
+     * when first asked for, so asking holds at most one handle in a call; the host gives it back when the call
+     * ends.
      */
     public Value asValue() {
         if (map.kind() == Value.MAP) {
             return map;
         }
 
-        if (empty == null) {
-            empty = MapBuilder.create(0).asValue();
-        }
-
-        return empty;
+        return Maps.emptyMap();
     }
 
     //==========================================================
@@ -534,14 +530,18 @@ public final class MapValue implements Iterable<MapValue.Entry> {
     /**
      * The entries in the order the server keeps them, a fresh key and value each, so an entry can be kept
      * after the loop moves on. The loop may be left early. The entries come from the host 64 at a time, so a
-     * loop costs a call per 64 entries, not one per entry. {@code next()} past the end throws
-     * {@code NoSuchElementException}. The host's cursor is given back when the last window is read; a loop left
-     * early over a map longer than one window leaves it open until the call ends, which {@link #forEach} does
-     * not.
+     * map costs a call per 64 entries, not one per entry. {@code next()} past the end throws
+     * {@code NoSuchElementException}.
+     *
+     * <p><b>The iterator holds no cursor.</b> It reads every key's and value's position before it hands out
+     * the first entry, and gives the host's cursor back then, so a loop left early leaves nothing open. The
+     * positions cost 32 bytes of the guest's memory per entry, for as long as the iterator is reachable; the
+     * keys and values themselves are not copied. {@link #forEach} reads a window at a time instead, closing the
+     * cursor however it ends.
      */
     @Override
     public Iterator<Entry> iterator() {
-        final Walk walk = new Walk(map.kind() == Value.MAP ? map : Maps.NOTHING);
+        final Walk walk = Walk.whole(map.kind() == Value.MAP ? map : Maps.NOTHING);
 
         return new Iterator<Entry>() {
             @Override

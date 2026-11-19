@@ -93,7 +93,7 @@ public final class Params {
             int rc = LowLevel.bytes(v, b);
 
             if (rc < 0) {
-                throw new UdfException(rc, fn + ": could not read argument " + (i + 1) + " (" + p + ")");
+                throw new UdfException(rc, fn + ": argument " + (i + 1) + " (" + p + ") could not be read");
             }
         }
 
@@ -110,6 +110,7 @@ public final class Params {
      * {@link LowLevel#NOT_FOUND}) or is nil or of another kind ({@code ... is not an int}, with
      * {@link LowLevel#TYPE_MISMATCH}); {@code fn} and {@code p} are the function and parameter names
      * the message gives, and {@code n} is what {@link #args} returned. Every reader here takes the same five.
+     * The message counts arguments from 1 and is word for word what every SDK says.
      */
     public static long argInt(Value[] a, int n, int i, String fn, String p) {
         Value v = at(a, n, i, fn, p);
@@ -123,13 +124,15 @@ public final class Params {
 
     /**
      * An integer argument that fits in 32 bits, for an {@code int} parameter; one outside that range is a
-     * mismatch and throws {@link UdfException}, not a truncation.
+     * mismatch and throws {@link UdfException} ({@code <fn>: argument <N> (<p>) is out of range for a 32-bit
+     * int}), not a truncation.
      */
     public static int argInt32(Value[] a, int n, int i, String fn, String p) {
         long x = argInt(a, n, i, fn, p);
 
         if (x != (int) x) {
-            throw mismatch(fn, i, p, "a 32-bit int");
+            throw new UdfException(LowLevel.TYPE_MISMATCH,
+                    fn + ": argument " + (i + 1) + " (" + p + ") is out of range for a 32-bit int");
         }
 
         return (int) x;
@@ -185,13 +188,14 @@ public final class Params {
     /**
      * The bytes of a string or a blob argument, copied into a new array exactly as long as they are, with
      * nothing decoded or replaced: the reader for raw bytes, whichever of the two the client sent. Throws
-     * {@link UdfException} when it is missing or of another kind.
+     * {@link UdfException} when it is missing or of another kind ({@code ... is not a blob}: a string is taken
+     * all the same).
      */
     public static byte[] argBlob(Value[] a, int n, int i, String fn, String p) {
         Value v = at(a, n, i, fn, p);
 
         if (v.kind() != Value.STR && v.kind() != Value.BLOB) {
-            throw mismatch(fn, i, p, "a string or a blob");
+            throw mismatch(fn, i, p, "a blob");
         }
 
         return copy(v, fn, i, p);

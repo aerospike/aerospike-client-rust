@@ -147,13 +147,17 @@ collection of any size the call's memory allows; the host refusing one is `Err(E
 `contains_key("key")` asks a map you are building whether it has a key. `extend(iterator)` takes a whole iterator 128 values per import, including a stored collection's
 own iterator, so `list.extend(stored.iter())` copies a list without the guest seeing an element. A built
 collection is written to a bin or nested in another by reference (`rec.set("tags", &list)`,
-`outer.push(&inner)`), and returned by value (`Ok(list.into())`, or `into_value()`).
+`outer.push(&inner)`), and returned by value: a function declared `-> Result<List, Error>` (or `Map`)
+returns `Ok(list)`, and one that sometimes returns something else declares `-> Result<Output, Error>` and
+returns `Ok(list.into())` there and `Ok(value.into())` elsewhere.
 
 A `List` or `Map` owns its handle and gives it back when it is dropped; what it was set into or pushed
 into keeps the collection, because the host holds its own reference. So a loop that builds a collection
 per turn and nests it by reference holds one at a time, and an iterator gives its cursor back when it is
-dropped too. A call is bounded by its memory on the server, not by a count of handles. A collection turned
-into a `Value` by value keeps its handle until the call ends, since the value names it.
+dropped too. A call is bounded by its memory on the server, not by a count of handles. There is no way to
+turn a `List` or `Map` into a `Value` that outlives it: a value of one is only borrowed (`&list`), so no
+value names a handle that was given back, and none keeps one past its use. A collection returned from a UDF
+is dropped by `export!` as soon as the host has taken the result, which it keeps by its own reference.
 
 ## Arguments
 
@@ -170,9 +174,11 @@ into a `Value` by value keeps its handle until the call ends, since the value na
 | `Option<T>` | `T` or nothing | the wrong kind |
 | `Args` (last) | the rest, as a cursor over the remaining values | nothing |
 
-A refused call fails with `name: argument 2 (numbers): expected an integer, got a string` and never runs the
-body. A call takes at most 128 arguments in all (`MAX_ARGS`); one with more fails with a message naming the
-limit and the count, and no argument is ever dropped.
+A refused call fails with `name: argument 2 (numbers) is not an int` (or `... is missing`, or `... is 300
+bytes, at most 256`) and never runs the body. Arguments count from 1, and the messages are word for word
+those of the other SDKs. A call with more arguments than the function declares fails before any is decoded
+(`name takes at most 2 arguments, got 3`); a call takes at most 128 arguments in all (`MAX_ARGS`), and one
+with more fails the same way (`name takes at most 128 arguments, got 129`). No argument is ever dropped.
 
 ## Errors and results
 

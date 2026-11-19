@@ -144,14 +144,14 @@ static int32_t fail_parts(const char* fn, int32_t i, const char* param, const ch
 }
 
 /* Whether the client passed no more arguments than the export declares; fails the call, naming the limit and
- * the count, when it passed more. */
+ * the count, when it passed more: "<fn> takes at most <max> arguments, got <argc>", as every SDK says it. */
 static bool arity(const char* fn, int32_t argc, int32_t max)
 {
 	if (argc <= max) return true;
 	char msg[96];
 	int32_t len = 0;
 	for (const char* s = fn; *s != '\0' && len < 32; s++) msg[len++] = *s;
-	for (const char* s = ": takes at most "; *s != '\0'; s++) msg[len++] = *s;
+	for (const char* s = " takes at most "; *s != '\0'; s++) msg[len++] = *s;
 	len += fmt_int(msg + len, max);
 	for (const char* s = " arguments, got "; *s != '\0'; s++) msg[len++] = *s;
 	len += fmt_int(msg + len, argc);
@@ -186,11 +186,18 @@ static bool arg_string(const char* fn, const as_udf_value* a, int32_t n, int32_t
 	if (! arg_is_string(fn, a, n, i, param)) return false;
 	int32_t got = as_udf_as_string(&a[i], out, STR_MAX);
 	if (got <= AS_UDF_NEEDED_BASE) {
-		fail_parts(fn, i, param, "is longer than 65536 bytes: ", true, (int64_t)a[i].len);
+		/* "is <len> bytes, at most 65536", as the SDKs that check a length say it. */
+		char what[64];
+		int32_t w = 0;
+		for (const char* s = "is "; *s != '\0'; s++) what[w++] = *s;
+		w += fmt_int(what + w, (int64_t)a[i].len);
+		for (const char* s = " bytes, at most 65536"; *s != '\0'; s++) what[w++] = *s;
+		what[w] = '\0';
+		arg_fail(fn, i, param, what);
 		return false;
 	}
 	if (got < 0) {
-		fail_parts(fn, i, param, "could not be read: ", true, got);
+		arg_fail(fn, i, param, "could not be read");
 		return false;
 	}
 	out[got] = '\0';

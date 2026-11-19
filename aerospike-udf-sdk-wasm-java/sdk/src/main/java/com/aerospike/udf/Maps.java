@@ -26,6 +26,38 @@ final class Maps {
     /** A value that is not there, for a view of nothing; never written to. */
     static final Value NOTHING = new Value();
 
+    /**
+     * The empty list and map a view of nothing answers {@code asValue} with: one each per call, built when
+     * first asked for and forgotten when the next call starts ({@link #newCall}). The host gives the handle
+     * back when the call ends, and a handle number of an ended call names nothing in the next one, so a
+     * cached one is never carried over. A view of nothing is made only by an event handler, whose every
+     * call reads its arguments first, which is where the call starts.
+     */
+    private static Value emptyList;
+    private static Value emptyMap;
+
+    static Value emptyList() {
+        if (emptyList == null) {
+            emptyList = ListBuilder.create(0).asValue();
+        }
+
+        return emptyList;
+    }
+
+    static Value emptyMap() {
+        if (emptyMap == null) {
+            emptyMap = MapBuilder.create(0).asValue();
+        }
+
+        return emptyMap;
+    }
+
+    /** A call has started: what the last one built is gone. */
+    static void newCall() {
+        emptyList = null;
+        emptyMap = null;
+    }
+
     private static final Value SCRATCH = new Value();
 
     /** The entry under {@code key} into {@code out}; false when there is none or {@code m} is not a map. */

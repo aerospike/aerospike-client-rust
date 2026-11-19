@@ -21,7 +21,7 @@
 
 #![no_std]
 
-use aerospike_udf_sdk_wasm::{self as as_udf, event, export, Coll, Error, List, Record, Resolution, Str, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, event, export, Coll, Error, List, Record, Resolution, Str};
 
 const MAX_TAGS: usize = 64;
 
@@ -128,11 +128,11 @@ fn stored(rec: &Record, bin: &str) -> Result<Tags, Error> {
 }
 
 /// The members: added and not removed.
-fn members_of(rec: &Record) -> Result<Value<'static>, Error> {
+fn members_of(rec: &Record) -> Result<List, Error> {
     let added = stored(rec, "added")?;
     let removed = stored(rec, "removed")?;
 
-    Ok(added.into_list(Some(&removed))?.into_value())
+    added.into_list(Some(&removed))
 }
 
 /// Adds `tag` to one of the lists and saves.
@@ -154,13 +154,13 @@ fn grow(rec: &mut Record, bin: &str, tag: Tag) -> Result<(), Error> {
 export! {
     /// Adds a tag. Returns the members. A tag removed before stays removed: `added` already has it, and
     /// `removed` never forgets it.
-    fn add(rec: &mut Record, tag: &str) -> Result<Value, Error> {
+    fn add(rec: &mut Record, tag: &str) -> Result<List, Error> {
         grow(rec, "added", Tag::new(tag)?)?;
         members_of(rec)
     }
 
     /// Removes a tag that is a member, forever. Returns the members.
-    fn remove(rec: &mut Record, tag: &str) -> Result<Value, Error> {
+    fn remove(rec: &mut Record, tag: &str) -> Result<List, Error> {
         if !stored(rec, "added")?.contains(tag) || stored(rec, "removed")?.contains(tag) {
             return Err(Error::Custom("not a member"));
         }
@@ -170,7 +170,7 @@ export! {
     }
 
     /// The members, in order.
-    fn members(rec: &Record) -> Result<Value, Error> {
+    fn members(rec: &Record) -> Result<List, Error> {
         members_of(rec)
     }
 }

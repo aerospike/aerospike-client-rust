@@ -25,7 +25,7 @@
 
 #![no_std]
 
-use aerospike_udf_sdk_wasm::{self as as_udf, event, export, Coll, Error, List, Map, Record, Resolution, Str, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, event, export, Coll, Error, List, Map, Record, Resolution, Str};
 
 const MAX_TAGS: usize = 64;
 
@@ -130,7 +130,7 @@ fn is_member(added: &Stamps, removed: &Stamps, tag: &str) -> bool {
 }
 
 /// The members, in order, as a built list.
-fn members_of(rec: &Record) -> Result<Value<'static>, Error> {
+fn members_of(rec: &Record) -> Result<List, Error> {
     let added = stored(rec, "addedAt")?;
     let removed = stored(rec, "removedAt")?;
     let l: List = as_udf::list(added.n.max(1))?;
@@ -158,7 +158,7 @@ fn members_of(rec: &Record) -> Result<Value<'static>, Error> {
         }
     }
 
-    Ok(l.into_value())
+    Ok(l)
 }
 
 /// The stamp for a write to `tag` now: the clock, or one past the tag's last stamp when the clock has
@@ -185,13 +185,13 @@ fn stamp(rec: &mut Record, bin: &str, tag: Tag) -> Result<(), Error> {
 
 export! {
     /// Adds a tag, or adds it back. Returns the members.
-    fn add(rec: &mut Record, tag: &str) -> Result<Value, Error> {
+    fn add(rec: &mut Record, tag: &str) -> Result<List, Error> {
         stamp(rec, "addedAt", Tag::new(tag)?)?;
         members_of(rec)
     }
 
     /// Removes a tag that is a member. Returns the members.
-    fn remove(rec: &mut Record, tag: &str) -> Result<Value, Error> {
+    fn remove(rec: &mut Record, tag: &str) -> Result<List, Error> {
         if !is_member(&stored(rec, "addedAt")?, &stored(rec, "removedAt")?, tag) {
             return Err(Error::Custom("not a member"));
         }
@@ -201,7 +201,7 @@ export! {
     }
 
     /// The members, in order.
-    fn members(rec: &Record) -> Result<Value, Error> {
+    fn members(rec: &Record) -> Result<List, Error> {
         members_of(rec)
     }
 }

@@ -99,10 +99,12 @@ a handle to freed memory. A boolean is one of the value library's two constants,
 does not count references to booleans and a heap one could not be shared.
 
 **A collection cannot contain itself, or nest past 64 levels.** Packing a value and releasing it both
-recurse into it, so a list a guest pushed into itself ran the server's stack out. A collection going
-into another is walked first, and refused if the walk finds the destination or goes too deep. A chain
-built from the top down, one empty list at a time, is not seen by that walk; it is bounded by the call's
-memory budget and refused where it would leave the call, as a bin or as the result.
+recurse into it, so a list a guest pushed into itself ran the server's stack out. The host keeps, for
+every list and map the call nests, its height (the levels below it) and its depth (the levels above it,
+through every collection holding it), and a put of X into P is allowed only when depth(P) + height(X)
+is at most 64; a put that would close a cycle is refused the same way. So the limit holds whatever the
+order a guest builds in - from the root down, from the leaves up, or a finished subtree moved under a
+deeper parent - and a value is measured again where it leaves the call, as a bin or as the result.
 
 **A module cannot buy memory with a number.** Every section of a module but two begins with a count,
 and the runtime's loader made room for that many entries before reading any. Thirty-nine bytes claiming

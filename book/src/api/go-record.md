@@ -1340,8 +1340,8 @@ func (v Value) List() iter.Seq[Value]
 
 List walks a stored list, one Value per element, in order; nothing when the value is not a list
 (IsList tells, and Record.List answers an error for a bin of another kind). It is a Go iterator, to
-range over. The elements come 32 per import, and the cursor is released when the loop ends or
-breaks.
+range over. The elements come 32 per import, and the cursor is released when the loop ends,
+breaks, returns or panics, so a loop left early holds nothing; through iter.Pull, when stop is called.
 
 Lists nest: an element that is itself a list or map can be ranged over inside the loop, since the
 inner cursor closes before the outer steps on. A cursor is a handle on the host, given back when the
@@ -1877,7 +1877,7 @@ ArgInt is argument i as an integer.
 The Arg functions all take the same five parameters. a and n are the slice Args filled and the count
 it returned. i is the argument's index, from 0. fn is the UDF's name and p the parameter's, and they
 are used only in the error, which reads "&lt;fn&gt;: argument <i+1> (&lt;p&gt;) is missing" or "... is not an
-int". The error is an *Error with Status NotFound for a missing argument and TypeMismatch for one of
+int": the message counts arguments from 1, and is word for word what every SDK says. The error is an *Error with Status NotFound for a missing argument and TypeMismatch for one of
 another kind; a nil passed where an int is wanted is of another kind. A double is not narrowed.
 
 The generated exports call these. An export in the raw form can too:
@@ -1898,7 +1898,8 @@ func ArgInt32(a []Value, n int32, i int, fn, p string) (int32, error)
 ```
 
 ArgInt32 is argument i as a 32-bit integer; an error when it is missing, not an int, or does not fit
-32 bits, which is reported as "is not a 32-bit int". The parameters are ArgInt's.
+32 bits, which is reported as "&lt;fn&gt;: argument <i+1> (&lt;p&gt;) is out of range for a 32-bit int", with
+Status TypeMismatch. The parameters are ArgInt's.
 
 #### `ArgDouble`
 
@@ -1934,7 +1935,8 @@ func ArgBlob(a []Value, n int32, i int, fn, p string) ([]byte, error)
 ```
 
 ArgBlob is the bytes of argument i, which may be a string or a blob, copied into a new slice the
-caller owns; an error when it is missing or of any other kind. The parameters are ArgInt's.
+caller owns; an error when it is missing or of any other kind, which reads "... is not a blob" (a
+string is taken all the same). The parameters are ArgInt's.
 
 #### `ArgValue`
 

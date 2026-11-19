@@ -1295,7 +1295,9 @@ public Value asValue()
 The list as the one value it is, to hand on: into a bin, a builder or the result, by position, so the
 server copies it without its elements passing through the guest. A view of nothing (the deleted bins of
 a side that deleted none, say) answers an empty list, built for the purpose; never an absent value,
-which no bin, builder or result takes.
+which no bin, builder or result takes. That empty list is one per call, shared by every view of nothing
+and made when first asked for, so asking holds at most one handle in a call, however many views ask;
+the host gives it back when the call ends.
 
 #### `ListValue.get`
 
@@ -1412,10 +1414,15 @@ public Iterator<Value> iterator()
 ```
 
 The elements in order, a fresh `Value` each, so one can be kept after the loop moves on. The loop
-may be left early. The elements come from the host 128 at a time, so a loop costs a call per 128
-elements, not one per element. `next()` past the end throws `NoSuchElementException`. The
-host's cursor is given back when the last window is read; a loop left early over a list longer than one
-window leaves it open until the call ends, which `forEach` does not.
+may be left early. The elements come from the host 128 at a time, so a list costs a call per 128
+elements, not one per element. `next()` past the end throws `NoSuchElementException`.
+
+**The iterator holds no cursor.** It reads every element's position before it hands out the first
+one, and gives the host's cursor back then, so a loop left early (`break`, `return`, an
+exception) leaves nothing open. The positions cost 16 bytes of the guest's memory per element (16 KB for
+a list of 1000), for as long as the iterator is reachable; the elements themselves are not copied.
+`forEach` reads a window at a time instead, closing the cursor however it ends, and costs at most
+2 KB whatever the list's length.
 
 #### `ListValue.forEach`
 
@@ -1521,7 +1528,9 @@ public Value asValue()
 The map as the one value it is, to hand on: into a bin, a builder or the result, by position, so the
 server copies it without its entries passing through the guest. A view of nothing (a list of names the
 server did not send, say) answers an empty map, built for the purpose; never an absent value, which no
-bin, builder or result takes.
+bin, builder or result takes. That empty map is one per call, shared by every view of nothing and made
+when first asked for, so asking holds at most one handle in a call; the host gives it back when the call
+ends.
 
 #### `MapValue.get`
 
@@ -1845,10 +1854,14 @@ public Iterator<Entry> iterator()
 
 The entries in the order the server keeps them, a fresh key and value each, so an entry can be kept
 after the loop moves on. The loop may be left early. The entries come from the host 64 at a time, so a
-loop costs a call per 64 entries, not one per entry. `next()` past the end throws
-`NoSuchElementException`. The host's cursor is given back when the last window is read; a loop left
-early over a map longer than one window leaves it open until the call ends, which `forEach` does
-not.
+map costs a call per 64 entries, not one per entry. `next()` past the end throws
+`NoSuchElementException`.
+
+**The iterator holds no cursor.** It reads every key's and value's position before it hands out
+the first entry, and gives the host's cursor back then, so a loop left early leaves nothing open. The
+positions cost 32 bytes of the guest's memory per entry, for as long as the iterator is reachable; the
+keys and values themselves are not copied. `forEach` reads a window at a time instead, closing the
+cursor however it ends.
 
 #### `MapValue.forEach`
 
@@ -3507,6 +3520,7 @@ Argument `i`, counted from 0, of the `n` in `a`, as an integer. Throws
 `LowLevel.NOT_FOUND`) or is nil or of another kind (`... is not an int`, with
 `LowLevel.TYPE_MISMATCH`); `fn` and `p` are the function and parameter names
 the message gives, and `n` is what `args` returned. Every reader here takes the same five.
+The message counts arguments from 1 and is word for word what every SDK says.
 
 #### `Params.argInt32`
 
@@ -3515,7 +3529,7 @@ public static int argInt32(Value[] a, int n, int i, String fn, String p)
 ```
 
 An integer argument that fits in 32 bits, for an `int` parameter; one outside that range is a
-mismatch and throws `UdfException`, not a truncation.
+mismatch and throws `UdfException` (`<fn>: argument <N> (<p>) is out of range for a 32-bit int`), not a truncation.
 
 #### `Params.argDouble`
 
@@ -3555,7 +3569,8 @@ public static byte[] argBlob(Value[] a, int n, int i, String fn, String p)
 
 The bytes of a string or a blob argument, copied into a new array exactly as long as they are, with
 nothing decoded or replaced: the reader for raw bytes, whichever of the two the client sent. Throws
-`UdfException` when it is missing or of another kind.
+`UdfException` when it is missing or of another kind (`... is not a blob`: a string is taken
+all the same).
 
 #### `Params.argValue`
 

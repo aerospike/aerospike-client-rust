@@ -18,14 +18,12 @@ import org.teavm.interop.Address;
  * One walk over a stored list or map, behind the iterators of {@link ListValue} and {@link MapValue}: the
  * values come from the host a window at a time, {@link Slots#BATCH} per import, into a buffer this owns.
  *
- * <p><b>The host's cursor is given back as soon as the last window is read</b>, which is before the walk
- * hands out its first element when the collection fits one window (128 values, 64 map entries). So a
- * for-each left early holds nothing in that case. A longer collection keeps its cursor between windows, and
- * an iterator abandoned part way (a {@code break} or {@code return} out of a for-each) leaves it open: there
- * is no finalizer to close it with. The host releases it when the call returns (per record, in a stream),
- * and until then it costs the call a little of its memory, not a count of anything, so even a loop of
- * abandoned walks runs until that memory is spent. Every walk the SDK makes for itself ({@code contains},
- * {@code forEach}, the {@code java.util} conversions, the lookups) closes its cursor on every path out.
+ * <p><b>The host's cursor is given back as soon as the last window is read.</b> A walk made with
+ * {@link #whole} reads every window before it hands out the first value, so it holds no cursor at all while
+ * the values are used: that is what the {@code Iterable} iterators use, because a for-each left early has no
+ * hook to close anything with. A windowed walk ({@code new Walk}) keeps its cursor between windows, and is
+ * used only where the SDK closes it on every path out ({@code contains}, {@code forEach}, the
+ * {@code java.util} conversions, the lookups).
  */
 final class Walk {
     private final byte[] window;
@@ -34,6 +32,62 @@ final class Walk {
     private int remaining;
     private int got;
     private int at;
+
+    /**
+     * A walk whose values are all read, a window per import, before it returns: the cursor is closed
+     * before the first value is handed out, however the walk is then used or left. The values are the
+     * 16-byte positions the host hands out, not copies of the data, so it costs 16 bytes of the guest's
+     * memory per list element, 32 per map entry; a value read from it is good for the call, as any stored
+     * value is.
+     */
+    static Walk whole(Value coll) {
+        int total = coll.kind() == Value.MAP ? coll.length() * 2 : coll.kind() == Value.LIST ? coll.length() : 0;
+
+        if (total <= Slots.BATCH) {
+            // One window: the windowed walk already closes the cursor before it hands anything out.
+            return new Walk(coll);
+        }
+
+        Walk w = new Walk(new byte[total * Slots.SIZE]);
+        int cursor = Natives.cursorEnterAt(coll.src(), coll.at());
+
+        if (cursor <= 0) {
+            throw new UdfException(LowLevel.ERR, "could not open the " + (coll.kind() == Value.MAP ? "map" : "list"));
+        }
+
+        byte[] window = new byte[Slots.BATCH * Slots.SIZE];
+        int filled = 0;
+
+        try {
+            while (filled < total) {
+                int want = Math.min(total - filled, Slots.BATCH) * Slots.SIZE;
+                int n = Natives.cursorValues(cursor, Address.ofData(window), want);
+
+                if (n <= 0) {
+                    break;
+                }
+
+                System.arraycopy(window, 0, w.window, filled * Slots.SIZE, n * Slots.SIZE);
+                filled += n;
+
+                if (n * Slots.SIZE < want) {
+                    break;
+                }
+            }
+        }
+        finally {
+            Natives.cursorClose(cursor);
+        }
+
+        w.got = filled;
+
+        return w;
+    }
+
+    /** A walk over values already read, with no cursor. */
+    private Walk(byte[] values) {
+        window = values;
+    }
 
     /** A walk over {@code coll}, a stored list or map; a map yields a key and then its value. */
     Walk(Value coll) {

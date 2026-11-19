@@ -46,8 +46,6 @@ public final class ListValue implements Iterable<Value> {
     private static final Value SCRATCH = new Value();
 
     private final Value list;
-    /** What {@link #asValue} answers for a view of nothing: an empty list, built when first asked for. */
-    private Value empty;
 
     /** A view of {@code list}, which is a stored list, or of nothing at all, which reads as empty. */
     ListValue(Value list) {
@@ -68,18 +66,12 @@ public final class ListValue implements Iterable<Value> {
      * The list as the one value it is, to hand on: into a bin, a builder or the result, by position, so the
      * server copies it without its elements passing through the guest. A view of nothing (the deleted bins of
      * a side that deleted none, say) answers an empty list, built for the purpose; never an absent value,
-     * which no bin, builder or result takes.
+     * which no bin, builder or result takes. That empty list is one per call, shared by every view of nothing
+     * and made when first asked for, so asking holds at most one handle in a call, however many views ask;
+     * the host gives it back when the call ends.
      */
     public Value asValue() {
-        if (list.kind() == Value.LIST) {
-            return list;
-        }
-
-        if (empty == null) {
-            empty = ListBuilder.create(0).asValue();
-        }
-
-        return empty;
+        return list.kind() == Value.LIST ? list : Maps.emptyList();
     }
 
     //==========================================================
@@ -283,14 +275,19 @@ public final class ListValue implements Iterable<Value> {
 
     /**
      * The elements in order, a fresh {@link Value} each, so one can be kept after the loop moves on. The loop
-     * may be left early. The elements come from the host 128 at a time, so a loop costs a call per 128
-     * elements, not one per element. {@code next()} past the end throws {@code NoSuchElementException}. The
-     * host's cursor is given back when the last window is read; a loop left early over a list longer than one
-     * window leaves it open until the call ends, which {@link #forEach} does not.
+     * may be left early. The elements come from the host 128 at a time, so a list costs a call per 128
+     * elements, not one per element. {@code next()} past the end throws {@code NoSuchElementException}.
+     *
+     * <p><b>The iterator holds no cursor.</b> It reads every element's position before it hands out the first
+     * one, and gives the host's cursor back then, so a loop left early ({@code break}, {@code return}, an
+     * exception) leaves nothing open. The positions cost 16 bytes of the guest's memory per element (16 KB for
+     * a list of 1000), for as long as the iterator is reachable; the elements themselves are not copied.
+     * {@link #forEach} reads a window at a time instead, closing the cursor however it ends, and costs at most
+     * 2 KB whatever the list's length.
      */
     @Override
     public Iterator<Value> iterator() {
-        final Walk walk = new Walk(list.kind() == Value.LIST ? list : Maps.NOTHING);
+        final Walk walk = Walk.whole(list.kind() == Value.LIST ? list : Maps.NOTHING);
 
         return new Iterator<Value>() {
             @Override

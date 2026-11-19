@@ -16,7 +16,7 @@
 #![no_std]
 
 // ANCHOR: setup
-use aerospike_udf_sdk_wasm::{self as as_udf, export, Error, Record, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, export, Error, Map, Record, Value};
 // ANCHOR_END: setup
 
 export! {
@@ -107,7 +107,7 @@ export! {
         let out = as_udf::list(count)?;
         out.extend(history.iter())?.push(amount)?;      // the stored elements, then the new one
 
-        rec.set("history", out)?;
+        rec.set("history", &out)?;
         rec.save()?;
 
         Ok(Value::Int(count as i64))
@@ -115,7 +115,7 @@ export! {
     // ANCHOR_END: log_payment
 
     // ANCHOR: summary
-    fn summary(rec: &Record) -> Result<Value, Error> {
+    fn summary(rec: &Record) -> Result<Map, Error> {
         let out = as_udf::map(5)?;
 
         out.insert("owner", rec.bin("owner")?)?         // a stored value goes in as it is
@@ -124,7 +124,7 @@ export! {
             .insert("bins", rec.bin_count())?
             .insert("ttl", rec.ttl().map_or(-1, i64::from))?;
 
-        Ok(out.into_value())
+        Ok(out) // delivered, then dropped: the host keeps the map, and its handle goes back
     }
     // ANCHOR_END: summary
 

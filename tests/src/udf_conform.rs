@@ -138,6 +138,9 @@ enum Answer {
     Is(Value),
     /// The call fails, with a message that holds this.
     Fails(String),
+    /// The call fails with exactly this message, the same in every language: what the SDKs say when the
+    /// arguments do not fit the function.
+    FailsWith(String),
 }
 
 /// What the record is after the call, from what it was before.
@@ -187,6 +190,31 @@ fn is(v: Value) -> Answer {
 
 fn fails(text: &str) -> Answer {
     Answer::Fails(text.to_string())
+}
+
+fn fails_with(text: &str) -> Answer {
+    Answer::FailsWith(text.to_string())
+}
+
+/// The UDF's own failure message, out of the client's text for the error, which reads
+/// `Error 100, ..., node=<name>: <address>: <message>`: what follows the node's name and address. The whole
+/// text when it does not have that shape, so that a case expecting an exact message then fails.
+fn udf_message(error: &str) -> &str {
+    let Some(at) = error.find("node=") else {
+        return error;
+    };
+
+    // `<name>: <address>: `; an address has colons in it, but never a colon followed by a space.
+    let mut rest = &error[at..];
+
+    for _ in 0..2 {
+        match rest.find(": ") {
+            Some(i) => rest = &rest[i + 2..],
+            None => return error,
+        }
+    }
+
+    rest
 }
 
 /// `mk`'s value, from the specification.
@@ -387,11 +415,34 @@ fn cases() -> Vec<Case> {
     ar_128.extend((0..126).map(|_| s("int")));
 
     out.extend([
-        case("ar 0", Stored, "ar", vec![], fails(""), same()),
+        case("ar 0", Stored, "ar", vec![], fails_with("ar: argument 1 (a) is missing"), same()),
         case("ar 1", Stored, "ar", vec![i(5)], is(list(vec![i(5), Value::Nil, i(0)])), same()),
         case("ar 3", Stored, "ar", vec![i(5), s("x"), blob(&[1])], is(list(vec![i(5), s("x"), i(1), s("blob")])), same()),
         case("ar 128", Stored, "ar", many(128), is(list(ar_128)), same()),
-        case("ar 129", Stored, "ar", many(129), fails("128"), same()),
+        case("ar 129", Stored, "ar", many(129), fails_with("ar takes at most 128 arguments, got 129"), same()),
+    ]);
+
+    // Arguments that do not fit the function: the message is the same, byte for byte, in every language,
+    // and counts arguments from 1. A call with more arguments than the function takes fails before any is
+    // decoded, so the count is what it reports even when an argument is also of the wrong kind.
+    let wide = |count: usize| -> Vec<Value> { (0..count).map(|k| i(k as i64)).collect() };
+
+    out.extend([
+        case("args rd missing", Stored, "rd", vec![s("n")], fails_with("rd: argument 2 (how) is missing"), same()),
+        case("args mk missing", Stored, "mk", vec![s("list_int")], fails_with("mk: argument 2 (n) is missing"), same()),
+        case("args mk none", Stored, "mk", vec![], fails_with("mk: argument 1 (what) is missing"), same()),
+        case("args rd wrong kind", Stored, "rd", vec![i(1), s("get")], fails_with("rd: argument 1 (name) is not a string"), same()),
+        case("args rd wrong kind second", Stored, "rd", vec![s("n"), b(true)], fails_with("rd: argument 2 (how) is not a string"), same()),
+        case("args mk wrong kind", Stored, "mk", vec![s("list_int"), s("5")], fails_with("mk: argument 2 (n) is not an int"), same()),
+        case("args mk double", Stored, "mk", vec![s("list_int"), f(5.0)], fails_with("mk: argument 2 (n) is not an int"), same()),
+        case("args ar wrong kind", Stored, "ar", vec![s("x")], fails_with("ar: argument 1 (a) is not an int"), same()),
+        case("args ar wrong kind b", Stored, "ar", vec![i(1), i(2)], fails_with("ar: argument 2 (b) is not a string"), same()),
+        case("args rd too many", Stored, "rd", vec![s("n"), s("int"), i(1)], fails_with("rd takes at most 2 arguments, got 3"), same()),
+        case("args mk too many", Stored, "mk", vec![s("list_int"), i(1), i(2)], fails_with("mk takes at most 2 arguments, got 3"), same()),
+        case("args mk too many wrong kind", Stored, "mk", vec![i(1), s("x"), i(2)], fails_with("mk takes at most 2 arguments, got 3"), same()),
+        case("args rd 129", Stored, "rd", wide(129), fails_with("rd takes at most 2 arguments, got 129"), same()),
+        case("args mk 129", Stored, "mk", wide(129), fails_with("mk takes at most 2 arguments, got 129"), same()),
+        case("args ar 129 wrong kind", Stored, "ar", wide(129).into_iter().map(|_| s("x")).collect(), fails_with("ar takes at most 128 arguments, got 129"), same()),
     ]);
 
     // life.
@@ -603,10 +654,12 @@ async fn the_five_apitest_modules_agree_on_the_server() {
             match (&c.answer, &run.answer) {
                 (Answer::Is(want), Ok(got)) if norm(want) == *got => {}
                 (Answer::Fails(text), Err(message)) if message.contains(text.as_str()) => {}
+                (Answer::FailsWith(text), Err(message)) if udf_message(message) == text.as_str() => {}
                 (want, got) => {
                     let want = match want {
                         Answer::Is(v) => show(v),
                         Answer::Fails(text) => format!("a failure saying {text:?}"),
+                        Answer::FailsWith(text) => format!("a failure saying exactly {text:?}"),
                     };
                     let got = match got {
                         Ok(v) => show(v),
@@ -634,13 +687,14 @@ async fn the_five_apitest_modules_agree_on_the_server() {
         }
 
         // Against each other: what failed is held by whether it failed, not by its message, which names
-        // the module.
+        // the module; but where the table says the exact message, every language says the same one.
         let first = &runs[0].1;
+        let exact = matches!(c.answer, Answer::FailsWith(_));
 
         for (lang, run) in &runs[1..] {
             let same_answer = match (&first.answer, &run.answer) {
                 (Ok(a), Ok(b)) => a == b,
-                (Err(_), Err(_)) => true,
+                (Err(a), Err(b)) => !exact || udf_message(a) == udf_message(b),
                 _ => false,
             };
 
