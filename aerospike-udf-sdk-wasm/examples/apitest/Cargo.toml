@@ -1,0 +1,23 @@
+[package]
+name = "aerospike-udf-apitest"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# `allocator`: every string parameter is a `String`, so that an argument of any length is taken, and `mk`
+# formats its keys.
+aerospike-udf-sdk-wasm = { path = "../..", features = ["allocator"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"
+strip = true
+
+# Its own workspace root, like the other examples. Build with
+# `cargo build --release --target wasm32-unknown-unknown`.
+[workspace]

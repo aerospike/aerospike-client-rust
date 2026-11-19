@@ -1,0 +1,9 @@
+/* Wider page and larger text than mdBook's defaults (750px, 1.6rem).
+   The width is a ceiling: on a narrower window the page still fits it. */
+:root {
+    --content-max-width: 1013px;
+}
+
+body {
+    font-size: 1.8rem;
+}

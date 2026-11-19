@@ -50,7 +50,7 @@
 //! - **`no_std`, and no allocator unless you ask for one.** Nothing here allocates by default. Buffers are
 //!   yours: anything that gives you bytes takes a `&mut [u8]` or fills a [`Str`] / [`Bytes`] of the capacity
 //!   you declare, and a buffer that is too small reports the size needed ([`Error::TooSmall`]) rather than
-//!   truncating. The `alloc` feature adds `String` and `Vec<u8>` as parameter types and as what
+//!   truncating. The `alloc` feature adds `String` and `Vec<u8>` as parameter and return types and as what
 //!   [`Text::to_string`] / [`Blob::to_vec`] return, for a UDF that wants a string of any length; the
 //!   `allocator` feature adds a global allocator (dlmalloc) so such a UDF crate needs nothing else. Both are
 //!   off by default, because a module without an allocator is smaller and that was the measured cost.
@@ -133,35 +133,13 @@ extern "C" {
     // Collections - building.
     fn list_new(capacity: i32) -> i32;
     fn map_new(capacity: i32) -> i32;
-    fn val_int(value: i64) -> i32;
-    fn val_double(value: f64) -> i32;
-    fn val_bool(value: i32) -> i32;
-    fn val_nil() -> i32;
-    fn val_str(value: *const u8, value_len: i32) -> i32;
-    fn val_blob(value: *const u8, value_len: i32) -> i32;
-    fn val_geojson(value: *const u8, value_len: i32) -> i32;
-    fn list_push(handle: i32, value: i32) -> i32;
-    fn list_push_int(handle: i32, value: i64) -> i32;
-    fn list_push_str(handle: i32, value: *const u8, value_len: i32) -> i32;
-    fn map_put(handle: i32, key: i32, value: i32) -> i32;
     #[link_name = "map_has"]
     fn raw_map_has(handle: i32, key: *const u8, key_len: i32) -> i32;
     #[link_name = "map_has_i"]
     fn raw_map_has_i(handle: i32, key: i64) -> i32;
-    fn map_put_str_int(handle: i32, key: *const u8, key_len: i32, value: i64) -> i32;
-    fn map_put_str_str(
-        handle: i32,
-        key: *const u8,
-        key_len: i32,
-        value: *const u8,
-        value_len: i32,
-    ) -> i32;
-    fn map_put_str_handle(handle: i32, key: *const u8, key_len: i32, value: i32) -> i32;
-    // A value read from the record, into a built collection by position.
-    fn list_push_at(handle: i32, src: i32, at: i32) -> i32;
-    fn map_put_str_at(handle: i32, key: *const u8, key_len: i32, src: i32, at: i32) -> i32;
-    fn map_put_i_at(handle: i32, key: i64, src: i32, at: i32) -> i32;
-    // A batch of values into a built collection: 16-byte values, or 32-byte key-value pairs.
+    // Values into a built collection, by value: 16-byte values, or 32-byte key-value pairs. Every push and
+    // insert goes through these two, one element or many, because they take none of the call's host handles:
+    // the per-value natives (`val_double`, `map_put`, ...) hold one each for the rest of the call.
     fn list_push_values(handle: i32, vals: *const u8, vals_len: i32) -> i32;
     fn map_put_entries(handle: i32, pairs: *const u8, pairs_len: i32) -> i32;
 
@@ -233,6 +211,7 @@ extern "C" {
 //
 
 const OK: i32 = 0;
+const ERR: i32 = -1;
 const NOT_FOUND: i32 = -2;
 const TYPE_MISMATCH: i32 = -3;
 const REFUSED: i32 = -4;
@@ -257,25 +236,51 @@ const HANDLE: i32 = 19;
 
 /// Why a call did not do what was asked. The one error type: every fallible call returns it, and a UDF
 /// returns it to fail the call with the error's [`message`](Error::message).
+///
+/// `?` passes one on; [`Error::Custom`] carries a message of the UDF's own. An error returned from a UDF is
+/// all the client sees of the call: no result arrives with it, and **the call writes nothing**. Bins staged
+/// but not saved are dropped, and so is what the call had already written: a [`Record::save`] that succeeded,
+/// and a [`Record::set_ints`] or [`Record::set_doubles`], are undone when the call then fails.
+///
+/// ```ignore
+/// let balance = rec.bin("balance")?.int()?;      // Absent, or WrongType
+///
+/// if balance < amount {
+///     return Err(Error::Custom("insufficient funds"));
+/// }
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
-    /// No such bin, key, element or argument.
+    /// No such bin, map key, list index or argument. Also what a read answers for a name that cannot be a bin
+    /// name: empty, longer than 15 bytes, or with a zero byte in it.
     Absent,
-    /// The value is not the kind asked for: `int()` on a string, `list()` on an integer.
+    /// The value is not the kind asked for: `int()` on a string, `list()` on an integer. Also a value that
+    /// cannot go where it was sent: [`Value::Other`], an HLL made from guest bytes, or guest bytes written as
+    /// a plain blob over a bin that holds an HLL.
     WrongType,
-    /// The buffer was too small; this many bytes are needed.
+    /// The buffer was too small; this many bytes are needed. Nothing was written and nothing truncated: call
+    /// again with a buffer of that size.
     TooSmall(usize),
-    /// The record is read-only here (an aggregation), the host rejected the write, or the per-call
-    /// resource table is full.
+    /// The host would not do it. The record is read-only here (a stream UDF's record; an event handler has no
+    /// record to write), the server rejected the write, the clock was asked for in an event handler, a
+    /// collection would nest more than 64 deep, a call came with more than [`MAX_ARGS`] arguments, or the
+    /// call has used up what it may hold on the host: 256 collections, strings read and open iterators at a
+    /// time, and a memory budget. It is also what [`List::push`] and [`Map::insert`] answer when the host
+    /// does not take the value, whatever the reason.
     Refused,
-    /// The host could not decode the stored bytes. Not something a UDF can act on.
+    /// The host could not decode the stored bytes, or text that had to be UTF-8 was not. Also what a write
+    /// answers for a name that cannot be a bin name (empty, longer than 15 bytes, or with a zero byte in it),
+    /// and what using a value gives once it is no longer valid (see [`Value`]). Not something a UDF can
+    /// repair; pass it on.
     Malformed,
     /// A failure of the UDF's own, with the message the client will see.
     Custom(&'static str),
 }
 
 impl Error {
-    /// The message a client sees when a UDF returns this.
+    /// The message a client sees when a UDF returns this. A fixed text per variant - `"absent: no such bin,
+    /// key, element or argument"`, `"wrong type"`, `"buffer too small"`, `"refused"`, `"malformed value"` -
+    /// and for [`Error::Custom`] the message it carries. The size in [`Error::TooSmall`] is not part of it.
     #[must_use]
     pub fn message(&self) -> &'static str {
         match self {
@@ -285,6 +290,23 @@ impl Error {
             Error::Refused => "refused",
             Error::Malformed => "malformed value",
             Error::Custom(message) => message,
+        }
+    }
+
+    /// The host's status for this error, as the number the host itself uses, for a caller that reports a
+    /// failure in the terms the other SDKs do: `-2` (`NOT_FOUND`) for [`Error::Absent`], `-3`
+    /// (`TYPE_MISMATCH`) for [`Error::WrongType`], `-4` (`REFUSED`) for [`Error::Refused`], `-16 - n` (the
+    /// too-small form, which carries the size) for [`Error::TooSmall`]`(n)`, and `-1` (`ERR`) for
+    /// [`Error::Malformed`] and for [`Error::Custom`], which is no status of the host's. The variant is the
+    /// status already, and is what Rust code matches on; this is the same fact as a number.
+    #[must_use]
+    pub fn status(&self) -> i32 {
+        match self {
+            Error::Absent => NOT_FOUND,
+            Error::WrongType => TYPE_MISMATCH,
+            Error::Refused => REFUSED,
+            Error::TooSmall(n) => NEEDED_BASE.saturating_sub(i32::try_from(*n).unwrap_or(i32::MAX)),
+            Error::Malformed | Error::Custom(_) => ERR,
         }
     }
 
@@ -316,11 +338,16 @@ fn bytes_result(rc: i32, cap: usize) -> Result<usize, Error> {
     Err(Error::from_status(rc))
 }
 
-/// How severe a log line is. `Warn` is the loudest.
+/// How severe a line written with [`log`] is. Each maps to the server's log level of the same name, under the
+/// server's `udf` log context, whose configured level decides whether `Info` and `Debug` lines are written at
+/// all. `Warn` is the loudest.
 #[derive(Clone, Copy, Debug)]
 pub enum Level {
+    /// The server's `warning` level.
     Warn = 0,
+    /// The server's `info` level.
     Info = 1,
+    /// The server's `debug` level.
     Debug = 2,
 }
 
@@ -333,55 +360,129 @@ pub enum Level {
 /// The guest-side analogue of the client's `Value`, with one difference that runs through everything: it is
 /// **borrowed, never owned**, because the guest has no allocator. A string or blob is a [`Text`] / [`Blob`]
 /// that knows where its bytes are and copies them out on request; a nested list or map is a [`Coll`] that
-/// opens a window onto the stored bytes when iterated. A value read from the record is valid for the rest of
-/// the call, or until the bin it came from is written.
+/// opens a window onto the stored bytes when iterated. Reading a value costs nothing until its bytes or
+/// elements are asked for.
 ///
-/// Values a UDF builds use the same type: `Value::Int(3)`, `"text".into()`, or a [`List`] / [`Map`] built
-/// on the host. [`Value::List`] and [`Value::Map`] then hold a [`Coll::Built`].
+/// ```ignore
+/// let v = rec.bin("profile")?;                    // Value::Map
+///
+/// if let Some(age) = v.map()?.get("age")? {       // one lookup on the host; None for no such key
+///     let age = age.int()?;
+/// }
+///
+/// let mut buf = [0u8; 64];
+/// let name = v.map()?.get("name")?.ok_or(Error::Absent)?;
+/// let name = name.as_str(&mut buf)?;              // the text, copied into buf
+/// ```
+///
+/// The accessors (`int`, `double`, `bool`, `string`, `blob`, `geojson`, `list`, `map`, `hll`) do not
+/// convert: each answers `Err(WrongType)` for any kind but its own, [`Value::Nil`] included. An integer is
+/// not a double, a string is not a blob, and a GeoJson document is not a string. The one reader that takes
+/// several kinds says so in its name: [`bytes`](Value::bytes), the raw bytes of a string, blob, GeoJson
+/// document or HLL.
+///
+/// A value read from the record or from the arguments is valid for the rest of the call, or until the bin it
+/// came from is written; finish reading a bin before writing it. One more case ends it early: when the server
+/// refuses a write ([`Record::save`], [`Record::delete`], [`Record::set_ints`] returning `Err(Refused)`), a
+/// list, map or blob read from a bin before that is gone. Using it afterwards gives `Err(Malformed)`, and
+/// iterating it one `Err(Refused)` item. Read the bin again.
+///
+/// Values a UDF builds use the same type: `Value::Int(3)`, `"text".into()`, or a [`List`] / [`Map`] built on
+/// the host. [`Value::List`] and [`Value::Map`] then hold a [`Coll::Built`]. A value made from a `&str` or
+/// `&[u8]` borrows it, and is copied by the host when it is written, pushed or returned.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Value<'a> {
+    /// Nil. Never what a bin holds - a nil bin is an absent one - but an argument, a list element or a map
+    /// value can be nil, and a UDF returns it for "no result".
     Nil,
+    /// A boolean.
     Bool(bool),
+    /// A 64-bit signed integer, the server's only integer type.
     Int(i64),
+    /// A 64-bit float. Never converted to or from [`Value::Int`].
     Double(f64),
+    /// A string: its text, to fetch with [`Text::as_str`] or [`Text::to_inline`].
     String(Text<'a>),
+    /// A blob: its bytes, to fetch with [`Blob::bytes`] or [`Blob::to_inline`].
     Blob(Blob<'a>),
-    /// A GeoJson document, which reads and writes as its text. Distinct from [`Value::String`] on purpose: the
-    /// particle type is what makes a bin geospatially indexable, and writing a document back as a string
+    /// A GeoJson document: its text, read with [`Value::geojson`]. Distinct from [`Value::String`] on purpose:
+    /// the particle type is what makes a bin geospatially indexable, and writing a document back as a string
     /// would silently make it unqueryable.
     GeoJson(Text<'a>),
+    /// A list: iterate it with [`Coll::iter`], index it with [`Coll::at`].
     List(Coll),
+    /// A map: iterate it with [`Coll::entries`], look a key up with [`Coll::get`].
     Map(Coll),
     /// An HLL: the bytes the server's HLL operations maintain. Readable, and writable back **by position**
     /// only - a UDF cannot make one from guest bytes, since the subtype that makes it an HLL is the
     /// server's to set.
     Hll(Blob<'a>),
-    /// Something a UDF has no business interpreting.
+    /// A kind this SDK has no variant for. It can be passed over, not read; writing it to a bin or putting it
+    /// in a collection is `Err(WrongType)`, and returning it returns nil.
     Other,
 }
 
-/// A string's bytes: in the record, or in the guest's own memory.
+/// The text of a string or of a GeoJson document: in the record, or in the guest's own memory.
+///
+/// What [`Value::string`], [`Value::geojson`] and the typed readers ([`Record::string`]) give. Its length is known at once; the
+/// text itself is copied out when asked for, into a buffer of the caller's ([`as_str`](Text::as_str)), a
+/// [`Str`] ([`to_inline`](Text::to_inline)) or, with the `alloc` feature, a `String`
+/// ([`to_string`](Text::to_string)).
+///
+/// ```ignore
+/// if let Some(owner) = rec.string("owner")? {
+///     let mut buf = [0u8; 64];
+///     let owner = owner.as_str(&mut buf)?;        // Err(TooSmall(n)) past 64 bytes
+///     log(Level::Info, owner);
+/// }
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text<'a> {
-    /// `len` bytes at a position in a source the host holds. What a read yields.
+    /// `len` bytes at a position in a source the host holds. What a read yields. `src` and `at` are the
+    /// host's own way of finding the bytes again, meaningful only to it and only during the call.
     Stored { src: i32, at: u32, len: usize },
     /// A `&str` of the guest's. What a UDF builds; `"text".into()` makes one.
     Guest(&'a str),
 }
 
-/// A blob's bytes: in the record, or in the guest's own memory.
+/// A blob's bytes (or an HLL's): in the record, or in the guest's own memory. The counterpart of [`Text`] for
+/// bytes, and read the same way: the length at once, the bytes copied out by [`bytes`](Blob::bytes),
+/// [`to_inline`](Blob::to_inline) or, with the `alloc` feature, [`to_vec`](Blob::to_vec).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Blob<'a> {
+    /// `len` bytes at a position in a source the host holds. What a read yields.
     Stored { src: i32, at: u32, len: usize },
+    /// A `&[u8]` of the guest's. What a UDF builds; `bytes.into()` makes a [`Value::Blob`] of one.
     Guest(&'a [u8]),
 }
 
-/// A list or map: `len` elements (or entries) somewhere the host can walk.
+/// A list or map: `len` elements (or entries) somewhere the host can walk. What [`Value::list`],
+/// [`Value::map`] and the typed readers ([`Record::list`], [`Record::map`]) give, and what a `Coll` parameter
+/// of a UDF receives.
+///
+/// A `Coll` is a small `Copy` handle; the elements stay on the host until they are asked for. Whether it is a
+/// list or a map is known to the [`Value`] it came out of, not to the `Coll`: [`at`](Coll::at) finds nothing
+/// (`Ok(None)`) on a map, and [`get`](Coll::get) nothing on a list.
+///
+/// ```ignore
+/// let mut total = 0;
+///
+/// for item in rec.bin("scores")?.list()?.iter() {
+///     total += item?.int()?;
+/// }
+///
+/// for entry in rec.bin("counts")?.map()?.entries() {
+///     let (site, count) = entry?;
+///     // ...
+/// }
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Coll {
     /// In the record, or in the packed copy of an argument list: at a position in a source the host holds.
+    /// `len` is the number of elements of a list or of entries of a map.
     Stored { src: i32, at: u32, len: usize },
-    /// Built on the host by [`list`] / [`map`], identified by its handle.
+    /// Built on the host by [`list`] / [`map`], identified by its handle. It can be read like a stored one,
+    /// at the price of the host packing a copy of it first.
     Built(i32),
 }
 
@@ -408,7 +509,9 @@ impl<'a> Value<'a> {
         }
     }
 
-    /// What kind of value this is, for messages.
+    /// What kind of value this is, as an English phrase for a message: `"nil"`, `"a boolean"`, `"an
+    /// integer"`, `"a double"`, `"a string"`, `"a blob"`, `"a geojson document"`, `"a list"`, `"a map"`, `"an
+    /// HLL"` or `"an unsupported value"`. It is what the rejection of a mistyped argument says it got.
     #[must_use]
     pub fn kind(&self) -> &'static str {
         match self {
@@ -426,7 +529,9 @@ impl<'a> Value<'a> {
         }
     }
 
-    /// The bytes of an HLL.
+    /// The bytes of an HLL, or `Err(WrongType)` for any other kind, a plain blob included. They are the
+    /// server's own encoding of the sketch: something to copy, compare or hand back, not to interpret. An HLL
+    /// bin is written back by passing the [`Value`] itself to [`Record::set`], never from these bytes.
     pub fn hll(&self) -> Result<Blob<'a>, Error> {
         match self {
             Value::Hll(b) => Ok(*b),
@@ -458,19 +563,46 @@ impl<'a> Value<'a> {
         }
     }
 
-    /// The text of a string or a GeoJson document.
+    /// The text of a string, or `Err(WrongType)` for any other kind, a GeoJson document included: read that
+    /// with [`geojson`](Value::geojson). Nothing is copied yet: the [`Text`] knows the length, and
+    /// [`Text::as_str`] or [`Text::to_inline`] fetches the bytes.
     pub fn string(&self) -> Result<Text<'a>, Error> {
         match self {
-            Value::String(t) | Value::GeoJson(t) => Ok(*t),
+            Value::String(t) => Ok(*t),
             _ => Err(Error::WrongType),
         }
     }
 
-    /// The bytes of a blob, or `Err(WrongType)` for any other kind. An HLL is not a blob here: see
-    /// [`Value::hll`].
+    /// The text of a GeoJson document, or `Err(WrongType)` for any other kind, a string included.
+    pub fn geojson(&self) -> Result<Text<'a>, Error> {
+        match self {
+            Value::GeoJson(t) => Ok(*t),
+            _ => Err(Error::WrongType),
+        }
+    }
+
+    /// The bytes of a blob, or `Err(WrongType)` for any other kind. Strict: a string is not a blob, nor is
+    /// a GeoJson document or an HLL (see [`Value::hll`]). [`bytes`](Value::bytes) reads the raw bytes of
+    /// any of them.
     pub fn blob(&self) -> Result<Blob<'a>, Error> {
         match self {
             Value::Blob(b) => Ok(*b),
+            _ => Err(Error::WrongType),
+        }
+    }
+
+    /// The raw bytes of a value that has bytes: a string's or GeoJson document's text, a blob's content, an
+    /// HLL's encoding. The one reader that takes more than one kind, for code that copies, hashes or
+    /// compares content without caring which of them it is; `Err(WrongType)` for anything else (nil, a
+    /// boolean, a number, a list, a map). Nothing is copied yet: [`Blob::bytes`] or [`Blob::to_inline`]
+    /// fetches them. A list's or map's packed bytes are [`Coll::bytes`].
+    pub fn bytes(&self) -> Result<Blob<'a>, Error> {
+        match self {
+            Value::Blob(b) | Value::Hll(b) => Ok(*b),
+            Value::String(Text::Guest(s)) | Value::GeoJson(Text::Guest(s)) => Ok(Blob::Guest(s.as_bytes())),
+            Value::String(Text::Stored { src, at, len }) | Value::GeoJson(Text::Stored { src, at, len }) => {
+                Ok(Blob::Stored { src: *src, at: *at, len: *len })
+            }
             _ => Err(Error::WrongType),
         }
     }
@@ -491,7 +623,9 @@ impl<'a> Value<'a> {
         }
     }
 
-    /// A string's or GeoJson document's text, into a buffer you own. See [`Text::as_str`].
+    /// A string's or GeoJson document's text, copied into a buffer you own, in one step. `out` must hold the
+    /// whole text: a shorter buffer is `Err(TooSmall(n))` with the `n` bytes needed, and nothing is
+    /// truncated. `Err(WrongType)` for any other kind. The `&str` borrows `out`. See [`Text::as_str`].
     pub fn as_str<'b>(&'b self, out: &'b mut [u8]) -> Result<&'b str, Error> {
         match self {
             Value::String(t) | Value::GeoJson(t) => t.as_str(out),
@@ -535,6 +669,18 @@ impl<'a> Value<'a> {
         matches!(self, Value::Blob(_))
     }
 
+    /// Whether this is a GeoJson document. A string is not one.
+    #[must_use]
+    pub fn is_geojson(&self) -> bool {
+        matches!(self, Value::GeoJson(_))
+    }
+
+    /// Whether this is an HLL. A blob is not one.
+    #[must_use]
+    pub fn is_hll(&self) -> bool {
+        matches!(self, Value::Hll(_))
+    }
+
     /// Whether this is a list.
     #[must_use]
     pub fn is_list(&self) -> bool {
@@ -547,8 +693,9 @@ impl<'a> Value<'a> {
         matches!(self, Value::Map(_))
     }
 
-    /// Whether this is a string, blob, GeoJson document, HLL, list or map the host holds, as opposed to
-    /// a scalar or something the guest built.
+    /// Whether this is a string, blob, GeoJson document, HLL, list or map the host holds - read from the
+    /// record, an argument or a collection - as opposed to a scalar or something the guest built. Only such a
+    /// value can be given to [`stored_bytes`](Value::stored_bytes) and [`cmp_stored`](Value::cmp_stored).
     #[must_use]
     pub fn is_stored(&self) -> bool {
         stored_position(self).is_some()
@@ -556,9 +703,16 @@ impl<'a> Value<'a> {
 }
 
 impl Value<'_> {
-    /// The value's bytes as the server stores them - its msgpack, header included - into `buf`, for a
-    /// value read from the record (a string, blob, list or map). A short buffer reports the size needed.
-    /// This is the encoding a convergent merge compares when nothing else tells two candidates apart.
+    /// The value's bytes as the host holds them, copied into `buf`, for a value read from the record: a
+    /// string, blob, GeoJson document, HLL, list or map.
+    ///
+    /// A list or map, and any value that is an element of one, comes out as its msgpack, header included,
+    /// exactly as the server stores it. A string, blob or HLL that is a bin of its own comes out as its
+    /// content alone. Either way it is the encoding a convergent merge compares when nothing else tells two
+    /// candidates apart.
+    ///
+    /// `Err(TooSmall(n))` when `buf` is shorter than the `n` bytes needed; `Err(WrongType)` for a scalar or a
+    /// value the guest built ([`is_stored`](Value::is_stored) says which in advance).
     pub fn stored_bytes<'b>(&self, buf: &'b mut [u8]) -> Result<&'b [u8], Error> {
         let (src, at) = stored_position(self).ok_or(Error::WrongType)?;
         let n = bytes_result(unsafe { raw_coll_bytes_at(src, at as i32, buf.as_mut_ptr(), buf.len() as i32) }, buf.len())?;
@@ -566,10 +720,15 @@ impl Value<'_> {
         Ok(&buf[..n])
     }
 
-    /// Compare two stored values byte by byte, as `memcmp` would on their stored encodings: the first byte
-    /// that differs decides, a shorter prefix comes first. Neither value is copied into the guest. Equal
-    /// content built the same way encodes the same, since the server stores lists in order and the maps
-    /// a UDF builds key-ordered, so this is the last tie-break of a deterministic merge.
+    /// Compare two stored values byte by byte, as `memcmp` would on the bytes
+    /// [`stored_bytes`](Value::stored_bytes) gives: the first byte that differs decides, a shorter prefix
+    /// comes first. Neither value is copied into the guest, so it works on values of any size. Equal content
+    /// built the same way encodes the same, since the server stores lists in order and the maps a UDF builds
+    /// key-ordered, so this is the last tie-break of a deterministic merge. It is an order on encodings, not
+    /// on meaning: do not read "greater" as numerically or alphabetically greater.
+    ///
+    /// `Err(WrongType)` when either value is a scalar or guest-built, or the host cannot find the bytes of one
+    /// (a value that is no longer valid): what cannot be compared is an error, never an ordering.
     pub fn cmp_stored(&self, other: &Value<'_>) -> Result<core::cmp::Ordering, Error> {
         let (a, at_a) = stored_position(self).ok_or(Error::WrongType)?;
         let (b, at_b) = stored_position(other).ok_or(Error::WrongType)?;
@@ -604,18 +763,22 @@ impl From<bool> for Value<'_> {
     }
 }
 
+/// A `&str` as a value: a [`Value::String`] that borrows the text. This is what lets `rec.set("name",
+/// "alice")` and `list.push("alice")` take a string directly.
 impl<'a> From<&'a str> for Value<'a> {
     fn from(value: &'a str) -> Self {
         Value::String(Text::Guest(value))
     }
 }
 
+/// A `&[u8]` as a value: a [`Value::Blob`] that borrows the bytes.
 impl<'a> From<&'a [u8]> for Value<'a> {
     fn from(value: &'a [u8]) -> Self {
         Value::Blob(Blob::Guest(value))
     }
 }
 
+/// A `&str` as a [`Text::Guest`], for building a [`Value::GeoJson`] from text of the guest's.
 impl<'a> From<&'a str> for Text<'a> {
     fn from(value: &'a str) -> Self {
         Text::Guest(value)
@@ -623,7 +786,8 @@ impl<'a> From<&'a str> for Text<'a> {
 }
 
 impl Text<'_> {
-    /// How many bytes the text has.
+    /// How many bytes the text has - bytes, not characters. Known without fetching the text, so it is the way
+    /// to size a buffer or reject an over-long string before copying anything.
     #[must_use]
     pub fn len(&self) -> usize {
         match self {
@@ -638,8 +802,12 @@ impl Text<'_> {
         self.len() == 0
     }
 
-    /// The text, into a buffer you own. A guest string comes back as itself, nothing copied; a stored one is
-    /// fetched in one import call. `Err(TooSmall(n))` says to try again with `n` bytes.
+    /// The text, into a buffer you own. A guest string comes back as itself, nothing copied and `out`
+    /// untouched; a stored one is copied into `out` in one import call, and the `&str` returned borrows
+    /// `out`.
+    ///
+    /// `out` must hold all of it: `Err(TooSmall(n))` says to try again with `n` bytes ([`len`](Text::len)
+    /// tells in advance), and nothing is truncated. `Err(Malformed)` when the stored bytes are not UTF-8.
     pub fn as_str<'b>(&'b self, out: &'b mut [u8]) -> Result<&'b str, Error> {
         match self {
             Text::Guest(s) => Ok(s),
@@ -651,7 +819,9 @@ impl Text<'_> {
         }
     }
 
-    /// The text's bytes, without the UTF-8 check.
+    /// The text's bytes, without the UTF-8 check: [`as_str`](Text::as_str) for a caller that compares or
+    /// copies bytes and does not need a `str`. The same buffer rules: `Err(TooSmall(n))` when `out` is
+    /// shorter than the text.
     pub fn bytes<'b>(&'b self, out: &'b mut [u8]) -> Result<&'b [u8], Error> {
         match self {
             Text::Guest(s) => Ok(s.as_bytes()),
@@ -665,7 +835,7 @@ impl Text<'_> {
 }
 
 impl Blob<'_> {
-    /// How many bytes the blob has.
+    /// How many bytes the blob has, known without fetching them.
     #[must_use]
     pub fn len(&self) -> usize {
         match self {
@@ -680,7 +850,9 @@ impl Blob<'_> {
         self.len() == 0
     }
 
-    /// The bytes, into a buffer you own. See [`Text::as_str`].
+    /// The bytes, into a buffer you own. A guest blob comes back as itself, nothing copied; a stored one is
+    /// copied into `out` in one import call and the slice returned borrows `out`. `Err(TooSmall(n))` when
+    /// `out` is shorter than the `n` bytes the blob has; nothing is truncated.
     pub fn bytes<'b>(&'b self, out: &'b mut [u8]) -> Result<&'b [u8], Error> {
         match self {
             Blob::Guest(b) => Ok(b),
@@ -697,12 +869,26 @@ impl Blob<'_> {
 // Owned strings and bytes.
 //
 
-/// A string in a buffer of its own, `N` bytes at most. What a UDF declares when it wants text to keep -
-/// an argument, a bin's value - without an allocator; derefs to `str`.
+/// A string in a buffer of its own, `N` bytes at most. What a UDF declares when it wants text to keep - an
+/// argument, a bin's value - without an allocator; derefs to `str`. It is `Copy` and lives on the guest's
+/// stack, `N` bytes plus a length, so choose `N` for the data rather than generously.
 ///
-/// As a parameter type, `N` is the longest argument the UDF accepts: a longer one is rejected before the
-/// body runs, from its reported length, without a copy. `&str` is the same with a capacity of 256; with the
+/// As a parameter type, `N` is the longest argument the UDF accepts: a longer one is rejected before the body
+/// runs, from its reported length, without a copy. `&str` is the same with a capacity of 256; with the
 /// `alloc` feature, `String` takes any length.
+///
+/// ```ignore
+/// export! {
+///     fn rename(rec: &mut Record, name: Str<32>) -> Result<Value, Error> {
+///         let old: Option<Str<32>> = rec.string("name")?.map(|t| t.to_inline()).transpose()?;
+///
+///         rec.set("name", &name)?;
+///         rec.save()?;
+///
+///         Ok(Value::Bool(old.is_some_and(|old| old != name)))
+///     }
+/// }
+/// ```
 #[derive(Clone, Copy)]
 pub struct Str<const N: usize> {
     len: usize,
@@ -710,10 +896,11 @@ pub struct Str<const N: usize> {
 }
 
 impl<const N: usize> Str<N> {
-    /// The most bytes this holds.
+    /// The most bytes a `Str<N>` holds: `N`.
     pub const CAPACITY: usize = N;
 
-    /// Copy a string in. `Err(TooSmall(len))` when it does not fit.
+    /// Copy a string in. `Err(TooSmall(len))` when it does not fit, `len` being the string's length in bytes;
+    /// nothing is truncated.
     pub fn new(text: &str) -> Result<Self, Error> {
         if text.len() > N {
             return Err(Error::TooSmall(text.len()));
@@ -785,13 +972,16 @@ impl<const N: usize> core::fmt::Display for Str<N> {
     }
 }
 
+/// A [`Str`] by reference as a value: a [`Value::String`] that borrows its text, so `rec.set("name", &name)`
+/// works.
 impl<'a, const N: usize> From<&'a Str<N>> for Value<'a> {
     fn from(value: &'a Str<N>) -> Self {
         Value::String(Text::Guest(value.as_str()))
     }
 }
 
-/// Bytes in a buffer of their own, `N` at most: [`Str`] for a blob. Derefs to `[u8]`.
+/// Bytes in a buffer of their own, `N` at most: [`Str`] for a blob. Derefs to `[u8]`. As a parameter type it
+/// takes a blob argument of up to `N` bytes and rejects a longer one before the body runs.
 #[derive(Clone, Copy)]
 pub struct Bytes<const N: usize> {
     len: usize,
@@ -799,10 +989,11 @@ pub struct Bytes<const N: usize> {
 }
 
 impl<const N: usize> Bytes<N> {
-    /// The most bytes this holds.
+    /// The most bytes a `Bytes<N>` holds: `N`.
     pub const CAPACITY: usize = N;
 
-    /// Copy bytes in. `Err(TooSmall(len))` when they do not fit.
+    /// Copy bytes in. `Err(TooSmall(len))` when they do not fit, `len` being how many there are; nothing is
+    /// truncated.
     pub fn new(bytes: &[u8]) -> Result<Self, Error> {
         if bytes.len() > N {
             return Err(Error::TooSmall(bytes.len()));
@@ -859,6 +1050,7 @@ impl<const N: usize> core::fmt::Debug for Bytes<N> {
     }
 }
 
+/// A [`Bytes`] by reference as a value: a [`Value::Blob`] that borrows its bytes.
 impl<'a, const N: usize> From<&'a Bytes<N>> for Value<'a> {
     fn from(value: &'a Bytes<N>) -> Self {
         Value::Blob(Blob::Guest(value.as_bytes()))
@@ -866,8 +1058,10 @@ impl<'a, const N: usize> From<&'a Bytes<N>> for Value<'a> {
 }
 
 impl Text<'_> {
-    /// The text in a [`Str`] of its own, in one import call. `Err(TooSmall(len))` when it is longer than `N`,
-    /// known before anything is copied.
+    /// The text in a [`Str`] of its own, in one import call: the way to keep a string past the buffer it
+    /// would otherwise borrow. `N` usually comes from the type it is assigned to: `let name: Str<32> =
+    /// text.to_inline()?`. `Err(TooSmall(len))` when the text is longer than `N`, known before anything is
+    /// copied; `Err(Malformed)` when stored bytes are not UTF-8.
     pub fn to_inline<const N: usize>(self) -> Result<Str<N>, Error> {
         match self {
             Text::Guest(s) => Str::new(s),
@@ -884,7 +1078,8 @@ impl Text<'_> {
         }
     }
 
-    /// The text as a `String` of any length, in one import call. Needs the `alloc` feature.
+    /// The text as a `String` of any length, in one import call and one allocation. Needs the `alloc`
+    /// feature. `Err(Malformed)` when stored bytes are not UTF-8.
     #[cfg(feature = "alloc")]
     pub fn to_string(self) -> Result<alloc::string::String, Error> {
         match self {
@@ -902,7 +1097,8 @@ impl Text<'_> {
 }
 
 impl Blob<'_> {
-    /// The bytes in a [`Bytes`] of their own. See [`Text::to_inline`].
+    /// The bytes in a [`Bytes`] of their own, in one import call. `Err(TooSmall(len))` when there are more
+    /// than `N`, known before anything is copied. See [`Text::to_inline`].
     pub fn to_inline<const N: usize>(self) -> Result<Bytes<N>, Error> {
         match self {
             Blob::Guest(b) => Bytes::new(b),
@@ -917,7 +1113,8 @@ impl Blob<'_> {
         }
     }
 
-    /// The bytes as a `Vec<u8>` of any length. Needs the `alloc` feature.
+    /// The bytes as a `Vec<u8>` of any length, in one import call and one allocation. Needs the `alloc`
+    /// feature.
     #[cfg(feature = "alloc")]
     pub fn to_vec(self) -> Result<alloc::vec::Vec<u8>, Error> {
         match self {
@@ -945,7 +1142,9 @@ fn fetch_bytes(src: i32, at: u32, out: &mut [u8]) -> Result<usize, Error> {
 //
 
 impl Coll {
-    /// How many elements a list has, or entries a map has.
+    /// How many elements a list has, or entries a map has (a map of three keys is 3, though iterating it
+    /// yields six values). Known at once for a stored collection; a built one is asked on the host each time,
+    /// so it counts what has been added so far.
     #[must_use]
     pub fn len(&self) -> usize {
         match self {
@@ -968,14 +1167,28 @@ impl Coll {
         self.len() == 0
     }
 
-    /// Walk the collection: every element of a list, or every key and value of a map, alternately.
+    /// Walk the collection: every element of a list in order, or every key and value of a map, alternately
+    /// (use [`entries`](Coll::entries) to get a map's as pairs).
     ///
     /// The import calls are hidden. The iterator fetches 128 values per call into a window on the guest's
-    /// stack, so a ten-thousand-element list is 79 imports, not ten thousand. Each item is a
-    /// `Result<Value, Error>`: a malformed collection surfaces as an `Err` item rather than as a quiet end.
+    /// stack (2 KB), so a ten-thousand-element list is 79 imports, not ten thousand. Each item is a
+    /// `Result<Value, Error>`: a malformed collection surfaces as an `Err` item rather than as a quiet end,
+    /// and the iterator ends after it.
     ///
     /// A nested list or map comes out as a [`Value::List`] / [`Value::Map`] that iterates the same way, and
     /// the walk continues after it.
+    ///
+    /// An iterator holds one of the call's 256 host slots until it is dropped. When none is left, or the
+    /// collection is no longer valid (see [`Value`]), the iterator yields one `Err(Refused)` and ends. A
+    /// built collection is walked through a packed copy of it, so finish building it before iterating it.
+    ///
+    /// ```ignore
+    /// let mut longest = 0;
+    ///
+    /// for item in tags.iter() {
+    ///     longest = longest.max(item?.string()?.len());
+    /// }
+    /// ```
     #[must_use]
     pub fn iter(&self) -> Iter {
         let cursor = match *self {
@@ -1003,7 +1216,9 @@ impl Coll {
         }
     }
 
-    /// The collection's bytes as stored, header included. See [`Value::stored_bytes`].
+    /// The collection's bytes as stored - its msgpack, header included - copied into `buf`.
+    /// `Err(TooSmall(n))` when `buf` is shorter than the `n` bytes needed. A built collection is packed
+    /// first, and `Err(Refused)` when the host cannot. See [`Value::stored_bytes`].
     pub fn bytes<'b>(&self, buf: &'b mut [u8]) -> Result<&'b [u8], Error> {
         let (src, at) = self.position()?;
         let n = bytes_result(unsafe { raw_coll_bytes_at(src, at as i32, buf.as_mut_ptr(), buf.len() as i32) }, buf.len())?;
@@ -1011,7 +1226,10 @@ impl Coll {
         Ok(&buf[..n])
     }
 
-    /// Compare two collections' stored bytes. See [`Value::cmp_stored`].
+    /// Compare two collections' stored bytes, as `memcmp` would, without copying either into the guest: the
+    /// deterministic tie-break between two candidates that are otherwise equal. An order on encodings, not on
+    /// content. See [`Value::cmp_stored`]. `Err(WrongType)` when the host cannot find the bytes of one of
+    /// them, `Err(Refused)` when a built collection cannot be packed: never an ordering.
     pub fn cmp_bytes(&self, other: &Coll) -> Result<core::cmp::Ordering, Error> {
         let (a, at_a) = self.position()?;
         let (b, at_b) = other.position()?;
@@ -1024,34 +1242,68 @@ impl Coll {
         Ok(c.cmp(&0))
     }
 
-    /// The map's entries, paired.
+    /// A map's entries as `(key, value)` pairs, 64 per import call. Each item is a `Result<(Value, Value),
+    /// Error>`. A stored map comes out in the order it is stored; a map built with [`map`] is ordered by key.
+    ///
+    /// For a map only: on a list it would pair up neighbouring elements, and end with `Err(Malformed)` when
+    /// their number is odd.
+    ///
+    /// ```ignore
+    /// for entry in rec.bin("counts")?.map()?.entries() {
+    ///     let (site, count) = entry?;
+    ///     let mut buf = [0u8; 32];
+    ///
+    ///     total += count.int()?;
+    ///     log(Level::Debug, site.as_str(&mut buf)?);
+    /// }
+    /// ```
     #[must_use]
     pub fn entries(&self) -> Entries {
         Entries { values: self.iter() }
     }
 
-    /// The value under a key of a map, a string or an integer, in one import call. `Err(Absent)` for no
-    /// such key.
-    pub fn get(&self, key: impl MapKey) -> Result<Value<'static>, Error> {
+    /// The value under a key of a map: `coll.get("name")` for a string key, `coll.get(7)` for an integer one.
+    /// A string key matches only a string key with the same bytes, an integer only an integer.
+    ///
+    /// `Ok(None)` for no such key: not being there is not an error. A key whose value is nil is
+    /// `Ok(Some(Value::Nil))`. A list has no keys, so on a list every key is `Ok(None)` too. An `Err` means
+    /// the map could not be read at all.
+    ///
+    /// ```ignore
+    /// let limit = match settings.get("limit")? {
+    ///     Some(v) => v.int()?,                        // Err(WrongType) when it is not an integer
+    ///     None => 100,
+    /// };
+    /// ```
+    ///
+    /// The host walks the stored entries in place, so the cost grows with the map but nothing is copied into
+    /// the guest; a stored map takes one import call. A built map is read through a packed copy of it, which
+    /// costs the whole map and is not promised to show entries inserted after the map was first read: to
+    /// ask a map under construction whether it has a key use [`Map::contains_key`].
+    pub fn get(&self, key: impl MapKey) -> Result<Option<Value<'static>>, Error> {
         key.lookup_in(self)
     }
 
-    /// The element at `index` of a list, in one import call: the host steps over the elements before it
-    /// where they are stored, so nothing before it is fetched. `Err(Absent)` past the end.
-    pub fn at(&self, index: usize) -> Result<Value<'static>, Error> {
+    /// The element at `index` of a list, counting from 0, in one import call: the host steps over the
+    /// elements before it where they are stored, so nothing before it is fetched.
+    ///
+    /// `Ok(None)` past the end: not being there is not an error. An element that is nil is
+    /// `Ok(Some(Value::Nil))`. A map has no positions, so on a map every index is `Ok(None)` too. For more
+    /// than a few elements, [`iter`](Coll::iter) is cheaper than indexing each: every `at` starts again from
+    /// the front.
+    pub fn at(&self, index: usize) -> Result<Option<Value<'static>>, Error> {
         let (src, at) = self.position()?;
         let mut raw = [0u8; VALUE_SZ];
-        let index = i32::try_from(index).map_err(|_| Error::Absent)?;
+        // The host counts elements in 32 bits, so there is nothing at an index beyond them.
+        let Ok(index) = i32::try_from(index) else {
+            return Ok(None);
+        };
         let rc = unsafe { raw_list_get(src, at as i32, index, raw.as_mut_ptr(), VALUE_SZ as i32) };
 
-        if rc != OK {
-            return Err(Error::from_status(rc));
-        }
-
-        Ok(Value::from_raw(&raw))
+        found(rc, &raw)
     }
 
-    fn get_str(&self, key: &str) -> Result<Value<'static>, Error> {
+    fn get_str(&self, key: &str) -> Result<Option<Value<'static>>, Error> {
         let (src, at) = self.position()?;
         let mut raw = [0u8; VALUE_SZ];
         let rc = unsafe {
@@ -1065,23 +1317,15 @@ impl Coll {
             )
         };
 
-        if rc != OK {
-            return Err(Error::from_status(rc));
-        }
-
-        Ok(Value::from_raw(&raw))
+        found(rc, &raw)
     }
 
-    fn get_int(&self, key: i64) -> Result<Value<'static>, Error> {
+    fn get_int(&self, key: i64) -> Result<Option<Value<'static>>, Error> {
         let (src, at) = self.position()?;
         let mut raw = [0u8; VALUE_SZ];
         let rc = unsafe { raw_coll_get_i(src, at as i32, key, raw.as_mut_ptr(), VALUE_SZ as i32) };
 
-        if rc != OK {
-            return Err(Error::from_status(rc));
-        }
-
-        Ok(Value::from_raw(&raw))
+        found(rc, &raw)
     }
 
     // Where this collection sits, packing a built one on request.
@@ -1101,7 +1345,17 @@ impl Coll {
     }
 }
 
-/// The values of a collection, 128 per import call. See [`Coll::iter`].
+// What a lookup in a collection answers: the value, nothing for "not there", an error for anything else.
+fn found(rc: i32, raw: &[u8; VALUE_SZ]) -> Result<Option<Value<'static>>, Error> {
+    match rc {
+        OK => Ok(Some(Value::from_raw(raw))),
+        NOT_FOUND => Ok(None),
+        rc => Err(Error::from_status(rc)),
+    }
+}
+
+/// The values of a collection, 128 per import call. Made by [`Coll::iter`]; an `Iterator` of `Result<Value,
+/// Error>`. About 2 KB on the guest's stack, and one of the call's 256 host slots while it lives.
 pub struct Iter {
     cursor: i32,
     window: [[u8; VALUE_SZ]; WINDOW],
@@ -1170,7 +1424,8 @@ impl Drop for Iter {
     }
 }
 
-/// A map's entries, key and value together. See [`Coll::entries`].
+/// A map's entries, key and value together. Made by [`Coll::entries`]; an `Iterator` of `Result<(Value,
+/// Value), Error>`.
 pub struct Entries {
     values: Iter,
 }
@@ -1198,23 +1453,52 @@ impl Iterator for Entries {
 // The record.
 //
 
-/// What any record can be asked: the one a record UDF is called on ([`Record`]) and either side of an
-/// event ([`EventRecord`]). A helper that takes `&impl ReadRecord` reads a bin the same way in both.
+/// What any record can be asked: the one a record UDF is called on ([`Record`]) and either side of an event
+/// ([`EventRecord`]). A helper that takes `&impl ReadRecord` reads a bin the same way in both.
 ///
-/// [`bin`](ReadRecord::bin) is the form for a bin that must be there, `Err(Absent)` when it is not. The
-/// typed forms are for a bin that may not be: `None` when it is absent or nil, `Err(WrongType)` when it
-/// holds another kind.
+/// Two methods are the record's own: `bin(name)`, a bin whatever it holds, and the metadata `generation()`
+/// and `last_update_time()`. The rest are provided from `bin`, and come in three forms:
+///
+/// - `bin(name)` is for a bin that must be there: `Err(Absent)` when it is not.
+/// - `get(name)` and the typed readers `int`, `double`, `bool`, `string`, `blob`, `list`, `map` are for a bin
+///   that may not be: `Ok(None)` when it is absent or nil, `Err(WrongType)` when it holds another kind. Nothing
+///   is converted: `int` on a double bin is `Err(WrongType)`, and so are `string` on a GeoJson bin and `blob`
+///   on a string bin. `bytes(name)` is the one reader that takes several kinds: the raw bytes of a string,
+///   blob, GeoJson or HLL bin.
+/// - `int_or`, `double_or`, `bool_or` take the default to use when the bin is absent or nil, and are still
+///   `Err(WrongType)` for a bin of another kind. `has(name)` says only whether the bin is there.
+///
+/// A `name` is a bin name: 1 to 15 bytes. Any other name reads as an absent bin.
+///
+/// ```ignore
+/// fn total(rec: &impl ReadRecord) -> Result<i64, Error> {
+///     let balance = rec.bin("balance")?.int()?;      // must be there
+///     let bonus = rec.int_or("bonus", 0)?;           // 0 when absent
+///     let mut buf = [0u8; 64];
+///
+///     if let Some(owner) = rec.string("owner")? {    // None when absent
+///         log(Level::Info, owner.as_str(&mut buf)?);
+///     }
+///
+///     Ok(balance + bonus)
+/// }
+/// ```
 pub trait ReadRecord {
-    /// A bin, whatever it holds. `Err(Absent)` when the record has no such bin.
+    /// A bin, whatever it holds. `Err(Absent)` when the record has no such bin, or `name` cannot be a bin
+    /// name (empty, or longer than 15 bytes).
     fn bin(&self, name: &str) -> Result<Value<'static>, Error>;
 
-    /// The record's modification count.
+    /// The record's generation: the server's count of the writes the record has taken. Zero on a key with no
+    /// record, and on both sides of an `xdr-merge` event.
     fn generation(&self) -> i64;
 
-    /// When the record was last written, in milliseconds since the Aerospike epoch (2010-01-01 UTC).
+    /// When the record was last written, in milliseconds since the Citrusleaf epoch, 2010-01-01T00:00:00Z:
+    /// Unix milliseconds minus 1 262 304 000 000. Zero on a key with no record, and on both sides of an
+    /// `xdr-merge` event.
     fn last_update_time(&self) -> i64;
 
-    /// A bin that may be absent: `None` when it is absent or nil.
+    /// A bin that may be absent: `Ok(None)` when it is absent or nil, `Ok(Some(value))` otherwise, whatever
+    /// kind it holds.
     fn get(&self, name: &str) -> Result<Option<Value<'static>>, Error> {
         match self.bin(name) {
             Ok(Value::Nil) | Err(Error::Absent) => Ok(None),
@@ -1223,12 +1507,14 @@ pub trait ReadRecord {
         }
     }
 
-    /// Whether the record has the bin.
+    /// Whether the record has the bin. False for a name that cannot be a bin name. Costs the same one import
+    /// call as reading the bin.
     fn has(&self, name: &str) -> bool {
         self.bin(name).is_ok()
     }
 
-    /// An integer bin, or `None`.
+    /// An integer bin, or `None` when the bin is absent or nil. A bin of another kind, a double included, is
+    /// `Err(WrongType)`.
     fn int(&self, name: &str) -> Result<Option<i64>, Error> {
         self.get(name)?.map(|v| v.int()).transpose()
     }
@@ -1239,42 +1525,57 @@ pub trait ReadRecord {
         Ok(self.int(name)?.unwrap_or(default))
     }
 
-    /// A double bin, or `default` when it is absent or nil.
+    /// A double bin, or `default` when it is absent or nil. A bin of another kind, an integer included, is
+    /// still `Err(WrongType)`.
     fn double_or(&self, name: &str, default: f64) -> Result<f64, Error> {
         Ok(self.double(name)?.unwrap_or(default))
     }
 
-    /// A boolean bin, or `default` when it is absent or nil.
+    /// A boolean bin, or `default` when it is absent or nil. A bin of another kind is still `Err(WrongType)`.
     fn bool_or(&self, name: &str, default: bool) -> Result<bool, Error> {
         Ok(self.bool(name)?.unwrap_or(default))
     }
 
-    /// A double bin, or `None`.
+    /// A double bin, or `None` when the bin is absent or nil. A bin of another kind, an integer included, is
+    /// `Err(WrongType)`.
     fn double(&self, name: &str) -> Result<Option<f64>, Error> {
         self.get(name)?.map(|v| v.double()).transpose()
     }
 
-    /// A boolean bin, or `None`.
+    /// A boolean bin, or `None` when the bin is absent or nil. A bin of another kind is `Err(WrongType)`.
     fn bool(&self, name: &str) -> Result<Option<bool>, Error> {
         self.get(name)?.map(|v| v.bool()).transpose()
     }
 
-    /// A string bin's text, or `None`.
+    /// A string bin's text, or `None` when the bin is absent or nil. A bin of another kind is
+    /// `Err(WrongType)`, a GeoJson bin included: read that with `bin(name)?.geojson()`. The [`Text`] is
+    /// fetched with [`Text::as_str`] or [`Text::to_inline`].
     fn string(&self, name: &str) -> Result<Option<Text<'static>>, Error> {
         self.get(name)?.map(|v| v.string()).transpose()
     }
 
-    /// A blob bin's bytes, or `None`.
+    /// A blob bin's bytes, or `None` when the bin is absent or nil. Strict: a bin of another kind is
+    /// `Err(WrongType)`, a string, GeoJson or HLL bin included. [`bytes`](ReadRecord::bytes) reads the raw
+    /// bytes of any of those.
     fn blob(&self, name: &str) -> Result<Option<Blob<'static>>, Error> {
         self.get(name)?.map(|v| v.blob()).transpose()
     }
 
-    /// A list bin, or `None`.
+    /// The raw bytes of a bin that has bytes - a string, blob, GeoJson or HLL bin - or `None` when the bin
+    /// is absent or nil. A bin of any other kind (a number, a boolean, a list, a map) is `Err(WrongType)`.
+    /// See [`Value::bytes`].
+    fn bytes(&self, name: &str) -> Result<Option<Blob<'static>>, Error> {
+        self.get(name)?.map(|v| v.bytes()).transpose()
+    }
+
+    /// A list bin as a [`Coll`] to iterate or index, or `None` when the bin is absent or nil. A bin of
+    /// another kind, a map included, is `Err(WrongType)`.
     fn list(&self, name: &str) -> Result<Option<Coll>, Error> {
         self.get(name)?.map(|v| v.list()).transpose()
     }
 
-    /// A map bin, or `None`.
+    /// A map bin as a [`Coll`] to iterate or look up, or `None` when the bin is absent or nil. A bin of
+    /// another kind, a list included, is `Err(WrongType)`.
     fn map(&self, name: &str) -> Result<Option<Coll>, Error> {
         self.get(name)?.map(|v| v.map()).transpose()
     }
@@ -1282,9 +1583,9 @@ pub trait ReadRecord {
 
 /// The record a UDF was called on.
 ///
-/// A record UDF, and the per-record half of a stream UDF, takes it as its first parameter, before the
-/// call's arguments. It is not one of them: a client does not pass it and the function's signature export
-/// does not list it. A function that does not touch the record leaves the parameter out.
+/// A record UDF, and the per-record half of a stream UDF, takes it as its first parameter, before the call's
+/// arguments. It is not one of them: a client does not pass it and the function's signature export does not
+/// list it. A function that does not touch the record leaves the parameter out.
 ///
 /// ```ignore
 /// export! {
@@ -1305,7 +1606,28 @@ pub trait ReadRecord {
 ///
 /// `&Record` reads; `&mut Record` also writes. **A bin write is staged**: [`set`](Record::set) and
 /// [`remove`](Record::remove) change the record in hand, and nothing reaches the server's record until
-/// [`save`](Record::save). [`delete`](Record::delete) is the exception: it needs no save.
+/// [`save`](Record::save). [`delete`](Record::delete) is the exception: it needs no save. A read after a
+/// staged write sees the staged value, though [`bin_count`](Record::bin_count) does not count a staged bin
+/// until it is saved.
+///
+/// **A call that fails writes nothing**, even what it had already saved: a `save` that succeeded, and a
+/// [`set_ints`](Record::set_ints) or [`set_doubles`](Record::set_doubles), are undone when the function then
+/// returns an `Err`.
+///
+/// A UDF can be called on a key that has no record. There [`exists`](Record::exists) is false, every bin
+/// reads as absent, [`generation`](Record::generation), [`last_update_time`](Record::last_update_time),
+/// [`size`](Record::size) and `bin_count` are 0, and there is no TTL; reading creates nothing. A `save` with a
+/// bin staged creates the record. `set_ints`, `set_doubles` and `delete` are `Err(Refused)` and create
+/// nothing, and a `save` with no bin staged (only a [`remove`](Record::remove) or a
+/// [`set_ttl`](Record::set_ttl)) creates nothing and fails the call with "key not found".
+///
+/// Every `name` is a bin name: 1 to 15 bytes, with no zero byte. A read under any other name finds no bin
+/// (`Err(Absent)`, or `None`); a write under one is `Err(Malformed)`.
+///
+/// The record is locked for the whole call, so nothing changes between a read and the save that follows it. A
+/// stream UDF's record is the query's and read-only: [`stream!`] accepts only `&Record` there, and every
+/// write, [`set_ttl`](Record::set_ttl), `save` and `delete` included, is `Err(Refused)`. An event handler has
+/// no `Record` at all; it is given [`EventRecord`]s.
 ///
 /// The reading methods are also on [`ReadRecord`], which [`EventRecord`] implements too.
 pub struct Record {
@@ -1326,7 +1648,18 @@ impl Record {
     // Reading bins.
     //
 
-    /// A bin, whatever it holds, in one import call. `Err(Absent)` when the record has no such bin.
+    /// A bin, whatever it holds, in one import call. The form for a bin that must be there: `Err(Absent)`
+    /// when the record has no such bin, when the record does not exist, or when `name` cannot be a bin name.
+    /// It never returns [`Value::Nil`], since a bin cannot hold nil.
+    ///
+    /// A scalar comes back whole. A string, blob, list or map comes back as its length and position, and is
+    /// fetched or walked when asked ([`Text::as_str`], [`Coll::iter`]); see [`Value`] for how long it stays
+    /// valid. A bin staged by [`set`](Record::set) earlier in the call reads as the staged value.
+    ///
+    /// ```ignore
+    /// let balance = rec.bin("balance")?.int()?;
+    /// let tags = rec.bin("tags")?.list()?;
+    /// ```
     pub fn bin(&self, name: &str) -> Result<Value<'static>, Error> {
         let mut raw = [0u8; VALUE_SZ];
         let rc = unsafe { raw_bin_value(name.as_ptr(), name.len() as i32, raw.as_mut_ptr(), VALUE_SZ as i32) };
@@ -1338,69 +1671,101 @@ impl Record {
         Ok(Value::from_raw(&raw))
     }
 
-    /// A bin that may be absent: `None` when it is absent or nil.
+    /// A bin that may be absent: `Ok(None)` when the record has no such bin, `Ok(Some(value))` otherwise,
+    /// whatever kind it holds. The untyped form of the typed readers below.
     pub fn get(&self, name: &str) -> Result<Option<Value<'static>>, Error> {
         ReadRecord::get(self, name)
     }
 
-    /// Whether the record has the bin.
+    /// Whether the record has the bin. False for a name that cannot be a bin name, and for every name when
+    /// the record does not exist. Costs the same one import call as reading the bin.
     #[must_use]
     pub fn has(&self, name: &str) -> bool {
         ReadRecord::has(self, name)
     }
 
-    /// An integer bin, or `None` when the bin is absent or nil. A bin of another kind is `Err(WrongType)`.
+    /// An integer bin, or `None` when the bin is absent. A bin of another kind is `Err(WrongType)`, a double
+    /// included: nothing is converted.
+    ///
+    /// The typed readers - `int`, `double`, `bool`, `string`, `blob`, `list`, `map` - are the form for a bin
+    /// that may not be there, and the `_or` forms take the default in the same call:
+    ///
+    /// ```ignore
+    /// let visits = rec.int_or("visits", 0)?;
+    ///
+    /// if let Some(limit) = rec.int("limit")? {
+    ///     // ...
+    /// }
+    /// ```
     pub fn int(&self, name: &str) -> Result<Option<i64>, Error> {
         ReadRecord::int(self, name)
     }
 
-    /// An integer bin, or `default` when it is absent or nil. A bin of another kind is still
-    /// `Err(WrongType)`.
+    /// An integer bin, or `default` when it is absent. A bin of another kind is still `Err(WrongType)`: the
+    /// default stands in for a missing bin, not for a wrong one.
     pub fn int_or(&self, name: &str, default: i64) -> Result<i64, Error> {
         ReadRecord::int_or(self, name, default)
     }
 
-    /// A double bin, or `default` when it is absent or nil.
+    /// A double bin, or `default` when it is absent. A bin of another kind, an integer included, is still
+    /// `Err(WrongType)`.
     pub fn double_or(&self, name: &str, default: f64) -> Result<f64, Error> {
         ReadRecord::double_or(self, name, default)
     }
 
-    /// A boolean bin, or `default` when it is absent or nil.
+    /// A boolean bin, or `default` when it is absent. A bin of another kind is still `Err(WrongType)`.
     pub fn bool_or(&self, name: &str, default: bool) -> Result<bool, Error> {
         ReadRecord::bool_or(self, name, default)
     }
 
-    /// A double bin, or `None` when absent or nil.
+    /// A double bin, or `None` when the bin is absent. A bin of another kind is `Err(WrongType)`, an integer
+    /// included: nothing is converted.
     pub fn double(&self, name: &str) -> Result<Option<f64>, Error> {
         ReadRecord::double(self, name)
     }
 
-    /// A boolean bin, or `None` when absent or nil.
+    /// A boolean bin, or `None` when the bin is absent. A bin of another kind is `Err(WrongType)`.
     pub fn bool(&self, name: &str) -> Result<Option<bool>, Error> {
         ReadRecord::bool(self, name)
     }
 
-    /// A string bin's text, or `None` when absent or nil.
+    /// A string bin's text, or `None` when the bin is absent. A bin of another kind is `Err(WrongType)`, a
+    /// GeoJson bin included: read that with `rec.bin(name)?.geojson()`. The [`Text`] has the length; the
+    /// text itself is fetched with [`Text::as_str`] (into a buffer) or [`Text::to_inline`] (into a [`Str`]).
     pub fn string(&self, name: &str) -> Result<Option<Text<'static>>, Error> {
         ReadRecord::string(self, name)
     }
 
-    /// A blob bin's bytes, or `None` when absent or nil.
+    /// A blob bin's bytes, or `None` when the bin is absent. Strict: a bin of another kind is
+    /// `Err(WrongType)`, a string, GeoJson or HLL bin included ([`bytes`](Record::bytes) reads the raw bytes
+    /// of any of those, `rec.bin(name)?.hll()` an HLL as one). The bytes are fetched with [`Blob::bytes`] or
+    /// [`Blob::to_inline`].
     pub fn blob(&self, name: &str) -> Result<Option<Blob<'static>>, Error> {
         ReadRecord::blob(self, name)
     }
 
-    /// A list bin, or `None` when absent or nil.
+    /// The raw bytes of a bin that has bytes - a string, blob, GeoJson or HLL bin - or `None` when the bin
+    /// is absent. A bin of any other kind is `Err(WrongType)`. For code that copies, hashes or compares
+    /// content whichever of them holds it; see [`Value::bytes`].
+    pub fn bytes(&self, name: &str) -> Result<Option<Blob<'static>>, Error> {
+        ReadRecord::bytes(self, name)
+    }
+
+    /// A list bin as a [`Coll`] to iterate or index, or `None` when the bin is absent. A bin of another kind,
+    /// a map included, is `Err(WrongType)`.
     pub fn list(&self, name: &str) -> Result<Option<Coll>, Error> {
         ReadRecord::list(self, name)
     }
 
-    /// A map bin, or `None` when absent or nil.
+    /// A map bin as a [`Coll`] to iterate or look up by key, or `None` when the bin is absent. A bin of
+    /// another kind, a list included, is `Err(WrongType)`.
     pub fn map(&self, name: &str) -> Result<Option<Coll>, Error> {
         ReadRecord::map(self, name)
     }
 
-    /// How many bins the record has.
+    /// How many bins the record has. It does not count a staged bin until it is saved: after a
+    /// [`set`](Record::set) of a new bin the count is what it was, though the bin itself reads as staged.
+    /// Zero on a key with no record.
     #[must_use]
     pub fn bin_count(&self) -> i64 {
         unsafe { numbins() }
@@ -1410,19 +1775,38 @@ impl Record {
     // Writing bins.
     //
 
-    /// Write a value to a bin. **Staged until [`save`](Record::save).**
+    /// Write a value to a bin, replacing what the bin held. **Staged until [`save`](Record::save)**: a UDF
+    /// that returns without saving has written nothing.
     ///
-    /// A value read from the record is written back from its stored bytes without the guest decoding it,
-    /// which is how a sub-document is copied from one bin to another. A built [`List`] / [`Map`] is handed
-    /// over whole. A string or blob of the guest's is copied during the call, so it may be any `&str` - a
-    /// literal, a buffer of the UDF's, a `String` - not only a `'static` one.
+    /// ```ignore
+    /// rec.set("visits", visits + 1)?;                 // an i64
+    /// rec.set("name", "alice")?;                      // a &str
+    /// rec.set("tags", list)?;                         // a built List or Map
+    /// rec.set("backup", rec.bin("profile")?)?;        // a value read from the record
+    /// rec.save()?;
+    /// ```
+    ///
+    /// `value` is anything that converts to a [`Value`]: an `i64`, `f64`, `bool`, `&str`, `&[u8]`, a
+    /// `&Str<N>` or `&Bytes<N>`, a [`List`] or [`Map`], or a `Value`. A value read from the record is written
+    /// back from its stored bytes without the guest decoding it, which is how a sub-document is copied from
+    /// one bin to another. A built [`List`] / [`Map`] is handed over whole. A string or blob of the guest's
+    /// is copied during the call, so it may be any `&str` - a literal, a buffer of the UDF's, a `String` -
+    /// not only a `'static` one. A `&str` is written as a string: for a GeoJson bin use
+    /// [`set_geojson`](Record::set_geojson).
     ///
     /// Writing [`Value::Nil`] removes the bin, as [`remove`](Record::remove) does: a bin cannot hold nil.
+    ///
+    /// `Err(Malformed)` when `name` cannot be a bin name (empty, longer than 15 bytes, or with a zero byte).
+    /// `Err(Refused)` when the record is read-only (a stream UDF's), the value nests collections more than 64
+    /// deep, or the call's budget on the host is spent. `Err(WrongType)` for [`Value::Other`], an HLL made
+    /// from guest bytes, and guest bytes written over a bin that holds an HLL; an HLL read from the record
+    /// can be written back as the `Value` it came as.
     pub fn set<'a>(&mut self, name: &str, value: impl Into<Value<'a>>) -> Result<(), Error> {
         self.set_value(name, &value.into())
     }
 
-    /// [`set`](Record::set) for a value held by reference.
+    /// [`set`](Record::set) for a value held by reference, for a caller that has a `&Value` and wants to keep
+    /// it. Staged, with the same rules and the same errors.
     pub fn set_value(&mut self, name: &str, value: &Value<'_>) -> Result<(), Error> {
         let n = name.as_ptr();
         let nl = name.len() as i32;
@@ -1450,27 +1834,39 @@ impl Record {
         status(rc)
     }
 
-    /// Write bytes to a bin as a blob. Staged, like [`set`](Record::set), which does the same for a
-    /// `&[u8]`; this form says the kind at the call.
+    /// Write bytes to a bin as a blob. Staged, like [`set`](Record::set), which does the same for a `&[u8]`;
+    /// this form says the kind at the call. The bytes are copied during the call. `Err(WrongType)` when the
+    /// bin holds an HLL, which plain bytes would silently turn into a blob.
     pub fn set_blob(&mut self, name: &str, value: &[u8]) -> Result<(), Error> {
         self.set_value(name, &Value::Blob(Blob::Guest(value)))
     }
 
-    /// Write a GeoJson document to a bin from its text. Staged, like [`set`](Record::set). A document
-    /// written with `set` from a `&str` would be a string, which no geospatial index reads.
+    /// Write a GeoJson document to a bin from its text. Staged, like [`set`](Record::set). A document written
+    /// with `set` from a `&str` would be a string, which no geospatial index reads. The text is not checked
+    /// here: the server checks the document when it writes the record.
     pub fn set_geojson(&mut self, name: &str, value: &str) -> Result<(), Error> {
         self.set_value(name, &Value::GeoJson(Text::Guest(value)))
     }
 
-    /// Remove a bin. Staged, like [`set`](Record::set).
+    /// Remove a bin. Staged, like [`set`](Record::set): the bin is gone from the server's record after
+    /// [`save`](Record::save), and reads as absent for the rest of the call. The same as setting it to
+    /// [`Value::Nil`], with the same errors. Removing a bin that is not there is not an error.
     pub fn remove(&mut self, name: &str) -> Result<(), Error> {
         status(unsafe { raw_bin_remove(name.as_ptr(), name.len() as i32) })
     }
 
-    /// Write a slice of integers to a bin as a list, **without building a value per element**.
+    /// Write a slice of integers to a bin as a list, **without building a value per element**: the fast way
+    /// to store a numeric array computed in the guest.
     ///
     /// The host packs the slice straight into a LIST particle and applies it as one op, which takes effect
-    /// immediately rather than being staged: [`save`](Record::save) is not needed.
+    /// immediately rather than being staged: [`save`](Record::save) is not needed. The list replaces whatever
+    /// the bin held, in the slice's order; an empty slice writes an empty list. It is still part of the call:
+    /// when the function then returns an `Err`, the write is undone.
+    ///
+    /// `Err(Malformed)` when `name` cannot be a bin name. `Err(Refused)` when the record is read-only (a
+    /// stream UDF's), when the key has no record (nothing is created: a record is made by a `save` with a bin
+    /// staged), or when the server rejects the write, after which values read from the record earlier are no
+    /// longer valid (see [`Value`]).
     pub fn set_ints(&mut self, name: &str, values: &[i64]) -> Result<(), Error> {
         let bytes = core::mem::size_of_val(values);
 
@@ -1479,7 +1875,9 @@ impl Record {
         })
     }
 
-    /// The counterpart of [`set_ints`](Record::set_ints) for doubles.
+    /// The counterpart of [`set_ints`](Record::set_ints) for doubles: the slice becomes a list of doubles in
+    /// the bin, applied at once and not staged, with the same errors: `Err(Refused)` on a key with no record
+    /// among them. Undone, like `set_ints`, when the call then fails.
     pub fn set_doubles(&mut self, name: &str, values: &[f64]) -> Result<(), Error> {
         let bytes = core::mem::size_of_val(values);
 
@@ -1492,19 +1890,24 @@ impl Record {
     // Metadata.
     //
 
-    /// Whether the record exists. A UDF can be called on a key that has no record yet.
+    /// Whether the record exists. A UDF can be called on a key that has no record yet, in which case this is
+    /// false, every bin reads as absent, the metadata reads as 0 and [`save`](Record::save) with a bin staged
+    /// creates the record. Reading creates nothing. Still true after [`delete`](Record::delete) for the rest
+    /// of the call.
     #[must_use]
     pub fn exists(&self) -> bool {
         unsafe { raw_rec_exists() == 1 }
     }
 
-    /// The record's modification count.
+    /// The record's generation: the server's count of the writes the record has taken, which is what a
+    /// client's generation check compares. Zero on a key with no record.
     #[must_use]
     pub fn generation(&self) -> i64 {
         unsafe { gen() }
     }
 
-    /// The record's remaining lifetime in seconds, or `None` when it never expires.
+    /// The record's remaining lifetime in seconds, counted from now, or `None` when it never expires. Also
+    /// `None` on a key with no record, which has no TTL.
     #[must_use]
     pub fn ttl(&self) -> Option<u32> {
         match unsafe { raw_ttl() } {
@@ -1515,27 +1918,39 @@ impl Record {
         }
     }
 
-    /// Set the record's time to live, in seconds. It is the TTL of the write, so it takes effect when
-    /// [`save`](Record::save) writes the record.
+    /// Set the record's time to live, in seconds from the write. It is the TTL of the write, so it takes
+    /// effect when [`save`](Record::save) writes the record and does nothing without one.
+    ///
+    /// The value has a client write's meaning: `0` asks for the namespace's default TTL, `u32::MAX` (a
+    /// client's `-1`) makes the record never expire, and anything else is that many seconds. The namespace's
+    /// own rules on TTLs apply when the record is saved.
+    ///
+    /// A TTL is not a bin: on a key with no record, a `save` with only a TTL set creates nothing and fails
+    /// the call with "key not found".
+    ///
+    /// `Err(Refused)` on a record that cannot be written: a stream UDF's.
     pub fn set_ttl(&mut self, seconds: u32) -> Result<(), Error> {
         status(unsafe { raw_set_ttl(seconds as i32) })
     }
 
-    /// When the record was last written, in milliseconds since the Aerospike epoch (2010-01-01 UTC), which
-    /// is how the server stores it. It is not on the same scale as [`now`], which counts from the Unix
-    /// epoch.
+    /// When the record was last written, in milliseconds since the Citrusleaf epoch, 2010-01-01T00:00:00Z,
+    /// which is how the server stores it: Unix milliseconds minus 1 262 304 000 000. It is not on the same
+    /// scale as [`now`], which counts from the Unix epoch. Zero on a key with no record.
     #[must_use]
     pub fn last_update_time(&self) -> i64 {
         unsafe { last_update() }
     }
 
-    /// The record's stored size, in bytes.
+    /// The record's size as the server stores it, in bytes. It is the stored record's, so writes staged in
+    /// this call are not counted. Zero on a key with no record.
     #[must_use]
     pub fn size(&self) -> i64 {
         unsafe { record_size() }
     }
 
-    /// The record's set name, into a buffer you own.
+    /// The name of the set the record is in, copied into a buffer you own; the `&str` borrows `out`. A set
+    /// name is at most 63 bytes, so a 64-byte buffer always fits. `Err(Absent)` when the record is in no set,
+    /// `Err(TooSmall(n))` when `out` is shorter than the name.
     pub fn set_name<'b>(&self, out: &'b mut [u8]) -> Result<&'b str, Error> {
         let rc = unsafe { raw_set_name(out.as_mut_ptr(), out.len() as i32) };
         let written = bytes_result(rc, out.len())?;
@@ -1543,8 +1958,15 @@ impl Record {
         core::str::from_utf8(&out[..written]).map_err(|_| Error::Malformed)
     }
 
-    /// The record's user key, when it was written with `send_key`: an integer, or a string or blob whose
-    /// bytes go into `out`. `Err(Absent)` when the record carries none.
+    /// The record's user key, when the record was written with the client's `send_key`: otherwise the server
+    /// never stored it, and it cannot be recovered from the digest.
+    ///
+    /// An integer key comes back as [`Value::Int`] and `out` is not used. A string or blob key is copied into
+    /// `out` and comes back borrowing it: as a [`Value::String`] when the bytes are valid UTF-8, as a
+    /// [`Value::Blob`] when they are not. The key's bytes decide, not the type the client sent, so a blob key
+    /// that happens to be valid UTF-8 arrives as a string.
+    ///
+    /// `Err(Absent)` when the record carries no key; `Err(TooSmall(n))` when `out` is shorter than the key.
     pub fn key<'b>(&self, out: &'b mut [u8]) -> Result<Value<'b>, Error> {
         match unsafe { key_type() } {
             2 => Ok(Value::Int(unsafe { key_int() })),
@@ -1561,9 +1983,9 @@ impl Record {
         }
     }
 
-    /// The record's digest, into a buffer you own: 20 bytes, always present. What identifies a record a
-    /// UDF wants to point at rather than ship - a top-k hit, say - since a client can fetch it by digest
-    /// afterwards.
+    /// The record's digest, copied into a buffer you own: 20 bytes, always present. What identifies a record
+    /// a UDF wants to point at rather than ship - a top-k hit, say - since a client can fetch it by digest
+    /// afterwards. `Err(TooSmall(20))` when `out` is shorter than 20 bytes.
     pub fn digest<'b>(&self, out: &'b mut [u8]) -> Result<&'b [u8], Error> {
         let rc = unsafe { raw_digest(out.as_mut_ptr(), out.len() as i32) };
         let written = bytes_result(rc, out.len())?;
@@ -1578,12 +2000,22 @@ impl Record {
     /// Write the staged bins to the server's record, creating the record when it does not exist yet.
     ///
     /// This is the one way a staged write takes effect: a UDF that returns without saving has changed
-    /// nothing. A UDF that must not overwrite checks [`exists`](Record::exists) first; the record is
-    /// locked for the whole call, so nothing can come between the check and the save.
+    /// nothing. A UDF that must not overwrite checks [`exists`](Record::exists) first; the record is locked
+    /// for the whole call, so nothing can come between the check and the save.
     ///
-    /// With nothing staged it is still a write: the server treats it as a touch, and the record's
-    /// generation and last-update time move. On a key with no record it makes nothing, since a record
-    /// has to have a bin, and the call is answered "key not found".
+    /// With nothing staged it is still a write: the server treats it as a touch, and the record's generation
+    /// and last-update time move. On a key with no record, a save with a bin staged creates the record; one
+    /// with no bin staged (nothing at all, or only a [`remove`](Record::remove) or a
+    /// [`set_ttl`](Record::set_ttl)) makes nothing, since a record has to have a bin, and the call fails with
+    /// "key not found".
+    ///
+    /// A save that succeeded is still part of the call: when the function then returns an `Err`, what it
+    /// saved is undone, and the call has written nothing.
+    ///
+    /// `Err(Refused)` when the server does not take the write: the record is a stream UDF's, which is
+    /// read-only, or the write breaks one of the server's own rules (a malformed GeoJson document, for one).
+    /// After a refused save, a list, map or blob read from the record earlier in the call is no longer valid
+    /// (see [`Value`]); the usual answer is to return the error.
     pub fn save(&mut self) -> Result<(), Error> {
         status(unsafe {
             if raw_rec_exists() == 1 {
@@ -1594,15 +2026,24 @@ impl Record {
         })
     }
 
-    /// Delete the record. Not staged: it needs no [`save`](Record::save) after it, and whatever was
-    /// staged goes with the record. The server carries it out when the call returns, so for the rest of
-    /// the call [`exists`](Record::exists) answers as it did before. `Err(Refused)` when the server
-    /// could not do it.
+    /// Delete the record. Not staged: it needs no [`save`](Record::save) after it, and whatever was staged
+    /// goes with the record. The server carries it out when the call returns, so for the rest of the call
+    /// [`exists`](Record::exists) answers as it did before. `Err(Refused)` when the server could not do it,
+    /// when the key has no record to delete (nothing is created), or the record is a stream UDF's.
+    ///
+    /// ```ignore
+    /// if rec.int_or("balance", 0)? == 0 {
+    ///     rec.delete()?;
+    /// }
+    /// ```
     pub fn delete(&mut self) -> Result<(), Error> {
         status(unsafe { raw_rec_remove() })
     }
 }
 
+/// Reads the record of the call. `bin`, `generation` and `last_update_time` are [`Record`]'s own methods of
+/// those names, and the typed readers come from the trait, so a helper written against `&impl ReadRecord`
+/// takes a `&Record` and behaves exactly as the inherent methods do.
 impl ReadRecord for Record {
     fn bin(&self, name: &str) -> Result<Value<'static>, Error> {
         Record::bin(self, name)
@@ -1630,6 +2071,20 @@ fn status(rc: i32) -> Result<(), Error> {
 //
 
 /// Start a list. It lives on the host; hand it to [`Record::set`], return it, or nest it in another.
+///
+/// `capacity` is a hint of how many elements to make room for, not a limit: the list grows as needed, and `0`
+/// is fine. The list lasts until the call ends.
+///
+/// ```ignore
+/// let recent = as_udf::list(3)?;
+///
+/// recent.push(42)?.push("text")?.push(rec.bin("last")?)?;
+/// rec.set("recent", recent)?;
+/// rec.save()?;
+/// ```
+///
+/// `Err(Refused)` when the host cannot make one: the call may hold 256 host values at a time, within a memory
+/// budget.
 pub fn list(capacity: usize) -> Result<List, Error> {
     let handle = unsafe { list_new(capacity as i32) };
 
@@ -1640,7 +2095,22 @@ pub fn list(capacity: usize) -> Result<List, Error> {
     }
 }
 
-/// Start a map. Entries come out ordered by key, whatever order they go in.
+/// Start a map. Entries come out ordered by key, whatever order they go in: that is how it is stored,
+/// returned and iterated.
+///
+/// `capacity` is a hint of how many entries to make room for, not a limit. The map lives on the host until
+/// the call ends; hand it to [`Record::set`], return it, or nest it in another.
+///
+/// ```ignore
+/// let summary = as_udf::map(2)?;
+///
+/// summary.insert("balance", balance)?.insert("owner", "alice")?;
+///
+/// Ok(summary.into())
+/// ```
+///
+/// `Err(Refused)` when the host cannot make one: the call may hold 256 host values at a time, within a memory
+/// budget.
 pub fn map(capacity: usize) -> Result<Map, Error> {
     let handle = unsafe { map_new(capacity as i32) };
 
@@ -1651,7 +2121,11 @@ pub fn map(capacity: usize) -> Result<Map, Error> {
     }
 }
 
-/// A list under construction.
+/// A list under construction, made by [`list`]. It lives on the host; this is its handle, which is `Copy`, so
+/// every copy is the same list. Elements are added with [`push`](List::push) and [`extend`](List::extend)
+/// through `&self`, and the list is finished by handing it over: to [`Record::set`], to another collection,
+/// or as the UDF's result (`Ok(list.into())`). It can still be added to after that, and what it was handed to
+/// sees the additions, because the host shares the list rather than copying it.
 #[derive(Clone, Copy, Debug)]
 pub struct List {
     handle: i32,
@@ -1659,32 +2133,31 @@ pub struct List {
 
 impl List {
     /// Append a value: a scalar, a guest string, blob or GeoJson, a built collection, or a value read from
-    /// the record - which goes in by position, built by the server from its stored bytes.
+    /// the record - which goes in by position, built by the server from its stored bytes without passing
+    /// through the guest. Guest bytes are copied during the call. Returns the list, so pushes chain:
+    /// `list.push(1)?.push("two")?`.
+    ///
+    /// A push holds nothing on the host but the element itself, whatever its kind, so a loop may push as many
+    /// as the call's memory budget takes: the limit of 256 is on collections, strings read and iterators,
+    /// not on elements.
+    ///
+    /// `Err(WrongType)` for a value that cannot be an element: [`Value::Other`], an HLL made from guest
+    /// bytes. `Err(Refused)` when the host does not take it: a list may not contain itself or nest more than
+    /// 64 deep, what a call builds on the host is bounded, and a value read earlier may no longer be valid
+    /// (see [`Value`]). There is no other error.
     pub fn push<'a>(&self, value: impl Into<Value<'a>>) -> Result<&Self, Error> {
-        let value = value.into();
-        let rc = unsafe {
-            match &value {
-                Value::Int(i) => list_push_int(self.handle, *i),
-                Value::String(Text::Guest(s)) => list_push_str(self.handle, s.as_ptr(), s.len() as i32),
-                Value::List(Coll::Built(h)) | Value::Map(Coll::Built(h)) => list_push(self.handle, *h),
-                other => match stored_position(other) {
-                    Some((src, at)) => list_push_at(self.handle, src, at as i32),
-                    None => match val_of(other) {
-                        Some(v) => list_push(self.handle, v),
-                        None => return Err(Error::WrongType),
-                    },
-                },
-            }
-        };
+        let raw = value.into().raw().ok_or(Error::WrongType)?;
+        let rc = unsafe { list_push_values(self.handle, raw.as_ptr(), VALUE_SZ as i32) };
 
-        status(rc).map(|()| self)
+        Batch::taken(rc, 1).map(|()| self)
     }
 
     /// Append every item, 128 per import call instead of one each.
     ///
     /// An item is anything [`push`](List::push) takes, or a `Result<Value, Error>` as [`Coll::iter`] yields
     /// them, so `list.extend(stored.iter())` copies a stored list's elements by position in one call per
-    /// window. The first `Err` item, or a value the host cannot take, stops the extend with that error; the
+    /// window. The first `Err` item stops the extend with that error, a value that cannot be an element with
+    /// `Err(WrongType)`, and one the host does not take with `Err(Refused)`, as in [`push`](List::push); the
     /// items before it are in.
     pub fn extend<'a, I>(&self, items: I) -> Result<&Self, Error>
     where
@@ -1717,25 +2190,31 @@ impl List {
         Ok(self)
     }
 
-    /// The finished list, as a value to return or store.
+    /// The finished list, as a value to return or store: a [`Value::List`] holding the same host list.
+    /// `list.into()` does the same.
     #[must_use]
     pub fn into_value(self) -> Value<'static> {
         Value::List(Coll::Built(self.handle))
     }
 }
 
-/// A map under construction, keyed by strings.
+/// A map under construction, made by [`map`], keyed by strings or integers. It lives on the host; this is its
+/// handle, which is `Copy`, so every copy is the same map. Entries are added with [`insert`](Map::insert) and
+/// [`extend`](Map::extend) through `&self`, and the map is finished by handing it over: to [`Record::set`],
+/// to another collection, or as the UDF's result (`Ok(map.into())`). Whatever order entries go in, the map is
+/// ordered by key.
 #[derive(Clone, Copy, Debug)]
 pub struct Map {
     handle: i32,
 }
 
-/// What a map is keyed by: a string or an integer. [`Map::insert`] and [`Coll::get`] take either.
+/// What a map is keyed by: a string (`&str`) or an integer (`i64`). [`Map::insert`], [`Map::contains_key`]
+/// and [`Coll::get`] take either. Sealed: these two are the only key types.
 pub trait MapKey: sealed::Sealed {
     #[doc(hidden)]
     fn insert_into(self, map: &Map, value: Value<'_>) -> Result<(), Error>;
     #[doc(hidden)]
-    fn lookup_in(self, coll: &Coll) -> Result<Value<'static>, Error>;
+    fn lookup_in(self, coll: &Coll) -> Result<Option<Value<'static>>, Error>;
     #[doc(hidden)]
     fn contained_in(self, map: &Map) -> bool;
 }
@@ -1747,12 +2226,14 @@ mod sealed {
     impl Sealed for i64 {}
 }
 
+/// A string key: `map.insert("name", v)`, `coll.get("name")`. It matches a string key of the same bytes and
+/// never an integer one. A key may be any length; nothing is cut.
 impl MapKey for &str {
     fn insert_into(self, map: &Map, value: Value<'_>) -> Result<(), Error> {
-        map.insert_str(self, value).map(|_| ())
+        map.put(&Value::String(Text::Guest(self)), &value)
     }
 
-    fn lookup_in(self, coll: &Coll) -> Result<Value<'static>, Error> {
+    fn lookup_in(self, coll: &Coll) -> Result<Option<Value<'static>>, Error> {
         coll.get_str(self)
     }
 
@@ -1761,12 +2242,14 @@ impl MapKey for &str {
     }
 }
 
+/// An integer key: `map.insert(7, v)`, `coll.get(7)`. It matches an integer key of the same value and never a
+/// string one. A literal needs to be an `i64`, which an unsuffixed one is inferred as here.
 impl MapKey for i64 {
     fn insert_into(self, map: &Map, value: Value<'_>) -> Result<(), Error> {
-        map.insert_int(self, value).map(|_| ())
+        map.put(&Value::Int(self), &value)
     }
 
-    fn lookup_in(self, coll: &Coll) -> Result<Value<'static>, Error> {
+    fn lookup_in(self, coll: &Coll) -> Result<Option<Value<'static>>, Error> {
         coll.get_int(self)
     }
 
@@ -1776,66 +2259,48 @@ impl MapKey for i64 {
 }
 
 impl Map {
-    /// Insert a value under a key: a string or an integer. The same values as [`List::push`]. An entry
-    /// already under the key is replaced.
+    /// Insert a value under a key: a `&str` or an `i64`. The value is anything [`List::push`] takes, with the
+    /// same errors: `Err(WrongType)` for a value that cannot be in a collection, `Err(Refused)` when the
+    /// host does not take the entry, and no other. An entry already under the key is replaced. Returns the
+    /// map, so inserts chain: `map.insert("a", 1)?.insert("b", 2)?`. The key's bytes, like a guest string's,
+    /// are copied during the call.
+    ///
+    /// Like a push, an insert holds nothing on the host but the entry, under either kind of key, so a loop
+    /// may insert as many as the call's memory budget takes.
     pub fn insert<'a>(&self, key: impl MapKey, value: impl Into<Value<'a>>) -> Result<&Self, Error> {
         key.insert_into(self, value.into())?;
 
         Ok(self)
     }
 
-    /// Whether the map holds an entry under `key`. The map is asked where it is, on the host.
+    /// Whether the map holds an entry under `key`. The map is asked where it is, on the host, in one import
+    /// call, without packing it - which is what [`Coll::get`] on a built map would do. False when there is no
+    /// such key.
     #[must_use]
     pub fn contains_key(&self, key: impl MapKey) -> bool {
         key.contained_in(self)
     }
 
-    fn insert_str(&self, key: &str, value: Value<'_>) -> Result<&Self, Error> {
-        let k = key.as_ptr();
-        let kl = key.len() as i32;
-        let rc = unsafe {
-            match &value {
-                Value::Int(i) => map_put_str_int(self.handle, k, kl, *i),
-                Value::String(Text::Guest(s)) => map_put_str_str(self.handle, k, kl, s.as_ptr(), s.len() as i32),
-                Value::List(Coll::Built(h)) | Value::Map(Coll::Built(h)) => {
-                    map_put_str_handle(self.handle, k, kl, *h)
-                }
-                other => match stored_position(other) {
-                    Some((src, at)) => map_put_str_at(self.handle, k, kl, src, at as i32),
-                    None => match val_of(other) {
-                        Some(v) => map_put(self.handle, val_str(k, kl), v),
-                        None => return Err(Error::WrongType),
-                    },
-                },
-            }
+    // One entry, by value: the batch import with a batch of one, which takes no host handle.
+    fn put(&self, key: &Value<'_>, value: &Value<'_>) -> Result<(), Error> {
+        let (Some(k), Some(v)) = (key.raw(), value.raw()) else {
+            return Err(Error::WrongType);
         };
+        let mut pair = [0u8; 2 * VALUE_SZ];
 
-        status(rc).map(|()| self)
-    }
+        pair[..VALUE_SZ].copy_from_slice(&k);
+        pair[VALUE_SZ..].copy_from_slice(&v);
 
-    fn insert_int(&self, key: i64, value: Value<'_>) -> Result<&Self, Error> {
-        let rc = unsafe {
-            match &value {
-                Value::List(Coll::Built(h)) | Value::Map(Coll::Built(h)) => map_put(self.handle, val_int(key), *h),
-                other => match stored_position(other) {
-                    Some((src, at)) => map_put_i_at(self.handle, key, src, at as i32),
-                    None => match val_of(other) {
-                        Some(v) => map_put(self.handle, val_int(key), v),
-                        None => return Err(Error::WrongType),
-                    },
-                },
-            }
-        };
-
-        status(rc).map(|()| self)
+        Batch::taken(unsafe { map_put_entries(self.handle, pair.as_ptr(), (2 * VALUE_SZ) as i32) }, 1)
     }
 
     /// Insert every entry, 64 per import call instead of one each.
     ///
     /// An entry is a `(key, value)` pair of anything [`push`](List::push) takes - a string or integer key,
     /// in practice - or a `Result<(Value, Value), Error>` as [`Coll::entries`] yields them, so
-    /// `map.extend(stored.entries())` copies a stored map by position. The first `Err`, or a value the host
-    /// cannot take, stops the extend with that error; the entries before it are in.
+    /// `map.extend(stored.entries())` copies a stored map by position. The first `Err` item stops the extend
+    /// with that error, a key or value that cannot be in a collection with `Err(WrongType)`, and an entry
+    /// the host does not take with `Err(Refused)`; the entries before it are in.
     pub fn extend<'a, I>(&self, entries: I) -> Result<&Self, Error>
     where
         I: IntoIterator,
@@ -1869,7 +2334,8 @@ impl Map {
         Ok(self)
     }
 
-    /// The finished map, as a value to return or store.
+    /// The finished map, as a value to return or store: a [`Value::Map`] holding the same host map.
+    /// `map.into()` does the same.
     #[must_use]
     pub fn into_value(self) -> Value<'static> {
         Value::Map(Coll::Built(self.handle))
@@ -1941,6 +2407,7 @@ pub trait PutEntry<'a> {
     fn entry(self) -> Result<(Value<'a>, Value<'a>), Error>;
 }
 
+/// A `(key, value)` pair of anything [`List::push`] takes, as an entry for [`Map::extend`].
 impl<'a, K: Pushable<'a>, V: Pushable<'a>> PutEntry<'a> for (K, V) {
     fn entry(self) -> Result<(Value<'a>, Value<'a>), Error> {
         Ok((self.0.pushable()?, self.1.pushable()?))
@@ -2037,11 +2504,11 @@ impl Batch {
         Batch::taken(rc, n / 2)
     }
 
-    // The host answers with how many it took; fewer than sent means one of them it could not.
+    // The host answers with how many it took. Fewer than sent means one of them it could not take, and a
+    // status that it took none; either way the host refused, which is the one thing there is to tell a
+    // caller whose value was of a kind a collection holds.
     fn taken(rc: i32, sent: usize) -> Result<(), Error> {
-        if rc < 0 {
-            Err(Error::from_status(rc))
-        } else if rc as usize == sent {
+        if rc >= 0 && rc as usize == sent {
             Ok(())
         } else {
             Err(Error::Refused)
@@ -2062,32 +2529,31 @@ fn stored_position(value: &Value<'_>) -> Option<(i32, u32)> {
     }
 }
 
-// A standalone host value for the general push / put path, or None for a value the host cannot take.
-unsafe fn val_of(value: &Value<'_>) -> Option<i32> {
-    let h = match value {
-        Value::Nil => val_nil(),
-        Value::Bool(b) => val_bool(i32::from(*b)),
-        Value::Int(i) => val_int(*i),
-        Value::Double(d) => val_double(*d),
-        Value::String(Text::Guest(s)) => val_str(s.as_ptr(), s.len() as i32),
-        Value::Blob(Blob::Guest(b)) => val_blob(b.as_ptr(), b.len() as i32),
-        Value::GeoJson(Text::Guest(s)) => val_geojson(s.as_ptr(), s.len() as i32),
-        _ => return None,
-    };
-
-    if h <= 0 {
-        None
-    } else {
-        Some(h)
-    }
-}
-
 //==========================================================
 // Results and failure.
 //
 
 /// Make a value the call's result. The [`export!`] macro does this with the `Ok` a UDF returns; it is public
 /// for code that bypasses the macro.
+///
+/// The last call wins: a second result replaces the first. A guest string or blob is copied; a stored value
+/// or built collection goes by position or handle. [`Value::Other`] is delivered as nil.
+///
+/// `Err(WrongType)` for an HLL made from guest bytes. A result the host cannot hold - one nesting collections
+/// more than 64 deep, or larger than the call may build - fails the call with a message of the host's.
+///
+/// ```ignore
+/// #[no_mangle]
+/// pub extern "C" fn ping(_args: i32, _argc: i32) -> i32 {
+///     match as_udf::result(&Value::from("pong")) {
+///         Ok(()) => 0,
+///         Err(e) => {
+///             as_udf::fail(e.message());
+///             1
+///         }
+///     }
+/// }
+/// ```
 pub fn result(value: &Value<'_>) -> Result<(), Error> {
     let rc = unsafe {
         match value {
@@ -2133,8 +2599,84 @@ pub fn result(value: &Value<'_>) -> Result<(), Error> {
     status(rc)
 }
 
+/// What a UDF may return, as the `T` of its `Result<T, Error>` or on its own: a [`Value`], which is every kind
+/// there is, or a string or blob the function built and owns - a [`Str`] or [`Bytes`], and with the `alloc`
+/// feature a `String` or `Vec<u8>`. A `Value` only borrows a string, so it cannot carry one made inside the
+/// function out of it; the owned types can, and the host copies the bytes before they are dropped.
+///
+/// ```ignore
+/// export! {
+///     fn greeting(name: String) -> Result<String, Error> {
+///         Ok(format!("hello, {name}"))
+///     }
+///
+///     fn version() -> String {
+///         String::from("1.2")
+///     }
+/// }
+/// ```
+///
+/// The [`export!`] and [`stream!`] macros use it to deliver what the function returned; `deliver` is what an
+/// export written without them calls in place of [`result`].
+pub trait Return {
+    /// Make this the call's result, as [`result`] does for a [`Value`], or pass on the error. A function
+    /// that returned `Err` delivers nothing: the error comes back for the export to [`fail`] the call with.
+    fn deliver(self) -> Result<(), Error>;
+}
+
+/// Any value: what [`result`] takes.
+impl Return for Value<'_> {
+    fn deliver(self) -> Result<(), Error> {
+        result(&self)
+    }
+}
+
+/// A string the function built, of up to `N` bytes, returned as a string.
+impl<const N: usize> Return for Str<N> {
+    fn deliver(self) -> Result<(), Error> {
+        result(&Value::from(&self))
+    }
+}
+
+/// Bytes the function built, up to `N` of them, returned as a blob.
+impl<const N: usize> Return for Bytes<N> {
+    fn deliver(self) -> Result<(), Error> {
+        result(&Value::from(&self))
+    }
+}
+
+/// A string the function built, of any length, returned as a string. Needs the `alloc` feature.
+#[cfg(feature = "alloc")]
+impl Return for alloc::string::String {
+    fn deliver(self) -> Result<(), Error> {
+        result(&Value::from(self.as_str()))
+    }
+}
+
+/// Bytes the function built, of any length, returned as a blob. Needs the `alloc` feature.
+#[cfg(feature = "alloc")]
+impl Return for alloc::vec::Vec<u8> {
+    fn deliver(self) -> Result<(), Error> {
+        result(&Value::from(self.as_slice()))
+    }
+}
+
+/// The usual form: `Ok` delivers what it holds, `Err` is passed on and fails the call.
+impl<T: Return> Return for Result<T, Error> {
+    fn deliver(self) -> Result<(), Error> {
+        self?.deliver()
+    }
+}
+
 /// Fail the call with a message the client will see. The [`export!`] macro does this with the `Err` a UDF
-/// returns.
+/// returns, passing [`Error::message`]; call it directly only in an export written without the macro, and
+/// return `1` from the export afterwards, as the macro does.
+///
+/// The message is copied; anything past 511 bytes is cut off. It does not end the function: code after it
+/// still runs.
+///
+/// A call that fails writes nothing, even what it had already saved: a [`Record::save`] that succeeded, and
+/// a [`Record::set_ints`] or [`Record::set_doubles`], are undone.
 pub fn fail(message: &str) {
     unsafe { raw_fail(message.as_ptr(), message.len() as i32) };
 }
@@ -2143,8 +2685,14 @@ pub fn fail(message: &str) {
 // Metadata.
 //
 
-/// The server's clock, in milliseconds since the Unix epoch. Refused in an event handler, where a decision
-/// that reads the clock cannot converge across clusters; a handler takes its times from the data.
+/// The server's clock, in milliseconds since the Unix epoch. Available to record and stream UDFs.
+///
+/// `Err(Refused)` in an event handler, where a decision that reads the clock cannot converge across clusters;
+/// a handler takes its times from the data.
+///
+/// It is not on the scale of [`Record::last_update_time`] and [`EventRecord::bin_last_update_time`], which
+/// count milliseconds from the Citrusleaf epoch, 2010-01-01T00:00:00Z: add 1 262 304 000 000 to a last-update
+/// time to compare it with this.
 pub fn now() -> Result<i64, Error> {
     let t = unsafe { current_time() };
 
@@ -2155,7 +2703,17 @@ pub fn now() -> Result<i64, Error> {
     Ok(t)
 }
 
-/// Write a line to the server log, under the UDF context.
+/// Write a line to the server log, under the UDF context. For diagnosing a UDF, not for data: it returns
+/// nothing and cannot fail.
+///
+/// ```ignore
+/// as_udf::log(Level::Info, "withdraw: balance below the limit");
+/// ```
+///
+/// The server meters it. A call gets 16 lines and a module 100 lines a second; lines over either limit are
+/// dropped and counted, and the count is logged in their place. A line is cut at about 512 bytes, and control
+/// characters in it are escaped, so a message cannot forge a log line. In an `xdr-merge` handler the line is
+/// dropped: nothing is written.
 pub fn log(level: Level, message: &str) {
     unsafe { raw_log(level as i32, message.as_ptr(), message.len() as i32) };
 }
@@ -2164,13 +2722,32 @@ pub fn log(level: Level, message: &str) {
 // Arguments.
 //
 
-/// How many arguments a call may carry. Beyond this the call is rejected before the UDF runs.
-pub const MAX_ARGS: usize = 32;
+/// How many arguments a call may carry in all: 128. A call with more **fails** before the UDF runs, with a
+/// message naming this limit and the count that came; no argument is ever dropped. It is also the size of an
+/// [`Args`].
+pub const MAX_ARGS: usize = 128;
 
 /// The arguments of a call, decoded in one import call.
 ///
 /// The [`export!`] macro turns these into the typed parameters of a UDF; a parameter of this type takes the
-/// remaining arguments as they are, for a variadic function.
+/// remaining arguments as they are, for a variadic function. It must be the last parameter.
+///
+/// ```ignore
+/// export! {
+///     fn add_all(numbers: Args) -> Result<Value, Error> {
+///         let mut total = 0;
+///
+///         for n in numbers.iter() {
+///             total += n.int()?;
+///         }
+///
+///         Ok(Value::Int(total))
+///     }
+/// }
+/// ```
+///
+/// Each argument is a [`Value`], valid for the call: a string or blob is fetched like one read from a bin, a
+/// list or map is a [`Coll`]. `Args` is `Copy` and about 2 KB on the stack.
 #[derive(Clone, Copy)]
 pub struct Args {
     values: [[u8; VALUE_SZ]; MAX_ARGS],
@@ -2179,9 +2756,14 @@ pub struct Args {
 }
 
 impl Args {
-    /// Decode the call's arguments from the handle the host passed. Used by [`export!`].
-    #[must_use]
-    pub fn from_handle(handle: i32, argc: i32) -> Args {
+    /// Decode the call's arguments from the two numbers the host passes an export: the handle of the argument
+    /// list and the argument count. Used by [`export!`]; an export written without the macro calls it with
+    /// its own two parameters, and fails the call when it answers `Err`. A call with no arguments gives an
+    /// empty `Args`.
+    ///
+    /// `Err(Refused)` when the call carries more than [`MAX_ARGS`] arguments: they are not read, and none is
+    /// dropped to make the rest fit. Any other `Err` is the host failing to hand the arguments over.
+    pub fn from_handle(handle: i32, argc: i32) -> Result<Args, Error> {
         let mut args = Args {
             values: [[0; VALUE_SZ]; MAX_ARGS],
             start: 0,
@@ -2190,7 +2772,11 @@ impl Args {
 
         // A call with no arguments gets handle 0: nothing to fetch.
         if handle <= 0 || argc <= 0 {
-            return args;
+            return Ok(args);
+        }
+
+        if argc as usize > MAX_ARGS {
+            return Err(Error::Refused);
         }
 
         // One import for every argument: the host writes their values straight from the list it holds.
@@ -2198,11 +2784,13 @@ impl Args {
             raw_args_values(handle, args.values.as_mut_ptr().cast::<u8>(), (MAX_ARGS * VALUE_SZ) as i32)
         };
 
-        if rc > 0 {
-            args.len = rc as usize;
+        if rc < 0 {
+            return Err(Error::from_status(rc));
         }
 
-        args
+        args.len = (rc as usize).min(MAX_ARGS);
+
+        Ok(args)
     }
 
     /// How many arguments there are (from this view's start).
@@ -2217,7 +2805,8 @@ impl Args {
         self.len() == 0
     }
 
-    /// The argument at `index`, or `None` past the end.
+    /// The argument at `index`, counting from 0 at this view's start, or `None` past the end. An argument the
+    /// client passed as nil is `Some(Value::Nil)`, not `None`.
     #[must_use]
     pub fn get(&self, index: usize) -> Option<Value<'static>> {
         let i = self.start + index;
@@ -2229,12 +2818,14 @@ impl Args {
         }
     }
 
-    /// Every argument, in order.
+    /// Every argument, in order, as a [`Value`]. Unlike [`Coll::iter`] the items are not `Result`s: the
+    /// arguments were already decoded, so the walk cannot fail and costs no import call.
     pub fn iter(&self) -> impl Iterator<Item = Value<'static>> + '_ {
         (0..self.len()).map(move |i| Value::from_raw(&self.values[self.start + i]))
     }
 
-    /// The arguments from `index` on, as their own view.
+    /// The arguments from `index` on, as their own view, in which they count from 0 again. An `index` past
+    /// the end gives an empty view.
     #[must_use]
     pub fn from(&self, index: usize) -> Args {
         let mut rest = *self;
@@ -2467,6 +3058,9 @@ impl<'a> FromArg<'a> for Coll {
     }
 }
 
+/// An optional parameter: `None` when the call does not supply the argument or supplies nil, `Some` of the
+/// inner type otherwise. An argument of the wrong kind is still rejected. In the signature export the
+/// parameter's name carries a `?`.
 impl<'a, T: FromArg<'a>> FromArg<'a> for Option<T> {
     const NAME: &'static str = T::NAME;
     const CAPACITY: usize = T::CAPACITY;
@@ -2686,7 +3280,29 @@ pub fn reject_argument(function: &str, index: usize, parameter: &str, error: Arg
     1
 }
 
-/// Reject a call with too many arguments. Used by [`export!`].
+/// The arguments of a call, or the call failed: with more than [`MAX_ARGS`] arguments, by a message naming
+/// the function, the limit and the count. Used by [`export!`] and [`stream!`].
+#[doc(hidden)]
+pub fn decode_args(function: &str, handle: i32, argc: i32) -> Result<Args, i32> {
+    match Args::from_handle(handle, argc) {
+        Ok(args) => Ok(args),
+        Err(e) => {
+            let mut m = Message::new();
+
+            if argc > 0 && argc as usize > MAX_ARGS {
+                let _ = write!(m, "{function}: {argc} arguments, at most {MAX_ARGS} in a call");
+            } else {
+                let _ = write!(m, "{function}: the arguments could not be read: {}", e.message());
+            }
+
+            fail(m.as_str());
+
+            Err(1)
+        }
+    }
+}
+
+/// Reject a call with more arguments than the function declares. Used by [`export!`].
 #[doc(hidden)]
 pub fn reject_arity(function: &str, declared: usize, got: i32) -> i32 {
     let mut m = Message::new();
@@ -2707,6 +3323,9 @@ pub fn reject_arity(function: &str, declared: usize, got: i32) -> i32 {
 // is read from them. See `event!`.
 //
 
+/// Reads one side of an event. `bin` is [`EventRecord::bin`], and the typed readers come from the trait, so a
+/// helper written against `&impl ReadRecord` works on either side of a merge as it does on a [`Record`].
+/// `generation` and `last_update_time` are zero on both sides of an `xdr-merge`.
 impl ReadRecord for EventRecord {
     fn bin(&self, name: &str) -> Result<Value<'static>, Error> {
         EventRecord::bin(self, name)
@@ -2721,8 +3340,17 @@ impl ReadRecord for EventRecord {
     }
 }
 
-/// One side of an event: a read-only record with its metadata. Its bins are read through the event's own
-/// import, never the ordinary record natives, which in an event answer "nothing".
+/// One side of an event: a read-only record with its metadata. An `xdr-merge` handler is given two, the
+/// record this cluster holds (`current`) and the write that arrived over XDR (`incoming`); see [`event!`].
+///
+/// It reads like a [`Record`] - `bin`, `get`, `has` and the typed readers, with the same answers - and has
+/// nothing that writes: a handler changes the record by what it returns ([`Resolution`]). Besides the bins it
+/// answers what the server knows about its side of the merge: [`is_delete`](EventRecord::is_delete) and
+/// [`is_partial`](EventRecord::is_partial) of the incoming write, [`is_tombstone`](EventRecord::is_tombstone)
+/// of the current record, and per bin when and by which DC it was written.
+///
+/// It is `Copy`, and valid until the handler returns. Its bins are read through the event's own import, never
+/// the ordinary record natives, which in an event answer "nothing": a `Record` has no place in a handler.
 #[derive(Clone, Copy)]
 pub struct EventRecord {
     which: i32,
@@ -2742,7 +3370,10 @@ pub struct EventRecord {
 }
 
 impl EventRecord {
-    /// A bin, as [`Record::bin`] reads one: `Err(Absent)` when the record has no such bin.
+    /// A bin of this side, as [`Record::bin`] reads one, in one import call: `Err(Absent)` when this side has
+    /// no such bin, or `name` cannot be a bin name (1 to 15 bytes). A bin this side deleted is absent too;
+    /// [`deleted_bins`](EventRecord::deleted_bins) tells the two apart. An incoming record delete has no
+    /// bins.
     pub fn bin(&self, name: &str) -> Result<Value<'static>, Error> {
         let mut raw = [0u8; VALUE_SZ];
         let rc = unsafe {
@@ -2756,137 +3387,177 @@ impl EventRecord {
         Ok(Value::from_raw(&raw))
     }
 
-    /// A bin that may be absent: `None` when it is absent or nil.
+    /// A bin that may be absent: `Ok(None)` when this side has no such bin, `Ok(Some(value))` otherwise,
+    /// whatever kind it holds.
     pub fn get(&self, name: &str) -> Result<Option<Value<'static>>, Error> {
         ReadRecord::get(self, name)
     }
 
-    /// Whether the record has the bin.
+    /// Whether this side has the bin. False for a bin it deleted, and for a name that cannot be a bin name.
     #[must_use]
     pub fn has(&self, name: &str) -> bool {
         ReadRecord::has(self, name)
     }
 
-    /// An integer bin, or `None` when the bin is absent or nil. A bin of another kind is `Err(WrongType)`.
+    /// An integer bin, or `None` when this side does not have the bin. A bin of another kind is
+    /// `Err(WrongType)`, a double included: nothing is converted.
     pub fn int(&self, name: &str) -> Result<Option<i64>, Error> {
         ReadRecord::int(self, name)
     }
 
-    /// An integer bin, or `default` when it is absent or nil. A bin of another kind is still
+    /// An integer bin, or `default` when this side does not have it. A bin of another kind is still
     /// `Err(WrongType)`.
     pub fn int_or(&self, name: &str, default: i64) -> Result<i64, Error> {
         ReadRecord::int_or(self, name, default)
     }
 
-    /// A double bin, or `default` when it is absent or nil.
+    /// A double bin, or `default` when this side does not have it. A bin of another kind, an integer
+    /// included, is still `Err(WrongType)`.
     pub fn double_or(&self, name: &str, default: f64) -> Result<f64, Error> {
         ReadRecord::double_or(self, name, default)
     }
 
-    /// A boolean bin, or `default` when it is absent or nil.
+    /// A boolean bin, or `default` when this side does not have it. A bin of another kind is still
+    /// `Err(WrongType)`.
     pub fn bool_or(&self, name: &str, default: bool) -> Result<bool, Error> {
         ReadRecord::bool_or(self, name, default)
     }
 
-    /// A double bin, or `None` when absent or nil.
+    /// A double bin, or `None` when this side does not have the bin. A bin of another kind is
+    /// `Err(WrongType)`, an integer included.
     pub fn double(&self, name: &str) -> Result<Option<f64>, Error> {
         ReadRecord::double(self, name)
     }
 
-    /// A boolean bin, or `None` when absent or nil.
+    /// A boolean bin, or `None` when this side does not have the bin. A bin of another kind is
+    /// `Err(WrongType)`.
     pub fn bool(&self, name: &str) -> Result<Option<bool>, Error> {
         ReadRecord::bool(self, name)
     }
 
-    /// A string bin's text, or `None` when absent or nil.
+    /// A string bin's text, or `None` when this side does not have the bin. A bin of another kind is
+    /// `Err(WrongType)`, a GeoJson bin included: read that with `bin(name)?.geojson()`. Fetch the text with
+    /// [`Text::as_str`] or [`Text::to_inline`].
     pub fn string(&self, name: &str) -> Result<Option<Text<'static>>, Error> {
         ReadRecord::string(self, name)
     }
 
-    /// A blob bin's bytes, or `None` when absent or nil.
+    /// A blob bin's bytes, or `None` when this side does not have the bin. Strict: a bin of another kind is
+    /// `Err(WrongType)`, a string, GeoJson or HLL bin included; [`bytes`](EventRecord::bytes) reads the raw
+    /// bytes of any of those.
     pub fn blob(&self, name: &str) -> Result<Option<Blob<'static>>, Error> {
         ReadRecord::blob(self, name)
     }
 
-    /// A list bin, or `None` when absent or nil.
+    /// The raw bytes of a bin that has bytes - a string, blob, GeoJson or HLL bin - or `None` when this side
+    /// does not have the bin. A bin of any other kind is `Err(WrongType)`. See [`Value::bytes`].
+    pub fn bytes(&self, name: &str) -> Result<Option<Blob<'static>>, Error> {
+        ReadRecord::bytes(self, name)
+    }
+
+    /// A list bin as a [`Coll`], or `None` when this side does not have the bin. A bin of another kind, a map
+    /// included, is `Err(WrongType)`.
     pub fn list(&self, name: &str) -> Result<Option<Coll>, Error> {
         ReadRecord::list(self, name)
     }
 
-    /// A map bin, or `None` when absent or nil.
+    /// A map bin as a [`Coll`], or `None` when this side does not have the bin. A bin of another kind, a list
+    /// included, is `Err(WrongType)`.
     pub fn map(&self, name: &str) -> Result<Option<Coll>, Error> {
         ReadRecord::map(self, name)
     }
 
-    /// The names of this record's bins, as a stored list to iterate.
+    /// The names of the bins this side has, as a stored list of strings to iterate. Each is at most 15 bytes,
+    /// so a 16-byte buffer reads any of them. Empty for an incoming record delete and for a tombstone. Bins
+    /// this side deleted are not in it; see [`deleted_bins`](EventRecord::deleted_bins).
+    ///
+    /// ```ignore
+    /// let mut buf = [0u8; 16];
+    ///
+    /// for name in incoming.bin_names().iter() {
+    ///     let name = name?;
+    ///     let name = name.as_str(&mut buf)?;
+    ///     // ...
+    /// }
+    /// ```
     #[must_use]
     pub fn bin_names(&self) -> Coll {
         self.bin_names
     }
 
     /// The record's generation. Zero on both sides of an `xdr-merge`: each cluster sets its own, and a merge
-    /// must not read it.
+    /// that read it would answer differently on each. Here only because [`ReadRecord`] has it.
     #[must_use]
     pub fn generation(&self) -> i64 {
         self.generation
     }
 
     /// When the record was last written. Zero on both sides of an `xdr-merge`, for the same reason as
-    /// [`generation`](EventRecord::generation).
+    /// [`generation`](EventRecord::generation). The time a merge may use is per bin:
+    /// [`bin_last_update_time`](EventRecord::bin_last_update_time).
     #[must_use]
     pub fn last_update_time(&self) -> i64 {
         self.last_update_time
     }
 
-    /// The time to live in seconds; 0 for a record that does not expire.
+    /// This side's time to live, in seconds; 0 for a record that does not expire.
     #[must_use]
     pub fn ttl(&self) -> i64 {
         self.ttl
     }
 
-    /// The XDR source id of the DC that wrote this version.
+    /// The XDR source id of the DC that wrote this version (`src-id` in that cluster's XDR configuration). It
+    /// is the tie-break between two sides written at the same time; see [`Both::incoming_is_newer`].
     #[must_use]
     pub fn source_id(&self) -> i64 {
         self.source_id
     }
 
-    /// The names of the bins this side deleted: for the incoming write, its bin-delete ops; for the
-    /// current record, its bin tombstones. A deleted bin reads as absent, so this is the only way to tell
-    /// "never had it" from "removed it", and
+    /// The names of the bins this side deleted, as a stored list of strings: for the incoming write, its
+    /// bin-delete ops; for the current record, its bin tombstones. Empty when there are none. A deleted bin
+    /// reads as absent, so this is the only way to tell "never had it" from "removed it", and
     /// [`bin_last_update_time`](EventRecord::bin_last_update_time) says when.
     #[must_use]
     pub fn deleted_bins(&self) -> Coll {
         self.deleted_bins
     }
 
-    /// Whether this side deleted any bin.
+    /// Whether this side deleted any bin: whether [`deleted_bins`](EventRecord::deleted_bins) has anything in
+    /// it.
     #[must_use]
     pub fn deleted_any(&self) -> bool {
         !self.deleted_bins.is_empty()
     }
 
-    /// When this side last wrote the bin, when the server knows per bin (bin convergence keeps a time per
-    /// bin); the record's last update time otherwise. This is what decides a bin under the `bin-lut` policy, so a merge
-    /// that orders the sides per bin agrees with the policy on the bins it does not merge.
+    /// When this side last wrote the bin, where the server keeps a time per bin: under bin convergence
+    /// ([`uses_bin_convergence`](EventRecord::uses_bin_convergence)). It is in milliseconds since the
+    /// Citrusleaf epoch, 2010-01-01T00:00:00Z: Unix milliseconds minus 1 262 304 000 000. It covers a bin this
+    /// side deleted as well. This is what decides a bin under the `bin-lut` policy, so a merge that orders the
+    /// sides per bin agrees with the policy on the bins it does not merge.
+    ///
+    /// Where the server keeps no time for the bin, the answer is the record's
+    /// [`last_update_time`](EventRecord::last_update_time), which in an `xdr-merge` is 0 on both sides: the
+    /// two sides then tie on time, and [`Both::incoming_is_newer`] falls to the source id.
     #[must_use]
     pub fn bin_last_update_time(&self, name: &str) -> i64 {
         self.bin_last_update_times
-            .and_then(|m| m.get(name).ok())
+            .and_then(|m| m.get(name).ok().flatten())
             .and_then(|v| v.int().ok())
             .unwrap_or(self.last_update_time)
     }
 
-    /// The source id that wrote the bin, per bin when known; the record's otherwise.
+    /// The source id of the DC that wrote the bin, where the server keeps one per bin; this side's
+    /// [`source_id`](EventRecord::source_id) otherwise.
     #[must_use]
     pub fn bin_source_id(&self, name: &str) -> i64 {
         self.bin_source_ids
-            .and_then(|m| m.get(name).ok())
+            .and_then(|m| m.get(name).ok().flatten())
             .and_then(|v| v.int().ok())
             .unwrap_or(self.source_id)
     }
 
     /// Whether this is the incoming write and it is a record delete, in which case it has no bins. Always
-    /// false of the current record.
+    /// false of the current record. A handler that does not ask sees only an incoming record with no bins.
     #[must_use]
     pub fn is_delete(&self) -> bool {
         self.delete
@@ -2899,8 +3570,9 @@ impl EventRecord {
         self.partial
     }
 
-    /// The names of the incoming bins that would lose under bin convergence, as a stored list. Empty for
-    /// the current record, whose bins are not the ones being applied.
+    /// The names of the incoming bins that would lose under bin convergence, as a stored list of strings: the
+    /// bins the policy would have kept the current value of. Empty for the current record, whose bins are not
+    /// the ones being applied, and when no incoming bin would lose.
     #[must_use]
     pub fn lost_bins(&self) -> Coll {
         self.lost
@@ -2924,11 +3596,24 @@ impl EventRecord {
     }
 
     /// A new record built from this one's bins with `overrides` on top: every bin of this record goes in
-    /// unless the map already has it. The bins travel by position, never through the guest.
+    /// unless the map already has it. The bins travel by position, never through the guest. `overrides` is
+    /// the map returned, filled in; it is what goes into [`Resolution::Record`].
     ///
     /// This prefers one side, so a handler that uses it on `current` is not symmetric: the two DCs would
     /// resolve the same pair to different records. [`Pair::with_newer`] is the symmetric form; use this one
     /// when the side is chosen by something both DCs agree on, such as the source id.
+    ///
+    /// ```ignore
+    /// let winner = if incoming.source_id() > current.source_id() { incoming } else { current };
+    /// let out = as_udf::map(1)?;
+    ///
+    /// out.insert("merged", true)?;
+    ///
+    /// Ok(Resolution::Record { bins: winner.with_bins(out)?, ttl: None })
+    /// ```
+    ///
+    /// Only bins this record has go in. A bin it deleted is not one of them (see
+    /// [`deleted_bins`](EventRecord::deleted_bins)), so nothing deleted comes back.
     pub fn with_bins(&self, overrides: Map) -> Result<Map, Error> {
         let mut buf = [0u8; 32];
 
@@ -2945,9 +3630,47 @@ impl EventRecord {
 
         Ok(overrides)
     }
+
+    // Whether this side deleted the bin: whether `deleted_bins` names it. A name of any length is compared
+    // whole, by length first, so none is cut to fit the buffer a bin name needs.
+    fn deleted(&self, name: &str) -> Result<bool, Error> {
+        let mut buf = [0u8; 16];
+
+        if name.len() > buf.len() {
+            return Ok(false);
+        }
+
+        for deleted in self.deleted_bins.iter() {
+            if let Value::String(text) = deleted? {
+                if text.len() == name.len() && text.bytes(&mut buf)? == name.as_bytes() {
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
+    }
 }
 
 /// The two sides of a merge, read bin by bin into a [`Both`]. Made by [`Pair::of`].
+///
+/// A handler that merges some bins itself and wants the rest as the policy would have left them reads the
+/// bins it knows through the pair and finishes with [`with_newer`](Pair::with_newer):
+///
+/// ```ignore
+/// let pair = Pair::of(current, incoming);
+/// let out = as_udf::map(2)?;
+///
+/// if let Some(visits) = pair.int("visits")?.max() {      // a counter that only grows
+///     out.insert("visits", visits)?;
+/// }
+///
+/// out.insert("total", pair.int("total")?.sum())?;        // each DC's own share, added
+///
+/// Ok(Resolution::Record { bins: pair.with_newer(out)?, ttl: None })
+/// ```
+///
+/// Each reader is the [`EventRecord`] reader of the same name asked of both sides. `Pair` is `Copy`.
 #[derive(Clone, Copy)]
 pub struct Pair {
     current: EventRecord,
@@ -2966,43 +3689,51 @@ impl Pair {
         }
     }
 
-    /// An integer bin on each side; a side where it is absent or nil is `None`. `Err(WrongType)` when either
-    /// side holds another kind.
+    /// An integer bin on each side; a side that does not have the bin is `None`. `Err(WrongType)` when either
+    /// side holds another kind, which fails the handler if passed on with `?`.
     pub fn int(&self, name: &str) -> Result<Both<i64>, Error> {
         Ok(self.both(name, self.current.int(name)?, self.incoming.int(name)?))
     }
 
-    /// A double bin on each side; a side where it is absent or nil is `None`.
+    /// A double bin on each side; a side that does not have the bin is `None`. `Err(WrongType)` when either
+    /// side holds another kind, an integer included.
     pub fn double(&self, name: &str) -> Result<Both<f64>, Error> {
         Ok(self.both(name, self.current.double(name)?, self.incoming.double(name)?))
     }
 
-    /// A boolean bin on each side; a side where it is absent or nil is `None`.
+    /// A boolean bin on each side; a side that does not have the bin is `None`. `Err(WrongType)` when either
+    /// side holds another kind.
     pub fn bool(&self, name: &str) -> Result<Both<bool>, Error> {
         Ok(self.both(name, self.current.bool(name)?, self.incoming.bool(name)?))
     }
 
-    /// A string bin's text on each side; a side where it is absent or nil is `None`.
+    /// A string bin's text on each side; a side that does not have the bin is `None`. `Err(WrongType)` when
+    /// either side holds another kind. A [`Text`] has no order of its own, so `max` and `min` are not offered
+    /// on it: fetch the two texts and compare them, or take [`Both::newer`].
     pub fn string(&self, name: &str) -> Result<Both<Text<'static>>, Error> {
         Ok(self.both(name, self.current.string(name)?, self.incoming.string(name)?))
     }
 
-    /// A blob bin's bytes on each side; a side where it is absent or nil is `None`.
+    /// A blob bin's bytes on each side; a side that does not have the bin is `None`. `Err(WrongType)` when
+    /// either side holds another kind.
     pub fn blob(&self, name: &str) -> Result<Both<Blob<'static>>, Error> {
         Ok(self.both(name, self.current.blob(name)?, self.incoming.blob(name)?))
     }
 
-    /// A list bin on each side; a side where it is absent or nil is `None`.
+    /// A list bin on each side; a side that does not have the bin is `None`. `Err(WrongType)` when either
+    /// side holds another kind.
     pub fn list(&self, name: &str) -> Result<Both<Coll>, Error> {
         Ok(self.both(name, self.current.list(name)?, self.incoming.list(name)?))
     }
 
-    /// A map bin on each side; a side where it is absent or nil is `None`.
+    /// A map bin on each side; a side that does not have the bin is `None`. `Err(WrongType)` when either side
+    /// holds another kind.
     pub fn map(&self, name: &str) -> Result<Both<Coll>, Error> {
         Ok(self.both(name, self.current.map(name)?, self.incoming.map(name)?))
     }
 
-    /// The bin as a value on each side; absent sides are `None`.
+    /// The bin as a value on each side, whatever kind it holds; a side that does not have the bin is `None`.
+    /// The form for a bin the handler passes on without looking inside: `pair.bin("profile")?.newer()`.
     pub fn bin(&self, name: &str) -> Result<Both<Value<'static>>, Error> {
         let side = |r: &EventRecord| match r.bin(name) {
             Ok(Value::Nil) | Err(Error::Absent) => Ok(None),
@@ -3016,17 +3747,28 @@ impl Pair {
     /// Every bin either side has that `overrides` lacks, from the side that wrote it later - which is what
     /// the policy would have kept - so a handler merges the bins it knows about and leaves the rest as they
     /// would have been. Symmetric: both DCs order the two sides the same way.
+    ///
+    /// `overrides` is the map returned, filled in, and is what goes into [`Resolution::Record`]. A bin
+    /// already in it is left as the handler set it. A bin that exists on one side only is taken from that
+    /// side, whichever wrote later - **unless the side that wrote later deleted it**: a bin named in the
+    /// newer side's [`deleted_bins`](EventRecord::deleted_bins) is left out of the map, which deletes it, so
+    /// the older side's value does not bring a deleted bin back.
     pub fn with_newer(&self, overrides: Map) -> Result<Map, Error> {
         let mut buf = [0u8; 32];
-        let have = overrides.into_value();
-        let have = have.map()?;
 
         for side in [&self.current, &self.incoming] {
             for name in side.bin_names().iter() {
                 let name = name?;
                 let name = name.as_str(&mut buf)?;
 
-                if have.get(name).is_ok() {
+                if overrides.contains_key(name) {
+                    continue;
+                }
+
+                let newer = if self.incoming_is_newer(name) { &self.incoming } else { &self.current };
+
+                // The later write to this bin was its removal: the bin stays removed.
+                if newer.deleted(name)? {
                     continue;
                 }
 
@@ -3039,7 +3781,10 @@ impl Pair {
         Ok(overrides)
     }
 
-    /// Whether the incoming side wrote `name` later, per bin: the order the `bin-lut` policy uses.
+    /// Whether the incoming side wrote the bin `name` later than the current side, per bin: the order the
+    /// `bin-lut` policy uses. The later [`bin_last_update_time`](EventRecord::bin_last_update_time) wins, and
+    /// on equal times the greater [`bin_source_id`](EventRecord::bin_source_id); see
+    /// [`Both::incoming_is_newer`].
     #[must_use]
     pub fn incoming_is_newer(&self, name: &str) -> bool {
         let current = self.current.bin_last_update_time(name);
@@ -3062,6 +3807,21 @@ impl Pair {
 }
 
 /// A bin on both sides of a merge, either of which may be missing, with the merges a resolver reaches for.
+/// Made by the readers of a [`Pair`]. `current` and `incoming` are the two values, `None` on a side that does
+/// not have the bin; they are public for a merge that none of the methods covers.
+///
+/// ```ignore
+/// let visits = pair.int("visits")?.max();             // Option<i64>: the larger
+/// let total = pair.int("total")?.sum();               // i64: a missing side counts as 0
+/// let name = pair.string("name")?.newer();            // Option<Text>: last writer wins
+///
+/// if let Some(visits) = visits {
+///     out.insert("visits", visits)?;
+/// }
+/// ```
+///
+/// The methods take `self`: a `Both` is read once. The ones that return an `Option` give `None` only when
+/// neither side has the bin.
 pub struct Both<T> {
     pub current: Option<T>,
     pub incoming: Option<T>,
@@ -3083,7 +3843,8 @@ impl<T> Both<T> {
                 && self.incoming_source_id > self.current_source_id)
     }
 
-    /// The side written later; whichever exists when only one does.
+    /// The side written later, by [`incoming_is_newer`](Both::incoming_is_newer); whichever exists when only
+    /// one does, and `None` when neither does. Last writer wins, for one bin.
     pub fn newer(self) -> Option<T> {
         if self.incoming_is_newer() {
             self.incoming.or(self.current)
@@ -3092,7 +3853,8 @@ impl<T> Both<T> {
         }
     }
 
-    /// The side written earlier; whichever exists when only one does.
+    /// The side written earlier; whichever exists when only one does, and `None` when neither does. First
+    /// writer wins, for one bin.
     pub fn older(self) -> Option<T> {
         if self.incoming_is_newer() {
             self.current.or(self.incoming)
@@ -3101,8 +3863,8 @@ impl<T> Both<T> {
         }
     }
 
-    /// Both sides, as `(older, newer)`: the order both DCs agree on, for a merge whose result depends on
-    /// the order its inputs are taken in.
+    /// Both sides, as `(older, newer)`: the order both DCs agree on, for a merge whose result depends on the
+    /// order its inputs are taken in. A missing side stays `None` in its place.
     pub fn ordered(self) -> (Option<T>, Option<T>) {
         if self.incoming_is_newer() {
             (self.current, self.incoming)
@@ -3111,17 +3873,21 @@ impl<T> Both<T> {
         }
     }
 
-    /// The current value when there is one, else the incoming.
+    /// The current value when there is one, else the incoming. It prefers a side by which cluster is asking,
+    /// so the two DCs can disagree: use it only where the other DC's answer does not have to match.
     pub fn current_or_incoming(self) -> Option<T> {
         self.current.or(self.incoming)
     }
 
-    /// The incoming value when there is one, else the current.
+    /// The incoming value when there is one, else the current. Like
+    /// [`current_or_incoming`](Both::current_or_incoming), it is not symmetric between the two DCs.
     pub fn incoming_or_current(self) -> Option<T> {
         self.incoming.or(self.current)
     }
 
-    /// Combine the two when both exist; the one that exists otherwise.
+    /// Combine the two when both exist, as `f(current, incoming)`; the one that exists otherwise, without
+    /// calling `f`; `None` when neither does. For the two DCs to agree, `f` must give the same answer with
+    /// its arguments swapped.
     pub fn merge(self, f: impl FnOnce(T, T) -> T) -> Option<T> {
         match (self.current, self.incoming) {
             (Some(l), Some(r)) => Some(f(l, r)),
@@ -3131,34 +3897,55 @@ impl<T> Both<T> {
 }
 
 impl<T: PartialOrd> Both<T> {
-    /// The larger of the two; the one that exists when only one does.
+    /// The larger of the two; the one that exists when only one does, and `None` when neither does. The merge
+    /// of a value that only grows.
     pub fn max(self) -> Option<T> {
         self.merge(|l, r| if r > l { r } else { l })
     }
 
-    /// The smaller of the two; the one that exists when only one does.
+    /// The smaller of the two; the one that exists when only one does, and `None` when neither does.
     pub fn min(self) -> Option<T> {
         self.merge(|l, r| if r < l { r } else { l })
     }
 }
 
 impl Both<i64> {
-    /// The sum, a missing side counting as zero.
+    /// The sum, a missing side counting as zero, so it is `0` when neither side has the bin: unlike `max`
+    /// and `min` it never answers "nothing". It wraps on overflow, as two's complement does, rather than
+    /// trapping. Adding the two sides is right only when each holds its own DC's share; summing two copies
+    /// of one counter counts twice.
     #[must_use]
     pub fn sum(self) -> i64 {
-        self.current.unwrap_or(0) + self.incoming.unwrap_or(0)
+        self.current.unwrap_or(0).wrapping_add(self.incoming.unwrap_or(0))
     }
 }
 
 impl Both<f64> {
-    /// The sum, a missing side counting as zero.
+    /// The sum, a missing side counting as zero, so it is `0.0` when neither side has the bin. Right only
+    /// when each side holds its own DC's share.
     #[must_use]
     pub fn sum(self) -> f64 {
         self.current.unwrap_or(0.0) + self.incoming.unwrap_or(0.0)
     }
 }
 
-/// What an `xdr-merge` handler answers.
+/// What an `xdr-merge` handler answers: which record this cluster ends up with. A handler returns
+/// `Ok(resolution)`; an `Err` fails the merge with the error's message.
+///
+/// ```ignore
+/// if incoming.is_delete() {
+///     return Ok(Resolution::TakeRemote);
+/// }
+///
+/// let pair = Pair::of(current, incoming);
+/// let out = as_udf::map(1)?;
+///
+/// out.insert("visits", pair.int("visits")?.max().unwrap_or(0))?;
+///
+/// Ok(Resolution::Record { bins: pair.with_newer(out)?, ttl: None })
+/// ```
+///
+/// A [`Map`] of bins converts to `Resolution::Record` with `ttl: None`, so `Ok(bins.into())` is enough.
 pub enum Resolution {
     /// Keep the current record; the incoming write is dropped.
     KeepLocal,
@@ -3194,39 +3981,44 @@ impl From<Map> for Resolution {
 /// are not passed on, because a merge that read them would answer differently for the same two records.
 #[doc(hidden)]
 pub fn xdr_merge_inputs(args_handle: i32, argc: i32) -> Result<(EventRecord, EventRecord), Error> {
-    let args = Args::from_handle(args_handle, argc);
+    let args = Args::from_handle(args_handle, argc)?;
     let merge = args.get(0).ok_or(Error::Custom("event: the merge description is missing"))?.map()?;
 
+    // A key the server always sends, and one it sends only when it has something to say.
+    let need = |m: &Coll, key: &str| m.get(key)?.ok_or(Error::Absent);
+    let maybe = |m: &Coll, key: &str| m.get(key).ok().flatten();
+
     let mut kbuf = [0u8; 16];
-    let bin_convergence = merge.get("policy").ok().is_some_and(|v| v.as_str(&mut kbuf) == Ok("bin-lut"));
+    let bin_convergence = maybe(&merge, "policy").is_some_and(|v| v.as_str(&mut kbuf) == Ok("bin-lut"));
     // A stored list that is empty: the server always sends `empty` for this purpose.
-    let empty = merge.get("empty")?.list()?;
+    let empty = need(&merge, "empty")?.list()?;
 
     let side = |which: i32, key: &str| -> Result<EventRecord, Error> {
-        let m = merge.get(key)?.map()?;
-        let bin_names = m.get("bins")?.list()?;
+        let m = need(&merge, key)?.map()?;
+        let bin_names = need(&m, "bins")?.list()?;
         let incoming = which == 1;
-        let flag = |name: &str| matches!(m.get(name), Ok(Value::Bool(true)));
+        let flag = |name: &str| matches!(m.get(name), Ok(Some(Value::Bool(true))));
+        let int = |name: &str| maybe(&m, name).and_then(|v| v.int().ok()).unwrap_or(0);
 
         Ok(EventRecord {
             which,
             // Absent for an xdr-merge side: each cluster sets its own, and a merge must not read them.
-            generation: m.get("gen").ok().and_then(|v| v.int().ok()).unwrap_or(0),
-            last_update_time: m.get("lut").ok().and_then(|v| v.int().ok()).unwrap_or(0),
-            ttl: m.get("ttl").ok().and_then(|v| v.int().ok()).unwrap_or(0),
-            source_id: m.get("src-id")?.int()?,
+            generation: int("gen"),
+            last_update_time: int("lut"),
+            ttl: int("ttl"),
+            source_id: need(&m, "src-id")?.int()?,
             bin_names,
-            deleted_bins: match m.get("deleted") {
-                Ok(v) => v.list()?,
-                Err(_) => empty,
+            deleted_bins: match maybe(&m, "deleted") {
+                Some(v) => v.list()?,
+                None => empty,
             },
-            bin_last_update_times: m.get("bin-luts").ok().and_then(|v| v.map().ok()),
-            bin_source_ids: m.get("bin-srcs").ok().and_then(|v| v.map().ok()),
+            bin_last_update_times: maybe(&m, "bin-luts").and_then(|v| v.map().ok()),
+            bin_source_ids: maybe(&m, "bin-srcs").and_then(|v| v.map().ok()),
             delete: incoming && flag("deleted-record"),
             partial: incoming && flag("partial"),
             tombstone: !incoming && flag("tombstone"),
             bin_convergence,
-            lost: if incoming { merge.get("lost")?.list()? } else { empty },
+            lost: if incoming { need(&merge, "lost")?.list()? } else { empty },
         })
     };
 
@@ -3270,7 +4062,7 @@ pub fn deliver_resolution(r: Result<Resolution, Error>) -> i32 {
 
 /// Export one or more functions as UDFs.
 ///
-/// A UDF is an ordinary function with typed parameters and a `Result<Value, Error>` body:
+/// A UDF is an ordinary function with typed parameters, returning a `Result<Value, Error>`:
 ///
 /// ```ignore
 /// export! {
@@ -3293,13 +4085,25 @@ pub fn deliver_resolution(r: Result<Resolution, Error>) -> i32 {
 /// message naming the parameter - before the body runs. `Ok(value)` becomes the result the client receives;
 /// `Err(error)` fails the call with the error's message.
 ///
+/// # What it returns
+///
+/// `Result<Value, Error>` is the general form: a [`Value`] is any kind of result. A function that builds a
+/// string or blob returns it owned instead, because a `Value` only borrows one: `Result<String, Error>` or
+/// `Result<Vec<u8>, Error>` with the `alloc` feature, `Result<Str<N>, Error>` or `Result<Bytes<N>, Error>`
+/// without. A function that cannot fail may leave the `Result` off and return any of these directly. The
+/// return type is anything that is [`Return`], written with `Value`, `Error` and the rest in scope under
+/// those names. The signature export says `-> value` for all of them.
+///
+/// # The parameters
+///
 /// Parameter types: `i64`, `f64`, `bool`; `&str` and `&[u8]` (copied into a 256-byte buffer of the
 /// parameter's own); [`Str<N>`] and [`Bytes<N>`] for a string or blob of up to `N` bytes; `String` and
 /// `Vec<u8>` for any length, with the `alloc` feature; [`Value`] for anything, [`Coll`] for a list or map,
 /// `Option<T>` for an argument that may be absent or nil, and [`Args`] as the last parameter for every
 /// remaining argument. A string or blob longer than its parameter allows is rejected from its reported
 /// length, before any copy. A call with more arguments than parameters is rejected unless the last parameter
-/// is [`Args`].
+/// is [`Args`], and a call with more than [`MAX_ARGS`] (128) arguments in all is rejected whatever the
+/// parameters are, with a message naming the limit and the count: no argument is dropped.
 ///
 /// # The signature export
 ///
@@ -3314,7 +4118,7 @@ pub fn deliver_resolution(r: Result<Resolution, Error>) -> i32 {
 macro_rules! export {
     ($(
         $(#[$meta:meta])*
-        fn $name:ident($($params:tt)*) -> Result<Value, Error> $body:block
+        fn $name:ident($($params:tt)*) -> $ret:ty $body:block
     )*) => {
         $(
             const _: () = {
@@ -3335,7 +4139,7 @@ macro_rules! export {
             $(#[$meta])*
             #[no_mangle]
             pub extern "C" fn $name(args_handle: i32, argc: i32) -> i32 {
-                $crate::udf_call!(writable, $name, args_handle, argc, $body, result, $($params)*)
+                $crate::udf_call!(writable, $name, args_handle, argc, $body, [result $ret], $($params)*)
             }
         )*
     };
@@ -3349,7 +4153,8 @@ macro_rules! export {
 ///
 /// Each declaration produces the two exports the host looks for, derived from the name a client passes to its
 /// query: `<name>_record`, called per record and returning `Result<(), Error>`, and `<name>_end`, called once
-/// afterwards and returning `Result<Value, Error>`, its `Ok` being the node's partial. Both take the call's
+/// afterwards and returning `Result<Value, Error>` (or anything else [`export!`] lets a function return),
+/// its `Ok` being the node's partial. Both take the call's
 /// typed arguments like a record UDF does.
 ///
 /// ```ignore
@@ -3381,7 +4186,7 @@ macro_rules! stream {
         $(#[$meta:meta])*
         fn $name:ident {
             record($($rparams:tt)*) -> Result<(), Error> $rbody:block
-            end($($earg:ident : $ety:ty),* $(,)?) -> Result<Value, Error> $ebody:block
+            end($($earg:ident : $ety:ty),* $(,)?) -> $eret:ty $ebody:block
         }
     )*) => {
         $(
@@ -3401,12 +4206,12 @@ macro_rules! stream {
 
                 #[export_name = concat!(stringify!($name), "_record")]
                 pub extern "C" fn record(args_handle: i32, argc: i32) -> i32 {
-                    $crate::udf_call!(readable, $name, args_handle, argc, $rbody, unit, $($rparams)*)
+                    $crate::udf_call!(readable, $name, args_handle, argc, $rbody, [unit], $($rparams)*)
                 }
 
                 #[export_name = concat!(stringify!($name), "_end")]
                 pub extern "C" fn end(args_handle: i32, argc: i32) -> i32 {
-                    $crate::udf_body!($name, args_handle, argc, [], ($($earg : $ety),*), $ebody, result)
+                    $crate::udf_body!($name, args_handle, argc, [], ($($earg : $ety),*), $ebody, [result $eret])
                 }
             };
         )*
@@ -3423,7 +4228,11 @@ macro_rules! stream {
 ///     fn resolve_account(current: EventRecord, incoming: EventRecord) -> Result<Resolution, Error> {
 ///         let pair = Pair::of(current, incoming);
 ///         let out = as_udf::map(2)?;
-///         out.insert("visits", pair.int("visits")?.max())?;
+///
+///         if let Some(visits) = pair.int("visits")?.max() {
+///             out.insert("visits", visits)?;
+///         }
+///
 ///         Ok(Resolution::Record { bins: pair.with_newer(out)?, ttl: None })
 ///     }
 /// }
@@ -3431,16 +4240,22 @@ macro_rules! stream {
 ///
 /// The handler takes the record this cluster holds and the one that arrived over XDR, in that order, and
 /// nothing else: what there is to know about the merge is asked of the record it is true of
-/// ([`EventRecord::is_delete`], [`EventRecord::is_tombstone`] and their neighbours). The parameter types
-/// are part of the arm, so a handler with another signature does not compile. The macro
-/// exports the handler under its name, which `event-set` refers to, and `__udf_sig_<name>` reading
+/// ([`EventRecord::is_delete`], [`EventRecord::is_tombstone`] and their neighbours). The parameter types are
+/// part of the arm, so a handler with another signature does not compile; `EventRecord`, `Resolution` and
+/// `Error` must be in scope under those names. It returns the [`Resolution`], or an `Err` to fail the merge
+/// with the error's message. Several handlers may follow one another in one `event!`.
+///
+/// The macro exports the handler under its name, which `event-set` refers to, and `__udf_sig_<name>` reading
 /// `event xdr-merge/1 ...`, which `event-set` checks before binding: the number is the version of the
 /// contract this SDK was written against, and a server that does not serve it refuses the binding.
 ///
 /// A handler must be a pure function of its inputs - no writes, no clock - and symmetric in them: two DCs
-/// that resolve the same pair in opposite order must produce the same record, or they diverge. The dry run
-/// (`execute_udf(key, "__event__", "xdr-merge", ...)`) reports whether a handler is: `symmetric`,
-/// `idempotent` and, given a third record, `associative` - the three laws a convergent merge obeys.
+/// that resolve the same pair in opposite order must produce the same record, or they diverge. There is no
+/// clock in a handler ([`now`] answers `Err(Refused)`), a [`log`] line is dropped, and the record-level
+/// [`generation`](EventRecord::generation) and [`last_update_time`](EventRecord::last_update_time) are 0 on
+/// both sides. The dry run (`execute_udf(key,
+/// "__event__", "xdr-merge", ...)`) reports whether a handler is: `symmetric`, `idempotent` and, given a
+/// third record, `associative` - the three laws a convergent merge obeys.
 #[macro_export]
 macro_rules! event {
     () => {};
@@ -3509,15 +4324,15 @@ macro_rules! udf_params {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! udf_call {
-    (writable, $name:ident, $h:expr, $argc:expr, $body:block, $outcome:ident,
+    (writable, $name:ident, $h:expr, $argc:expr, $body:block, $outcome:tt,
      $rec:ident : &mut Record $(, $arg:ident : $ty:ty)* $(,)?) => {
         $crate::udf_body!($name, $h, $argc, [mut $rec], ($($arg : $ty),*), $body, $outcome)
     };
-    ($access:ident, $name:ident, $h:expr, $argc:expr, $body:block, $outcome:ident,
+    ($access:ident, $name:ident, $h:expr, $argc:expr, $body:block, $outcome:tt,
      $rec:ident : &Record $(, $arg:ident : $ty:ty)* $(,)?) => {
         $crate::udf_body!($name, $h, $argc, [ref $rec], ($($arg : $ty),*), $body, $outcome)
     };
-    ($access:ident, $name:ident, $h:expr, $argc:expr, $body:block, $outcome:ident,
+    ($access:ident, $name:ident, $h:expr, $argc:expr, $body:block, $outcome:tt,
      $($arg:ident : $ty:ty),* $(,)?) => {
         $crate::udf_body!($name, $h, $argc, [], ($($arg : $ty),*), $body, $outcome)
     };
@@ -3546,10 +4361,13 @@ macro_rules! udf_record {
 #[macro_export]
 macro_rules! udf_body {
     ($name:ident, $args_handle:expr, $argc:expr, [$($record:tt)*], ($($arg:ident : $ty:ty),*), $body:block,
-     $outcome:ident) => {{
+     $outcome:tt) => {{
         $crate::udf_record!([$($record)*]);
 
-        let __args = $crate::Args::from_handle($args_handle, $argc);
+        let __args = match $crate::decode_args(stringify!($name), $args_handle, $argc) {
+            Ok(args) => args,
+            Err(failed) => return failed,
+        };
         let mut __index: usize = 0;
         let mut __rest = false;
 
@@ -3578,24 +4396,19 @@ macro_rules! udf_body {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! udf_outcome {
-    (result, $r:expr) => {{
-        let __r: ::core::result::Result<$crate::Value<'_>, $crate::Error> = $r;
+    // The type is the one the function declares, as its own source names it: anything that is `Return`.
+    ([result $ret:ty], $r:expr) => {{
+        let __r: $ret = $r;
 
-        match __r {
-            Ok(value) => match $crate::result(&value) {
-                Ok(()) => 0,
-                Err(e) => {
-                    $crate::fail(e.message());
-                    1
-                }
-            },
+        match $crate::Return::deliver(__r) {
+            Ok(()) => 0,
             Err(e) => {
                 $crate::fail(e.message());
                 1
             }
         }
     }};
-    (unit, $r:expr) => {{
+    ([unit], $r:expr) => {{
         let __r: ::core::result::Result<(), $crate::Error> = $r;
 
         match __r {

@@ -14,7 +14,7 @@ file compiled with clang for `wasm32`: no standard library, no exceptions, no RT
 
 UDF_FUNCTION(increment, udf::Result<int64_t>, udf::Record& rec, int64_t by)
 {
-	int64_t next = rec.int_or("n", 0) + by;
+	int64_t next = UDF_TRY(rec.int_or("n", 0)) + by;
 
 	UDF_TRY(rec.set("n", next));
 	UDF_TRY(rec.save());
@@ -37,7 +37,7 @@ names (the names are read out of the stringised parameter list by a `constexpr` 
 before `main` would, since there is no `main`: every object the SDK makes is `constexpr`.
 
 `rec` is the record the function was called on. `int_or("n", 0)` reads bin `n` as an integer, 0 when
-absent, and `set` stages a write that `rec.save()` makes, creating the record if it does not exist. The
+absent, and an error when the bin holds another kind; `set` stages a write that `rec.save()` makes, creating the record if it does not exist. The
 client passes only `by`. Every call that can fail returns a `udf::Result<T>`, and `UDF_TRY(expr)` is the Rust `?`:
 it yields the value or returns the error from the function, which the generated export delivers as the
 failure the client sees. (`UDF_TRY` is a statement expression, a clang and gcc extension.)
@@ -46,6 +46,14 @@ failure the client sees. (`UDF_TRY` is a statement expression, a clang and gcc e
 or `lld` from Homebrew, or build in a Linux container as this repository's tests do. `make SIMD=1` adds `-msimd128` for a
 kernel that should vectorise. `-fvisibility=hidden` keeps everything but the attributed exports out of
 the module's export table.
+
+**The stack.** A `Text<N>` or `Bytes<N>` holds its bytes inline, so a parameter or a local of one is N bytes
+of the wasm stack, and the generated export holds every parameter at once plus a copy on the way into the
+function. clang gives a module 64 KB of stack, which one `Text<65536>` parameter already overflows, and an
+overflow is not reported at build time: it traps the call. Add up the capacities of the largest function's
+parameters and locals, double that, leave some 16 KB for the SDK, and link with `-Wl,-z,stack-size=N`: a
+function taking two `Text<65536>` wants about 512 KB, and the SDK's `apitest`, which takes several, links with
+4 MiB. Keep large buffers in statics where the function allows it.
 
 ## The record
 
@@ -69,7 +77,7 @@ a handler:
 template <class R>
 static int64_t visits_of(const udf::ReadRecord<R>& rec)
 {
-	return rec.int_or("visits", 0);
+	return rec.int_or("visits", 0).take();   // a helper may also return the Result itself
 }
 ```
 
@@ -87,7 +95,7 @@ decide both how an argument is decoded and what the signature says:
 | `udf::Bytes<N>` | `bytes[N]` | a string or a blob of at most N bytes, as its bytes |
 | `udf::Value` | `any` | anything, nil included, as the 16-byte value |
 | `udf::Optional<T>` | `name?: type` | an argument that may be absent or nil, empty then |
-| `udf::Args`, last | `any...` | every remaining argument |
+| `udf::Args`, last | `any...` | every remaining argument; a call with more than 128 arguments in all fails |
 
 A call that leaves a required argument out, passes one of another kind, passes a string longer than its
 `Text<N>`, or passes more arguments than there are parameters, fails before the function runs, with a
@@ -110,18 +118,23 @@ arguments once and keep them, as the vector example does.
 Bins are addressed by name; there is no bin object. `rec.bin("name")` returns a `Result<Value>` whose
 error names the bin: the form for a bin that must be there. Chain the value's own reader when the kind
 must hold too, `UDF_TRY(UDF_TRY(rec.bin("balance")).as_int())`. The typed readers are for a bin that may
-not be there: `rec.as_int("name")`, `as_double`, `as_bool`, `as_string<N>`, `as_blob<N>` and the untyped
-`get` each return an `Optional`, empty for a bin that is absent or nil, and for the typed ones also for a
-bin of another kind. The `Or` forms take a default instead: `int_or("name", 0)`, `double_or`, `bool_or`.
-`has("name")` says whether the bin is there, `floats_into("name", ptr, n)` reads a blob of floats into
-an array, and `list("name")` and `map("name")` give a range over a collection bin, empty when the bin is
-missing or of another kind.
+not be there: `rec.as_int("name")`, `as_double`, `as_bool`, `as_string<N>`, `as_blob<N>` (only a blob) and
+`as_bytes<N>` (the raw bytes of a string, blob, GeoJSON or HLL) each return a `Result<Optional<T>>` with three
+outcomes: an empty `Optional` for a bin that is absent or nil, the value for a bin of that kind, and an
+error of status `AS_UDF_TYPE_MISMATCH` for a bin of another kind. Nothing is converted: an integer bin is
+not a double. The untyped `get` returns an `Optional<Value>`. The `Or` forms take a default for an absent
+bin, and only for that: `int_or("name", 0)`, `double_or`, `bool_or` return a `Result<T>`, an error for a
+bin of another kind. `udf::required(reader, "message")` turns "nothing there" into an error too, for a
+value that must be present. `has("name")` says whether the bin is there, `floats_into("name", ptr, n)`
+reads a blob of floats into an array, and `list("name")` and `map("name")` return a
+`Result<Optional<ListRange>>` (`MapRange`): nothing for an absent bin, an error for another kind, and a
+range, whose `size()` may be 0 and whose `value()` is the stored collection, for a list or map.
 
 ```cpp
 UDF_FUNCTION(withdraw, udf::Result<int64_t>, udf::Record& rec, int64_t amount)
 {
-	// An error when the bin is absent, and another when it is not an integer.
-	int64_t balance = UDF_TRY(UDF_TRY(rec.bin("balance")).as_int());
+	// An error when the bin is absent, another when it is not an integer, and one when it is nil.
+	int64_t balance = UDF_TRY(udf::required(UDF_TRY(rec.bin("balance")).as_int(), "withdraw: balance is nil"));
 
 	if (amount > balance) return udf::error(AS_UDF_REFUSED, "insufficient funds");
 
@@ -181,14 +194,18 @@ UDF_FUNCTION(close_account, udf::Result<void>, udf::Record& rec)
 
 Every read is a `udf::Value`, the C struct with accessors: `kind()` (a `udf::Kind`: `Int`, `Str`, `List`,
 `Map`, `GeoJson`, `Absent`, ...), the `is_int()` ... `is_nil()` tests (and `is_null()`, true of a nil and of an absent value alike), `as_int()`, `as_double()`,
-`as_bool()`, `as_string<N>()`, `as_blob<N>()`, `floats_into()`, each a `Result`. A stored string or
-collection is held by position, never copied until asked.
+`as_bool()`, `as_string<N>()`, `as_blob<N>()`, `as_bytes<N>()`, each a `Result<Optional<T>>` with the three
+outcomes of the record's readers, and `bytes_into()` and `floats_into()`. `is_geojson()` and `is_hll()`
+complete the tests. `cmp_stored(other)` is a `Result<int32_t>`: exactly -1, 0 or 1, or an error of status
+`AS_UDF_TYPE_MISMATCH` for a value that is not stored. A stored string or collection is held by position,
+never copied until asked.
 
 A stored list or map answers without a walk: `size()` and `empty()`; on a map `get(key)` for an entry by
-string or integer key and `contains(key)`; on a list `at(index)`, one element by its index in one import,
-an empty `Optional` past the end.
+string or integer key and `contains(key)`; on a list `at(index)`, one element by its index in one import.
+A key that is not there and an index past the end are an empty `Optional`, not an error.
 
-`list()` and `map()` on a `Value`, and `rec.list("name")` and `rec.map("name")` on a record, are ranges,
+`list()` and `map()` on a `Value` (empty for a value of another kind), and what `rec.list("name")` and
+`rec.map("name")` hand out for a list or map bin, are ranges,
 the Rust SDK's `iter()` and `entries()`: a list ranges over its values, a map over
 `udf::Entry{key, value}`, 32 per import, and the cursor is released when the loop ends or breaks (the
 iterator owns it). Collections nest, as long as the inner walk ends before the outer one steps on. A
@@ -199,8 +216,8 @@ UDF_FUNCTION(sum_list, udf::Result<int64_t>, const udf::Record& rec)
 {
 	int64_t total = 0;
 
-	for (udf::Value v : rec.list("l")) {
-		total += UDF_TRY(v.as_int());   // fails the call on anything but an int
+	for (udf::Value v : UDF_TRY(rec.list("l")).value_or(udf::ListRange())) {
+		total += UDF_TRY(v.as_int()).value_or(0);   // fails the call on anything but an int or nil
 	}
 
 	return total;
@@ -219,8 +236,8 @@ UDF_FUNCTION(max_count, udf::Result<int64_t>, const udf::Record& rec)
 {
 	int64_t best = 0;
 
-	for (udf::Entry e : rec.map("counts")) {
-		if (udf::Result<int64_t> n = e.value.as_int(); n && *n > best) {
+	for (udf::Entry e : UDF_TRY(rec.map("counts")).value_or(udf::MapRange())) {
+		if (udf::Optional<int64_t> n = UDF_TRY(e.value.as_int()); n && *n > best) {
 			best = *n;   // e.key is the entry's key
 		}
 	}
@@ -240,9 +257,10 @@ bin, returned as the result, nested, or handed back from an event handler. `put(
 overloaded for every kind (`int64_t`, `double`, `bool`, `StrView`, a literal, `const Value&`, `const Map&`,
 `const List&`); `put` takes a `StrView` or an `int64_t` key; `put_nil`, `add_nil`, `put_blob`,
 `put_geojson`, `add_geojson`; `put_all(stored)` and `add_all(stored)` copy a stored collection by position;
-`put_entries` and `add_values` take an array of values in one import. They chain, each is one import, and
-the first refusal is kept and answered by `error()` or `result()`, which a UDF returning the collection
-should check with `UDF_TRY(out.result())`.
+`put_entries` and `add_values` take an array of values in one import. They chain, each is one import, none
+takes one of the call's 256 handles (so a loop builds as many elements as the call's memory allows), a key
+is put whole whatever its length, and the first refusal is kept and answered by `error()` or `result()`,
+which a UDF returning the collection should check with `UDF_TRY(out.result())`.
 
 Both have `size()` and `empty()`. `Map::contains(key)` says whether the map being built has a string or
 an integer key. The host answers for the map it holds, so the check is one import and fit for a loop.
@@ -270,7 +288,8 @@ On the record: `rec.exists()`, `rec.generation()`, `rec.ttl()` (0 for a record t
 `rec.last_update_time()`, `rec.size()` (the stored size in bytes), `rec.bin_count()`, `rec.set_name()` (a
 `Text<64>`, empty when the record is in no set), `rec.key_type()` with `rec.key_int()` and
 `rec.key_bytes(buf, cap)` for the user key of a record written with `send_key`, `rec.key(buf, cap)` for
-that key as one `Value`, and `rec.digest(buf, cap)`. Not on the record: `udf::now()`, the server's clock, which an event handler may
+that key as one `Value` (a `Result<Optional<Value>>`: nothing when there is no key, an error when it does
+not fit), and `rec.digest(buf, cap)`. Not on the record: `udf::now()`, the server's clock, which an event handler may
 not read, and `udf::log(level, message)`.
 
 ## The low-level tier

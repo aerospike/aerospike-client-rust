@@ -120,7 +120,7 @@ fn id_cmp(a: &Option<Candidate>, b: &Option<Candidate>) -> Ordering {
 fn id_of(entry: &Coll) -> Result<Id, Error> {
     let mut buf = [0u8; 64];
 
-    Id::new(entry.get("deviceId")?.as_str(&mut buf)?)
+    Id::new(entry.get("deviceId")?.ok_or(Error::Absent)?.as_str(&mut buf)?)
 }
 
 /// Every live entry of a `devices` list as a candidate.
@@ -131,7 +131,7 @@ fn offer_live(best: &mut Best, devices: Coll) -> Result<(), Error> {
 
         best.offer(Candidate {
             id: id_of(&entry)?,
-            version: entry.get("version")?.int()?,
+            version: entry.get("version")?.ok_or(Error::Absent)?.int()?,
             removed: false,
             value: item,
             off_at: 0,
@@ -145,15 +145,15 @@ fn offer_live(best: &mut Best, devices: Coll) -> Result<(), Error> {
 fn offer_markers(best: &mut Best, removed: Option<Coll>, horizon: &mut i64, floor: &mut i64) -> Result<(), Error> {
     let Some(removed) = removed else { return Ok(()) };
 
-    if let Ok(h) = removed.get("purgedBefore") {
+    if let Some(h) = removed.get("purgedBefore")? {
         *horizon = (*horizon).max(h.int()?);
     }
 
-    if let Ok(f) = removed.get("versionFloor") {
+    if let Some(f) = removed.get("versionFloor")? {
         *floor = (*floor).max(f.int()?);
     }
 
-    if let Ok(markers) = removed.get("markers") {
+    if let Some(markers) = removed.get("markers")? {
         let mut buf = [0u8; 64];
 
         for entry in markers.map()?.entries() {
@@ -162,10 +162,10 @@ fn offer_markers(best: &mut Best, removed: Option<Coll>, horizon: &mut i64, floo
 
             best.offer(Candidate {
                 id: Id::new(key.as_str(&mut buf)?)?,
-                version: m.get("version")?.int()?,
+                version: m.get("version")?.ok_or(Error::Absent)?.int()?,
                 removed: true,
                 value: marker,
-                off_at: m.get("offAt")?.int()?,
+                off_at: m.get("offAt")?.ok_or(Error::Absent)?.int()?,
             })?;
         }
     }
@@ -285,24 +285,21 @@ fn live_entries(rec: &Record, buf: &mut [Option<(Id, Value<'static>)>; MAX_DEVIC
 fn marker_version(rec: &Record, id: &str) -> Result<Option<i64>, Error> {
     let Some(removed) = rec.map("devicesRemoved")? else { return Ok(None) };
 
-    match removed.get("markers") {
-        Ok(markers) => match markers.map()?.get(id) {
-            Ok(marker) => Ok(Some(marker.map()?.get("version")?.int()?)),
-            Err(Error::Absent) => Ok(None),
-            Err(e) => Err(e),
+    match removed.get("markers")? {
+        Some(markers) => match markers.map()?.get(id)? {
+            Some(marker) => Ok(Some(marker.map()?.get("version")?.ok_or(Error::Absent)?.int()?)),
+            None => Ok(None),
         },
-        Err(Error::Absent) => Ok(None),
-        Err(e) => Err(e),
+        None => Ok(None),
     }
 }
 
 fn removed_int(rec: &Record, key: &str) -> Result<i64, Error> {
     let Some(removed) = rec.map("devicesRemoved")? else { return Ok(0) };
 
-    match removed.get(key) {
-        Ok(v) => v.int(),
-        Err(Error::Absent) => Ok(0),
-        Err(e) => Err(e),
+    match removed.get(key)? {
+        Some(v) => v.int(),
+        None => Ok(0),
     }
 }
 
@@ -312,7 +309,7 @@ fn last_version(rec: &Record, entries: &[Option<(Id, Value<'static>)>], id: &str
 
     for (eid, entry) in entries.iter().flatten() {
         if eid.as_str() == id {
-            v = v.max(entry.map()?.get("version")?.int()?);
+            v = v.max(entry.map()?.get("version")?.ok_or(Error::Absent)?.int()?);
         }
     }
 
@@ -387,7 +384,7 @@ fn store_removed(
     let mut kbuf = [0u8; 64];
 
     if let Some(removed) = rec.map("devicesRemoved")? {
-        if let Ok(existing) = removed.get("markers") {
+        if let Some(existing) = removed.get("markers")? {
             for entry in existing.map()?.entries() {
                 let (key, marker) = entry?;
                 let id = key.as_str(&mut kbuf)?;
@@ -397,9 +394,9 @@ fn store_removed(
                     continue;
                 }
 
-                if m.get("offAt")?.int()? < horizon {
+                if m.get("offAt")?.ok_or(Error::Absent)?.int()? < horizon {
                     // Purged: its version becomes the floor every later version starts above.
-                    floor = floor.max(m.get("version")?.int()?);
+                    floor = floor.max(m.get("version")?.ok_or(Error::Absent)?.int()?);
                     continue;
                 }
 

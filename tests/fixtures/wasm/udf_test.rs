@@ -16,7 +16,7 @@ extern crate alloc;
 
 use alloc::{format, string::String, vec::Vec};
 
-use aerospike_udf_sdk_wasm::{self as as_udf, Args, Coll, Error, Level, List, Record, Str, Value};
+use aerospike_udf_sdk_wasm::{self as as_udf, Args, Coll, Error, Level, List, Record, Resolution, Str, Value};
 
 // The host calls themselves, for the three functions below that do what the SDK's own types do not allow:
 // keep a value across a write to its bin, and write from a stream. A module is not obliged to use the
@@ -210,11 +210,16 @@ as_udf::export! {
 
         out.insert("len", list.len() as i64)?;
 
-        // An index too large for this target's `usize` is past the end of any list it could hold.
-        match usize::try_from(index).map_err(|_| Error::Absent).and_then(|i| list.at(i)) {
-            Ok(v) => out.insert("at", v)?,
-            Err(Error::Absent) => out.insert("at", "absent")?,
-            Err(e) => return Err(e),
+        // An index too large for this target's `usize` is past the end of any list it could hold, and a
+        // negative one is before the start of every list: nothing is there either way.
+        let at = match usize::try_from(index) {
+            Ok(i) => list.at(i)?,
+            Err(_) => None,
+        };
+
+        match at {
+            Some(v) => out.insert("at", v)?,
+            None => out.insert("at", "absent")?,
         };
 
         out.insert(7, "seven")?;
@@ -337,29 +342,33 @@ as_udf::export! {
         out.insert("tail", l.iter().skip(3).count() as i64)?;
         out.insert("dsum", d.iter().map(|v| v.and_then(|v| v.double()).unwrap_or(0.0)).sum::<f64>())?;
         out.insert("mlen", m.len() as i64)?;
-        out.insert("x", m.get("x").and_then(|v| v.int()).unwrap_or(-1))?;
-        out.insert("f", m.get("f").and_then(|v| v.double()).unwrap_or(-1.0))?;
+        // A key that must be there: the value, or `Absent` like a bin that must be.
+        let under = |key: &str| m.get(key)?.ok_or(Error::Absent);
+
+        out.insert("x", under("x").and_then(|v| v.int()).unwrap_or(-1))?;
+        out.insert("f", under("f").and_then(|v| v.double()).unwrap_or(-1.0))?;
 
         let mut text = [0u8; 32];
 
-        match m.get("s").and_then(|v| v.string()) {
+        match under("s").and_then(|v| v.string()) {
             Ok(t) => out.insert("s", t.as_str(&mut text).unwrap_or("?"))?,
             Err(_) => out.insert("s", "?")?,
         };
 
-        out.insert("k7", m.get(7).and_then(|v| v.int()).unwrap_or(-1))?;
+        out.insert("k7", m.get(7).and_then(|v| v.ok_or(Error::Absent)?.int()).unwrap_or(-1))?;
         // A nested list is a value like any other, with its length.
-        out.insert("nested", m.get("l").and_then(|v| v.list()).map_or(-1, |c| c.len() as i64))?;
-        out.insert("missing", matches!(m.get("nope"), Err(Error::Absent)))?;
+        out.insert("nested", under("l").and_then(|v| v.list()).map_or(-1, |c| c.len() as i64))?;
+        // A key the map does not have is nothing, not an error.
+        out.insert("missing", matches!(m.get("nope"), Ok(None)))?;
         // The nested list, entered and summed: its length times 100 plus its sum.
         out.insert(
             "found",
-            match m.get("l").and_then(|v| v.list()) {
+            match under("l").and_then(|v| v.list()) {
                 Ok(inner) => inner.len() as i64 * 100 + sum_ints(inner),
                 Err(_) => -1,
             },
         )?;
-        out.insert("bulk", m.get("l").and_then(|v| v.list()).map_or(-1, sum_ints))?;
+        out.insert("bulk", under("l").and_then(|v| v.list()).map_or(-1, sum_ints))?;
         out.insert("run", sum_ints(l))?;
 
         Ok(out.into_value())
@@ -514,7 +523,7 @@ as_udf::export! {
 
     /// Copy the list under key `vals` of map bin `m` into bin `copy`, from its stored bytes.
     fn copy_vals(rec: &mut Record) -> Result<Value, Error> {
-        let vals = rec.bin("m")?.map()?.get("vals")?;
+        let vals = rec.bin("m")?.map()?.get("vals")?.ok_or(Error::Absent)?;
 
         rec.set_value("copy", &vals)?;
         rec.save()?;
@@ -525,8 +534,9 @@ as_udf::export! {
     /// Echo a string of any length back with a mark appended, as `[text!, length]`.
     ///
     /// A `String` parameter: allocated once at the argument's reported length, however long. A `&str`
-    /// parameter would have refused anything past 256 bytes. The string is written into bin `echo` too,
-    /// since a result borrows and a `String` is the function's own.
+    /// parameter would have refused anything past 256 bytes. The string is written into bin `echo` too.
+    /// (A function whose whole answer is a string it built returns it owned, `-> Result<String, Error>`;
+    /// this one answers a list, which copies the text when it is pushed.)
     fn echo(rec: &mut Record, text: String) -> Result<Value, Error> {
         let mut marked = text;
 
@@ -583,6 +593,76 @@ as_udf::export! {
         let out = as_udf::list(2)?;
 
         out.push(list_copy)?.push(map_copy)?;
+
+        Ok(out.into_value())
+    }
+
+    /// Stage a bin, save, then fail the call. A test reads the record afterwards to see whether a save
+    /// that succeeded is undone by a failure that follows it.
+    fn save_then_fail(rec: &mut Record) -> Result<Value, Error> {
+        rec.set("kept", 1)?;
+        rec.save()?;
+
+        Err(Error::Custom("failed after the save"))
+    }
+
+    /// The same with a list written by `set_ints`, which is written at once and not staged.
+    fn ints_then_fail(rec: &mut Record) -> Result<Value, Error> {
+        rec.set_ints("ints", &[1, 2, 3])?;
+
+        Err(Error::Custom("failed after set_ints"))
+    }
+
+    /// `bin_count` before a write is staged, once it is staged, and once it is saved.
+    fn count_staged(rec: &mut Record) -> Result<Value, Error> {
+        let out = as_udf::list(3)?;
+
+        out.push(rec.bin_count())?;
+        rec.set("staged", 1)?;
+        out.push(rec.bin_count())?;
+        rec.save()?;
+        out.push(rec.bin_count())?;
+
+        Ok(out.into_value())
+    }
+
+    /// What every metadata call answers. Exists to pin down what they say on a key with no record.
+    fn meta_probe(rec: &Record) -> Result<Value, Error> {
+        let out = as_udf::map(8)?;
+
+        out.insert("exists", Value::Bool(rec.exists()))?;
+        out.insert("generation", rec.generation())?;
+        out.insert("ttl", rec.ttl().map_or(-1, i64::from))?;
+        out.insert("lut", rec.last_update_time())?;
+        out.insert("size", rec.size())?;
+        out.insert("bins", rec.bin_count())?;
+        out.insert("has", Value::Bool(rec.has("a")))?;
+
+        Ok(out.into_value())
+    }
+
+    /// One write verb chosen by name, with what it answered and whether the record exists afterwards
+    /// as the call sees it. Exists to pin down the verbs on a key with no record.
+    fn verb_probe(rec: &mut Record, verb: &str) -> Result<Value, Error> {
+        let answer = match verb {
+            "set_ints" => rec.set_ints("v", &[1, 2]),
+            "set_doubles" => rec.set_doubles("v", &[1.5]),
+            "delete" => rec.delete(),
+            "remove" => rec.remove("nope").and_then(|()| rec.save()),
+            "ttl_never" => rec.set_ttl(u32::MAX).and_then(|()| rec.save()),
+            "ttl_zero" => rec.set_ttl(0).and_then(|()| rec.save()),
+            _ => Err(Error::Custom("no such verb")),
+        };
+        let out = as_udf::list(2)?;
+
+        out.push(match answer {
+            Ok(()) => "ok",
+            Err(Error::Refused) => "refused",
+            Err(Error::Malformed) => "malformed",
+            Err(Error::Absent) => "absent",
+            Err(_) => "other",
+        })?;
+        out.push(Value::Bool(rec.exists()))?;
 
         Ok(out.into_value())
     }
@@ -650,6 +730,30 @@ static mut NESTED: i64 = 0;
 /// What `poke` was answered: refusals, and anything else.
 static mut REFUSED: i64 = 0;
 static mut WRITTEN: i64 = 0;
+
+as_udf::event! {
+    /// Answers the metadata a merge is handed, as a record, and writes a log line. Exists so a test can
+    /// read the numbers: what the per-bin times are counted in, and what the record-level ones hold.
+    on xdr_merge
+    fn meta_merge(current: EventRecord, incoming: EventRecord) -> Result<Resolution, Error> {
+        let out = as_udf::map(12)?;
+
+        out.insert("c_blut", current.bin_last_update_time("a"))?;
+        out.insert("c_bsrc", current.bin_source_id("a"))?;
+        out.insert("c_lut", current.last_update_time())?;
+        out.insert("c_gen", current.generation())?;
+        out.insert("c_ttl", current.ttl())?;
+        out.insert("i_blut", incoming.bin_last_update_time("a"))?;
+        out.insert("i_bsrc", incoming.bin_source_id("a"))?;
+        out.insert("i_lut", incoming.last_update_time())?;
+        out.insert("i_gen", incoming.generation())?;
+        out.insert("i_ttl", incoming.ttl())?;
+        out.insert("now", as_udf::now().unwrap_or(-1))?;
+        as_udf::log(Level::Info, "meta_merge ran");
+
+        Ok(Resolution::Record { bins: out, ttl: None })
+    }
+}
 
 as_udf::stream! {
     /// Sum bin `n` across every record the query matched.
@@ -741,7 +845,7 @@ as_udf::stream! {
                 return Ok(());
             };
 
-            let Ok(vals) = m.map()?.get("vals") else {
+            let Ok(Some(vals)) = m.map()?.get("vals") else {
                 return Ok(());
             };
 

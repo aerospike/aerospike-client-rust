@@ -29,13 +29,23 @@ func mergeAccount(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 
 	// A count each DC advanced on its own: both sides' increments are real, so the merge is the larger
 	// of the two, not the sum (the sum would double-count the visits both already knew of).
-	if visits, ok := udf.Max(pair.Int("visits")); ok {
-		out.Put("visits", visits)
+	visits, err := pair.Int("visits")
+	if err != nil {
+		return udf.Resolution{}, err
+	}
+
+	if most, ok := udf.Max(visits); ok {
+		out.Put("visits", most)
 	}
 
 	// A set each DC added to: the union. Its order is part of the result, so it is the order both DCs
 	// agree on - the older side's tags, then the newer side's new ones - never "mine first".
-	older, hasOlder, newer, hasNewer := pair.List("tags").Ordered()
+	bothTags, err := pair.List("tags")
+	if err != nil {
+		return udf.Resolution{}, err
+	}
+
+	older, hasOlder, newer, hasNewer := bothTags.Ordered()
 	tags := udf.NewList(16)
 
 	if hasOlder {
@@ -59,13 +69,19 @@ func mergeAccount(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 	out.Put("tags", tags)
 
 	// A document one side rewrote whole: last writer wins, by last update time, which both DCs agree on.
-	if profile, ok := pair.Bin("profile").Newer(); ok {
-		out.Put("profile", profile)
+	profile, err := pair.Bin("profile")
+	if err != nil {
+		return udf.Resolution{}, err
+	}
+
+	if latest, ok := profile.Newer(); ok {
+		out.Put("profile", latest)
 	}
 
 	// A bin one side deleted stays deleted when the delete is the later write for that bin: a nil in the
-	// returned record is "no such bin". Without this, the other side's copy would come back through
-	// WithNewer below - the resurrection every merge has to guard against.
+	// returned record is "no such bin". WithNewer below leaves such a bin out by itself; this is for the
+	// three bins decided above, which read what each side holds and so would bring the other side's
+	// copy back - the resurrection every merge has to guard against.
 	applyDeletes(pair, out, current, false)
 	applyDeletes(pair, out, incoming, true)
 

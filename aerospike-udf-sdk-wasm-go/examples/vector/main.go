@@ -111,6 +111,12 @@ func parseMetric(name string) (metric, bool) {
 func configure(handle, argc int32) string {
 	n := udf.Args(handle, argc, args[:])
 
+	// Args reads no more than the window holds, and a call that passed more must not lose them in
+	// silence.
+	if err := udf.Arity("topk", len(args), argc); err != nil {
+		return err.Error()
+	}
+
 	if n < 2 || args[0].Kind != udf.KindStr {
 		return "topk: bin name missing"
 	}
@@ -252,7 +258,10 @@ func scoreOf(measured float64) float64 {
 func readVector(rec *udf.Record) int {
 	// Get, not Bin: a record without the vector is ordinary here, and Get says so without making an
 	// error for each one.
-	v, ok := rec.Get(topk.bin)
+	v, ok, err := rec.Get(topk.bin)
+	if err != nil {
+		return -1
+	}
 
 	if !ok || v.Kind != udf.KindBlob {
 		topk.skippedNone++
@@ -308,7 +317,9 @@ func offer(rec *udf.Record, score float64) bool {
 	}
 
 	// A string or blob key is copied by the host straight into the hit; an integer one is written out.
-	if key, ok := rec.Key(h.key[:]); ok {
+	// A hit carries a key of keyMax bytes at most: a longer one is an error here, and the hit goes
+	// without it, since the digest is what identifies the record.
+	if key, ok, err := rec.Key(h.key[:]); err == nil && ok {
 		if key.Kind == udf.KindInt {
 			h.keyLen = copy(h.key[:], strconv.FormatInt(key.Payload, 10))
 		} else {

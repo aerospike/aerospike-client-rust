@@ -15,8 +15,7 @@ package udf
 import "unsafe"
 
 //==========================================================
-// The results the scalar Result* calls do not cover, the clock, and the values made by the host for a
-// collection entry. None of it is about the record.
+// The results the scalar Result* calls do not cover, and the clock. None of it is about the record.
 //
 
 //go:wasmimport aerospike result_geojson
@@ -25,29 +24,22 @@ func resultGeoJSON(value unsafe.Pointer, valueLen int32)
 //go:wasmimport aerospike current_time
 func currentTime() int64
 
-//go:wasmimport aerospike val_int
-func valInt(value int64) int32
-
-//go:wasmimport aerospike val_str
-func valStr(value unsafe.Pointer, valueLen int32) int32
-
-//go:wasmimport aerospike val_blob
-func valBlob(value unsafe.Pointer, valueLen int32) int32
-
-//go:wasmimport aerospike val_geojson
-func valGeoJSON(value unsafe.Pointer, valueLen int32) int32
-
-//go:wasmimport aerospike map_put
-func mapPut(handle int32, key int32, value int32) int32
-
-//go:wasmimport aerospike map_put_i_at
-func mapPutIAt(handle int32, key int64, src int32, at int32) int32
-
-// ResultGeoJSON sets a GeoJSON document as the result, kept as that kind.
+// ResultGeoJSON sets a GeoJSON document as the call's result, kept as that kind where ResultString
+// would return a string. The host copies the text during the call and does not check it.
 func ResultGeoJSON(doc string) { resultGeoJSON(strptr(doc), int32(len(doc))) }
 
-// ResultMap sets a built map as the result. When the map kept a refusal while it was built, that error is
-// returned and no result is set.
+// ResultMap sets a built map as the call's result. When the map kept a refusal while it was built, that
+// error is returned and no result is set; otherwise the error is nil unless the host no longer has the
+// map. A result that nests collections more than 64 deep fails the call.
+//
+// A function under `//udf:function` returns the *Map instead, and the generated export makes this
+// call.
+//
+//	out := udf.NewMap(2).Put("total", total).Put("count", count)
+//	if err := udf.ResultMap(out); err != nil {
+//		return udf.FailErr(err)
+//	}
+//	return 0
 func ResultMap(m *Map) error {
 	if m.err != nil {
 		return m.err
@@ -55,8 +47,8 @@ func ResultMap(m *Map) error {
 	return statusError(resultHandle(m.handle), "could not return the map")
 }
 
-// ResultList sets a built list as the result. When the list kept a refusal while it was built, that error
-// is returned and no result is set.
+// ResultList sets a built list as the call's result. When the list kept a refusal while it was built,
+// that error is returned and no result is set.
 func ResultList(l *List) error {
 	if l.err != nil {
 		return l.err
@@ -64,8 +56,25 @@ func ResultList(l *List) error {
 	return statusError(resultHandle(l.handle), "could not return the list")
 }
 
-// Result sets a value of any kind as the result: a scalar by value, guest bytes, a built collection by
-// handle, a stored value by position; nil or absent is nil.
+// Result sets a value of any kind as the call's result: a scalar by value, a string, blob or GeoJSON
+// of the guest's, copied by the host, a built collection by its handle, a stored value by position,
+// without decoding it. A nil or absent value sets nil.
+//
+// The error is non-nil only for a built collection or a stored value the host can no longer find. It
+// is what a function returning a udf.Value has the generated export call.
+//
+//	last, ok, err := history.Index(int(history.Len) - 1)
+//	if err != nil {
+//		return udf.FailErr(err)
+//	}
+//	if !ok {
+//		udf.ResultNil()
+//		return 0
+//	}
+//	if err := udf.Result(last); err != nil {
+//		return udf.FailErr(err)
+//	}
+//	return 0
 func Result(v Value) error {
 	switch v.Kind {
 	case KindInt:
@@ -90,5 +99,7 @@ func Result(v Value) error {
 	return nil
 }
 
-// Now is the server's clock in ms since the Unix epoch, or -1 inside an event handler, where it is refused.
+// Now is the server's clock, in milliseconds since the Unix epoch. Inside an event handler it is
+// refused and answers -1: a merge that reads the clock cannot come out the same on both clusters.
+// It is not on the scale of Record.LastUpdateTime, which counts from 2010.
 func Now() int64 { return currentTime() }

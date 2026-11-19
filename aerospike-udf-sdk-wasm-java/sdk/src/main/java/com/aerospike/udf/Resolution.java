@@ -16,6 +16,15 @@ package com.aerospike.udf;
  * What an {@code xdr-merge} handler returns: the Java face of the Rust SDK's {@code Resolution}. Keep the
  * current record, apply the incoming write whole, let the namespace's policy decide, remove the record, or
  * the final record.
+ *
+ * <pre>
+ * return Resolution.keepLocal();                               // drop the incoming write
+ * return Resolution.record(pair.withNewer(out));               // these bins, the incoming TTL
+ * return Resolution.record(out, 3600);                         // these bins, expiring in an hour
+ * </pre>
+ *
+ * <p>A resolution is checked by the server before it is taken, and one it does not accept is the handler's
+ * failure, which the binding's {@code on-failure} setting decides.
  */
 public final class Resolution {
     private final String verdict;
@@ -28,12 +37,18 @@ public final class Resolution {
         this.ttl = ttl;
     }
 
-    /** Keep the local record; the incoming write is dropped. */
+    /**
+     * Keep the local record; the incoming write is dropped, and the source cluster is told so in a way it
+     * counts as success.
+     */
     public static Resolution keepLocal() {
         return new Resolution("keep-local", 0, -1);
     }
 
-    /** Apply the incoming write whole, as if it had won every bin. */
+    /**
+     * Apply the incoming write whole, as if it had won every bin: the incoming bins go over the current
+     * record.
+     */
     public static Resolution takeRemote() {
         return new Resolution("take-remote", 0, -1);
     }
@@ -53,22 +68,30 @@ public final class Resolution {
     }
 
     /**
-     * The final record: these bins, whole - a bin not in the map, or set to nil, is deleted - keeping the
-     * TTL the incoming write asked for.
+     * The final record: these bins, whole - a bin not in the map, or set to nil, is deleted - keeping the TTL
+     * the incoming write asked for. The map's keys are the bin names, so each is a string of 1 to 15 bytes.
+     * At least one bin must be left: an empty map, or one whose values are all nil, is the handler's failure
+     * and not a deletion, which is what {@link #delete} is for. The builder is not used up and may still be
+     * added to before the handler returns.
      */
     public static Resolution record(MapBuilder bins) {
         return new Resolution("record", bins.handle(), -1);
     }
 
-    /** As {@link #record(MapBuilder)}, with a TTL in seconds: 0 for the namespace default. */
+    /**
+     * As {@link #record(MapBuilder)}, with the record's TTL in seconds, which has a write's meaning: 0 for
+     * the namespace default. A negative {@code ttl} is the same as giving none: the TTL the incoming write
+     * asked for is kept.
+     */
     public static Resolution record(MapBuilder bins, long ttl) {
         return new Resolution("record", bins.handle(), ttl);
     }
 
     /**
-     * Sets the resolution as the result of the call and returns the status the export returns. The
-     * generated export of a typed handler calls it; a handler in the raw form
-     * {@code int name(int args, int argc)} ends with it, as in {@code return Resolution.keepLocal().deliver()}.
+     * Sets the resolution as the result of the call and returns the status the export returns: 0, or 1 after
+     * failing the call when the answer could not be built. The generated export of a typed handler calls it;
+     * a handler in the raw form {@code int name(int args, int argc)} ends with it, as in
+     * {@code return Resolution.keepLocal().deliver()}.
      */
     public int deliver() {
         if (bins == 0) {
@@ -96,7 +119,10 @@ public final class Resolution {
         return 0;
     }
 
-    /** The verdict word as the server reads it, such as {@code keep-local} or {@code record}. */
+    /**
+     * The verdict word as the server reads it: {@code keep-local}, {@code take-remote}, {@code policy},
+     * {@code delete} or {@code record}.
+     */
     public String verdict() {
         return verdict;
     }

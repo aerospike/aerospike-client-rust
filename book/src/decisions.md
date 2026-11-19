@@ -83,6 +83,27 @@ Decided 2026-11-18. Described in each language's page.
 | **What a language cannot say, it says once, differently**: C++ has `delete_record()` because `delete` is a keyword; Java has `sumInt` and `sumDouble` and argument readers named `argInt`; Rust keeps the type names `Text` and `Blob` beside the method `string()`; `is_null` stays where it means nil or absent. | Each is forced by the language, and is the only departure of its kind. |
 | **Collection verbs stay each language's own**, as decided above; **names on the wire did not change.** | A Java programmer expects `put` and a Rust one `insert`. Host imports, export names and signature text belong to the server's contract. |
 
+## What a reader answers
+
+Decided 2026-11-19, after the five SDKs were run on the same inputs and disagreed on one case in five.
+Described in each language's page.
+
+| Decision | Why |
+| --- | --- |
+| **A typed reader has three answers: nothing for an absent or nil bin, the value, or a wrong-type error for a bin of another kind.** The same on a record, an event record, a pair, and the elements of a stored list or map. No widening: an integer is not a double. | Go, C and C++ answered "nothing" for a bin of another kind, Rust answered an error, Java threw for both. A UDF that reads a counter stored as a string should not see an absent counter. "Nothing for both" was considered: simpler signatures, but it hides data that is not what the code expects. |
+| **A default stands in for an absent or nil bin only.** `int_or` on a bin of another kind is the same wrong-type error. | Go, C and C++ answered the default, so a counter stored as a string quietly read as 0. |
+| **The blob reader reads a blob and nothing else.** The bytes of a string, GeoJSON or HLL value are read with the reader named `bytes`. | Three SDKs handed back a string's bytes as a blob and two did not. A separate name says what it does, and loses nothing. |
+| **"Not there" is nothing, not an error**, for an index past the end of a list and a key a map lacks. Java's list `get` keeps throwing, as `java.util` does. | Rust answered an error, the others nothing. |
+| **Every error carries the host's status.** Java's `UdfException` has `status()`. | Java code could not tell "refused" from "wrong type" without reading the message. |
+| **A call takes up to 128 arguments, and one with more fails.** | Each SDK silently dropped arguments past its own limit: 30, 126 or 200. |
+| **Nothing is cut or skipped silently.** A buffer too small reports the size it needs; keys, names and compared strings of any length work. | The C++ map builder cut a key to 63 bytes, which merged two keys into one. Several helpers answered "no" for any string past 64 or 128 bytes. |
+| **Building a collection element by element never runs out of the call's handles.** | Every add of a double, bool, nil or blob and every put under an integer key took a handle for the rest of the call, so an ordinary loop failed near 250 elements, with an error that said the value had the wrong type. |
+| **A string argument that is not UTF-8 is left to the language**: Rust fails the call, Java replaces the bad bytes with U+FFFD, Go, C and C++ pass them through. | Recorded in the conformance harness's allow-list. Failing the call everywhere was considered. |
+
+The conformance module `apitest` is written to one specification in all five SDKs, and the harness in
+the WASM module (`make conform`, under each sanitizer, and the `sdk` fuzz target) holds them to these
+rules. A difference not on its allow-list fails the run.
+
 ## The `xdr-merge` event
 
 Decided 2026-11-18. Described in [The event system](events/README.md#xdr-merge).
@@ -97,6 +118,9 @@ Decided 2026-11-18. Described in [The event system](events/README.md#xdr-merge).
 | **A handler sees both records unmasked.** | It merges real values and what it returns is stored; masking what it reads would make it store masked values. Refusing to bind on a masked set, and skipping the handler there, were considered. Binding a handler to a masked set is the operator's decision to trust it. |
 | **An invalid GeoJSON document, and a record whose values alone exceed `max-record-size`, are handler failures.** | Both used to be found out by the write, which then failed whatever the binding said, or were stored. |
 | **A handler takes the two records and nothing else.** There was a third parameter, a description of the conflict. What a merge can need from it is now asked of the record it is about: whether the incoming write is a delete or carries only changed bins, which of its bins would lose under bin convergence, whether the current record is a tombstone, and whether per-bin timestamps mean anything. Whether the call is a dry run, and the binding's trigger, are no longer shown. | Six of the seven merges written for this engine ignored the parameter, and the seventh used it to get back the two records it already had. A merge that reads how it was called, and not only what it was given, is one that can answer differently for the same two records. An optional third parameter was considered and turned down: one shape to document, and one for the code generators to accept. The contract version stays 1, since what the server sends did not change. |
+| **Under bin convergence a merged record is stamped bin by bin by what each bin is**: the incoming value keeps the incoming stamp and is not shipped back, this cluster's own value is left as it was, and a value the handler computed is a write made here, which ships. | A merge marked every bin as arrived over XDR. A local write that was still waiting to ship when a merge landed was then never shipped, and the two clusters stayed apart. Found by the first test that ran a handler between two clusters with bin convergence on. Keeping the mark only where the local stamp wins was considered: it leaves a value merged from both sides, such as a maximum, unshipped. |
+| **The dry run tells a handler what a live merge on that namespace would**, bin convergence included, and stamps the merged record before it merges it again. | It always said bin convergence was off, so a merge that reads per-bin stamps could not be checked at all, and its idempotence check handed the handler a record with no stamps. |
+| **The dry run hands a handler what a live merge would**: bin convergence and per-bin times as the namespace keeps them, the current record's TTL, the TTL the incoming write asks for, and a list of deleted bins even when it is empty. | Each of these differed, and a merge could pass its dry run and answer otherwise between two clusters. A test now runs every handler in every language both ways and compares the records. |
 | **A signature's text is cleaned before it is quoted to an operator, and its version is read whole.** | The text is the module's. A version of 4294967297 had bound as version 1. |
 
 ## One event

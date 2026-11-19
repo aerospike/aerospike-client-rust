@@ -54,38 +54,49 @@ type candidate struct {
 
 // higher is the one of two candidates for a device that wins. The first rule that tells them apart
 // decides, and every rule reads the data alone.
-func higher(a, b candidate) candidate {
+func higher(a, b candidate) (candidate, error) {
 	if a.version != b.version {
 		if a.version > b.version {
-			return a
+			return a, nil
 		}
-		return b
+		return b, nil
 	}
 
 	if a.removed != b.removed {
 		if a.removed {
-			return a
+			return a, nil
 		}
-		return b
+		return b, nil
 	}
 
 	// Two different changes at one version are concurrent: the stored bytes pick one, the same on both
 	// clusters, since each side compares the same two byte strings.
-	if udf.CmpStored(a.value, b.value) >= 0 {
-		return a
+	order, err := udf.CmpStored(a.value, b.value)
+	if err != nil {
+		return candidate{}, err
 	}
-	return b
+	if order >= 0 {
+		return a, nil
+	}
+	return b, nil
 }
 
 // best is the candidates seen so far, one per device; offer keeps the higher.
 type best map[string]candidate
 
-func (b best) offer(c candidate) {
-	if have, ok := b[c.id]; ok {
-		b[c.id] = higher(have, c)
-	} else {
+func (b best) offer(c candidate) error {
+	have, ok := b[c.id]
+	if !ok {
 		b[c.id] = c
+		return nil
 	}
+
+	winner, err := higher(have, c)
+	if err != nil {
+		return err
+	}
+	b[c.id] = winner
+	return nil
 }
 
 // sorted is the candidates in deviceId order, by UTF-8 bytes - the order the server keeps a key-ordered
@@ -101,7 +112,10 @@ func (b best) sorted() []candidate {
 
 // idOf is a device's id, from its entry.
 func idOf(entry udf.Value) (string, error) {
-	id, ok := entry.Lookup("deviceId")
+	id, ok, err := entry.Lookup("deviceId")
+	if err != nil {
+		return "", err
+	}
 	if !ok {
 		return "", errors.New("an entry has no deviceId")
 	}
@@ -109,7 +123,10 @@ func idOf(entry udf.Value) (string, error) {
 }
 
 func intField(m udf.Value, key string) (int64, error) {
-	v, ok := m.Lookup(key)
+	v, ok, err := m.Lookup(key)
+	if err != nil {
+		return 0, err
+	}
 	if !ok {
 		return 0, errors.New("a map has no " + key)
 	}
@@ -127,7 +144,9 @@ func offerLive(b best, list udf.Value) error {
 		if err != nil {
 			return err
 		}
-		b.offer(candidate{id: id, version: version, value: item})
+		if err := b.offer(candidate{id: id, version: version, value: item}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -135,7 +154,9 @@ func offerLive(b best, list udf.Value) error {
 // offerMarkers offers every marker of a devicesRemoved bin, and raises the horizon and the floor to what
 // it carries.
 func offerMarkers(b best, removed udf.Value, horizon, floor *int64) error {
-	if h, ok := removed.Lookup("purgedBefore"); ok {
+	if h, ok, err := removed.Lookup("purgedBefore"); err != nil {
+		return err
+	} else if ok {
 		n, err := h.Int()
 		if err != nil {
 			return err
@@ -143,7 +164,9 @@ func offerMarkers(b best, removed udf.Value, horizon, floor *int64) error {
 		*horizon = max(*horizon, n)
 	}
 
-	if f, ok := removed.Lookup("versionFloor"); ok {
+	if f, ok, err := removed.Lookup("versionFloor"); err != nil {
+		return err
+	} else if ok {
 		n, err := f.Int()
 		if err != nil {
 			return err
@@ -151,7 +174,10 @@ func offerMarkers(b best, removed udf.Value, horizon, floor *int64) error {
 		*floor = max(*floor, n)
 	}
 
-	markers, ok := removed.Lookup("markers")
+	markers, ok, err := removed.Lookup("markers")
+	if err != nil {
+		return err
+	}
 	if !ok {
 		return nil
 	}
@@ -169,7 +195,9 @@ func offerMarkers(b best, removed udf.Value, horizon, floor *int64) error {
 		if err != nil {
 			return err
 		}
-		b.offer(candidate{id: id, version: version, removed: true, value: marker, offAt: offAt})
+		if err := b.offer(candidate{id: id, version: version, removed: true, value: marker, offAt: offAt}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -192,22 +220,35 @@ func xdrMerge(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 		}
 	}
 
-	curDevices, curHas := incoming.Get("devices")
-	_ = curDevices
-	incRemoved, incHasRemoved := incoming.Get("devicesRemoved")
-	_ = incRemoved
+	_, curHas, err := incoming.Get("devices")
+	if err != nil {
+		return udf.Resolution{}, err
+	}
+	_, incHasRemoved, err := incoming.Get("devicesRemoved")
+	if err != nil {
+		return udf.Resolution{}, err
+	}
 
 	if curHas || incHasRemoved {
 		b := best{}
 		var horizon, floor int64
 
 		for _, side := range []*udf.EventRecord{current, incoming} {
-			if list, ok := side.Get("devices"); ok && list.IsList() {
+			list, ok, err := side.Get("devices")
+			if err != nil {
+				return udf.Resolution{}, err
+			}
+			if ok && list.IsList() {
 				if err := offerLive(b, list); err != nil {
 					return udf.Resolution{}, err
 				}
 			}
-			if removed, ok := side.Get("devicesRemoved"); ok && removed.IsMap() {
+
+			removed, ok, err := side.Get("devicesRemoved")
+			if err != nil {
+				return udf.Resolution{}, err
+			}
+			if ok && removed.IsMap() {
 				if err := offerMarkers(b, removed, &horizon, &floor); err != nil {
 					return udf.Resolution{}, err
 				}
@@ -233,7 +274,10 @@ func xdrMerge(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 			}
 		}
 
-		_, curList := current.Get("devices")
+		_, curList, err := current.Get("devices")
+		if err != nil {
+			return udf.Resolution{}, err
+		}
 		if curList || curHas {
 			out.Put("devices", live)
 		}
@@ -267,8 +311,13 @@ type entry struct {
 
 // liveEntries is the live entries in stored order.
 func liveEntries(rec *udf.Record) ([]entry, error) {
+	devices, _, err := rec.List("devices")
+	if err != nil {
+		return nil, err
+	}
+
 	var out []entry
-	for item := range rec.List("devices") {
+	for item := range devices.List() {
 		id, err := idOf(item)
 		if err != nil {
 			return nil, err
@@ -278,40 +327,50 @@ func liveEntries(rec *udf.Record) ([]entry, error) {
 	return out, nil
 }
 
-// markerVersion is a marker's version, if the device has one.
-func markerVersion(rec *udf.Record, id string) (int64, bool) {
-	removed, ok := rec.Get("devicesRemoved")
-	if !ok {
-		return 0, false
-	}
-	markers, ok := removed.Lookup("markers")
-	if !ok {
-		return 0, false
-	}
-	marker, ok := markers.Lookup(id)
-	if !ok {
-		return 0, false
-	}
-	v, err := intField(marker, "version")
-	return v, err == nil
+// removedBin is the devicesRemoved bin; a Value with nothing in it when the record has none, which
+// every lookup below answers "not there" for.
+func removedBin(rec *udf.Record) (udf.Value, error) {
+	removed, _, err := rec.Map("devicesRemoved")
+	return removed, err
 }
 
-func removedInt(rec *udf.Record, key string) int64 {
-	removed, ok := rec.Get("devicesRemoved")
-	if !ok {
-		return 0
+// markerVersion is a marker's version, if the device has one.
+func markerVersion(rec *udf.Record, id string) (int64, bool, error) {
+	removed, err := removedBin(rec)
+	if err != nil {
+		return 0, false, err
 	}
-	v, ok := removed.Lookup(key)
-	if !ok {
-		return 0
+	markers, _, err := removed.Lookup("markers")
+	if err != nil {
+		return 0, false, err
 	}
-	n, _ := v.Int()
-	return n
+	marker, ok, err := markers.Lookup(id)
+	if err != nil || !ok {
+		return 0, false, err
+	}
+	v, err := intField(marker, "version")
+	return v, err == nil, err
+}
+
+// removedInt is an integer field of devicesRemoved, 0 when there is none.
+func removedInt(rec *udf.Record, key string) (int64, error) {
+	removed, err := removedBin(rec)
+	if err != nil {
+		return 0, err
+	}
+	v, ok, err := removed.Lookup(key)
+	if err != nil || !ok {
+		return 0, err
+	}
+	return v.Int()
 }
 
 // lastVersion is the device's latest version, live or removed, and never below the version floor.
 func lastVersion(rec *udf.Record, entries []entry, id string) (int64, error) {
-	v := removedInt(rec, "versionFloor")
+	v, err := removedInt(rec, "versionFloor")
+	if err != nil {
+		return 0, err
+	}
 	for _, e := range entries {
 		if e.id == id {
 			n, err := intField(e.value, "version")
@@ -321,7 +380,11 @@ func lastVersion(rec *udf.Record, entries []entry, id string) (int64, error) {
 			v = max(v, n)
 		}
 	}
-	if mv, ok := markerVersion(rec, id); ok {
+	mv, ok, err := markerVersion(rec, id)
+	if err != nil {
+		return 0, err
+	}
+	if ok {
 		v = max(v, mv)
 	}
 	return v, nil
@@ -358,8 +421,14 @@ type marker struct {
 // storeRemoved rebuilds devicesRemoved from the current one with one marker dropped (drop != ""), one
 // added or replaced, and a purge at now (when now != nil). The bin is left out while it holds nothing.
 func storeRemoved(rec *udf.Record, drop string, add *marker, now *int64) error {
-	horizon := removedInt(rec, "purgedBefore")
-	floor := removedInt(rec, "versionFloor")
+	horizon, err := removedInt(rec, "purgedBefore")
+	if err != nil {
+		return err
+	}
+	floor, err := removedInt(rec, "versionFloor")
+	if err != nil {
+		return err
+	}
 	if now != nil {
 		horizon = max(horizon, *now-purgeAgeMs)
 	}
@@ -367,33 +436,38 @@ func storeRemoved(rec *udf.Record, drop string, add *marker, now *int64) error {
 	markers := udf.NewMap(8)
 	n := 0
 
-	if removed, ok := rec.Get("devicesRemoved"); ok {
-		if existing, ok := removed.Lookup("markers"); ok {
-			for key, m := range existing.Map() {
-				id, err := key.String()
-				if err != nil {
-					return err
-				}
-				if (drop != "" && id == drop) || (add != nil && add.id == id) {
-					continue
-				}
-				offAt, err := intField(m, "offAt")
-				if err != nil {
-					return err
-				}
-				if offAt < horizon {
-					// Purged: its version becomes the floor every later version starts above.
-					version, err := intField(m, "version")
-					if err != nil {
-						return err
-					}
-					floor = max(floor, version)
-					continue
-				}
-				markers.Put(id, m)
-				n++
-			}
+	removed, err := removedBin(rec)
+	if err != nil {
+		return err
+	}
+	existing, _, err := removed.Lookup("markers")
+	if err != nil {
+		return err
+	}
+
+	for key, m := range existing.Map() {
+		id, err := key.String()
+		if err != nil {
+			return err
 		}
+		if (drop != "" && id == drop) || (add != nil && add.id == id) {
+			continue
+		}
+		offAt, err := intField(m, "offAt")
+		if err != nil {
+			return err
+		}
+		if offAt < horizon {
+			// Purged: its version becomes the floor every later version starts above.
+			version, err := intField(m, "version")
+			if err != nil {
+				return err
+			}
+			floor = max(floor, version)
+			continue
+		}
+		markers.Put(id, m)
+		n++
 	}
 
 	if add != nil {
@@ -408,11 +482,11 @@ func storeRemoved(rec *udf.Record, drop string, add *marker, now *int64) error {
 		return nil
 	}
 
-	removed := udf.NewMap(3).Put("markers", markers).Put("purgedBefore", horizon)
+	rebuilt := udf.NewMap(3).Put("markers", markers).Put("purgedBefore", horizon)
 	if floor > 0 {
-		removed.Put("versionFloor", floor)
+		rebuilt.Put("versionFloor", floor)
 	}
-	return rec.Set("devicesRemoved", removed)
+	return rec.Set("devicesRemoved", rebuilt)
 }
 
 // Adds a device, updates one, or adds a removed one back: the entry becomes the old one (if any) with
@@ -449,7 +523,11 @@ func updateDevice(rec *udf.Record, id string, changes udf.Value) (int64, error) 
 	if err := storeDevices(rec, entries, id, &entry{id: id, value: e.Value()}); err != nil {
 		return 0, err
 	}
-	if _, has := markerVersion(rec, id); has {
+	_, has, err := markerVersion(rec, id)
+	if err != nil {
+		return 0, err
+	}
+	if has {
 		if err := storeRemoved(rec, id, nil, nil); err != nil {
 			return 0, err
 		}
@@ -505,7 +583,7 @@ func purgeDevices(rec *udf.Record, now int64) (int64, error) {
 	if err := rec.Save(); err != nil {
 		return 0, err
 	}
-	return removedInt(rec, "purgedBefore"), nil
+	return removedInt(rec, "purgedBefore")
 }
 
 func main() {}

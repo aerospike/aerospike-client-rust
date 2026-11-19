@@ -118,10 +118,14 @@ func mergeLwwSet(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 		s := stamps{}
 
 		for _, side := range []*udf.EventRecord{current, incoming} {
-			if stored, ok := side.Get(bin); ok {
-				if err := s.offerAll(stored); err != nil {
-					return udf.Resolution{}, err
-				}
+			// A side without the bin has no stamps to offer; a bin that is not a map is an error.
+			stored, _, err := side.Map(bin)
+			if err != nil {
+				return udf.Resolution{}, err
+			}
+
+			if err := s.offerAll(stored); err != nil {
+				return udf.Resolution{}, err
 			}
 		}
 

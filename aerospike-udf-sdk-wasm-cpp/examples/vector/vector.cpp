@@ -339,15 +339,15 @@ topk_record_udf_impl(int32_t args, int32_t argc)
 {
 	if (! S.configured) {
 		const char* err = configure(args, argc);
-		if (err != NULL) return as_udf_failf(err);
+		if (err != NULL) return as_udf_fail_str(err);
 	}
 
 	int32_t read = read_vector();
 
-	if (read < 0) return as_udf_failf("topk: could not read the vector");
+	if (read < 0) return as_udf_fail_str("topk: could not read the vector");
 	if (read == 0) return 0;
 
-	if (! offer(score_of(measure()))) return as_udf_failf("topk: could not read the digest");
+	if (! offer(score_of(measure()))) return as_udf_fail_str("topk: could not read the digest");
 
 	return 0;
 }
@@ -361,7 +361,7 @@ topk_end_udf_impl(int32_t args, int32_t argc)
 	int32_t out = as_udf_map_new(3);
 	int32_t hits = as_udf_list_new((int32_t)S.n);
 
-	if (out <= 0 || hits <= 0) return as_udf_failf("topk: could not build the partial");
+	if (out <= 0 || hits <= 0) return as_udf_fail_str("topk: could not build the partial");
 
 	for (uint32_t i = 0; i < S.n; i++) {
 		const hit* h = &S.hits[i];
@@ -374,7 +374,7 @@ topk_end_udf_impl(int32_t args, int32_t argc)
 
 		if (entry <= 0 || as_udf_map_put_entries(entry, pairs, (int32_t)sizeof(pairs)) != 3 ||
 				as_udf_list_push(hits, entry) != AS_UDF_OK) {
-			return as_udf_failf("topk: could not build a hit");
+			return as_udf_fail_str("topk: could not build a hit");
 		}
 	}
 
@@ -382,7 +382,7 @@ topk_end_udf_impl(int32_t args, int32_t argc)
 	as_udf_map_put_string_int(out, "skipped_dim", 11, S.skipped_dim);
 	as_udf_map_put_string_int(out, "skipped_none", 12, S.skipped_none);
 
-	return as_udf_result_handle(out) == AS_UDF_OK ? 0 : as_udf_failf("topk: could not return the partial");
+	return as_udf_result_handle(out) == AS_UDF_OK ? 0 : as_udf_fail_str("topk: could not return the partial");
 }
 
 /* The distance from this record's vector to the query: one record, one number, nil for no such vector. */
@@ -390,11 +390,11 @@ UDF_FUNCTION_RAW(vec_distance, "(bin: str, query: bytes, metric: str)")
 {
 	const char* err = configure(args, argc);
 
-	if (err != NULL) return as_udf_failf(err);
+	if (err != NULL) return as_udf_fail_str(err);
 
 	int32_t read = read_vector();
 
-	if (read < 0) return as_udf_failf("vec_distance: could not read the vector");
+	if (read < 0) return as_udf_fail_str("vec_distance: could not read the vector");
 
 	if (read == 0) {
 		as_udf_result_nil();

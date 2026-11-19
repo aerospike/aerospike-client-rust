@@ -27,7 +27,7 @@ import org.teavm.interop.Address;
  * MapValue device = rec.getMap("device");
  *
  * long version = device.getInt("version", 0);     // 0 when there is no such key
- * String id = device.getString("deviceId");        // throws when there is no such key
+ * String id = device.getString("deviceId");        // null when there is no such key
  *
  * for (MapValue.Entry e : rec.getMap("counts")) {
  *     total += e.getValue().asInt();
@@ -35,9 +35,10 @@ import org.teavm.interop.Address;
  * </pre>
  *
  * <p>{@link #get(String)} answers {@code null} for a key the map does not have, as a {@code java.util.Map}
- * does. A typed reader without a default throws {@link UdfException} naming the key when the map has no
- * such key; one with a default answers the default for a missing key or a nil entry; either throws when
- * the entry is of another kind. A map is read-only: to change one, build another ({@link MapBuilder}) and
+ * does, and so does every typed reader, for a missing key and for a nil entry alike; one with a default
+ * answers the default there. Either throws {@link UdfException} naming the key, with the status
+ * {@link LowLevel#TYPE_MISMATCH}, when the entry is of another kind: nothing is widened or converted. A key
+ * may be of any length. A map is read-only: to change one, build another ({@link MapBuilder}) and
  * write that. {@link #toMap} copies the whole map out as a {@code java.util.Map}.
  */
 public final class MapValue implements Iterable<MapValue.Entry> {
@@ -57,7 +58,10 @@ public final class MapValue implements Iterable<MapValue.Entry> {
             return key;
         }
 
-        /** The entry's value. */
+        /**
+         * The entry's value, of any kind; a nil entry is a {@link Value} whose {@link Value#isNil} is true,
+         * not null.
+         */
         @Override
         public Value getValue() {
             return value;
@@ -73,13 +77,15 @@ public final class MapValue implements Iterable<MapValue.Entry> {
     private static final Value SCRATCH = new Value();
 
     private final Value map;
+    /** What {@link #asValue} answers for a view of nothing: an empty map, built when first asked for. */
+    private Value empty;
 
     /** A view of {@code map}, which is a stored map, or of nothing at all, which reads as empty. */
     MapValue(Value map) {
         this.map = map;
     }
 
-    /** How many entries the map has. */
+    /** How many entries the map has; known without a call to the host. */
     public int size() {
         return map.kind() == Value.MAP ? map.length() : 0;
     }
@@ -89,9 +95,22 @@ public final class MapValue implements Iterable<MapValue.Entry> {
         return size() == 0;
     }
 
-    /** The map as the one value it is, to hand on: into a bin, a builder or the result, by position. */
+    /**
+     * The map as the one value it is, to hand on: into a bin, a builder or the result, by position, so the
+     * server copies it without its entries passing through the guest. A view of nothing (a list of names the
+     * server did not send, say) answers an empty map, built for the purpose; never an absent value, which no
+     * bin, builder or result takes.
+     */
     public Value asValue() {
-        return map;
+        if (map.kind() == Value.MAP) {
+            return map;
+        }
+
+        if (empty == null) {
+            empty = MapBuilder.create(0).asValue();
+        }
+
+        return empty;
     }
 
     //==========================================================
@@ -128,23 +147,8 @@ public final class MapValue implements Iterable<MapValue.Entry> {
         return rc;
     }
 
-    /** The scratch value when the entry is there and of {@code kind}; throws when it is missing or another. */
-    private Value required(int rc, String key, int kind, String what) {
-        if (rc == LowLevel.OK && SCRATCH.kind() == kind) {
-            return SCRATCH;
-        }
-
-        int state = Reads.state(rc, SCRATCH, kind);
-
-        if (state != Reads.HIT) {
-            throw Reads.problem(state, "key ", key, what);
-        }
-
-        return SCRATCH;
-    }
-
-    /** As {@link #required}, but null for a missing key or a nil entry. */
-    private Value optional(int rc, String key, int kind, String what) {
+    /** The scratch value when the entry is of {@code kind}; null for a missing key or a nil entry. */
+    private Value typed(int rc, String key, int kind, String what) {
         if (rc == LowLevel.OK && SCRATCH.kind() == kind) {
             return SCRATCH;
         }
@@ -155,277 +159,370 @@ public final class MapValue implements Iterable<MapValue.Entry> {
             return null;
         }
 
-        if (state != Reads.HIT) {
-            throw Reads.problem(state, "key ", key, what);
-        }
-
-        return SCRATCH;
+        throw Reads.problem(state, "key ", key, what);
     }
 
-    private static Value bytesOf(Value v, String key) {
-        if (v != null && (!v.isStored() || v.isList() || v.isMap())) {
-            throw Reads.problem(Reads.WRONG, "key ", key, "a string or blob");
+    /** As {@link #typed(int, String, int, String)}; the key's text is made only for a message. */
+    private Value typed(int rc, long key, int kind, String what) {
+        if (rc == LowLevel.OK && SCRATCH.kind() == kind) {
+            return SCRATCH;
         }
 
-        return v;
+        int state = Reads.state(rc, SCRATCH, kind);
+
+        if (state == Reads.NONE) {
+            return null;
+        }
+
+        throw Reads.problem(state, "key ", Long.toString(key), what);
     }
 
     //==========================================================
     // String keys.
     //
 
-    /** The value under {@code key}, or null when the map has no such key. */
+    /**
+     * The value under {@code key}, as a fresh {@link Value}, or null when the map has no such key. An entry that is
+     * there and holds nil is not null: it is a value whose {@link Value#isNil} is true. One call to the host,
+     * which walks the entries to the key, so a lookup is linear in the map's size.
+     */
     public Value get(String key) {
         Value out = new Value();
 
         return find(key, out) == LowLevel.OK ? out : null;
     }
 
-    /** Whether the map has {@code key}. */
+    /** Whether the map has the key; true also for an entry that holds nil. One call to the host. */
     public boolean containsKey(String key) {
         return find(key, SCRATCH) == LowLevel.OK;
     }
 
-    /** The integer under {@code key}; throws {@link UdfException} when there is none or it is not one. */
-    public long getInt(String key) {
-        return required(find(key, SCRATCH), key, Value.INT, "an int").payload();
+    /**
+     * The integer under {@code key}, or null when the map has no such key or the entry is nil. Throws
+     * {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}) naming the key when the entry is of another kind.
+     */
+    public Long getInt(String key) {
+        Value v = typed(find(key, SCRATCH), key, Value.INT, "an int");
+
+        return v == null ? null : v.payload();
     }
 
-    /** The integer under {@code key}, or {@code dflt} when there is none; throws when it is of another kind. */
+    /**
+     * The integer under {@code key}, or {@code dflt} when the map has no such key or the entry is nil. An entry of
+     * another kind still throws {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}).
+     */
     public long getInt(String key, long dflt) {
-        Value v = optional(find(key, SCRATCH), key, Value.INT, "an int");
+        Value v = typed(find(key, SCRATCH), key, Value.INT, "an int");
 
         return v == null ? dflt : v.payload();
     }
 
-    /** The double under {@code key}; an integer is not widened. */
-    public double getDouble(String key) {
-        return required(find(key, SCRATCH), key, Value.DOUBLE, "a double").doubleBits();
+    /**
+     * The double under {@code key}, or null when the map has no such key or the entry is nil. Throws
+     * {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}) when the entry is of another kind; an integer is
+     * not widened.
+     */
+    public Double getDouble(String key) {
+        Value v = typed(find(key, SCRATCH), key, Value.DOUBLE, "a double");
+
+        return v == null ? null : v.doubleBits();
     }
 
-    /** The double under {@code key}, or {@code dflt} when there is none. */
+    /**
+     * The double under {@code key}, or {@code dflt} when the map has no such key or the entry is nil. An entry of
+     * another kind, an integer included, still throws {@link UdfException}.
+     */
     public double getDouble(String key, double dflt) {
-        Value v = optional(find(key, SCRATCH), key, Value.DOUBLE, "a double");
+        Value v = typed(find(key, SCRATCH), key, Value.DOUBLE, "a double");
 
         return v == null ? dflt : v.doubleBits();
     }
 
-    /** The boolean under {@code key}. */
-    public boolean getBool(String key) {
-        return required(find(key, SCRATCH), key, Value.BOOL, "a bool").payload() != 0;
+    /**
+     * The boolean under {@code key}, or null when the map has no such key or the entry is nil. Throws
+     * {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}) when the entry is of another kind.
+     */
+    public Boolean getBool(String key) {
+        Value v = typed(find(key, SCRATCH), key, Value.BOOL, "a bool");
+
+        return v == null ? null : v.payload() != 0;
     }
 
-    /** The boolean under {@code key}, or {@code dflt} when there is none. */
+    /**
+     * The boolean under {@code key}, or {@code dflt} when the map has no such key or the entry is nil. An entry of
+     * another kind still throws {@link UdfException}.
+     */
     public boolean getBool(String key, boolean dflt) {
-        Value v = optional(find(key, SCRATCH), key, Value.BOOL, "a bool");
+        Value v = typed(find(key, SCRATCH), key, Value.BOOL, "a bool");
 
         return v == null ? dflt : v.payload() != 0;
     }
 
-    /** The text of the string under {@code key}, copied out. */
+    /**
+     * The text of the string under {@code key}, decoded into a new {@code String}, or null when the map has no such
+     * key or the entry is nil. Throws {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}) when the entry is
+     * not a string.
+     */
     public String getString(String key) {
-        return required(find(key, SCRATCH), key, Value.STR, "a string").asString();
+        return getString(key, null);
     }
 
-    /** The text of the string under {@code key}, or {@code dflt} when there is none. */
+    /**
+     * The text of the string under {@code key}, or {@code dflt} (which may be null) when the map has no such key or
+     * the entry is nil. An entry of another kind still throws {@link UdfException}.
+     */
     public String getString(String key, String dflt) {
-        Value v = optional(find(key, SCRATCH), key, Value.STR, "a string");
+        Value v = typed(find(key, SCRATCH), key, Value.STR, "a string");
 
         return v == null ? dflt : v.asString();
     }
 
-    /** The bytes of the string, blob, GeoJSON or HLL under {@code key}, copied out. */
+    /**
+     * The bytes of the blob under {@code key}, copied into a new array, or null when the map has no such key or the
+     * entry is nil. It is strict: throws {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}) when the entry
+     * is anything but a blob, a string included; {@link #getBytes(String)} takes those.
+     */
     public byte[] getBlob(String key) {
-        int state = Reads.state(find(key, SCRATCH), SCRATCH, SCRATCH.kind());
-
-        if (state != Reads.HIT) {
-            throw Reads.problem(state, "key ", key, "a string or blob");
-        }
-
-        return bytesOf(SCRATCH, key).asBlob();
+        return getBlob(key, null);
     }
 
-    /** The bytes under {@code key}, or {@code dflt} when there is none. */
+    /**
+     * The bytes of the blob under {@code key}, copied into a new array, or {@code dflt} (which may be null) when the
+     * map has no such key or the entry is nil. An entry of another kind still throws {@link UdfException}.
+     */
     public byte[] getBlob(String key, byte[] dflt) {
+        Value v = typed(find(key, SCRATCH), key, Value.BLOB, "a blob");
+
+        return v == null ? dflt : v.asBytes();
+    }
+
+    /**
+     * The raw bytes of the string, blob, GeoJSON or HLL under {@code key}, copied into a new array, or null when the
+     * map has no such key or the entry is nil. Throws {@link UdfException} ({@link LowLevel#TYPE_MISMATCH})
+     * when the entry is a number, a boolean, a list or a map.
+     */
+    public byte[] getBytes(String key) {
         int state = Reads.state(find(key, SCRATCH), SCRATCH, SCRATCH.kind());
-
-        if (state == Reads.NONE) {
-            return dflt;
-        }
-
-        if (state != Reads.HIT) {
-            throw Reads.problem(state, "key ", key, "a string or blob");
-        }
-
-        return bytesOf(SCRATCH, key).asBlob();
-    }
-
-    /** The list under {@code key}. */
-    public ListValue getList(String key) {
-        return new ListValue(required(find(key, SCRATCH), key, Value.LIST, "a list").copy());
-    }
-
-    /** The list under {@code key}, or {@code dflt} (which may be null) when there is none. */
-    public ListValue getList(String key, ListValue dflt) {
-        Value v = optional(find(key, SCRATCH), key, Value.LIST, "a list");
-
-        return v == null ? dflt : new ListValue(v.copy());
-    }
-
-    /** The map under {@code key}. */
-    public MapValue getMap(String key) {
-        return new MapValue(required(find(key, SCRATCH), key, Value.MAP, "a map").copy());
-    }
-
-    /** The map under {@code key}, or {@code dflt} (which may be null) when there is none. */
-    public MapValue getMap(String key, MapValue dflt) {
-        Value v = optional(find(key, SCRATCH), key, Value.MAP, "a map");
-
-        return v == null ? dflt : new MapValue(v.copy());
-    }
-
-    //==========================================================
-    // Integer keys. The key's text is made only for a message.
-    //
-
-    private Value required(int rc, long key, int kind, String what) {
-        if (rc == LowLevel.OK && SCRATCH.kind() == kind) {
-            return SCRATCH;
-        }
-
-        int state = Reads.state(rc, SCRATCH, kind);
-
-        if (state != Reads.HIT) {
-            throw Reads.problem(state, "key ", Long.toString(key), what);
-        }
-
-        return SCRATCH;
-    }
-
-    private Value optional(int rc, long key, int kind, String what) {
-        if (rc == LowLevel.OK && SCRATCH.kind() == kind) {
-            return SCRATCH;
-        }
-
-        int state = Reads.state(rc, SCRATCH, kind);
 
         if (state == Reads.NONE) {
             return null;
         }
 
-        if (state != Reads.HIT) {
-            throw Reads.problem(state, "key ", Long.toString(key), what);
+        if (state != Reads.HIT || !SCRATCH.hasBytes()) {
+            throw Reads.problem(state == Reads.HIT ? Reads.WRONG : state, "key ", key,
+                    "a string, blob, GeoJSON or HLL");
         }
 
-        return SCRATCH;
+        return SCRATCH.asBytes();
     }
 
-    /** The value under the integer {@code key}, or null when the map has no such key. */
+    /**
+     * The list under {@code key}, as a view: nothing is copied. Null when the map has no such key or the entry is
+     * nil. Throws {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}) when the entry is not a list.
+     */
+    public ListValue getList(String key) {
+        return getList(key, null);
+    }
+
+    /**
+     * The list under {@code key} as a view, or {@code dflt} (which may be null) when the map has no such key or the
+     * entry is nil. An entry of another kind still throws {@link UdfException}.
+     */
+    public ListValue getList(String key, ListValue dflt) {
+        Value v = typed(find(key, SCRATCH), key, Value.LIST, "a list");
+
+        return v == null ? dflt : new ListValue(v.copy());
+    }
+
+    /**
+     * The map under {@code key}, as another view: nothing is copied. Null when the map has no such key or the entry
+     * is nil. Throws {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}) when the entry is not a map.
+     */
+    public MapValue getMap(String key) {
+        return getMap(key, null);
+    }
+
+    /**
+     * The map under {@code key} as a view, or {@code dflt} (which may be null) when the map has no such key or the
+     * entry is nil. An entry of another kind still throws {@link UdfException}.
+     */
+    public MapValue getMap(String key, MapValue dflt) {
+        Value v = typed(find(key, SCRATCH), key, Value.MAP, "a map");
+
+        return v == null ? dflt : new MapValue(v.copy());
+    }
+
+    //==========================================================
+    // Integer keys.
+    //
+
+    /**
+     * The value under the integer {@code key}, as a fresh {@link Value}, or null when the map has no such key. An entry that is
+     * there and holds nil is not null: it is a value whose {@link Value#isNil} is true. One call to the host,
+     * which walks the entries to the key, so a lookup is linear in the map's size.
+     */
     public Value get(long key) {
         Value out = new Value();
 
         return find(key, out) == LowLevel.OK ? out : null;
     }
 
-    /** Whether the map has the integer {@code key}. */
+    /** Whether the map has the key; true also for an entry that holds nil. One call to the host. */
     public boolean containsKey(long key) {
         return find(key, SCRATCH) == LowLevel.OK;
     }
 
-    /** The integer under the integer {@code key}; throws when there is none or it is not one. */
-    public long getInt(long key) {
-        return required(find(key, SCRATCH), key, Value.INT, "an int").payload();
+    /**
+     * The integer under the integer {@code key}, or null when the map has no such key or the entry is nil. Throws
+     * {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}) naming the key when the entry is of another kind.
+     */
+    public Long getInt(long key) {
+        Value v = typed(find(key, SCRATCH), key, Value.INT, "an int");
+
+        return v == null ? null : v.payload();
     }
 
-    /** The integer under the integer {@code key}, or {@code dflt} when there is none. */
+    /**
+     * The integer under the integer {@code key}, or {@code dflt} when the map has no such key or the entry is nil. An entry of
+     * another kind still throws {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}).
+     */
     public long getInt(long key, long dflt) {
-        Value v = optional(find(key, SCRATCH), key, Value.INT, "an int");
+        Value v = typed(find(key, SCRATCH), key, Value.INT, "an int");
 
         return v == null ? dflt : v.payload();
     }
 
-    /** The double under the integer {@code key}; an integer is not widened. */
-    public double getDouble(long key) {
-        return required(find(key, SCRATCH), key, Value.DOUBLE, "a double").doubleBits();
+    /**
+     * The double under the integer {@code key}, or null when the map has no such key or the entry is nil. Throws
+     * {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}) when the entry is of another kind; an integer is
+     * not widened.
+     */
+    public Double getDouble(long key) {
+        Value v = typed(find(key, SCRATCH), key, Value.DOUBLE, "a double");
+
+        return v == null ? null : v.doubleBits();
     }
 
-    /** The double under the integer {@code key}, or {@code dflt} when there is none. */
+    /**
+     * The double under the integer {@code key}, or {@code dflt} when the map has no such key or the entry is nil. An entry of
+     * another kind, an integer included, still throws {@link UdfException}.
+     */
     public double getDouble(long key, double dflt) {
-        Value v = optional(find(key, SCRATCH), key, Value.DOUBLE, "a double");
+        Value v = typed(find(key, SCRATCH), key, Value.DOUBLE, "a double");
 
         return v == null ? dflt : v.doubleBits();
     }
 
-    /** The boolean under the integer {@code key}. */
-    public boolean getBool(long key) {
-        return required(find(key, SCRATCH), key, Value.BOOL, "a bool").payload() != 0;
+    /**
+     * The boolean under the integer {@code key}, or null when the map has no such key or the entry is nil. Throws
+     * {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}) when the entry is of another kind.
+     */
+    public Boolean getBool(long key) {
+        Value v = typed(find(key, SCRATCH), key, Value.BOOL, "a bool");
+
+        return v == null ? null : v.payload() != 0;
     }
 
-    /** The boolean under the integer {@code key}, or {@code dflt} when there is none. */
+    /**
+     * The boolean under the integer {@code key}, or {@code dflt} when the map has no such key or the entry is nil. An entry of
+     * another kind still throws {@link UdfException}.
+     */
     public boolean getBool(long key, boolean dflt) {
-        Value v = optional(find(key, SCRATCH), key, Value.BOOL, "a bool");
+        Value v = typed(find(key, SCRATCH), key, Value.BOOL, "a bool");
 
         return v == null ? dflt : v.payload() != 0;
     }
 
-    /** The text of the string under the integer {@code key}, copied out. */
+    /**
+     * The text of the string under the integer {@code key}, decoded into a new {@code String}, or null when the map has no such
+     * key or the entry is nil. Throws {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}) when the entry is
+     * not a string.
+     */
     public String getString(long key) {
-        return required(find(key, SCRATCH), key, Value.STR, "a string").asString();
+        return getString(key, null);
     }
 
-    /** The text of the string under the integer {@code key}, or {@code dflt} when there is none. */
+    /**
+     * The text of the string under the integer {@code key}, or {@code dflt} (which may be null) when the map has no such key or
+     * the entry is nil. An entry of another kind still throws {@link UdfException}.
+     */
     public String getString(long key, String dflt) {
-        Value v = optional(find(key, SCRATCH), key, Value.STR, "a string");
+        Value v = typed(find(key, SCRATCH), key, Value.STR, "a string");
 
         return v == null ? dflt : v.asString();
     }
 
-    /** The bytes of the string, blob, GeoJSON or HLL under the integer {@code key}, copied out. */
+    /**
+     * The bytes of the blob under the integer {@code key}, copied into a new array, or null when the map has no such key or the
+     * entry is nil. It is strict: throws {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}) when the entry
+     * is anything but a blob, a string included; {@link #getBytes(long)} takes those.
+     */
     public byte[] getBlob(long key) {
-        int state = Reads.state(find(key, SCRATCH), SCRATCH, SCRATCH.kind());
-
-        if (state != Reads.HIT) {
-            throw Reads.problem(state, "key ", Long.toString(key), "a string or blob");
-        }
-
-        return bytesOf(SCRATCH, Long.toString(key)).asBlob();
+        return getBlob(key, null);
     }
 
-    /** The bytes under the integer {@code key}, or {@code dflt} when there is none. */
+    /**
+     * The bytes of the blob under the integer {@code key}, copied into a new array, or {@code dflt} (which may be null) when the
+     * map has no such key or the entry is nil. An entry of another kind still throws {@link UdfException}.
+     */
     public byte[] getBlob(long key, byte[] dflt) {
+        Value v = typed(find(key, SCRATCH), key, Value.BLOB, "a blob");
+
+        return v == null ? dflt : v.asBytes();
+    }
+
+    /**
+     * The raw bytes of the string, blob, GeoJSON or HLL under the integer {@code key}, copied into a new array, or null when the
+     * map has no such key or the entry is nil. Throws {@link UdfException} ({@link LowLevel#TYPE_MISMATCH})
+     * when the entry is a number, a boolean, a list or a map.
+     */
+    public byte[] getBytes(long key) {
         int state = Reads.state(find(key, SCRATCH), SCRATCH, SCRATCH.kind());
 
         if (state == Reads.NONE) {
-            return dflt;
+            return null;
         }
 
-        if (state != Reads.HIT) {
-            throw Reads.problem(state, "key ", Long.toString(key), "a string or blob");
+        if (state != Reads.HIT || !SCRATCH.hasBytes()) {
+            throw Reads.problem(state == Reads.HIT ? Reads.WRONG : state, "key ", Long.toString(key),
+                    "a string, blob, GeoJSON or HLL");
         }
 
-        return bytesOf(SCRATCH, Long.toString(key)).asBlob();
+        return SCRATCH.asBytes();
     }
 
-    /** The list under the integer {@code key}. */
+    /**
+     * The list under the integer {@code key}, as a view: nothing is copied. Null when the map has no such key or the entry is
+     * nil. Throws {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}) when the entry is not a list.
+     */
     public ListValue getList(long key) {
-        return new ListValue(required(find(key, SCRATCH), key, Value.LIST, "a list").copy());
+        return getList(key, null);
     }
 
-    /** The list under the integer {@code key}, or {@code dflt} (which may be null) when there is none. */
+    /**
+     * The list under the integer {@code key} as a view, or {@code dflt} (which may be null) when the map has no such key or the
+     * entry is nil. An entry of another kind still throws {@link UdfException}.
+     */
     public ListValue getList(long key, ListValue dflt) {
-        Value v = optional(find(key, SCRATCH), key, Value.LIST, "a list");
+        Value v = typed(find(key, SCRATCH), key, Value.LIST, "a list");
 
         return v == null ? dflt : new ListValue(v.copy());
     }
 
-    /** The map under the integer {@code key}. */
+    /**
+     * The map under the integer {@code key}, as another view: nothing is copied. Null when the map has no such key or the entry
+     * is nil. Throws {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}) when the entry is not a map.
+     */
     public MapValue getMap(long key) {
-        return new MapValue(required(find(key, SCRATCH), key, Value.MAP, "a map").copy());
+        return getMap(key, null);
     }
 
-    /** The map under the integer {@code key}, or {@code dflt} (which may be null) when there is none. */
+    /**
+     * The map under the integer {@code key} as a view, or {@code dflt} (which may be null) when the map has no such key or the
+     * entry is nil. An entry of another kind still throws {@link UdfException}.
+     */
     public MapValue getMap(long key, MapValue dflt) {
-        Value v = optional(find(key, SCRATCH), key, Value.MAP, "a map");
+        Value v = typed(find(key, SCRATCH), key, Value.MAP, "a map");
 
         return v == null ? dflt : new MapValue(v.copy());
     }
@@ -436,7 +533,9 @@ public final class MapValue implements Iterable<MapValue.Entry> {
 
     /**
      * The entries in the order the server keeps them, a fresh key and value each, so an entry can be kept
-     * after the loop moves on. The loop may be left early.
+     * after the loop moves on. The loop may be left early. The entries come from the host 64 at a time, so a
+     * loop costs a call per 64 entries, not one per entry. {@code next()} past the end throws
+     * {@code NoSuchElementException}.
      */
     @Override
     public Iterator<Entry> iterator() {
@@ -457,7 +556,7 @@ public final class MapValue implements Iterable<MapValue.Entry> {
                 Value key = walk.next(new Value());
 
                 if (!walk.more()) {
-                    throw new UdfException("the map ended on a key");
+                    throw new UdfException(LowLevel.ERR, "the map ended on a key");
                 }
 
                 return new Entry(key, walk.next(new Value()));
@@ -467,7 +566,9 @@ public final class MapValue implements Iterable<MapValue.Entry> {
 
     /**
      * The whole map copied out as a {@code java.util.Map} in the server's order, each key and value as
-     * {@link Value#toObject} gives it; a nested list or map is copied too.
+     * {@link Value#toObject} gives it: a string key is a {@code String}, an integer key a {@code Long}, and a
+     * nested list or map is copied too. It costs an object per key and value; the views read the same data
+     * without.
      */
     public Map<Object, Object> toMap() {
         return Convert.toMap(map);

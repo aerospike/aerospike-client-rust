@@ -71,6 +71,16 @@ const LWWSET_JAVA: &[u8] = include_bytes!("../fixtures/wasm/lwwset_java.wasm");
 const LWWSET_GO: &[u8] = include_bytes!("../fixtures/wasm/lwwset_go.wasm");
 const LWWSET_CPP: &[u8] = include_bytes!("../fixtures/wasm/lwwset_cpp.wasm");
 
+// The record of registers: `aerospike-udf-sdk-wasm/examples/registers`, which reads the per-bin last-update
+// times a namespace with bin convergence keeps.
+const REGISTERS: &[u8] = include_bytes!("../fixtures/wasm/registers.wasm");
+const REGISTERS_JAVA: &[u8] = include_bytes!("../fixtures/wasm/registers_java.wasm");
+const REGISTERS_GO: &[u8] = include_bytes!("../fixtures/wasm/registers_go.wasm");
+const REGISTERS_CPP: &[u8] = include_bytes!("../fixtures/wasm/registers_cpp.wasm");
+
+/// The namespace the node keeps with bin convergence on.
+const BIN_CONVERGENCE_NS: &str = "testbc";
+
 /// The active-active CRDT of the design note: `aerospike-udf-sdk-wasm/examples/crdt`, and the same in Java
 /// and Go.
 const CRDT: &[u8] = include_bytes!("../fixtures/wasm/crdt.wasm");
@@ -1062,6 +1072,124 @@ async fn lwwset_merge_converges() {
 
         assert_eq!(info(&client, &remove_command("xdr-merge", namespace, set_name)).await, "ok");
         let _ = client.delete(&write, &key).await;
+        remove_module(&client, package).await;
+    }
+}
+
+/// The record of registers through the dry run, on the namespace that keeps a last-update time per bin:
+/// each register is the side with the later stamp for that bin, whatever the records' own times say; a
+/// delete with the later stamp is kept as a nil; a bin only one side has is that side's; `seen` is the
+/// larger number although its stamp is the older; and the server finds the merge symmetric. On a
+/// namespace without bin convergence the handler refuses to answer.
+#[aerospike_macro::test]
+async fn registers_merge_converges() {
+    let client = common::client().await;
+
+    if !supported(&client).await {
+        skipped("registers_merge_converges", "no event commands on this server");
+        return;
+    }
+
+    if !info(&client, "namespaces").await.split(';').any(|n| n == BIN_CONVERGENCE_NS) {
+        skipped("registers_merge_converges", "the node has no namespace with bin convergence");
+        return;
+    }
+
+    for (lang, module) in [("rust", REGISTERS), ("java", REGISTERS_JAVA), ("go", REGISTERS_GO), ("cpp", REGISTERS_CPP)] {
+        let set_name = &common::rand_str(10);
+        let package = &format!("registers_{lang}_{}", common::rand_str(6));
+
+        if let Err(reason) = register(&client, module, package).await {
+            skipped("registers_merge_converges", &reason);
+            return;
+        }
+
+        let key = as_key!(BIN_CONVERGENCE_NS, set_name, "ada");
+        let write = WritePolicy::default();
+
+        client
+            .put(&write, &key, &[as_bin!("theme", "dark"), as_bin!("lang", "en"), as_bin!("email", "ada@example.com")])
+            .await
+            .unwrap();
+        assert_eq!(
+            client.execute_udf(&write, &key, package, "saw", &[Value::from(3)]).await.unwrap(),
+            Some(Value::from(3)),
+            "{lang}"
+        );
+        assert_eq!(
+            client.execute_udf(&write, &key, package, "saw", &[Value::from(2)]).await.unwrap(),
+            Some(Value::from(3)),
+            "{lang}: seen never goes down"
+        );
+        assert_eq!(info(&client, &bind_command(BIN_CONVERGENCE_NS, set_name, package, "merge_settings")).await, "ok", "{lang}");
+
+        // The incoming record as a whole is from 1970, yet two of its bins were written in 2030: `theme`,
+        // and the delete of `email`. Its `lang` and `seen` are as old as the record, and `tz` is a bin this
+        // side has never had.
+        const THEN: i64 = 1_000;
+        const LATER: i64 = 1_900_000_000_000;
+        let incoming = bins_map(&[
+            ("theme", Value::from("solar")),
+            ("lang", Value::from("fr")),
+            ("seen", Value::from(7)),
+            ("tz", Value::from("utc")),
+        ]);
+        let mut incoming_meta = meta(4, THEN, 0, 2);
+
+        incoming_meta.insert(
+            Value::from("bin-luts"),
+            Value::from(bins_map(&[
+                ("theme", Value::from(LATER)),
+                ("email", Value::from(LATER)),
+                ("lang", Value::from(THEN)),
+                ("seen", Value::from(THEN)),
+                ("tz", Value::from(THEN)),
+            ])),
+        );
+        incoming_meta.insert(Value::from("deleted"), strings(&["email"]));
+
+        let answer = dry_run(&client, &key, incoming, incoming_meta).await;
+        let bins = bins_of(&answer);
+        let expected = bins_map(&[
+            ("theme", Value::from("solar")),
+            ("lang", Value::from("en")),
+            ("email", Value::Nil),
+            ("seen", Value::from(7)),
+            ("tz", Value::from("utc")),
+        ]);
+
+        assert_eq!(bins, expected, "{lang}: {answer:?}");
+        assert_eq!(answer.get(&Value::from("symmetric")), Some(&Value::from(true)), "{lang}: {answer:?}");
+        assert_eq!(answer.get(&Value::from("idempotent")), Some(&Value::from(true)), "{lang}: {answer:?}");
+
+        assert_eq!(info(&client, &unbind_command(BIN_CONVERGENCE_NS, set_name)).await, "ok");
+        let _ = client.delete(&write, &key).await;
+
+        // The same module where no bin has a stamp of its own: it says so instead of deciding by the
+        // record's time.
+        let namespace = common::namespace();
+        let plain = as_key!(namespace, set_name, "ada");
+
+        client.put(&write, &plain, &[as_bin!("theme", "dark")]).await.unwrap();
+        assert_eq!(info(&client, &bind_command(namespace, set_name, package, "merge_settings")).await, "ok", "{lang}");
+
+        let refused = client
+            .execute_udf(
+                &write,
+                &plain,
+                "__event__",
+                "xdr-merge",
+                &[Value::from(bins_map(&[("theme", Value::from("solar"))])), Value::from(meta(4, LATER, 0, 2))],
+            )
+            .await;
+
+        assert!(
+            format!("{refused:?}").contains("conflict-resolve-writes"),
+            "{lang}: without bin convergence the merge fails and says why: {refused:?}"
+        );
+
+        assert_eq!(info(&client, &unbind_command(namespace, set_name)).await, "ok");
+        let _ = client.delete(&write, &plain).await;
         remove_module(&client, package).await;
     }
 }

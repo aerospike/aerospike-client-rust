@@ -4,61 +4,40 @@
 
 ```go
 type EventRecord struct {
-	which              int32 // 0 current, 1 incoming
-	generation         int64
-	lastUpdateTime     int64
-	ttl                int64
-	sourceID           int64
-	binNames           Value // list of bin names
-	deletedBins        Value // list of bin names this side deleted; Absent kind when none
-	binLastUpdateTimes Value // map name -> last update time per bin, when the server keeps one; Absent kind otherwise
-	binSourceIDs       Value // map name -> source id, likewise
-
-	// What the server says of the merge, each kept on the record it is true of and read through the
-	// method of the same name. On the other record they are the zero value, so the method answers false
-	// or walks nothing.
-	lost           Value // the incoming bins that would lose under bin convergence
-	isDelete       bool
-	partial        bool
-	tombstone      bool
-	binConvergence bool
+	// contains unexported fields
 }
 ```
 
-EventRecord is one of the two records of a merge: the current one, as it is on this cluster, or the
-incoming one, as it arrived over XDR.
+EventRecord is one of the two records an xdr-merge handler is given: the current one, as it is on
+this cluster, or the incoming one, as it arrived over XDR.
 
-#### `MapGet`
+It is read like the record of a UDF, with the methods of RecordReader: Bin, Get, the typed readers
+Int, Double, Bool, String, Blob and Bytes, List and Map. Beyond those it names its bins (BinNames) and the
+bins its side deleted (DeletedBins), says when and by which cluster a bin was last written
+(BinLastUpdateTime, BinSourceID), and carries what the server says of the merge: IsDelete,
+IsPartial and LostBins of the incoming record, IsTombstone of the current one.
 
-```go
-func MapGet(m Value, key string) Value
-```
-
-MapGet is a map entry by string key; a value of Absent kind when there is none or m is not a map.
-
-#### `MapString`
-
-```go
-func MapString(m Value, key string) string
-```
-
-MapString is a string entry of a map, or "" when absent.
-
-#### `MapBool`
+It has no writing methods. A handler changes the record through the Resolution it returns, and it
+cannot read the clock (Now answers -1) or write to the log: a Log line is dropped. Generation and
+LastUpdateTime are 0 on both records. The two records are good for the call.
 
 ```go
-func MapBool(m Value, key string) bool
+//udf:on xdr-merge merge_visits
+func mergeVisits(current, incoming *udf.EventRecord) (udf.Resolution, error) {
+	pair := udf.PairOf(current, incoming)
+	out := udf.NewMap(4)
+
+	visits, err := pair.Int("visits")
+	if err != nil {
+		return udf.Resolution{}, err
+	}
+	if most, ok := udf.Max(visits); ok {
+		out.Put("visits", most)
+	}
+
+	return udf.Resolve(pair.WithNewer(out)), out.Err()
+}
 ```
-
-MapBool is a boolean entry of a map, false when absent.
-
-#### `MapInt`
-
-```go
-func MapInt(m Value, key string, dflt int64) int64
-```
-
-MapInt is an integer map entry, or dflt.
 
 #### `StringIs`
 
@@ -66,7 +45,10 @@ MapInt is an integer map entry, or dflt.
 func StringIs(v Value, text string) bool
 ```
 
-StringIs reports whether a stored string value reads as text.
+StringIs reports whether a string value reads as text, without allocating for text of up to 64
+bytes; longer text is compared through a buffer of its own length, so text of any length matches
+when it is equal. It is false for a value that is not a string - a blob or a GeoJSON with the same
+bytes included - and for a string the host can no longer read.
 
 #### `DecodeMerge`
 
@@ -74,9 +56,34 @@ StringIs reports whether a stored string value reads as text.
 func DecodeMerge(args, argc int32, current, incoming *EventRecord) bool
 ```
 
-DecodeMerge reads an xdr-merge call's arguments into the two records. False when they are not that
-event. The generated export of a `//udf:on xdr-merge` handler calls it; a raw handler, which is handed
-(args, argc) as they come, calls it first to get the records it then reads.
+DecodeMerge reads an xdr-merge call's arguments into the two records, and answers false when the
+call is not that event, in which case current and incoming are not to be read. args and argc are
+the two parameters the export was called with.
+
+The generated export of a `//udf:on xdr-merge` handler calls it. A handler in the raw form, which
+is handed (args, argc) as they come, calls it first to get the records it then reads:
+
+```go
+//udf:on xdr-merge keep_richer
+func keepRicher(args, argc int32) int32 {
+	var current, incoming udf.EventRecord
+	if !udf.DecodeMerge(args, argc, &current, &incoming) {
+		return udf.Fail("keep_richer: not an xdr-merge call")
+	}
+	theirs, err := incoming.IntOr("balance", 0)
+	if err != nil {
+		return udf.FailErr(err)
+	}
+	mine, err := current.IntOr("balance", 0)
+	if err != nil {
+		return udf.FailErr(err)
+	}
+	if theirs > mine {
+		return udf.TakeRemote().Deliver()
+	}
+	return udf.KeepLocal().Deliver()
+}
+```
 
 #### `EventRecord.BinLastUpdateTime`
 
@@ -84,8 +91,15 @@ event. The generated export of a `//udf:on xdr-merge` handler calls it; a raw ha
 func (r *EventRecord) BinLastUpdateTime(name string) int64
 ```
 
-BinLastUpdateTime is when this side last wrote the bin: per bin where the server keeps one, the
-record's otherwise.
+BinLastUpdateTime is when this side last wrote the bin, where the server keeps a time per bin, and
+the record's LastUpdateTime otherwise. It is in milliseconds since the Citrusleaf epoch,
+2010-01-01T00:00:00Z (Unix milliseconds minus 1 262 304 000 000), like LastUpdateTime. It is for
+ordering the two sides of one bin, which is what decides a bin under bin convergence;
+Pair.IncomingIsNewer and Both.Newer do that with it.
+
+The server keeps a time per bin only under bin convergence (UsesBinConvergence). Without it this
+is the record's time, which an xdr-merge reports as 0 on both sides, so nothing can be ordered by
+it. name need not be a bin the side has: a bin with no time of its own gets the record's.
 
 #### `EventRecord.BinSourceID`
 
@@ -93,15 +107,28 @@ record's otherwise.
 func (r *EventRecord) BinSourceID(name string) int64
 ```
 
-BinSourceID is the source id that wrote the bin, likewise.
+BinSourceID is the source id of the cluster that last wrote the bin on this side, where the server
+keeps one per bin (under bin convergence), and the record's SourceID otherwise. It is the tie-break
+when two sides wrote a bin at the same time.
 
 #### `EachString`
 
 ```go
-func EachString(list Value, buf []byte, fn func(name []byte, v Value))
+func EachString(list Value, buf []byte, fn func(name []byte, v Value)) error
 ```
 
-EachString calls fn with every string of a stored list, as bytes into buf.
+EachString calls fn with every string of a stored list, in order: name is the string's bytes,
+copied into buf, and v the stored value itself. name is good only until fn returns; copy what is to
+be kept.
+
+A string of any length is handed over. One that fits buf is copied into it and nothing is
+allocated, so give it a buffer as long as the longest string expected (15 bytes for bin names); a
+longer one is copied into a buffer made for it. An element that is not a string is not a string of
+the list, and is passed over.
+
+A list that is absent or nil has no strings, and the answer is nil. The error is an *Error: Status
+TypeMismatch when list is a value of another kind, and the host's status when the list could not be
+walked - the call holds its 256 handles - or a string could not be read; the walk stops there.
 
 #### `XdrMergeSignature`
 
@@ -109,59 +136,93 @@ EachString calls fn with every string of a stored list, as bytes into buf.
 func XdrMergeSignature(name string) []byte
 ```
 
-XdrMergeSignature is the signature text an xdr-merge handler exports under `__udf_sig_<name>`,
-NUL-terminated. Keep it in a package-level variable and serve it with Signature.
+XdrMergeSignature is the signature text of an xdr-merge handler, NUL-terminated: what the export
+`__udf_sig_<name>` serves and `event-set` checks before it binds the handler. name is the name the
+handler is exported under. udfgen writes this for a `//udf:on xdr-merge` handler; by hand, keep the
+text in a package-level variable and serve it with Signature:
+
+```go
+var sigMerge = udf.XdrMergeSignature("merge_visits")
+
+//export __udf_sig_merge_visits
+func udfSigMerge() int32 { return udf.Signature(&sigMerge) }
+```
 
 #### `Resolution`
 
 ```go
 type Resolution struct {
-	verdict string
-	bins    int32
-	ttl     int64
-	err     error
+	// contains unexported fields
 }
 ```
 
-Resolution is what an xdr-merge handler returns: keep the current record, apply the incoming write
-whole, let the namespace's policy decide, or the final record.
+Resolution is what an xdr-merge handler returns: keep the current record (KeepLocal), apply the
+incoming write whole (TakeRemote), let the namespace's policy decide (Policy), remove the record
+(DeleteRecord), or the final record, bin by bin (Resolve, ResolveTTL). Make one with those
+functions. The zero Resolution is not an answer: return it only beside a non-nil error, which fails
+the handler.
+
+```go
+//udf:on xdr-merge keep_richer
+func keepRicher(current, incoming *udf.EventRecord) (udf.Resolution, error) {
+	mine, ok, err := current.Int("balance")
+	if err != nil {
+		return udf.Resolution{}, err // a balance that is not an integer fails the handler
+	}
+	if !ok {
+		return udf.Policy(), nil // nothing to compare: as if there were no handler
+	}
+	theirs, ok, err := incoming.Int("balance")
+	if err != nil {
+		return udf.Resolution{}, err
+	}
+	if ok && theirs > mine {
+		return udf.TakeRemote(), nil
+	}
+	return udf.KeepLocal(), nil
+}
+```
 
 #### `Resolution.Verdict`
 
 ```go
-func (r Resolution) Verdict() string { return r.verdict }
+func (r Resolution) Verdict() string
 ```
 
-Verdict is the resolution's verdict word, such as "keep-local" or "record".
+Verdict is the resolution's verdict word, as the server reads it: "keep-local", "take-remote",
+"policy", "delete", or "record" for one made by Resolve or ResolveTTL.
 
 #### `KeepLocal`
 
 ```go
-func KeepLocal() Resolution { return Resolution{verdict: "keep-local", ttl: -1} }
+func KeepLocal() Resolution
 ```
 
-KeepLocal keeps the current record; the incoming write is dropped.
+KeepLocal keeps the current record as it is. The incoming write is dropped, which its source counts
+as a success.
 
 #### `TakeRemote`
 
 ```go
-func TakeRemote() Resolution { return Resolution{verdict: "take-remote", ttl: -1} }
+func TakeRemote() Resolution
 ```
 
-TakeRemote applies the incoming write whole, as if it had won every bin.
+TakeRemote applies the incoming write whole, its bins over the current record, as if it had won
+every bin.
 
 #### `Policy`
 
 ```go
-func Policy() Resolution { return Resolution{verdict: "policy", ttl: -1} }
+func Policy() Resolution
 ```
 
-Policy lets the namespace's policy decide, as it would have without the event.
+Policy lets the namespace's policy decide, as it would have without the event: the answer of a
+handler that has no opinion on this pair.
 
 #### `DeleteRecord`
 
 ```go
-func DeleteRecord() Resolution { return Resolution{verdict: "delete", ttl: -1} }
+func DeleteRecord() Resolution
 ```
 
 DeleteRecord removes the record on this cluster. The other cluster decides for itself, so a merge that
@@ -171,19 +232,40 @@ is not this: it is the handler's failure.
 #### `Resolve`
 
 ```go
-func Resolve(bins *Map) Resolution { return recordOf(bins, -1) }
+func Resolve(bins *Map) Resolution
 ```
 
-Resolve is the final record: these bins, whole - a bin not in the map, or nil, is deleted - keeping
-the TTL the incoming write asked for.
+Resolve is the final record: these bins and no others. A bin that is not in the map, or is nil in
+it, is deleted, so a handler that decides a few bins fills in the rest first, with Pair.WithNewer.
+The record keeps the TTL the incoming write asked for.
+
+The server checks the answer before taking it, and what is wrong with it is the handler's failure:
+a key that is not a bin name (a string of 1 to 15 bytes), text in a GeoJSON bin that is not GeoJSON,
+and a map with no bins left, since a record of nothing is not a deletion (DeleteRecord is). A
+refusal the map kept while it was built fails the handler too.
+
+```go
+pair := udf.PairOf(current, incoming)
+out := udf.NewMap(4)
+visits, err := pair.Int("visits")
+if err != nil {
+	return udf.Resolution{}, err
+}
+if most, ok := udf.Max(visits); ok {
+	out.Put("visits", most)
+}
+return udf.Resolve(pair.WithNewer(out)), out.Err()
+```
 
 #### `ResolveTTL`
 
 ```go
-func ResolveTTL(bins *Map, ttl int64) Resolution { return recordOf(bins, ttl) }
+func ResolveTTL(bins *Map, ttl int64) Resolution
 ```
 
-ResolveTTL is Resolve with a TTL in seconds: 0 for the namespace default.
+ResolveTTL is Resolve with the record's TTL, in seconds: 0 for the namespace default. A negative
+ttl is not sent, and the record keeps the TTL the incoming write asked for, as with Resolve. Both
+clusters have to arrive at the same TTL, like everything else in the answer.
 
 #### `Resolution.Deliver`
 
@@ -191,8 +273,13 @@ ResolveTTL is Resolve with a TTL in seconds: 0 for the namespace default.
 func (r Resolution) Deliver() int32
 ```
 
-Deliver sets the resolution as the result and returns the status an export returns: the verdict word,
-or the record form with its bins and TTL. Called by the generated export.
+Deliver sets the resolution as the call's result and returns the status the export returns: 0, or
+non-zero after failing the call when the bins map had kept a refusal or the answer could not be
+built. The generated export calls it; a handler in the raw form ends with it.
+
+```go
+return udf.KeepLocal().Deliver()
+```
 
 #### `EventRecord.Bin`
 
@@ -200,16 +287,19 @@ or the record form with its bins and TTL. Called by the generated export.
 func (r *EventRecord) Bin(name string) (Value, error)
 ```
 
-Bin is one of this side's bins, whatever it holds, a nil included; an error naming the bin when the
-side has none by that name.
+Bin is one of this side's bins, whatever it holds. It is the form for a bin that must be there: the
+error names the bin, with Status NotFound, when the side has none by that name. A bin the side
+deleted, a nil bin, and a name that is not a bin name are all absent.
 
 #### `EventRecord.Get`
 
 ```go
-func (r *EventRecord) Get(name string) (Value, bool)
+func (r *EventRecord) Get(name string) (Value, bool, error)
 ```
 
-Get is the bin as a value; false when the side has no such bin or it is nil.
+Get is a bin that may be absent, whatever it holds: the value and true, or a Value of KindAbsent
+and false, with a nil error, when the side has no such bin or the bin is nil. The error is a bin
+that could not be read at all, as Record.Get's is.
 
 #### `EventRecord.Has`
 
@@ -217,129 +307,170 @@ Get is the bin as a value; false when the side has no such bin or it is nil.
 func (r *EventRecord) Has(name string) bool
 ```
 
-Has reports whether the side has the bin, nil included.
+Has reports whether the side has the bin. A bin the side deleted reads as absent; Deleted and
+DeletedBins are what tell "removed it" from "never had it".
 
 #### `EventRecord.Int`
 
 ```go
-func (r *EventRecord) Int(name string) (int64, bool) { return readInt(r, name) }
+func (r *EventRecord) Int(name string) (int64, bool, error)
 ```
 
-Int is an int bin; false when absent, nil or of another kind.
+Int is an integer bin, with the three outcomes of every typed reader: the value and true; false
+with a nil error when the bin is absent or nil; an error with Status TypeMismatch when it holds
+another kind.
 
 #### `EventRecord.Double`
 
 ```go
-func (r *EventRecord) Double(name string) (float64, bool) { return readDouble(r, name) }
+func (r *EventRecord) Double(name string) (float64, bool, error)
 ```
 
-Double is a double bin; false when absent, nil or of another kind. An integer bin is not widened.
+Double is a double bin; false when absent or nil, an error when of another kind. An integer bin is
+another kind: it is not widened.
 
 #### `EventRecord.Bool`
 
 ```go
-func (r *EventRecord) Bool(name string) (bool, bool) { return readBool(r, name) }
+func (r *EventRecord) Bool(name string) (bool, bool, error)
 ```
 
-Bool is a boolean bin; false when absent, nil or of another kind.
+Bool is a boolean bin. The second result is false when the bin is absent or nil; a bin of another
+kind is an error.
 
 #### `EventRecord.String`
 
 ```go
-func (r *EventRecord) String(name string) (string, bool) { return readString(r, name) }
+func (r *EventRecord) String(name string) (string, bool, error)
 ```
 
-String is the text of a string bin, copied out; false when absent, nil, of another kind, or unreadable.
+String is the text of a string bin, copied into a new Go string; false when absent or nil, an
+error when of another kind, a GeoJSON bin included.
 
 #### `EventRecord.Blob`
 
 ```go
-func (r *EventRecord) Blob(name string) ([]byte, bool) { return readBlob(r, name) }
+func (r *EventRecord) Blob(name string) ([]byte, bool, error)
 ```
 
-Blob is the bytes of a blob bin, copied out; false when absent, nil or of another kind.
+Blob is the bytes of a blob bin, copied into a new slice; false when absent or nil. It is strict:
+a string, GeoJSON or HLL bin is an error, like any other kind. Bytes reads the raw bytes of all
+four.
+
+#### `EventRecord.Bytes`
+
+```go
+func (r *EventRecord) Bytes(name string) ([]byte, bool, error)
+```
+
+Bytes is the raw bytes of a string, blob, GeoJSON or HLL bin, copied into a new slice; false when
+absent or nil, an error when the bin is a scalar, a list or a map.
 
 #### `EventRecord.IntOr`
 
 ```go
-func (r *EventRecord) IntOr(name string, dflt int64) int64 { return readIntOr(r, name, dflt) }
+func (r *EventRecord) IntOr(name string, dflt int64) (int64, error)
 ```
 
-IntOr is an int bin, or dflt when it is absent, nil or of another kind.
+IntOr is an integer bin, or dflt when it is absent or nil; a bin of another kind is an error, not
+the default.
 
 #### `EventRecord.DoubleOr`
 
 ```go
-func (r *EventRecord) DoubleOr(name string, dflt float64) float64 { return readDoubleOr(r, name, dflt) }
+func (r *EventRecord) DoubleOr(name string, dflt float64) (float64, error)
 ```
 
-DoubleOr is a double bin, or dflt when it is absent, nil or of another kind, an integer included.
+DoubleOr is a double bin, or dflt when it is absent or nil; a bin of another kind, an integer
+included, is an error.
 
 #### `EventRecord.BoolOr`
 
 ```go
-func (r *EventRecord) BoolOr(name string, dflt bool) bool { return readBoolOr(r, name, dflt) }
+func (r *EventRecord) BoolOr(name string, dflt bool) (bool, error)
 ```
 
-BoolOr is a boolean bin, or dflt when it is absent, nil or of another kind.
+BoolOr is a boolean bin, or dflt when it is absent or nil; a bin of another kind is an error.
 
 #### `EventRecord.Generation`
 
 ```go
-func (r *EventRecord) Generation() int64 { return r.generation }
+func (r *EventRecord) Generation() int64
 ```
 
-Generation is this side's modification count.
+Generation is the record's generation as the event carries it, which for an xdr-merge is 0 on both
+sides: each cluster counts its own writes, and a merge that read the count could not come out the
+same on both. It is here because RecordReader has it.
 
 #### `EventRecord.LastUpdateTime`
 
 ```go
-func (r *EventRecord) LastUpdateTime() int64 { return r.lastUpdateTime }
+func (r *EventRecord) LastUpdateTime() int64
 ```
 
-LastUpdateTime is when this side was last written, in ms since the Aerospike epoch (2010-01-01 UTC).
+LastUpdateTime is the record's last update time as the event carries it, in milliseconds since the
+Citrusleaf epoch, 2010-01-01T00:00:00Z (Unix milliseconds minus 1 262 304 000 000), which for an
+xdr-merge is 0 on both sides, for the same reason as Generation. To order the two sides, use
+BinLastUpdateTime, bin by bin.
 
 #### `EventRecord.TTL`
 
 ```go
-func (r *EventRecord) TTL() int64 { return r.ttl }
+func (r *EventRecord) TTL() int64
 ```
 
 TTL is this side's time to live, in seconds: what the current record has left, and what the incoming
-write asks for.
+write asks for. 0 is a record that does not expire.
 
 #### `EventRecord.SourceID`
 
 ```go
-func (r *EventRecord) SourceID() int64 { return r.sourceID }
+func (r *EventRecord) SourceID() int64
 ```
 
-SourceID is the id of the cluster that wrote this side, the tie-break when two last update times are
-equal.
+SourceID is the XDR source id of the cluster that wrote this side, the tie-break when two last
+update times are equal. It is never 0 on the incoming side: the server refuses an incoming write
+that carries no source id, or this cluster's own, before the handler runs.
 
 #### `EventRecord.List`
 
 ```go
-func (r *EventRecord) List(name string) iter.Seq[Value]
+func (r *EventRecord) List(name string) (Value, bool, error)
 ```
 
-List walks a list bin; nothing when absent or not a list.
+List is a list bin, as the stored Value to range over with Value.List; false when the bin is
+absent or nil, an error with Status TypeMismatch when it is not a list, and the list with Len 0
+when it is empty.
 
 #### `EventRecord.Map`
 
 ```go
-func (r *EventRecord) Map(name string) iter.Seq2[Value, Value]
+func (r *EventRecord) Map(name string) (Value, bool, error)
 ```
 
-Map walks a map bin's entries; nothing when absent or not a map.
+Map is a map bin, as the stored Value to range over with Value.Map or read with Value.Lookup;
+false when the bin is absent or nil, an error with Status TypeMismatch when it is not a map.
 
 #### `EventRecord.BinNames`
 
 ```go
-func (r *EventRecord) BinNames() iter.Seq[string] { return names(r.binNames) }
+func (r *EventRecord) BinNames() iter.Seq[string]
 ```
 
-BinNames walks the record's bin names.
+BinNames walks the names of this side's bins, each copied into a Go string. An incoming write that
+is partial (IsPartial) names only the bins it carries.
+
+```go
+for name := range incoming.BinNames() {
+	if !out.Contains(name) {
+		v, err := incoming.Bin(name)
+		if err != nil {
+			return udf.Resolution{}, err
+		}
+		out.Put(name, v)
+	}
+}
+```
 
 #### `EventRecord.BinCount`
 
@@ -347,7 +478,7 @@ BinNames walks the record's bin names.
 func (r *EventRecord) BinCount() int64
 ```
 
-BinCount is how many bins this side has.
+BinCount is how many bins this side has, known without a walk; 0 for an incoming delete.
 
 #### `EventRecord.WithBins`
 
@@ -355,18 +486,38 @@ BinCount is how many bins this side has.
 func (r *EventRecord) WithBins(overrides *Map) *Map
 ```
 
-WithBins is overrides with every bin of this record it lacks put on top, by position: the Rust SDK's
-with_bins, for a record answer that changes a few bins and keeps the rest. It prefers one side, so an
-xdr-merge handler that uses it on the current record is not symmetric; Pair.WithNewer is the symmetric
-form. Returns overrides.
+WithBins fills overrides in from this record: every bin of the record that the map does not hold
+yet is put in, by position, and the same map is returned. It is for a record answer that changes a
+few bins and keeps the rest. It costs a few imports for each bin of the record.
+
+It prefers one side, so an xdr-merge handler that uses it on the current record is not symmetric:
+the other cluster, doing the same, keeps its own bins. Pair.WithNewer is the symmetric form; use
+this one when the side was chosen by something both clusters agree on.
+
+Only this record's own bins go in, so a bin this side deleted is not brought back from anywhere:
+it is not among BinNames, and the answer leaves it out. A bin that is named and cannot be read is
+a refusal the map keeps, answered by its Err, as a put that failed is.
 
 #### `EventRecord.DeletedBins`
 
 ```go
-func (r *EventRecord) DeletedBins() iter.Seq[string] { return names(r.deletedBins) }
+func (r *EventRecord) DeletedBins() iter.Seq[string]
 ```
 
-DeletedBins walks the names of the bins this side deleted; nothing when it deleted none.
+DeletedBins walks the names of the bins this side deleted: for the incoming write, its bin deletes;
+for the current record, its bin tombstones. Nothing when it deleted none. A deleted bin reads as
+absent, so this is the only way to tell "never had it" from "removed it", and BinLastUpdateTime
+says when. Bringing such a bin back from the other side is the mistake a merge has to guard
+against; Pair.WithNewer guards against it.
+
+#### `EventRecord.Deleted`
+
+```go
+func (r *EventRecord) Deleted(name string) bool
+```
+
+Deleted reports whether this side deleted the bin name: whether it is among DeletedBins. The name
+is compared whole.
 
 #### `EventRecord.DeletedAny`
 
@@ -374,12 +525,12 @@ DeletedBins walks the names of the bins this side deleted; nothing when it delet
 func (r *EventRecord) DeletedAny() bool
 ```
 
-DeletedAny reports whether this side deleted any bin.
+DeletedAny reports whether this side deleted any bin, without walking DeletedBins.
 
 #### `EventRecord.IsDelete`
 
 ```go
-func (r *EventRecord) IsDelete() bool { return r.isDelete }
+func (r *EventRecord) IsDelete() bool
 ```
 
 IsDelete reports whether the incoming write is a record delete, in which case the incoming record has
@@ -388,7 +539,7 @@ no bins. Always false of the current record.
 #### `EventRecord.IsPartial`
 
 ```go
-func (r *EventRecord) IsPartial() bool { return r.partial }
+func (r *EventRecord) IsPartial() bool
 ```
 
 IsPartial reports whether the incoming write carries only the bins that changed, so a bin it lacks may
@@ -397,16 +548,16 @@ well exist on the other cluster. Always false of the current record.
 #### `EventRecord.LostBins`
 
 ```go
-func (r *EventRecord) LostBins() iter.Seq[string] { return names(r.lost) }
+func (r *EventRecord) LostBins() iter.Seq[string]
 ```
 
-LostBins walks the names of the incoming bins that would lose under bin convergence. Nothing of the
-current record.
+LostBins walks the names of the incoming bins that would lose under bin convergence: the bins the
+namespace's policy would not have applied. Nothing of the current record.
 
 #### `EventRecord.IsTombstone`
 
 ```go
-func (r *EventRecord) IsTombstone() bool { return r.tombstone }
+func (r *EventRecord) IsTombstone() bool
 ```
 
 IsTombstone reports whether the current record is a tombstone: it exists and has no bins. Always false
@@ -415,12 +566,13 @@ of the incoming record, whose delete is IsDelete.
 #### `EventRecord.UsesBinConvergence`
 
 ```go
-func (r *EventRecord) UsesBinConvergence() bool { return r.binConvergence }
+func (r *EventRecord) UsesBinConvergence() bool
 ```
 
 UsesBinConvergence reports whether the namespace converges bin by bin, which is when the per-bin
 timestamps behind BinLastUpdateTime mean something; without it that is the record's for every bin. A
-fact about the merge, so both records answer the same.
+fact about the merge, so both records answer the same. A merge that orders the sides by time asks
+it first.
 
 #### `Pair`
 
@@ -431,16 +583,44 @@ type Pair struct {
 }
 ```
 
-Pair is the two records of a merge, read bin by bin into a Both: the Go face of the Rust SDK's Pair.
-Make one with PairOf.
+Pair is the two records of a merge side by side, read bin by bin into a Both: the Go face of the
+Rust SDK's Pair. Make one with PairOf. Its readers take a bin name and answer that bin on each
+side, or an error when a side holds another kind than the reader's; Both then carries the merges.
+
+```go
+//udf:on xdr-merge merge_account
+func mergeAccount(current, incoming *udf.EventRecord) (udf.Resolution, error) {
+	pair := udf.PairOf(current, incoming)
+	out := udf.NewMap(8)
+
+	visits, err := pair.Int("visits")
+	if err != nil {
+		return udf.Resolution{}, err // a side where visits is not an integer
+	}
+	if most, ok := udf.Max(visits); ok { // both sides' increments are real
+		out.Put("visits", most)
+	}
+
+	profile, err := pair.Bin("profile")
+	if err != nil {
+		return udf.Resolution{}, err
+	}
+	if latest, ok := profile.Newer(); ok { // last writer wins
+		out.Put("profile", latest)
+	}
+
+	return udf.Resolve(pair.WithNewer(out)), out.Err() // the rest as the policy would keep it
+}
+```
 
 #### `PairOf`
 
 ```go
-func PairOf(current, incoming *EventRecord) Pair { return Pair{Current: current, Incoming: incoming} }
+func PairOf(current, incoming *EventRecord) Pair
 ```
 
-PairOf is the two records a handler was given, side by side, for bin-wise merging.
+PairOf is the two records a handler was given, side by side, for bin-wise merging. Pass them as
+the handler got them, current first: Both's Current and Incoming follow the order given here.
 
 #### `Both`
 
@@ -450,82 +630,130 @@ type Both[T any] struct {
 	Incoming       T
 	HasCurrent     bool
 	HasIncoming    bool
-	currentTime    int64
-	incomingTime   int64
-	currentSource  int64
-	incomingSource int64
+	// contains unexported fields
 }
 ```
 
-Both is a bin on both sides of a merge, either of which may be missing, with the merges a resolver
-reaches for. Max, Min and Sum are functions, since a method cannot add a constraint the type lacks.
+Both is one bin on both sides of a merge, either of which may be missing, with the merges a resolver
+reaches for. Current and Incoming are the two values, and HasCurrent and HasIncoming say whether
+each is there; the value of a missing side is T's zero value and is not to be read. Both also
+remembers when, and by which cluster, each side wrote the bin, which is what Newer, Older and
+Ordered go by.
+
+Max, Min and Sum are functions, since a method cannot add a constraint the type lacks.
+
+```go
+visits, err := pair.Int("visits") // a Both[int64]
+if err != nil {
+	return udf.Resolution{}, err
+}
+if visits.HasCurrent && visits.HasIncoming {
+	out.Put("visits", max(visits.Current, visits.Incoming))
+}
+
+note, err := pair.String("note")
+if err != nil {
+	return udf.Resolution{}, err
+}
+if latest, ok := note.Newer(); ok { // last writer wins, in one step
+	out.Put("note", latest)
+}
+```
 
 #### `Pair.Int`
 
 ```go
-func (p Pair) Int(name string) Both[int64]
+func (p Pair) Int(name string) (Both[int64], error)
 ```
 
-Int is an int bin on each side; a side where it is absent, nil or of another kind is missing.
+Int is an integer bin on each side; a side where it is absent or nil is missing. A side where the
+bin holds another kind is an error, an *Error with Status TypeMismatch, as it is for
+EventRecord.Int: every reader of Pair answers the three outcomes of the reader of the same name,
+once for each side.
+
+```go
+visits, err := pair.Int("visits")
+if err != nil {
+	return udf.Resolution{}, err
+}
+if most, ok := udf.Max(visits); ok {
+	out.Put("visits", most)
+}
+```
 
 #### `Pair.Double`
 
 ```go
-func (p Pair) Double(name string) Both[float64]
+func (p Pair) Double(name string) (Both[float64], error)
 ```
 
-Double is a double bin on each side; a side where it is absent, nil or of another kind, an integer
-included, is missing.
+Double is a double bin on each side; a side where it is absent or nil is missing, and a side where
+it holds another kind, an integer included, is an error.
 
 #### `Pair.Bool`
 
 ```go
-func (p Pair) Bool(name string) Both[bool]
+func (p Pair) Bool(name string) (Both[bool], error)
 ```
 
-Bool is a boolean bin on each side; a side where it is absent, nil or of another kind is missing.
+Bool is a boolean bin on each side; a side where it is absent or nil is missing, and a side where
+it holds another kind is an error.
 
 #### `Pair.String`
 
 ```go
-func (p Pair) String(name string) Both[string]
+func (p Pair) String(name string) (Both[string], error)
 ```
 
-String is the text of a string bin on each side, copied out; a side where it is absent, nil or of
-another kind is missing.
+String is the text of a string bin on each side, copied out; a side where it is absent or nil is
+missing, and a side where it holds another kind is an error.
 
 #### `Pair.Blob`
 
 ```go
-func (p Pair) Blob(name string) Both[[]byte]
+func (p Pair) Blob(name string) (Both[[]byte], error)
 ```
 
-Blob is the bytes of a blob bin on each side, copied out; a side where it is absent, nil or of another
-kind is missing.
+Blob is the bytes of a blob bin on each side, copied out; a side where it is absent or nil is
+missing, and a side where it holds another kind - a string, GeoJSON or HLL included - is an error.
+
+#### `Pair.Bytes`
+
+```go
+func (p Pair) Bytes(name string) (Both[[]byte], error)
+```
+
+Bytes is the raw bytes of a string, blob, GeoJSON or HLL bin on each side, copied out; a side where
+it is absent or nil is missing, and a side where it is a scalar, a list or a map is an error.
 
 #### `Pair.Bin`
 
 ```go
-func (p Pair) Bin(name string) Both[Value]
+func (p Pair) Bin(name string) (Both[Value], error)
 ```
 
-Bin is the bin as a value on each side; absent and nil sides are missing.
+Bin is the bin as a Value on each side, whatever kind it holds; a side where it is absent or nil
+is missing. It is the form for a bin the handler passes on without reading, as Newer does: the
+value goes into the answer by position. The error is a bin that could not be read at all.
 
 #### `Pair.List`
 
 ```go
-func (p Pair) List(name string) Both[Value]
+func (p Pair) List(name string) (Both[Value], error)
 ```
 
-List is a list bin on each side, as stored values to range over.
+List is a list bin on each side, as stored Values to range over with Value.List; a side where the
+bin is absent or nil is missing, and a side where it is not a list is an error.
 
 #### `Pair.Map`
 
 ```go
-func (p Pair) Map(name string) Both[Value]
+func (p Pair) Map(name string) (Both[Value], error)
 ```
 
-Map is a map bin on each side, as stored values to range over.
+Map is a map bin on each side, as stored Values to range over with Value.Map or read with
+Value.Lookup; a side where the bin is absent or nil is missing, and a side where it is not a map
+is an error.
 
 #### `Pair.IncomingIsNewer`
 
@@ -533,8 +761,10 @@ Map is a map bin on each side, as stored values to range over.
 func (p Pair) IncomingIsNewer(name string) bool
 ```
 
-IncomingIsNewer reports whether the incoming side wrote name later, per bin: the order the bin-lut
-policy uses.
+IncomingIsNewer reports whether the incoming side wrote the bin name later: by the bin's last
+update time, and on a tie by source id, the larger winning. It is the order the server's own bin
+convergence uses, and it is symmetric: the other cluster, with the sides swapped, names the same
+winner. Without bin convergence there are no per-bin times and the source id alone decides.
 
 #### `Pair.WithNewer`
 
@@ -542,9 +772,18 @@ policy uses.
 func (p Pair) WithNewer(overrides *Map) *Map
 ```
 
-WithNewer is overrides with every bin either side has that it lacks, from the side that wrote it later -
-which is what the policy would have kept - so a handler merges the bins it knows about and leaves the
-rest as they would have been. Symmetric: both DCs order the two sides the same way. Returns overrides.
+WithNewer fills overrides in from both records: every bin either side has that the map does not
+hold yet is put in from the side that wrote it later - which is what the policy would have kept -
+and the same map is returned. So a handler merges the bins it knows about and leaves the rest as
+they would have been. It is symmetric: both clusters order the two sides the same way.
+
+A bin only one side has comes from that side, whichever is newer, unless the newer side deleted
+it. A deleted bin is not brought back: when the side that wrote the bin later is the one that
+deleted it (Deleted), the map gets nil under the bin, which in a record answer deletes it. When
+the delete is the older write, the other side's value stands.
+
+A bin that is named and cannot be read is a refusal the map keeps, answered by its Err, as a put
+that failed is.
 
 #### `Both.IncomingIsNewer`
 
@@ -555,7 +794,7 @@ func (b Both[T]) IncomingIsNewer() bool
 IncomingIsNewer reports whether the incoming side wrote this bin later: by the bin's last update time
 where the server keeps one, the record's otherwise, and on a tie by source id - the order the server's
 own bin convergence uses, so "newer" means the same on both DCs even when the clocks agreed to the
-millisecond.
+millisecond. It goes by when each side wrote, not by whether a side has the bin.
 
 #### `Both.Newer`
 
@@ -563,7 +802,10 @@ millisecond.
 func (b Both[T]) Newer() (T, bool)
 ```
 
-Newer is the side written later; whichever exists when only one does.
+Newer is the value of the side that wrote the bin later, and true; the value of whichever side has
+the bin when only one does; false when neither has it. It is last-writer-wins for one bin. It goes
+by what each side holds, so a bin the newer side deleted comes from the older one: a handler that
+honours deletes asks EventRecord.Deleted first, as Pair.WithNewer does.
 
 #### `Both.Older`
 
@@ -571,7 +813,8 @@ Newer is the side written later; whichever exists when only one does.
 func (b Both[T]) Older() (T, bool)
 ```
 
-Older is the side written earlier; whichever exists when only one does.
+Older is the value of the side that wrote the bin earlier, and true; the value of whichever side
+has the bin when only one does; false when neither has it.
 
 #### `Both.Ordered`
 
@@ -579,7 +822,28 @@ Older is the side written earlier; whichever exists when only one does.
 func (b Both[T]) Ordered() (older T, hasOlder bool, newer T, hasNewer bool)
 ```
 
-Ordered is both sides as (older, newer), each with whether it exists: the order both DCs agree on.
+Ordered is both sides as (older, newer), each with whether it is there: the order both DCs agree
+on, for a merge whose result depends on order, such as a list that is the older side's elements
+followed by the newer side's new ones.
+
+```go
+both, err := pair.List("tags")
+if err != nil {
+	return udf.Resolution{}, err
+}
+older, hasOlder, newer, hasNewer := both.Ordered()
+tags := udf.NewList(16)
+if hasOlder {
+	tags.AddAll(older)
+}
+if hasNewer {
+	for tag := range newer.List() {
+		if text, err := tag.String(); err == nil && !(hasOlder && udf.Contains(older, text)) {
+			tags.Add(tag)
+		}
+	}
+}
+```
 
 #### `Both.CurrentOrIncoming`
 
@@ -587,7 +851,8 @@ Ordered is both sides as (older, newer), each with whether it exists: the order 
 func (b Both[T]) CurrentOrIncoming() (T, bool)
 ```
 
-CurrentOrIncoming is the current side when it exists, the incoming side otherwise; false when neither exists.
+CurrentOrIncoming is the current side when it exists, the incoming side otherwise; false when neither
+exists. It prefers a side, so on its own it is not a symmetric merge.
 
 #### `Both.IncomingOrCurrent`
 
@@ -595,7 +860,8 @@ CurrentOrIncoming is the current side when it exists, the incoming side otherwis
 func (b Both[T]) IncomingOrCurrent() (T, bool)
 ```
 
-IncomingOrCurrent is the incoming side when it exists, the current side otherwise; false when neither exists.
+IncomingOrCurrent is the incoming side when it exists, the current side otherwise; false when neither
+exists. It prefers a side, so on its own it is not a symmetric merge.
 
 #### `Both.Merge`
 
@@ -603,7 +869,19 @@ IncomingOrCurrent is the incoming side when it exists, the current side otherwis
 func (b Both[T]) Merge(f func(l, r T) T) (T, bool)
 ```
 
-Merge combines the two when both exist; the one that exists otherwise.
+Merge combines the two values with f when both sides have the bin, and is the one that is there
+when only one does; false when neither has it. f is called with the current value first, and only
+when both exist. For the merge to converge f must not care which is which: f(a, b) has to equal
+f(b, a).
+
+```go
+// The union of two flag words, the same from either side.
+words, err := pair.Int("flags")
+if err != nil {
+	return udf.Resolution{}, err
+}
+flags, ok := words.Merge(func(a, b int64) int64 { return a | b })
+```
 
 #### `Max`
 
@@ -611,7 +889,18 @@ Merge combines the two when both exist; the one that exists otherwise.
 func Max[T cmp.Ordered](b Both[T]) (T, bool)
 ```
 
-Max is the larger of the two; the one that exists when only one does.
+Max is the larger of the two sides' values; the one that is there when only one side has the bin,
+and false when neither does. It is the merge for a count each cluster advanced on its own.
+
+```go
+visits, err := pair.Int("visits")
+if err != nil {
+	return udf.Resolution{}, err
+}
+if most, ok := udf.Max(visits); ok {
+	out.Put("visits", most)
+}
+```
 
 #### `Min`
 
@@ -619,7 +908,8 @@ Max is the larger of the two; the one that exists when only one does.
 func Min[T cmp.Ordered](b Both[T]) (T, bool)
 ```
 
-Min is the smaller of the two; the one that exists when only one does.
+Min is the smaller of the two sides' values; the one that is there when only one side has the bin,
+and false when neither does.
 
 #### `Sum`
 
@@ -627,5 +917,10 @@ Min is the smaller of the two; the one that exists when only one does.
 func Sum[T int64 | float64](b Both[T]) T
 ```
 
-Sum is the sum, a missing side counting as zero.
+Sum is the sum of the two sides' values, a missing side counting as zero, so it is 0 when neither
+side has the bin: unlike Max and Min it has no "nothing" answer, and a caller that must tell reads
+HasCurrent and HasIncoming. An integer sum that overflows wraps around, as Go's addition does; it
+is never undefined. A sum is not idempotent: a merge that stores it and then meets the same write
+again adds it again. It is for adding up parts that belong to different clusters, never for merging
+two copies of one count, which is what Max is for.
 

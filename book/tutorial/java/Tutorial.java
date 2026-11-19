@@ -41,7 +41,7 @@ public final class Tutorial {
     // ANCHOR: withdraw
     @Function("withdraw")
     static long withdraw(Record rec, long amount) {
-        long balance = rec.getInt("balance");    // throws when absent or not an integer
+        long balance = rec.bin("balance").asInt();   // throws when absent or not an integer
 
         if (amount > balance) {
             throw new UdfException("insufficient funds");
@@ -57,7 +57,7 @@ public final class Tutorial {
     // ANCHOR: rename
     @Function("rename")
     static boolean rename(Record rec, String name) {
-        if (rec.getString("owner").equals(name)) {   // copied out of the record
+        if (rec.bin("owner").asString().equals(name)) {   // copied out of the record
             return false;
         }
 
@@ -73,7 +73,7 @@ public final class Tutorial {
     static long total(Record rec) {
         long sum = 0;
 
-        for (Value payment : rec.getList("history")) {
+        for (Value payment : rec.bin("history").asList()) {
             sum += payment.asInt();
         }
 
@@ -84,7 +84,7 @@ public final class Tutorial {
     // ANCHOR: limit_for
     @Function("limit_for")
     static long limitFor(Record rec, String kind) {
-        return rec.getMap("limits").getInt(kind, 0);   // 0 when the map has no such key
+        return rec.bin("limits").asMap().getInt(kind, 0);   // 0 when the map has no such key
     }
     // ANCHOR_END: limit_for
 
@@ -93,7 +93,7 @@ public final class Tutorial {
     static long limitsTotal(Record rec) {
         long sum = 0;
 
-        for (MapValue.Entry e : rec.getMap("limits")) {
+        for (MapValue.Entry e : rec.bin("limits").asMap()) {
             sum += e.getValue().asInt();
         }
 
@@ -104,7 +104,7 @@ public final class Tutorial {
     // ANCHOR: log_payment
     @Function("log_payment")
     static long logPayment(Record rec, long amount) {
-        ListValue stored = rec.getList("history");
+        ListValue stored = rec.bin("history").asList();
         int count = stored.size() + 1;
 
         rec.set("history", Udf.list(count).addAll(stored).add(amount));   // the stored elements, then the new one

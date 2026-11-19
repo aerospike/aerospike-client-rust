@@ -412,7 +412,7 @@ fn record(args: i32, argc: i32) -> Result<(), Error> {
     let s = state();
 
     if !s.configured {
-        configure(s, &Args::from_handle(args, argc))?;
+        configure(s, &Args::from_handle(args, argc)?)?;
     }
 
     if !read_vector(&rec, s)? {
@@ -476,7 +476,7 @@ pub extern "C" fn topk_end(_args: i32, _argc: i32) -> i32 {
 pub extern "C" fn vec_distance(args: i32, argc: i32) -> i32 {
     let rec = Record::current();
     let s = state();
-    let r = configure(s, &Args::from_handle(args, argc)).and_then(|()| {
+    let r = Args::from_handle(args, argc).and_then(|args| configure(s, &args)).and_then(|()| {
         if !read_vector(&rec, s)? {
             return Ok(None);
         }

@@ -78,6 +78,7 @@ it show the handler form each SDK gives it.
 | [3](twopset.md) | 2P-Set, two lists | union, twice | tombstones: a removal is data that beats an add | add a removed tag back; the tombstones grow forever |
 | [4](lwwset.md) | LWW-Element-Set, two maps of stamps | per-tag maximum, twice | a stamp per element, so the later write wins and a tag can return; the tie bias | trust the clock; purge the tombstones |
 | [5](device-map.md) | the device map | per-device versions, removal markers, a horizon, a byte tie-break | application-raised versions instead of a clock, a purge horizon, a version floor | |
+| [6](registers.md) | a record of LWW-Registers, one per bin | the later stamp per bin, read from the server; a maximum for one bin | the per-bin last-update times and source ids a bin-convergence namespace keeps, so a register needs no stamps of its own and no write UDF | merge inside a bin; do without the clock |
 
 Steps 1 and 2 are about ten lines of logic each and establish the shape: a table gathered from both
 sides, a merge that keeps the larger entry, write UDFs that only ever add. Step 3 changes the merge from
@@ -85,7 +86,8 @@ a maximum to a union and introduces removal as data. Step 4 puts a timestamp on 
 the first time two sides can disagree about who was later, and shows the bias a tie needs. Step 5 is
 what the four steps were preparing: a structure the application can add to, change, remove from and add
 back to, with removals that do not accumulate, and with the clock replaced by a version the application
-raises.
+raises. Step 6 stands a little apart: it goes back to the clock, and shows how little a merge has to
+keep in the record when the server is stamping every bin for it.
 
 Read them in order. Each step's chapter opens with the limit of the previous one and closes with its
 own.
@@ -93,5 +95,5 @@ own.
 ## The sources
 
 Every step is `examples/<name>` in each SDK, built into `tests/fixtures/wasm/<name>*.wasm`, and the
-chapter includes all four sources at the end. The names are `counter`, `pncounter`, `twopset`, `lwwset`
-and `crdt`.
+chapter includes all four sources at the end. The names are `counter`, `pncounter`, `twopset`, `lwwset`,
+`crdt` and `registers`.

@@ -79,10 +79,9 @@ export! {
     fn limit_for(rec: &Record, kind: &str) -> Result<Value, Error> {
         let limits = rec.bin("limits")?.map()?;
 
-        match limits.get(kind) {
-            Ok(limit) => Ok(Value::Int(limit.int()?)),
-            Err(Error::Absent) => Ok(Value::Int(0)),    // no such key
-            Err(e) => Err(e),
+        match limits.get(kind)? {
+            Some(limit) => Ok(Value::Int(limit.int()?)),
+            None => Ok(Value::Int(0)),                  // no such key
         }
     }
     // ANCHOR_END: limit_for

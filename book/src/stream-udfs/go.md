@@ -22,7 +22,12 @@ type SumN struct {
 }
 
 func (s *SumN) Record(rec *udf.Record) error {
-	if n, ok := rec.Int("n"); ok {
+	n, ok, err := rec.Int("n")
+	if err != nil {
+		return err // an n that is not an integer ends the stream
+	}
+
+	if ok {
 		s.total += n
 		s.count++
 	}
@@ -53,8 +58,8 @@ the stream ends, and declaring one there is a generation error.
 
 Everything `Record` reads with is the record API of the [previous part](../record-udfs/go.md). On a path
 that runs per record, prefer `rec.Get` and the typed readers, which answer false for a missing bin, to
-`rec.Bin`, which builds an error for one. A collection bin is ranged over as in a record UDF, `for v :=
-range rec.List("l")` or `for k, v := range rec.Map("m")`.
+`rec.Bin`, which builds an error for one. A collection bin is read with `rec.List("l")` or
+`rec.Map("m")` and ranged over as in a record UDF.
 
 A stream in the raw form has `Record(args, argc int32) int32`, or `Record(rec *udf.Record, args, argc
 int32) int32` to take the record, and `End(args, argc int32) int32`. They are exported as they are, and
@@ -67,7 +72,7 @@ would cost an import and, for a `string`, an allocation per record.
 `examples/vector/main.go` is the full-size example, in the raw form. Its stream half:
 
 ```go
-{{#include ../../../aerospike-udf-sdk-wasm-go/examples/vector/main.go:343:399}}
+{{#include ../../../aerospike-udf-sdk-wasm-go/examples/vector/main.go:354:410}}
 ```
 
 The record method configures itself from the arguments on the first call, reads the vector straight into

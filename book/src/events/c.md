@@ -9,10 +9,10 @@ in `examples/resolver/resolver.c`:
 AS_UDF_EVENT_XDR_MERGE(merge_account)
 {
 	as_udf_event_record current, incoming;
-	if (as_udf_event_decode(args, argc, &current, &incoming) != AS_UDF_OK) return as_udf_failf("merge_account: not an xdr-merge");
+	if (as_udf_event_decode(args, argc, &current, &incoming) != AS_UDF_OK) return as_udf_fail_str("merge_account: not an xdr-merge");
 
 	int32_t out = as_udf_map_new(8);
-	if (out <= 0) return as_udf_failf("merge_account: could not build the record");
+	if (out <= 0) return as_udf_fail_str("merge_account: could not build the record");
 
 	/* visits: the larger of the two counts. */
 	as_udf_value cv, iv;
@@ -36,14 +36,17 @@ is on this cluster and the one that arrived over XDR, and returns `AS_UDF_ERR` w
 those of an `xdr-merge`.
 
 An `as_udf_event_record` carries one side's `generation`, `last_update_time`, `ttl` and `source_id`, and
-four stored values: `bin_names` (the list of bin names), `deleted_bins` (the names this side deleted), and
+four stored values: `bin_names` (the list of bin names), `deleted_bins` (the names this side deleted: a list
+when there are some, and of kind `AS_UDF_ABSENT`, not an empty list, when there are none), and
 `bin_last_update_times` and `bin_source_ids` (per-bin last-update times and source ids, where the server
 keeps them). `as_udf_event_bin(&rec, name, &v)` reads a bin
 through the event's own import, and the readers a record UDF has are there for a side too, taking the
-record first: `as_udf_event_has`, `as_udf_event_get`, `as_udf_event_int` and the other typed readers,
-`as_udf_event_int_or` and its family for a default. `as_udf_event_deleted_any(&rec)` says whether the side
-deleted a bin, and `as_udf_event_with_bins(&rec, out)` puts every bin of one side that the built map `out`
-lacks into it. An event's records are read-only and are read with the `as_udf_event_`
+record first: `as_udf_event_has`, `as_udf_event_get`, `as_udf_event_int` and the other typed readers, which
+answer `AS_UDF_OK`, `AS_UDF_NOT_FOUND` or `AS_UDF_TYPE_MISMATCH` as a record UDF's do, and
+`as_udf_event_int_or(&rec, name, dflt, &n)` and its family for a default. `as_udf_event_deleted_any(&rec)`
+says whether the side deleted a bin, `as_udf_list_count(&rec.deleted_bins)` how many (0 for the absent
+shape), and `as_udf_event_with_bins(&rec, out)` puts every bin of one side that the built map `out` lacks into
+it, answering 0 (which `as_udf_resolve_record` fails on) when a bin could not be carried over. An event's records are read-only and are read with the `as_udf_event_`
 family, never with `as_udf_rec_`, which is for the record of a call and has none in a handler.
 
 What the server says of the merge is a field of the record it is about. On the other record the field is
@@ -53,14 +56,15 @@ false, and `lost_bins` is `AS_UDF_ABSENT`:
 | --- | --- |
 | `incoming.is_delete` | the incoming write is a record delete, so `incoming` has no bins |
 | `incoming.is_partial` | the incoming write carries only the bins that changed, so a bin it lacks may well exist on the other cluster |
-| `incoming.lost_bins` | a stored list: the names of the incoming bins that would lose under bin convergence |
+| `incoming.lost_bins` | a stored list: the names of the incoming bins that would lose under bin convergence; `AS_UDF_ABSENT` when there are none (`as_udf_list_count` answers either shape) |
 | `current.is_tombstone` | the current record exists but has no bins |
 | `uses_bin_convergence` | on either record, the same answer: per-bin LUTs are meaningful, for a time-based merge to check before it trusts `as_udf_event_bin_last_update_time` |
 
 `as_udf_event_bin_last_update_time` and `as_udf_event_bin_source_id` answer per bin and fall back to the record's values.
 `as_udf_event_incoming_is_newer(&current, &incoming, name)` orders the two records on one bin by LUT, then
 source id: the order the server's bin convergence uses, so both clusters answer the same. When nothing but the data tells two
-values apart, `as_udf_cmp_stored(&a, &b)` compares their stored bytes without copying either, and
+values apart, `as_udf_cmp_stored(&a, &b, &order)` compares their stored bytes without copying either: the
+status is `AS_UDF_TYPE_MISMATCH` for a value that is not stored, and `order` is exactly -1, 0 or 1, and
 `as_udf_stored_bytes` copies them out. `as_udf_list_has_string` searches a stored list of strings, and
 `as_udf_map_put_value(out, name, &v)` puts a value read from either side into the map being built, by
 position.

@@ -21,6 +21,19 @@ import java.lang.annotation.Target;
  * A {@link Function} or {@link Stream} parameter that may be absent or nil: the parameter is then
  * {@code null}, and the signature reads {@code name?: type}. A scalar parameter marked this way is boxed:
  * {@code @Nullable Long n}, not {@code long}.
+ *
+ * <pre>
+ * {@literal @}Function("greet")
+ * static String greet(String name, {@literal @}Nullable String title, {@literal @}Nullable Long times) {
+ *     int n = times == null ? 1 : times.intValue();
+ *     ...
+ * }
+ * // fn greet(name: str, title?: str, times?: int) -&gt; value
+ * </pre>
+ *
+ * <p>Without it, a nil or missing argument fails the call before the method runs. The one exception is a
+ * {@link Value} parameter, which takes a nil argument as a value whose {@link Value#isNil} is true and fails
+ * only for a missing one; marked, it is {@code null} for both.
  */
 @Target(ElementType.PARAMETER)
 @Retention(RetentionPolicy.SOURCE)

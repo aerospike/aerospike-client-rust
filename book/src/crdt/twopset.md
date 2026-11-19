@@ -95,10 +95,14 @@ func mergeTwoPSet(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 		t := tags{}
 
 		for _, side := range []*udf.EventRecord{current, incoming} {
-			if stored, ok := side.Get(bin); ok {
-				if err := t.offerAll(stored); err != nil {
-					return udf.Resolution{}, err
-				}
+			// A side without the bin has no tags to offer; a bin that is not a list is an error.
+			stored, _, err := side.List(bin)
+			if err != nil {
+				return udf.Resolution{}, err
+			}
+
+			if err := t.offerAll(stored); err != nil {
+				return udf.Resolution{}, err
 			}
 		}
 

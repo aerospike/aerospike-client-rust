@@ -64,15 +64,16 @@ write that arrived over XDR). What the server knows about the merge is asked of 
 They are ordinary methods of `EventRecord`; asked of the other side they answer `false`, or an empty list.
 
 `Pair::of(current, incoming)` reads a bin from both
-sides into a `Both<T>`, whose members are `current` and `incoming`, with the merges a resolver reaches for, `max`, `min`, `sum`, `merge(f)`, and the
+sides into a `Both<T>`, whose members are `current` and `incoming`, with the merges a resolver reaches for, `max`, `min`, `sum` (0 when neither side has the bin; it wraps on overflow), `merge(f)`, and the
 orderings `newer`, `older`, `ordered()`, which compare the bin's own last update time on each side and then the source
 id, the order the server's bin convergence uses, so they are symmetric. `pair.incoming_is_newer(name)` is the
 same test for a bin by name; `pair.with_newer(overrides)` fills in every bin the handler did not decide
-from the newer side, which is the policy's own answer.
+from the newer side, which is the policy's own answer: a bin the newer side deleted (it is in that side's
+`deleted_bins()`) stays deleted, rather than coming back from the older side.
 
 A data-only merge has no times to order by: it keeps versions in the record and breaks a tie between two
 values with `Value::cmp_stored(&a, &b)`, the stored bytes of the two compared, which both clusters compute
-alike; `Value::stored_bytes(buf)` and `Coll::bytes(buf)` hand over the bytes themselves. `now()` fails in a
+alike (exactly `Less`, `Equal` or `Greater`; values that cannot be compared are `Err(WrongType)`); `Value::stored_bytes(buf)` and `Coll::bytes(buf)` hand over the bytes themselves. `now()` fails in a
 handler, so a merge cannot read the clock by accident.
 
 ## The modules

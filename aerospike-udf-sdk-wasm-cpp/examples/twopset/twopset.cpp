@@ -81,7 +81,7 @@ struct Tags {
 	udf::Result<void> offer_all(const udf::Value& stored)
 	{
 		for (udf::Value item : stored.list()) {
-			Tag tag = UDF_TRY(item.as_string<TAG_MAX>());
+			Tag tag = UDF_TRY(udf::required(item.as_string<TAG_MAX>(), "twopset: a nil tag"));
 
 			UDF_TRY(insert(tag.view()));
 		}

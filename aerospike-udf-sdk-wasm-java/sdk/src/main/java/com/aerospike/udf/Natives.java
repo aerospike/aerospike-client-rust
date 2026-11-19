@@ -57,9 +57,6 @@ final class Natives {
     @Import(module = "aerospike", name = "cursor_close")
     static native void cursorClose(int cursor);
 
-    @Import(module = "aerospike", name = "pack_handle")
-    static native int packHandle(int handle);
-
     @Import(module = "aerospike", name = "args_values")
     static native int argsValues(int handle, Address out, int cap);
 

@@ -48,23 +48,40 @@ final class Reads {
         return v.kind() == kind ? HIT : WRONG;
     }
 
-    /** The exception for a read that did not hit: {@code label} is {@code "bin "} or {@code "key "}. */
+    /**
+     * The exception for a read that did not hit, carrying the status of what it came to: {@code label} is
+     * {@code "bin "} or {@code "key "}.
+     */
     static UdfException problem(int state, String label, String name, String what) {
         switch (state) {
         case NONE:
-            return new UdfException(label + name + " is absent");
+            return new UdfException(LowLevel.NOT_FOUND, label + name + " is absent");
         case WRONG:
-            return new UdfException(label + name + " is not " + what);
+            return new UdfException(LowLevel.TYPE_MISMATCH, label + name + " is not " + what);
         default:
-            return new UdfException(label + name + " could not be read");
+            return new UdfException(LowLevel.ERR, label + name + " could not be read");
         }
+    }
+
+    /** The exception for a write, a save or a build the host turned down with status {@code rc}. */
+    static UdfException refused(int rc, String what) {
+        return new UdfException(rc < 0 ? rc : LowLevel.ERR, what + ": " + why(rc));
+    }
+
+    /**
+     * The status of a batch call that was to take one value or entry and answered {@code n}: its own status
+     * when it gave one, and {@link LowLevel#REFUSED} when it took nothing, which is the host turning the
+     * value down.
+     */
+    static int one(int n) {
+        return n == 1 ? LowLevel.OK : n < 0 ? n : LowLevel.REFUSED;
     }
 
     /** Why the host turned a write down, for a message. */
     static String why(int rc) {
         switch (rc) {
         case LowLevel.REFUSED:
-            return "the record is read-only here";
+            return "the server refused it (the record is read-only here, or the write is one it does not take)";
         case LowLevel.TYPE_MISMATCH:
             return "the value is of a kind that cannot go there";
         case LowLevel.ERR:

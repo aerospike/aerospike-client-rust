@@ -46,6 +46,88 @@ def area_of(section, name=''):
     return 'record'
 
 
+def comment_line(text):
+    """One line of a comment with its marker already cut off: the single space after the marker goes, and
+    the rest of the indentation stays, since in an example it is the code's."""
+    return (text[1:] if text.startswith(' ') else text).rstrip()
+
+
+def rust_doc(doc):
+    """A Rust doc comment as the Markdown mdBook reads: every fence is a rust one (rustdoc's `ignore` and
+    `no_run` mean nothing here), an intra-doc link is its text (there is no rustdoc page to link to), and a
+    heading inside a comment is a bold line, so it does not become a heading of the chapter."""
+    out = []
+    fenced = False
+    for line in doc:
+        if line.lstrip().startswith('```'):
+            if not fenced:
+                tag = line.strip()[3:].strip()
+                line = '```text' if tag.startswith('text') else '```rust'
+            fenced = not fenced
+            out.append(line)
+            continue
+        if not fenced:
+            line = re.sub(r'\[(`[^`]+`)\]\((?!https?:)[^)]*\)', r'\1', line)
+            line = re.sub(r'\[(`[^`]+`)\](?!\()', r'\1', line)
+            m = re.match(r'^#+\s+(.*)$', line)
+            if m:
+                line = f'**{m.group(1)}**'
+        out.append(line)
+    return out
+
+
+def go_doc(doc):
+    """A Go doc comment as Markdown: a run of indented lines is a code block, as godoc reads it."""
+    out = []
+    block = []
+
+    def flush():
+        while block and block[-1] == '':
+            block.pop()
+        if block:
+            cut = min(len(l) - len(l.lstrip()) for l in block if l)
+            out.append('```go')
+            out.extend(l[cut:] for l in block)
+            out.append('```')
+            block.clear()
+
+    for line in doc:
+        if line.startswith(('\t', '    ')):
+            if not block and out and out[-1] != '':
+                out.append('')
+            block.append(line)
+        elif line == '' and block:
+            block.append(line)
+        else:
+            if block:
+                flush()
+                out.append('')
+            out.append(line)
+    flush()
+    return out
+
+
+def public_fields(body_lines, is_public):
+    """A struct's body with the fields a user cannot name left out, each with the comment above it."""
+    kept = []
+    pending = []
+    dropped = False
+    for line in body_lines:
+        t = line.strip()
+        if t == '' or t.startswith(('//', '#[')):
+            pending.append(line)
+            continue
+        if is_public(t):
+            kept.extend(pending)
+            kept.append(line)
+        else:
+            dropped = True
+        pending = []
+    while kept and kept[0].strip() == '':
+        kept.pop(0)
+    return kept, dropped
+
+
 # ---------------------------------------------------------------- rust
 
 def parse_rust(path):
@@ -55,6 +137,13 @@ def parse_rust(path):
     impl_of = None
     doc = []
     hidden = False
+    # A type hidden from the documentation hides what is implemented on it too.
+    hidden_types = set()
+    for k, l in enumerate(lines):
+        m = re.match(r'^pub (?:struct|enum|trait|type) (\w+)', l)
+        if m and any(lines[j].strip() == '#[doc(hidden)]' for j in range(max(0, k - 4), k)
+                     if all(x.strip().startswith(('#[', '///')) for x in lines[j:k])):
+            hidden_types.add(m.group(1))
     i = 0
     n = len(lines)
     while i < n:
@@ -65,7 +154,7 @@ def parse_rust(path):
             i += 2
             continue
         if s.startswith('///'):
-            doc.append(s[3:].strip())
+            doc.append(comment_line(s[3:]))
             i += 1
             continue
         if s.startswith('#[doc(hidden)]'):
@@ -76,7 +165,27 @@ def parse_rust(path):
             i += 1
             continue
         if line.startswith('impl') and line.rstrip().endswith('{'):
-            m = re.match(r'impl(?:<[^>]*>)?\s+(?:(\S+)\s+for\s+)?(\S+)', line)
+            rest = line[4:]
+            if rest.startswith('<'):
+                # The impl's own parameters, which may nest: `impl<'a, T: FromArg<'a>>`.
+                level = 0
+                for at, ch in enumerate(rest):
+                    level += (ch == '<') - (ch == '>')
+                    if level == 0:
+                        rest = rest[at + 1:]
+                        break
+            head = rest.split(' where ')[0].rstrip(' {').strip()
+            m = re.match(r'(?:(.+?)\s+for\s+)?(.+)$', head)
+            target = re.match(r'&?(?:\'\w+ )?(\w+)', m.group(2)).group(1) if m and re.match(r'&?(?:\'\w+ )?(\w+)', m.group(2)) else ''
+            if target in hidden_types or hidden:
+                # To the brace that closes it, found by its column: a body may hold braces in strings.
+                i += 1
+                while i < n and not lines[i].startswith('}'):
+                    i += 1
+                i += 1
+                doc = []
+                hidden = False
+                continue
             if m and m.group(1):
                 items.append((area_of(section), 'impl', f'impl {m.group(1)} for {m.group(2)}', line.rstrip(' {'), doc, ''))
                 impl_of = None
@@ -87,7 +196,7 @@ def parse_rust(path):
                     i += 1
                 doc = []
                 continue
-            impl_of = m.group(2) if m else None
+            impl_of = re.sub(r'<.*$', '', m.group(2)) if m else None
             doc = []
             i += 1
             continue
@@ -110,10 +219,15 @@ def parse_rust(path):
                     while k < n and not lines[k].startswith('}'):
                         body_lines.append(lines[k])
                         k += 1
-                    if kind == 'enum' or any(l.strip().startswith('pub ') for l in body_lines):
+                    if kind == 'enum':
                         body = '\n'.join([lines[j].rstrip()] + body_lines + ['}'])
+                    elif any(l.strip().startswith('pub ') for l in body_lines):
+                        kept, dropped = public_fields(body_lines, lambda t: t.startswith('pub '))
+                        if dropped:
+                            kept.append('    // and private fields')
+                        body = '\n'.join([lines[j].rstrip()] + kept + ['}'])
                     j = k
-                full = f'{impl_of}::{name}' if impl_of and kind == 'fn' else name
+                full = f'{impl_of}::{name}' if impl_of and kind in ('fn', 'const') else name
                 items.append((area_of(section, name), kind, full, signature, doc, body))
                 i = j + 1
                 doc = []
@@ -170,13 +284,15 @@ def parse_go(path):
             i += 1
             continue
         if s.startswith('//'):
-            doc.append(s[2:].strip())
+            doc.append(comment_line(s[2:]))
             i += 1
             continue
         m = re.match(r'^func (?:\((\w+) \*?(\w+)(?:\[[^\]]*\])?\) )?([A-Z]\w*)(?:\[[^\]]*\])?\(', line)
         if m:
             recv, name = m.group(2), m.group(3)
-            signature = line.rstrip(' {').strip()
+            # A function written on one line carries its body: the signature ends where the body opens.
+            one_line = re.match(r'^(.*?\)(?: [^{]*?)?) \{ .* \}$', line.rstrip())
+            signature = (one_line.group(1) if one_line else line.rstrip(' {')).strip()
             full = f'{recv}.{name}' if recv else name
             items.append((area_of(section, name), 'func', full, signature, doc, ''))
             doc = []
@@ -198,6 +314,11 @@ def parse_go(path):
                 body.append(lines[k])
                 k += 1
             body.append('}')
+            if m.group(2) == 'struct':
+                kept, dropped = public_fields(body[1:-1], lambda t: t[:1].isupper())
+                if dropped:
+                    kept.append('\t// contains unexported fields')
+                body = [body[0]] + kept + ['}']
             items.append((area_of(section), 'type', m.group(1), line.rstrip(' {').strip(), doc, '\n'.join(body)))
             doc = []
             i = k + 1
@@ -247,12 +368,17 @@ def parse_c(path):
             i += 1
             continue
         if s.startswith('/*'):
-            comment = [s[2:].strip()]
+            comment = [s[2:]]
             while not lines[i].strip().endswith('*/'):
                 i += 1
-                comment.append(lines[i].strip().lstrip('*').strip())
-            comment[-1] = comment[-1].rstrip('*/').strip()
-            doc = [c for c in comment if c]
+                c = lines[i].strip()
+                comment.append(c[1:] if c.startswith('*') and not c.startswith('*/') else c)
+            comment[-1] = comment[-1].rstrip()[:-2] if comment[-1].rstrip().endswith('*/') else comment[-1]
+            doc = [comment_line(c) for c in comment]
+            while doc and doc[0] == '':
+                doc.pop(0)
+            while doc and doc[-1] == '':
+                doc.pop()
             i += 1
             continue
         m = re.match(r'^AS_UDF_IMPORT\((\w+)\)\s+(.*);', line)
@@ -304,6 +430,38 @@ def parse_c(path):
 
 # ---------------------------------------------------------------- java
 
+def java_doc(lines):
+    """A Javadoc comment as Markdown. The inline tags may wrap across lines, so they are replaced over the
+    whole comment; a `<pre>` block is a fenced java block with its lines as written; `<p>` starts a
+    paragraph."""
+    while lines and lines[0] == '':
+        lines.pop(0)
+    while lines and lines[-1] == '':
+        lines.pop()
+    text = '\n'.join(lines)
+    blocks = []
+
+    def keep(m):
+        blocks.append(re.sub(r'\{@(?:literal|code)\s+([^}]*)\}', r'\1', m.group(1)).strip('\n').replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&'))
+        return f'\n\n\x00{len(blocks) - 1}\x00\n\n'
+
+    text = re.sub(r'<pre>(?:\{@code)?(.*?)\}?\s*</pre>' if False else r'<pre>(.*?)</pre>', keep, text, flags=re.S)
+    text = re.sub(r'\{@(?:code|literal)\s+([^}]*)\}', lambda m: '`' + ' '.join(m.group(1).split()) + '`', text)
+    text = re.sub(r'\{@link(?:plain)?\s+([^}]*)\}',
+                  lambda m: '`' + m.group(1).split()[-1].lstrip('#').replace('#', '.') + '`' if len(m.group(1).split()) == 1
+                  else ' '.join(m.group(1).split()[1:]), text)
+    # The HTML outside code spans only: `<p>` inside one is the text of a message.
+    parts = text.split('`')
+    for k in range(0, len(parts), 2):
+        parts[k] = (parts[k].replace('<p>', '\n\n').replace('</p>', '')
+                    .replace('<b>', '**').replace('</b>', '**')
+                    .replace('<ul>', '\n').replace('</ul>', '\n').replace('<li>', '- ').replace('</li>', ''))
+    text = '`'.join(parts).replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
+    text = re.sub(r'\x00(\d+)\x00', lambda m: '```java\n' + blocks[int(m.group(1))] + '\n```', text)
+    text = re.sub(r'\n{3,}', '\n\n', text).strip('\n')
+    return text.split('\n')
+
+
 def parse_java(path, area):
     lines = open(path, encoding='utf-8').read().split('\n')
     items = []
@@ -316,19 +474,13 @@ def parse_java(path, area):
         line = lines[i]
         s = line.strip()
         if s.startswith('/**'):
-            comment = [s[3:].strip()]
+            comment = [s[3:]]
             while not lines[i].strip().endswith('*/'):
                 i += 1
-                comment.append(lines[i].strip().lstrip('*').strip())
-            comment[-1] = comment[-1].rstrip('*/').strip()
-            doc = [re.sub(r'\{@literal ([^}]*)\}', r'\1',
-                          re.sub(r'\{@link #?([^}]*)\}', r'`\1`', re.sub(r'\{@code ([^}]*)\}', r'`\1`', c)))
-                   .replace('<p>', '').replace('<pre>', '```text').replace('</pre>', '```')
-                   # The rest of the HTML a Javadoc comment uses, as the Markdown that means the same.
-                   .replace('<b>', '**').replace('</b>', '**')
-                   .replace('<ul>', '').replace('</ul>', '').replace('<li>', '- ').replace('</li>', '')
-                   .replace('&lt;', '<').replace('&gt;', '>')
-                   for c in comment if c]
+                c = lines[i].strip()
+                comment.append(c[1:] if c.startswith('*') and not c.startswith('*/') else c)
+            comment[-1] = comment[-1].strip()[:-2] if comment[-1].strip().endswith('*/') else comment[-1]
+            doc = java_doc([comment_line(c) for c in comment])
             i += 1
             continue
         if s.startswith('//') or s.startswith('*'):
@@ -352,7 +504,7 @@ def parse_java(path, area):
             depth += line.count('{') - line.count('}')
             i += 1
             continue
-        m = re.match(r'^\s*public (?:static )?(?:final )?(?:[\w\[\]<>.]+ )(\w+)\(([^)]*)\)', line)
+        m = re.match(r'^\s*public (?:static )?(?:final )?(?:<[^>]*> )?(?:[\w\[\].]+(?:<[^()]*>)?(?:\[\])* )(\w+)\(([^)]*)\)', line)
         if m and stack:
             if stack[-1][0]:
                 name = f'{stack[-1][0]}.{m.group(1)}'
@@ -437,7 +589,7 @@ def parse_cpp(path):
                 i += 1
             continue
         if s.startswith('//'):
-            doc.append(s[2:].strip())
+            doc.append(comment_line(s[2:]))
             i += 1
             continue
         area = 'events' if section.startswith(CPP_EVENT_SECTIONS) else 'record'
@@ -448,7 +600,7 @@ def parse_cpp(path):
             depth += line.count('{') - line.count('}')
             i += 1
             continue
-        m = re.match(r'^(?:template <[^>]*>\s*)?(?:class|struct) (\w+)(?:\s*:\s*[\w:]+)?\s*\{', line)
+        m = re.match(r'^(?:template <[^>]*>\s*)?(?:class|struct) (\w+)(?:\s*:\s*[^{;]+)?\s*\{', line)
         if m and not in_detail:
             name = m.group(1)
             outer = [t for t, _, v in stack if v]
@@ -472,8 +624,17 @@ def parse_cpp(path):
             i += 1
             continue
         if stack and stack[-1][2] is True and depth == stack[-1][1] + 1:
+            m = re.match(r'^\t(?:constexpr |explicit |inline )*' + re.escape(stack[-1][0]) + r'\(', line)
+            if m:
+                if doc:
+                    signature = re.sub(r'\s*(?::\s[^{]*)?\{.*$', '', s).rstrip(';').strip()
+                    items.append((area, 'constructor', f'{stack[-1][0]}::{stack[-1][0]}', signature, doc, ''))
+                doc = []
+                depth += line.count('{') - line.count('}')
+                i += 1
+                continue
             m = re.match(r'^\t(?:template <[^>]*>\s*)?(?:static |constexpr |explicit |inline )*([\w:<>,&*\s]+?)\s+([a-z_]\w*)\(', line)
-            if m and not s.startswith('return') and 'operator' not in s:
+            if m and not s.startswith(('return', ':')) and 'operator' not in s:
                 items.append((area, 'method', f'{stack[-1][0]}::{m.group(2)}', cpp_signature(s), doc, ''))
                 doc = []
                 depth += line.count('{') - line.count('}')
@@ -523,6 +684,10 @@ def render(lang, items, area, intro):
             out.append('```')
             out.append('')
         if doc:
+            if lang == 'rust':
+                doc = rust_doc(doc)
+            elif lang == 'go':
+                doc = go_doc(doc)
             out.append('\n'.join(escape_generics(doc)))
             out.append('')
     return '\n'.join(out)

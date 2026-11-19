@@ -21,8 +21,10 @@ fixtures: all
 	cp -f examples/pncounter/target/wasm/pncounter_java.wasm $(FIXTURES)/pncounter_java.wasm
 	cp -f examples/twopset/target/wasm/twopset_java.wasm $(FIXTURES)/twopset_java.wasm
 	cp -f examples/lwwset/target/wasm/lwwset_java.wasm $(FIXTURES)/lwwset_java.wasm
+	cp -f examples/registers/target/wasm/registers_java.wasm $(FIXTURES)/registers_java.wasm
 	cp -f examples/crdt/target/wasm/crdt_java.wasm $(FIXTURES)/crdt_java.wasm
 	cp -f examples/udf/target/wasm/udf_java.wasm $(FIXTURES)/udf_java.wasm
+	cp -f examples/apitest/target/wasm/apitest_java.wasm $(FIXTURES)/apitest_java.wasm
 
 clean:
 	$(MVN) -q -B clean

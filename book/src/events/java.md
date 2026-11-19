@@ -26,12 +26,14 @@ static Resolution mergeVisits(EventRecord current, EventRecord incoming) {
 An `EventRecord` is one side of the merge, the current record or the incoming write, read-only. It implements `RecordReader`, as the
 `Record` of a record UDF does, so it reads the same way: `rec.get(name)` answers `null` for a bin that is
 absent or nil, `rec.bin(name)` throws for one that is absent, `rec.has(name)` asks whether it is there,
-the typed readers `getInt`, `getDouble`, `getBool`, `getString`, `getBlob`, `getList` and `getMap` throw
-for an absent bin unless given a default, and all of them throw for a bin of another kind. A helper that
+the typed readers `getInt`, `getDouble`, `getBool`, `getString`, `getBlob`, `getBytes`, `getList` and
+`getMap` answer `null` for an absent bin (or the default, when given one), and all of them throw
+`UdfException` with the status `LowLevel.TYPE_MISMATCH` for a bin of another kind. A helper that
 takes a `RecordReader` works on both.
 
 What an event adds: `rec.binNames()` is the list of the record's bin names, `rec.deletedBins()` the names
-of the bins this side deleted, and `rec.deletedAny()` says whether there are any.
+of the bins this side deleted (an empty list when the server sent none), `rec.deletedAny()` says whether
+there are any, and `rec.deleted(name)` whether this side deleted that bin.
 `rec.binLastUpdateTime(name)` and `rec.binSourceId(name)` are when and by which data centre the bin was
 last written, falling back to the record's own values. `rec.generation()`, `lastUpdateTime()`, `ttl()`
 and `sourceId()` are its metadata.
@@ -62,14 +64,16 @@ return is a compile error that states the expected shape.
 ## Merging bin by bin
 
 `Pair.of(current, incoming)` reads the two records bin by bin into a `Both<T>`, the Rust SDK's `Pair`
-and `Both`: `pair.getInt(name)`, `getDouble`, `getBool`, `getString`, `getBlob`, `getList`, `getMap` and
-`bin` give the bin on each side (`current`, `incoming`, either null when that side has no such bin or
+and `Both`: `pair.getInt(name)`, `getDouble`, `getBool`, `getString`, `getBlob`, `getBytes`, `getList`,
+`getMap` and `bin` give the bin on each side (`current`, `incoming`, either null when that side has no such bin or
 holds nil; `getList` and `getMap` give a `ListValue` and a `MapValue`), and `Both` carries the merges a
 resolver reaches for: `incomingIsNewer()`, by the bin's LUT and then source id, the order the server's
 own bin convergence uses; `newer()` and `older()`, and `ordered()`, the two as a list, older first, for a
-merge whose result depends on the order; `max()`, `min()`, `merge(f)`, `sumInt()`, `sumDouble()`;
+merge whose result depends on the order; `max()`, `min()`, `merge(f)`, `sumInt()` and `sumDouble()` (0
+when neither side has the bin; `sumInt()` wraps on overflow);
 `currentOrIncoming()`, `incomingOrCurrent()`. `pair.withNewer(out)` fills in every bin the handler had no
-opinion on from the side that wrote it later, which is symmetric, and `pair.incomingIsNewer(name)` orders
+opinion on from the side that wrote it later, which is symmetric, and leaves out a bin that side deleted
+(rather than bring the older side's value back); `pair.incomingIsNewer(name)` orders
 one bin.
 `current.deletedAny() || incoming.deletedAny()` says a bin was deleted on either side: resurrecting it
 from the other is the mistake every merge has to guard against.

@@ -14,8 +14,13 @@ func mergeVisits(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 	pair := udf.PairOf(current, incoming)
 	out := udf.NewMap(4)
 
-	if visits, ok := udf.Max(pair.Int("visits")); ok { // both sides' increments are real
-		out.Put("visits", visits)
+	visits, err := pair.Int("visits")
+	if err != nil {
+		return udf.Resolution{}, err // a side where visits is not an integer
+	}
+
+	if most, ok := udf.Max(visits); ok { // both sides' increments are real
+		out.Put("visits", most)
 	}
 
 	return udf.Resolve(pair.WithNewer(out)), out.Err() // every other bin from the side that wrote it later
@@ -27,11 +32,11 @@ func mergeVisits(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 An `*udf.EventRecord` is one of the two records the event hands over, read-only: `current` is the record
 as it is on this cluster and `incoming` the one that arrived over XDR. It has no writing methods: an event changes a record through its
 answer. It reads like the record of a UDF. `Bin(name)` returns the bin or an error naming it when the side
-has none. `Get(name)` and the typed readers `Int(name)`, `Double`, `Bool`, `String` and `Blob` answer the
-value and whether the side has it, false for absent, nil or another kind; `IntOr(name, dflt)`, `DoubleOr`
-and `BoolOr` answer a default instead. `List(name)` and `Map(name)` range over a collection bin,
-`BinNames()` over the record's bin names and `DeletedBins()` over the names of the bins that side
-deleted. `rec.BinLastUpdateTime(name)` and `rec.BinSourceID(name)` are when the bin was last written and
+has none. `Get(name)` and the typed readers `Int(name)`, `Double`, `Bool`, `String`, `Blob`, `Bytes`,
+`List` and `Map` answer as a record UDF's do: the value and `true`, `false` for an absent or nil bin, and
+an error with `Status` `udf.TypeMismatch` for a bin of another kind; `IntOr(name, dflt)`, `DoubleOr` and
+`BoolOr` answer the default for an absent bin only. `BinNames()` ranges over the record's bin names and
+`DeletedBins()` over the names of the bins that side deleted; `Deleted(name)` asks after one. `rec.BinLastUpdateTime(name)` and `rec.BinSourceID(name)` are when the bin was last written and
 by which cluster, and fall back to the record's values where the server keeps none per bin.
 `rec.Generation()`, `LastUpdateTime()`, `TTL()` and `SourceID()` are its metadata.
 
@@ -52,15 +57,23 @@ implements too. A helper written over it serves both:
 
 ```go
 // The balance of any record: a side of a merge here, the record of a UDF elsewhere.
-func balanceOf(rec udf.RecordReader) int64 {
-	n, _ := rec.Int("balance")
-
-	return n
+func balanceOf(rec udf.RecordReader) (int64, error) {
+	return rec.IntOr("balance", 0) // 0 for no bin; an error for a bin that is not an integer
 }
 
 //udf:on xdr-merge keep_richer
 func keepRicher(current, incoming *udf.EventRecord) (udf.Resolution, error) {
-	if balanceOf(incoming) > balanceOf(current) {
+	theirs, err := balanceOf(incoming)
+	if err != nil {
+		return udf.Resolution{}, err
+	}
+
+	mine, err := balanceOf(current)
+	if err != nil {
+		return udf.Resolution{}, err
+	}
+
+	if theirs > mine {
 		return udf.TakeRemote(), nil
 	}
 
@@ -69,7 +82,8 @@ func keepRicher(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 ```
 
 `rec.WithBins(out)` is the Rust SDK's `with_bins`: every bin of the record that the `*udf.Map` `out`
-lacks goes in by position. It asks `out.Contains(name)` for each bin, one import each. It prefers one
+lacks goes in by position. It asks `out.Contains(name)` for each bin, one import each, and takes only
+the record's own bins, so a bin this side deleted stays out. It prefers one
 side, and the other DC prefers the other side, so a handler that decides a few bins and keeps the rest
 uses `Pair.WithNewer` instead.
 
@@ -83,27 +97,39 @@ The handler returns `(udf.Resolution, error)`. `Resolve` takes a `*udf.Map`; a b
 is deleted. A TTL is in seconds, 0 for the namespace default; `Resolve` keeps the one the incoming write
 asked for. `DeleteRecord()` removes the record on this cluster, and a record resolution with no bins left
 in it is not that: it is the handler's failure. `udf.CmpStored` / `StoredBytes` compare stored bytes for a data-only
-tie-break.
+tie-break: `CmpStored` answers exactly -1, 0 or 1, or an error with `Status` `udf.TypeMismatch` for a
+value that is not stored (a scalar, a value the guest built).
 
 ## Merging bin by bin
 
 `udf.PairOf(current, incoming)` is the two records side by side, a `udf.Pair`, which reads them bin by bin
-into a `udf.Both[T]`, the Rust SDK's `Pair` and `Both`: `pair.Int(name)`, `Double`, `Bool`, `String`, `Blob`, `List`, `Map` and `Bin` give the bin on each side (`Current`,
-`Incoming`, with `HasCurrent` and `HasIncoming`), and `Both` carries the merges a resolver reaches for:
+into a `udf.Both[T]`, the Rust SDK's `Pair` and `Both`: `pair.Int(name)`, `Double`, `Bool`, `String`, `Blob`, `Bytes`, `List`, `Map` and `Bin` give the bin on each side (`Current`,
+`Incoming`, with `HasCurrent` and `HasIncoming`), or an error when a side holds another kind, and `Both` carries the merges a resolver reaches for:
 `IncomingIsNewer()`, by the bin's last update time and then source id, the order the server's own bin convergence uses;
 `Newer()` and `Older()`; `Ordered()` as (older, newer); `Merge(f)`; `CurrentOrIncoming()`, `IncomingOrCurrent()`.
 `udf.Max`, `udf.Min` and `udf.Sum` are functions over a `Both`, since a method cannot add the ordering
-constraint. `pair.WithNewer(out)` fills in every bin the handler had no opinion on from the side that
-wrote it later, which is symmetric, and `pair.IncomingIsNewer(name)` orders one bin. `rec.DeletedAny()` says
+constraint; `Sum` is 0 when neither side has the bin, and an integer sum wraps on overflow.
+`pair.WithNewer(out)` fills in every bin the handler had no opinion on from the side that
+wrote it later, which is symmetric, and `pair.IncomingIsNewer(name)` orders one bin. When the side that
+wrote a bin later deleted it, `WithNewer` leaves the bin out, so the delete stands. `rec.DeletedAny()` says
 that side deleted a bin, and `rec.DeletedBins()` names them: bringing such a bin back from the other side is the
-mistake every merge has to guard against.
+mistake every merge has to guard against, and a bin the handler decides itself with `Newer()` is its own
+to guard.
 
 ```go
-if visits, ok := udf.Max(pair.Int("visits")); ok { // both sides' increments are real
-	out.Put("visits", visits)
+visits, err := pair.Int("visits")
+if err != nil {
+	return udf.Resolution{}, err
 }
-if profile, ok := pair.Bin("profile").Newer(); ok { // last writer wins, by last update time
-	out.Put("profile", profile)
+if most, ok := udf.Max(visits); ok { // both sides' increments are real
+	out.Put("visits", most)
+}
+profile, err := pair.Bin("profile")
+if err != nil {
+	return udf.Resolution{}, err
+}
+if latest, ok := profile.Newer(); ok { // last writer wins, by last update time
+	out.Put("profile", latest)
 }
 return udf.Resolve(pair.WithNewer(out)), out.Err() // the rest as the policy would have kept it
 ```

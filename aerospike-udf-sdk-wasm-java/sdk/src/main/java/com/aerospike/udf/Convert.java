@@ -43,11 +43,11 @@ final class Convert {
             return v.asString();
         case Value.GEOJSON:
         case Value.GUEST_GEOJSON:
-            return new String(v.asBlob(), StandardCharsets.UTF_8);
+            return new String(v.asBytes(), StandardCharsets.UTF_8);
         case Value.BLOB:
         case Value.HLL:
         case Value.GUEST_BLOB:
-            return v.asBlob();
+            return v.asBytes();
         case Value.LIST:
             return toList(v);
         case Value.MAP:
@@ -56,7 +56,7 @@ final class Convert {
         case Value.ABSENT:
             return null;
         default:
-            throw new UdfException("a value of kind " + v.kind() + " has no Java form");
+            throw new UdfException(LowLevel.TYPE_MISMATCH, "a value of kind " + v.kind() + " has no Java form");
         }
     }
 
@@ -93,7 +93,7 @@ final class Convert {
             Value key = walk.next(new Value());
 
             if (!walk.more()) {
-                throw new UdfException("the map ended on a key");
+                throw new UdfException(LowLevel.ERR, "the map ended on a key");
             }
 
             Value value = walk.next(new Value());
@@ -146,7 +146,7 @@ final class Convert {
             list.add((Map<?, ?>) o);
         }
         else {
-            throw new UdfException("a " + o.getClass().getName() + " cannot go into a list");
+            throw new UdfException(LowLevel.TYPE_MISMATCH, "a " + o.getClass().getName() + " cannot go into a list");
         }
     }
 
@@ -204,7 +204,7 @@ final class Convert {
             return Udf.map(((Map<?, ?>) o).size()).putAll((Map<?, ?>) o).asValue();
         }
 
-        throw new UdfException("a " + o.getClass().getName() + " cannot go into a map");
+        throw new UdfException(LowLevel.TYPE_MISMATCH, "a " + o.getClass().getName() + " cannot go into a map");
     }
 
     /** Puts one entry of a {@code java.util.Map} into a map being built; the key is a string or an integer. */
@@ -216,7 +216,7 @@ final class Convert {
             map.put(((Number) key).longValue(), valueOf(value));
         }
         else {
-            throw new UdfException("a map key is a String or an integer, not "
+            throw new UdfException(LowLevel.TYPE_MISMATCH, "a map key is a String or an integer, not "
                     + (key == null ? "null" : "a " + key.getClass().getName()));
         }
     }

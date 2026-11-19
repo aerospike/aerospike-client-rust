@@ -11,14 +11,17 @@ processor (`aerospike-udf-sdk-wasm-java-processor`) generates, in a class `<Clas
 beside the annotated one, the exported `int name(int args, int argc)` that decodes the arguments
 into the method's parameters and delivers its return value as the result, and the `__udf_sig_<name>`
 export whose text it derives from the parameter types.
-```text
+
+```java
 @Function("increment")
 static long increment(Record rec, String site, long n) { ... }
 // exports increment and __udf_sig_increment = "fn increment(site: str, n: int) -> value"
 ```
+
 A first parameter of type `Record` is the record the call is about. It is handed to the method,
 not decoded from the arguments, so it is no part of the signature or of the argument count; a method
 that does not touch the record leaves it out.
+
 Parameters: `long`, `int` (`int` in the signature), `double`, `boolean`
 (`bool`), `String` (`str`), `byte[]` (`bytes`: a string or a blob),
 `Value` (`any`), and `Value[]` as the last parameter for every remaining argument
@@ -26,16 +29,38 @@ Parameters: `long`, `int` (`int` in the signature), `double`, `boolean`
 scalar one is boxed (`Long`, `Integer`, `Double`, `Boolean`). A call with a
 missing or mismatched argument, or more arguments than parameters, fails with a message naming the
 argument, before the method runs.
+
 Return: `void` (a nil result), `long` or `int`, `double`, `boolean`,
 `String`, `byte[]` (a blob), `Value` (a scalar by value, guest bytes, a stored value
 by position), a `MapBuilder` or `ListBuilder`, a `MapValue` or `ListValue`, or a
 `java.util.Map` or `java.util.List` of plain Java values. The method fails the call by throwing `UdfException`
 with the message; any other exception fails it with the exception's message.
+
 A method declared `(int args, int argc)` returning `int` is exported as it is: it takes
 the raw handles and returns the status, exactly as a hand-written export does, and `params` gives
 the signature's parameter text, since nothing can be derived. This is the form for a hot path that
 decodes its arguments its own way.
+
 The generated class carries the module's `main`: name it as the TeaVM `mainClass`.
+
+A typed function, whole:
+
+```java
+@Function("visit")
+static long visit(Record rec, String page, @Nullable Long weight) {
+    long visits = rec.getInt("visits", 0) + (weight == null ? 1 : weight);
+
+    if (visits > 1_000_000) {
+        throw new UdfException("visit: counter overflow");   // the client's error message
+    }
+
+    rec.set("visits", visits);
+    rec.set("last", page);
+    rec.save();                                              // nothing is written without it
+
+    return visits;                                           // the client's result
+}
+```
 
 #### `Nullable`
 
@@ -47,6 +72,19 @@ A `Function` or `Stream` parameter that may be absent or nil: the parameter is t
 `null`, and the signature reads `name?: type`. A scalar parameter marked this way is boxed:
 `@Nullable Long n`, not `long`.
 
+```java
+@Function("greet")
+static String greet(String name, @Nullable String title, @Nullable Long times) {
+    int n = times == null ? 1 : times.intValue();
+    ...
+}
+// fn greet(name: str, title?: str, times?: int) -> value
+```
+
+Without it, a nil or missing argument fails the call before the method runs. The one exception is a
+`Value` parameter, which takes a nil argument as a value whose `Value.isNil` is true and fails
+only for a missing one; marked, it is `null` for both.
+
 #### `UdfException`
 
 ```java
@@ -54,8 +92,62 @@ public class UdfException extends RuntimeException
 ```
 
 Fails the call from inside a `Function`, `Stream` or `On` method: the generated export
-catches it and delivers its message with `Udf#fail`, the way a hand-written export returns
+catches it and delivers its message with `Udf.fail`, the way a hand-written export returns
 `Udf.fail(message)`. `Params` throws it for an argument that does not fit its parameter.
+
+```java
+@Function("withdraw")
+static long withdraw(Record rec, long amount) {
+    long balance = rec.bin("balance").asInt();  // throws when the account has no balance
+
+    if (amount > balance) {
+        throw new UdfException("insufficient funds: " + balance);
+    }
+
+    rec.set("balance", balance - amount);
+    rec.save();
+
+    return balance - amount;
+}
+```
+
+The client sees the message as the call's error. It is unchecked, so no method declares it, and every
+reader and every write of the SDK that fails throws it. A call that fails writes nothing: throwing before
+`Record.save` leaves what was staged unwritten, and throwing after it undoes what the save wrote,
+and what `Record.setInts` or `Record.setDoubles` wrote, as well.
+
+**It carries the host's status**, so code that catches one can tell what went wrong without reading
+the message: `status` is `LowLevel.NOT_FOUND` for a bin, key, element or argument that is
+not there, `LowLevel.TYPE_MISMATCH` for a value of another kind, `LowLevel.REFUSED` for
+something the server refuses (a write to a read-only record, a value nested too deep, a call that has
+built as much as it may), a status at or below `LowLevel.NEEDED_BASE` for an array that was too
+small, and `LowLevel.ERR` for everything else, which includes every exception user code makes with
+`UdfException(String)`.
+
+```java
+try {
+    rec.set("n", n);
+    rec.save();
+}
+catch (UdfException e) {
+    if (e.status() != LowLevel.REFUSED) {
+        throw e;
+    }
+
+    // a read-only record: answer without writing
+}
+```
+
+#### `UdfException.status`
+
+```java
+public int status()
+```
+
+The host status behind the failure: `LowLevel.ERR`, `LowLevel.NOT_FOUND`,
+`LowLevel.TYPE_MISMATCH`, `LowLevel.REFUSED`, or, for an array that was too small, a status
+at or below `LowLevel.NEEDED_BASE` whose `-(status) - 16` is the size needed. Never
+`LowLevel.OK`.
 
 #### `Record`
 
@@ -66,29 +158,57 @@ public final class Record implements RecordReader
 The record a call is about. A `@Function` method and a stream's `record` method take it as
 their first parameter, and everything a UDF does to the record is a method of it:
 reading a bin, writing one, the record's metadata, saving and deleting.
-```text
+
+```java
 @Function("visit")
 static long visit(Record rec, String page) {
-long visits = rec.getInt("visits", 0) + 1;
-rec.set("visits", visits);
-rec.set("last", page);
-rec.save();
-return visits;
+    long visits = rec.getInt("visits", 0) + 1;
+
+    rec.set("visits", visits);
+    rec.set("last", page);
+    rec.save();
+
+    return visits;
 }
 ```
-**Reading.** `get` gives a bin of any kind, or null; `bin` gives it or throws. The
-typed readers (`getInt(String)`, `getString(String)`, `getList(String)` and the
-rest) throw `UdfException` naming the bin when it is absent or of another kind; given a default,
-they answer it for an absent bin and still throw for a wrong kind. See `RecordReader`.
+
+**Reading.** `get` gives a bin of any kind, or null; `bin` gives it or throws. A typed
+reader (`getInt(String)`, `getString(String)`, `getList(String)` and the rest) has
+three outcomes: null for a bin that is not there, the value for a bin of that kind, and an
+`UdfException` naming the bin, with the status `LowLevel.TYPE_MISMATCH`, for a bin of another
+kind. Given a default, a reader answers it for an absent bin and still throws for a wrong kind. Nothing
+is widened: an integer bin is not a double, and a string bin is not a blob. See `RecordReader`.
+
 **Writing.** `set` stages a bin, `remove` stages its removal, and `save`
 writes what is staged, creating the record when it does not exist. `delete` deletes the record.
 Nothing is written until `save`, with one exception the server makes: `setInts` and
-`setDoubles` take effect at once.
+`setDoubles` take effect at once. A call that fails writes nothing at all: what a `save` that
+succeeded had written, and what `setInts` or `setDoubles` had, is undone when the call then
+fails.
+
+**A key with no record.** `exists` is false; `generation`, `lastUpdateTime`,
+`size` and `binCount` are 0; there is no TTL; and reading creates nothing.
+`setInts`, `setDoubles` and `delete` are refused there, so they throw, and create
+nothing. A `save` with a bin staged creates the record; a `save` with no bin staged (only a
+`remove` or a `setTtl`) creates nothing, and the call fails with "key not found".
+
 **One type, writable or not.** A stream's records are read-only, and so is the record of a call
 the server runs as a read. A write there throws `UdfException` saying the record is read-only: it
 is refused by the server when it is made, not by the type.
+
 Bins are addressed by name. The record keeps the encoded form of the names it has seen, so a name
 passed as a string literal is encoded once, not once per call, and a reader allocates nothing.
+
+A bin name is 1 to 15 bytes of UTF-8 with no zero byte in it. A read under any other name finds no bin;
+a write under one throws.
+
+Reading a string, blob, GeoJSON, HLL, list or map bin takes one of the call's 256 handles each time it
+is read, and the handle is held until the call returns (in a stream, until the next record). Read such a
+bin once and keep what came back, not once per turn of a loop: when the handles run out the read throws
+`UdfException` saying the bin could not be read. An integer, double or boolean bin costs none.
+
+A `save` or `delete` that fails ends every list, map and blob value read from the record
+before it: a read through one then throws. Read the bin again.
 
 #### `Record.get`
 
@@ -96,11 +216,22 @@ passed as a string literal is encoded once, not once per call, and a reader allo
 public Value get(String name)
 ```
 
+The bin as a `Value` of whatever kind it is, or null when the record has no such bin, which
+includes a record that does not exist yet. The value is a fresh one that is not changed afterwards: a
+scalar is in it whole, and the text of a string or the elements of a list are read from the server when
+its `as*` reader asks for them. Throws `UdfException` only when the host could not read the
+bin.
+
 #### `Record.bin`
 
 ```java
 public Value bin(String name)
 ```
+
+As `get`, for a bin that has to be there: throws `UdfException` reading
+`bin <name> is absent`, with the status `LowLevel.NOT_FOUND`, when the record has no such
+bin, and never answers null. With the value's own reader it is the read that insists:
+`rec.bin("balance").asInt()`.
 
 #### `Record.has`
 
@@ -108,10 +239,28 @@ public Value bin(String name)
 public boolean has(String name)
 ```
 
+Whether the record has the bin, of any kind. It is a read of the bin like any other, so when the value
+is wanted next, `get` or a typed reader finds out and reads it in one call.
+
 #### `Record.getInt`
 
 ```java
-public long getInt(String name)
+public Long getInt(String name)
+```
+
+An integer bin, or null when the record has no such bin. Throws `UdfException` naming the bin
+(`bin n is not an int`, status `LowLevel.TYPE_MISMATCH`) when it holds another kind; a
+double is not truncated to one. The answer is boxed so that it can be null: assigning it to a
+`long` without looking fails the call with a `NullPointerException` for an absent bin, so
+give a default (long)) or insist (`rec.bin(name).asInt()`) where no test
+for null is wanted.
+
+```java
+Long seen = rec.getInt("seen");
+
+if (seen == null) {
+    // the bin is not there
+}
 ```
 
 #### `Record.getInt`
@@ -120,11 +269,29 @@ public long getInt(String name)
 public long getInt(String name, long dflt)
 ```
 
+An integer bin, or `dflt` when the record has no such bin. A bin of another kind still throws
+`UdfException` (`LowLevel.TYPE_MISMATCH`): the default stands in for a missing bin, not for
+a wrong one. Nothing is boxed, so this is the reader for a hot path.
+
+```java
+long visits = rec.getInt("visits", 0);      // 0 for a new record
+String plan = rec.getString("plan", "free");
+MapValue limits = rec.getMap("limits");     // null when there is no such bin
+
+if (limits != null) {
+    visits = Math.min(visits, limits.getInt(plan, Long.MAX_VALUE));
+}
+```
+
 #### `Record.getDouble`
 
 ```java
-public double getDouble(String name)
+public Double getDouble(String name)
 ```
+
+A double bin, or null when the record has no such bin. Throws `UdfException`
+(`LowLevel.TYPE_MISMATCH`) naming the bin when it holds another kind, and an integer bin is
+another kind: it is not widened.
 
 #### `Record.getDouble`
 
@@ -132,11 +299,18 @@ public double getDouble(String name)
 public double getDouble(String name, double dflt)
 ```
 
+A double bin, or `dflt` when the record has no such bin. A bin of another kind, an integer
+included, still throws `UdfException` (`LowLevel.TYPE_MISMATCH`).
+
 #### `Record.getBool`
 
 ```java
-public boolean getBool(String name)
+public Boolean getBool(String name)
 ```
+
+A boolean bin, or null when the record has no such bin. Throws `UdfException`
+(`LowLevel.TYPE_MISMATCH`) naming the bin when it holds another kind; an integer 0 or 1 is not a
+boolean.
 
 #### `Record.getBool`
 
@@ -144,11 +318,19 @@ public boolean getBool(String name)
 public boolean getBool(String name, boolean dflt)
 ```
 
+A boolean bin, or `dflt` when the record has no such bin. A bin of another kind still throws
+`UdfException` (`LowLevel.TYPE_MISMATCH`).
+
 #### `Record.getString`
 
 ```java
 public String getString(String name)
 ```
+
+The text of a string bin, decoded from UTF-8 into a new `String` on every call, or null when the
+record has no such bin. Throws `UdfException` (`LowLevel.TYPE_MISMATCH`) naming the bin
+when it is not a string. A GeoJSON bin is not a string here: `getBytes(String)` gives its text
+as bytes.
 
 #### `Record.getString`
 
@@ -156,11 +338,19 @@ public String getString(String name)
 public String getString(String name, String dflt)
 ```
 
+The text of a string bin, or `dflt` (which may be null) when the record has no such bin. A bin of
+another kind still throws `UdfException` (`LowLevel.TYPE_MISMATCH`).
+
 #### `Record.getBlob`
 
 ```java
 public byte[] getBlob(String name)
 ```
+
+The bytes of a blob bin, copied into a new array on every call, or null when the record has no such
+bin. It is strict: throws `UdfException` (`LowLevel.TYPE_MISMATCH`) naming the bin when it
+holds anything but a blob, a string, a GeoJSON document and an HLL included. `getBytes(String)`
+is the reader that takes those.
 
 #### `Record.getBlob`
 
@@ -168,11 +358,32 @@ public byte[] getBlob(String name)
 public byte[] getBlob(String name, byte[] dflt)
 ```
 
+The bytes of a blob bin, copied into a new array, or `dflt` (which may be null, and is returned as
+it is, not copied) when the record has no such bin. A bin of another kind still throws
+`UdfException` (`LowLevel.TYPE_MISMATCH`).
+
+#### `Record.getBytes`
+
+```java
+public byte[] getBytes(String name)
+```
+
+The raw bytes of a string, blob, GeoJSON or HLL bin, copied into a new array on every call, or null
+when the record has no such bin: the UTF-8 bytes of a string or a document, the bytes of a blob, an HLL
+as the server stores it. Throws `UdfException` (`LowLevel.TYPE_MISMATCH`) naming the bin
+when it is a number, a boolean, a list or a map.
+
 #### `Record.getList`
 
 ```java
 public ListValue getList(String name)
 ```
+
+A list bin, as a view that reads it where the server holds it: nothing is copied until an element is
+asked for. Null when the record has no such bin, which is not an empty list: an empty list bin is a
+view whose `ListValue.isEmpty` is true. Throws `UdfException`
+(`LowLevel.TYPE_MISMATCH`) naming the bin when it is not a list. The view can be kept for the
+rest of the call; a save that fails ends it.
 
 #### `Record.getList`
 
@@ -180,11 +391,19 @@ public ListValue getList(String name)
 public ListValue getList(String name, ListValue dflt)
 ```
 
+A list bin as a view, or `dflt` (which may be null) when the record has no such bin. A bin of
+another kind still throws `UdfException` (`LowLevel.TYPE_MISMATCH`).
+
 #### `Record.getMap`
 
 ```java
 public MapValue getMap(String name)
 ```
+
+A map bin, as a view that looks keys up and iterates where the server holds it: nothing is copied until
+an entry is asked for. Null when the record has no such bin, which is not an empty map. Throws
+`UdfException` (`LowLevel.TYPE_MISMATCH`) naming the bin when it is not a map. The view can
+be kept for the rest of the call; a save that fails ends it.
 
 #### `Record.getMap`
 
@@ -192,15 +411,22 @@ public MapValue getMap(String name)
 public MapValue getMap(String name, MapValue dflt)
 ```
 
+A map bin as a view, or `dflt` (which may be null) when the record has no such bin. A bin of
+another kind still throws `UdfException` (`LowLevel.TYPE_MISMATCH`).
+
 #### `Record.getFloats`
 
 ```java
 public int getFloats(String name, float[] out)
 ```
 
-A blob bin of little-endian 32-bit floats straight into `out`, element for element, with no
-copy in between: how a vector is read. Returns how many floats there were; throws
-`UdfException` when the bin is absent, is not a blob, or does not fit.
+A blob bin of little-endian 32-bit floats straight into `out`, element for element, with no copy
+in between: how a vector is read. Returns how many floats there were, which is the blob's length in
+bytes divided by 4; the elements of `out` past that count are left as they were. A count has no
+null, so unlike the typed readers this one throws `UdfException` for an absent bin
+(`LowLevel.NOT_FOUND`) as well as for one that is not a blob (`LowLevel.TYPE_MISMATCH`; a
+string is not); when the bin holds more floats than `out` has room for nothing is copied and the
+status is at or below `LowLevel.NEEDED_BASE`.
 
 #### `Record.binCount`
 
@@ -208,7 +434,8 @@ copy in between: how a vector is read. Returns how many floats there were; throw
 public long binCount()
 ```
 
-How many bins the record has.
+How many bins the stored record has; 0 when the record does not exist. A staged bin is not counted
+until `save` writes it.
 
 #### `Record.set`
 
@@ -216,7 +443,11 @@ How many bins the record has.
 public void set(String name, long value)
 ```
 
-Stages an integer bin. Throws `UdfException` when the record cannot be written, as every write does.
+Stages an integer bin. The value replaces whatever the bin held, of any kind, when `save` writes
+it; until then the stored record is unchanged, though a read of the bin later in this call answers the
+staged value. Throws `UdfException`, as every `set` does, when the record cannot be written
+here (a stream's record, a call the server runs as a read; the status is `LowLevel.REFUSED`) or
+when `name` is not 1 to 15 bytes (`LowLevel.ERR`).
 
 #### `Record.set`
 
@@ -224,7 +455,8 @@ Stages an integer bin. Throws `UdfException` when the record cannot be written, 
 public void set(String name, double value)
 ```
 
-Stages a double bin.
+Stages a double bin, to be written by `save`. Throws `UdfException` when the record cannot
+be written or the name is not a bin name.
 
 #### `Record.set`
 
@@ -232,7 +464,8 @@ Stages a double bin.
 public void set(String name, boolean value)
 ```
 
-Stages a boolean bin.
+Stages a boolean bin, to be written by `save`. It is stored as a boolean, not as the integer 0
+or 1. Throws `UdfException` when the record cannot be written or the name is not a bin name.
 
 #### `Record.set`
 
@@ -240,7 +473,9 @@ Stages a boolean bin.
 public void set(String name, String value)
 ```
 
-Stages a string bin, written as UTF-8.
+Stages a string bin, to be written by `save`; the text is encoded as UTF-8 and copied by the
+server, so the string is not needed afterwards. Throws `UdfException` when the record cannot be
+written or the name is not a bin name.
 
 #### `Record.set`
 
@@ -248,7 +483,10 @@ Stages a string bin, written as UTF-8.
 public void set(String name, byte[] value)
 ```
 
-Stages a blob bin.
+Stages a blob bin holding a copy of all of `value`, to be written by `save`. Throws
+`UdfException` when the record cannot be written, and when the bin now holds an HLL: plain bytes
+over one would silently stop it being an HLL, so an HLL is written back as the `Value` it was
+read as.
 
 #### `Record.set`
 
@@ -257,8 +495,10 @@ public void set(String name, Value value)
 ```
 
 Stages a bin from a value of any kind: a scalar, a string or blob of the guest's, a built collection,
-or a stored value, which is written by position and keeps its kind (a GeoJSON stays one). A nil value
-removes the bin, since a bin cannot hold nil.
+or a stored value, which is written by position and keeps its kind (a GeoJSON stays one, an HLL stays
+one). A nil value removes the bin, since a bin cannot hold nil. Throws `UdfException` for an
+absent value (one never filled; the status is `LowLevel.TYPE_MISMATCH`), for a stored value read
+before a save that failed, and when the record cannot be written.
 
 #### `Record.set`
 
@@ -266,7 +506,9 @@ removes the bin, since a bin cannot hold nil.
 public void set(String name, ListBuilder value)
 ```
 
-Stages a bin from a built list.
+Stages a list bin from a built list; an empty builder makes an empty list. The builder is not used up:
+the same list can also go into another bin, into a collection or be the result. Throws
+`UdfException` when the record cannot be written.
 
 #### `Record.set`
 
@@ -274,7 +516,8 @@ Stages a bin from a built list.
 public void set(String name, MapBuilder value)
 ```
 
-Stages a bin from a built map.
+Stages a map bin from a built map. The builder is not used up: the same map can also go into another
+bin, into a collection or be the result. Throws `UdfException` when the record cannot be written.
 
 #### `Record.set`
 
@@ -282,7 +525,9 @@ Stages a bin from a built map.
 public void set(String name, ListValue value)
 ```
 
-Stages a bin from a stored list, by position: a copy of a list this or another record holds.
+Stages a bin from a stored list, by position: the server copies the list from where it is (a bin of
+this record, an argument, an element of another collection) without its elements passing through the
+guest.
 
 #### `Record.set`
 
@@ -290,7 +535,8 @@ Stages a bin from a stored list, by position: a copy of a list this or another r
 public void set(String name, MapValue value)
 ```
 
-Stages a bin from a stored map, by position.
+Stages a bin from a stored map, by position: the server copies the map from where it is without its
+entries passing through the guest.
 
 #### `Record.set`
 
@@ -298,7 +544,9 @@ Stages a bin from a stored map, by position.
 public void set(String name, List<?> value)
 ```
 
-Stages a list bin from a `java.util.List`, its elements as `ListBuilder#addAll` takes them.
+Stages a list bin from a `java.util.List`, its elements as `ListBuilder.addAll` takes them:
+the boxed numbers, `Boolean`, `String`, `byte[]`, `Value`, nested lists and
+maps, and null for nil. Throws `UdfException` for an element of any other type.
 
 #### `Record.set`
 
@@ -306,7 +554,9 @@ Stages a list bin from a `java.util.List`, its elements as `ListBuilder#addAll` 
 public void set(String name, Map<?, ?> value)
 ```
 
-Stages a map bin from a `java.util.Map`, its entries as `MapBuilder#putAll(Map)` takes them.
+Stages a map bin from a `java.util.Map`, its entries as `MapBuilder.putAll(Map)` takes
+them: a key is a `String` or an integer, a value anything a list element may be. Throws
+`UdfException` for any other key or value type.
 
 #### `Record.setGeoJson`
 
@@ -315,6 +565,7 @@ public void setGeoJson(String name, String doc)
 ```
 
 Stages a GeoJSON bin from the document's text, kept as the geospatially indexable kind, not a string.
+The text is not checked here: `save` fails when it is not a document the server accepts.
 
 #### `Record.setInts`
 
@@ -323,7 +574,10 @@ public void setInts(String name, long[] values)
 ```
 
 Writes a list bin of integers straight from the array, in one call, with no value built per element.
-Unlike the other writes it takes effect at once, without `save`.
+Unlike the other writes it is not staged: it is applied when it is made and needs no `save`, so
+returning without saving does not undo it. A call that fails does: it writes nothing, this included.
+Throws `UdfException` when the record cannot be written or the name is not a bin name, and on a
+key with no record, where the server refuses it and creates nothing.
 
 #### `Record.setDoubles`
 
@@ -331,7 +585,8 @@ Unlike the other writes it takes effect at once, without `save`.
 public void setDoubles(String name, double[] values)
 ```
 
-As `setInts`, for a list of doubles.
+As `setInts`, for a list of doubles: applied when it is made, with no `save`, undone when
+the call fails, and refused on a key with no record.
 
 #### `Record.remove`
 
@@ -339,7 +594,8 @@ As `setInts`, for a list of doubles.
 public void remove(String name)
 ```
 
-Stages the removal of a bin; removing one the record does not have is not an error.
+Stages the removal of a bin, carried out by `save`; removing one the record does not have is not
+an error. Throws `UdfException` when the record cannot be written or the name is not a bin name.
 
 #### `Record.exists`
 
@@ -347,8 +603,9 @@ Stages the removal of a bin; removing one the record does not have is not an err
 public boolean exists()
 ```
 
-Whether the record exists. It answers what it did when the call began for the whole call: a
-`delete` is carried out when the call returns.
+Whether the record exists: false for a key that has no record yet, which is where `save` creates
+one. It answers what it did when the call began for the whole call: a `delete` is carried out
+when the call returns.
 
 #### `Record.generation`
 
@@ -356,11 +613,16 @@ Whether the record exists. It answers what it did when the call began for the wh
 public long generation()
 ```
 
+The record's generation: how many times it has been written. 0 when the record does not exist.
+
 #### `Record.ttl`
 
 ```java
 public long ttl()
 ```
+
+The record's remaining time to live, in seconds. 0 for a record that never expires, and for one that
+does not exist.
 
 #### `Record.setTtl`
 
@@ -368,8 +630,9 @@ public long ttl()
 public void setTtl(int seconds)
 ```
 
-Sets the record's time to live, in seconds, for the next `save`: 0 for the namespace default,
--1 for never expire. Throws `UdfException` when the host refuses it.
+Sets the record's time to live, in seconds: 0 for the namespace default, -1 for never expire. It is the
+TTL of the write, so it takes effect when `save` writes the record and does nothing without one.
+Throws `UdfException` when the record cannot take one, as a stream's cannot.
 
 #### `Record.lastUpdateTime`
 
@@ -377,8 +640,9 @@ Sets the record's time to live, in seconds, for the next `save`: 0 for the names
 public long lastUpdateTime()
 ```
 
-When the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC), which is how the
-server stores it. Not on the same scale as `Udf#now`, which counts from the Unix epoch.
+When the record was last written, in milliseconds since the Citrusleaf epoch, 2010-01-01T00:00:00Z
+(Unix milliseconds minus 1 262 304 000 000), which is how the server stores it; 0 when the record does
+not exist. Not on the same scale as `Udf.now`, which counts from the Unix epoch.
 
 #### `Record.size`
 
@@ -386,7 +650,7 @@ server stores it. Not on the same scale as `Udf#now`, which counts from the Unix
 public long size()
 ```
 
-The record's size on device, in bytes.
+The record's size as it is stored, in bytes; 0 when the record does not exist.
 
 #### `Record.setName`
 
@@ -394,7 +658,7 @@ The record's size on device, in bytes.
 public String setName()
 ```
 
-The record's set name, or null when it is in no set.
+The name of the set the record is in, whatever its length, or null when it is in no set.
 
 #### `Record.key`
 
@@ -402,8 +666,10 @@ The record's set name, or null when it is in no set.
 public Value key()
 ```
 
-The record's user key - an integer, a string or a blob - or null when none was stored with the
-record, which is the server's default.
+The record's user key - an integer, a string or a blob - or null when none was stored with the record,
+which is the server's default: a client has to ask for the key to be sent with the write. The value is
+a copy of the guest's own, so it stays good whatever is written afterwards. Throws `UdfException`
+when a key that is there could not be read.
 
 #### `Record.digest`
 
@@ -411,7 +677,8 @@ record, which is the server's default.
 public byte[] digest()
 ```
 
-The record's digest: the 20 bytes the server knows the record by.
+The record's digest: the 20 bytes the server knows the record by, in a new array. It is there whether
+or not the user key was stored.
 
 #### `Record.save`
 
@@ -419,9 +686,26 @@ The record's digest: the 20 bytes the server knows the record by.
 public void save()
 ```
 
-Writes the staged bins, creating the record when it does not exist. With nothing staged it is still
-a write: the server treats it as a touch, so the generation and the last-update time move. Throws
-`UdfException` when the record cannot be written.
+Writes the staged bins, creating the record when it does not exist. With nothing staged it is still a
+write: the server treats it as a touch, so the generation and the last-update time move; on a key with
+no record a save with no bin staged (nothing, or only a `remove` or a `setTtl`) makes
+nothing, since a record must have a bin, and the call fails: the client is told the key was not found.
+What is staged after a save needs another save. A save is not the last word: when the call fails after
+one that succeeded, what it wrote is undone.
+
+Throws `UdfException`, with the status `LowLevel.REFUSED`, when the record cannot be
+written: a stream's record, a call the server runs as a read, a write the server turns down, such as a
+GeoJSON bin whose text is not GeoJSON. After a
+save that failed, a list, map or blob value read from the record before it can no longer be read.
+
+```java
+if (!rec.exists()) {
+    rec.set("created", Udf.now());
+}
+
+rec.set("seen", Udf.now());
+rec.save();                 // creates the record, or updates it
+```
 
 #### `Record.delete`
 
@@ -430,7 +714,23 @@ public void delete()
 ```
 
 Deletes the record, with whatever was staged; no `save` is needed. The server carries it out
-when the call returns. Throws `UdfException` when the record cannot be deleted.
+when the call returns, so `exists` keeps its answer until then. Throws `UdfException` when
+the record cannot be deleted (`LowLevel.REFUSED`), as a stream's cannot, and on a key with no
+record, where the server refuses it.
+
+```java
+@Function("expire_if_empty")
+static boolean expireIfEmpty(Record rec) {
+    ListValue items = rec.getList("items");
+
+    if (items == null || items.isEmpty()) {
+        rec.delete();
+        return true;
+    }
+
+    return false;
+}
+```
 
 #### `RecordReader`
 
@@ -441,15 +741,24 @@ public interface RecordReader
 Reading a record: what the record of a call (`Record`) and a record an event hands over
 (`EventRecord`) have in common, so that a helper which only reads bins is written once and works
 on both.
-```text
+
+```java
 static long balanceOf(RecordReader rec) {
-return rec.getInt("balance", 0);
+    return rec.getInt("balance", 0);
 }
 ```
-The readers come in two forms. Without a default, the bin must be there: the reader throws
-`UdfException` naming the bin when it is absent. With a default, an absent bin (or one holding
-nil) answers the default. Either way a bin of another kind throws: a wrong type is a bug to hear about,
-not a value to paper over.
+
+A typed reader has three outcomes, and a caller can tell them apart without reading a message: null
+when the bin is absent (or holds nil), the value when the bin is of that kind, and an
+`UdfException` whose status is `LowLevel.TYPE_MISMATCH` when the
+bin holds another kind. A wrong type is a bug to hear about, not a value to paper over, so nothing is
+widened or converted: an integer is not a double, a string is not a blob. A reader given a default
+answers the default in place of null, and for nothing else. `bin` is the read that insists: it
+throws (`LowLevel.NOT_FOUND`) for a bin that is not there.
+
+The scalar readers without a default answer a boxed value, so that it can be null. Unboxing one
+without a test fails the call with a `NullPointerException` when the bin is absent; where that is
+not what is meant, give a default or use `bin(name).asInt()`.
 
 #### `Value`
 
@@ -462,12 +771,30 @@ or a string, blob, GeoJSON, HLL, list or map that the server holds and this read
 is here whole; a string's text or a list's elements stay on the server until they are asked for
 (`asString`, `asList`), so handing a stored value on - into a bin, a builder, the result -
 copies nothing through the guest.
+
 The `is*` tests say what the value is, `kind` gives the same as one of the constants of
-this class, and each `as*` reader throws `UdfException` when the value is of another kind.
+this class, and each `as*` reader throws `UdfException` with the status
+`LowLevel.TYPE_MISMATCH` when the value is of another kind: nothing is widened or converted, so an
+integer is not a double and a string is not a blob.
 A value read from the record, from an argument or from an iteration is never changed afterwards, so it
 can be kept for the rest of the call.
+
 `ofInt`, `ofString` and the other factories make a value of the guest's own, for a
 builder, a bin or a result.
+
+```java
+Value score = rec.get("score");             // null when there is no such bin
+
+if (score == null) {
+    return 0;
+}
+
+return score.isInt() ? score.asInt() : (long) score.asDouble();
+```
+
+A value of the guest's own (`ofString`, `ofBlob`) reads back through the same `as*`
+readers. A built list or map in a value (`ListBuilder.asValue`) does not: it is of kind
+`HANDLE` and is only handed on.
 
 #### `Value.ABSENT`
 
@@ -483,7 +810,8 @@ No value at all: a `Value` never filled, or a map entry that is not there. Disti
 public static final int NIL = 0
 ```
 
-Nil.
+The kind of nil: a list element, a map entry or an argument that is nil. A bin is never nil, it is
+absent.
 
 #### `Value.BOOL`
 
@@ -491,7 +819,7 @@ Nil.
 public static final int BOOL = 1
 ```
 
-A boolean.
+The kind of a boolean, which `asBool` reads.
 
 #### `Value.INT`
 
@@ -499,7 +827,7 @@ A boolean.
 public static final int INT = 2
 ```
 
-A 64-bit integer.
+The kind of a 64-bit signed integer, which `asInt` reads.
 
 #### `Value.DOUBLE`
 
@@ -507,7 +835,7 @@ A 64-bit integer.
 public static final int DOUBLE = 3
 ```
 
-A double.
+The kind of a 64-bit double, which `asDouble` reads.
 
 #### `Value.STR`
 
@@ -547,7 +875,8 @@ A map the host holds, walked or looked up by position; the length is in entries.
 public static final int OTHER = 8
 ```
 
-A value of a kind the host has no other name for.
+A value of a kind the host has no other name for. It can be tested for and nothing else: no reader
+takes it.
 
 #### `Value.GEOJSON`
 
@@ -555,7 +884,7 @@ A value of a kind the host has no other name for.
 public static final int GEOJSON = 9
 ```
 
-A GeoJSON document the host holds; its bytes are read like a string's.
+A GeoJSON document the host holds; `asBytes` reads its text.
 
 #### `Value.HLL`
 
@@ -563,7 +892,7 @@ A GeoJSON document the host holds; its bytes are read like a string's.
 public static final int HLL = 10
 ```
 
-A HyperLogLog value the host holds; its bytes are read like a blob's.
+A HyperLogLog value the host holds; `asBytes` reads its bytes.
 
 #### `Value.GUEST_STR`
 
@@ -595,7 +924,8 @@ A GeoJSON document of the guest's own, handed to the host by address.
 public static final int HANDLE = 19
 ```
 
-A value built on the host, handed back by its handle.
+A list or map built on the host (`ListBuilder`, `MapBuilder`), handed back by its handle.
+It can be put in a bin, a collection or the result; it cannot be read.
 
 #### `Value.kind`
 
@@ -603,7 +933,9 @@ A value built on the host, handed back by its handle.
 public int kind()
 ```
 
-The kind, one of the constants of this class.
+The kind, one of the constants of this class: `INT`, `STR`, `LIST` and the rest
+for a value read from the server, `GUEST_STR` and its neighbours for one made here. The
+`is*` tests cover both, so prefer them unless a `switch` is wanted.
 
 #### `Value.length`
 
@@ -636,7 +968,7 @@ Whether the value is nil. An absent value is not; see `isNull`.
 public boolean isNull()
 ```
 
-Nil, or absent.
+Whether the value is nil or absent: the test for "nothing here" when the difference does not matter.
 
 #### `Value.isInt`
 
@@ -668,7 +1000,7 @@ Whether the value is a boolean.
 public boolean isString()
 ```
 
-Whether the value is a string.
+Whether the value is a string: a stored one or one of the guest's own. A GeoJSON document is not.
 
 #### `Value.isBlob`
 
@@ -676,7 +1008,8 @@ Whether the value is a string.
 public boolean isBlob()
 ```
 
-Whether the value is a blob.
+Whether the value is a blob: a stored one or one of the guest's own. False for a string, a GeoJSON
+document and an HLL, whose bytes `asBytes` reads.
 
 #### `Value.isGeoJson`
 
@@ -684,7 +1017,15 @@ Whether the value is a blob.
 public boolean isGeoJson()
 ```
 
-Whether the value is a GeoJSON document.
+Whether the value is a GeoJSON document: a stored one or one of the guest's own.
+
+#### `Value.isHll`
+
+```java
+public boolean isHll()
+```
+
+Whether the value is a HyperLogLog. It is not a blob, though `asBytes` reads its bytes.
 
 #### `Value.isList`
 
@@ -716,7 +1057,8 @@ Whether the value is a string, blob, GeoJSON, HLL, list or map the host holds (r
 public long asInt()
 ```
 
-The integer; throws `UdfException` when the value is of another kind.
+The integer; throws `UdfException` (`LowLevel.TYPE_MISMATCH`) when the value is of another
+kind, nil included. A double is not truncated to one.
 
 #### `Value.asDouble`
 
@@ -724,7 +1066,8 @@ The integer; throws `UdfException` when the value is of another kind.
 public double asDouble()
 ```
 
-The double; throws `UdfException` when the value is of another kind. An integer is not widened.
+The double; throws `UdfException` (`LowLevel.TYPE_MISMATCH`) when the value is of another
+kind. An integer is not widened.
 
 #### `Value.asBool`
 
@@ -732,7 +1075,8 @@ The double; throws `UdfException` when the value is of another kind. An integer 
 public boolean asBool()
 ```
 
-The boolean; throws `UdfException` when the value is of another kind.
+The boolean; throws `UdfException` (`LowLevel.TYPE_MISMATCH`) when the value is of another
+kind. An integer 0 or 1 is not one.
 
 #### `Value.asString`
 
@@ -740,7 +1084,11 @@ The boolean; throws `UdfException` when the value is of another kind.
 public String asString()
 ```
 
-The text of a string, copied out; throws `UdfException` when the value is of another kind.
+The text of a string, decoded from UTF-8 into a new `String` on every call; for a stored string
+that is one call to the host and one copy. Bytes that are not UTF-8 are replaced, not refused:
+`asBytes` has them as they are. Throws `UdfException` (`LowLevel.TYPE_MISMATCH`) when
+the value is of another kind, a GeoJSON included: its text is `toObject`, or `asBytes`
+decoded.
 
 #### `Value.asBlob`
 
@@ -748,18 +1096,34 @@ The text of a string, copied out; throws `UdfException` when the value is of ano
 public byte[] asBlob()
 ```
 
-The bytes of a string, blob, GeoJSON or HLL, copied out; throws `UdfException` when the value
-is of another kind.
+The bytes of a blob, copied into a new array on every call. It is strict: throws `UdfException`
+(`LowLevel.TYPE_MISMATCH`) for anything that is not a blob, a string, a GeoJSON document and an
+HLL included. `asBytes` is the reader that takes those too.
 
-#### `Value.readBlob`
+#### `Value.asBytes`
 
 ```java
-public int readBlob(byte[] into)
+public byte[] asBytes()
 ```
 
-Copies the bytes of a stored string, blob, GeoJSON or HLL into `into`, which the caller keeps
-and reuses, and returns how many there were. Throws `UdfException` when the value is of another
-kind or does not fit.
+The raw bytes of a string, blob, GeoJSON document or HLL, copied into a new array on every call: the
+UTF-8 bytes of a string or a document, the bytes of a blob, an HLL as the server stores it. Throws
+`UdfException` (`LowLevel.TYPE_MISMATCH`) when the value is a scalar, nil, a list or a map,
+and (`LowLevel.ERR`) when a stored value can no longer be read: it was read before a save that
+failed.
+
+#### `Value.readBytes`
+
+```java
+public int readBytes(byte[] into)
+```
+
+Copies the raw bytes of a stored string, blob, GeoJSON or HLL into `into`, which the caller keeps
+and reuses, and returns how many there were; the rest of `into` is left as it was. Throws
+`UdfException` (`LowLevel.TYPE_MISMATCH`) when the value is of another kind or is one of
+the guest's own (`ofBlob`). When `into` is shorter than `length` nothing is copied
+and the exception's status is the host's "too small": at or below `LowLevel.NEEDED_BASE`, with
+`-(status) - 16` the size needed.
 
 #### `Value.readFloats`
 
@@ -768,8 +1132,10 @@ public int readFloats(float[] into)
 ```
 
 Copies a stored blob of little-endian 32-bit floats straight into `into`, element for element -
-the way a vector is read without converting it - and returns how many floats there were. Throws
-`UdfException` when the value is not a blob or does not fit.
+the way a vector is read without converting it - and returns how many floats there were, which is
+`length` divided by 4. Throws `UdfException` (`LowLevel.TYPE_MISMATCH`) when the
+value is not a stored blob (a string is not). When it holds more floats than `into` has room for
+nothing is copied and the exception's status is at or below `LowLevel.NEEDED_BASE`.
 
 #### `Value.asList`
 
@@ -777,7 +1143,8 @@ the way a vector is read without converting it - and returns how many floats the
 public ListValue asList()
 ```
 
-The list this value is, to index and iterate; throws `UdfException` when it is not a list.
+The list this value is, as a view to index and iterate where it is stored; throws `UdfException`
+(`LowLevel.TYPE_MISMATCH`) when it is not a stored list. A built list (`ListBuilder.asValue`) is not one.
 
 #### `Value.asMap`
 
@@ -785,7 +1152,8 @@ The list this value is, to index and iterate; throws `UdfException` when it is n
 public MapValue asMap()
 ```
 
-The map this value is, to look up in and iterate; throws `UdfException` when it is not a map.
+The map this value is, as a view to look up in and iterate where it is stored; throws
+`UdfException` (`LowLevel.TYPE_MISMATCH`) when it is not a stored map. A built map (`MapBuilder.asValue`) is not one.
 
 #### `Value.toObject`
 
@@ -794,8 +1162,10 @@ public Object toObject()
 ```
 
 The value as a plain Java object, copied out whole: `Long`, `Double`, `Boolean`,
-`String` (a GeoJSON document as its text), `byte[]`, a `java.util.List` or a
-`java.util.Map` of the same, and `null` for nil or absent.
+`String` (a GeoJSON document as its text), `byte[]` (a blob or an HLL), a
+`java.util.List` or a `java.util.Map` of the same, and `null` for nil or absent.
+Throws `UdfException` (`LowLevel.TYPE_MISMATCH`) for a built collection and for a value of
+kind `OTHER`, which have no Java form.
 
 #### `Value.cmpStored`
 
@@ -804,8 +1174,11 @@ public int cmpStored(Value other)
 ```
 
 Compares two stored values byte by byte, as memcmp would on their stored encodings, without copying
-either: negative, zero or positive. It is the last resort of a convergent merge, which needs some
-order that both sides compute alike. Throws `UdfException` when either is not a stored value.
+either: exactly -1, 0 or 1, a value that is a prefix of the other coming first. Zero means the same
+bytes. It is not the order of the numbers or texts the values hold: it is the last resort of a
+convergent merge, which needs some order that both sides compute alike. Throws `UdfException`
+(`LowLevel.TYPE_MISMATCH`) when either is not a stored value (a scalar, nil, or one of the
+guest's own) or the host cannot compare them: a status is never returned as if it were an ordering.
 
 #### `Value.ofInt`
 
@@ -813,7 +1186,7 @@ order that both sides compute alike. Throws `UdfException` when either is not a 
 public static Value ofInt(long i)
 ```
 
-An integer value.
+An integer value of the guest's own, for where a `Value` is taken: a bin, a builder, the result.
 
 #### `Value.ofDouble`
 
@@ -821,7 +1194,7 @@ An integer value.
 public static Value ofDouble(double d)
 ```
 
-A double value.
+A double value of the guest's own, for where a `Value` is taken: a bin, a builder, the result.
 
 #### `Value.ofBool`
 
@@ -829,7 +1202,7 @@ A double value.
 public static Value ofBool(boolean b)
 ```
 
-A boolean value.
+A boolean value of the guest's own, for where a `Value` is taken: a bin, a builder, the result.
 
 #### `Value.ofNil`
 
@@ -837,7 +1210,8 @@ A boolean value.
 public static Value ofNil()
 ```
 
-A nil value.
+A nil value: a nil element in a list, a nil entry in a map, a nil result. Written to a bin it removes
+the bin.
 
 #### `Value.ofString`
 
@@ -845,7 +1219,8 @@ A nil value.
 public static Value ofString(String s)
 ```
 
-A string of the guest's, encoded as UTF-8.
+A string of the guest's, encoded as UTF-8 here, once; the host copies the bytes when the value is
+handed to it.
 
 #### `Value.ofBlob`
 
@@ -853,7 +1228,8 @@ A string of the guest's, encoded as UTF-8.
 public static Value ofBlob(byte[] b)
 ```
 
-A blob of the guest's over `b`, which is kept, not copied.
+A blob of the guest's over all of `b`, which is kept, not copied: the host reads the array when
+the value is handed to it, so a change to `b` before then is a change to the value.
 
 #### `Value.ofGeoJson`
 
@@ -861,7 +1237,8 @@ A blob of the guest's over `b`, which is kept, not copied.
 public static Value ofGeoJson(String doc)
 ```
 
-A GeoJSON document of the guest's, from its text; kept as that kind when it is stored or returned.
+A GeoJSON document of the guest's, from its text; kept as that kind when it is stored or returned. The
+text is not checked here: the write that stores it fails when it is not a document the server accepts.
 
 #### `ListValue`
 
@@ -872,17 +1249,23 @@ public final class ListValue implements Iterable<Value>
 A list the server holds - a list bin, an element of another collection, an argument - to read: its
 size, an element by index, and every element in order. It is read where it is, so nothing is copied
 until an element is asked for, and an element that is itself a list or map is another view.
-```text
+
+```java
 ListValue tags = rec.getList("tags");
+
 for (Value tag : tags) {
-if (tag.asString().equals(wanted)) {
-break;            // leaving early is fine
+    if (tag.asString().equals(wanted)) {
+        break;            // leaving early is fine
+    }
 }
-}
-long first = tags.getInt(0);
+
+Value first = tags.isEmpty() ? null : tags.get(0);
 ```
-The typed readers (`getInt(int)` and the rest) throw `UdfException` naming the index
-when the element is of another kind, and so does every reader for an index past the end. A list is
+
+The typed readers (`getInt(int)` and the rest) answer null for an element that is nil and
+throw `UdfException` naming the index, with the status `LowLevel.TYPE_MISMATCH`, when the
+element is of another kind. An index past the end throws too (`LowLevel.NOT_FOUND`), as an index
+out of range does on a `java.util.List`: `size` is the test. A list is
 read-only: to change one, build another (`ListBuilder`) and write that. `toList` copies
 the whole list out as a `java.util.List`.
 
@@ -892,7 +1275,7 @@ the whole list out as a `java.util.List`.
 public int size()
 ```
 
-How many elements the list has.
+How many elements the list has; known without a call to the host.
 
 #### `ListValue.isEmpty`
 
@@ -908,7 +1291,10 @@ Whether the list has no elements.
 public Value asValue()
 ```
 
-The list as the one value it is, to hand on: into a bin, a builder or the result, by position.
+The list as the one value it is, to hand on: into a bin, a builder or the result, by position, so the
+server copies it without its elements passing through the guest. A view of nothing (the deleted bins of
+a side that deleted none, say) answers an empty list, built for the purpose; never an absent value,
+which no bin, builder or result takes.
 
 #### `ListValue.get`
 
@@ -916,32 +1302,41 @@ The list as the one value it is, to hand on: into a bin, a builder or the result
 public Value get(int index)
 ```
 
-The element at `index`, counted from 0; throws `UdfException` when the list has no such
-element. The server steps over the elements before it without decoding them.
+The element at `index`, counted from 0, as a fresh `Value`; a nil element is a value whose
+`Value.isNil` is true, not null. As `java.util.List.get` does, it throws for an index that
+is negative or past the end, where the other SDKs answer nothing: an `UdfException` with the
+status `LowLevel.NOT_FOUND`. Test `size` first where the index is not known to be good.
+One call to the host, which steps over the elements before it without decoding them: reading every
+element this way is quadratic, and what the iterator is for.
 
 #### `ListValue.getInt`
 
 ```java
-public long getInt(int index)
+public Long getInt(int index)
 ```
 
-The integer at `index`; throws `UdfException` naming the index when it is not one.
+The integer at `index`, counted from 0, or null when that element is nil. Throws
+`UdfException` naming the index: `LowLevel.TYPE_MISMATCH` when the element is of another
+kind, `LowLevel.NOT_FOUND` when the list has no such element, as `get` does. Every typed
+reader here answers these three ways.
 
 #### `ListValue.getDouble`
 
 ```java
-public double getDouble(int index)
+public Double getDouble(int index)
 ```
 
-The double at `index`; an integer is not widened.
+The double at `index`, or null when that element is nil. Throws `UdfException` when the
+element is of another kind (an integer is not widened) or the list has no such element.
 
 #### `ListValue.getBool`
 
 ```java
-public boolean getBool(int index)
+public Boolean getBool(int index)
 ```
 
-The boolean at `index`.
+The boolean at `index`, or null when that element is nil. Throws `UdfException` when the
+element is of another kind or the list has no such element.
 
 #### `ListValue.getString`
 
@@ -949,7 +1344,8 @@ The boolean at `index`.
 public String getString(int index)
 ```
 
-The text of the string at `index`, copied out.
+The text of the string at `index`, decoded into a new `String`, or null when that element
+is nil. Throws `UdfException` when the element is not a string or the list has no such element.
 
 #### `ListValue.getBlob`
 
@@ -957,7 +1353,19 @@ The text of the string at `index`, copied out.
 public byte[] getBlob(int index)
 ```
 
-The bytes of the string, blob, GeoJSON or HLL at `index`, copied out.
+The bytes of the blob at `index`, copied into a new array, or null when that element is nil. It
+is strict: throws `UdfException` (`LowLevel.TYPE_MISMATCH`) when the element is anything
+but a blob, a string included; `getBytes` takes those.
+
+#### `ListValue.getBytes`
+
+```java
+public byte[] getBytes(int index)
+```
+
+The raw bytes of the string, blob, GeoJSON or HLL at `index`, copied into a new array, or null
+when that element is nil. Throws `UdfException` (`LowLevel.TYPE_MISMATCH`) when the element
+is a number, a boolean, a list or a map, and when the list has no such element.
 
 #### `ListValue.getList`
 
@@ -965,7 +1373,8 @@ The bytes of the string, blob, GeoJSON or HLL at `index`, copied out.
 public ListValue getList(int index)
 ```
 
-The list at `index`.
+The list at `index`, as another view: nothing is copied. Null when that element is nil. Throws
+`UdfException` when the element is not a list or the list has no such element.
 
 #### `ListValue.getMap`
 
@@ -973,7 +1382,8 @@ The list at `index`.
 public MapValue getMap(int index)
 ```
 
-The map at `index`.
+The map at `index`, as a view: nothing is copied. Null when that element is nil. Throws
+`UdfException` when the element is not a map or the list has no such element.
 
 #### `ListValue.contains`
 
@@ -981,7 +1391,9 @@ The map at `index`.
 public boolean contains(String text)
 ```
 
-Whether the list holds the string `text`.
+Whether any element is the string `text`, of any length, compared byte for byte as UTF-8. It walks
+the list from the start and stops at the first match, so it is linear in the list; an element of another kind never
+matches, and a nested list is not searched.
 
 #### `ListValue.contains`
 
@@ -989,7 +1401,8 @@ Whether the list holds the string `text`.
 public boolean contains(long i)
 ```
 
-Whether the list holds the integer `i`.
+Whether any element is the integer `i`. It walks the list from the start and stops at the first
+match; a double of the same value does not match, and a nested list is not searched.
 
 #### `ListValue.iterator`
 
@@ -997,8 +1410,9 @@ Whether the list holds the integer `i`.
 public Iterator<Value> iterator()
 ```
 
-The elements in order, a fresh `Value` each, so one can be kept after the loop moves on. The
-loop may be left early.
+The elements in order, a fresh `Value` each, so one can be kept after the loop moves on. The loop
+may be left early. The elements come from the host 128 at a time, so a loop costs a call per 128
+elements, not one per element. `next()` past the end throws `NoSuchElementException`.
 
 #### `ListValue.toList`
 
@@ -1006,7 +1420,7 @@ loop may be left early.
 public List<Object> toList()
 ```
 
-The whole list copied out as a `java.util.List`, each element as `Value#toObject` gives
+The whole list copied out as a `java.util.List`, each element as `Value.toObject` gives
 it; a nested list or map is copied too.
 
 #### `MapValue`
@@ -1018,18 +1432,23 @@ public final class MapValue implements Iterable<MapValue.Entry>
 A map the server holds - a map bin, an element of another collection, an argument - to read: an entry
 by its key, which is a string or an integer, and every entry in the order the server keeps them. It is
 read where it is, so nothing is copied until an entry is asked for.
-```text
+
+```java
 MapValue device = rec.getMap("device");
+
 long version = device.getInt("version", 0);     // 0 when there is no such key
-String id = device.getString("deviceId");        // throws when there is no such key
+String id = device.getString("deviceId");        // null when there is no such key
+
 for (MapValue.Entry e : rec.getMap("counts")) {
-total += e.getValue().asInt();
+    total += e.getValue().asInt();
 }
 ```
+
 `get(String)` answers `null` for a key the map does not have, as a `java.util.Map`
-does. A typed reader without a default throws `UdfException` naming the key when the map has no
-such key; one with a default answers the default for a missing key or a nil entry; either throws when
-the entry is of another kind. A map is read-only: to change one, build another (`MapBuilder`) and
+does, and so does every typed reader, for a missing key and for a nil entry alike; one with a default
+answers the default there. Either throws `UdfException` naming the key, with the status
+`LowLevel.TYPE_MISMATCH`, when the entry is of another kind: nothing is widened or converted. A key
+may be of any length. A map is read-only: to change one, build another (`MapBuilder`) and
 write that. `toMap` copies the whole map out as a `java.util.Map`.
 
 #### `MapValue.Entry`
@@ -1054,7 +1473,8 @@ The entry's key: a string or an integer, as a rule.
 public Value getValue()
 ```
 
-The entry's value.
+The entry's value, of any kind; a nil entry is a `Value` whose `Value.isNil` is true,
+not null.
 
 #### `Entry.setValue`
 
@@ -1070,7 +1490,7 @@ A stored map is read-only: this throws `UnsupportedOperationException`.
 public int size()
 ```
 
-How many entries the map has.
+How many entries the map has; known without a call to the host.
 
 #### `MapValue.isEmpty`
 
@@ -1086,7 +1506,10 @@ Whether the map has no entries.
 public Value asValue()
 ```
 
-The map as the one value it is, to hand on: into a bin, a builder or the result, by position.
+The map as the one value it is, to hand on: into a bin, a builder or the result, by position, so the
+server copies it without its entries passing through the guest. A view of nothing (a list of names the
+server did not send, say) answers an empty map, built for the purpose; never an absent value, which no
+bin, builder or result takes.
 
 #### `MapValue.get`
 
@@ -1094,7 +1517,9 @@ The map as the one value it is, to hand on: into a bin, a builder or the result,
 public Value get(String key)
 ```
 
-The value under `key`, or null when the map has no such key.
+The value under `key`, as a fresh `Value`, or null when the map has no such key. An entry that is
+there and holds nil is not null: it is a value whose `Value.isNil` is true. One call to the host,
+which walks the entries to the key, so a lookup is linear in the map's size.
 
 #### `MapValue.containsKey`
 
@@ -1102,15 +1527,16 @@ The value under `key`, or null when the map has no such key.
 public boolean containsKey(String key)
 ```
 
-Whether the map has `key`.
+Whether the map has the key; true also for an entry that holds nil. One call to the host.
 
 #### `MapValue.getInt`
 
 ```java
-public long getInt(String key)
+public Long getInt(String key)
 ```
 
-The integer under `key`; throws `UdfException` when there is none or it is not one.
+The integer under `key`, or null when the map has no such key or the entry is nil. Throws
+`UdfException` (`LowLevel.TYPE_MISMATCH`) naming the key when the entry is of another kind.
 
 #### `MapValue.getInt`
 
@@ -1118,15 +1544,18 @@ The integer under `key`; throws `UdfException` when there is none or it is not o
 public long getInt(String key, long dflt)
 ```
 
-The integer under `key`, or `dflt` when there is none; throws when it is of another kind.
+The integer under `key`, or `dflt` when the map has no such key or the entry is nil. An entry of
+another kind still throws `UdfException` (`LowLevel.TYPE_MISMATCH`).
 
 #### `MapValue.getDouble`
 
 ```java
-public double getDouble(String key)
+public Double getDouble(String key)
 ```
 
-The double under `key`; an integer is not widened.
+The double under `key`, or null when the map has no such key or the entry is nil. Throws
+`UdfException` (`LowLevel.TYPE_MISMATCH`) when the entry is of another kind; an integer is
+not widened.
 
 #### `MapValue.getDouble`
 
@@ -1134,15 +1563,17 @@ The double under `key`; an integer is not widened.
 public double getDouble(String key, double dflt)
 ```
 
-The double under `key`, or `dflt` when there is none.
+The double under `key`, or `dflt` when the map has no such key or the entry is nil. An entry of
+another kind, an integer included, still throws `UdfException`.
 
 #### `MapValue.getBool`
 
 ```java
-public boolean getBool(String key)
+public Boolean getBool(String key)
 ```
 
-The boolean under `key`.
+The boolean under `key`, or null when the map has no such key or the entry is nil. Throws
+`UdfException` (`LowLevel.TYPE_MISMATCH`) when the entry is of another kind.
 
 #### `MapValue.getBool`
 
@@ -1150,7 +1581,8 @@ The boolean under `key`.
 public boolean getBool(String key, boolean dflt)
 ```
 
-The boolean under `key`, or `dflt` when there is none.
+The boolean under `key`, or `dflt` when the map has no such key or the entry is nil. An entry of
+another kind still throws `UdfException`.
 
 #### `MapValue.getString`
 
@@ -1158,7 +1590,9 @@ The boolean under `key`, or `dflt` when there is none.
 public String getString(String key)
 ```
 
-The text of the string under `key`, copied out.
+The text of the string under `key`, decoded into a new `String`, or null when the map has no such
+key or the entry is nil. Throws `UdfException` (`LowLevel.TYPE_MISMATCH`) when the entry is
+not a string.
 
 #### `MapValue.getString`
 
@@ -1166,7 +1600,8 @@ The text of the string under `key`, copied out.
 public String getString(String key, String dflt)
 ```
 
-The text of the string under `key`, or `dflt` when there is none.
+The text of the string under `key`, or `dflt` (which may be null) when the map has no such key or
+the entry is nil. An entry of another kind still throws `UdfException`.
 
 #### `MapValue.getBlob`
 
@@ -1174,7 +1609,9 @@ The text of the string under `key`, or `dflt` when there is none.
 public byte[] getBlob(String key)
 ```
 
-The bytes of the string, blob, GeoJSON or HLL under `key`, copied out.
+The bytes of the blob under `key`, copied into a new array, or null when the map has no such key or the
+entry is nil. It is strict: throws `UdfException` (`LowLevel.TYPE_MISMATCH`) when the entry
+is anything but a blob, a string included; `getBytes(String)` takes those.
 
 #### `MapValue.getBlob`
 
@@ -1182,7 +1619,18 @@ The bytes of the string, blob, GeoJSON or HLL under `key`, copied out.
 public byte[] getBlob(String key, byte[] dflt)
 ```
 
-The bytes under `key`, or `dflt` when there is none.
+The bytes of the blob under `key`, copied into a new array, or `dflt` (which may be null) when the
+map has no such key or the entry is nil. An entry of another kind still throws `UdfException`.
+
+#### `MapValue.getBytes`
+
+```java
+public byte[] getBytes(String key)
+```
+
+The raw bytes of the string, blob, GeoJSON or HLL under `key`, copied into a new array, or null when the
+map has no such key or the entry is nil. Throws `UdfException` (`LowLevel.TYPE_MISMATCH`)
+when the entry is a number, a boolean, a list or a map.
 
 #### `MapValue.getList`
 
@@ -1190,7 +1638,8 @@ The bytes under `key`, or `dflt` when there is none.
 public ListValue getList(String key)
 ```
 
-The list under `key`.
+The list under `key`, as a view: nothing is copied. Null when the map has no such key or the entry is
+nil. Throws `UdfException` (`LowLevel.TYPE_MISMATCH`) when the entry is not a list.
 
 #### `MapValue.getList`
 
@@ -1198,7 +1647,8 @@ The list under `key`.
 public ListValue getList(String key, ListValue dflt)
 ```
 
-The list under `key`, or `dflt` (which may be null) when there is none.
+The list under `key` as a view, or `dflt` (which may be null) when the map has no such key or the
+entry is nil. An entry of another kind still throws `UdfException`.
 
 #### `MapValue.getMap`
 
@@ -1206,7 +1656,8 @@ The list under `key`, or `dflt` (which may be null) when there is none.
 public MapValue getMap(String key)
 ```
 
-The map under `key`.
+The map under `key`, as another view: nothing is copied. Null when the map has no such key or the entry
+is nil. Throws `UdfException` (`LowLevel.TYPE_MISMATCH`) when the entry is not a map.
 
 #### `MapValue.getMap`
 
@@ -1214,7 +1665,8 @@ The map under `key`.
 public MapValue getMap(String key, MapValue dflt)
 ```
 
-The map under `key`, or `dflt` (which may be null) when there is none.
+The map under `key` as a view, or `dflt` (which may be null) when the map has no such key or the
+entry is nil. An entry of another kind still throws `UdfException`.
 
 #### `MapValue.get`
 
@@ -1222,7 +1674,9 @@ The map under `key`, or `dflt` (which may be null) when there is none.
 public Value get(long key)
 ```
 
-The value under the integer `key`, or null when the map has no such key.
+The value under the integer `key`, as a fresh `Value`, or null when the map has no such key. An entry that is
+there and holds nil is not null: it is a value whose `Value.isNil` is true. One call to the host,
+which walks the entries to the key, so a lookup is linear in the map's size.
 
 #### `MapValue.containsKey`
 
@@ -1230,15 +1684,16 @@ The value under the integer `key`, or null when the map has no such key.
 public boolean containsKey(long key)
 ```
 
-Whether the map has the integer `key`.
+Whether the map has the key; true also for an entry that holds nil. One call to the host.
 
 #### `MapValue.getInt`
 
 ```java
-public long getInt(long key)
+public Long getInt(long key)
 ```
 
-The integer under the integer `key`; throws when there is none or it is not one.
+The integer under the integer `key`, or null when the map has no such key or the entry is nil. Throws
+`UdfException` (`LowLevel.TYPE_MISMATCH`) naming the key when the entry is of another kind.
 
 #### `MapValue.getInt`
 
@@ -1246,15 +1701,18 @@ The integer under the integer `key`; throws when there is none or it is not one.
 public long getInt(long key, long dflt)
 ```
 
-The integer under the integer `key`, or `dflt` when there is none.
+The integer under the integer `key`, or `dflt` when the map has no such key or the entry is nil. An entry of
+another kind still throws `UdfException` (`LowLevel.TYPE_MISMATCH`).
 
 #### `MapValue.getDouble`
 
 ```java
-public double getDouble(long key)
+public Double getDouble(long key)
 ```
 
-The double under the integer `key`; an integer is not widened.
+The double under the integer `key`, or null when the map has no such key or the entry is nil. Throws
+`UdfException` (`LowLevel.TYPE_MISMATCH`) when the entry is of another kind; an integer is
+not widened.
 
 #### `MapValue.getDouble`
 
@@ -1262,15 +1720,17 @@ The double under the integer `key`; an integer is not widened.
 public double getDouble(long key, double dflt)
 ```
 
-The double under the integer `key`, or `dflt` when there is none.
+The double under the integer `key`, or `dflt` when the map has no such key or the entry is nil. An entry of
+another kind, an integer included, still throws `UdfException`.
 
 #### `MapValue.getBool`
 
 ```java
-public boolean getBool(long key)
+public Boolean getBool(long key)
 ```
 
-The boolean under the integer `key`.
+The boolean under the integer `key`, or null when the map has no such key or the entry is nil. Throws
+`UdfException` (`LowLevel.TYPE_MISMATCH`) when the entry is of another kind.
 
 #### `MapValue.getBool`
 
@@ -1278,7 +1738,8 @@ The boolean under the integer `key`.
 public boolean getBool(long key, boolean dflt)
 ```
 
-The boolean under the integer `key`, or `dflt` when there is none.
+The boolean under the integer `key`, or `dflt` when the map has no such key or the entry is nil. An entry of
+another kind still throws `UdfException`.
 
 #### `MapValue.getString`
 
@@ -1286,7 +1747,9 @@ The boolean under the integer `key`, or `dflt` when there is none.
 public String getString(long key)
 ```
 
-The text of the string under the integer `key`, copied out.
+The text of the string under the integer `key`, decoded into a new `String`, or null when the map has no such
+key or the entry is nil. Throws `UdfException` (`LowLevel.TYPE_MISMATCH`) when the entry is
+not a string.
 
 #### `MapValue.getString`
 
@@ -1294,7 +1757,8 @@ The text of the string under the integer `key`, copied out.
 public String getString(long key, String dflt)
 ```
 
-The text of the string under the integer `key`, or `dflt` when there is none.
+The text of the string under the integer `key`, or `dflt` (which may be null) when the map has no such key or
+the entry is nil. An entry of another kind still throws `UdfException`.
 
 #### `MapValue.getBlob`
 
@@ -1302,7 +1766,9 @@ The text of the string under the integer `key`, or `dflt` when there is none.
 public byte[] getBlob(long key)
 ```
 
-The bytes of the string, blob, GeoJSON or HLL under the integer `key`, copied out.
+The bytes of the blob under the integer `key`, copied into a new array, or null when the map has no such key or the
+entry is nil. It is strict: throws `UdfException` (`LowLevel.TYPE_MISMATCH`) when the entry
+is anything but a blob, a string included; `getBytes(long)` takes those.
 
 #### `MapValue.getBlob`
 
@@ -1310,7 +1776,18 @@ The bytes of the string, blob, GeoJSON or HLL under the integer `key`, copied ou
 public byte[] getBlob(long key, byte[] dflt)
 ```
 
-The bytes under the integer `key`, or `dflt` when there is none.
+The bytes of the blob under the integer `key`, copied into a new array, or `dflt` (which may be null) when the
+map has no such key or the entry is nil. An entry of another kind still throws `UdfException`.
+
+#### `MapValue.getBytes`
+
+```java
+public byte[] getBytes(long key)
+```
+
+The raw bytes of the string, blob, GeoJSON or HLL under the integer `key`, copied into a new array, or null when the
+map has no such key or the entry is nil. Throws `UdfException` (`LowLevel.TYPE_MISMATCH`)
+when the entry is a number, a boolean, a list or a map.
 
 #### `MapValue.getList`
 
@@ -1318,7 +1795,8 @@ The bytes under the integer `key`, or `dflt` when there is none.
 public ListValue getList(long key)
 ```
 
-The list under the integer `key`.
+The list under the integer `key`, as a view: nothing is copied. Null when the map has no such key or the entry is
+nil. Throws `UdfException` (`LowLevel.TYPE_MISMATCH`) when the entry is not a list.
 
 #### `MapValue.getList`
 
@@ -1326,7 +1804,8 @@ The list under the integer `key`.
 public ListValue getList(long key, ListValue dflt)
 ```
 
-The list under the integer `key`, or `dflt` (which may be null) when there is none.
+The list under the integer `key` as a view, or `dflt` (which may be null) when the map has no such key or the
+entry is nil. An entry of another kind still throws `UdfException`.
 
 #### `MapValue.getMap`
 
@@ -1334,7 +1813,8 @@ The list under the integer `key`, or `dflt` (which may be null) when there is no
 public MapValue getMap(long key)
 ```
 
-The map under the integer `key`.
+The map under the integer `key`, as another view: nothing is copied. Null when the map has no such key or the entry
+is nil. Throws `UdfException` (`LowLevel.TYPE_MISMATCH`) when the entry is not a map.
 
 #### `MapValue.getMap`
 
@@ -1342,7 +1822,8 @@ The map under the integer `key`.
 public MapValue getMap(long key, MapValue dflt)
 ```
 
-The map under the integer `key`, or `dflt` (which may be null) when there is none.
+The map under the integer `key` as a view, or `dflt` (which may be null) when the map has no such key or the
+entry is nil. An entry of another kind still throws `UdfException`.
 
 #### `MapValue.iterator`
 
@@ -1351,7 +1832,20 @@ public Iterator<Entry> iterator()
 ```
 
 The entries in the order the server keeps them, a fresh key and value each, so an entry can be kept
-after the loop moves on. The loop may be left early.
+after the loop moves on. The loop may be left early. The entries come from the host 64 at a time, so a
+loop costs a call per 64 entries, not one per entry. `next()` past the end throws
+`NoSuchElementException`.
+
+#### `MapValue.toMap`
+
+```java
+public Map<Object, Object> toMap()
+```
+
+The whole map copied out as a `java.util.Map` in the server's order, each key and value as
+`Value.toObject` gives it: a string key is a `String`, an integer key a `Long`, and a
+nested list or map is copied too. It costs an object per key and value; the views read the same data
+without.
 
 #### `ListBuilder`
 
@@ -1360,16 +1854,25 @@ public final class ListBuilder
 ```
 
 A list being built on the server, to be written to a bin, returned as the result, nested in another
-collection or handed back from an event handler. `Udf#list()` starts one; every `add` is
+collection or handed back from an event handler. `Udf.list()` starts one; every `add` is
 one call to the host, appends, and returns the builder, so they chain; one that the host refuses throws
 `UdfException`. The list lives until the call ends.
-```text
+
+```java
 ListBuilder tags = Udf.list().add("a").add("b").addAll(rec.getList("more"));
+
 rec.set("tags", tags);
 ```
+
 It is a builder, not a collection: what went in is not read back from it. To read a list, read the
 stored one (`ListValue`); to build from plain Java data, `addAll(Iterable)` takes a
 `java.util.List`.
+
+A builder holds one of the call's 256 handles for as long as the call runs, and an `add` takes
+none, whatever is added: a loop may add as many elements as the server lets a call build. An `add`
+throws, with the status `LowLevel.REFUSED`, when the call has built as much on the server as it is
+allowed, when the value would nest deeper than 64 levels, and when a collection would end up inside
+itself. What was added before the throw stays in the list.
 
 #### `ListBuilder.size`
 
@@ -1377,7 +1880,7 @@ stored one (`ListValue`); to build from plain Java data, `addAll(Iterable)` take
 public int size()
 ```
 
-How many elements have been added.
+How many elements have been added. One call to the host.
 
 #### `ListBuilder.isEmpty`
 
@@ -1385,7 +1888,7 @@ How many elements have been added.
 public boolean isEmpty()
 ```
 
-Whether nothing has been added.
+Whether nothing has been added. One call to the host.
 
 #### `ListBuilder.asValue`
 
@@ -1393,7 +1896,9 @@ Whether nothing has been added.
 public Value asValue()
 ```
 
-The list as a value, to put where a `Value` is taken.
+The list as a `Value` of kind `Value.HANDLE`, to put where a value is taken:
+Value), another builder, `Udf.result`. It stands for this same list,
+not a copy, and cannot be read back: `Value.asList` throws on it.
 
 #### `ListBuilder.add`
 
@@ -1401,7 +1906,7 @@ The list as a value, to put where a `Value` is taken.
 public ListBuilder add(long value)
 ```
 
-Appends an integer.
+Appends an integer and returns this builder. An `int` argument widens to this one.
 
 #### `ListBuilder.add`
 
@@ -1409,7 +1914,8 @@ Appends an integer.
 public ListBuilder add(double value)
 ```
 
-Appends a double.
+Appends a double and returns this builder. A whole-number double stays a double: 3.0 is not stored as
+3.
 
 #### `ListBuilder.add`
 
@@ -1417,7 +1923,7 @@ Appends a double.
 public ListBuilder add(boolean value)
 ```
 
-Appends a boolean.
+Appends a boolean, stored as one and not as 0 or 1.
 
 #### `ListBuilder.add`
 
@@ -1425,7 +1931,8 @@ Appends a boolean.
 public ListBuilder add(String value)
 ```
 
-Appends a string.
+Appends a string, encoded as UTF-8 and copied by the host. `value` must not be null: nil is
+`addNil`.
 
 #### `ListBuilder.add`
 
@@ -1433,7 +1940,7 @@ Appends a string.
 public ListBuilder add(byte[] value)
 ```
 
-Appends a blob.
+Appends a blob holding a copy of all of `value`.
 
 #### `ListBuilder.add`
 
@@ -1441,8 +1948,9 @@ Appends a blob.
 public ListBuilder add(Value value)
 ```
 
-Appends a value of any kind: a scalar, a string or blob of the guest's, a stored value by position
-(so a nested document goes in exactly as it is stored), a built collection.
+Appends a value of any kind: a scalar, a string or blob of the guest's, a stored value by position (so
+a nested document goes in exactly as it is stored, copied by the server), a built collection. A nil
+value appends nil. Throws `UdfException` (`LowLevel.TYPE_MISMATCH`) for an absent value.
 
 #### `ListBuilder.add`
 
@@ -1450,7 +1958,8 @@ Appends a value of any kind: a scalar, a string or blob of the guest's, a stored
 public ListBuilder add(MapBuilder value)
 ```
 
-Appends a built map, nested.
+Appends a built map as one nested element. The builder is not used up, and the list holds the same map
+rather than a copy of it. Throws `UdfException` past 64 levels of nesting.
 
 #### `ListBuilder.add`
 
@@ -1458,7 +1967,9 @@ Appends a built map, nested.
 public ListBuilder add(ListBuilder value)
 ```
 
-Appends a built list, nested.
+Appends a built list as one nested element, not its elements one by one. The builder is not used up,
+and this list holds the same list rather than a copy of it. Throws `UdfException` past 64 levels
+of nesting, and for a list added to itself.
 
 #### `ListBuilder.add`
 
@@ -1474,7 +1985,7 @@ Appends a `java.util.List` as one nested list, its elements as `addAll(Iterable)
 public ListBuilder add(Map<?, ?> value)
 ```
 
-Appends a `java.util.Map` as one nested map, its entries as `MapBuilder#putAll(Map)` takes them.
+Appends a `java.util.Map` as one nested map, its entries as `MapBuilder.putAll(Map)` takes them.
 
 #### `ListBuilder.addNil`
 
@@ -1482,7 +1993,7 @@ Appends a `java.util.Map` as one nested map, its entries as `MapBuilder#putAll(M
 public ListBuilder addNil()
 ```
 
-Appends nil.
+Appends nil: an element that reads back with `Value.isNil` true.
 
 #### `ListBuilder.addGeoJson`
 
@@ -1490,7 +2001,8 @@ Appends nil.
 public ListBuilder addGeoJson(String doc)
 ```
 
-Appends a GeoJSON document, kept as that kind rather than a string.
+Appends a GeoJSON document from its text, kept as that kind rather than a string. The text is not
+checked here.
 
 #### `ListBuilder.addAll`
 
@@ -1498,11 +2010,22 @@ Appends a GeoJSON document, kept as that kind rather than a string.
 public ListBuilder addAll(Iterable<?> items)
 ```
 
-Appends every element of `items`, one by one: a stored list (`ListValue`), whose
-elements go in by position, or a `java.util.List` or other iterable of `Long`,
-`Integer`, `Double`, `Boolean`, `String`, `byte[]`, `Value`,
-builders, nested `java.util` lists and maps, and `null` for nil. Anything else throws
-`UdfException`.
+Appends every element of `items`, one by one: a stored list (`ListValue`), whose elements
+go in by position, or a `java.util.List` or other iterable of `Long`, `Integer`,
+`Short`, `Byte`, `Double`, `Float`, `Boolean`, `String`,
+`byte[]`, `Value`, stored lists and maps, builders, nested `java.util` lists and
+maps, and `null` for nil. Anything else throws `UdfException` naming its class, with the
+elements before it already added.
+
+```java
+List<Object> row = new ArrayList<>();
+row.add("alice");
+row.add(42);                          // an Integer goes in as an integer
+row.add(null);                        // nil
+
+ListBuilder rows = Udf.list().add(row);                 // one nested list of three
+ListBuilder flat = Udf.list().addAll(row).add(true);    // four elements
+```
 
 #### `MapBuilder`
 
@@ -1511,19 +2034,32 @@ public final class MapBuilder
 ```
 
 A map being built on the server, to be written to a bin, returned as the result, nested in another
-collection or handed back from an event handler. `Udf#map()` starts one; every `put` is one
+collection or handed back from an event handler. `Udf.map()` starts one; every `put` is one
 call to the host and returns the builder, so they chain; one that the host refuses throws
 `UdfException`. A key is a string or an integer. The map is ordered by key, whatever order its
 entries are put in, and lives until the call ends.
-```text
+
+```java
 MapBuilder out = Udf.map().put("visits", visits).put("tags", tags);
+
 if (!out.containsKey("profile")) {
-out.put("profile", profile);
+    out.put("profile", profile);
 }
 ```
+
 It is a builder, not a collection: `containsKey` and `size` are all it answers about
 what went in. To read a map, read the stored one (`MapValue`); to build from plain Java data,
 `putAll(Map)` takes a `java.util.Map`.
+
+Putting under a key the map already has replaces that entry. A key is not a bin name and may be of
+any length; none is cut. The exception is the map of bins an event handler answers with
+(`Resolution.record`), whose keys are bin names.
+
+A builder holds one of the call's 256 handles for as long as the call runs, and a `put` takes
+none, whatever the key and the value are: a loop may put as many entries as the server lets a call build.
+A `put` throws, with the status `LowLevel.REFUSED`, when the call has built as much on the
+server as it is allowed, when the value would nest deeper than 64 levels, and when a collection would end
+up inside itself.
 
 #### `MapBuilder.size`
 
@@ -1531,7 +2067,7 @@ what went in. To read a map, read the stored one (`MapValue`); to build from pla
 public int size()
 ```
 
-How many entries the map holds.
+How many entries the map holds: keys, not puts. One call to the host.
 
 #### `MapBuilder.isEmpty`
 
@@ -1539,7 +2075,7 @@ How many entries the map holds.
 public boolean isEmpty()
 ```
 
-Whether the map holds nothing.
+Whether the map holds nothing. One call to the host.
 
 #### `MapBuilder.asValue`
 
@@ -1547,7 +2083,9 @@ Whether the map holds nothing.
 public Value asValue()
 ```
 
-The map as a value, to put where a `Value` is taken.
+The map as a `Value` of kind `Value.HANDLE`, to put where a value is taken:
+Value), another builder, `Udf.result`. It stands for this same map,
+not a copy, and cannot be read back: `Value.asMap` throws on it.
 
 #### `MapBuilder.containsKey`
 
@@ -1555,7 +2093,8 @@ The map as a value, to put where a `Value` is taken.
 public boolean containsKey(String key)
 ```
 
-Whether an entry has been put under `key`: one call to the host, which asks the map itself.
+Whether an entry has been put under `key`, a nil entry included: one call to the host, which asks
+the map itself.
 
 #### `MapBuilder.containsKey`
 
@@ -1563,7 +2102,8 @@ Whether an entry has been put under `key`: one call to the host, which asks the 
 public boolean containsKey(long key)
 ```
 
-Whether an entry has been put under the integer `key`.
+Whether an entry has been put under the integer `key`, a nil entry included. The integer 1 and
+the string "1" are different keys.
 
 #### `MapBuilder.put`
 
@@ -1571,7 +2111,7 @@ Whether an entry has been put under the integer `key`.
 public MapBuilder put(String key, long value)
 ```
 
-An integer under a string key.
+Puts an integer under a string key, replacing any entry the key had, and returns this builder.
 
 #### `MapBuilder.put`
 
@@ -1579,7 +2119,8 @@ An integer under a string key.
 public MapBuilder put(String key, double value)
 ```
 
-A double under a string key.
+Puts a double under a string key, replacing any entry the key had. A whole-number double stays a
+double.
 
 #### `MapBuilder.put`
 
@@ -1587,7 +2128,7 @@ A double under a string key.
 public MapBuilder put(String key, boolean value)
 ```
 
-A boolean under a string key.
+Puts a boolean under a string key, replacing any entry the key had; stored as a boolean, not 0 or 1.
 
 #### `MapBuilder.put`
 
@@ -1595,7 +2136,8 @@ A boolean under a string key.
 public MapBuilder put(String key, String value)
 ```
 
-A string under a string key.
+Puts a string under a string key, replacing any entry the key had; encoded as UTF-8 and copied by the
+host. `value` must not be null: nil is `putNil(String)`.
 
 #### `MapBuilder.put`
 
@@ -1603,7 +2145,7 @@ A string under a string key.
 public MapBuilder put(String key, byte[] value)
 ```
 
-A blob under a string key.
+Puts a blob holding a copy of all of `value` under a string key, replacing any entry the key had.
 
 #### `MapBuilder.put`
 
@@ -1611,8 +2153,9 @@ A blob under a string key.
 public MapBuilder put(String key, Value value)
 ```
 
-A value of any kind under a string key: a scalar, a string or blob of the guest's, a stored value by
-position (so a nested document goes in exactly as it is stored), a built collection.
+Puts a value of any kind under a string key: a scalar, a string or blob of the guest's, a stored value
+by position (so a nested document goes in exactly as it is stored, copied by the server), a built
+collection. A nil value makes a nil entry. Throws `UdfException` for an absent value.
 
 #### `MapBuilder.put`
 
@@ -1620,7 +2163,9 @@ position (so a nested document goes in exactly as it is stored), a built collect
 public MapBuilder put(String key, MapBuilder value)
 ```
 
-A built map, nested under a string key.
+Puts a built map, nested, under a string key. The nested builder is not used up, and this map holds the
+same map rather than a copy of it. Throws `UdfException` past 64 levels of nesting, and for a map
+put into itself.
 
 #### `MapBuilder.put`
 
@@ -1628,7 +2173,8 @@ A built map, nested under a string key.
 public MapBuilder put(String key, ListBuilder value)
 ```
 
-A built list, nested under a string key.
+Puts a built list, nested, under a string key. The nested builder is not used up, and the map holds the
+same list rather than a copy of it. Throws `UdfException` past 64 levels of nesting.
 
 #### `MapBuilder.put`
 
@@ -1636,7 +2182,8 @@ A built list, nested under a string key.
 public MapBuilder put(String key, List<?> value)
 ```
 
-A `java.util.List` as a nested list under a string key.
+Puts a `java.util.List` as a nested list under a string key, its elements as
+`ListBuilder.addAll` takes them; an element of another type throws `UdfException`.
 
 #### `MapBuilder.put`
 
@@ -1644,7 +2191,8 @@ A `java.util.List` as a nested list under a string key.
 public MapBuilder put(String key, Map<?, ?> value)
 ```
 
-A `java.util.Map` as a nested map under a string key.
+Puts a `java.util.Map` as a nested map under a string key, its entries as `putAll(Map)`
+takes them; a key or value of another type throws `UdfException`.
 
 #### `MapBuilder.putNil`
 
@@ -1652,7 +2200,8 @@ A `java.util.Map` as a nested map under a string key.
 public MapBuilder putNil(String key)
 ```
 
-A nil entry: in a record an event handler answers with, "no such bin".
+Puts a nil entry under a string key: the key is in the map and its value is nil. In the record an event
+handler answers with, that means "no such bin": the bin is deleted.
 
 #### `MapBuilder.putGeoJson`
 
@@ -1660,7 +2209,8 @@ A nil entry: in a record an event handler answers with, "no such bin".
 public MapBuilder putGeoJson(String key, String doc)
 ```
 
-A GeoJSON document under a string key, kept as that kind rather than a string.
+Puts a GeoJSON document under a string key from its text, kept as that kind rather than a string. The
+text is not checked here.
 
 #### `MapBuilder.put`
 
@@ -1668,7 +2218,7 @@ A GeoJSON document under a string key, kept as that kind rather than a string.
 public MapBuilder put(long key, long value)
 ```
 
-An integer under an integer key.
+Puts an integer under an integer key, replacing any entry the key had, and returns this builder.
 
 #### `MapBuilder.put`
 
@@ -1676,7 +2226,8 @@ An integer under an integer key.
 public MapBuilder put(long key, double value)
 ```
 
-A double under an integer key.
+Puts a double under an integer key, replacing any entry the key had. A whole-number double stays a
+double.
 
 #### `MapBuilder.put`
 
@@ -1684,7 +2235,7 @@ A double under an integer key.
 public MapBuilder put(long key, boolean value)
 ```
 
-A boolean under an integer key.
+Puts a boolean under an integer key, replacing any entry the key had; stored as a boolean, not 0 or 1.
 
 #### `MapBuilder.put`
 
@@ -1692,7 +2243,8 @@ A boolean under an integer key.
 public MapBuilder put(long key, String value)
 ```
 
-A string under an integer key.
+Puts a string under an integer key, replacing any entry the key had; encoded as UTF-8 and copied by the
+host. `value` must not be null: nil is `putNil(long)`.
 
 #### `MapBuilder.put`
 
@@ -1700,7 +2252,8 @@ A string under an integer key.
 public MapBuilder put(long key, byte[] value)
 ```
 
-A blob under an integer key.
+Puts a blob holding a copy of all of `value` under an integer key, replacing any entry the key
+had.
 
 #### `MapBuilder.put`
 
@@ -1708,7 +2261,8 @@ A blob under an integer key.
 public MapBuilder put(long key, Value value)
 ```
 
-A value of any kind under an integer key, the kinds as `put(String, Value)` takes them.
+Puts a value of any kind under an integer key, the kinds as Value) takes them.
+Throws `UdfException` for an absent value.
 
 #### `MapBuilder.put`
 
@@ -1716,7 +2270,9 @@ A value of any kind under an integer key, the kinds as `put(String, Value)` take
 public MapBuilder put(long key, MapBuilder value)
 ```
 
-A built map, nested under an integer key.
+Puts a built map, nested, under an integer key. The nested builder is not used up, and this map holds
+the same map rather than a copy of it. Throws `UdfException` past 64 levels of nesting, and for a
+map put into itself.
 
 #### `MapBuilder.put`
 
@@ -1724,7 +2280,8 @@ A built map, nested under an integer key.
 public MapBuilder put(long key, ListBuilder value)
 ```
 
-A built list, nested under an integer key.
+Puts a built list, nested, under an integer key. The nested builder is not used up, and the map holds
+the same list rather than a copy of it. Throws `UdfException` past 64 levels of nesting.
 
 #### `MapBuilder.put`
 
@@ -1732,7 +2289,8 @@ A built list, nested under an integer key.
 public MapBuilder put(long key, List<?> value)
 ```
 
-A `java.util.List` as a nested list under an integer key.
+Puts a `java.util.List` as a nested list under an integer key, its elements as
+`ListBuilder.addAll` takes them; an element of another type throws `UdfException`.
 
 #### `MapBuilder.put`
 
@@ -1740,7 +2298,8 @@ A `java.util.List` as a nested list under an integer key.
 public MapBuilder put(long key, Map<?, ?> value)
 ```
 
-A `java.util.Map` as a nested map under an integer key.
+Puts a `java.util.Map` as a nested map under an integer key, its entries as `putAll(Map)`
+takes them; a key or value of another type throws `UdfException`.
 
 #### `MapBuilder.putNil`
 
@@ -1748,7 +2307,7 @@ A `java.util.Map` as a nested map under an integer key.
 public MapBuilder putNil(long key)
 ```
 
-A nil entry under an integer key.
+Puts a nil entry under an integer key: the key is in the map and its value is nil.
 
 #### `MapBuilder.putAll`
 
@@ -1756,7 +2315,8 @@ A nil entry under an integer key.
 public MapBuilder putAll(MapValue stored)
 ```
 
-Every entry of a stored map, each value by position.
+Puts every entry of a stored map, each value by position, replacing entries whose keys this map already
+has. Throws `UdfException` for a key that is neither a string nor an integer.
 
 #### `MapBuilder.putAll`
 
@@ -1764,10 +2324,21 @@ Every entry of a stored map, each value by position.
 public MapBuilder putAll(Map<?, ?> entries)
 ```
 
-Every entry of a `java.util.Map`: a key is a `String` or an integer, a value a
-`Long`, `Integer`, `Double`, `Boolean`, `String`, `byte[]`,
-`Value`, a builder, a nested `java.util` list or map, or `null` for nil. Anything
-else throws `UdfException`.
+Puts every entry of a `java.util.Map`: a key is a `String` or an integer (`Long`,
+`Integer`, `Short`, `Byte`), a value a `Long`, `Integer`, `Double`,
+`Float`, `Boolean`, `String`, `byte[]`, `Value`, a stored list or map, a
+builder, a nested `java.util` list or map, or `null` for nil. Anything else throws
+`UdfException` naming its class, with the entries before it already put.
+
+```java
+Map<String, Object> profile = new HashMap<>();
+profile.put("name", "alice");
+profile.put("age", 42);
+
+MapBuilder out = Udf.map().putAll(profile).put("tags", Udf.list().add("a").add("b"));
+
+rec.set("profile", out);
+```
 
 #### `Udf`
 
@@ -1780,15 +2351,19 @@ WebAssembly backend. This class is what a UDF reaches for that is not about the 
 server's log, the builders of lists and maps, and - for a function written in the raw form -
 the result and the failure. Everything about the record is a method of the `Record` a function
 takes as its first parameter.
-```text
+
+```java
 @Function("increment")
 static long increment(Record rec, long by) {
-long n = rec.getInt("n", 0) + by;
-rec.set("n", n);
-rec.save();
-return n;
+    long n = rec.getInt("n", 0) + by;
+
+    rec.set("n", n);
+    rec.save();
+
+    return n;
 }
 ```
+
 The contract underneath is the one the Rust SDK (aerospike-udf-sdk-wasm) documents: every read is a
 16-byte `Value`, a string or collection is read by position from a source the host holds, nothing
 is msgpack. `LowLevel` has that contract one call at a time, for code that must allocate nothing.
@@ -1799,7 +2374,7 @@ is msgpack. `LowLevel` has that contract one call at a time, for code that must 
 public static final int LOG_WARN = 0
 ```
 
-A `log` level: a warning in the server log.
+A `log` level: a warning in the server log, the most severe a UDF can write.
 
 #### `Udf.LOG_INFO`
 
@@ -1815,7 +2390,8 @@ A `log` level: an info line in the server log.
 public static final int LOG_DEBUG = 2
 ```
 
-A `log` level: a debug line in the server log.
+A `log` level: a debug line in the server log, written only when the server's logging is set to
+show them.
 
 #### `Udf.now`
 
@@ -1823,7 +2399,9 @@ A `log` level: a debug line in the server log.
 public static long now()
 ```
 
-The server's clock in ms since the Unix epoch, or -1 inside an event handler, where it is refused.
+The server's clock, in milliseconds since the Unix epoch (1970-01-01 UTC). -1 inside an event handler,
+which is refused the clock because a merge that read it could not converge. Not on the scale of
+`Record.lastUpdateTime`, which counts from 2010.
 
 #### `Udf.log`
 
@@ -1831,7 +2409,15 @@ The server's clock in ms since the Unix epoch, or -1 inside an event handler, wh
 public static void log(int level, String message)
 ```
 
-Writes a line to the server's log at `LOG_WARN`, `LOG_INFO` or `LOG_DEBUG`.
+Writes one line to the server's log at `LOG_WARN`, `LOG_INFO` or `LOG_DEBUG`; any
+other `level` is taken as debug. The message is data to the server: control characters are
+escaped, so it cannot forge a line, and what does not fit in about 500 bytes is cut. A call may write
+16 lines and a module 100 a second; the lines over that are dropped and the server reports how many. In
+an `xdr-merge` handler every line is dropped. It returns nothing and does not fail.
+
+```java
+Udf.log(Udf.LOG_INFO, "rebalance: moved " + moved + " of " + total);
+```
 
 #### `Udf.list`
 
@@ -1839,7 +2425,15 @@ Writes a line to the server's log at `LOG_WARN`, `LOG_INFO` or `LOG_DEBUG`.
 public static ListBuilder list()
 ```
 
-Starts a list on the server, to add to and then write to a bin, return, or nest.
+Starts an empty list on the server, to add to and then write to a bin, return, or nest. Throws
+`UdfException` when the call has no handle left for it, or has built as much as it is allowed.
+
+```java
+ListBuilder recent = Udf.list().add(page).addAll(rec.getList("recent"));
+
+rec.set("recent", recent);
+rec.save();
+```
 
 #### `Udf.list`
 
@@ -1847,7 +2441,8 @@ Starts a list on the server, to add to and then write to a bin, return, or nest.
 public static ListBuilder list(int capacity)
 ```
 
-As `list()`, with room for `capacity` elements to begin with.
+As `list()`, with room for `capacity` elements to begin with. It is a hint that saves
+regrowing: the list grows past it, and the server takes no more than 1024 of it.
 
 #### `Udf.map`
 
@@ -1855,7 +2450,15 @@ As `list()`, with room for `capacity` elements to begin with.
 public static MapBuilder map()
 ```
 
-Starts a map on the server, to put into and then write to a bin, return, or nest.
+Starts an empty map on the server, to put into and then write to a bin, return, or nest. Throws
+`UdfException` when the call has no handle left for it, or has built as much as it is allowed.
+
+```java
+MapBuilder stats = Udf.map().put("visits", visits).put("last", page);
+
+rec.set("stats", stats);
+rec.save();
+```
 
 #### `Udf.map`
 
@@ -1863,7 +2466,8 @@ Starts a map on the server, to put into and then write to a bin, return, or nest
 public static MapBuilder map(int capacity)
 ```
 
-As `map()`, with room for `capacity` entries to begin with.
+As `map()`, with room for `capacity` entries to begin with. It is a hint: the map grows
+past it.
 
 #### `Udf.resultNil`
 
@@ -1871,7 +2475,24 @@ As `map()`, with room for `capacity` entries to begin with.
 public static void resultNil()
 ```
 
-Sets nil as the result of the call. Of several results set in one call, the last is the one returned.
+Sets nil as the result of the call. The `result*` methods are for a function in the raw form
+`int name(int args, int argc)`, which sets its result and returns 0; a typed function returns its
+value and the generated export calls these. Of several results set in one call, the last is the one
+returned. A call that sets none returns nil.
+
+```java
+@Function(value = "peek", params = "(bin: str)")
+static int peek(int args, int argc) {
+    Value[] a = new Value[1];
+
+    if (LowLevel.args(args, argc, a) != 1 || !a[0].isString()) {
+        return Udf.fail("peek: expected one string argument");
+    }
+
+    Udf.result(Params.record().get(a[0].asString()));       // nil when there is no such bin
+    return 0;
+}
+```
 
 #### `Udf.resultInt`
 
@@ -1879,7 +2500,7 @@ Sets nil as the result of the call. Of several results set in one call, the last
 public static void resultInt(long v)
 ```
 
-Sets an integer as the result.
+Sets an integer as the result of the call, replacing any result set before.
 
 #### `Udf.resultDouble`
 
@@ -1887,7 +2508,7 @@ Sets an integer as the result.
 public static void resultDouble(double v)
 ```
 
-Sets a double as the result.
+Sets a double as the result of the call, replacing any result set before.
 
 #### `Udf.resultBool`
 
@@ -1895,7 +2516,7 @@ Sets a double as the result.
 public static void resultBool(boolean v)
 ```
 
-Sets a boolean as the result.
+Sets a boolean as the result of the call, replacing any result set before.
 
 #### `Udf.resultString`
 
@@ -1903,7 +2524,8 @@ Sets a boolean as the result.
 public static void resultString(String s)
 ```
 
-Sets a string as the result.
+Sets a string as the result of the call, encoded as UTF-8 and copied by the host. `s` must not be
+null: `resultNil` is the nil result.
 
 #### `Udf.resultBlob`
 
@@ -1911,7 +2533,7 @@ Sets a string as the result.
 public static void resultBlob(byte[] b)
 ```
 
-Sets all of `b` as a blob result.
+Sets all of `b` as a blob result; the host copies it, so the array is free to reuse afterwards.
 
 #### `Udf.resultGeoJson`
 
@@ -1919,7 +2541,8 @@ Sets all of `b` as a blob result.
 public static void resultGeoJson(String doc)
 ```
 
-Sets a GeoJSON document as the result, kept as that kind.
+Sets a GeoJSON document as the result from its text, kept as that kind: the client receives a GeoJSON
+value, not a string.
 
 #### `Udf.result`
 
@@ -1928,7 +2551,8 @@ public static void result(Value v)
 ```
 
 Sets a `Value` as the result: a scalar by value, a string or blob of the guest's, a built
-collection, a stored value by position; null or absent is nil.
+collection, a stored value by position (the server copies it from where it is); null or absent is nil.
+A stored value that can no longer be read leaves the result as it was, without an error.
 
 #### `Udf.fail`
 
@@ -1936,7 +2560,11 @@ collection, a stored value by position; null or absent is nil.
 public static int fail(String message)
 ```
 
-Fails the call with a message the client sees, and returns the non-zero status a raw UDF then returns.
+Fails the call with a message the client sees as the error, and returns the non-zero status a raw UDF
+then returns: `return Udf.fail("no such account")`. The message is cut at 511 bytes. Calling it
+does not stop the method: the failure is what the server reports once the export returns, whatever
+result was set. A typed function throws `UdfException` instead, and the generated export calls
+this.
 
 #### `LowLevel`
 
@@ -1950,6 +2578,7 @@ handles, cursors opened and closed by hand, and a status code where the rest of 
 here is needed to write a UDF; `Record`, `ListValue`, `MapValue` and the builders are
 the API, and they are built on these same calls. `examples/vector` is what this tier is for: a
 stream that reads a blob from every record of a scan and must not create garbage per record.
+
 The rules the rest of the SDK keeps for its callers are the caller's own here:
 
 - A status is `OK` or negative: `NOT_FOUND`, `TYPE_MISMATCH`, `REFUSED`,
@@ -1961,6 +2590,38 @@ the order they were opened, on every path out of the loop.
 - A `Value` filled here is overwritten by the next call that fills it; `copy` keeps
 one.
 
+The calls that read a stored `Value` (byte[]), `floats`,
+`storedBytes`, `cmpStored`, `enter`, byte[], Value),
+`listGet`) check its kind first and answer `TYPE_MISMATCH` (0 from `enter`) for a
+value that is not of a kind they read; none takes a scalar's bits for a position. The calls that hand a
+stored value on (`setValue` and the `*Value` puts) do not look: pass them a value for which
+`Value.isStored` is true.
+
+```java
+private static final byte[] TAGS = LowLevel.bytes("tags");
+private static final Value BIN = new Value();
+private static final Value[] WINDOW = new Value[32];
+
+static long countTags() {
+    if (LowLevel.bin(TAGS, BIN) != LowLevel.OK || !BIN.isList()) {
+        return 0;
+    }
+
+    int cursor = LowLevel.enter(BIN);
+    long count = 0;
+
+    if (cursor <= 0) {
+        return 0;
+    }
+
+    for (int n = LowLevel.next(cursor, WINDOW); n > 0; n = LowLevel.next(cursor, WINDOW)) {
+        count += n;
+    }
+
+    LowLevel.close(cursor);
+    return count;
+}
+```
 
 #### `LowLevel.OK`
 
@@ -1968,7 +2629,7 @@ one.
 public static final int OK = 0
 ```
 
-The call succeeded.
+The call succeeded. Every other status is negative.
 
 #### `LowLevel.ERR`
 
@@ -1985,7 +2646,7 @@ handle the host does not hold.
 public static final int NOT_FOUND = -2
 ```
 
-There is no such bin, key or entry.
+There is no such bin, key or element. The `Value` the call was to fill is left as it was.
 
 #### `LowLevel.TYPE_MISMATCH`
 
@@ -1993,7 +2654,8 @@ There is no such bin, key or entry.
 public static final int TYPE_MISMATCH = -3
 ```
 
-The value is not of a kind the call takes.
+The value is not of a kind the call takes: the bytes of a list asked for, plain bytes written over an
+HLL bin.
 
 #### `LowLevel.REFUSED`
 
@@ -2001,8 +2663,9 @@ The value is not of a kind the call takes.
 public static final int REFUSED = -4
 ```
 
-The host refused the operation: a write the record does not accept, or a call not allowed where it was
-made.
+The host refused the operation: a write the record does not accept (a stream's record, a call run as a
+read, a save the server turns down), a value that would nest too deep or make the call build more than
+it may, or a call not allowed where it was made.
 
 #### `LowLevel.NEEDED_BASE`
 
@@ -2018,7 +2681,9 @@ The buffer was too small: a status at or below this carries the size needed, `-(
 public static final int BATCH = Slots.BATCH
 ```
 
-Values cross the boundary at most this many per import.
+Values cross the boundary at most this many per import: 128. It bounds what one `args`,
+`next` or `listPushValues` moves, and `mapPutEntries` moves half as many entries.
+A longer array is not an error; the call takes this many and is called again for the rest.
 
 #### `LowLevel.bytes`
 
@@ -2026,7 +2691,8 @@ Values cross the boundary at most this many per import.
 public static byte[] bytes(String s)
 ```
 
-The UTF-8 bytes of a string; keep the result in a constant for a name used on every call.
+The UTF-8 bytes of a string, in a new array; keep the result in a `static final` for a name used
+on every call, which is what makes a call here allocate nothing.
 
 #### `LowLevel.string`
 
@@ -2034,7 +2700,9 @@ The UTF-8 bytes of a string; keep the result in a constant for a name used on ev
 public static String string(byte[] b, int len)
 ```
 
-A string from the first `len` bytes of `b`, decoded as UTF-8.
+A string from the first `len` bytes of `b`, decoded as UTF-8: the way back from a buffer
+byte[]) or `keyBytes` filled, `len` being the length that call
+returned.
 
 #### `LowLevel.setInt`
 
@@ -2042,7 +2710,9 @@ A string from the first `len` bytes of `b`, decoded as UTF-8.
 public static Value setInt(Value v, long i)
 ```
 
-Makes `v` an integer.
+Makes `v` an integer of the guest's own and returns it, to send in a batch or as a result. Like
+every `set*(Value, ...)` here it overwrites what `v` was, so use a value this code owns,
+never one the SDK handed out.
 
 #### `LowLevel.setDouble`
 
@@ -2050,7 +2720,7 @@ Makes `v` an integer.
 public static Value setDouble(Value v, double d)
 ```
 
-Makes `v` a double.
+Makes `v` a double of the guest's own and returns it.
 
 #### `LowLevel.setBool`
 
@@ -2058,7 +2728,7 @@ Makes `v` a double.
 public static Value setBool(Value v, boolean b)
 ```
 
-Makes `v` a boolean.
+Makes `v` a boolean of the guest's own and returns it.
 
 #### `LowLevel.setNil`
 
@@ -2066,7 +2736,7 @@ Makes `v` a boolean.
 public static Value setNil(Value v)
 ```
 
-Makes `v` nil.
+Makes `v` nil and returns it: a nil element or entry in a batch.
 
 #### `LowLevel.setStr`
 
@@ -2074,7 +2744,9 @@ Makes `v` nil.
 public static Value setStr(Value v, byte[] b, int len)
 ```
 
-Makes `v` a string of the guest's: the first `len` bytes of `b`, kept, not copied.
+Makes `v` a string of the guest's: the first `len` bytes of `b`, which are UTF-8 and
+are kept, not copied. The host reads `b` when the value is handed to it, so `b` must not
+change before then.
 
 #### `LowLevel.setBlob`
 
@@ -2082,7 +2754,8 @@ Makes `v` a string of the guest's: the first `len` bytes of `b`, kept, not copie
 public static Value setBlob(Value v, byte[] b, int len)
 ```
 
-Makes `v` a blob of the guest's: the first `len` bytes of `b`, kept, not copied.
+Makes `v` a blob of the guest's: the first `len` bytes of `b`, kept, not copied. The
+host reads `b` when the value is handed to it, so `b` must not change before then.
 
 #### `LowLevel.setGeoJson`
 
@@ -2090,7 +2763,8 @@ Makes `v` a blob of the guest's: the first `len` bytes of `b`, kept, not copied.
 public static Value setGeoJson(Value v, byte[] b, int len)
 ```
 
-Makes `v` a GeoJSON document of the guest's: the first `len` bytes of `b`, kept.
+Makes `v` a GeoJSON document of the guest's: the first `len` bytes of `b`, its UTF-8
+text, kept, not copied.
 
 #### `LowLevel.setHandle`
 
@@ -2098,7 +2772,8 @@ Makes `v` a GeoJSON document of the guest's: the first `len` bytes of `b`, kept.
 public static Value setHandle(Value v, int handle)
 ```
 
-Makes `v` a built collection, by its handle.
+Makes `v` a built list or map, by the handle `newList` or `newMap` returned: how a
+nested collection goes into a batch.
 
 #### `LowLevel.copy`
 
@@ -2106,7 +2781,9 @@ Makes `v` a built collection, by its handle.
 public static Value copy(Value from, Value into)
 ```
 
-Makes `into` what `from` is: the way to keep a value across cursor steps.
+Makes `into` what `from` is and returns `into`: the way to keep a value across cursor
+steps, which overwrite the values of the window. Nothing on the host is copied; a stored value's copy
+reads the same position.
 
 #### `LowLevel.bin`
 
@@ -2114,7 +2791,11 @@ Makes `into` what `from` is: the way to keep a value across cursor steps.
 public static int bin(byte[] name, Value out)
 ```
 
-Reads a bin of any kind into `out`, in one import. NOT_FOUND for no such bin.
+Reads a bin of any kind into `out`, in one import. Returns `OK` with `out` filled;
+`NOT_FOUND` for no such bin, or a name that is not 1 to 15 bytes, with `out` left as it
+was; `ERR` when the host could not hand the value out. Each read of a string, blob, list or map
+bin takes one of the call's 256 handles and nothing gives it back before the call ends, so read such a
+bin once per call (per record, in a stream).
 
 #### `LowLevel.eventBin`
 
@@ -2122,7 +2803,9 @@ Reads a bin of any kind into `out`, in one import. NOT_FOUND for no such bin.
 public static int eventBin(EventRecord rec, byte[] name, Value out)
 ```
 
-Reads a bin of one of an event's records into `out`. NOT_FOUND when that side has no such bin.
+Reads a bin of one of an event's records into `out`. Returns `OK` with `out` filled,
+or `NOT_FOUND` when that side has no such bin or holds nil in it, with `out` left as it
+was. Inside a handler this is the read that works: `bin` has no record there and finds nothing.
 
 #### `LowLevel.bytes`
 
@@ -2130,7 +2813,11 @@ Reads a bin of one of an event's records into `out`. NOT_FOUND when that side ha
 public static int bytes(Value v, byte[] buf)
 ```
 
-Copies the bytes of a string, blob, GeoJSON or HLL value into `buf`. Returns the length, or a status.
+Copies the raw bytes of a stored string, blob, GeoJSON or HLL value into `buf`. Returns the
+length copied. When `buf` is too small nothing is copied and the status is at or below
+`NEEDED_BASE`, the length needed being `-(rc) - 16`, which is also `Value.length`.
+`TYPE_MISMATCH` for a value of any other kind (a scalar, nil, a list, a map, one of the guest's
+own), `ERR` for a value that can no longer be read.
 
 #### `LowLevel.floats`
 
@@ -2138,8 +2825,11 @@ Copies the bytes of a string, blob, GeoJSON or HLL value into `buf`. Returns the
 public static int floats(Value v, float[] buf)
 ```
 
-Copies a blob of little-endian 32-bit floats straight into a float array, element for element: the way a
-vector is read without converting it. Returns the length in bytes, or a status.
+Copies a stored blob of little-endian 32-bit floats straight into a float array, element for element:
+the way a vector is read without converting it. Returns the length in bytes, so the count of floats is
+a quarter of it, or a status as byte[]) gives: a blob longer than
+`buf.length * 4` bytes copies nothing and answers the size needed, and a value that is not a
+stored blob is `TYPE_MISMATCH`.
 
 #### `LowLevel.storedBytes`
 
@@ -2147,17 +2837,22 @@ vector is read without converting it. Returns the length in bytes, or a status.
 public static int storedBytes(Value v, byte[] buf)
 ```
 
-Copies a stored value's bytes as the server stores them, msgpack header included, into `buf`.
-Returns the length, or a status.
+Copies a stored value's bytes as the server stores them, msgpack header included, into `buf`: any
+kind, a list or map whole. Returns the length, a status at or below `NEEDED_BASE` when
+`buf` is too small (nothing is copied; `-(rc) - 16` is the size), `TYPE_MISMATCH`
+for a value that is not a stored one, or `ERR` for one that can no longer be read.
 
 #### `LowLevel.cmpStored`
 
 ```java
-public static int cmpStored(Value a, Value b)
+public static int cmpStored(Value a, Value b, Value out)
 ```
 
 Compares two stored values byte by byte, as memcmp would on their stored encodings, without copying
-either: negative, zero or positive; TYPE_MISMATCH when a value is not a stored one.
+either, and makes `out` the ordering as an integer: exactly -1, 0 or 1, a value that is a prefix
+of the other coming first. Returns `OK`, or `TYPE_MISMATCH` with `out` left as it
+was when either is not a stored value or the host cannot compare them. The ordering and the status
+come apart on purpose: -3 is never an ordering.
 
 #### `LowLevel.args`
 
@@ -2165,8 +2860,15 @@ either: negative, zero or positive; TYPE_MISMATCH when a value is not a stored o
 public static int args(int handle, int argc, Value[] out)
 ```
 
-Decodes the call's arguments into `out`, in one import, filling (or allocating) a Value per slot.
-Returns how many there are, bounded by `out.length` and `BATCH`.
+Decodes the call's arguments into `out`, in one import, filling (or allocating, where an element
+is null) a Value per slot. `handle` and `argc` are the two parameters of the export, passed
+on as they came. Returns how many were filled, bounded by `out.length` and `BATCH`; 0 when
+there are none or they could not be read. A nil argument is a value whose `Value.isNil` is true;
+a string, blob, list or map argument is a stored value read by position.
+
+A call may pass more arguments than `out` holds, and 128 is the most any call can be read for.
+The rest are not decoded and nothing here fails: `argc` larger than the count returned is how to
+tell, and a function that does not want to ignore them fails the call on it.
 
 #### `LowLevel.enter`
 
@@ -2174,7 +2876,10 @@ Returns how many there are, bounded by `out.length` and `BATCH`.
 public static int enter(Value v)
 ```
 
-Opens a cursor over the stored list or map `v`. 0 when it could not.
+Opens a cursor over the stored list or map `v`, placed before its first element. Returns the
+cursor, which is positive, or 0 when it could not: `v` is not a stored list or map, or the call
+has no handle left. Every cursor opened is closed with `close`, in the reverse of the order they
+were opened.
 
 #### `LowLevel.next`
 
@@ -2182,8 +2887,12 @@ Opens a cursor over the stored list or map `v`. 0 when it could not.
 public static int next(int cursor, Value[] out)
 ```
 
-Fills `out` with the next values of a cursor, `BATCH` at most per import. A map yields key,
-value, key, value. Returns how many, or a status; fewer than `out.length` means the end.
+Fills `out` with the next values of a cursor, `BATCH` at most per import, allocating a
+Value where an element of `out` is null. A map yields key, value, key, value, so give it an array
+of even length. Returns how many were filled, and 0 once the end has been reached; fewer than the
+smaller of `out.length` and `BATCH` means these were the last. A negative status means the
+handle is not an open cursor. The values are overwritten by the next call: `copy` keeps one. A
+nested list or map comes as one value, to `enter` in turn.
 
 #### `LowLevel.close`
 
@@ -2191,7 +2900,9 @@ value, key, value. Returns how many, or a status; fewer than `out.length` means 
 public static void close(int cursor)
 ```
 
-Gives a cursor's slot back.
+Gives a cursor's handle back. The host gives a handle back only when it is the last one handed out, and
+ignores the call otherwise: close an inner cursor before the outer one, and before building anything
+new. A cursor left open costs one of the 256 handles until the call ends, and nothing after.
 
 #### `LowLevel.get`
 
@@ -2199,7 +2910,10 @@ Gives a cursor's slot back.
 public static int get(Value m, byte[] key, Value out)
 ```
 
-Looks a string key up in the stored map `m`, in one import.
+Looks a string key up in the stored map `m`, in one import; the host walks the entries to it.
+Returns `OK` with `out` filled (a nil entry is a nil value), `NOT_FOUND` for no
+such key, `TYPE_MISMATCH` when `m` is not a stored map. `out` is left as it was
+unless the status is OK. The key may be of any length.
 
 #### `LowLevel.get`
 
@@ -2207,7 +2921,8 @@ Looks a string key up in the stored map `m`, in one import.
 public static int get(Value m, long key, Value out)
 ```
 
-Looks an integer key up in the stored map `m`.
+Looks an integer key up in the stored map `m`; the statuses are those of
+byte[], Value).
 
 #### `LowLevel.listGet`
 
@@ -2215,7 +2930,10 @@ Looks an integer key up in the stored map `m`.
 public static int listGet(Value list, int index, Value out)
 ```
 
-The element at `index` of the stored list `list`. NOT_FOUND past the end.
+The element at `index`, counted from 0, of the stored list `list`, into `out`.
+Returns `OK`; `NOT_FOUND` past the end, with `out` left as it was;
+`TYPE_MISMATCH` when the value is not a stored list. The host steps over the elements before it,
+so walking a list this way is quadratic: use a cursor.
 
 #### `LowLevel.digest`
 
@@ -2223,7 +2941,8 @@ The element at `index` of the stored list `list`. NOT_FOUND past the end.
 public static int digest(byte[] buf)
 ```
 
-Copies the record's digest (20 bytes) into `buf`. Returns the length, or a status.
+Copies the record's digest (20 bytes) into `buf`. Returns 20, or a status at or below
+`NEEDED_BASE` when `buf` is shorter than that.
 
 #### `LowLevel.keyType`
 
@@ -2231,7 +2950,8 @@ Copies the record's digest (20 bytes) into `buf`. Returns the length, or a statu
 public static int keyType()
 ```
 
-The kind of the record's user key (`Value#INT`, `Value#STR`, `Value#BLOB`), or ABSENT.
+The kind of the record's user key (`Value.INT`, `Value.STR`, `Value.BLOB`), or
+`Value.ABSENT` when no key was stored with the record, which is the server's default.
 
 #### `LowLevel.keyInt`
 
@@ -2239,7 +2959,8 @@ The kind of the record's user key (`Value#INT`, `Value#STR`, `Value#BLOB`), or A
 public static long keyInt()
 ```
 
-The user key when it is an integer.
+The user key when `keyType` is `Value.INT`; 0 when the key is of another kind or there is
+none.
 
 #### `LowLevel.keyBytes`
 
@@ -2247,7 +2968,9 @@ The user key when it is an integer.
 public static int keyBytes(byte[] buf)
 ```
 
-Copies a string or blob user key into `buf`. Returns the length, or a status.
+Copies a string or blob user key into `buf`. Returns the length; a status at or below
+`NEEDED_BASE` when `buf` is too small, `-(rc) - 16` being the size;
+`NOT_FOUND` when no key was stored with the record.
 
 #### `LowLevel.setInt`
 
@@ -2255,7 +2978,9 @@ Copies a string or blob user key into `buf`. Returns the length, or a status.
 public static int setInt(byte[] name, long value)
 ```
 
-Writes an integer bin. Returns OK or a status.
+Stages an integer bin, written by `save`. Returns `OK`; `ERR` for a name that is
+not 1 to 15 bytes; `REFUSED` when the record cannot be written. Every `set*` on a name
+answers these.
 
 #### `LowLevel.setDouble`
 
@@ -2263,7 +2988,8 @@ Writes an integer bin. Returns OK or a status.
 public static int setDouble(byte[] name, double value)
 ```
 
-Writes a double bin.
+Stages a double bin, written by `save`. Returns `OK` or a status, as
+long) does.
 
 #### `LowLevel.setBool`
 
@@ -2271,7 +2997,8 @@ Writes a double bin.
 public static int setBool(byte[] name, boolean value)
 ```
 
-Writes a boolean bin.
+Stages a boolean bin, written by `save`. Returns `OK` or a status, as
+long) does.
 
 #### `LowLevel.setStr`
 
@@ -2279,7 +3006,8 @@ Writes a boolean bin.
 public static int setStr(byte[] name, byte[] value, int valueLen)
 ```
 
-Writes a string bin from the first `valueLen` bytes of `value`, which are UTF-8.
+Stages a string bin from the first `valueLen` bytes of `value`, which are UTF-8; the host
+copies them, so the array is free to reuse. Returns `OK` or a status.
 
 #### `LowLevel.setBlob`
 
@@ -2287,7 +3015,9 @@ Writes a string bin from the first `valueLen` bytes of `value`, which are UTF-8.
 public static int setBlob(byte[] name, byte[] value, int valueLen)
 ```
 
-Writes a blob bin from the first `valueLen` bytes of `value`.
+Stages a blob bin from the first `valueLen` bytes of `value`, which the host copies.
+Returns `OK`, or `TYPE_MISMATCH` when the bin holds an HLL, which plain bytes would
+silently replace.
 
 #### `LowLevel.setGeoJson`
 
@@ -2295,7 +3025,8 @@ Writes a blob bin from the first `valueLen` bytes of `value`.
 public static int setGeoJson(byte[] name, byte[] doc, int docLen)
 ```
 
-Writes a GeoJSON document, kept as the geospatially indexable kind rather than a string.
+Stages a GeoJSON bin from the first `docLen` bytes of `doc`, its UTF-8 text, kept as the
+geospatially indexable kind rather than a string. The text is checked by `save`, not here.
 
 #### `LowLevel.setHandle`
 
@@ -2303,7 +3034,8 @@ Writes a GeoJSON document, kept as the geospatially indexable kind rather than a
 public static int setHandle(byte[] name, int handle)
 ```
 
-Writes a built list or map to a bin, by its handle.
+Stages a bin from a built list or map, by its handle. The handle stays good and the collection can be
+used again. Returns `OK`, or `ERR` for a handle the host does not hold.
 
 #### `LowLevel.setValue`
 
@@ -2311,7 +3043,9 @@ Writes a built list or map to a bin, by its handle.
 public static int setValue(byte[] name, Value v)
 ```
 
-Writes a stored value to a bin, by position.
+Stages a bin from a stored value, by position: the server copies it from where it is, and it keeps its
+kind. Returns `OK`; `ERR` when `v` can no longer be read; `REFUSED` when the
+record cannot be written, and for a plain blob written over an HLL bin.
 
 #### `LowLevel.setListInts`
 
@@ -2319,7 +3053,11 @@ Writes a stored value to a bin, by position.
 public static int setListInts(byte[] name, long[] values)
 ```
 
-Writes a list of integers from the array, in one import; it takes effect at once, not on save.
+Writes a list bin of integers from the whole array, in one import. It is applied when it is made, not
+staged: it needs no `save` and is not undone by leaving one out, though a call that fails undoes
+it with everything else the call wrote. Returns `OK`, `ERR` for a bad name,
+`REFUSED` when the record cannot be written, which includes a key with no record: nothing is
+created there.
 
 #### `LowLevel.setListDoubles`
 
@@ -2327,7 +3065,8 @@ Writes a list of integers from the array, in one import; it takes effect at once
 public static int setListDoubles(byte[] name, double[] values)
 ```
 
-Writes a list of doubles from the array, in one import; it takes effect at once, not on save.
+Writes a list bin of doubles from the whole array, in one import; applied when it is made, as
+`setListInts` is.
 
 #### `LowLevel.remove`
 
@@ -2335,7 +3074,8 @@ Writes a list of doubles from the array, in one import; it takes effect at once,
 public static int remove(byte[] name)
 ```
 
-Removes a bin from the record, staged like a write.
+Stages the removal of a bin, carried out by `save`; a bin the record does not have is not an
+error. Returns `OK` or a status, as a `set*` does.
 
 #### `LowLevel.save`
 
@@ -2343,7 +3083,12 @@ Removes a bin from the record, staged like a write.
 public static int save()
 ```
 
-Writes the staged bins, creating the record when it does not exist. Returns OK or a status.
+Writes the staged bins, creating the record when it does not exist and a bin is staged; with none
+staged (only a removal or a TTL) on a key with no record it creates nothing and the call fails with
+"key not found". What a save wrote is undone when the call then fails. Returns `OK`, or
+`REFUSED` when the record cannot be written or the server turns the write down. After a refused
+save, the list, map and blob values read from the record before it can no longer be read: read the bins
+again.
 
 #### `LowLevel.newList`
 
@@ -2351,7 +3096,10 @@ Writes the staged bins, creating the record when it does not exist. Returns OK o
 public static int newList(int capacity)
 ```
 
-Starts a list on the host; the handle is what the other calls take. 0 when it could not.
+Starts a list on the host and returns its handle, which is positive and is what the `listPush*`
+calls, int) and `resultHandle` take. 0 when it could not: the call
+has no handle left, or has built as much as it may. `capacity` is a hint, 0 meaning none; the
+list grows past it.
 
 #### `LowLevel.newMap`
 
@@ -2359,7 +3107,9 @@ Starts a list on the host; the handle is what the other calls take. 0 when it co
 public static int newMap(int capacity)
 ```
 
-Starts a map on the host, ordered by key whatever order its entries are put in.
+Starts a map on the host and returns its handle, or 0 when it could not, as `newList` does. The
+map is ordered by key whatever order its entries are put in, and a put under a key it has replaces the
+entry.
 
 #### `LowLevel.handle`
 
@@ -2367,7 +3117,7 @@ Starts a map on the host, ordered by key whatever order its entries are put in.
 public static int handle(ListBuilder list)
 ```
 
-The handle of a builder, for these calls.
+The handle of a list builder, for these calls: the bridge from `Udf.list()` down to this tier.
 
 #### `LowLevel.handle`
 
@@ -2375,7 +3125,7 @@ The handle of a builder, for these calls.
 public static int handle(MapBuilder map)
 ```
 
-The handle of a builder, for these calls.
+The handle of a map builder, for these calls: the bridge from `Udf.map()` down to this tier.
 
 #### `LowLevel.list`
 
@@ -2383,7 +3133,8 @@ The handle of a builder, for these calls.
 public static ListBuilder list(int handle)
 ```
 
-A builder over a list handle these calls made.
+A builder over a list handle `newList` returned: the bridge up to the methods that throw. It
+does not check the handle; a bad one shows in the first `add`.
 
 #### `LowLevel.map`
 
@@ -2391,7 +3142,8 @@ A builder over a list handle these calls made.
 public static MapBuilder map(int handle)
 ```
 
-A builder over a map handle these calls made.
+A builder over a map handle `newMap` returned, which is also how a map built here becomes an
+event handler's answer: `Resolution.record(LowLevel.map(handle))`. It does not check the handle.
 
 #### `LowLevel.nilHandle`
 
@@ -2399,7 +3151,9 @@ A builder over a map handle these calls made.
 public static int nilHandle()
 ```
 
-A nil value as a handle.
+A nil value as a handle, for `mapPut` and `listPushHandle`. Each call takes one of the
+256 handles for good, so this is not for a loop: `listPushValues` and `mapPutEntries`
+take the same value in a `Value`, with no handle. 0 when none is left.
 
 #### `LowLevel.strHandle`
 
@@ -2407,7 +3161,9 @@ A nil value as a handle.
 public static int strHandle(byte[] s, int len)
 ```
 
-A guest string as a handle, for `mapPut`.
+A string as a handle, copied from the first `len` bytes of `s`: a key or value for
+`mapPut`. Each call takes one of the 256 handles for good, so this is not for a loop; 0 when none
+is left.
 
 #### `LowLevel.intHandle`
 
@@ -2415,16 +3171,9 @@ A guest string as a handle, for `mapPut`.
 public static int intHandle(long i)
 ```
 
-An integer as a handle, for `mapPut`.
-
-#### `LowLevel.packHandle`
-
-```java
-public static int packHandle(int handle)
-```
-
-Packs a built collection into a source the host holds, for reading it back by position; returns the
-source, whose value sits at offset 0, and which lives until the call ends.
+An integer as a handle: a key or value for `mapPut`. Each call takes one of the 256 handles for
+good, so a loop that puts under integer keys uses `mapPutEntries` or
+long, Value), which take none; 0 when none is left.
 
 #### `LowLevel.size`
 
@@ -2432,7 +3181,8 @@ source, whose value sits at offset 0, and which lives until the call ends.
 public static int size(int handle)
 ```
 
-The size of a built collection.
+The size of a built collection: the elements of a list, the entries of a map. A negative status for a
+handle that is neither.
 
 #### `LowLevel.mapHas`
 
@@ -2456,7 +3206,9 @@ Whether a built map has the integer key: 1 or 0, negative for a bad handle.
 public static int listPushInt(int list, long value)
 ```
 
-Appends an integer to a built list. Returns OK or a status.
+Appends an integer to a built list. Returns `OK`; `ERR` when `list` is not a list
+this call built; `REFUSED` when the call has built as much as it may. The other
+`listPush*` calls answer the same.
 
 #### `LowLevel.listPushStr`
 
@@ -2464,7 +3216,8 @@ Appends an integer to a built list. Returns OK or a status.
 public static int listPushStr(int list, byte[] value, int valueLen)
 ```
 
-Appends a string from the first `valueLen` bytes of `value`, which are UTF-8.
+Appends a string from the first `valueLen` bytes of `value`, which are UTF-8 and are copied
+by the host. Returns `OK` or a status, as `listPushInt` does.
 
 #### `LowLevel.listPushHandle`
 
@@ -2472,7 +3225,10 @@ Appends a string from the first `valueLen` bytes of `value`, which are UTF-8.
 public static int listPushHandle(int list, int value)
 ```
 
-Appends a built value by its handle: a nested list or map, or a value from one of the handle calls.
+Appends a built value by its handle: a nested list or map, or a value from `nilHandle`,
+`strHandle` or `intHandle`. The handle stays good. Returns `OK`; `ERR` for
+a handle the host does not hold; `REFUSED` past 64 levels of nesting or for a list pushed into
+itself.
 
 #### `LowLevel.listPushValue`
 
@@ -2480,7 +3236,9 @@ Appends a built value by its handle: a nested list or map, or a value from one o
 public static int listPushValue(int list, Value v)
 ```
 
-Appends a stored value, by position.
+Appends a stored value, by position: the server copies it from where it is. Returns `OK`;
+`ERR` when `list` is not a list this call built or `v` can no longer be read;
+`REFUSED` when the list turns the value down.
 
 #### `LowLevel.listPushValues`
 
@@ -2488,8 +3246,10 @@ Appends a stored value, by position.
 public static int listPushValues(int list, Value[] vals, int n)
 ```
 
-Appends the first `n` of `vals` in one import: scalars, guest bytes by address, stored values
-by position, built collections by handle. Returns how many went in.
+Appends the first `n` of `vals` in one import, `BATCH` at most: scalars, guest bytes
+by address, stored values by position, built collections by handle. Returns how many went in. Fewer
+than asked means the value at that index was turned down, with those before it already in the list;
+`ERR` means `list` is not a list this call built.
 
 #### `LowLevel.mapPutInt`
 
@@ -2497,7 +3257,9 @@ by position, built collections by handle. Returns how many went in.
 public static int mapPutInt(int m, byte[] key, long value)
 ```
 
-Puts an integer under a string key of a built map. Returns OK or a status.
+Puts an integer under a string key of a built map, replacing any entry the key had. Returns
+`OK`; `ERR` when `m` is not a map this call built; `REFUSED` when the call
+has built as much as it may. The other `mapPut*` calls answer the same.
 
 #### `LowLevel.mapPutStr`
 
@@ -2505,7 +3267,8 @@ Puts an integer under a string key of a built map. Returns OK or a status.
 public static int mapPutStr(int m, byte[] key, byte[] value, int valueLen)
 ```
 
-Puts a string, the first `valueLen` bytes of `value` as UTF-8, under a string key.
+Puts a string, the first `valueLen` bytes of `value` as UTF-8, under a string key; the host
+copies both. Returns `OK` or a status, as `mapPutInt` does.
 
 #### `LowLevel.mapPutHandle`
 
@@ -2513,7 +3276,9 @@ Puts a string, the first `valueLen` bytes of `value` as UTF-8, under a string ke
 public static int mapPutHandle(int m, byte[] key, int value)
 ```
 
-Puts a built value, by its handle, under a string key.
+Puts a built value, by its handle, under a string key: a nested list or map. The handle stays good.
+Returns `OK`; `ERR` for a handle the host does not hold; `REFUSED` past 64 levels
+of nesting or for a map put into itself.
 
 #### `LowLevel.mapPutValue`
 
@@ -2521,7 +3286,9 @@ Puts a built value, by its handle, under a string key.
 public static int mapPutValue(int m, byte[] key, Value v)
 ```
 
-Puts a stored value, by position, under a string key.
+Puts a stored value, by position, under a string key: the server copies it from where it is. Returns
+`OK`, or `ERR` when `m` is not a map this call built, `v` can no longer be
+read, or the map turns the value down.
 
 #### `LowLevel.mapPutValue`
 
@@ -2529,7 +3296,8 @@ Puts a stored value, by position, under a string key.
 public static int mapPutValue(int m, long key, Value v)
 ```
 
-Puts a stored value, by position, under an integer key.
+Puts a stored value, by position, under an integer key; the statuses are those of
+byte[], Value).
 
 #### `LowLevel.mapPut`
 
@@ -2537,7 +3305,10 @@ Puts a stored value, by position, under an integer key.
 public static int mapPut(int m, int key, int value)
 ```
 
-Puts a built value under a built key, both by handle: for a key of any kind.
+Puts a built value under a built key, both by handle: for a key of any kind, such as one from
+`intHandle`. Both handles stay good, and each took one of the 256, which is why the typed puts
+are the ones for a loop. Returns `OK`, `ERR` for a handle the host does not hold,
+`REFUSED` when the map turns the entry down.
 
 #### `LowLevel.mapPutEntries`
 
@@ -2546,8 +3317,11 @@ public static int mapPutEntries(int m, Value[] pairs, int n)
 ```
 
 Puts the first `n` values of `pairs` as entries (`pairs[0]` the first key,
-`pairs[1]` its value) in one import, each of any kind `listPushValues` takes. Returns how
-many entries went in.
+`pairs[1]` its value) in one import, each of any kind `listPushValues` takes. `n`
+counts values, not entries: an odd one is rounded down, and at most `BATCH` values, 64 entries,
+go per call. Returns how many entries went in; fewer than `n / 2` means the entry at that index
+was turned down, with those before it already in the map; `ERR` means `m` is not a map
+this call built.
 
 #### `LowLevel.resultStr`
 
@@ -2555,7 +3329,8 @@ many entries went in.
 public static void resultStr(byte[] s, int len)
 ```
 
-Sets a string as the result: the first `len` bytes of `s`, which are UTF-8.
+Sets a string as the result of the call: the first `len` bytes of `s`, which are UTF-8 and
+are copied by the host. It replaces any result set before.
 
 #### `LowLevel.resultBlob`
 
@@ -2563,7 +3338,7 @@ Sets a string as the result: the first `len` bytes of `s`, which are UTF-8.
 public static void resultBlob(byte[] b, int len)
 ```
 
-Sets a blob as the result: the first `len` bytes of `b`.
+Sets a blob as the result of the call: the first `len` bytes of `b`, copied by the host.
 
 #### `LowLevel.resultGeoJson`
 
@@ -2571,7 +3346,8 @@ Sets a blob as the result: the first `len` bytes of `b`.
 public static void resultGeoJson(byte[] doc, int len)
 ```
 
-Sets a GeoJSON document as the result, kept as that kind.
+Sets a GeoJSON document as the result, from the first `len` bytes of `doc`, its UTF-8 text;
+kept as that kind, so the client receives a GeoJSON value and not a string.
 
 #### `LowLevel.resultHandle`
 
@@ -2579,7 +3355,8 @@ Sets a GeoJSON document as the result, kept as that kind.
 public static int resultHandle(int handle)
 ```
 
-Sets a built list or map as the result, by its handle. Returns OK, or ERR for a handle the host lacks.
+Sets a built list or map as the result, by its handle. Returns `OK`, or `ERR` for a
+handle the host does not hold, in which case the result is as it was.
 
 #### `LowLevel.resultValue`
 
@@ -2587,7 +3364,9 @@ Sets a built list or map as the result, by its handle. Returns OK, or ERR for a 
 public static int resultValue(Value v)
 ```
 
-Sets a stored value as the result, by position.
+Sets a stored value as the result, by position: the server copies it from where it is. Returns
+`OK`, or `ERR` when `v` can no longer be read, in which case the result is as it
+was.
 
 #### `Params`
 
@@ -2601,13 +3380,48 @@ delivered as the result; an uncaught exception turned into a failure. The argume
 `args` as a `Value` array and a count. Nothing here is specific to a generated class,
 so a hand-written export may use it too.
 
+```java
+private static final Value[] ARGS = new Value[2];
+
+@Export(name = "add")
+public static int add(int args, int argc) {
+    try {
+        int n = Params.args(args, argc, ARGS);
+        Params.arity("add", 2, argc);        // more than it declares fails the call
+
+        long by = Params.argInt(ARGS, n, 0, "add", "by");
+        Long cap = Params.optInt(ARGS, n, 1, "add", "cap");
+        ...
+        Udf.resultInt(total);
+        return 0;
+    }
+    catch (Throwable t) {
+        return Params.uncaught("add", t);
+    }
+}
+```
+
+#### `Params.MAX_ARGS`
+
+```java
+public static final int MAX_ARGS = Slots.BATCH
+```
+
+The most arguments a call can pass: 128, the bound of the import that decodes them. A function that
+takes the rest (`Value[]` last) takes this many in all, and a call with more fails; none is ever
+dropped.
+
 #### `Params.arity`
 
 ```java
 public static void arity(String fn, int declared, int got)
 ```
 
-Fails a call that passed more arguments than the function declares, unless it takes the rest.
+Fails a call that passed more arguments than the function declares: throws `UdfException` reading
+`<fn> takes at most <declared> arguments, got <got>` when `got`, the export's `argc`,
+is larger. Too few is not its business: a missing argument is reported by the reader that wanted it. A
+function that takes the rest (`argRest`) calls it with `MAX_ARGS`, the most a call can
+pass, so that a longer call fails, naming the limit and the count, and no argument is dropped.
 
 #### `Params.argInt`
 
@@ -2616,8 +3430,10 @@ public static long argInt(Value[] a, int n, int i, String fn, String p)
 ```
 
 Argument `i`, counted from 0, of the `n` in `a`, as an integer. Throws
-`UdfException` when it is missing or of another kind; `fn` and `p` are the function
-and parameter names its message gives. Every reader here takes the same five.
+`UdfException` when it is missing (`<fn>: argument 2 (<p>) is missing`, with the status
+`LowLevel.NOT_FOUND`) or is nil or of another kind (`... is not an int`, with
+`LowLevel.TYPE_MISMATCH`); `fn` and `p` are the function and parameter names
+the message gives, and `n` is what `args` returned. Every reader here takes the same five.
 
 #### `Params.argInt32`
 
@@ -2625,7 +3441,8 @@ and parameter names its message gives. Every reader here takes the same five.
 public static int argInt32(Value[] a, int n, int i, String fn, String p)
 ```
 
-An integer argument that fits in 32 bits; one that does not is a mismatch.
+An integer argument that fits in 32 bits, for an `int` parameter; one outside that range is a
+mismatch and throws `UdfException`, not a truncation.
 
 #### `Params.argDouble`
 
@@ -2633,7 +3450,9 @@ An integer argument that fits in 32 bits; one that does not is a mismatch.
 public static double argDouble(Value[] a, int n, int i, String fn, String p)
 ```
 
-A double, or an int widened to one.
+A double argument, or an integer argument widened to one, which is the one place the SDK widens: a
+client that passes 3 for a double parameter means 3.0. Throws `UdfException` when it is missing
+or of any other kind.
 
 #### `Params.argBool`
 
@@ -2641,7 +3460,8 @@ A double, or an int widened to one.
 public static boolean argBool(Value[] a, int n, int i, String fn, String p)
 ```
 
-A boolean argument.
+A boolean argument. Throws `UdfException` when it is missing or of another kind; an integer 0 or
+1 is not one.
 
 #### `Params.argString`
 
@@ -2649,7 +3469,11 @@ A boolean argument.
 public static String argString(Value[] a, int n, int i, String fn, String p)
 ```
 
-The text of a string argument, copied out.
+The text of a string argument, of any length, decoded from UTF-8 into a new `String`. Bytes that
+are not UTF-8 are not refused: each malformed sequence is replaced with U+FFFD, so the text is no
+longer what the client sent. `argBlob`, a `byte[]` parameter, is the way to take raw
+bytes: it accepts a string argument too and hands its bytes over untouched. Throws
+`UdfException` when the argument is missing or is not a string.
 
 #### `Params.argBlob`
 
@@ -2657,7 +3481,9 @@ The text of a string argument, copied out.
 public static byte[] argBlob(Value[] a, int n, int i, String fn, String p)
 ```
 
-The bytes of a string or a blob.
+The bytes of a string or a blob argument, copied into a new array exactly as long as they are, with
+nothing decoded or replaced: the reader for raw bytes, whichever of the two the client sent. Throws
+`UdfException` when it is missing or of another kind.
 
 #### `Params.argValue`
 
@@ -2665,7 +3491,9 @@ The bytes of a string or a blob.
 public static Value argValue(Value[] a, int n, int i, String fn, String p)
 ```
 
-Any value, nil included.
+The argument as it is, of any kind: nil is a value whose `Value.isNil` is true. Throws
+`UdfException` only when it is missing. The value is the one in `a`, which the next call's
+`args` overwrites: it is good for this call.
 
 #### `Params.argRest`
 
@@ -2673,7 +3501,8 @@ Any value, nil included.
 public static Value[] argRest(Value[] a, int n, int i)
 ```
 
-Every argument from `i` on.
+Every argument from `i` on, in a new array: empty when there are no more. For a last parameter
+that takes the rest; nothing is checked, so nil arguments are in it as nil values.
 
 #### `Params.optInt`
 
@@ -2681,7 +3510,8 @@ Every argument from `i` on.
 public static Long optInt(Value[] a, int n, int i, String fn, String p)
 ```
 
-As `argInt`, or null when the argument is absent or nil.
+As `argInt`, or null when the argument is absent or nil; one of another kind still throws
+`UdfException`. For a parameter marked `Nullable`.
 
 #### `Params.optInt32`
 
@@ -2689,7 +3519,8 @@ As `argInt`, or null when the argument is absent or nil.
 public static Integer optInt32(Value[] a, int n, int i, String fn, String p)
 ```
 
-As `argInt32`, or null when the argument is absent or nil.
+As `argInt32`, or null when the argument is absent or nil; one of another kind still throws
+`UdfException`. For a parameter marked `Nullable`.
 
 #### `Params.optDouble`
 
@@ -2697,7 +3528,8 @@ As `argInt32`, or null when the argument is absent or nil.
 public static Double optDouble(Value[] a, int n, int i, String fn, String p)
 ```
 
-As `argDouble`, or null when the argument is absent or nil.
+As `argDouble`, or null when the argument is absent or nil; one of another kind still throws
+`UdfException`. For a parameter marked `Nullable`.
 
 #### `Params.optBool`
 
@@ -2705,7 +3537,8 @@ As `argDouble`, or null when the argument is absent or nil.
 public static Boolean optBool(Value[] a, int n, int i, String fn, String p)
 ```
 
-As `argBool`, or null when the argument is absent or nil.
+As `argBool`, or null when the argument is absent or nil; one of another kind still throws
+`UdfException`. For a parameter marked `Nullable`.
 
 #### `Params.optString`
 
@@ -2713,7 +3546,8 @@ As `argBool`, or null when the argument is absent or nil.
 public static String optString(Value[] a, int n, int i, String fn, String p)
 ```
 
-As `argString`, or null when the argument is absent or nil.
+As `argString`, or null when the argument is absent or nil; one of another kind still throws
+`UdfException`. For a parameter marked `Nullable`.
 
 #### `Params.optBlob`
 
@@ -2721,7 +3555,8 @@ As `argString`, or null when the argument is absent or nil.
 public static byte[] optBlob(Value[] a, int n, int i, String fn, String p)
 ```
 
-As `argBlob`, or null when the argument is absent or nil.
+As `argBlob`, or null when the argument is absent or nil; one of another kind still throws
+`UdfException`. For a parameter marked `Nullable`.
 
 #### `Params.optValue`
 
@@ -2729,7 +3564,8 @@ As `argBlob`, or null when the argument is absent or nil.
 public static Value optValue(Value[] a, int n, int i, String fn, String p)
 ```
 
-The argument as it is, or null when it is absent or nil.
+The argument as it is, or null when it is absent or nil. It never throws; `fn` and `p` are
+taken only to match the other readers.
 
 #### `Params.result`
 
@@ -2738,7 +3574,7 @@ public static void result(Value v)
 ```
 
 Delivers a `Value` as the result: a scalar by value, guest bytes by address, a built collection
-by handle, a stored value by position; null or absent is nil.
+by handle, a stored value by position; null or absent is nil. It is `Udf.result`.
 
 #### `Params.result`
 
@@ -2794,7 +3630,7 @@ Delivers a `java.util.Map` as a map result, its entries as a builder takes them;
 public static void resultString(String s)
 ```
 
-Delivers a string as the result; null is nil.
+Delivers a string as the result; null is nil, which is the difference from `Udf.resultString`.
 
 #### `Params.resultBlob`
 
@@ -2802,7 +3638,8 @@ Delivers a string as the result; null is nil.
 public static void resultBlob(byte[] b)
 ```
 
-Delivers a byte array as a blob result; null is nil.
+Delivers a byte array as a blob result; null is nil, which is the difference from
+`Udf.resultBlob`.
 
 #### `Params.record`
 
@@ -2810,7 +3647,9 @@ Delivers a byte array as a blob result; null is nil.
 public static Record record()
 ```
 
-The record the call is about, for a method that takes one as its first parameter.
+The record the call is about, for a method that takes one as its first parameter. It is the same object
+on every call, standing for whichever record the call in hand is about; in a stream that is the record
+the query thread is on, which cannot be written.
 
 #### `Params.args`
 
@@ -2818,8 +3657,13 @@ The record the call is about, for a method that takes one as its first parameter
 public static int args(int handle, int argc, Value[] out)
 ```
 
-Decodes the call's arguments into `out`, in one import, filling (or allocating) a Value per slot.
-Returns how many there are, bounded by `out.length`.
+Decodes the call's arguments into `out`, in one import, filling (or allocating, where an element
+is null) a Value per slot: `handle` and `argc` are the export's two parameters. Returns how
+many were filled, bounded by `out.length` and `MAX_ARGS`, which is the `n` the
+readers here take; 0 when there are none. It does not fail for a call that passed more than
+`out` holds: the surplus shows only as an `argc` larger than the count returned, and
+`arity` is the check that turns it into a failure. Keep `out` in a static field so that a
+call allocates no array.
 
 #### `Params.signatureBytes`
 
@@ -2827,8 +3671,10 @@ Returns how many there are, bounded by `out.length`.
 public static byte[] signatureBytes(String text)
 ```
 
-The text behind a `__udf_sig_<name>` export: a NUL-terminated byte array, kept in a static field.
-The export returns `signature` of it.
+The text behind a `__udf_sig_<name>` export, such as `fn add(by: int, cap?: int) -> value`,
+as a NUL-terminated byte array to keep in a static field. The export returns `signature` of it.
+The server serves the text to clients, which can check a call against it; it must say what the export
+really takes.
 
 #### `Params.signature`
 
@@ -2836,7 +3682,9 @@ The export returns `signature` of it.
 public static int signature(byte[] text)
 ```
 
-The address the host reads a signature from: valid until the next allocation, which is after the host read it.
+The address the host reads a signature from, to return from a `__udf_sig_<name>` export: valid
+until the next allocation, which is after the host read it. `text` is what
+`signatureBytes` made.
 
 #### `Params.uncaught`
 
@@ -2844,5 +3692,7 @@ The address the host reads a signature from: valid until the next allocation, wh
 public static int uncaught(String fn, Throwable t)
 ```
 
-Fails the call for an exception the method did not catch, with its message. Returns the status.
+Fails the call for an exception the method did not catch, with the message
+`<fn>: <the exception's message>`, or the exception's class name when it has no message. Returns
+the non-zero status for the export to return.
 

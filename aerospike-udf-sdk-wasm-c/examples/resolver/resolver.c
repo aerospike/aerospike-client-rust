@@ -53,7 +53,7 @@ static void done_add(done* d, const char* name)
 /* A stored string value into a NUL-terminated buffer. */
 static bool name_of(const as_udf_value* v, char* out, int32_t cap)
 {
-	int32_t n = v->kind == AS_UDF_STR ? as_udf_bytes(v, out, cap - 1) : -1;
+	int32_t n = as_udf_as_string(v, out, cap - 1);
 	if (n < 0) return false;
 	out[n] = '\0';
 	return true;
@@ -107,7 +107,8 @@ static void apply_delete(const char* name, const as_udf_value* v, void* udata)
 	deletes* x = (deletes*)udata;
 	/* A put replaces, so a bin already decided above (the profile) is overridden here, as it should be. */
 	if (as_udf_event_incoming_is_newer(x->current, x->incoming, name) == x->by_incoming) {
-		as_udf_map_put_string_handle(x->out, name, as_udf_strlen(name), as_udf_val_nil());
+		as_udf_value nil = as_udf_v_nil();
+		as_udf_map_put_value(x->out, name, &nil);
 		done_add(x->d, name);
 	}
 }
@@ -138,10 +139,10 @@ static void put_newer(const char* name, const as_udf_value* v, void* udata)
 AS_UDF_EVENT_XDR_MERGE(merge_account)
 {
 	as_udf_event_record current, incoming;
-	if (as_udf_event_decode(args, argc, &current, &incoming) != AS_UDF_OK) return as_udf_failf("merge_account: not an xdr-merge");
+	if (as_udf_event_decode(args, argc, &current, &incoming) != AS_UDF_OK) return as_udf_fail_str("merge_account: not an xdr-merge");
 
 	int32_t out = as_udf_map_new(8);
-	if (out <= 0) return as_udf_failf("merge_account: could not build the record");
+	if (out <= 0) return as_udf_fail_str("merge_account: could not build the record");
 	done d = { .n = 0 };
 
 	/* visits: the larger of the two counts. */
@@ -159,7 +160,7 @@ AS_UDF_EVENT_XDR_MERGE(merge_account)
 	const as_udf_event_record* older = incoming_newer ? &current : &incoming;
 	const as_udf_event_record* newer = incoming_newer ? &incoming : &current;
 	tags t = { .list = as_udf_list_new(16), .second = false };
-	if (t.list <= 0) return as_udf_failf("merge_account: could not build the tags");
+	if (t.list <= 0) return as_udf_fail_str("merge_account: could not build the tags");
 	as_udf_value older_tags = { AS_UDF_ABSENT, 0, 0 }, newer_tags = { AS_UDF_ABSENT, 0, 0 };
 	as_udf_event_bin(older, "tags", &older_tags);
 	as_udf_event_bin(newer, "tags", &newer_tags);

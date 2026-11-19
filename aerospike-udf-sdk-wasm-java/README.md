@@ -79,7 +79,9 @@ at compile time, inside `javac`, before TeaVM runs.
   `@Nullable` for one that may be absent or nil, boxed when scalar), and the return is the result (`void`
   nil, `long`/`int`, `double`, `boolean`, `String`, `byte[]`, `Value`, `MapBuilder`, `ListBuilder`,
   `MapValue`, `ListValue`, and a `java.util.Map` or `java.util.List` of plain Java values). A missing,
-  mismatched or surplus argument fails the call before the method runs, naming the argument. Throw `UdfException` to fail the call with a message; any other exception fails it
+  mismatched or surplus argument fails the call before the method runs, naming the argument, and so
+  does a call with more than 128 arguments, `Value[]` or not: none is dropped. A `String` parameter
+  replaces bytes that are not UTF-8; `byte[]` takes a string or blob argument's bytes untouched. Throw `UdfException` to fail the call with a message; any other exception fails it
   with its message.
 - **`@Stream("name")`** on a class with a `record` method and an `end` method: a stream UDF, exported as
   `name_record` and `name_end` with the signature `stream name { record(...) end(...) }`. The processor
@@ -107,10 +109,12 @@ per export, and `main`. Name it as the TeaVM `mainClass`; the annotated class ne
 
 - **`Record`**: the record a call is about, and everything a UDF does to it. Bins are addressed by name.
   `get(name)` gives a bin as a `Value`, or null, `bin(name)` gives it or throws, and `has(name)` says
-  whether it is there; the typed readers (`getInt`, `getDouble`, `getBool`, `getString`, `getBlob`,
-  `getList`, `getMap`, and `getFloats(name, float[])` for a vector) throw `UdfException` naming the bin
-  when it is absent or of another kind, and given a default (`getInt("n", 0)`) answer it for an absent
-  bin. `set(name, value)` stages a bin of any kind (a scalar,
+  whether it is there. The typed readers (`getInt`, `getDouble`, `getBool`, `getString`, `getBlob`,
+  `getList`, `getMap`) have three outcomes: null for an absent bin, the value for a bin of that kind,
+  and `UdfException` with the status `LowLevel.TYPE_MISMATCH` for a bin of another kind; nothing is
+  widened, and `getBlob` takes a blob only, `getBytes` the raw bytes of a string, blob, GeoJSON or HLL.
+  Given a default (`getInt("n", 0)`) a reader answers it for an absent bin and still throws for another
+  kind; `bin(name).asInt()` is the read that insists. `getFloats(name, float[])` reads a vector. `set(name, value)` stages a bin of any kind (a scalar,
   a string, a blob, a `Value`, a builder, a stored list or map, a `java.util.List` or `Map`),
   `setGeoJson` a GeoJSON one, `remove(name)` stages a removal, and `save()` writes what is staged,
   creating the record when it does not exist. `setInts(long[])` and `setDoubles(double[])` write a packed
@@ -119,21 +123,27 @@ per export, and `main`. Name it as the TeaVM `mainClass`; the annotated class ne
   There is one `Record` type: a write where the record is read-only (a stream's records) throws.
 - **`RecordReader`**: the readers `Record` and `EventRecord` share, so a helper that only reads bins takes
   either.
-- **`Value`**: one value, read-only: `kind()`, the `is*` tests, `asInt()`, `asDouble()`, `asBool()`,
-  `asString()`, `asBlob()`, `asList()`, `asMap()`, `toObject()`; `Value.ofInt`, `ofString`, `ofGeoJson`
+- **`Value`**: one value, read-only: `kind()`, the `is*` tests (`isGeoJson()` and `isHll()` among them),
+  `asInt()`, `asDouble()`, `asBool()`, `asString()`, `asBlob()` (a blob only), `asBytes()` (the raw bytes
+  of a string, blob, GeoJSON or HLL), `asList()`, `asMap()`, `toObject()`, `cmpStored(other)` (-1, 0 or
+  1, and a throw for values it cannot compare); `Value.ofInt`, `ofString`, `ofGeoJson`
   and the rest make one of the guest's own.
 - **`ListValue` and `MapValue`**: a stored list or map, read where it is. A list has `size()`,
-  `isEmpty()`, `get(index)` and the typed `getInt(index)` and so on, `contains`, and is an
-  `Iterable<Value>`; a map has `get(key)` (null for no such key), `containsKey`, the typed
-  `getInt(key)` / `getInt(key, dflt)` and so on for string and integer keys, and is an
+  `isEmpty()`, `get(index)` and the typed `getInt(index)` and so on (null for a nil element; an index
+  out of range throws, as on a `java.util.List`), `contains`, and is an `Iterable<Value>`; a map has
+  `get(key)` (null for no such key), `containsKey`, the typed `getInt(key)` (null for no such key or a
+  nil entry) / `getInt(key, dflt)` and so on for string and integer keys of any length, and is an
   `Iterable<MapValue.Entry>`. Every element a loop yields is a fresh `Value`, safe to keep, and a loop
-  may be left early. A wrong kind throws `UdfException` naming the key or the index. `toList()` and
+  may be left early. A wrong kind throws `UdfException` naming the key or the index. `asValue()` hands
+  the collection on; a view of nothing (a side's deleted bins when it deleted none) is an empty one. `toList()` and
   `toMap()` copy the whole collection out as `java.util` ones.
 - **`ListBuilder` and `MapBuilder`**: a list or map being built on the server, started with `Udf.list()`
   and `Udf.map()`: chained `add` / `put` of every kind, string and integer keys, `addNil` / `putNil`,
   `addGeoJson` / `putGeoJson`, `addAll` / `putAll` from a stored collection (by position) or from a
   `java.util` one, `MapBuilder.containsKey`; written to a bin, returned as the result, nested, or handed
-  back from a handler. They are builders, not collections: what went in is not read back.
+  back from a handler. They are builders, not collections: what went in is not read back. An `add` or a
+  `put` takes none of the call's 256 handles, so a loop of any length builds until the server refuses
+  (`LowLevel.REFUSED`).
 - **`Udf`**: what is not about the record: `now()`, `log`, the builder factories, and for a function in
   the raw form the `result*` calls and `fail`.
 - **Events**: `EventRecord` for each side of a merge (the same readers as `Record`, plus `binNames()`,
@@ -141,8 +151,8 @@ per export, and `main`. Name it as the TeaVM `mainClass`; the annotated class ne
   under a few decided bins; and what the merge says of one side: `isDelete()`, `isPartial()` and
   `lostBins()` of the incoming write, `isTombstone()` of the current record, `usesBinConvergence()` of
   either), `Resolution` for the answer, and the merge itself through `Pair.of(current, incoming)` (`Pair`
-  and `Both` with `current`, `incoming`, `newer`, `older`, `ordered`, `max`, `min`, `merge`,
-  `withNewer`). A handler in the raw form reads the two records with `Pair.decode(args, argc)` and
+  and `Both` with `current`, `incoming`, `newer`, `older`, `ordered`, `max`, `min`, `merge`, `sumInt`
+  (0 when neither side has the bin), `withNewer`, which leaves out a bin the later side deleted). A handler in the raw form reads the two records with `Pair.decode(args, argc)` and
   returns a resolution's `deliver()`. `examples/resolver` is the worked example, held to the same
   behaviour as the other languages' by the client tests.
 - **`LowLevel`**: the server's calls one at a time, for a hot path that must allocate nothing: names as
@@ -155,7 +165,7 @@ per export, and `main`. Name it as the TeaVM `mainClass`; the annotated class ne
 ### Names are encoded once
 
 A bin name crosses to the server as UTF-8 bytes. `Record` (and the map classes, for keys) keeps the
-encoded form of the names it has seen, found by the string itself, so `rec.getInt("ticks")` on a string
+encoded form of the names it has seen, found by the string itself, so `rec.getInt("ticks", 0)` on a string
 literal allocates nothing and needs no constant declared for the name. The last eight names used are
 matched by identity, which is the whole cost for a literal; a module that rotates through more than eight
 in one call pays a hash lookup for the others. `tests/src/udf_java.rs` has the measurement
@@ -199,8 +209,10 @@ host, and never keeps one. Code that calls the natives directly must do the same
 ## Exceptions
 
 A generated export catches what the method throws and fails the call with the message; `UdfException`
-is the one to throw on purpose, and the one the SDK throws: for a bin or key that is absent or of another
-kind, and for a write the record refuses. In the raw form an uncaught exception ends
+is the one to throw on purpose, and the one the SDK throws: for a bin, key or element of another kind, a
+required one that is absent, and a write the record refuses. It carries the host's status, `status()`:
+`LowLevel.NOT_FOUND`, `TYPE_MISMATCH`, `REFUSED`, a too-small status at or below `NEEDED_BASE`, or `ERR`,
+which is also the status of one made with `new UdfException(message)`. In the raw form an uncaught exception ends
 the call the same way, and `Udf.fail(message)` is the status-code way to say why.
 
 ## The examples
@@ -218,6 +230,10 @@ the call the same way, and `Udf.fail(message)` is the status-code way to say why
 - `examples/twopset` and `examples/lwwset`: steps 3 and 4 of the book's CRDT tutorial, a set with
   removals (two sorted lists merged by union) and a set with re-adds (two maps of `Udf.now()` stamps merged
   by the later stamp); both return a `ListBuilder` of members from `@Function` methods.
+- `examples/registers`: a record whose bins are last-writer-wins registers stamped by the server, on a
+  namespace with bin convergence; the handler reads `binLastUpdateTime` and `binSourceId` per bin, keeps
+  a delete that is the later write, and merges the one bin that is not a register (`seen`) by the larger
+  number.
 - `examples/crdt`: the active-active CRDT of the design note, rule for rule the same as the Rust one, held to
   the same nine dry-run scenarios by `tests/src/events.rs`; written on `ListValue`, `MapValue` and the
   builders, with plain Java collections for its own bookkeeping.

@@ -12,16 +12,18 @@ generates the export that decodes the event into the method's parameters and the
 `__udf_sig_<name>` export reading `event xdr-merge/1 ...`, which `event-set` checks
 before binding. The parameter types are part of the kind, so a handler with another signature does not
 compile. A handler returns a `Resolution`; an exception fails the call with its message.
-```text
+
+```java
 @On.XdrMerge("merge_counter")
 static Resolution mergeCounter(EventRecord current, EventRecord incoming) {
-...
-return Resolution.record(out);
+    ...
+    return Resolution.record(out);
 }
 ```
+
 A handler may also take the raw form `int name(int args, int argc)`, exported as it is with only
-the signature generated; it reads the two records with `Pair#decode` and answers by returning a
-resolution's `Resolution#deliver`. The name is the method's when the annotation's value is empty.
+the signature generated; it reads the two records with `Pair.decode` and answers by returning a
+resolution's `Resolution.deliver`. The name is the method's when the annotation's value is empty.
 
 #### `On.XdrMerge`
 
@@ -29,8 +31,13 @@ resolution's `Resolution#deliver`. The name is the method's when the annotation'
 public @interface XdrMerge
 ```
 
-`(EventRecord current, EventRecord incoming)`: the record as it is on this cluster and the one
-that arrived over XDR; answers keep-local, take-remote, policy, delete or record.
+Marks the handler of an `xdr-merge`: a method
+`Resolution name(EventRecord current, EventRecord incoming)` given the record as it is on this
+cluster and the one that arrived over XDR, which answers with a `Resolution`: keep-local,
+take-remote, policy, delete or record. The annotation's value is the name the export gets and
+`event-set` binds; the method's name when it is empty. The handler runs on an incoming XDR write
+to a record this node has, live or tombstone, before the write is applied, with no clock and nothing to
+write to: its answer is the only effect it has.
 
 #### `Resolution`
 
@@ -42,13 +49,23 @@ What an `xdr-merge` handler returns: the Java face of the Rust SDK's `Resolution
 current record, apply the incoming write whole, let the namespace's policy decide, remove the record, or
 the final record.
 
+```java
+return Resolution.keepLocal();                               // drop the incoming write
+return Resolution.record(pair.withNewer(out));               // these bins, the incoming TTL
+return Resolution.record(out, 3600);                         // these bins, expiring in an hour
+```
+
+A resolution is checked by the server before it is taken, and one it does not accept is the handler's
+failure, which the binding's `on-failure` setting decides.
+
 #### `Resolution.keepLocal`
 
 ```java
 public static Resolution keepLocal()
 ```
 
-Keep the local record; the incoming write is dropped.
+Keep the local record; the incoming write is dropped, and the source cluster is told so in a way it
+counts as success.
 
 #### `Resolution.takeRemote`
 
@@ -56,7 +73,8 @@ Keep the local record; the incoming write is dropped.
 public static Resolution takeRemote()
 ```
 
-Apply the incoming write whole, as if it had won every bin.
+Apply the incoming write whole, as if it had won every bin: the incoming bins go over the current
+record.
 
 #### `Resolution.policy`
 
@@ -82,8 +100,11 @@ this: it is the handler's failure.
 public static Resolution record(MapBuilder bins)
 ```
 
-The final record: these bins, whole - a bin not in the map, or set to nil, is deleted - keeping the
-TTL the incoming write asked for.
+The final record: these bins, whole - a bin not in the map, or set to nil, is deleted - keeping the TTL
+the incoming write asked for. The map's keys are the bin names, so each is a string of 1 to 15 bytes.
+At least one bin must be left: an empty map, or one whose values are all nil, is the handler's failure
+and not a deletion, which is what `delete` is for. The builder is not used up and may still be
+added to before the handler returns.
 
 #### `Resolution.record`
 
@@ -91,7 +112,9 @@ TTL the incoming write asked for.
 public static Resolution record(MapBuilder bins, long ttl)
 ```
 
-As `record(MapBuilder)`, with a TTL in seconds: 0 for the namespace default.
+As `record(MapBuilder)`, with the record's TTL in seconds, which has a write's meaning: 0 for
+the namespace default. A negative `ttl` is the same as giving none: the TTL the incoming write
+asked for is kept.
 
 #### `Resolution.deliver`
 
@@ -99,9 +122,10 @@ As `record(MapBuilder)`, with a TTL in seconds: 0 for the namespace default.
 public int deliver()
 ```
 
-Sets the resolution as the result of the call and returns the status the export returns. The
-generated export of a typed handler calls it; a handler in the raw form
-`int name(int args, int argc)` ends with it, as in `return Resolution.keepLocal().deliver()`.
+Sets the resolution as the result of the call and returns the status the export returns: 0, or 1 after
+failing the call when the answer could not be built. The generated export of a typed handler calls it;
+a handler in the raw form `int name(int args, int argc)` ends with it, as in
+`return Resolution.keepLocal().deliver()`.
 
 #### `Resolution.verdict`
 
@@ -109,7 +133,8 @@ generated export of a typed handler calls it; a handler in the raw form
 public String verdict()
 ```
 
-The verdict word as the server reads it, such as `keep-local` or `record`.
+The verdict word as the server reads it: `keep-local`, `take-remote`, `policy`,
+`delete` or `record`.
 
 #### `EventRecord`
 
@@ -124,12 +149,32 @@ where the server keeps them, when and by whom each bin was last written, and the
 merge that are facts about one side (`isDelete`, `isPartial` and `lostBins` of the
 incoming write, `isTombstone` of the current record). One asked of the side it is not about
 answers false, or an empty list.
+
 A handler must be pure and convergent: both data centres merge the same two records with the sides
 swapped and must land on the same record. `Pair` orders a bin's two sides by its own LUT and then
 source id, which is symmetric; "mine first" is not.
+
 A handler changes a record by answering with the bins it should have
-(`Resolution#record`); `withBins` fills such an answer with every bin of this record the
+(`Resolution.record`); `withBins` fills such an answer with every bin of this record the
 handler did not decide.
+
+```java
+@On.XdrMerge("keep_higher_score")
+static Resolution keepHigherScore(EventRecord current, EventRecord incoming) {
+    if (incoming.isDelete()) {
+        return Resolution.policy();
+    }
+
+    long mine = current.getInt("score", 0);
+    long theirs = incoming.getInt("score", 0);
+
+    return theirs > mine ? Resolution.takeRemote() : Resolution.keepLocal();
+}
+```
+
+Both records are good for the whole call and for nothing after it. A handler has no record of its own
+and no clock: `Udf.now` answers -1 in one, a `Udf.log` line is dropped, and the
+`Record` of a record UDF is not there to read or write.
 
 #### `EventRecord.generation`
 
@@ -137,7 +182,8 @@ handler did not decide.
 public long generation()
 ```
 
-The record's generation; 0 on both sides of an `xdr-merge`.
+The record's generation. It is 0 on both sides of an `xdr-merge`: each cluster counts its own
+writes, so a merge that read it could not converge.
 
 #### `EventRecord.lastUpdateTime`
 
@@ -145,7 +191,8 @@ The record's generation; 0 on both sides of an `xdr-merge`.
 public long lastUpdateTime()
 ```
 
-When the record was last written; 0 on both sides of an `xdr-merge`.
+When the record was last written. It is 0 on both sides of an `xdr-merge`, for the reason
+`generation` is; `binLastUpdateTime` is the time a merge orders by.
 
 #### `EventRecord.ttl`
 
@@ -153,13 +200,16 @@ When the record was last written; 0 on both sides of an `xdr-merge`.
 public long ttl()
 ```
 
+This side's time to live, in seconds; 0 for a record that does not expire.
+
 #### `EventRecord.sourceId`
 
 ```java
 public long sourceId()
 ```
 
-The XDR source id of the data centre that wrote this version.
+The XDR source id of the data centre that wrote this version: the number each cluster is configured
+with as its `src-id`. It is the tie-break when two writes carry the same time.
 
 #### `EventRecord.binNames`
 
@@ -167,7 +217,8 @@ The XDR source id of the data centre that wrote this version.
 public ListValue binNames()
 ```
 
-The names of the record's bins, as a list of strings.
+The names of the bins this side has, as a list of strings to iterate; empty for an incoming write that
+deletes the record and for a tombstone.
 
 #### `EventRecord.deletedBins`
 
@@ -175,7 +226,9 @@ The names of the record's bins, as a list of strings.
 public ListValue deletedBins()
 ```
 
-The names of the bins this side deleted (bin deletes, or tombstones); empty when it deleted none.
+The names of the bins this side deleted (bin deletes, or tombstones), as a list of strings; empty when
+it deleted none, which is also what it is when the server sent no such list. A bin named here must not be brought back from the other side by a merge that copies
+whatever either side has.
 
 #### `EventRecord.deletedAny`
 
@@ -183,7 +236,16 @@ The names of the bins this side deleted (bin deletes, or tombstones); empty when
 public boolean deletedAny()
 ```
 
-Whether this side deleted any bin.
+Whether this side deleted any bin: `deletedBins` is not empty.
+
+#### `EventRecord.deleted`
+
+```java
+public boolean deleted(String name)
+```
+
+Whether this side deleted the bin `name`: it is in `deletedBins`. A merge that takes the
+later write of a bin asks this of the later side, so that a delete is not undone by the older value.
 
 #### `EventRecord.binLastUpdateTime`
 
@@ -191,7 +253,12 @@ Whether this side deleted any bin.
 public long binLastUpdateTime(String name)
 ```
 
-When this side last wrote the bin: per bin where the server keeps one, the record's otherwise.
+When this side last wrote the bin, in milliseconds since the Citrusleaf epoch, 2010-01-01T00:00:00Z
+(Unix milliseconds minus 1 262 304 000 000), for comparing with the other side's: the bin's own time
+where the server keeps one (`usesBinConvergence` says whether it is meaningful), and
+`lastUpdateTime` otherwise, also for a bin this side does not have. The record's time is 0 in an
+`xdr-merge`, so where no per-bin time is kept every bin answers 0 on both sides and only
+`binSourceId` tells them apart.
 
 #### `EventRecord.binSourceId`
 
@@ -199,7 +266,8 @@ When this side last wrote the bin: per bin where the server keeps one, the recor
 public long binSourceId(String name)
 ```
 
-The source id that wrote the bin: per bin where the server keeps one, the record's otherwise.
+The source id of the data centre that last wrote the bin on this side: the bin's own where the server
+keeps one, the record's `sourceId` otherwise, also for a bin this side does not have.
 
 #### `EventRecord.isDelete`
 
@@ -226,7 +294,7 @@ public ListValue lostBins()
 ```
 
 The names of the incoming bins that would lose under bin convergence, as a list of strings. Empty
-for the current record.
+for the current record, and when the server sent no such list.
 
 #### `EventRecord.isTombstone`
 
@@ -251,7 +319,11 @@ before trusting `binLastUpdateTime`. The same answer on both records.
 public Value get(String name)
 ```
 
-The bin as a value, or null when this side has no such bin or holds nil in it (a bin it deleted).
+The bin as a `Value` of whatever kind it is, or null when this side has no such bin or holds nil in it
+(a bin it deleted). The value is a fresh one that is not changed afterwards: a
+scalar is in it whole, and the text of a string or the elements of a list are read from the server when
+its `as*` reader asks for them. Throws `UdfException` only when the host could not read the
+bin.
 
 #### `EventRecord.bin`
 
@@ -259,16 +331,39 @@ The bin as a value, or null when this side has no such bin or holds nil in it (a
 public Value bin(String name)
 ```
 
+As `get`, for a bin that has to be there: throws `UdfException` reading
+`bin <name> is absent`, with the status `LowLevel.NOT_FOUND`, when this side has no such
+bin, and never answers null. With the value's own reader it is the read that insists:
+`incoming.bin("score").asInt()`.
+
 #### `EventRecord.has`
 
 ```java
 public boolean has(String name)
 ```
 
+Whether this side has the bin, of any kind. False for a bin it deleted, and for a name that is not 1 to
+15 bytes.
+
 #### `EventRecord.getInt`
 
 ```java
-public long getInt(String name)
+public Long getInt(String name)
+```
+
+An integer bin, or null when this side has no such bin. Throws `UdfException` naming the bin
+(`bin n is not an int`, status `LowLevel.TYPE_MISMATCH`) when it holds another kind; a
+double is not truncated to one. The answer is boxed so that it can be null: assigning it to a
+`long` without looking fails the call with a `NullPointerException` for an absent bin, so
+give a default (long)) or insist (`incoming.bin(name).asInt()`) where no test
+for null is wanted.
+
+```java
+Long theirs = incoming.getInt("score");
+
+if (theirs == null) {
+    // the incoming write does not carry the bin
+}
 ```
 
 #### `EventRecord.getInt`
@@ -277,11 +372,20 @@ public long getInt(String name)
 public long getInt(String name, long dflt)
 ```
 
+An integer bin, or `dflt` when this side has no such bin. A bin of another kind still throws
+`UdfException` (`LowLevel.TYPE_MISMATCH`): the default stands in for a missing bin, not for
+a wrong one. In a merge the default is what a side that never wrote the bin counts as, so choose one
+that leaves the other side's value standing: 0 for a sum or a maximum of counts.
+
 #### `EventRecord.getDouble`
 
 ```java
-public double getDouble(String name)
+public Double getDouble(String name)
 ```
+
+A double bin, or null when this side has no such bin. Throws `UdfException`
+(`LowLevel.TYPE_MISMATCH`) naming the bin when it holds another kind, and an integer bin is
+another kind: it is not widened.
 
 #### `EventRecord.getDouble`
 
@@ -289,11 +393,18 @@ public double getDouble(String name)
 public double getDouble(String name, double dflt)
 ```
 
+A double bin, or `dflt` when this side has no such bin. A bin of another kind, an integer
+included, still throws `UdfException` (`LowLevel.TYPE_MISMATCH`).
+
 #### `EventRecord.getBool`
 
 ```java
-public boolean getBool(String name)
+public Boolean getBool(String name)
 ```
+
+A boolean bin, or null when this side has no such bin. Throws `UdfException`
+(`LowLevel.TYPE_MISMATCH`) naming the bin when it holds another kind; an integer 0 or 1 is not a
+boolean.
 
 #### `EventRecord.getBool`
 
@@ -301,11 +412,19 @@ public boolean getBool(String name)
 public boolean getBool(String name, boolean dflt)
 ```
 
+A boolean bin, or `dflt` when this side has no such bin. A bin of another kind still throws
+`UdfException` (`LowLevel.TYPE_MISMATCH`).
+
 #### `EventRecord.getString`
 
 ```java
 public String getString(String name)
 ```
+
+The text of a string bin, decoded from UTF-8 into a new `String` on every call, or null when this
+side has no such bin. Throws `UdfException` (`LowLevel.TYPE_MISMATCH`) naming the bin
+when it is not a string. A GeoJSON bin is not a string here: `getBytes(String)` gives its text
+as bytes.
 
 #### `EventRecord.getString`
 
@@ -313,11 +432,19 @@ public String getString(String name)
 public String getString(String name, String dflt)
 ```
 
+The text of a string bin, or `dflt` (which may be null) when this side has no such bin. A bin of
+another kind still throws `UdfException` (`LowLevel.TYPE_MISMATCH`).
+
 #### `EventRecord.getBlob`
 
 ```java
 public byte[] getBlob(String name)
 ```
+
+The bytes of a blob bin, copied into a new array on every call, or null when this side has no such
+bin. It is strict: throws `UdfException` (`LowLevel.TYPE_MISMATCH`) naming the bin when it
+holds anything but a blob, a string, a GeoJSON document and an HLL included. `getBytes(String)`
+is the reader that takes those.
 
 #### `EventRecord.getBlob`
 
@@ -325,11 +452,32 @@ public byte[] getBlob(String name)
 public byte[] getBlob(String name, byte[] dflt)
 ```
 
+The bytes of a blob bin, copied into a new array, or `dflt` (which may be null, and is returned as
+it is, not copied) when this side has no such bin. A bin of another kind still throws
+`UdfException` (`LowLevel.TYPE_MISMATCH`).
+
+#### `EventRecord.getBytes`
+
+```java
+public byte[] getBytes(String name)
+```
+
+The raw bytes of a string, blob, GeoJSON or HLL bin, copied into a new array on every call, or null
+when this side has no such bin: the UTF-8 bytes of a string or a document, the bytes of a blob, an HLL
+as the server stores it. Throws `UdfException` (`LowLevel.TYPE_MISMATCH`) naming the bin
+when it is a number, a boolean, a list or a map.
+
 #### `EventRecord.getList`
 
 ```java
 public ListValue getList(String name)
 ```
+
+A list bin, as a view that reads it where the server holds it: nothing is copied until an element is
+asked for. Null when this side has no such bin, which is not an empty list: an empty list bin is a
+view whose `ListValue.isEmpty` is true. Throws `UdfException`
+(`LowLevel.TYPE_MISMATCH`) naming the bin when it is not a list. The view goes into an answer by position:
+`out.put("tags", incoming.getList("tags").asValue())`.
 
 #### `EventRecord.getList`
 
@@ -337,11 +485,18 @@ public ListValue getList(String name)
 public ListValue getList(String name, ListValue dflt)
 ```
 
+A list bin as a view, or `dflt` (which may be null) when this side has no such bin. A bin of
+another kind still throws `UdfException` (`LowLevel.TYPE_MISMATCH`).
+
 #### `EventRecord.getMap`
 
 ```java
 public MapValue getMap(String name)
 ```
+
+A map bin, as a view that looks keys up and iterates where the server holds it: nothing is copied until
+an entry is asked for. Null when this side has no such bin, which is not an empty map. Throws
+`UdfException` (`LowLevel.TYPE_MISMATCH`) naming the bin when it is not a map.
 
 #### `EventRecord.getMap`
 
@@ -349,16 +504,27 @@ public MapValue getMap(String name)
 public MapValue getMap(String name, MapValue dflt)
 ```
 
+A map bin as a view, or `dflt` (which may be null) when this side has no such bin. A bin of
+another kind still throws `UdfException` (`LowLevel.TYPE_MISMATCH`).
+
 #### `EventRecord.withBins`
 
 ```java
 public MapBuilder withBins(MapBuilder overrides)
 ```
 
-Puts every bin of this record that `overrides` lacks into it, by position, and returns it: for
-a `record` answer that changes a few bins and keeps the rest. This prefers one side, so an
-`xdr-merge` handler that uses it on the current record is not symmetric;
-`Pair#withNewer` is the symmetric form.
+Puts every bin of this record that `overrides` lacks into it, by position, and returns it: for a
+`record` answer that changes a few bins and keeps the rest. A bin this side deleted is not put,
+so in the answer it stays deleted. This prefers one side, so an `xdr-merge` handler that uses it
+on the current record is not symmetric; `Pair.withNewer` is the symmetric form. It never brings
+back a bin from the other side, so a bin the other side has and this one deleted stays out too. Throws
+`UdfException` when a bin could not be read or put.
+
+```java
+MapBuilder out = Udf.map(4).put("visits", visits);
+
+return Resolution.record(incoming.withBins(out));   // visits as merged, the rest as it arrived
+```
 
 #### `Pair`
 
@@ -368,7 +534,19 @@ public final class Pair
 
 The two records of a merge side by side, read bin by bin into a `Both`: the Java face of the Rust
 SDK's `Pair`. `of` makes one from the two records a handler is given. A reader answers null
-for a side that has no such bin or holds nil, and throws `UdfException` for a bin of another kind.
+for a side that has no such bin or holds nil, and throws `UdfException`, with the status
+`LowLevel.TYPE_MISMATCH`, for a bin of another kind.
+
+```java
+Pair pair = Pair.of(current, incoming);
+
+Long visits = pair.getInt("visits").max();          // null when neither side has the bin
+String name = pair.getString("name").newer();       // last writer wins
+long spent = pair.getInt("spent").sumInt();         // a missing side counts as 0
+```
+
+Every reader reads the bin on both sides, so each costs two reads; keep the `Both` when more than
+one merge is asked of it.
 
 #### `Pair.current`
 
@@ -376,7 +554,8 @@ for a side that has no such bin or holds nil, and throws `UdfException` for a bi
 public final EventRecord current
 ```
 
-The current record.
+The current record: this cluster's, as it is before the incoming write is applied. Read it directly for
+what is not a bin, such as `EventRecord.isTombstone`.
 
 #### `Pair.incoming`
 
@@ -384,7 +563,8 @@ The current record.
 public final EventRecord incoming
 ```
 
-The incoming write.
+The incoming write: the record as the other cluster shipped it. Read it directly for what is not a bin,
+such as `EventRecord.isDelete` and `EventRecord.isPartial`.
 
 #### `Pair.of`
 
@@ -392,7 +572,8 @@ The incoming write.
 public static Pair of(EventRecord current, EventRecord incoming)
 ```
 
-The two records a handler is given, side by side: the current record, then the incoming write.
+The two records a handler is given, side by side: the current record, then the incoming write, in the
+order the handler's parameters have them. It reads nothing yet and copies nothing.
 
 #### `Pair.decode`
 
@@ -411,7 +592,8 @@ generated export of a typed handler calls, and what a handler in the raw form
 public Both<Long> getInt(String name)
 ```
 
-An integer bin on each side.
+An integer bin on each side, boxed: a side is null when it has no such bin. Throws `UdfException`
+when either side holds another kind in the bin.
 
 #### `Pair.getDouble`
 
@@ -419,7 +601,8 @@ An integer bin on each side.
 public Both<Double> getDouble(String name)
 ```
 
-A double bin on each side.
+A double bin on each side, boxed: a side is null when it has no such bin. Throws `UdfException`
+when either side holds another kind in the bin; an integer is not widened.
 
 #### `Pair.getBool`
 
@@ -427,7 +610,8 @@ A double bin on each side.
 public Both<Boolean> getBool(String name)
 ```
 
-A boolean bin on each side.
+A boolean bin on each side, boxed: a side is null when it has no such bin. Throws `UdfException`
+when either side holds another kind in the bin.
 
 #### `Pair.getString`
 
@@ -435,7 +619,8 @@ A boolean bin on each side.
 public Both<String> getString(String name)
 ```
 
-A string bin on each side, its text copied out.
+A string bin on each side, its text copied out: a side is null when it has no such bin. Throws
+`UdfException` when either side holds another kind in the bin.
 
 #### `Pair.getBlob`
 
@@ -443,7 +628,20 @@ A string bin on each side, its text copied out.
 public Both<byte[]> getBlob(String name)
 ```
 
-The bytes of a string, blob, GeoJSON or HLL bin on each side, copied out.
+The bytes of a blob bin on each side, copied out: a side is null when it has no such bin. It is strict:
+throws `UdfException` when either side holds anything but a blob in it, a string included;
+`getBytes` takes those. `Both.max` and `Both.min` do not apply: a `byte[]` is
+not `Comparable`.
+
+#### `Pair.getBytes`
+
+```java
+public Both<byte[]> getBytes(String name)
+```
+
+The raw bytes of a string, blob, GeoJSON or HLL bin on each side, copied out: a side is null when it
+has no such bin. Throws `UdfException` when either side holds a number, a boolean, a list or a
+map in it.
 
 #### `Pair.getList`
 
@@ -451,7 +649,8 @@ The bytes of a string, blob, GeoJSON or HLL bin on each side, copied out.
 public Both<ListValue> getList(String name)
 ```
 
-A list bin on each side, read where it is stored.
+A list bin on each side, as a view read where it is stored: a side is null when it has no such bin.
+Throws `UdfException` when either side holds another kind in the bin.
 
 #### `Pair.getMap`
 
@@ -459,7 +658,8 @@ A list bin on each side, read where it is stored.
 public Both<MapValue> getMap(String name)
 ```
 
-A map bin on each side, read where it is stored.
+A map bin on each side, as a view read where it is stored: a side is null when it has no such bin.
+Throws `UdfException` when either side holds another kind in the bin.
 
 #### `Pair.bin`
 
@@ -467,7 +667,9 @@ A map bin on each side, read where it is stored.
 public Both<Value> bin(String name)
 ```
 
-The bin as a value on each side; absent and nil sides are null.
+The bin as a value of whatever kind it is on each side; a side that has no such bin, or holds nil in
+it, is null. The way to carry a bin into the answer without caring what it holds:
+`out.put("profile", pair.bin("profile").newer())`, after checking the result for null.
 
 #### `Pair.incomingIsNewer`
 
@@ -475,7 +677,10 @@ The bin as a value on each side; absent and nil sides are null.
 public boolean incomingIsNewer(String name)
 ```
 
-Whether the incoming side wrote `name` later, per bin: the order the bin-lut policy uses.
+Whether the incoming side wrote `name` later: by the bin's time where the server keeps one, and
+on a tie (which is every bin when it keeps none) by the larger source id. It is the order the server's
+own bin convergence uses, and both clusters compute it alike. It reads no bin, so it also answers for a
+bin neither side has.
 
 #### `Pair.withNewer`
 
@@ -486,7 +691,11 @@ public MapBuilder withNewer(MapBuilder overrides)
 Puts into `overrides` every bin either side has that it lacks, from the side that wrote the bin
 later - which is what the policy would have kept - so a handler merges the bins it knows about and
 leaves the rest as they would have been. Symmetric: both DCs order the two sides the same way.
-Returns `overrides`.
+
+A delete is a write like any other. When the side that wrote a bin later deleted it (the bin is in
+that side's `EventRecord.deletedBins`), the bin is left out of the answer, which is how a
+`record` answer deletes it: the older side's value is not brought back. Returns
+`overrides`.
 
 #### `Both`
 
@@ -496,6 +705,20 @@ public final class Both<T>
 
 A bin on both sides of a merge, either of which may be missing (null), with the merges a resolver
 reaches for: the Java face of the Rust SDK's `Both<T>`. `Pair` builds one per bin.
+
+```java
+Both<Long> visits = pair.getInt("visits");
+
+Long merged = visits.merge(Math::max);       // null only when neither side has the bin
+long total = visits.sumInt();                // never null: a missing side is 0
+
+if (visits.current == null) {
+    // the bin is new to this cluster
+}
+```
+
+Every merge here answers null when both sides are missing, except the two sums. `current` and
+`incoming` are the values themselves, to read when no merge here fits.
 
 #### `Both.current`
 
@@ -511,7 +734,7 @@ The current record's value, or null when it has no such bin or the bin is nil.
 public final T incoming
 ```
 
-The incoming write's value, likewise.
+The incoming write's value, or null when it has no such bin or the bin is nil.
 
 #### `Both.incomingIsNewer`
 
@@ -529,7 +752,9 @@ record's otherwise, and on a tie by source id - the order the server's own bin c
 public T newer()
 ```
 
-The side written later; whichever exists when only one does.
+The side written later, by `incomingIsNewer`; whichever exists when only one does, and null when
+neither does. A missing side never wins over one that exists, however late it was deleted: a merge that
+must honour deletes asks `EventRecord.deleted` of the later side, as `Pair.withNewer` does.
 
 #### `Both.older`
 
@@ -537,7 +762,8 @@ The side written later; whichever exists when only one does.
 public T older()
 ```
 
-The side written earlier; whichever exists when only one does.
+The side written earlier, by `incomingIsNewer`; whichever exists when only one does, and null
+when neither does.
 
 #### `Both.ordered`
 
@@ -554,7 +780,8 @@ both DCs agree on, for a merge whose result depends on the order its inputs are 
 public T currentOrIncoming()
 ```
 
-The current value when there is one, else the incoming.
+The current value when there is one, else the incoming, else null. It prefers this cluster's side, so
+the two clusters answer differently: not for a merge that has to converge.
 
 #### `Both.incomingOrCurrent`
 
@@ -562,7 +789,8 @@ The current value when there is one, else the incoming.
 public T incomingOrCurrent()
 ```
 
-The incoming value when there is one, else the current.
+The incoming value when there is one, else the current, else null. It prefers the other cluster's side,
+so the two clusters answer differently: not for a merge that has to converge.
 
 #### `Both.merge`
 
@@ -570,7 +798,10 @@ The incoming value when there is one, else the current.
 public T merge(BinaryOperator<T> f)
 ```
 
-Combines the two when both exist; the one that exists otherwise.
+Combines the two with `f` when both exist, the current value as its first argument and the
+incoming as its second; the one that exists otherwise, and null when neither does. `f` is not
+called with a null. For the two clusters to agree it has to give the same result with its arguments
+swapped.
 
 #### `Both.max`
 
@@ -578,7 +809,9 @@ Combines the two when both exist; the one that exists otherwise.
 public T max()
 ```
 
-The larger of the two; the one that exists when only one does. For a `Comparable` T.
+The larger of the two by `compareTo`; the one that exists when only one does, null when neither
+does. Only for a `Comparable` T: `Long`, `Double`, `String`, `Boolean`.
+Called on a `Both` of bytes, values, lists or maps it is a bad cast, not a comparison.
 
 #### `Both.min`
 
@@ -586,7 +819,8 @@ The larger of the two; the one that exists when only one does. For a `Comparable
 public T min()
 ```
 
-The smaller of the two; the one that exists when only one does. For a `Comparable` T.
+The smaller of the two by `compareTo`; the one that exists when only one does, null when neither
+does. For a `Comparable` T, as `max` is.
 
 #### `Both.sumInt`
 
@@ -594,7 +828,9 @@ The smaller of the two; the one that exists when only one does. For a `Comparabl
 public long sumInt()
 ```
 
-The sum of a `Both<Long>`, a missing side counting as zero.
+The sum of a `Both<Long>`, a missing side counting as zero, so it is 0 and not null when neither
+side has the bin; it wraps on overflow as `long` addition does. Only for a `Both<Long>`: on
+any other it is a bad cast.
 
 #### `Both.sumDouble`
 
@@ -602,5 +838,6 @@ The sum of a `Both<Long>`, a missing side counting as zero.
 public double sumDouble()
 ```
 
-The sum of a `Both<Double>`, a missing side counting as zero.
+The sum of a `Both<Double>`, a missing side counting as zero, so it is 0.0 and not null when
+neither side has the bin. Only for a `Both<Double>`: on any other it is a bad cast.
 

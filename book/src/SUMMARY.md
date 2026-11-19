@@ -43,3 +43,4 @@
   - [Step 3: a set with removals](crdt/twopset.md)
   - [Step 4: a set with re-adds, on a clock](crdt/lwwset.md)
   - [Step 5: the device map](crdt/device-map.md)
+  - [Step 6: registers, on the server's clock](crdt/registers.md)

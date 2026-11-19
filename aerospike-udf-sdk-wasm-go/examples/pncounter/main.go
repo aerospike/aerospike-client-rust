@@ -94,10 +94,14 @@ func mergePnCounter(current, incoming *udf.EventRecord) (udf.Resolution, error) 
 		t := table{}
 
 		for _, side := range []*udf.EventRecord{current, incoming} {
-			if stored, ok := side.Get(bin); ok {
-				if err := t.offerAll(stored); err != nil {
-					return udf.Resolution{}, err
-				}
+			// A side without the bin has no entries to offer; a bin that is not a map is an error.
+			stored, _, err := side.Map(bin)
+			if err != nil {
+				return udf.Resolution{}, err
+			}
+
+			if err := t.offerAll(stored); err != nil {
+				return udf.Resolution{}, err
 			}
 		}
 
@@ -111,10 +115,13 @@ func mergePnCounter(current, incoming *udf.EventRecord) (udf.Resolution, error) 
 func stored(rec *udf.Record, bin string) (table, error) {
 	t := table{}
 
-	if v, ok := rec.Get(bin); ok {
-		if err := t.offerAll(v); err != nil {
-			return nil, err
-		}
+	v, _, err := rec.Map(bin)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := t.offerAll(v); err != nil {
+		return nil, err
 	}
 
 	return t, nil

@@ -13,8 +13,22 @@ const (
 )
 ```
 
-Status codes a native returns. Anything at or below NeededBase means the buffer was too small, and
--(rc) - 16 is the size needed.
+Status codes a host call returns, and the Status of an *Error.
+
+OK is success. Err is a call the host could not carry out: a bin name that is empty, longer than 15
+bytes or has a zero byte in it, a handle that is not what the call needs, or a call that has used up
+the 256 handles it may hold. NotFound is a bin, map key, list index or argument that is not there.
+TypeMismatch is a value of another kind than the one asked for. Refused is a write the host would not
+take: the record is read-only here (a stream's record, an event handler), the call has spent what it
+may build on the host, or the server turned the write down.
+
+A call that fills a buffer (Bytes, StoredBytes, Record.Key) answers a status at or below NeededBase
+when the buffer is too small. Nothing was copied, and -(rc) - 16 is the size to call again with;
+Error.Needed gives it for an *Error.
+
+Every failure the SDK reports carries one of these: the functions that answer an int32 answer the
+status itself, and every error the SDK returns is an *Error whose Status is the status. StatusOf
+reads it from an error of any type.
 
 #### `Kind`
 
@@ -22,7 +36,8 @@ Status codes a native returns. Anything at or below NeededBase means the buffer 
 type Kind int32
 ```
 
-Kind is a value's kind, as the host hands it out.
+Kind says what a Value holds. A function on the typed tier seldom reads it, since the Is tests and
+the accessors of Value do; it is there for a switch over v.Kind.
 
 #### `constants: KindAbsent, KindNil, KindBool, KindInt, KindDouble, KindStr, …`
 
@@ -50,8 +65,16 @@ const (
 )
 ```
 
-The kinds of a Value. KindAbsent stands for no value at all (a missing bin, map entry or argument), as
-distinct from a stored nil (KindNil). KindOther is a value a UDF cannot interpret.
+The kinds of a Value.
+
+KindAbsent stands for no value at all (a missing bin, map entry or argument), as distinct from a
+stored nil (KindNil). KindBool, KindInt and KindDouble carry the value in the Value itself. KindStr,
+KindBlob, KindGeoJSON, KindHLL, KindList and KindMap are values the host holds, which the Value
+points at. KindOther is a value a UDF cannot interpret, and Record.Set refuses to write one.
+
+The last four are never read from the host. They are what the constructors make: StringValue and
+StringBytesValue a KindGuestStr, BlobValue a KindGuestBlob, GeoJSONValue a KindGuestGeoJSON, and
+Map.Value and List.Value a KindHandle.
 
 #### `constants: LogWarn, LogInfo, LogDebug`
 
@@ -63,7 +86,7 @@ const (
 )
 ```
 
-Log levels for Log, most severe first.
+Log levels for Log, most severe first: the server's warning, info and debug levels.
 
 #### `Value`
 
@@ -75,32 +98,64 @@ type Value struct {
 }
 ```
 
-Value is the 16-byte value the host hands out, and the one a guest hands back in a batch: the kind, the
-length (bytes, elements or entries) and the payload (the scalar, or source<<32 | offset).
+Value is one value as the host hands it out, be it a bin, a list element, a map key or entry or an
+argument, and the form in which a guest hands one back. It is 16 bytes and is copied freely.
+
+Kind says what it holds. An integer, double or boolean is in the Value itself, and Int, Double and
+Bool read it. A string, blob, GeoJSON, HLL, list or map stays on the host: Payload says where (Src
+and At), and Len is its length in bytes, or the number of elements of a list or of entries of a map,
+known without a walk. String, Blob and Bytes copy the bytes out; List, Map, Index and Lookup read a
+collection where it lies. The kind tests (IsInt, IsString, IsGeoJSON and the rest) say which it is,
+and no accessor converts: each reads its own kind and answers an error for any other.
+
+A value the host holds is good for the call it was read in, and in a stream for the record it was
+read from. It stays readable when its bin is written again and when the record is deleted. After a
+Save that fails, a list, map or blob read before it answers an error: read the bin again.
+
+The constructors (IntValue, StringValue, BlobValue and the rest) make values of the guest's own, for
+Record.Set, Map.Put, List.Add, Result and the batch calls Map.PutEntries and List.AddValues.
+
+```go
+profile, err := rec.Bin("profile")
+if err != nil {
+	return "", err
+}
+name, ok, err := profile.Lookup("name") // one entry of a map bin, in one import
+if err != nil {
+	return "", err // the bin is not a map
+}
+if !ok {
+	return "", nil // the map has no "name"
+}
+return name.String()
+```
 
 #### `Value.Src`
 
 ```go
-func (v Value) Src() int32 { return int32(v.Payload >> 32) }
+func (v Value) Src() int32
 ```
 
-Src is the source handle a string, blob or collection sits in.
+Src is the host's handle of the source a stored value sits in, the high half of Payload. It means
+something only for a value the host holds (IsStored); the typed tier never needs it.
 
 #### `Value.At`
 
 ```go
-func (v Value) At() int32 { return int32(v.Payload & 0xffffffff) }
+func (v Value) At() int32
 ```
 
-At is the offset in that source.
+At is the value's byte offset in the source Src names, the low half of Payload. Like Src it means
+something only for a value the host holds.
 
 #### `IntValue`
 
 ```go
-func IntValue(i int64) Value { return Value{Kind: KindInt, Payload: i} }
+func IntValue(i int64) Value
 ```
 
-IntValue is an integer as a value of the guest's, for a batch.
+IntValue is an integer as a Value of the guest's, for Record.Set, Map.Put, List.Add, Result or a
+batch (Map.PutEntries, List.AddValues).
 
 #### `DoubleValue`
 
@@ -108,7 +163,7 @@ IntValue is an integer as a value of the guest's, for a batch.
 func DoubleValue(d float64) Value
 ```
 
-DoubleValue is a double as a value of the guest's, for a batch.
+DoubleValue is a double as a Value of the guest's, for the same calls as IntValue.
 
 #### `StringValue`
 
@@ -116,8 +171,9 @@ DoubleValue is a double as a value of the guest's, for a batch.
 func StringValue(s string) Value
 ```
 
-StringValue is a string of the guest's as a value, for a batch. It holds the address of s's bytes, not a
-copy, so s must stay alive until the host has taken the value.
+StringValue is a string of the guest's as a Value, for the same calls as IntValue. It holds the
+address of s's bytes, not a copy, so s must stay alive and unchanged until the call that is given
+the value has returned; the host copies the bytes during that call.
 
 #### `BlobValue`
 
@@ -125,8 +181,9 @@ copy, so s must stay alive until the host has taken the value.
 func BlobValue(b []byte) Value
 ```
 
-BlobValue is a blob of the guest's as a value, for a batch. It holds the address of b's bytes, not a
-copy, so b must stay alive until the host has taken the value.
+BlobValue is a blob of the guest's as a Value, for the same calls as IntValue. It holds the address
+of b's bytes, not a copy, so b must stay alive and unchanged until the call that is given the value
+has returned; the host copies the bytes during that call. A nil or empty b is an empty blob.
 
 #### `StringBytesValue`
 
@@ -134,7 +191,9 @@ copy, so b must stay alive until the host has taken the value.
 func StringBytesValue(b []byte) Value
 ```
 
-StringBytesValue is a string value over bytes the caller holds, without making a Go string of them.
+StringBytesValue is a string Value over bytes the caller holds, without making a Go string of them:
+the form for text that is already in a buffer. It holds b's address like BlobValue, with the same
+rule on b's lifetime. Record.Key answers one over the buffer it was given.
 
 #### `Bytes`
 
@@ -142,7 +201,25 @@ StringBytesValue is a string value over bytes the caller holds, without making a
 func Bytes(v Value, buf []byte) int32
 ```
 
-Bytes copies the bytes of a string, blob, GeoJSON or HLL value into buf. Returns the length, or a status.
+Bytes copies the raw bytes of a string, blob, GeoJSON or HLL value into buf and returns how many: a
+string's text or a GeoJSON document with no terminator, a blob's bytes as they were written. It
+allocates nothing, which is why a path that runs once per record uses it where Value.String and
+Value.Bytes would allocate. A value of the guest's own (StringValue, BlobValue, GeoJSONValue) is
+copied the same way.
+
+A negative return is a status, and nothing was copied. At or below NeededBase the buffer was too
+small - a value is never truncated - and -(rc) - 16 is the length needed, which v.Len gives
+beforehand. TypeMismatch is a value of any other kind: a scalar, a nil, a list, a map, a built
+collection. Err is a value the host can no longer read.
+
+```go
+var buf [64]byte
+n := udf.Bytes(v, buf[:])
+if n < 0 {
+	return udf.Fail("the name is not a string of at most 64 bytes")
+}
+name := buf[:n]
+```
 
 #### `StoredBytes`
 
@@ -150,18 +227,45 @@ Bytes copies the bytes of a string, blob, GeoJSON or HLL value into buf. Returns
 func StoredBytes(v Value, buf []byte) int32
 ```
 
-StoredBytes copies a stored value's bytes as the server stores them, msgpack header included, into buf:
-the encoding a convergent merge compares when nothing else tells two candidates apart. Returns the
-length, or a status.
+StoredBytes copies a stored value's bytes as the server stores them into buf and returns how many:
+the encoding a convergent merge compares when nothing else tells two candidates apart. For a value
+inside a list or map, and for a whole list or map, that is its msgpack encoding, header included.
+For a whole string, blob or HLL bin it is the bytes alone, with no header.
+
+A negative return is a status, and nothing was copied: at or below NeededBase the buffer was too
+small and -(rc) - 16 is the size needed; TypeMismatch is a value the host does not hold (IsStored
+is false: a scalar, a nil, a value of the guest's own); Err is one it can no longer read. To order
+two values without copying either, use CmpStored.
 
 #### `CmpStored`
 
 ```go
-func CmpStored(a, b Value) int32 { return collCmpAt(a.Src(), a.At(), b.Src(), b.At()) }
+func CmpStored(a, b Value) (int, error)
 ```
 
-CmpStored compares two stored values byte by byte, as memcmp would on their stored encodings, without
-copying either: negative, zero or positive; TypeMismatch when a value is not a stored one.
+CmpStored compares two stored values byte by byte, as memcmp would on the encodings StoredBytes
+gives, without copying either into the guest. The ordering is exactly -1, 0 or 1: the first byte
+that differs decides, and an encoding that is a prefix of the other comes first. The order is of
+the stored bytes, not of the values, so it is arbitrary but the same on every cluster, which is
+what a merge needs of a tie-break.
+
+Both values must be ones the host holds (IsStored). The error, an *Error with Status TypeMismatch,
+says one of them is not - an integer, double or boolean, a nil, a value of the guest's own; compare
+those in Go - or that the host could not find one of them. A status is never returned as if it
+were an ordering.
+
+```go
+// The same winner on both clusters, whichever side each calls a and b.
+order, err := udf.CmpStored(a, b)
+if err != nil {
+	return err
+}
+if order >= 0 {
+	out.Put("note", a)
+} else {
+	out.Put("note", b)
+}
+```
 
 #### `Args`
 
@@ -169,28 +273,60 @@ copying either: negative, zero or positive; TypeMismatch when a value is not a s
 func Args(handle, argc int32, out []Value) int32
 ```
 
-Args decodes the call's arguments into out, in one import. Returns how many there are, bounded by len(out).
+Args decodes the call's arguments into out, in one import, and returns how many it decoded: the
+number the client passed, or len(out) when that is smaller. handle and argc are the two parameters
+an export is called with. An argument passed as nil is a Value of KindNil. It answers 0 when the
+call has no arguments, out is empty, or the arguments could not be read.
+
+It reads no more than out holds, and does not say so: argc is the number the client passed, and
+Arity(fn, len(out), argc) is the check that fails a call that passed more. A UDF takes MaxArgs
+arguments at most, so a window of MaxArgs values holds any call that is allowed.
+
+The generated exports call it, and Arity after it. An export in the raw form calls both itself,
+once, and reads the arguments from out with the Arg and Opt functions or directly:
+
+```go
+//udf:function half params="(n: int)"
+func half(args, argc int32) int32 {
+	var a [1]udf.Value
+	n := udf.Args(args, argc, a[:])
+	if err := udf.Arity("half", 1, argc); err != nil {
+		return udf.FailErr(err)
+	}
+	x, err := udf.ArgInt(a[:], n, 0, "half", "n")
+	if err != nil {
+		return udf.FailErr(err)
+	}
+	udf.ResultInt(x / 2)
+	return 0
+}
+```
 
 #### `ResultNil`
 
 ```go
-func ResultNil() { resultNil() }
+func ResultNil()
 ```
 
-ResultNil sets nil as the call's result. Of several Result calls, the last one wins.
+ResultNil sets nil as the call's result, which is also what a call that sets no result returns.
+
+The rules are the same for every Result call. Of several, the last one wins. A result is dropped
+when the call then fails. In a stream only the result End sets is the answer: one set while a record
+is handled is dropped before the next record. A function under a `//udf:function` directive does not
+call these; it returns its value and the generated export sets it.
 
 #### `ResultInt`
 
 ```go
-func ResultInt(v int64) { resultInt(v) }
+func ResultInt(v int64)
 ```
 
-ResultInt sets an integer as the call's result.
+ResultInt sets an integer as the call's result; see ResultNil for the rules all Result calls share.
 
 #### `ResultDouble`
 
 ```go
-func ResultDouble(v float64) { resultDouble(v) }
+func ResultDouble(v float64)
 ```
 
 ResultDouble sets a double as the call's result.
@@ -206,18 +342,20 @@ ResultBool sets a boolean as the call's result.
 #### `ResultString`
 
 ```go
-func ResultString(s string) { resultStr(strptr(s), int32(len(s))) }
+func ResultString(s string)
 ```
 
-ResultString sets a string as the call's result; the host copies the bytes.
+ResultString sets a string as the call's result. The host copies the bytes during the call, so s
+need not outlive it. A string larger than the call may still build on the host fails the call.
 
 #### `ResultBlob`
 
 ```go
-func ResultBlob(b []byte) { resultBlob(ptr(b), int32(len(b))) }
+func ResultBlob(b []byte)
 ```
 
-ResultBlob sets a blob as the call's result; the host copies the bytes.
+ResultBlob sets a blob as the call's result. The host copies the bytes during the call, so b need
+not outlive it. A nil or empty b is an empty blob.
 
 #### `Fail`
 
@@ -225,16 +363,42 @@ ResultBlob sets a blob as the call's result; the host copies the bytes.
 func Fail(message string) int32
 ```
 
-Fail fails the call with a message the client sees, and returns the non-zero status a UDF then returns.
+Fail fails the call with a message the client sees, and returns the non-zero status for the export
+to return. It does not stop the function: return what it answers.
+
+The host keeps the first 511 bytes of the message. Once Fail has been called the call has failed
+whatever the export goes on to return, any result set is dropped, and of several Fail calls the
+last message is the one reported. A function under a `//udf:function` directive returns an error
+instead, and the generated export calls Fail with its message.
+
+A call that fails writes nothing, even what it had already saved: a Record.Save that succeeded
+before the failure, and a SetInts or SetDoubles, are undone.
+
+```go
+//udf:function half params="(n: int)"
+func half(args, argc int32) int32 {
+	var a [1]udf.Value
+	if udf.Args(args, argc, a[:]) < 1 || !a[0].IsInt() {
+		return udf.Fail("half: n must be an int")
+	}
+	udf.ResultInt(a[0].Payload / 2)
+	return 0
+}
+```
 
 #### `Log`
 
 ```go
-func Log(level int32, message string) { log(level, strptr(message), int32(len(message))) }
+func Log(level int32, message string)
 ```
 
 Log writes a message to the server log at a level: LogWarn, LogInfo or LogDebug, any other value
-logging as debug. The host keeps the first 511 bytes of the message.
+logging as debug.
+
+The host keeps the first 511 bytes of the message and escapes control bytes, so a message is one
+line of the log whatever it contains. A call may write 16 lines and a module 100 a second; lines
+over either limit are dropped, and the server logs how many. In an event handler nothing is
+written.
 
 #### `Signature`
 
@@ -242,8 +406,18 @@ logging as debug. The host keeps the first 511 bytes of the message.
 func Signature(text *[]byte) int32
 ```
 
-Signature is the text behind a `__udf_sig_<name>` export: the address of a NUL-terminated string, which the
-host serves as the call's result. Keep the string in a package-level variable so its address stays valid.
+Signature is what a `__udf_sig_<name>` export returns: the address of the signature text, which the
+host reads up to its terminating zero byte and serves as that call's result, and which `event-set`
+checks before it binds a handler. text must end in a zero byte and must not be empty, and it has to
+stay where it is, so keep it in a package-level variable. udfgen writes these exports; this is for
+one written by hand.
+
+```go
+var sigHalf = []byte("fn half(n: int) -> value\x00")
+
+//export __udf_sig_half
+func udfSigHalf() int32 { return udf.Signature(&sigHalf) }
+```
 
 #### `Error`
 
@@ -254,17 +428,64 @@ type Error struct {
 }
 ```
 
-Error is what the typed tier returns when the host refuses a call or a value is not of the kind asked
-for: the native's status and a message naming what failed. A UDF returns it (or any other error) from a
-`//udf:function` or handler, and the generated export fails the call with its message.
+Error is what the typed tier returns when the host refuses a call or a value is not of the kind
+asked for. Status is the status behind it, one of the constants beside OK: NotFound for a bin or an
+argument that is not there, TypeMismatch for a value of another kind, Refused for a write the host
+would not take, Err for anything else. Msg names what failed.
+
+A function under `//udf:function`, or a handler, returns it like any other error, and the generated
+export fails the call with its message. Code that has to tell one failure from another reads Status:
+
+```go
+if err := rec.Save(); err != nil {
+	if e, ok := err.(*udf.Error); ok && e.Status == udf.Refused {
+		udf.Log(udf.LogWarn, "the record is read-only here")
+	}
+	return err
+}
+```
 
 #### `Error.Error`
 
 ```go
-func (e *Error) Error() string { return e.Msg }
+func (e *Error) Error() string
 ```
 
 Error is the message, which makes *Error an error.
+
+#### `Error.Needed`
+
+```go
+func (e *Error) Needed() int
+```
+
+Needed is the size a buffer has to have, when the error is a buffer that was too small: its Status
+is at or below NeededBase, and this is the -(Status) - 16 behind it. It is 0 for any other error.
+
+```go
+key, ok, err := rec.Key(buf)
+if e, is := err.(*udf.Error); is && e.Needed() > 0 {
+	buf = make([]byte, e.Needed())
+	key, ok, err = rec.Key(buf)
+}
+```
+
+#### `StatusOf`
+
+```go
+func StatusOf(err error) int32
+```
+
+StatusOf is the host status an error carries, as a value: OK for nil, the Status of an *Error,
+and Err for an error of any other type, such as one a UDF made itself with errors.New. Every error
+the SDK returns is an *Error, so this is how a caller tells an absent bin (NotFound) from one of
+another kind (TypeMismatch) or a write the host refused (Refused) without reading the message.
+
+```go
+if _, err := rec.IntOr("visits", 0); udf.StatusOf(err) == udf.TypeMismatch {
+	// the bin is there and is not an integer
+}
+```
 
 #### `FailErr`
 
@@ -272,7 +493,9 @@ Error is the message, which makes *Error an error.
 func FailErr(err error) int32
 ```
 
-FailErr fails the call with the error's message and returns the status an export then returns.
+FailErr fails the call with the error's message, as Fail does, and returns the non-zero status for
+the export to return. err must not be nil. The generated exports call it with what a function
+returned; an export in the raw form calls it with an error from the Arg functions or the record.
 
 #### `RecordReader`
 
@@ -280,54 +503,76 @@ FailErr fails the call with the error's message and returns the status an export
 type RecordReader interface {
 	// Bin is a bin, whatever it holds; an error naming the bin when the record has none by that name.
 	Bin(name string) (Value, error)
-	// Get is a bin that may be absent: false when it is absent or nil.
-	Get(name string) (Value, bool)
+	// Get is a bin that may be absent, whatever it holds: false, and a Value of KindAbsent, when it
+	// is absent or nil; an error when it could not be read.
+	Get(name string) (Value, bool, error)
 	// Has reports whether the record has the bin.
 	Has(name string) bool
-	// Int is an integer bin; false when absent, nil or of another kind.
-	Int(name string) (int64, bool)
-	// Double is a double bin; false when absent, nil or of another kind. An integer is not widened.
-	Double(name string) (float64, bool)
-	// Bool is a boolean bin; false when absent, nil or of another kind.
-	Bool(name string) (bool, bool)
-	// String is the text of a string bin, copied out; false when absent, nil or of another kind.
-	String(name string) (string, bool)
-	// Blob is the bytes of a blob bin, copied out; false when absent, nil or of another kind.
-	Blob(name string) ([]byte, bool)
-	// IntOr is an integer bin, or dflt when it is absent, nil or of another kind.
-	IntOr(name string, dflt int64) int64
-	// DoubleOr is a double bin, or dflt when it is absent, nil or of another kind.
-	DoubleOr(name string, dflt float64) float64
-	// BoolOr is a boolean bin, or dflt when it is absent, nil or of another kind.
-	BoolOr(name string, dflt bool) bool
-	// List walks a list bin; nothing when absent or not a list.
-	List(name string) iter.Seq[Value]
-	// Map walks a map bin's entries, key then value; nothing when absent or not a map.
-	Map(name string) iter.Seq2[Value, Value]
-	// BinCount is how many bins the record has.
+	// Int is an integer bin; false when absent or nil, an error when of another kind.
+	Int(name string) (int64, bool, error)
+	// Double is a double bin; false when absent or nil, an error when of another kind, an integer
+	// included.
+	Double(name string) (float64, bool, error)
+	// Bool is a boolean bin; the second result is false when absent or nil; an error when of
+	// another kind.
+	Bool(name string) (bool, bool, error)
+	// String is the text of a string bin, copied out; false when absent or nil, an error when of
+	// another kind, a GeoJSON included.
+	String(name string) (string, bool, error)
+	// Blob is the bytes of a blob bin, copied out; false when absent or nil, an error when of
+	// another kind, a string, GeoJSON or HLL included.
+	Blob(name string) ([]byte, bool, error)
+	// Bytes is the raw bytes of a string, blob, GeoJSON or HLL bin, copied out; false when absent
+	// or nil, an error when the bin is a scalar, a list or a map.
+	Bytes(name string) ([]byte, bool, error)
+	// IntOr is an integer bin, or dflt when it is absent or nil; an error when of another kind.
+	IntOr(name string, dflt int64) (int64, error)
+	// DoubleOr is a double bin, or dflt when it is absent or nil; an error when of another kind.
+	DoubleOr(name string, dflt float64) (float64, error)
+	// BoolOr is a boolean bin, or dflt when it is absent or nil; an error when of another kind.
+	BoolOr(name string, dflt bool) (bool, error)
+	// List is a list bin, as the stored Value to range over; false when absent or nil, an error when
+	// of another kind.
+	List(name string) (Value, bool, error)
+	// Map is a map bin, as the stored Value to range over or look up in; false when absent or nil,
+	// an error when of another kind.
+	Map(name string) (Value, bool, error)
+	// BinCount is how many bins the record has. Of the record a UDF is called on, a bin that is staged
+	// is not counted until it is saved.
 	BinCount() int64
-	// Generation is the record's modification count.
+	// Generation is the record's modification count; 0 on either side of an xdr-merge.
 	Generation() int64
-	// TTL is the record's time to live, in seconds.
+	// TTL is the record's time to live, in seconds; 0 when it does not expire.
 	TTL() int64
-	// LastUpdateTime is when the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC).
+	// LastUpdateTime is when the record was last written, in milliseconds since the Citrusleaf epoch,
+	// 2010-01-01T00:00:00Z (Unix milliseconds minus 1 262 304 000 000); 0 on either side of an
+	// xdr-merge, and on a key with no record.
 	LastUpdateTime() int64
 }
 ```
 
 RecordReader is what any record can be asked: the one a record UDF is called on (*Record) and either
-side of an event (*EventRecord). A helper that takes a RecordReader reads a bin the same way from both.
+side of an event (*EventRecord). A helper that takes a RecordReader reads a bin the same way from
+both.
 
-Bin is the form for a bin that must be there: an error naming the bin when it is not. The others are
-for a bin that may not be: the typed readers answer false, and the walks yield nothing, when the bin is
-absent, nil or of another kind.
+Bin is the form for a bin that must be there: an error naming the bin when it is not. The others
+are for a bin that may not be, and have three outcomes a caller tells apart without reading a
+message: the value and true; the zero value and false, with a nil error, when the bin is absent or
+nil; and an error, an *Error with Status TypeMismatch, when the bin holds another kind than the
+one asked for. Nothing is converted: an integer is not a double, a string is not a blob.
+
+```go
+// The balance of any record: the one a UDF is called on, or a side of a merge.
+func balanceOf(rec udf.RecordReader) (int64, error) {
+	return rec.IntOr("balance", 0) // 0 for no bin; an error for a bin that is not an integer
+}
+```
 
 #### `Record`
 
 ```go
 type Record struct {
-	// It holds nothing, because the host knows which record a call is on.
-	_ [0]byte
+	// contains unexported fields
 }
 ```
 
@@ -338,24 +583,31 @@ call's arguments. It is not one of them: a client does not pass it, it is not co
 arguments are checked, and the function's signature export does not list it. A function that does not
 touch the record leaves the parameter out.
 
+```go
 //udf:function withdraw
 func withdraw(rec *udf.Record, amount int64) (int64, error) {
-balance, err := rec.Bin("balance")
-if err != nil {
-return 0, err
+	balance, err := rec.Bin("balance")
+	if err != nil {
+		return 0, err
+	}
+	have, err := balance.Int()
+	if err != nil {
+		return 0, err
+	}
+	if err := rec.Set("balance", have-amount); err != nil {
+		return 0, err
+	}
+	return have - amount, rec.Save()
 }
-have, err := balance.Int()
-if err != nil {
-return 0, err
-}
-if err := rec.Set("balance", have-amount); err != nil {
-return 0, err
-}
-return have - amount, rec.Save()
-}
+```
 
-A bin write is staged: Set and Remove change the record in hand, and nothing reaches the server's
-record until Save. Delete is the exception and needs no Save.
+A bin is addressed by its name, 1 to 15 bytes with no zero byte among them, on each call: there is
+no bin object. A bin write is staged: Set and Remove change the record in hand, a read after them
+sees what was staged, and nothing reaches the server's record until Save. Delete is the exception
+and needs no Save.
+
+A call that fails writes nothing, even what it had already saved: when the function returns an error
+(or calls Fail), a Save that succeeded earlier in the call, and a SetInts or SetDoubles, are undone.
 
 There is one Record type, for the places that may write and the places that may only read. Where the
 host does not take a write - the record a stream UDF is shown - every writing method returns an error
@@ -366,12 +618,15 @@ The reading methods are also on RecordReader, which *EventRecord implements too.
 #### `CurrentRecord`
 
 ```go
-func CurrentRecord() *Record { return &current }
+func CurrentRecord() *Record
 ```
 
 CurrentRecord is the record of the call in progress. The generated exports pass it as the first
 parameter of a function that declares one; it is for an export written without udfgen. Every call
-answers the same record.
+answers the same pointer, which holds nothing: the host knows which record a call is on.
+
+An event handler has no such record. There its bins all read as absent and Save is refused; a
+handler reads the two EventRecords it is given.
 
 #### `Record.Bin`
 
@@ -379,17 +634,36 @@ answers the same record.
 func (r *Record) Bin(name string) (Value, error)
 ```
 
-Bin is a bin, whatever it holds, in one import. An error naming the bin when the record has none by
-that name; a nil bin is absent too, since a bin cannot hold nil.
+Bin is a bin, whatever it holds, in one import. It is the form for a bin that must be there: the
+error names the bin when the record has none by that name, and its Status is NotFound. A nil bin is
+absent too, since a bin cannot hold nil, and so is a name that is empty or longer than 15 bytes.
+
+The value is what the call has staged for the bin, if it has staged anything, and what is stored
+otherwise. Reading a string, blob, list or map bin takes one of the 256 handles a call may hold,
+each time it is read: read such a bin once and keep the Value.
+
+```go
+balance, err := rec.Bin("balance")
+if err != nil {
+	return 0, err // "bin balance is absent"
+}
+have, err := balance.Int()
+```
 
 #### `Record.Get`
 
 ```go
-func (r *Record) Get(name string) (Value, bool)
+func (r *Record) Get(name string) (Value, bool, error)
 ```
 
-Get is a bin that may be absent: false when it is absent or nil. It allocates nothing, so it is the
-form for a stream's per-record path.
+Get is a bin that may be absent, whatever it holds: the value and true, or a Value of KindAbsent
+and false, with a nil error, when the bin is absent or nil. It is the untyped form of the typed
+readers. It allocates nothing for an absent bin, where Bin builds an error, so it is the form for a
+stream's per-record path.
+
+The error is the bin that could not be read at all, which is not the same as absent: Status Err
+for a name that is not a bin name - empty, longer than 15 bytes - or for a call that holds its 256
+handles.
 
 #### `Record.Has`
 
@@ -397,96 +671,174 @@ form for a stream's per-record path.
 func (r *Record) Has(name string) bool
 ```
 
-Has reports whether the record has the bin.
+Has reports whether the record has the bin: false when it is absent, or when the name is not a bin
+name. A bin the call has staged counts, and one it has removed does not. It costs the same one
+import as reading the bin, and for a string, blob, list or map bin the same handle.
 
 #### `Record.Int`
 
 ```go
-func (r *Record) Int(name string) (int64, bool) { return readInt(r, name) }
+func (r *Record) Int(name string) (int64, bool, error)
 ```
 
-Int is an integer bin; false when absent, nil or of another kind.
+Int is an integer bin. It has three outcomes: the value and true; 0 and false, with a nil error,
+when the bin is absent or nil; and an error, an *Error with Status TypeMismatch, when the bin
+holds another kind. Nothing is converted: a double is not narrowed.
+
+The typed readers - Int, Double, Bool, String, Blob, Bytes, List, Map - all answer this way, and
+IntOr, DoubleOr and BoolOr take a default for the absent bin in the same call. The default never
+stands in for a bin of another kind.
+
+```go
+visits, ok, err := rec.Int("visits") // ok is false when there is no bin "visits"
+if err != nil {
+	return err // "bin visits is not an int (kind 4)"
+}
+limit, err := rec.IntOr("limit", 100)
+```
 
 #### `Record.Double`
 
 ```go
-func (r *Record) Double(name string) (float64, bool) { return readDouble(r, name) }
+func (r *Record) Double(name string) (float64, bool, error)
 ```
 
-Double is a double bin; false when absent, nil or of another kind. An integer bin is not widened.
+Double is a double bin; false when the bin is absent or nil, and an error with Status TypeMismatch
+when it holds another kind. An integer bin is another kind: it is not widened.
 
 #### `Record.Bool`
 
 ```go
-func (r *Record) Bool(name string) (bool, bool) { return readBool(r, name) }
+func (r *Record) Bool(name string) (bool, bool, error)
 ```
 
-Bool is a boolean bin; false when absent, nil or of another kind.
+Bool is a boolean bin. The second result says whether there is one: it is false when the bin is
+absent or nil, and the first result is then false too. A bin of another kind, an integer included,
+is an error with Status TypeMismatch.
 
 #### `Record.String`
 
 ```go
-func (r *Record) String(name string) (string, bool) { return readString(r, name) }
+func (r *Record) String(name string) (string, bool, error)
 ```
 
-String is the text of a string bin, copied out; false when absent, nil or of another kind.
+String is the text of a string bin, copied into a new Go string; false, and "", when the bin is
+absent or nil. A bin of another kind is an error with Status TypeMismatch, a GeoJSON bin and a blob
+bin included; Bytes reads those.
 
 #### `Record.Blob`
 
 ```go
-func (r *Record) Blob(name string) ([]byte, bool) { return readBlob(r, name) }
+func (r *Record) Blob(name string) ([]byte, bool, error)
 ```
 
-Blob is the bytes of a blob bin, copied out; false when absent, nil or of another kind. The bytes of
-a GeoJSON or HLL bin are read through Get and Value.Blob.
+Blob is the bytes of a blob bin, copied into a new slice the caller owns; false, and nil, when the
+bin is absent or nil. It is strict: a bin of any other kind is an error with Status TypeMismatch,
+and a string, a GeoJSON and an HLL bin are other kinds. Bytes reads the raw bytes of all four.
+
+#### `Record.Bytes`
+
+```go
+func (r *Record) Bytes(name string) ([]byte, bool, error)
+```
+
+Bytes is the raw bytes of a string, blob, GeoJSON or HLL bin, copied into a new slice the caller
+owns: a string's text, a GeoJSON's document, a blob's and an HLL's bytes as stored. False, and
+nil, when the bin is absent or nil; an error with Status TypeMismatch when the bin is a scalar, a
+list or a map. It is the reader for code that takes bytes whatever they are labelled as, where Blob
+and String each take one kind.
 
 #### `Record.IntOr`
 
 ```go
-func (r *Record) IntOr(name string, dflt int64) int64 { return readIntOr(r, name, dflt) }
+func (r *Record) IntOr(name string, dflt int64) (int64, error)
 ```
 
-IntOr is an integer bin, or dflt when it is absent, nil or of another kind.
+IntOr is an integer bin, or dflt when it is absent or nil. The default stands in for a missing bin
+only: a bin of another kind is the same error Int answers, with Status TypeMismatch.
 
 #### `Record.DoubleOr`
 
 ```go
-func (r *Record) DoubleOr(name string, dflt float64) float64 { return readDoubleOr(r, name, dflt) }
+func (r *Record) DoubleOr(name string, dflt float64) (float64, error)
 ```
 
-DoubleOr is a double bin, or dflt when it is absent, nil or of another kind, an integer included.
+DoubleOr is a double bin, or dflt when it is absent or nil. A bin of another kind, an integer
+included, is an error with Status TypeMismatch.
 
 #### `Record.BoolOr`
 
 ```go
-func (r *Record) BoolOr(name string, dflt bool) bool { return readBoolOr(r, name, dflt) }
+func (r *Record) BoolOr(name string, dflt bool) (bool, error)
 ```
 
-BoolOr is a boolean bin, or dflt when it is absent, nil or of another kind.
+BoolOr is a boolean bin, or dflt when it is absent or nil. A bin of another kind is an error with
+Status TypeMismatch.
 
 #### `Record.List`
 
 ```go
-func (r *Record) List(name string) iter.Seq[Value]
+func (r *Record) List(name string) (Value, bool, error)
 ```
 
-List walks the list in a bin; nothing when the bin is absent or not a list.
+List is the list in a bin, as the stored Value: range over it with Value.List, read one element
+with Value.Index, and its Len is the number of elements. The three outcomes tell an absent bin, a
+bin of another kind and an empty list apart: false with a nil error when the bin is absent or nil;
+an error with Status TypeMismatch when it holds anything but a list, a map included; and the list
+and true, with Len 0, when it is empty.
+
+```go
+amounts, ok, err := rec.List("amounts")
+if err != nil {
+	return 0, err
+}
+if !ok {
+	return 0, nil // no such bin
+}
+var total int64
+for v := range amounts.List() {
+	n, err := v.Int()
+	if err != nil {
+		return 0, err
+	}
+	total += n
+}
+```
 
 #### `Record.Map`
 
 ```go
-func (r *Record) Map(name string) iter.Seq2[Value, Value]
+func (r *Record) Map(name string) (Value, bool, error)
 ```
 
-Map walks the entries of the map in a bin, key then value; nothing when the bin is absent or not a map.
+Map is the map in a bin, as the stored Value: range over its entries with Value.Map, read one with
+Value.Lookup or Value.LookupInt, and its Len is the number of entries. The outcomes are List's:
+false when the bin is absent or nil, an error with Status TypeMismatch when it holds anything but a
+map, and the map and true, with Len 0, when it is empty.
+
+```go
+counts, _, err := rec.Map("counts")
+if err != nil {
+	return "", err
+}
+var best int64
+var where string
+for site, count := range counts.Map() { // nothing, when there is no such bin
+	if n, err := count.Int(); err == nil && n > best {
+		best = n
+		where, _ = site.String() // the entry's key
+	}
+}
+```
 
 #### `Record.BinCount`
 
 ```go
-func (r *Record) BinCount() int64 { return numbins() }
+func (r *Record) BinCount() int64
 ```
 
-BinCount is how many bins the record has.
+BinCount is how many bins the record has. A bin that is staged is not counted until it is saved,
+though Has and the readers see it at once. It is 0 on a key with no record.
 
 #### `Record.Set`
 
@@ -495,7 +847,8 @@ func (r *Record) Set(name string, value any) error
 ```
 
 Set writes a value to a bin, staged until Save: an int, int32, int64, float32, float64, bool, string,
-[]byte (a blob), Value, *Map or *List.
+[]byte (a blob), Value, *Map or *List. Any other Go type - an unsigned integer, a Go slice or map -
+is an error, and nothing is written.
 
 A Value read from a record is written back from its stored bytes, without the guest decoding it, which
 is how a sub-document is copied from one bin to another and how a GeoJSON or HLL keeps its kind. A
@@ -505,8 +858,22 @@ udf.GeoJSONValue(doc) writes a GeoJSON document as the geospatially indexable ki
 
 Writing nil removes the bin, as Remove does: a bin cannot hold nil.
 
-The error says the name is empty or longer than 15 bytes, that a blob would relabel bytes of another
-subtype such as an HLL, or that the host refused the write.
+The error is an *Error. Its Status is Err when the name is empty, longer than 15 bytes or has a zero
+byte in it; NotFound for a Value of KindAbsent; TypeMismatch for a Go type or a Value that cannot be
+written, and for a blob written over a bin that holds bytes of another subtype such as an HLL, which
+it would relabel; and Refused when
+the host would not take the write: the record is read-only here, as in a stream, the value nests
+lists and maps more than 64 deep, or the call has spent what it may build on the host.
+
+```go
+if err := rec.Set("owner", owner); err != nil {
+	return err
+}
+if err := rec.Set("tags", udf.NewList(2).Add("new").Add("trial")); err != nil {
+	return err
+}
+return rec.Save() // nothing is stored until here
+```
 
 #### `Record.SetInts`
 
@@ -514,8 +881,15 @@ subtype such as an HLL, or that the host refused the write.
 func (r *Record) SetInts(name string, values []int64) error
 ```
 
-SetInts writes a slice of integers to a bin as a list in one import, no value built per element. The
-host applies it at once rather than staging it: Save is not needed for it.
+SetInts writes a slice of integers to a bin as a list in one import, no value built per element. An
+empty or nil slice writes an empty list.
+
+It is not staged. The host applies it to the record at once, as one write operation of its own,
+which is committed when the function returns, so Save is not needed for it. It is undone, like
+everything else the call wrote, when the call then fails. The error is as Set's: Err for a bad
+name, Refused where the record is read-only, and Refused on a key with no record, where it creates
+nothing: such a record is created by Set and Save. After a refusal by the server, as after a Save
+that fails, a list, map or blob read earlier in the call has to be read again.
 
 #### `Record.SetDoubles`
 
@@ -523,7 +897,9 @@ host applies it at once rather than staging it: Save is not needed for it.
 func (r *Record) SetDoubles(name string, values []float64) error
 ```
 
-SetDoubles is SetInts for doubles.
+SetDoubles writes a slice of doubles to a bin as a list in one import. It is SetInts for float64:
+applied at once and not staged, undone when the call then fails, an empty slice writing an empty
+list, with the same errors, the refusal on a key with no record included.
 
 #### `Record.SetBlob`
 
@@ -531,7 +907,10 @@ SetDoubles is SetInts for doubles.
 func (r *Record) SetBlob(name string, value []byte) error
 ```
 
-SetBlob writes bytes to a bin as a blob, staged until Save; Set with a []byte does the same.
+SetBlob writes bytes to a bin as a blob, staged until Save; Set with a []byte does the same. The
+host copies the bytes during the call. A nil or empty value is an empty blob. The error is as
+Set's, with Status TypeMismatch when the bin holds bytes of another subtype, such as an
+HLL, which a plain blob would relabel.
 
 #### `Record.SetGeoJSON`
 
@@ -540,7 +919,11 @@ func (r *Record) SetGeoJSON(name string, doc string) error
 ```
 
 SetGeoJSON writes a GeoJSON document to a bin as the geospatially indexable kind, staged until Save;
-Set with a GeoJSONValue does the same.
+Set with a GeoJSONValue does the same. Written as a string, with Set, the same text would be a
+string bin and not queryable by region.
+
+Staging takes any text. It is Save that fails when doc is not a document the server would accept
+as a client's write. The other errors are as Set's.
 
 #### `Record.Remove`
 
@@ -548,31 +931,39 @@ Set with a GeoJSONValue does the same.
 func (r *Record) Remove(name string) error
 ```
 
-Remove removes a bin, staged until Save like a write.
+Remove removes a bin, staged until Save like a write; it is Set with nil. Removing a bin that is
+not there is not an error. The error is as Set's: Err for a name that is not a bin name, Refused
+where the record is read-only.
 
 #### `Record.Exists`
 
 ```go
-func (r *Record) Exists() bool { return recExists() != 0 }
+func (r *Record) Exists() bool
 ```
 
-Exists reports whether the record exists. A UDF can be called on a key that has no record yet.
+Exists reports whether the record exists. A UDF can be called on a key that has no record yet, and
+Save then creates it; a function that must not overwrite checks this first. A Delete made earlier
+in the call does not change the answer.
+
+On a key with no record it is false; Generation, LastUpdateTime, Size and BinCount are 0, there is
+no TTL, every bin reads as absent, and reading creates nothing.
 
 #### `Record.Generation`
 
 ```go
-func (r *Record) Generation() int64 { return gen() }
+func (r *Record) Generation() int64
 ```
 
-Generation is the record's modification count.
+Generation is the record's generation, its modification count; 0 on a key with no record.
 
 #### `Record.TTL`
 
 ```go
-func (r *Record) TTL() int64 { return ttl() }
+func (r *Record) TTL() int64
 ```
 
-TTL is the record's time to live, in seconds, as the host reports it.
+TTL is the time the record has left to live, in seconds; 0 when it never expires. A key with no
+record has no TTL.
 
 #### `Record.SetTTL`
 
@@ -582,24 +973,32 @@ func (r *Record) SetTTL(seconds int32) error
 
 SetTTL sets the record's time to live, in seconds: 0 for the namespace default, -1 for never expire,
 subject to the namespace's rule on TTL reductions. It is the TTL of the write, so it takes effect when
-Save writes the record.
+Save writes the record, and does nothing without one. With -1 the record never expires.
+
+On a key with no record a TTL is not a bin: a Save with a TTL set and no bin staged creates nothing,
+and the call fails with "key not found".
+
+The error has Status Refused where there is no record that can take a TTL: a stream's record, and
+an event handler.
 
 #### `Record.LastUpdateTime`
 
 ```go
-func (r *Record) LastUpdateTime() int64 { return lastUpdate() }
+func (r *Record) LastUpdateTime() int64
 ```
 
-LastUpdateTime is when the record was last written, in ms since the Aerospike epoch (2010-01-01 UTC),
-which is how the server stores it. It is not on the same scale as Now, which counts from the Unix epoch.
+LastUpdateTime is when the record was last written, in milliseconds since the Citrusleaf epoch,
+2010-01-01T00:00:00Z, which is how the server stores it: Unix milliseconds minus 1 262 304 000 000.
+It is not on the same scale as Now, which counts from the Unix epoch. It is 0 on a key with no
+record.
 
 #### `Record.Size`
 
 ```go
-func (r *Record) Size() int64 { return recordSize() }
+func (r *Record) Size() int64
 ```
 
-Size is the record's size on device, in bytes.
+Size is the record's size on device, in bytes; 0 on a key with no record.
 
 #### `Record.SetName`
 
@@ -607,17 +1006,37 @@ Size is the record's size on device, in bytes.
 func (r *Record) SetName() string
 ```
 
-SetName is the record's set name, "" when it is in no set.
+SetName is the name of the set the record is in, "" when it is in no set. It reads the set; it does
+not write anything, the "Set" being the noun.
 
 #### `Record.Key`
 
 ```go
-func (r *Record) Key(buf []byte) (Value, bool)
+func (r *Record) Key(buf []byte) (Value, bool, error)
 ```
 
-Key is the record's user key, when it was written with the key stored: an integer, or a string or
-blob whose bytes go into buf, which the value then points at. False when the record carries none, or
-buf is too small for it.
+Key is the record's user key, when the record was written with the key stored: an integer Value, or
+a string or blob whose bytes are copied into buf.
+
+It has three outcomes. The key and true. A Value of KindAbsent and false, with a nil error, when
+the record carries no key: the server stores one only when the client asks it to. And an error
+when buf is too small for a string or blob key: nothing was copied, the key is never cut, and the
+error is an *Error whose Status is at or below NeededBase and whose Needed is the length to call
+again with. A user key is at most a few kilobytes.
+
+A string or blob key points at buf and is not a copy: it is good until buf is written again, and
+that includes the string Value.String makes of it. An integer key does not use buf.
+
+```go
+var buf [64]byte
+key, ok, err := rec.Key(buf[:])
+if err != nil {
+	return err // a key longer than 64 bytes: err.(*udf.Error).Needed() says how long
+}
+if ok {
+	out.Put("key", key) // copied by the host here
+}
+```
 
 #### `Record.Digest`
 
@@ -628,6 +1047,18 @@ func (r *Record) Digest(buf []byte) ([]byte, error)
 Digest copies the record's digest into buf and returns that part of it: 20 bytes, always present. It
 is what identifies a record a UDF wants to point at rather than ship - a top-k hit, say - since a
 client can fetch a record by its digest afterwards.
+
+buf must hold 20 bytes. A shorter one is an error, with a Status at or below NeededBase, and
+nothing is copied; the digest is never cut. It allocates nothing.
+
+```go
+var buf [20]byte
+digest, err := rec.Digest(buf[:])
+if err != nil {
+	return err
+}
+out.Put("digest", digest) // a blob
+```
 
 #### `Record.Save`
 
@@ -642,8 +1073,27 @@ A UDF that must not overwrite checks Exists first; the record is locked for the 
 can come between the check and the save.
 
 With nothing staged it is still a write: the server treats it as a touch, and the record's generation
-and last-update time move. On a key with no record it makes nothing, since a record has to have a bin,
-and the client is answered "key not found".
+and last-update time move. On a key with no record a Save with a bin staged creates the record. A Save
+with no bin staged - nothing at all, or only a Remove or a SetTTL - creates nothing, since a record has
+to have a bin, and the call fails: the client is answered "key not found".
+
+A Save that succeeded is not final until the call succeeds. When the function then returns an error,
+or calls Fail, what it saved is undone with the rest: a call that fails writes nothing.
+
+The error has Status Refused: the record is read-only here, as a stream's is, or the server would
+not take the write, as when a GeoJSON bin was staged with text that is not GeoJSON. After a Save
+that fails, a list, map or blob Value read earlier in the call answers an
+error; read the bin again before using it.
+
+```go
+if rec.Exists() {
+	return false, nil // must not overwrite
+}
+if err := rec.Set("owner", owner); err != nil {
+	return false, err
+}
+return true, rec.Save() // creates the record
+```
 
 #### `Record.Delete`
 
@@ -655,10 +1105,20 @@ Delete deletes the record. It is not staged: it needs no Save after it, and what
 with the record. The server carries it out when the call returns, so for the rest of the call Exists
 answers as it did before.
 
+The error has Status Refused where the record is read-only, as a stream's is, and on a key with no
+record, where there is nothing to delete and nothing is created.
+
+```go
+//udf:function close_account
+func closeAccount(rec *udf.Record) error {
+	return rec.Delete() // no Save: the delete is the write
+}
+```
+
 #### `Value.IsNull`
 
 ```go
-func (v Value) IsNull() bool { return v.Kind == KindNil || v.Kind == KindAbsent }
+func (v Value) IsNull() bool
 ```
 
 IsNull reports whether there is nothing to read: the value is a stored nil or is absent. It is not
@@ -667,23 +1127,25 @@ another name for IsNil, which is false of an absent value.
 #### `Value.IsNil`
 
 ```go
-func (v Value) IsNil() bool { return v.Kind == KindNil }
+func (v Value) IsNil() bool
 ```
 
-IsNil reports whether the value is a nil, as distinct from absent.
+IsNil reports whether the value is a nil that is there - a nil argument, a nil entry of a list or
+map - as distinct from absent.
 
 #### `Value.IsAbsent`
 
 ```go
-func (v Value) IsAbsent() bool { return v.Kind == KindAbsent }
+func (v Value) IsAbsent() bool
 ```
 
-IsAbsent reports whether there is no value at all: a missing bin, map entry or argument.
+IsAbsent reports whether there is no value at all: a missing bin, map entry or argument. It is what
+the lookups answer beside their false.
 
 #### `Value.IsInt`
 
 ```go
-func (v Value) IsInt() bool { return v.Kind == KindInt }
+func (v Value) IsInt() bool
 ```
 
 IsInt reports whether the value is an integer.
@@ -691,15 +1153,15 @@ IsInt reports whether the value is an integer.
 #### `Value.IsDouble`
 
 ```go
-func (v Value) IsDouble() bool { return v.Kind == KindDouble }
+func (v Value) IsDouble() bool
 ```
 
-IsDouble reports whether the value is a double. An integer is not one, though Double widens it.
+IsDouble reports whether the value is a double. An integer is not one, and Double does not widen it.
 
 #### `Value.IsBool`
 
 ```go
-func (v Value) IsBool() bool { return v.Kind == KindBool }
+func (v Value) IsBool() bool
 ```
 
 IsBool reports whether the value is a boolean.
@@ -707,34 +1169,54 @@ IsBool reports whether the value is a boolean.
 #### `Value.IsString`
 
 ```go
-func (v Value) IsString() bool { return v.Kind == KindStr }
+func (v Value) IsString() bool
 ```
 
-IsString reports whether the value is a string the host holds.
+IsString reports whether the value is a string the host holds: one read from a record, a collection
+or the arguments. It is false of a value StringValue made, which is the guest's own.
 
 #### `Value.IsBlob`
 
 ```go
-func (v Value) IsBlob() bool { return v.Kind == KindBlob }
+func (v Value) IsBlob() bool
 ```
 
-IsBlob reports whether the value is a plain blob the host holds; GeoJSON and HLL are kinds of their own.
+IsBlob reports whether the value is a plain blob the host holds; GeoJSON and HLL are kinds of their
+own, and a value BlobValue made is the guest's.
+
+#### `Value.IsGeoJSON`
+
+```go
+func (v Value) IsGeoJSON() bool
+```
+
+IsGeoJSON reports whether the value is a GeoJSON document the host holds. It is a kind of its own:
+neither String nor Blob reads it, and Bytes gives its text.
+
+#### `Value.IsHLL`
+
+```go
+func (v Value) IsHLL() bool
+```
+
+IsHLL reports whether the value is a HyperLogLog the host holds. It is a kind of its own: Blob does
+not read it, and Bytes gives its bytes.
 
 #### `Value.IsList`
 
 ```go
-func (v Value) IsList() bool { return v.Kind == KindList }
+func (v Value) IsList() bool
 ```
 
-IsList reports whether the value is a list the host holds.
+IsList reports whether the value is a list the host holds, which List walks and Index reads.
 
 #### `Value.IsMap`
 
 ```go
-func (v Value) IsMap() bool { return v.Kind == KindMap }
+func (v Value) IsMap() bool
 ```
 
-IsMap reports whether the value is a map the host holds.
+IsMap reports whether the value is a map the host holds, which Map walks and Lookup reads.
 
 #### `Value.IsStored`
 
@@ -742,7 +1224,9 @@ IsMap reports whether the value is a map the host holds.
 func (v Value) IsStored() bool
 ```
 
-IsStored reports whether the value is a string, blob, GeoJSON, HLL, list or map the host holds.
+IsStored reports whether the value is a string, blob, GeoJSON, HLL, list or map the host holds: the
+kinds Bytes, StoredBytes and CmpStored are for. False of a scalar, and of a value of the guest's own
+making.
 
 #### `Value.Int`
 
@@ -750,7 +1234,19 @@ IsStored reports whether the value is a string, blob, GeoJSON, HLL, list or map 
 func (v Value) Int() (int64, error)
 ```
 
-Int is the value as an integer.
+Int is the value as an integer. The error, an *Error with Status TypeMismatch, says the value is of
+another kind; a double is not narrowed, and a nil or absent value is an error too.
+
+The typed accessors - Int, Double, Bool, String, Blob - all answer this way and convert nothing.
+They are how an element of a stored list or map is read, once Index, Lookup or a walk has handed
+it over: "not there" is what the lookup answers, and "of another kind" is the accessor's error.
+
+```go
+n, err := v.Int()
+if err != nil {
+	return 0, err // "the value is not an int (kind 4)"
+}
+```
 
 #### `Value.Double`
 
@@ -758,7 +1254,8 @@ Int is the value as an integer.
 func (v Value) Double() (float64, error)
 ```
 
-Double is the value as a double, or an integer widened.
+Double is the value as a double; an *Error with Status TypeMismatch for any other kind. An integer
+is not widened: a caller that takes either tests IsInt and converts.
 
 #### `Value.Bool`
 
@@ -766,7 +1263,8 @@ Double is the value as a double, or an integer widened.
 func (v Value) Bool() (bool, error)
 ```
 
-Bool is the value as a boolean.
+Bool is the value as a boolean; an *Error with Status TypeMismatch for any other kind. An integer
+is not read as one.
 
 #### `Value.String`
 
@@ -774,7 +1272,14 @@ Bool is the value as a boolean.
 func (v Value) String() (string, error)
 ```
 
-String is the text of a string, copied out.
+String is the text of a string value, copied from the host into a new Go string, which allocates;
+the package's Bytes copies into a buffer of the caller's where that matters. The bytes are not
+checked to be UTF-8.
+
+The error, with Status TypeMismatch, says the value is of another kind: a blob or a GeoJSON is not
+read as a string, and Value.Bytes reads their bytes. Any other status is the host no longer being
+able to read the value. Of a value StringValue or StringBytesValue made, the string is not a copy:
+it shares the bytes the value was made over.
 
 #### `Value.Blob`
 
@@ -782,7 +1287,26 @@ String is the text of a string, copied out.
 func (v Value) Blob() ([]byte, error)
 ```
 
-Blob is the bytes of a blob, copied out. A string, GeoJSON or HLL value gives its bytes the same way.
+Blob is the bytes of a blob, copied from the host into a new slice the caller owns, which
+allocates. It is strict: only a blob is read. A string, a GeoJSON and an HLL are kinds of their
+own and are an *Error with Status TypeMismatch here, like every other kind; Bytes reads the raw
+bytes of all four. An empty blob is an empty slice, not nil.
+
+#### `Value.Bytes`
+
+```go
+func (v Value) Bytes() ([]byte, error)
+```
+
+Bytes is the raw bytes of a string, blob, GeoJSON or HLL value, copied into a new slice the caller
+owns, which allocates: a string its text, a GeoJSON its document, a blob and an HLL their bytes as
+stored. It is the reader for code that takes bytes whatever they are labelled as; Blob and String
+are the strict ones. A value of the guest's own (StringValue, BlobValue, GeoJSONValue) gives a copy
+of its bytes. An empty value is an empty slice, not nil.
+
+The error has Status TypeMismatch when the value is a scalar, a nil, a list or a map, and the
+host's status when it could no longer read the value, as after a Save that failed. The package's
+Bytes is the same read into a buffer of the caller's.
 
 #### `Value.Floats`
 
@@ -791,7 +1315,21 @@ func (v Value) Floats(dst []float32) (int, error)
 ```
 
 Floats copies a blob of 32-bit floats straight into dst, element for element: how a vector is read
-without converting it. Returns how many elements were copied.
+without converting it, and without allocating. The blob's bytes are taken as little-endian IEEE 754
+floats, four bytes each. It returns how many elements were copied, v.Len / 4.
+
+dst must be long enough for the whole blob. When the blob is longer than 4*len(dst) bytes it is an
+error and nothing is copied, so compare v.Len first when the length is not known. A shorter blob
+leaves the rest of dst as it was. Only a plain blob is read: any other kind is an error.
+
+```go
+var vec [128]float32
+n, err := v.Floats(vec[:])
+if err != nil {
+	return err
+}
+query := vec[:n]
+```
 
 #### `Value.List`
 
@@ -799,9 +1337,27 @@ without converting it. Returns how many elements were copied.
 func (v Value) List() iter.Seq[Value]
 ```
 
-List walks a stored list, 32 values per import; nothing when the value is not a list. The cursor is
-released when the loop ends or breaks. Lists nest: a value that is itself a list can be ranged over
-inside the loop, since the inner cursor closes before the outer steps on.
+List walks a stored list, one Value per element, in order; nothing when the value is not a list
+(IsList tells, and Record.List answers an error for a bin of another kind). It is a Go iterator, to
+range over. The elements come 32 per import, and the cursor is released when the loop ends or
+breaks.
+
+Lists nest: an element that is itself a list or map can be ranged over inside the loop, since the
+inner cursor closes before the outer steps on. A cursor is one of the 256 handles a call may hold.
+When none is left, or the host can no longer read the list, the walk cannot say so through a range
+loop, so it fails the call, as Fail does, and yields no more: a list is never walked short in
+silence. v.Len is the number of elements, with no walk, and Index reads one element without
+walking to it from the guest.
+
+```go
+for row := range v.List() {
+	for cell := range row.List() { // a list of lists
+		if n, err := cell.Int(); err == nil {
+			total += n
+		}
+	}
+}
+```
 
 #### `Value.Map`
 
@@ -809,32 +1365,68 @@ inside the loop, since the inner cursor closes before the outer steps on.
 func (v Value) Map() iter.Seq2[Value, Value]
 ```
 
-Map walks a stored map's entries, key then value; nothing when the value is not a map.
+Map walks a stored map's entries, key then value, both as Values; nothing when the value is not a
+map (IsMap tells). A key is a Value like any other: a string key is read with String, an integer
+key with Int. The entries come 16 per import, and the cursor is released when the loop ends or
+breaks, as with List; a walk that cannot go on fails the call, as List's does. v.Len is the number
+of entries, and Lookup reads one entry without a walk from the guest.
+
+```go
+for key, entry := range v.Map() {
+	name, err := key.String()
+	if err != nil {
+		continue // not a string key
+	}
+	out.Put(name, entry)
+}
+```
 
 #### `Value.Index`
 
 ```go
-func (v Value) Index(i int) (Value, bool)
+func (v Value) Index(i int) (Value, bool, error)
 ```
 
-Index is element i of a stored list, in one import: the host steps to it, nothing is walked from the
-guest. False past the end, for a negative index, or when the value is not a list.
+Index is element i of a stored list, counting from 0, in one import: the host steps to it, nothing
+is walked from the guest.
+
+It has three outcomes, like every lookup. The element and true. A Value of KindAbsent and false,
+with no error, when it is not there: i is past the end or negative (there is no counting from the
+end), or the value is absent or nil and so has no elements. And an error, an *Error with Status
+TypeMismatch, when the value is of another kind than a list.
+
+```go
+last, ok, err := history.Index(int(history.Len) - 1)
+if err != nil {
+	return udf.NilValue(), err // not a list
+}
+if !ok {
+	return udf.NilValue(), nil // an empty list
+}
+```
 
 #### `Value.Lookup`
 
 ```go
-func (v Value) Lookup(key string) (Value, bool)
+func (v Value) Lookup(key string) (Value, bool, error)
 ```
 
-Lookup is the entry under a string key of a stored map; false when there is none.
+Lookup is the entry under a string key of a stored map, in one import; the host walks the entries,
+the guest none. The key is compared whole, whatever its length.
+
+The outcomes are Index's: the entry and true; a Value of KindAbsent and false, with no error, when
+the map has no such key, or the value is absent or nil; an *Error with Status TypeMismatch when
+the value is of another kind than a map. A stored nil under the key is an entry: true, and a Value
+of KindNil.
 
 #### `Value.LookupInt`
 
 ```go
-func (v Value) LookupInt(key int64) (Value, bool)
+func (v Value) LookupInt(key int64) (Value, bool, error)
 ```
 
-LookupInt is the entry under an integer key of a stored map; false when there is none.
+LookupInt is the entry under an integer key of a stored map, in one import, with the outcomes of
+Lookup. An integer key and a string key that reads the same are different keys.
 
 #### `GeoJSONValue`
 
@@ -842,7 +1434,11 @@ LookupInt is the entry under an integer key of a stored map; false when there is
 func GeoJSONValue(doc string) Value
 ```
 
-GeoJSONValue is a GeoJSON document of the guest's, for a batch, a result or a collection.
+GeoJSONValue is a GeoJSON document of the guest's as a Value: written with Record.Set it makes a
+geospatially indexable bin, and put in a collection or returned with Result it stays GeoJSON, where
+the same text as a string would be a string. It holds the address of doc's bytes, not a copy, so
+doc must stay alive until the call that is given the value has returned. The text is not checked
+here.
 
 #### `BoolValue`
 
@@ -850,38 +1446,68 @@ GeoJSONValue is a GeoJSON document of the guest's, for a batch, a result or a co
 func BoolValue(b bool) Value
 ```
 
-BoolValue is a boolean as a value of the guest's, for a batch.
+BoolValue is a boolean as a Value of the guest's, for the same calls as IntValue.
 
 #### `NilValue`
 
 ```go
-func NilValue() Value { return Value{Kind: KindNil} }
+func NilValue() Value
 ```
 
-NilValue is a nil value, for a batch.
+NilValue is a nil as a Value: a nil entry in a list or map, a nil result. Written to a bin with
+Record.Set it removes the bin, since a bin cannot hold nil.
 
 #### `Map`
 
 ```go
 type Map struct {
-	handle int32
-	err    error
+	// contains unexported fields
 }
 ```
 
-Map is a map built on the host, to be written to a bin, returned as a result, nested, or handed back
-from an event handler. It lives until the call ends.
+Map is a map built on the host, to be written to a bin, returned as the result, nested in another
+collection, or handed back from an event handler as the record. Make one with NewMap; it lives until
+the call ends.
+
+Put and its relatives return the map, so they chain, and none of them returns an error: the first
+refusal is kept and answered by Err, the way strings.Builder keeps its error. Record.Set,
+ResultMap, Resolve and the generated exports check it when they are given the map; check it
+yourself where nothing else will.
+
+The host keeps the map ordered by key, so it reaches a client in key order whatever order the
+entries were put in.
+
+```go
+//udf:function describe
+func describe(rec *udf.Record) (*udf.Map, error) {
+	out := udf.NewMap(4).
+		Put("generation", rec.Generation()).
+		Put("bins", rec.BinCount()).
+		Put("tags", udf.NewList(2).Add("a").Add("b")).
+		Put(7, "seven") // an integer key
+
+	return out, out.Err()
+}
+```
 
 #### `List`
 
 ```go
 type List struct {
-	handle int32
-	err    error
+	// contains unexported fields
 }
 ```
 
-List is a list built on the host.
+List is a list built on the host, to be written to a bin, returned as the result or nested in
+another collection. Make one with NewList; it lives until the call ends. Add and its relatives
+chain, and the first refusal is kept and answered by Err, as with Map.
+
+```go
+tags := udf.NewList(4).Add("new").Add(42).Add(1.5)
+if err := rec.Set("tags", tags); err != nil { // Set answers what the list kept, too
+	return err
+}
+```
 
 #### `NewMap`
 
@@ -889,7 +1515,15 @@ List is a list built on the host.
 func NewMap(capacity int) *Map
 ```
 
-NewMap starts a map with room for capacity entries.
+NewMap starts an empty map. capacity is a hint of how many entries are coming, not a limit: the map
+grows past it, 0 is fine, and the host caps what it reserves at 1024.
+
+It never returns nil. When the host cannot make the map - the call holds its 256 handles, or has
+spent what it may build on the host - the map returned has kept that error, an *Error with Status
+Refused: Err answers it, every Put on it fails, and Len is -1.
+
+A built map or list holds one of the call's 256 handles until the call ends, whatever becomes of
+it; its entries hold none, however many there are and whatever their kinds.
 
 #### `NewList`
 
@@ -897,55 +1531,71 @@ NewMap starts a map with room for capacity entries.
 func NewList(capacity int) *List
 ```
 
-NewList starts a list with room for capacity elements.
+NewList starts an empty list. capacity is a hint of how many elements are coming, not a limit: the
+list grows past it, 0 is fine, and the host caps what it reserves at 1024.
+
+It never returns nil. When the host cannot make the list the one returned has kept that error, as
+NewMap's does.
 
 #### `Map.Err`
 
 ```go
-func (m *Map) Err() error { return m.err }
+func (m *Map) Err() error
 ```
 
-Err is the first refusal, nil when every put went in.
+Err is the first refusal the map kept, nil when the map was made and every put went in. It is an
+*Error whose message names the key that failed and whose Status says why: Refused when the host
+would not take the entry - the call has spent what it may build, or the value would nest more than
+64 deep - TypeMismatch for a Go type or a Value that cannot be put, NotFound for a Value of
+KindAbsent. Later puts are still attempted after a refusal, so a map with an error is partly built
+and not to be used.
 
 #### `List.Err`
 
 ```go
-func (l *List) Err() error { return l.err }
+func (l *List) Err() error
 ```
 
-Err is the first refusal, nil when every add went in.
+Err is the first refusal the list kept, nil when the list was made and every add went in. Later
+adds are still attempted after a refusal, so a list with an error is partly built and not to be
+used.
 
 #### `Map.Value`
 
 ```go
-func (m *Map) Value() Value { return handleValue(m.handle) }
+func (m *Map) Value() Value
 ```
 
-Value is the collection as a value, for a batch or a result.
+Value is the map as a Value, of KindHandle, for a batch (PutEntries, AddValues) or for Result. It
+does not carry what Err kept, so check Err before handing it on. Put, Add and Record.Set take the
+*Map itself.
 
 #### `List.Value`
 
 ```go
-func (l *List) Value() Value { return handleValue(l.handle) }
+func (l *List) Value() Value
 ```
 
-Value is the list as a value, for a batch or a result.
+Value is the list as a Value, of KindHandle, for a batch (PutEntries, AddValues) or for Result. It
+does not carry what Err kept, so check Err before handing it on.
 
 #### `Map.Len`
 
 ```go
-func (m *Map) Len() int { return int(collSize(m.handle)) }
+func (m *Map) Len() int
 ```
 
-Len is how many entries the map holds; -1 when it could not be built, as after a failed NewMap.
+Len is how many entries the map holds, asked of the host in one import; -1 when it could not be
+built, as after a failed NewMap.
 
 #### `List.Len`
 
 ```go
-func (l *List) Len() int { return int(collSize(l.handle)) }
+func (l *List) Len() int
 ```
 
-Len is how many elements the list holds; -1 when it could not be built, as after a failed NewList.
+Len is how many elements the list holds, asked of the host in one import; -1 when it could not be
+built, as after a failed NewList.
 
 #### `Map.Contains`
 
@@ -953,8 +1603,9 @@ Len is how many elements the list holds; -1 when it could not be built, as after
 func (m *Map) Contains(key any) bool
 ```
 
-Contains reports whether the map holds key, a string or an integer, in one import: the host answers
-from the map as built, nothing is packed.
+Contains reports whether the map holds key, a string or an integer (int, int32, int64), in one
+import: the host answers from the map as built, nothing is packed. It is false for a key of any
+other type, and for a map that could not be built.
 
 #### `Map.Put`
 
@@ -962,9 +1613,18 @@ from the map as built, nothing is packed.
 func (m *Map) Put(key any, v any) *Map
 ```
 
-Put puts a value under a key. The key is a string or an integer (int, int32, int64); the value an int,
-int32, int64, float32, float64, bool, string, []byte (a blob), Value, *Map, *List, or nil for a nil
-entry (in a record answer, "no such bin").
+Put puts a value under a key and returns the map. The key is a string or an integer (int, int32,
+int64); the value an int, int32, int64, float32, float64, bool, string, []byte (a blob), Value,
+*Map, *List, or nil for a nil entry (in a record answer, "no such bin"). A key or value of any
+other Go type is a refusal, kept for Err, and so is an inner *Map or *List that had kept one.
+
+A string or blob is copied by the host during the call. A Value read from a record goes in from its
+stored bytes, without being decoded, and keeps its kind. The host refuses a collection that would
+come to contain itself, or to nest more than 64 deep.
+
+Each put is one import and takes none of the 256 handles a call may hold, whatever the kinds of the
+key and the value, so a loop may put as many entries as the call may build. A key is put whole,
+whatever its length. PutEntries puts many entries in one import.
 
 #### `Map.PutAll`
 
@@ -972,7 +1632,10 @@ entry (in a record answer, "no such bin").
 func (m *Map) PutAll(stored Value) *Map
 ```
 
-PutAll puts every entry of a stored map, by position.
+PutAll puts every entry of a stored map, by position: neither the keys nor the values are decoded
+on the way. A value that is absent or nil has no entries and nothing is put; a value of any other
+kind than a map is a refusal, kept for Err with Status TypeMismatch, and so is an entry under a key
+that is neither a string nor an integer. Returns the map.
 
 #### `Map.PutEntries`
 
@@ -980,8 +1643,24 @@ PutAll puts every entry of a stored map, by position.
 func (m *Map) PutEntries(pairs []Value) *Map
 ```
 
-PutEntries puts pairs (pairs[0], pairs[1] is the first) in one import: scalars, guest bytes by address,
-stored values by position, built collections as their Value.
+PutEntries puts a batch of entries in one import and returns the map. pairs is flat, key then
+value: pairs[0] is the first key and pairs[1] its value. A trailing key with no value is ignored.
+
+Keys and values are Values of any kind the host can take: scalars from IntValue, DoubleValue and
+BoolValue, guest bytes by address from StringValue, BlobValue and GeoJSONValue, stored values by
+position, built collections as their Value. The bytes behind a guest value have to stay alive until
+the call returns. It takes none of the call's handles, however many entries there are.
+
+When the host cannot take an entry it stops there: the entries before it are in, and Err names the
+index of the one that failed, with Status Refused.
+
+```go
+pairs := []udf.Value{
+	udf.StringValue("x"), udf.DoubleValue(1.5),
+	udf.StringValue("y"), udf.DoubleValue(2.5),
+}
+point := udf.NewMap(2).PutEntries(pairs)
+```
 
 #### `List.AddValues`
 
@@ -989,7 +1668,18 @@ stored values by position, built collections as their Value.
 func (l *List) AddValues(vals []Value) *List
 ```
 
-AddValues appends values in one import, the kinds as PutEntries takes them.
+AddValues appends a batch of values in one import and returns the list. The values are of the kinds
+PutEntries takes, with the same rule on the bytes behind a guest value, and it takes none of the
+call's handles. When the host cannot take a value it stops there: the values before it are in, and
+Err names the index of the one that failed, with Status Refused.
+
+```go
+vals := make([]udf.Value, 0, len(scores))
+for _, s := range scores {
+	vals = append(vals, udf.DoubleValue(s))
+}
+list := udf.NewList(len(vals)).AddValues(vals)
+```
 
 #### `Map.PutGeoJSON`
 
@@ -997,7 +1687,8 @@ AddValues appends values in one import, the kinds as PutEntries takes them.
 func (m *Map) PutGeoJSON(key, doc string) *Map
 ```
 
-PutGeoJSON puts a GeoJSON document, kept as that kind.
+PutGeoJSON puts a GeoJSON document under a string key, kept as that kind; Put with a string would
+make it a string. The host copies the text and does not check it. Returns the map.
 
 #### `List.Add`
 
@@ -1005,7 +1696,14 @@ PutGeoJSON puts a GeoJSON document, kept as that kind.
 func (l *List) Add(v any) *List
 ```
 
-Add appends a value: the kinds as Map.Put takes them.
+Add appends a value and returns the list: an int, int32, int64, float32, float64, bool, string,
+[]byte (a blob), Value, *Map, *List, or nil for a nil element, as Map.Put takes them. A value of
+any other Go type is a refusal, kept for Err.
+
+Each add is one import and takes none of the 256 handles a call may hold, whatever the kind, so a
+loop may add as many elements as the call may build. AddValues adds many in one import. The
+refusal Err keeps has Status Refused when the host would not take the element, TypeMismatch for a
+Go type or a Value that cannot be added, NotFound for a Value of KindAbsent.
 
 #### `List.AddGeoJSON`
 
@@ -1013,7 +1711,8 @@ Add appends a value: the kinds as Map.Put takes them.
 func (l *List) AddGeoJSON(doc string) *List
 ```
 
-AddGeoJSON appends a GeoJSON document, kept as that kind.
+AddGeoJSON appends a GeoJSON document, kept as that kind; Add with a string would make it a string.
+The host copies the text and does not check it. Returns the list.
 
 #### `List.AddAll`
 
@@ -1021,7 +1720,9 @@ AddGeoJSON appends a GeoJSON document, kept as that kind.
 func (l *List) AddAll(stored Value) *List
 ```
 
-AddAll appends every element of a stored list, by position.
+AddAll appends every element of a stored list, in order and by position: the values are not decoded
+on the way. A value that is absent or nil has no elements and nothing is added; a value of any
+other kind than a list is a refusal, kept for Err with Status TypeMismatch. Returns the list.
 
 #### `Contains`
 
@@ -1029,15 +1730,24 @@ AddAll appends every element of a stored list, by position.
 func Contains(list Value, text string) bool
 ```
 
-Contains reports whether a stored list of strings holds text.
+Contains reports whether a stored list holds the string text, of any length. It walks the list and
+compares each string element, so it costs the length of the list; elements that are not strings
+never match (see StringIs). False when list is not a list.
+
+```go
+if !udf.Contains(older, text) {
+	tags.Add(tag) // the union, without duplicates
+}
+```
 
 #### `ResultGeoJSON`
 
 ```go
-func ResultGeoJSON(doc string) { resultGeoJSON(strptr(doc), int32(len(doc))) }
+func ResultGeoJSON(doc string)
 ```
 
-ResultGeoJSON sets a GeoJSON document as the result, kept as that kind.
+ResultGeoJSON sets a GeoJSON document as the call's result, kept as that kind where ResultString
+would return a string. The host copies the text during the call and does not check it.
 
 #### `ResultMap`
 
@@ -1045,8 +1755,20 @@ ResultGeoJSON sets a GeoJSON document as the result, kept as that kind.
 func ResultMap(m *Map) error
 ```
 
-ResultMap sets a built map as the result. When the map kept a refusal while it was built, that error is
-returned and no result is set.
+ResultMap sets a built map as the call's result. When the map kept a refusal while it was built, that
+error is returned and no result is set; otherwise the error is nil unless the host no longer has the
+map. A result that nests collections more than 64 deep fails the call.
+
+A function under `//udf:function` returns the *Map instead, and the generated export makes this
+call.
+
+```go
+out := udf.NewMap(2).Put("total", total).Put("count", count)
+if err := udf.ResultMap(out); err != nil {
+	return udf.FailErr(err)
+}
+return 0
+```
 
 #### `ResultList`
 
@@ -1054,8 +1776,8 @@ returned and no result is set.
 func ResultList(l *List) error
 ```
 
-ResultList sets a built list as the result. When the list kept a refusal while it was built, that error
-is returned and no result is set.
+ResultList sets a built list as the call's result. When the list kept a refusal while it was built,
+that error is returned and no result is set.
 
 #### `Result`
 
@@ -1063,16 +1785,37 @@ is returned and no result is set.
 func Result(v Value) error
 ```
 
-Result sets a value of any kind as the result: a scalar by value, guest bytes, a built collection by
-handle, a stored value by position; nil or absent is nil.
+Result sets a value of any kind as the call's result: a scalar by value, a string, blob or GeoJSON
+of the guest's, copied by the host, a built collection by its handle, a stored value by position,
+without decoding it. A nil or absent value sets nil.
+
+The error is non-nil only for a built collection or a stored value the host can no longer find. It
+is what a function returning a udf.Value has the generated export call.
+
+```go
+last, ok, err := history.Index(int(history.Len) - 1)
+if err != nil {
+	return udf.FailErr(err)
+}
+if !ok {
+	udf.ResultNil()
+	return 0
+}
+if err := udf.Result(last); err != nil {
+	return udf.FailErr(err)
+}
+return 0
+```
 
 #### `Now`
 
 ```go
-func Now() int64 { return currentTime() }
+func Now() int64
 ```
 
-Now is the server's clock in ms since the Unix epoch, or -1 inside an event handler, where it is refused.
+Now is the server's clock, in milliseconds since the Unix epoch. Inside an event handler it is
+refused and answers -1: a merge that reads the clock cannot come out the same on both clusters.
+It is not on the scale of Record.LastUpdateTime, which counts from 2010.
 
 #### `Arity`
 
@@ -1080,7 +1823,14 @@ Now is the server's clock in ms since the Unix epoch, or -1 inside an event hand
 func Arity(fn string, declared int, got int32) error
 ```
 
-Arity fails a call that passed more arguments than the function declares.
+Arity fails a call that passed more arguments than the function declares: the error reads
+"&lt;fn&gt; takes at most &lt;declared&gt; arguments, got &lt;got&gt;", naming the limit and the count. fn is the
+UDF's name, for the message, and got is the argc the export was called with. Fewer arguments are
+not its business: a missing one is reported by the Arg function that reads it.
+
+Every generated export calls it. For a function whose last parameter takes the rest, declared is
+MaxArgs, the most a UDF takes in total, so a call with 129 arguments fails and none is dropped.
+An export in the raw form calls it with the length of the window it handed Args.
 
 #### `ArgInt`
 
@@ -1088,8 +1838,24 @@ Arity fails a call that passed more arguments than the function declares.
 func ArgInt(a []Value, n int32, i int, fn, p string) (int64, error)
 ```
 
-ArgInt is argument i as an integer. The error, which names the function fn and the parameter p, says
-the argument is missing or is not an int.
+ArgInt is argument i as an integer.
+
+The Arg functions all take the same five parameters. a and n are the slice Args filled and the count
+it returned. i is the argument's index, from 0. fn is the UDF's name and p the parameter's, and they
+are used only in the error, which reads "&lt;fn&gt;: argument <i+1> (&lt;p&gt;) is missing" or "... is not an
+int". The error is an *Error with Status NotFound for a missing argument and TypeMismatch for one of
+another kind; a nil passed where an int is wanted is of another kind. A double is not narrowed.
+
+The generated exports call these. An export in the raw form can too:
+
+```go
+var a [2]udf.Value
+n := udf.Args(args, argc, a[:])
+by, err := udf.ArgInt(a[:], n, 0, "increment", "by")
+if err != nil {
+	return udf.FailErr(err) // "increment: argument 1 (by) is missing"
+}
+```
 
 #### `ArgInt32`
 
@@ -1097,8 +1863,8 @@ the argument is missing or is not an int.
 func ArgInt32(a []Value, n int32, i int, fn, p string) (int32, error)
 ```
 
-ArgInt32 is argument i as a 32-bit integer; an error when it is missing, not an int, or does not fit 32
-bits.
+ArgInt32 is argument i as a 32-bit integer; an error when it is missing, not an int, or does not fit
+32 bits, which is reported as "is not a 32-bit int". The parameters are ArgInt's.
 
 #### `ArgDouble`
 
@@ -1106,7 +1872,8 @@ bits.
 func ArgDouble(a []Value, n int32, i int, fn, p string) (float64, error)
 ```
 
-ArgDouble is a double, or an int widened to one.
+ArgDouble is argument i as a double, an integer argument being widened to one; an error when it is
+missing or of any other kind. The parameters are ArgInt's.
 
 #### `ArgBool`
 
@@ -1114,7 +1881,8 @@ ArgDouble is a double, or an int widened to one.
 func ArgBool(a []Value, n int32, i int, fn, p string) (bool, error)
 ```
 
-ArgBool is argument i as a boolean; an error when it is missing or not a bool.
+ArgBool is argument i as a boolean; an error when it is missing or not a bool. An integer is not
+read as one. The parameters are ArgInt's.
 
 #### `ArgString`
 
@@ -1122,7 +1890,8 @@ ArgBool is argument i as a boolean; an error when it is missing or not a bool.
 func ArgString(a []Value, n int32, i int, fn, p string) (string, error)
 ```
 
-ArgString is argument i as a string, copied out; an error when it is missing or not a string.
+ArgString is argument i as a string, copied into a new Go string; an error when it is missing or
+not a string. A blob is not read as one. The parameters are ArgInt's.
 
 #### `ArgBlob`
 
@@ -1130,7 +1899,8 @@ ArgString is argument i as a string, copied out; an error when it is missing or 
 func ArgBlob(a []Value, n int32, i int, fn, p string) ([]byte, error)
 ```
 
-ArgBlob is the bytes of a string or a blob.
+ArgBlob is the bytes of argument i, which may be a string or a blob, copied into a new slice the
+caller owns; an error when it is missing or of any other kind. The parameters are ArgInt's.
 
 #### `ArgValue`
 
@@ -1138,7 +1908,8 @@ ArgBlob is the bytes of a string or a blob.
 func ArgValue(a []Value, n int32, i int, fn, p string) (Value, error)
 ```
 
-ArgValue is any value, nil included.
+ArgValue is argument i as it came, whatever its kind, a nil included; an error only when it is
+missing. The Value is good for the call. The parameters are ArgInt's.
 
 #### `ArgRest`
 
@@ -1146,7 +1917,10 @@ ArgValue is any value, nil included.
 func ArgRest(a []Value, n int32, i int) []Value
 ```
 
-ArgRest is every argument from i on.
+ArgRest is every argument from index i on, as a new slice, for a function whose last parameter
+takes the rest; nil when there is none. a and n are the slice Args filled and the count it returned,
+so it holds no more arguments than a had room for: check the call with Arity(fn, len(a), argc)
+first, as the generated export does with a window of MaxArgs, and none is left out.
 
 #### `OptInt`
 
@@ -1154,7 +1928,23 @@ ArgRest is every argument from i on.
 func OptInt(a []Value, n int32, i int, fn, p string) (*int64, error)
 ```
 
-OptInt is argument i as an integer, nil when it is absent or nil; an error when it is of another kind.
+OptInt is argument i as an integer when it was passed: nil, with no error, when the argument is
+absent or nil, and a pointer to the value otherwise. An argument of another kind is an error, as
+with ArgInt, whose parameters these are.
+
+The Opt functions all answer this way, and are what a pointer parameter of a `//udf:function` is
+decoded with:
+
+```go
+k, err := udf.OptInt(a[:], n, 3, "topk", "k")
+if err != nil {
+	return udf.FailErr(err)
+}
+limit := int64(10)
+if k != nil {
+	limit = *k
+}
+```
 
 #### `OptDouble`
 
@@ -1179,7 +1969,8 @@ OptBool is argument i as a boolean, nil when it is absent or nil; an error when 
 func OptString(a []Value, n int32, i int, fn, p string) (*string, error)
 ```
 
-OptString is argument i as a string, nil when it is absent or nil; an error when it is of another kind.
+OptString is argument i as a string, copied out; nil when it is absent or nil, an error when it is
+of another kind.
 
 #### `OptValue`
 
@@ -1187,6 +1978,6 @@ OptString is argument i as a string, nil when it is absent or nil; an error when
 func OptValue(a []Value, n int32, i int, fn, p string) (*Value, error)
 ```
 
-OptValue is argument i as a value of any kind, nil when it is absent or nil. The pointer is into a, and
-the error is always nil.
+OptValue is argument i as a value of any kind, nil when it is absent or nil. The pointer is into a,
+not a copy, so it is good while a is, and the error is always nil.
 

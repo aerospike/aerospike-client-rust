@@ -232,25 +232,29 @@ language:
 `higher` is the same three rules:
 
 ```go
-func higher(a, b candidate) candidate {
+func higher(a, b candidate) (candidate, error) {
 	if a.version != b.version {
 		if a.version > b.version {
-			return a
+			return a, nil
 		}
-		return b
+		return b, nil
 	}
 
 	if a.removed != b.removed {
 		if a.removed {
-			return a
+			return a, nil
 		}
-		return b
+		return b, nil
 	}
 
-	if udf.CmpStored(a.value, b.value) >= 0 {
-		return a
+	order, err := udf.CmpStored(a.value, b.value) // -1, 0 or 1; an error for a value not stored
+	if err != nil {
+		return candidate{}, err
 	}
-	return b
+	if order >= 0 {
+		return a, nil
+	}
+	return b, nil
 }
 ```
 
@@ -281,7 +285,8 @@ static const Candidate& higher(const Candidate& a, const Candidate& b)
 	if (a.version != b.version) return a.version > b.version ? a : b;
 	if (a.removed != b.removed) return a.removed ? a : b;
 
-	return a.value.cmp_stored(b.value) >= 0 ? a : b;
+	udf::Result<int32_t> order = a.value.cmp_stored(b.value);   // both are stored entries
+	return !order || *order >= 0 ? a : b;
 }
 ```
 
@@ -310,6 +315,9 @@ data needs to forget, as the device map's markers do, name the assumption that m
 and bound it. When two sides can make the same change at once, decide the tie on bytes both sides have.
 Then let the dry run tell you whether the laws hold, and the two-cluster test whether they hold in
 practice.
+
+One more step follows, for the case this one deliberately avoided: [step 6](registers.md) trusts the
+clock again, and reads the per-bin stamps the server keeps on a namespace with bin convergence.
 
 ## The sources
 

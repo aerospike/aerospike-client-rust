@@ -15,8 +15,9 @@ static int64_t count;
 
 UDF_STREAM_RECORD(sum_n, udf::Result<void>, const udf::Record& rec)
 {
-	if (udf::Optional<int64_t> n = rec.as_int("n")) {
-		total += *n;
+	// A record whose n is absent, nil or of another kind is not counted: the reader says which it was.
+	if (udf::Result<udf::Optional<int64_t>> n = rec.as_int("n"); n && *n) {
+		total += **n;
 		count++;
 	}
 

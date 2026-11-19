@@ -71,7 +71,7 @@ the guest's memory on the way in, so no host function bounds-checks a guest poin
 
 **Collections and cursors are reached by handle, not by address.** A call has a table of 256 handles;
 every use is checked against the table, and the table is destroyed with the call. A function takes at
-most 32 arguments.
+most 128 arguments, and a call with more fails rather than losing the rest.
 
 **Instantiating a module runs none of its code.** A module may name a start function, and the runtime
 calls it while it makes the instance, along with two constructor exports of older toolchains. That is
@@ -137,7 +137,7 @@ handle the call did not create. Found while making the account below balance.
 | Reading a signature export | 1 s | fixed; it runs from an info command, with no transaction to borrow a deadline from |
 | Calls the watchdog can track at once | 1,024 | fixed |
 | Handles per call | 256 | fixed |
-| Arguments per call | 32 | fixed |
+| Arguments per call | 128 | fixed; more fails the call |
 | Queued compiles | 256, deduplicated by module | fixed; never fewer than `max-modules`, so a registration cannot find it full |
 | Compiler processes at once | 1 to 8 | `aot-compile-threads`, when the tier reads it |
 

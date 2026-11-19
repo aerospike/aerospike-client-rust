@@ -4,16 +4,27 @@
 
 ```rust
 pub enum Error {
-    /// No such bin, key, element or argument.
+    /// No such bin, map key, list index or argument. Also what a read answers for a name that cannot be a bin
+    /// name: empty, longer than 15 bytes, or with a zero byte in it.
     Absent,
-    /// The value is not the kind asked for: `int()` on a string, `list()` on an integer.
+    /// The value is not the kind asked for: `int()` on a string, `list()` on an integer. Also a value that
+    /// cannot go where it was sent: [`Value::Other`], an HLL made from guest bytes, or guest bytes written as
+    /// a plain blob over a bin that holds an HLL.
     WrongType,
-    /// The buffer was too small; this many bytes are needed.
+    /// The buffer was too small; this many bytes are needed. Nothing was written and nothing truncated: call
+    /// again with a buffer of that size.
     TooSmall(usize),
-    /// The record is read-only here (an aggregation), the host rejected the write, or the per-call
-    /// resource table is full.
+    /// The host would not do it. The record is read-only here (a stream UDF's record; an event handler has no
+    /// record to write), the server rejected the write, the clock was asked for in an event handler, a
+    /// collection would nest more than 64 deep, a call came with more than [`MAX_ARGS`] arguments, or the
+    /// call has used up what it may hold on the host: 256 collections, strings read and open iterators at a
+    /// time, and a memory budget. It is also what [`List::push`] and [`Map::insert`] answer when the host
+    /// does not take the value, whatever the reason.
     Refused,
-    /// The host could not decode the stored bytes. Not something a UDF can act on.
+    /// The host could not decode the stored bytes, or text that had to be UTF-8 was not. Also what a write
+    /// answers for a name that cannot be a bin name (empty, longer than 15 bytes, or with a zero byte in it),
+    /// and what using a value gives once it is no longer valid (see [`Value`]). Not something a UDF can
+    /// repair; pass it on.
     Malformed,
     /// A failure of the UDF's own, with the message the client will see.
     Custom(&'static str),
@@ -21,7 +32,20 @@ pub enum Error {
 ```
 
 Why a call did not do what was asked. The one error type: every fallible call returns it, and a UDF
-returns it to fail the call with the error's [`message`](Error::message).
+returns it to fail the call with the error's `message`.
+
+`?` passes one on; `Error::Custom` carries a message of the UDF's own. An error returned from a UDF is
+all the client sees of the call: no result arrives with it, and **the call writes nothing**. Bins staged
+but not saved are dropped, and so is what the call had already written: a `Record::save` that succeeded,
+and a `Record::set_ints` or `Record::set_doubles`, are undone when the call then fails.
+
+```rust
+let balance = rec.bin("balance")?.int()?;      // Absent, or WrongType
+
+if balance < amount {
+    return Err(Error::Custom("insufficient funds"));
+}
+```
 
 #### `Error::message`
 
@@ -29,41 +53,71 @@ returns it to fail the call with the error's [`message`](Error::message).
 pub fn message(&self) -> &'static str
 ```
 
-The message a client sees when a UDF returns this.
+The message a client sees when a UDF returns this. A fixed text per variant - `"absent: no such bin,
+key, element or argument"`, `"wrong type"`, `"buffer too small"`, `"refused"`, `"malformed value"` -
+and for `Error::Custom` the message it carries. The size in `Error::TooSmall` is not part of it.
+
+#### `Error::status`
+
+```rust
+pub fn status(&self) -> i32
+```
+
+The host's status for this error, as the number the host itself uses, for a caller that reports a
+failure in the terms the other SDKs do: `-2` (`NOT_FOUND`) for `Error::Absent`, `-3`
+(`TYPE_MISMATCH`) for `Error::WrongType`, `-4` (`REFUSED`) for `Error::Refused`, `-16 - n` (the
+too-small form, which carries the size) for `Error::TooSmall``(n)`, and `-1` (`ERR`) for
+`Error::Malformed` and for `Error::Custom`, which is no status of the host's. The variant is the
+status already, and is what Rust code matches on; this is the same fact as a number.
 
 #### `Level`
 
 ```rust
 pub enum Level {
+    /// The server's `warning` level.
     Warn = 0,
+    /// The server's `info` level.
     Info = 1,
+    /// The server's `debug` level.
     Debug = 2,
 }
 ```
 
-How severe a log line is. `Warn` is the loudest.
+How severe a line written with `log` is. Each maps to the server's log level of the same name, under the
+server's `udf` log context, whose configured level decides whether `Info` and `Debug` lines are written at
+all. `Warn` is the loudest.
 
 #### `Value`
 
 ```rust
 pub enum Value<'a> {
+    /// Nil. Never what a bin holds - a nil bin is an absent one - but an argument, a list element or a map
+    /// value can be nil, and a UDF returns it for "no result".
     Nil,
+    /// A boolean.
     Bool(bool),
+    /// A 64-bit signed integer, the server's only integer type.
     Int(i64),
+    /// A 64-bit float. Never converted to or from [`Value::Int`].
     Double(f64),
+    /// A string: its text, to fetch with [`Text::as_str`] or [`Text::to_inline`].
     String(Text<'a>),
+    /// A blob: its bytes, to fetch with [`Blob::bytes`] or [`Blob::to_inline`].
     Blob(Blob<'a>),
-    /// A GeoJson document, which reads and writes as its text. Distinct from [`Value::String`] on purpose: the
-    /// particle type is what makes a bin geospatially indexable, and writing a document back as a string
+    /// A GeoJson document: its text, read with [`Value::geojson`]. Distinct from [`Value::String`] on purpose:
+    /// the particle type is what makes a bin geospatially indexable, and writing a document back as a string
     /// would silently make it unqueryable.
     GeoJson(Text<'a>),
+    /// A list: iterate it with [`Coll::iter`], index it with [`Coll::at`].
     List(Coll),
+    /// A map: iterate it with [`Coll::entries`], look a key up with [`Coll::get`].
     Map(Coll),
     /// An HLL: the bytes the server's HLL operations maintain. Readable, and writable back **by position**
     /// only - a UDF cannot make one from guest bytes, since the subtype that makes it an HLL is the
     /// server's to set.
     Hll(Blob<'a>),
-    /// Something a UDF has no business interpreting.
+    /// A kind this SDK has no variant for. It can be passed over, not read; writing it to a bin or putting it
+    /// in a collection is `Err(WrongType)`, and returning it returns nil.
     Other,
 }
 ```
@@ -71,68 +125,136 @@ pub enum Value<'a> {
 One value: a bin, an element, a map entry, an argument, or a UDF's result.
 
 The guest-side analogue of the client's `Value`, with one difference that runs through everything: it is
-**borrowed, never owned**, because the guest has no allocator. A string or blob is a [`Text`] / [`Blob`]
-that knows where its bytes are and copies them out on request; a nested list or map is a [`Coll`] that
-opens a window onto the stored bytes when iterated. A value read from the record is valid for the rest of
-the call, or until the bin it came from is written.
+**borrowed, never owned**, because the guest has no allocator. A string or blob is a `Text` / `Blob`
+that knows where its bytes are and copies them out on request; a nested list or map is a `Coll` that
+opens a window onto the stored bytes when iterated. Reading a value costs nothing until its bytes or
+elements are asked for.
 
-Values a UDF builds use the same type: `Value::Int(3)`, `"text".into()`, or a [`List`] / [`Map`] built
-on the host. [`Value::List`] and [`Value::Map`] then hold a [`Coll::Built`].
+```rust
+let v = rec.bin("profile")?;                    // Value::Map
+
+if let Some(age) = v.map()?.get("age")? {       // one lookup on the host; None for no such key
+    let age = age.int()?;
+}
+
+let mut buf = [0u8; 64];
+let name = v.map()?.get("name")?.ok_or(Error::Absent)?;
+let name = name.as_str(&mut buf)?;              // the text, copied into buf
+```
+
+The accessors (`int`, `double`, `bool`, `string`, `blob`, `geojson`, `list`, `map`, `hll`) do not
+convert: each answers `Err(WrongType)` for any kind but its own, `Value::Nil` included. An integer is
+not a double, a string is not a blob, and a GeoJson document is not a string. The one reader that takes
+several kinds says so in its name: `bytes`, the raw bytes of a string, blob, GeoJson
+document or HLL.
+
+A value read from the record or from the arguments is valid for the rest of the call, or until the bin it
+came from is written; finish reading a bin before writing it. One more case ends it early: when the server
+refuses a write (`Record::save`, `Record::delete`, `Record::set_ints` returning `Err(Refused)`), a
+list, map or blob read from a bin before that is gone. Using it afterwards gives `Err(Malformed)`, and
+iterating it one `Err(Refused)` item. Read the bin again.
+
+Values a UDF builds use the same type: `Value::Int(3)`, `"text".into()`, or a `List` / `Map` built on
+the host. `Value::List` and `Value::Map` then hold a `Coll::Built`. A value made from a `&str` or
+`&[u8]` borrows it, and is copied by the host when it is written, pushed or returned.
 
 #### `Text`
 
 ```rust
 pub enum Text<'a> {
-    /// `len` bytes at a position in a source the host holds. What a read yields.
+    /// `len` bytes at a position in a source the host holds. What a read yields. `src` and `at` are the
+    /// host's own way of finding the bytes again, meaningful only to it and only during the call.
     Stored { src: i32, at: u32, len: usize },
     /// A `&str` of the guest's. What a UDF builds; `"text".into()` makes one.
     Guest(&'a str),
 }
 ```
 
-A string's bytes: in the record, or in the guest's own memory.
+The text of a string or of a GeoJson document: in the record, or in the guest's own memory.
+
+What `Value::string`, `Value::geojson` and the typed readers (`Record::string`) give. Its length is known at once; the
+text itself is copied out when asked for, into a buffer of the caller's (`as_str`), a
+`Str` (`to_inline`) or, with the `alloc` feature, a `String`
+(`to_string`).
+
+```rust
+if let Some(owner) = rec.string("owner")? {
+    let mut buf = [0u8; 64];
+    let owner = owner.as_str(&mut buf)?;        // Err(TooSmall(n)) past 64 bytes
+    log(Level::Info, owner);
+}
+```
 
 #### `Blob`
 
 ```rust
 pub enum Blob<'a> {
+    /// `len` bytes at a position in a source the host holds. What a read yields.
     Stored { src: i32, at: u32, len: usize },
+    /// A `&[u8]` of the guest's. What a UDF builds; `bytes.into()` makes a [`Value::Blob`] of one.
     Guest(&'a [u8]),
 }
 ```
 
-A blob's bytes: in the record, or in the guest's own memory.
+A blob's bytes (or an HLL's): in the record, or in the guest's own memory. The counterpart of `Text` for
+bytes, and read the same way: the length at once, the bytes copied out by `bytes`,
+`to_inline` or, with the `alloc` feature, `to_vec`.
 
 #### `Coll`
 
 ```rust
 pub enum Coll {
     /// In the record, or in the packed copy of an argument list: at a position in a source the host holds.
+    /// `len` is the number of elements of a list or of entries of a map.
     Stored { src: i32, at: u32, len: usize },
-    /// Built on the host by [`list`] / [`map`], identified by its handle.
+    /// Built on the host by [`list`] / [`map`], identified by its handle. It can be read like a stored one,
+    /// at the price of the host packing a copy of it first.
     Built(i32),
 }
 ```
 
-A list or map: `len` elements (or entries) somewhere the host can walk.
+A list or map: `len` elements (or entries) somewhere the host can walk. What `Value::list`,
+`Value::map` and the typed readers (`Record::list`, `Record::map`) give, and what a `Coll` parameter
+of a UDF receives.
 
-#### `Value<'a>::kind`
+A `Coll` is a small `Copy` handle; the elements stay on the host until they are asked for. Whether it is a
+list or a map is known to the `Value` it came out of, not to the `Coll`: `at` finds nothing
+(`Ok(None)`) on a map, and `get` nothing on a list.
+
+```rust
+let mut total = 0;
+
+for item in rec.bin("scores")?.list()?.iter() {
+    total += item?.int()?;
+}
+
+for entry in rec.bin("counts")?.map()?.entries() {
+    let (site, count) = entry?;
+    // ...
+}
+```
+
+#### `Value::kind`
 
 ```rust
 pub fn kind(&self) -> &'static str
 ```
 
-What kind of value this is, for messages.
+What kind of value this is, as an English phrase for a message: `"nil"`, `"a boolean"`, `"an
+integer"`, `"a double"`, `"a string"`, `"a blob"`, `"a geojson document"`, `"a list"`, `"a map"`, `"an
+HLL"` or `"an unsupported value"`. It is what the rejection of a mistyped argument says it got.
 
-#### `Value<'a>::hll`
+#### `Value::hll`
 
 ```rust
 pub fn hll(&self) -> Result<Blob<'a>, Error>
 ```
 
-The bytes of an HLL.
+The bytes of an HLL, or `Err(WrongType)` for any other kind, a plain blob included. They are the
+server's own encoding of the sketch: something to copy, compare or hand back, not to interpret. An HLL
+bin is written back by passing the `Value` itself to `Record::set`, never from these bytes.
 
-#### `Value<'a>::int`
+#### `Value::int`
 
 ```rust
 pub fn int(&self) -> Result<i64, Error>
@@ -140,7 +262,7 @@ pub fn int(&self) -> Result<i64, Error>
 
 The integer, or `Err(WrongType)` for any other kind. A double is not converted.
 
-#### `Value<'a>::double`
+#### `Value::double`
 
 ```rust
 pub fn double(&self) -> Result<f64, Error>
@@ -148,7 +270,7 @@ pub fn double(&self) -> Result<f64, Error>
 
 The double, or `Err(WrongType)` for any other kind. An integer is not converted.
 
-#### `Value<'a>::bool`
+#### `Value::bool`
 
 ```rust
 pub fn bool(&self) -> Result<bool, Error>
@@ -156,56 +278,81 @@ pub fn bool(&self) -> Result<bool, Error>
 
 The boolean, or `Err(WrongType)` for any other kind.
 
-#### `Value<'a>::string`
+#### `Value::string`
 
 ```rust
 pub fn string(&self) -> Result<Text<'a>, Error>
 ```
 
-The text of a string or a GeoJson document.
+The text of a string, or `Err(WrongType)` for any other kind, a GeoJson document included: read that
+with `geojson`. Nothing is copied yet: the `Text` knows the length, and
+`Text::as_str` or `Text::to_inline` fetches the bytes.
 
-#### `Value<'a>::blob`
+#### `Value::geojson`
+
+```rust
+pub fn geojson(&self) -> Result<Text<'a>, Error>
+```
+
+The text of a GeoJson document, or `Err(WrongType)` for any other kind, a string included.
+
+#### `Value::blob`
 
 ```rust
 pub fn blob(&self) -> Result<Blob<'a>, Error>
 ```
 
-The bytes of a blob, or `Err(WrongType)` for any other kind. An HLL is not a blob here: see
-[`Value::hll`].
+The bytes of a blob, or `Err(WrongType)` for any other kind. Strict: a string is not a blob, nor is
+a GeoJson document or an HLL (see `Value::hll`). `bytes` reads the raw bytes of
+any of them.
 
-#### `Value<'a>::list`
+#### `Value::bytes`
+
+```rust
+pub fn bytes(&self) -> Result<Blob<'a>, Error>
+```
+
+The raw bytes of a value that has bytes: a string's or GeoJson document's text, a blob's content, an
+HLL's encoding. The one reader that takes more than one kind, for code that copies, hashes or
+compares content without caring which of them it is; `Err(WrongType)` for anything else (nil, a
+boolean, a number, a list, a map). Nothing is copied yet: `Blob::bytes` or `Blob::to_inline`
+fetches them. A list's or map's packed bytes are `Coll::bytes`.
+
+#### `Value::list`
 
 ```rust
 pub fn list(&self) -> Result<Coll, Error>
 ```
 
-The list, as a [`Coll`] to iterate, or `Err(WrongType)` when this is not a list.
+The list, as a `Coll` to iterate, or `Err(WrongType)` when this is not a list.
 
-#### `Value<'a>::map`
+#### `Value::map`
 
 ```rust
 pub fn map(&self) -> Result<Coll, Error>
 ```
 
-The map, as a [`Coll`] to iterate or look up, or `Err(WrongType)` when this is not a map.
+The map, as a `Coll` to iterate or look up, or `Err(WrongType)` when this is not a map.
 
-#### `Value<'a>::as_str`
+#### `Value::as_str`
 
 ```rust
 pub fn as_str<'b>(&'b self, out: &'b mut [u8]) -> Result<&'b str, Error>
 ```
 
-A string's or GeoJson document's text, into a buffer you own. See [`Text::as_str`].
+A string's or GeoJson document's text, copied into a buffer you own, in one step. `out` must hold the
+whole text: a shorter buffer is `Err(TooSmall(n))` with the `n` bytes needed, and nothing is
+truncated. `Err(WrongType)` for any other kind. The `&str` borrows `out`. See `Text::as_str`.
 
-#### `Value<'a>::is_nil`
+#### `Value::is_nil`
 
 ```rust
 pub fn is_nil(&self) -> bool
 ```
 
-Whether this is [`Value::Nil`].
+Whether this is `Value::Nil`.
 
-#### `Value<'a>::is_int`
+#### `Value::is_int`
 
 ```rust
 pub fn is_int(&self) -> bool
@@ -213,7 +360,7 @@ pub fn is_int(&self) -> bool
 
 Whether this is an integer.
 
-#### `Value<'a>::is_double`
+#### `Value::is_double`
 
 ```rust
 pub fn is_double(&self) -> bool
@@ -221,7 +368,7 @@ pub fn is_double(&self) -> bool
 
 Whether this is a double.
 
-#### `Value<'a>::is_bool`
+#### `Value::is_bool`
 
 ```rust
 pub fn is_bool(&self) -> bool
@@ -229,7 +376,7 @@ pub fn is_bool(&self) -> bool
 
 Whether this is a boolean.
 
-#### `Value<'a>::is_string`
+#### `Value::is_string`
 
 ```rust
 pub fn is_string(&self) -> bool
@@ -237,7 +384,7 @@ pub fn is_string(&self) -> bool
 
 Whether this is a string. A GeoJson document is not one, though it reads as text.
 
-#### `Value<'a>::is_blob`
+#### `Value::is_blob`
 
 ```rust
 pub fn is_blob(&self) -> bool
@@ -245,7 +392,23 @@ pub fn is_blob(&self) -> bool
 
 Whether this is a blob. An HLL is not one.
 
-#### `Value<'a>::is_list`
+#### `Value::is_geojson`
+
+```rust
+pub fn is_geojson(&self) -> bool
+```
+
+Whether this is a GeoJson document. A string is not one.
+
+#### `Value::is_hll`
+
+```rust
+pub fn is_hll(&self) -> bool
+```
+
+Whether this is an HLL. A blob is not one.
+
+#### `Value::is_list`
 
 ```rust
 pub fn is_list(&self) -> bool
@@ -253,7 +416,7 @@ pub fn is_list(&self) -> bool
 
 Whether this is a list.
 
-#### `Value<'a>::is_map`
+#### `Value::is_map`
 
 ```rust
 pub fn is_map(&self) -> bool
@@ -261,35 +424,48 @@ pub fn is_map(&self) -> bool
 
 Whether this is a map.
 
-#### `Value<'a>::is_stored`
+#### `Value::is_stored`
 
 ```rust
 pub fn is_stored(&self) -> bool
 ```
 
-Whether this is a string, blob, GeoJson document, HLL, list or map the host holds, as opposed to
-a scalar or something the guest built.
+Whether this is a string, blob, GeoJson document, HLL, list or map the host holds - read from the
+record, an argument or a collection - as opposed to a scalar or something the guest built. Only such a
+value can be given to `stored_bytes` and `cmp_stored`.
 
-#### `Value<'_>::stored_bytes`
+#### `Value::stored_bytes`
 
 ```rust
 pub fn stored_bytes<'b>(&self, buf: &'b mut [u8]) -> Result<&'b [u8], Error>
 ```
 
-The value's bytes as the server stores them - its msgpack, header included - into `buf`, for a
-value read from the record (a string, blob, list or map). A short buffer reports the size needed.
-This is the encoding a convergent merge compares when nothing else tells two candidates apart.
+The value's bytes as the host holds them, copied into `buf`, for a value read from the record: a
+string, blob, GeoJson document, HLL, list or map.
 
-#### `Value<'_>::cmp_stored`
+A list or map, and any value that is an element of one, comes out as its msgpack, header included,
+exactly as the server stores it. A string, blob or HLL that is a bin of its own comes out as its
+content alone. Either way it is the encoding a convergent merge compares when nothing else tells two
+candidates apart.
+
+`Err(TooSmall(n))` when `buf` is shorter than the `n` bytes needed; `Err(WrongType)` for a scalar or a
+value the guest built (`is_stored` says which in advance).
+
+#### `Value::cmp_stored`
 
 ```rust
 pub fn cmp_stored(&self, other: &Value<'_>) -> Result<core::cmp::Ordering, Error>
 ```
 
-Compare two stored values byte by byte, as `memcmp` would on their stored encodings: the first byte
-that differs decides, a shorter prefix comes first. Neither value is copied into the guest. Equal
-content built the same way encodes the same, since the server stores lists in order and the maps
-a UDF builds key-ordered, so this is the last tie-break of a deterministic merge.
+Compare two stored values byte by byte, as `memcmp` would on the bytes
+`stored_bytes` gives: the first byte that differs decides, a shorter prefix
+comes first. Neither value is copied into the guest, so it works on values of any size. Equal content
+built the same way encodes the same, since the server stores lists in order and the maps a UDF builds
+key-ordered, so this is the last tie-break of a deterministic merge. It is an order on encodings, not
+on meaning: do not read "greater" as numerically or alphabetically greater.
+
+`Err(WrongType)` when either value is a scalar or guest-built, or the host cannot find the bytes of one
+(a value that is no longer valid): what cannot be compared is an error, never an ordering.
 
 #### `impl From<i64> for Value<'_>`
 
@@ -297,7 +473,7 @@ a UDF builds key-ordered, so this is the last tie-break of a deterministic merge
 impl From<i64> for Value<'_>
 ```
 
-An integer as a value: [`Value::Int`].
+An integer as a value: `Value::Int`.
 
 #### `impl From<f64> for Value<'_>`
 
@@ -305,7 +481,7 @@ An integer as a value: [`Value::Int`].
 impl From<f64> for Value<'_>
 ```
 
-A double as a value: [`Value::Double`].
+A double as a value: `Value::Double`.
 
 #### `impl From<bool> for Value<'_>`
 
@@ -313,17 +489,43 @@ A double as a value: [`Value::Double`].
 impl From<bool> for Value<'_>
 ```
 
-A boolean as a value: [`Value::Bool`].
+A boolean as a value: `Value::Bool`.
 
-#### `Text<'_>::len`
+#### `impl From<&'a str> for Value<'a>`
+
+```rust
+impl<'a> From<&'a str> for Value<'a>
+```
+
+A `&str` as a value: a `Value::String` that borrows the text. This is what lets `rec.set("name",
+"alice")` and `list.push("alice")` take a string directly.
+
+#### `impl From<&'a [u8]> for Value<'a>`
+
+```rust
+impl<'a> From<&'a [u8]> for Value<'a>
+```
+
+A `&[u8]` as a value: a `Value::Blob` that borrows the bytes.
+
+#### `impl From<&'a str> for Text<'a>`
+
+```rust
+impl<'a> From<&'a str> for Text<'a>
+```
+
+A `&str` as a `Text::Guest`, for building a `Value::GeoJson` from text of the guest's.
+
+#### `Text::len`
 
 ```rust
 pub fn len(&self) -> usize
 ```
 
-How many bytes the text has.
+How many bytes the text has - bytes, not characters. Known without fetching the text, so it is the way
+to size a buffer or reject an over-long string before copying anything.
 
-#### `Text<'_>::is_empty`
+#### `Text::is_empty`
 
 ```rust
 pub fn is_empty(&self) -> bool
@@ -331,32 +533,38 @@ pub fn is_empty(&self) -> bool
 
 Whether the text has no bytes.
 
-#### `Text<'_>::as_str`
+#### `Text::as_str`
 
 ```rust
 pub fn as_str<'b>(&'b self, out: &'b mut [u8]) -> Result<&'b str, Error>
 ```
 
-The text, into a buffer you own. A guest string comes back as itself, nothing copied; a stored one is
-fetched in one import call. `Err(TooSmall(n))` says to try again with `n` bytes.
+The text, into a buffer you own. A guest string comes back as itself, nothing copied and `out`
+untouched; a stored one is copied into `out` in one import call, and the `&str` returned borrows
+`out`.
 
-#### `Text<'_>::bytes`
+`out` must hold all of it: `Err(TooSmall(n))` says to try again with `n` bytes (`len`
+tells in advance), and nothing is truncated. `Err(Malformed)` when the stored bytes are not UTF-8.
+
+#### `Text::bytes`
 
 ```rust
 pub fn bytes<'b>(&'b self, out: &'b mut [u8]) -> Result<&'b [u8], Error>
 ```
 
-The text's bytes, without the UTF-8 check.
+The text's bytes, without the UTF-8 check: `as_str` for a caller that compares or
+copies bytes and does not need a `str`. The same buffer rules: `Err(TooSmall(n))` when `out` is
+shorter than the text.
 
-#### `Blob<'_>::len`
+#### `Blob::len`
 
 ```rust
 pub fn len(&self) -> usize
 ```
 
-How many bytes the blob has.
+How many bytes the blob has, known without fetching them.
 
-#### `Blob<'_>::is_empty`
+#### `Blob::is_empty`
 
 ```rust
 pub fn is_empty(&self) -> bool
@@ -364,13 +572,15 @@ pub fn is_empty(&self) -> bool
 
 Whether the blob has no bytes.
 
-#### `Blob<'_>::bytes`
+#### `Blob::bytes`
 
 ```rust
 pub fn bytes<'b>(&'b self, out: &'b mut [u8]) -> Result<&'b [u8], Error>
 ```
 
-The bytes, into a buffer you own. See [`Text::as_str`].
+The bytes, into a buffer you own. A guest blob comes back as itself, nothing copied; a stored one is
+copied into `out` in one import call and the slice returned borrows `out`. `Err(TooSmall(n))` when
+`out` is shorter than the `n` bytes the blob has; nothing is truncated.
 
 #### `Str`
 
@@ -378,30 +588,45 @@ The bytes, into a buffer you own. See [`Text::as_str`].
 pub struct Str<const N: usize>
 ```
 
-A string in a buffer of its own, `N` bytes at most. What a UDF declares when it wants text to keep -
-an argument, a bin's value - without an allocator; derefs to `str`.
+A string in a buffer of its own, `N` bytes at most. What a UDF declares when it wants text to keep - an
+argument, a bin's value - without an allocator; derefs to `str`. It is `Copy` and lives on the guest's
+stack, `N` bytes plus a length, so choose `N` for the data rather than generously.
 
-As a parameter type, `N` is the longest argument the UDF accepts: a longer one is rejected before the
-body runs, from its reported length, without a copy. `&str` is the same with a capacity of 256; with the
+As a parameter type, `N` is the longest argument the UDF accepts: a longer one is rejected before the body
+runs, from its reported length, without a copy. `&str` is the same with a capacity of 256; with the
 `alloc` feature, `String` takes any length.
 
-#### `CAPACITY`
+```rust
+export! {
+    fn rename(rec: &mut Record, name: Str<32>) -> Result<Value, Error> {
+        let old: Option<Str<32>> = rec.string("name")?.map(|t| t.to_inline()).transpose()?;
+
+        rec.set("name", &name)?;
+        rec.save()?;
+
+        Ok(Value::Bool(old.is_some_and(|old| old != name)))
+    }
+}
+```
+
+#### `Str::CAPACITY`
 
 ```rust
 pub const CAPACITY: usize = N
 ```
 
-The most bytes this holds.
+The most bytes a `Str<N>` holds: `N`.
 
-#### `Str<N>::new`
+#### `Str::new`
 
 ```rust
 pub fn new(text: &str) -> Result<Self, Error>
 ```
 
-Copy a string in. `Err(TooSmall(len))` when it does not fit.
+Copy a string in. `Err(TooSmall(len))` when it does not fit, `len` being the string's length in bytes;
+nothing is truncated.
 
-#### `Str<N>::as_str`
+#### `Str::as_str`
 
 ```rust
 pub fn as_str(&self) -> &str
@@ -415,7 +640,7 @@ The string held: its own length, not the capacity.
 impl<const N: usize> core::ops::Deref for Str<N>
 ```
 
-Derefs to `str`, so every `&str` method works on a [`Str`].
+Derefs to `str`, so every `&str` method works on a `Str`.
 
 #### `impl AsRef<str> for Str<N>`
 
@@ -431,7 +656,7 @@ The string held, for anything generic over `AsRef<str>`.
 impl<const N: usize> PartialEq for Str<N>
 ```
 
-Two [`Str`]s are equal when the strings they hold are.
+Two `Str`s are equal when the strings they hold are.
 
 #### `impl PartialEq<str> for Str<N>`
 
@@ -465,31 +690,42 @@ impl<const N: usize> core::fmt::Display for Str<N>
 
 Writes the string held, as it is.
 
+#### `impl From<&'a Str<N>> for Value<'a>`
+
+```rust
+impl<'a, const N: usize> From<&'a Str<N>> for Value<'a>
+```
+
+A `Str` by reference as a value: a `Value::String` that borrows its text, so `rec.set("name", &name)`
+works.
+
 #### `Bytes`
 
 ```rust
 pub struct Bytes<const N: usize>
 ```
 
-Bytes in a buffer of their own, `N` at most: [`Str`] for a blob. Derefs to `[u8]`.
+Bytes in a buffer of their own, `N` at most: `Str` for a blob. Derefs to `[u8]`. As a parameter type it
+takes a blob argument of up to `N` bytes and rejects a longer one before the body runs.
 
-#### `CAPACITY`
+#### `Bytes::CAPACITY`
 
 ```rust
 pub const CAPACITY: usize = N
 ```
 
-The most bytes this holds.
+The most bytes a `Bytes<N>` holds: `N`.
 
-#### `Bytes<N>::new`
+#### `Bytes::new`
 
 ```rust
 pub fn new(bytes: &[u8]) -> Result<Self, Error>
 ```
 
-Copy bytes in. `Err(TooSmall(len))` when they do not fit.
+Copy bytes in. `Err(TooSmall(len))` when they do not fit, `len` being how many there are; nothing is
+truncated.
 
-#### `Bytes<N>::as_bytes`
+#### `Bytes::as_bytes`
 
 ```rust
 pub fn as_bytes(&self) -> &[u8]
@@ -503,7 +739,7 @@ The bytes held: their own length, not the capacity.
 impl<const N: usize> core::ops::Deref for Bytes<N>
 ```
 
-Derefs to `[u8]`, so every slice method works on a [`Bytes`].
+Derefs to `[u8]`, so every slice method works on a `Bytes`.
 
 #### `impl AsRef<[u8]> for Bytes<N>`
 
@@ -519,7 +755,7 @@ The bytes held, for anything generic over `AsRef<[u8]>`.
 impl<const N: usize> PartialEq for Bytes<N>
 ```
 
-Two [`Bytes`] are equal when the bytes they hold are.
+Two `Bytes` are equal when the bytes they hold are.
 
 #### `impl PartialEq<[u8]> for Bytes<N>`
 
@@ -537,38 +773,51 @@ impl<const N: usize> core::fmt::Debug for Bytes<N>
 
 Formats as the byte slice does.
 
-#### `Text<'_>::to_inline`
+#### `impl From<&'a Bytes<N>> for Value<'a>`
+
+```rust
+impl<'a, const N: usize> From<&'a Bytes<N>> for Value<'a>
+```
+
+A `Bytes` by reference as a value: a `Value::Blob` that borrows its bytes.
+
+#### `Text::to_inline`
 
 ```rust
 pub fn to_inline<const N: usize>(self) -> Result<Str<N>, Error>
 ```
 
-The text in a [`Str`] of its own, in one import call. `Err(TooSmall(len))` when it is longer than `N`,
-known before anything is copied.
+The text in a `Str` of its own, in one import call: the way to keep a string past the buffer it
+would otherwise borrow. `N` usually comes from the type it is assigned to: `let name: Str<32> =
+text.to_inline()?`. `Err(TooSmall(len))` when the text is longer than `N`, known before anything is
+copied; `Err(Malformed)` when stored bytes are not UTF-8.
 
-#### `Text<'_>::to_string`
+#### `Text::to_string`
 
 ```rust
 pub fn to_string(self) -> Result<alloc::string::String, Error>
 ```
 
-The text as a `String` of any length, in one import call. Needs the `alloc` feature.
+The text as a `String` of any length, in one import call and one allocation. Needs the `alloc`
+feature. `Err(Malformed)` when stored bytes are not UTF-8.
 
-#### `Blob<'_>::to_inline`
+#### `Blob::to_inline`
 
 ```rust
 pub fn to_inline<const N: usize>(self) -> Result<Bytes<N>, Error>
 ```
 
-The bytes in a [`Bytes`] of their own. See [`Text::to_inline`].
+The bytes in a `Bytes` of their own, in one import call. `Err(TooSmall(len))` when there are more
+than `N`, known before anything is copied. See `Text::to_inline`.
 
-#### `Blob<'_>::to_vec`
+#### `Blob::to_vec`
 
 ```rust
 pub fn to_vec(self) -> Result<alloc::vec::Vec<u8>, Error>
 ```
 
-The bytes as a `Vec<u8>` of any length. Needs the `alloc` feature.
+The bytes as a `Vec<u8>` of any length, in one import call and one allocation. Needs the `alloc`
+feature.
 
 #### `Coll::len`
 
@@ -576,7 +825,9 @@ The bytes as a `Vec<u8>` of any length. Needs the `alloc` feature.
 pub fn len(&self) -> usize
 ```
 
-How many elements a list has, or entries a map has.
+How many elements a list has, or entries a map has (a map of three keys is 3, though iterating it
+yields six values). Known at once for a stored collection; a built one is asked on the host each time,
+so it counts what has been added so far.
 
 #### `Coll::is_empty`
 
@@ -592,14 +843,28 @@ Whether a list has no elements, or a map no entries.
 pub fn iter(&self) -> Iter
 ```
 
-Walk the collection: every element of a list, or every key and value of a map, alternately.
+Walk the collection: every element of a list in order, or every key and value of a map, alternately
+(use `entries` to get a map's as pairs).
 
 The import calls are hidden. The iterator fetches 128 values per call into a window on the guest's
-stack, so a ten-thousand-element list is 79 imports, not ten thousand. Each item is a
-`Result<Value, Error>`: a malformed collection surfaces as an `Err` item rather than as a quiet end.
+stack (2 KB), so a ten-thousand-element list is 79 imports, not ten thousand. Each item is a
+`Result<Value, Error>`: a malformed collection surfaces as an `Err` item rather than as a quiet end,
+and the iterator ends after it.
 
-A nested list or map comes out as a [`Value::List`] / [`Value::Map`] that iterates the same way, and
+A nested list or map comes out as a `Value::List` / `Value::Map` that iterates the same way, and
 the walk continues after it.
+
+An iterator holds one of the call's 256 host slots until it is dropped. When none is left, or the
+collection is no longer valid (see `Value`), the iterator yields one `Err(Refused)` and ends. A
+built collection is walked through a packed copy of it, so finish building it before iterating it.
+
+```rust
+let mut longest = 0;
+
+for item in tags.iter() {
+    longest = longest.max(item?.string()?.len());
+}
+```
 
 #### `Coll::bytes`
 
@@ -607,7 +872,9 @@ the walk continues after it.
 pub fn bytes<'b>(&self, buf: &'b mut [u8]) -> Result<&'b [u8], Error>
 ```
 
-The collection's bytes as stored, header included. See [`Value::stored_bytes`].
+The collection's bytes as stored - its msgpack, header included - copied into `buf`.
+`Err(TooSmall(n))` when `buf` is shorter than the `n` bytes needed. A built collection is packed
+first, and `Err(Refused)` when the host cannot. See `Value::stored_bytes`.
 
 #### `Coll::cmp_bytes`
 
@@ -615,7 +882,10 @@ The collection's bytes as stored, header included. See [`Value::stored_bytes`].
 pub fn cmp_bytes(&self, other: &Coll) -> Result<core::cmp::Ordering, Error>
 ```
 
-Compare two collections' stored bytes. See [`Value::cmp_stored`].
+Compare two collections' stored bytes, as `memcmp` would, without copying either into the guest: the
+deterministic tie-break between two candidates that are otherwise equal. An order on encodings, not on
+content. See `Value::cmp_stored`. `Err(WrongType)` when the host cannot find the bytes of one of
+them, `Err(Refused)` when a built collection cannot be packed: never an ordering.
 
 #### `Coll::entries`
 
@@ -623,25 +893,60 @@ Compare two collections' stored bytes. See [`Value::cmp_stored`].
 pub fn entries(&self) -> Entries
 ```
 
-The map's entries, paired.
+A map's entries as `(key, value)` pairs, 64 per import call. Each item is a `Result<(Value, Value),
+Error>`. A stored map comes out in the order it is stored; a map built with `map` is ordered by key.
+
+For a map only: on a list it would pair up neighbouring elements, and end with `Err(Malformed)` when
+their number is odd.
+
+```rust
+for entry in rec.bin("counts")?.map()?.entries() {
+    let (site, count) = entry?;
+    let mut buf = [0u8; 32];
+
+    total += count.int()?;
+    log(Level::Debug, site.as_str(&mut buf)?);
+}
+```
 
 #### `Coll::get`
 
 ```rust
-pub fn get(&self, key: impl MapKey) -> Result<Value<'static>, Error>
+pub fn get(&self, key: impl MapKey) -> Result<Option<Value<'static>>, Error>
 ```
 
-The value under a key of a map, a string or an integer, in one import call. `Err(Absent)` for no
-such key.
+The value under a key of a map: `coll.get("name")` for a string key, `coll.get(7)` for an integer one.
+A string key matches only a string key with the same bytes, an integer only an integer.
+
+`Ok(None)` for no such key: not being there is not an error. A key whose value is nil is
+`Ok(Some(Value::Nil))`. A list has no keys, so on a list every key is `Ok(None)` too. An `Err` means
+the map could not be read at all.
+
+```rust
+let limit = match settings.get("limit")? {
+    Some(v) => v.int()?,                        // Err(WrongType) when it is not an integer
+    None => 100,
+};
+```
+
+The host walks the stored entries in place, so the cost grows with the map but nothing is copied into
+the guest; a stored map takes one import call. A built map is read through a packed copy of it, which
+costs the whole map and is not promised to show entries inserted after the map was first read: to
+ask a map under construction whether it has a key use `Map::contains_key`.
 
 #### `Coll::at`
 
 ```rust
-pub fn at(&self, index: usize) -> Result<Value<'static>, Error>
+pub fn at(&self, index: usize) -> Result<Option<Value<'static>>, Error>
 ```
 
-The element at `index` of a list, in one import call: the host steps over the elements before it
-where they are stored, so nothing before it is fetched. `Err(Absent)` past the end.
+The element at `index` of a list, counting from 0, in one import call: the host steps over the
+elements before it where they are stored, so nothing before it is fetched.
+
+`Ok(None)` past the end: not being there is not an error. An element that is nil is
+`Ok(Some(Value::Nil))`. A map has no positions, so on a map every index is `Ok(None)` too. For more
+than a few elements, `iter` is cheaper than indexing each: every `at` starts again from
+the front.
 
 #### `Iter`
 
@@ -649,7 +954,8 @@ where they are stored, so nothing before it is fetched. `Err(Absent)` past the e
 pub struct Iter
 ```
 
-The values of a collection, 128 per import call. See [`Coll::iter`].
+The values of a collection, 128 per import call. Made by `Coll::iter`; an `Iterator` of `Result<Value,
+Error>`. About 2 KB on the guest's stack, and one of the call's 256 host slots while it lives.
 
 #### `impl Iterator for Iter`
 
@@ -673,7 +979,8 @@ Gives the iterator's cursor back to the host when the iterator is dropped.
 pub struct Entries
 ```
 
-A map's entries, key and value together. See [`Coll::entries`].
+A map's entries, key and value together. Made by `Coll::entries`; an `Iterator` of `Result<(Value,
+Value), Error>`.
 
 #### `impl Iterator for Entries`
 
@@ -690,12 +997,36 @@ the walk underneath is passed on as it is.
 pub trait ReadRecord
 ```
 
-What any record can be asked: the one a record UDF is called on ([`Record`]) and either side of an
-event ([`EventRecord`]). A helper that takes `&impl ReadRecord` reads a bin the same way in both.
+What any record can be asked: the one a record UDF is called on (`Record`) and either side of an event
+(`EventRecord`). A helper that takes `&impl ReadRecord` reads a bin the same way in both.
 
-[`bin`](ReadRecord::bin) is the form for a bin that must be there, `Err(Absent)` when it is not. The
-typed forms are for a bin that may not be: `None` when it is absent or nil, `Err(WrongType)` when it
-holds another kind.
+Two methods are the record's own: `bin(name)`, a bin whatever it holds, and the metadata `generation()`
+and `last_update_time()`. The rest are provided from `bin`, and come in three forms:
+
+- `bin(name)` is for a bin that must be there: `Err(Absent)` when it is not.
+- `get(name)` and the typed readers `int`, `double`, `bool`, `string`, `blob`, `list`, `map` are for a bin
+  that may not be: `Ok(None)` when it is absent or nil, `Err(WrongType)` when it holds another kind. Nothing
+  is converted: `int` on a double bin is `Err(WrongType)`, and so are `string` on a GeoJson bin and `blob`
+  on a string bin. `bytes(name)` is the one reader that takes several kinds: the raw bytes of a string,
+  blob, GeoJson or HLL bin.
+- `int_or`, `double_or`, `bool_or` take the default to use when the bin is absent or nil, and are still
+  `Err(WrongType)` for a bin of another kind. `has(name)` says only whether the bin is there.
+
+A `name` is a bin name: 1 to 15 bytes. Any other name reads as an absent bin.
+
+```rust
+fn total(rec: &impl ReadRecord) -> Result<i64, Error> {
+    let balance = rec.bin("balance")?.int()?;      // must be there
+    let bonus = rec.int_or("bonus", 0)?;           // 0 when absent
+    let mut buf = [0u8; 64];
+
+    if let Some(owner) = rec.string("owner")? {    // None when absent
+        log(Level::Info, owner.as_str(&mut buf)?);
+    }
+
+    Ok(balance + bonus)
+}
+```
 
 #### `Record`
 
@@ -705,32 +1036,53 @@ pub struct Record
 
 The record a UDF was called on.
 
-A record UDF, and the per-record half of a stream UDF, takes it as its first parameter, before the
-call's arguments. It is not one of them: a client does not pass it and the function's signature export
-does not list it. A function that does not touch the record leaves the parameter out.
+A record UDF, and the per-record half of a stream UDF, takes it as its first parameter, before the call's
+arguments. It is not one of them: a client does not pass it and the function's signature export does not
+list it. A function that does not touch the record leaves the parameter out.
 
-```ignore
+```rust
 export! {
-fn withdraw(rec: &mut Record, amount: i64) -> Result<Value, Error> {
-let balance = rec.bin("balance")?.int()?;
+    fn withdraw(rec: &mut Record, amount: i64) -> Result<Value, Error> {
+        let balance = rec.bin("balance")?.int()?;
 
-rec.set("balance", balance - amount)?;
-rec.save()?;
+        rec.set("balance", balance - amount)?;
+        rec.save()?;
 
-Ok(Value::Int(balance - amount))
-}
+        Ok(Value::Int(balance - amount))
+    }
 
-fn balance(rec: &Record) -> Result<Value, Error> {
-rec.bin("balance")
-}
+    fn balance(rec: &Record) -> Result<Value, Error> {
+        rec.bin("balance")
+    }
 }
 ```
 
-`&Record` reads; `&mut Record` also writes. **A bin write is staged**: [`set`](Record::set) and
-[`remove`](Record::remove) change the record in hand, and nothing reaches the server's record until
-[`save`](Record::save). [`delete`](Record::delete) is the exception: it needs no save.
+`&Record` reads; `&mut Record` also writes. **A bin write is staged**: `set` and
+`remove` change the record in hand, and nothing reaches the server's record until
+`save`. `delete` is the exception: it needs no save. A read after a
+staged write sees the staged value, though `bin_count` does not count a staged bin
+until it is saved.
 
-The reading methods are also on [`ReadRecord`], which [`EventRecord`] implements too.
+**A call that fails writes nothing**, even what it had already saved: a `save` that succeeded, and a
+`set_ints` or `set_doubles`, are undone when the function then
+returns an `Err`.
+
+A UDF can be called on a key that has no record. There `exists` is false, every bin
+reads as absent, `generation`, `last_update_time`,
+`size` and `bin_count` are 0, and there is no TTL; reading creates nothing. A `save` with a
+bin staged creates the record. `set_ints`, `set_doubles` and `delete` are `Err(Refused)` and create
+nothing, and a `save` with no bin staged (only a `remove` or a
+`set_ttl`) creates nothing and fails the call with "key not found".
+
+Every `name` is a bin name: 1 to 15 bytes, with no zero byte. A read under any other name finds no bin
+(`Err(Absent)`, or `None`); a write under one is `Err(Malformed)`.
+
+The record is locked for the whole call, so nothing changes between a read and the save that follows it. A
+stream UDF's record is the query's and read-only: `stream!` accepts only `&Record` there, and every
+write, `set_ttl`, `save` and `delete` included, is `Err(Refused)`. An event handler has
+no `Record` at all; it is given `EventRecord`s.
+
+The reading methods are also on `ReadRecord`, which `EventRecord` implements too.
 
 #### `Record::current`
 
@@ -747,7 +1099,18 @@ pass it as the first parameter. Every one of these is the same record, so make o
 pub fn bin(&self, name: &str) -> Result<Value<'static>, Error>
 ```
 
-A bin, whatever it holds, in one import call. `Err(Absent)` when the record has no such bin.
+A bin, whatever it holds, in one import call. The form for a bin that must be there: `Err(Absent)`
+when the record has no such bin, when the record does not exist, or when `name` cannot be a bin name.
+It never returns `Value::Nil`, since a bin cannot hold nil.
+
+A scalar comes back whole. A string, blob, list or map comes back as its length and position, and is
+fetched or walked when asked (`Text::as_str`, `Coll::iter`); see `Value` for how long it stays
+valid. A bin staged by `set` earlier in the call reads as the staged value.
+
+```rust
+let balance = rec.bin("balance")?.int()?;
+let tags = rec.bin("tags")?.list()?;
+```
 
 #### `Record::get`
 
@@ -755,7 +1118,8 @@ A bin, whatever it holds, in one import call. `Err(Absent)` when the record has 
 pub fn get(&self, name: &str) -> Result<Option<Value<'static>>, Error>
 ```
 
-A bin that may be absent: `None` when it is absent or nil.
+A bin that may be absent: `Ok(None)` when the record has no such bin, `Ok(Some(value))` otherwise,
+whatever kind it holds. The untyped form of the typed readers below.
 
 #### `Record::has`
 
@@ -763,7 +1127,8 @@ A bin that may be absent: `None` when it is absent or nil.
 pub fn has(&self, name: &str) -> bool
 ```
 
-Whether the record has the bin.
+Whether the record has the bin. False for a name that cannot be a bin name, and for every name when
+the record does not exist. Costs the same one import call as reading the bin.
 
 #### `Record::int`
 
@@ -771,7 +1136,19 @@ Whether the record has the bin.
 pub fn int(&self, name: &str) -> Result<Option<i64>, Error>
 ```
 
-An integer bin, or `None` when the bin is absent or nil. A bin of another kind is `Err(WrongType)`.
+An integer bin, or `None` when the bin is absent. A bin of another kind is `Err(WrongType)`, a double
+included: nothing is converted.
+
+The typed readers - `int`, `double`, `bool`, `string`, `blob`, `list`, `map` - are the form for a bin
+that may not be there, and the `_or` forms take the default in the same call:
+
+```rust
+let visits = rec.int_or("visits", 0)?;
+
+if let Some(limit) = rec.int("limit")? {
+    // ...
+}
+```
 
 #### `Record::int_or`
 
@@ -779,8 +1156,8 @@ An integer bin, or `None` when the bin is absent or nil. A bin of another kind i
 pub fn int_or(&self, name: &str, default: i64) -> Result<i64, Error>
 ```
 
-An integer bin, or `default` when it is absent or nil. A bin of another kind is still
-`Err(WrongType)`.
+An integer bin, or `default` when it is absent. A bin of another kind is still `Err(WrongType)`: the
+default stands in for a missing bin, not for a wrong one.
 
 #### `Record::double_or`
 
@@ -788,7 +1165,8 @@ An integer bin, or `default` when it is absent or nil. A bin of another kind is 
 pub fn double_or(&self, name: &str, default: f64) -> Result<f64, Error>
 ```
 
-A double bin, or `default` when it is absent or nil.
+A double bin, or `default` when it is absent. A bin of another kind, an integer included, is still
+`Err(WrongType)`.
 
 #### `Record::bool_or`
 
@@ -796,7 +1174,7 @@ A double bin, or `default` when it is absent or nil.
 pub fn bool_or(&self, name: &str, default: bool) -> Result<bool, Error>
 ```
 
-A boolean bin, or `default` when it is absent or nil.
+A boolean bin, or `default` when it is absent. A bin of another kind is still `Err(WrongType)`.
 
 #### `Record::double`
 
@@ -804,7 +1182,8 @@ A boolean bin, or `default` when it is absent or nil.
 pub fn double(&self, name: &str) -> Result<Option<f64>, Error>
 ```
 
-A double bin, or `None` when absent or nil.
+A double bin, or `None` when the bin is absent. A bin of another kind is `Err(WrongType)`, an integer
+included: nothing is converted.
 
 #### `Record::bool`
 
@@ -812,7 +1191,7 @@ A double bin, or `None` when absent or nil.
 pub fn bool(&self, name: &str) -> Result<Option<bool>, Error>
 ```
 
-A boolean bin, or `None` when absent or nil.
+A boolean bin, or `None` when the bin is absent. A bin of another kind is `Err(WrongType)`.
 
 #### `Record::string`
 
@@ -820,7 +1199,9 @@ A boolean bin, or `None` when absent or nil.
 pub fn string(&self, name: &str) -> Result<Option<Text<'static>>, Error>
 ```
 
-A string bin's text, or `None` when absent or nil.
+A string bin's text, or `None` when the bin is absent. A bin of another kind is `Err(WrongType)`, a
+GeoJson bin included: read that with `rec.bin(name)?.geojson()`. The `Text` has the length; the
+text itself is fetched with `Text::as_str` (into a buffer) or `Text::to_inline` (into a `Str`).
 
 #### `Record::blob`
 
@@ -828,7 +1209,20 @@ A string bin's text, or `None` when absent or nil.
 pub fn blob(&self, name: &str) -> Result<Option<Blob<'static>>, Error>
 ```
 
-A blob bin's bytes, or `None` when absent or nil.
+A blob bin's bytes, or `None` when the bin is absent. Strict: a bin of another kind is
+`Err(WrongType)`, a string, GeoJson or HLL bin included (`bytes` reads the raw bytes
+of any of those, `rec.bin(name)?.hll()` an HLL as one). The bytes are fetched with `Blob::bytes` or
+`Blob::to_inline`.
+
+#### `Record::bytes`
+
+```rust
+pub fn bytes(&self, name: &str) -> Result<Option<Blob<'static>>, Error>
+```
+
+The raw bytes of a bin that has bytes - a string, blob, GeoJson or HLL bin - or `None` when the bin
+is absent. A bin of any other kind is `Err(WrongType)`. For code that copies, hashes or compares
+content whichever of them holds it; see `Value::bytes`.
 
 #### `Record::list`
 
@@ -836,7 +1230,8 @@ A blob bin's bytes, or `None` when absent or nil.
 pub fn list(&self, name: &str) -> Result<Option<Coll>, Error>
 ```
 
-A list bin, or `None` when absent or nil.
+A list bin as a `Coll` to iterate or index, or `None` when the bin is absent. A bin of another kind,
+a map included, is `Err(WrongType)`.
 
 #### `Record::map`
 
@@ -844,7 +1239,8 @@ A list bin, or `None` when absent or nil.
 pub fn map(&self, name: &str) -> Result<Option<Coll>, Error>
 ```
 
-A map bin, or `None` when absent or nil.
+A map bin as a `Coll` to iterate or look up by key, or `None` when the bin is absent. A bin of
+another kind, a list included, is `Err(WrongType)`.
 
 #### `Record::bin_count`
 
@@ -852,7 +1248,9 @@ A map bin, or `None` when absent or nil.
 pub fn bin_count(&self) -> i64
 ```
 
-How many bins the record has.
+How many bins the record has. It does not count a staged bin until it is saved: after a
+`set` of a new bin the count is what it was, though the bin itself reads as staged.
+Zero on a key with no record.
 
 #### `Record::set`
 
@@ -860,14 +1258,32 @@ How many bins the record has.
 pub fn set<'a>(&mut self, name: &str, value: impl Into<Value<'a>>) -> Result<(), Error>
 ```
 
-Write a value to a bin. **Staged until [`save`](Record::save).**
+Write a value to a bin, replacing what the bin held. **Staged until `save`**: a UDF
+that returns without saving has written nothing.
 
-A value read from the record is written back from its stored bytes without the guest decoding it,
-which is how a sub-document is copied from one bin to another. A built [`List`] / [`Map`] is handed
-over whole. A string or blob of the guest's is copied during the call, so it may be any `&str` - a
-literal, a buffer of the UDF's, a `String` - not only a `'static` one.
+```rust
+rec.set("visits", visits + 1)?;                 // an i64
+rec.set("name", "alice")?;                      // a &str
+rec.set("tags", list)?;                         // a built List or Map
+rec.set("backup", rec.bin("profile")?)?;        // a value read from the record
+rec.save()?;
+```
 
-Writing [`Value::Nil`] removes the bin, as [`remove`](Record::remove) does: a bin cannot hold nil.
+`value` is anything that converts to a `Value`: an `i64`, `f64`, `bool`, `&str`, `&[u8]`, a
+`&Str<N>` or `&Bytes<N>`, a `List` or `Map`, or a `Value`. A value read from the record is written
+back from its stored bytes without the guest decoding it, which is how a sub-document is copied from
+one bin to another. A built `List` / `Map` is handed over whole. A string or blob of the guest's
+is copied during the call, so it may be any `&str` - a literal, a buffer of the UDF's, a `String` -
+not only a `'static` one. A `&str` is written as a string: for a GeoJson bin use
+`set_geojson`.
+
+Writing `Value::Nil` removes the bin, as `remove` does: a bin cannot hold nil.
+
+`Err(Malformed)` when `name` cannot be a bin name (empty, longer than 15 bytes, or with a zero byte).
+`Err(Refused)` when the record is read-only (a stream UDF's), the value nests collections more than 64
+deep, or the call's budget on the host is spent. `Err(WrongType)` for `Value::Other`, an HLL made
+from guest bytes, and guest bytes written over a bin that holds an HLL; an HLL read from the record
+can be written back as the `Value` it came as.
 
 #### `Record::set_value`
 
@@ -875,7 +1291,8 @@ Writing [`Value::Nil`] removes the bin, as [`remove`](Record::remove) does: a bi
 pub fn set_value(&mut self, name: &str, value: &Value<'_>) -> Result<(), Error>
 ```
 
-[`set`](Record::set) for a value held by reference.
+`set` for a value held by reference, for a caller that has a `&Value` and wants to keep
+it. Staged, with the same rules and the same errors.
 
 #### `Record::set_blob`
 
@@ -883,8 +1300,9 @@ pub fn set_value(&mut self, name: &str, value: &Value<'_>) -> Result<(), Error>
 pub fn set_blob(&mut self, name: &str, value: &[u8]) -> Result<(), Error>
 ```
 
-Write bytes to a bin as a blob. Staged, like [`set`](Record::set), which does the same for a
-`&[u8]`; this form says the kind at the call.
+Write bytes to a bin as a blob. Staged, like `set`, which does the same for a `&[u8]`;
+this form says the kind at the call. The bytes are copied during the call. `Err(WrongType)` when the
+bin holds an HLL, which plain bytes would silently turn into a blob.
 
 #### `Record::set_geojson`
 
@@ -892,8 +1310,9 @@ Write bytes to a bin as a blob. Staged, like [`set`](Record::set), which does th
 pub fn set_geojson(&mut self, name: &str, value: &str) -> Result<(), Error>
 ```
 
-Write a GeoJson document to a bin from its text. Staged, like [`set`](Record::set). A document
-written with `set` from a `&str` would be a string, which no geospatial index reads.
+Write a GeoJson document to a bin from its text. Staged, like `set`. A document written
+with `set` from a `&str` would be a string, which no geospatial index reads. The text is not checked
+here: the server checks the document when it writes the record.
 
 #### `Record::remove`
 
@@ -901,7 +1320,9 @@ written with `set` from a `&str` would be a string, which no geospatial index re
 pub fn remove(&mut self, name: &str) -> Result<(), Error>
 ```
 
-Remove a bin. Staged, like [`set`](Record::set).
+Remove a bin. Staged, like `set`: the bin is gone from the server's record after
+`save`, and reads as absent for the rest of the call. The same as setting it to
+`Value::Nil`, with the same errors. Removing a bin that is not there is not an error.
 
 #### `Record::set_ints`
 
@@ -909,10 +1330,18 @@ Remove a bin. Staged, like [`set`](Record::set).
 pub fn set_ints(&mut self, name: &str, values: &[i64]) -> Result<(), Error>
 ```
 
-Write a slice of integers to a bin as a list, **without building a value per element**.
+Write a slice of integers to a bin as a list, **without building a value per element**: the fast way
+to store a numeric array computed in the guest.
 
 The host packs the slice straight into a LIST particle and applies it as one op, which takes effect
-immediately rather than being staged: [`save`](Record::save) is not needed.
+immediately rather than being staged: `save` is not needed. The list replaces whatever
+the bin held, in the slice's order; an empty slice writes an empty list. It is still part of the call:
+when the function then returns an `Err`, the write is undone.
+
+`Err(Malformed)` when `name` cannot be a bin name. `Err(Refused)` when the record is read-only (a
+stream UDF's), when the key has no record (nothing is created: a record is made by a `save` with a bin
+staged), or when the server rejects the write, after which values read from the record earlier are no
+longer valid (see `Value`).
 
 #### `Record::set_doubles`
 
@@ -920,7 +1349,9 @@ immediately rather than being staged: [`save`](Record::save) is not needed.
 pub fn set_doubles(&mut self, name: &str, values: &[f64]) -> Result<(), Error>
 ```
 
-The counterpart of [`set_ints`](Record::set_ints) for doubles.
+The counterpart of `set_ints` for doubles: the slice becomes a list of doubles in
+the bin, applied at once and not staged, with the same errors: `Err(Refused)` on a key with no record
+among them. Undone, like `set_ints`, when the call then fails.
 
 #### `Record::exists`
 
@@ -928,7 +1359,10 @@ The counterpart of [`set_ints`](Record::set_ints) for doubles.
 pub fn exists(&self) -> bool
 ```
 
-Whether the record exists. A UDF can be called on a key that has no record yet.
+Whether the record exists. A UDF can be called on a key that has no record yet, in which case this is
+false, every bin reads as absent, the metadata reads as 0 and `save` with a bin staged
+creates the record. Reading creates nothing. Still true after `delete` for the rest
+of the call.
 
 #### `Record::generation`
 
@@ -936,7 +1370,8 @@ Whether the record exists. A UDF can be called on a key that has no record yet.
 pub fn generation(&self) -> i64
 ```
 
-The record's modification count.
+The record's generation: the server's count of the writes the record has taken, which is what a
+client's generation check compares. Zero on a key with no record.
 
 #### `Record::ttl`
 
@@ -944,7 +1379,8 @@ The record's modification count.
 pub fn ttl(&self) -> Option<u32>
 ```
 
-The record's remaining lifetime in seconds, or `None` when it never expires.
+The record's remaining lifetime in seconds, counted from now, or `None` when it never expires. Also
+`None` on a key with no record, which has no TTL.
 
 #### `Record::set_ttl`
 
@@ -952,8 +1388,17 @@ The record's remaining lifetime in seconds, or `None` when it never expires.
 pub fn set_ttl(&mut self, seconds: u32) -> Result<(), Error>
 ```
 
-Set the record's time to live, in seconds. It is the TTL of the write, so it takes effect when
-[`save`](Record::save) writes the record.
+Set the record's time to live, in seconds from the write. It is the TTL of the write, so it takes
+effect when `save` writes the record and does nothing without one.
+
+The value has a client write's meaning: `0` asks for the namespace's default TTL, `u32::MAX` (a
+client's `-1`) makes the record never expire, and anything else is that many seconds. The namespace's
+own rules on TTLs apply when the record is saved.
+
+A TTL is not a bin: on a key with no record, a `save` with only a TTL set creates nothing and fails
+the call with "key not found".
+
+`Err(Refused)` on a record that cannot be written: a stream UDF's.
 
 #### `Record::last_update_time`
 
@@ -961,9 +1406,9 @@ Set the record's time to live, in seconds. It is the TTL of the write, so it tak
 pub fn last_update_time(&self) -> i64
 ```
 
-When the record was last written, in milliseconds since the Aerospike epoch (2010-01-01 UTC), which
-is how the server stores it. It is not on the same scale as [`now`], which counts from the Unix
-epoch.
+When the record was last written, in milliseconds since the Citrusleaf epoch, 2010-01-01T00:00:00Z,
+which is how the server stores it: Unix milliseconds minus 1 262 304 000 000. It is not on the same
+scale as `now`, which counts from the Unix epoch. Zero on a key with no record.
 
 #### `Record::size`
 
@@ -971,7 +1416,8 @@ epoch.
 pub fn size(&self) -> i64
 ```
 
-The record's stored size, in bytes.
+The record's size as the server stores it, in bytes. It is the stored record's, so writes staged in
+this call are not counted. Zero on a key with no record.
 
 #### `Record::set_name`
 
@@ -979,7 +1425,9 @@ The record's stored size, in bytes.
 pub fn set_name<'b>(&self, out: &'b mut [u8]) -> Result<&'b str, Error>
 ```
 
-The record's set name, into a buffer you own.
+The name of the set the record is in, copied into a buffer you own; the `&str` borrows `out`. A set
+name is at most 63 bytes, so a 64-byte buffer always fits. `Err(Absent)` when the record is in no set,
+`Err(TooSmall(n))` when `out` is shorter than the name.
 
 #### `Record::key`
 
@@ -987,8 +1435,15 @@ The record's set name, into a buffer you own.
 pub fn key<'b>(&self, out: &'b mut [u8]) -> Result<Value<'b>, Error>
 ```
 
-The record's user key, when it was written with `send_key`: an integer, or a string or blob whose
-bytes go into `out`. `Err(Absent)` when the record carries none.
+The record's user key, when the record was written with the client's `send_key`: otherwise the server
+never stored it, and it cannot be recovered from the digest.
+
+An integer key comes back as `Value::Int` and `out` is not used. A string or blob key is copied into
+`out` and comes back borrowing it: as a `Value::String` when the bytes are valid UTF-8, as a
+`Value::Blob` when they are not. The key's bytes decide, not the type the client sent, so a blob key
+that happens to be valid UTF-8 arrives as a string.
+
+`Err(Absent)` when the record carries no key; `Err(TooSmall(n))` when `out` is shorter than the key.
 
 #### `Record::digest`
 
@@ -996,9 +1451,9 @@ bytes go into `out`. `Err(Absent)` when the record carries none.
 pub fn digest<'b>(&self, out: &'b mut [u8]) -> Result<&'b [u8], Error>
 ```
 
-The record's digest, into a buffer you own: 20 bytes, always present. What identifies a record a
-UDF wants to point at rather than ship - a top-k hit, say - since a client can fetch it by digest
-afterwards.
+The record's digest, copied into a buffer you own: 20 bytes, always present. What identifies a record
+a UDF wants to point at rather than ship - a top-k hit, say - since a client can fetch it by digest
+afterwards. `Err(TooSmall(20))` when `out` is shorter than 20 bytes.
 
 #### `Record::save`
 
@@ -1009,12 +1464,22 @@ pub fn save(&mut self) -> Result<(), Error>
 Write the staged bins to the server's record, creating the record when it does not exist yet.
 
 This is the one way a staged write takes effect: a UDF that returns without saving has changed
-nothing. A UDF that must not overwrite checks [`exists`](Record::exists) first; the record is
-locked for the whole call, so nothing can come between the check and the save.
+nothing. A UDF that must not overwrite checks `exists` first; the record is locked
+for the whole call, so nothing can come between the check and the save.
 
-With nothing staged it is still a write: the server treats it as a touch, and the record's
-generation and last-update time move. On a key with no record it makes nothing, since a record
-has to have a bin, and the call is answered "key not found".
+With nothing staged it is still a write: the server treats it as a touch, and the record's generation
+and last-update time move. On a key with no record, a save with a bin staged creates the record; one
+with no bin staged (nothing at all, or only a `remove` or a
+`set_ttl`) makes nothing, since a record has to have a bin, and the call fails with
+"key not found".
+
+A save that succeeded is still part of the call: when the function then returns an `Err`, what it
+saved is undone, and the call has written nothing.
+
+`Err(Refused)` when the server does not take the write: the record is a stream UDF's, which is
+read-only, or the write breaks one of the server's own rules (a malformed GeoJson document, for one).
+After a refused save, a list, map or blob read from the record earlier in the call is no longer valid
+(see `Value`); the usual answer is to return the error.
 
 #### `Record::delete`
 
@@ -1022,10 +1487,16 @@ has to have a bin, and the call is answered "key not found".
 pub fn delete(&mut self) -> Result<(), Error>
 ```
 
-Delete the record. Not staged: it needs no [`save`](Record::save) after it, and whatever was
-staged goes with the record. The server carries it out when the call returns, so for the rest of
-the call [`exists`](Record::exists) answers as it did before. `Err(Refused)` when the server
-could not do it.
+Delete the record. Not staged: it needs no `save` after it, and whatever was staged
+goes with the record. The server carries it out when the call returns, so for the rest of the call
+`exists` answers as it did before. `Err(Refused)` when the server could not do it,
+when the key has no record to delete (nothing is created), or the record is a stream UDF's.
+
+```rust
+if rec.int_or("balance", 0)? == 0 {
+    rec.delete()?;
+}
+```
 
 #### `impl ReadRecord for Record`
 
@@ -1033,13 +1504,31 @@ could not do it.
 impl ReadRecord for Record
 ```
 
+Reads the record of the call. `bin`, `generation` and `last_update_time` are `Record`'s own methods of
+those names, and the typed readers come from the trait, so a helper written against `&impl ReadRecord`
+takes a `&Record` and behaves exactly as the inherent methods do.
+
 #### `list`
 
 ```rust
 pub fn list(capacity: usize) -> Result<List, Error>
 ```
 
-Start a list. It lives on the host; hand it to [`Record::set`], return it, or nest it in another.
+Start a list. It lives on the host; hand it to `Record::set`, return it, or nest it in another.
+
+`capacity` is a hint of how many elements to make room for, not a limit: the list grows as needed, and `0`
+is fine. The list lasts until the call ends.
+
+```rust
+let recent = as_udf::list(3)?;
+
+recent.push(42)?.push("text")?.push(rec.bin("last")?)?;
+rec.set("recent", recent)?;
+rec.save()?;
+```
+
+`Err(Refused)` when the host cannot make one: the call may hold 256 host values at a time, within a memory
+budget.
 
 #### `map`
 
@@ -1047,7 +1536,22 @@ Start a list. It lives on the host; hand it to [`Record::set`], return it, or ne
 pub fn map(capacity: usize) -> Result<Map, Error>
 ```
 
-Start a map. Entries come out ordered by key, whatever order they go in.
+Start a map. Entries come out ordered by key, whatever order they go in: that is how it is stored,
+returned and iterated.
+
+`capacity` is a hint of how many entries to make room for, not a limit. The map lives on the host until
+the call ends; hand it to `Record::set`, return it, or nest it in another.
+
+```rust
+let summary = as_udf::map(2)?;
+
+summary.insert("balance", balance)?.insert("owner", "alice")?;
+
+Ok(summary.into())
+```
+
+`Err(Refused)` when the host cannot make one: the call may hold 256 host values at a time, within a memory
+budget.
 
 #### `List`
 
@@ -1055,7 +1559,11 @@ Start a map. Entries come out ordered by key, whatever order they go in.
 pub struct List
 ```
 
-A list under construction.
+A list under construction, made by `list`. It lives on the host; this is its handle, which is `Copy`, so
+every copy is the same list. Elements are added with `push` and `extend`
+through `&self`, and the list is finished by handing it over: to `Record::set`, to another collection,
+or as the UDF's result (`Ok(list.into())`). It can still be added to after that, and what it was handed to
+sees the additions, because the host shares the list rather than copying it.
 
 #### `List::push`
 
@@ -1064,7 +1572,18 @@ pub fn push<'a>(&self, value: impl Into<Value<'a>>) -> Result<&Self, Error>
 ```
 
 Append a value: a scalar, a guest string, blob or GeoJson, a built collection, or a value read from
-the record - which goes in by position, built by the server from its stored bytes.
+the record - which goes in by position, built by the server from its stored bytes without passing
+through the guest. Guest bytes are copied during the call. Returns the list, so pushes chain:
+`list.push(1)?.push("two")?`.
+
+A push holds nothing on the host but the element itself, whatever its kind, so a loop may push as many
+as the call's memory budget takes: the limit of 256 is on collections, strings read and iterators,
+not on elements.
+
+`Err(WrongType)` for a value that cannot be an element: `Value::Other`, an HLL made from guest
+bytes. `Err(Refused)` when the host does not take it: a list may not contain itself or nest more than
+64 deep, what a call builds on the host is bounded, and a value read earlier may no longer be valid
+(see `Value`). There is no other error.
 
 #### `List::extend`
 
@@ -1074,9 +1593,10 @@ pub fn extend<'a, I>(&self, items: I) -> Result<&Self, Error> where I: IntoItera
 
 Append every item, 128 per import call instead of one each.
 
-An item is anything [`push`](List::push) takes, or a `Result<Value, Error>` as [`Coll::iter`] yields
+An item is anything `push` takes, or a `Result<Value, Error>` as `Coll::iter` yields
 them, so `list.extend(stored.iter())` copies a stored list's elements by position in one call per
-window. The first `Err` item, or a value the host cannot take, stops the extend with that error; the
+window. The first `Err` item stops the extend with that error, a value that cannot be an element with
+`Err(WrongType)`, and one the host does not take with `Err(Refused)`, as in `push`; the
 items before it are in.
 
 #### `List::into_value`
@@ -1085,7 +1605,8 @@ items before it are in.
 pub fn into_value(self) -> Value<'static>
 ```
 
-The finished list, as a value to return or store.
+The finished list, as a value to return or store: a `Value::List` holding the same host list.
+`list.into()` does the same.
 
 #### `Map`
 
@@ -1093,7 +1614,11 @@ The finished list, as a value to return or store.
 pub struct Map
 ```
 
-A map under construction, keyed by strings.
+A map under construction, made by `map`, keyed by strings or integers. It lives on the host; this is its
+handle, which is `Copy`, so every copy is the same map. Entries are added with `insert` and
+`extend` through `&self`, and the map is finished by handing it over: to `Record::set`,
+to another collection, or as the UDF's result (`Ok(map.into())`). Whatever order entries go in, the map is
+ordered by key.
 
 #### `MapKey`
 
@@ -1101,7 +1626,8 @@ A map under construction, keyed by strings.
 pub trait MapKey: sealed::Sealed
 ```
 
-What a map is keyed by: a string or an integer. [`Map::insert`] and [`Coll::get`] take either.
+What a map is keyed by: a string (`&str`) or an integer (`i64`). `Map::insert`, `Map::contains_key`
+and `Coll::get` take either. Sealed: these two are the only key types.
 
 #### `impl MapKey for &str`
 
@@ -1109,11 +1635,17 @@ What a map is keyed by: a string or an integer. [`Map::insert`] and [`Coll::get`
 impl MapKey for &str
 ```
 
+A string key: `map.insert("name", v)`, `coll.get("name")`. It matches a string key of the same bytes and
+never an integer one. A key may be any length; nothing is cut.
+
 #### `impl MapKey for i64`
 
 ```rust
 impl MapKey for i64
 ```
+
+An integer key: `map.insert(7, v)`, `coll.get(7)`. It matches an integer key of the same value and never a
+string one. A literal needs to be an `i64`, which an unsuffixed one is inferred as here.
 
 #### `Map::insert`
 
@@ -1121,8 +1653,14 @@ impl MapKey for i64
 pub fn insert<'a>(&self, key: impl MapKey, value: impl Into<Value<'a>>) -> Result<&Self, Error>
 ```
 
-Insert a value under a key: a string or an integer. The same values as [`List::push`]. An entry
-already under the key is replaced.
+Insert a value under a key: a `&str` or an `i64`. The value is anything `List::push` takes, with the
+same errors: `Err(WrongType)` for a value that cannot be in a collection, `Err(Refused)` when the
+host does not take the entry, and no other. An entry already under the key is replaced. Returns the
+map, so inserts chain: `map.insert("a", 1)?.insert("b", 2)?`. The key's bytes, like a guest string's,
+are copied during the call.
+
+Like a push, an insert holds nothing on the host but the entry, under either kind of key, so a loop
+may insert as many as the call's memory budget takes.
 
 #### `Map::contains_key`
 
@@ -1130,7 +1668,9 @@ already under the key is replaced.
 pub fn contains_key(&self, key: impl MapKey) -> bool
 ```
 
-Whether the map holds an entry under `key`. The map is asked where it is, on the host.
+Whether the map holds an entry under `key`. The map is asked where it is, on the host, in one import
+call, without packing it - which is what `Coll::get` on a built map would do. False when there is no
+such key.
 
 #### `Map::extend`
 
@@ -1140,10 +1680,11 @@ pub fn extend<'a, I>(&self, entries: I) -> Result<&Self, Error> where I: IntoIte
 
 Insert every entry, 64 per import call instead of one each.
 
-An entry is a `(key, value)` pair of anything [`push`](List::push) takes - a string or integer key,
-in practice - or a `Result<(Value, Value), Error>` as [`Coll::entries`] yields them, so
-`map.extend(stored.entries())` copies a stored map by position. The first `Err`, or a value the host
-cannot take, stops the extend with that error; the entries before it are in.
+An entry is a `(key, value)` pair of anything `push` takes - a string or integer key,
+in practice - or a `Result<(Value, Value), Error>` as `Coll::entries` yields them, so
+`map.extend(stored.entries())` copies a stored map by position. The first `Err` item stops the extend
+with that error, a key or value that cannot be in a collection with `Err(WrongType)`, and an entry
+the host does not take with `Err(Refused)`; the entries before it are in.
 
 #### `Map::into_value`
 
@@ -1151,7 +1692,8 @@ cannot take, stops the extend with that error; the entries before it are in.
 pub fn into_value(self) -> Value<'static>
 ```
 
-The finished map, as a value to return or store.
+The finished map, as a value to return or store: a `Value::Map` holding the same host map.
+`map.into()` does the same.
 
 #### `impl From<List> for Value<'_>`
 
@@ -1159,7 +1701,7 @@ The finished map, as a value to return or store.
 impl From<List> for Value<'_>
 ```
 
-The finished list as a value, as [`List::into_value`] gives it.
+The finished list as a value, as `List::into_value` gives it.
 
 #### `impl From<Map> for Value<'_>`
 
@@ -1167,7 +1709,7 @@ The finished list as a value, as [`List::into_value`] gives it.
 impl From<Map> for Value<'_>
 ```
 
-The finished map as a value, as [`Map::into_value`] gives it.
+The finished map as a value, as `Map::into_value` gives it.
 
 #### `Pushable`
 
@@ -1175,32 +1717,32 @@ The finished map as a value, as [`Map::into_value`] gives it.
 pub trait Pushable<'a>
 ```
 
-What [`List::extend`] takes per item: anything that converts to a [`Value`], or the `Result<Value, Error>`
-a [`Coll::iter`] yields.
+What `List::extend` takes per item: anything that converts to a `Value`, or the `Result<Value, Error>`
+a `Coll::iter` yields.
 
-#### `impl Pushable<'a> for Result<Value<'a>,`
+#### `impl Pushable<'a> for Result<Value<'a>, Error>`
 
 ```rust
 impl<'a> Pushable<'a> for Result<Value<'a>, Error>
 ```
 
-Lets an item of [`Coll::iter`] go straight into [`List::extend`]. An `Err` item stops the extend.
+Lets an item of `Coll::iter` go straight into `List::extend`. An `Err` item stops the extend.
 
-#### `impl Pushable<'a> for &'a`
+#### `impl Pushable<'a> for &'a Str<N>`
 
 ```rust
 impl<'a, const N: usize> Pushable<'a> for &'a Str<N>
 ```
 
-A [`Str`] by reference, pushed as a string that borrows its text.
+A `Str` by reference, pushed as a string that borrows its text.
 
-#### `impl Pushable<'a> for &'a`
+#### `impl Pushable<'a> for &'a Bytes<N>`
 
 ```rust
 impl<'a, const N: usize> Pushable<'a> for &'a Bytes<N>
 ```
 
-A [`Bytes`] by reference, pushed as a blob that borrows its bytes.
+A `Bytes` by reference, pushed as a blob that borrows its bytes.
 
 #### `PutEntry`
 
@@ -1208,16 +1750,24 @@ A [`Bytes`] by reference, pushed as a blob that borrows its bytes.
 pub trait PutEntry<'a>
 ```
 
-What [`Map::extend`] takes per item: a `(key, value)` pair of [`Pushable`]s, or the
-`Result<(Value, Value), Error>` a [`Coll::entries`] yields.
+What `Map::extend` takes per item: a `(key, value)` pair of `Pushable`s, or the
+`Result<(Value, Value), Error>` a `Coll::entries` yields.
 
-#### `impl PutEntry<'a> for Result<(Value<'a>,`
+#### `impl PutEntry<'a> for (K, V)`
+
+```rust
+impl<'a, K: Pushable<'a>, V: Pushable<'a>> PutEntry<'a> for (K, V)
+```
+
+A `(key, value)` pair of anything `List::push` takes, as an entry for `Map::extend`.
+
+#### `impl PutEntry<'a> for Result<(Value<'a>, Value<'a>), Error>`
 
 ```rust
 impl<'a> PutEntry<'a> for Result<(Value<'a>, Value<'a>), Error>
 ```
 
-Lets an item of [`Coll::entries`] go straight into [`Map::extend`]. An `Err` item stops the extend.
+Lets an item of `Coll::entries` go straight into `Map::extend`. An `Err` item stops the extend.
 
 #### `result`
 
@@ -1225,8 +1775,101 @@ Lets an item of [`Coll::entries`] go straight into [`Map::extend`]. An `Err` ite
 pub fn result(value: &Value<'_>) -> Result<(), Error>
 ```
 
-Make a value the call's result. The [`export!`] macro does this with the `Ok` a UDF returns; it is public
+Make a value the call's result. The `export!` macro does this with the `Ok` a UDF returns; it is public
 for code that bypasses the macro.
+
+The last call wins: a second result replaces the first. A guest string or blob is copied; a stored value
+or built collection goes by position or handle. `Value::Other` is delivered as nil.
+
+`Err(WrongType)` for an HLL made from guest bytes. A result the host cannot hold - one nesting collections
+more than 64 deep, or larger than the call may build - fails the call with a message of the host's.
+
+```rust
+#[no_mangle]
+pub extern "C" fn ping(_args: i32, _argc: i32) -> i32 {
+    match as_udf::result(&Value::from("pong")) {
+        Ok(()) => 0,
+        Err(e) => {
+            as_udf::fail(e.message());
+            1
+        }
+    }
+}
+```
+
+#### `Return`
+
+```rust
+pub trait Return
+```
+
+What a UDF may return, as the `T` of its `Result<T, Error>` or on its own: a `Value`, which is every kind
+there is, or a string or blob the function built and owns - a `Str` or `Bytes`, and with the `alloc`
+feature a `String` or `Vec<u8>`. A `Value` only borrows a string, so it cannot carry one made inside the
+function out of it; the owned types can, and the host copies the bytes before they are dropped.
+
+```rust
+export! {
+    fn greeting(name: String) -> Result<String, Error> {
+        Ok(format!("hello, {name}"))
+    }
+
+    fn version() -> String {
+        String::from("1.2")
+    }
+}
+```
+
+The `export!` and `stream!` macros use it to deliver what the function returned; `deliver` is what an
+export written without them calls in place of `result`.
+
+#### `impl Return for Value<'_>`
+
+```rust
+impl Return for Value<'_>
+```
+
+Any value: what `result` takes.
+
+#### `impl Return for Str<N>`
+
+```rust
+impl<const N: usize> Return for Str<N>
+```
+
+A string the function built, of up to `N` bytes, returned as a string.
+
+#### `impl Return for Bytes<N>`
+
+```rust
+impl<const N: usize> Return for Bytes<N>
+```
+
+Bytes the function built, up to `N` of them, returned as a blob.
+
+#### `impl Return for alloc::string::String`
+
+```rust
+impl Return for alloc::string::String
+```
+
+A string the function built, of any length, returned as a string. Needs the `alloc` feature.
+
+#### `impl Return for alloc::vec::Vec<u8>`
+
+```rust
+impl Return for alloc::vec::Vec<u8>
+```
+
+Bytes the function built, of any length, returned as a blob. Needs the `alloc` feature.
+
+#### `impl Return for Result<T, Error>`
+
+```rust
+impl<T: Return> Return for Result<T, Error>
+```
+
+The usual form: `Ok` delivers what it holds, `Err` is passed on and fails the call.
 
 #### `fail`
 
@@ -1234,8 +1877,15 @@ for code that bypasses the macro.
 pub fn fail(message: &str)
 ```
 
-Fail the call with a message the client will see. The [`export!`] macro does this with the `Err` a UDF
-returns.
+Fail the call with a message the client will see. The `export!` macro does this with the `Err` a UDF
+returns, passing `Error::message`; call it directly only in an export written without the macro, and
+return `1` from the export afterwards, as the macro does.
+
+The message is copied; anything past 511 bytes is cut off. It does not end the function: code after it
+still runs.
+
+A call that fails writes nothing, even what it had already saved: a `Record::save` that succeeded, and
+a `Record::set_ints` or `Record::set_doubles`, are undone.
 
 #### `now`
 
@@ -1243,8 +1893,14 @@ returns.
 pub fn now() -> Result<i64, Error>
 ```
 
-The server's clock, in milliseconds since the Unix epoch. Refused in an event handler, where a decision
-that reads the clock cannot converge across clusters; a handler takes its times from the data.
+The server's clock, in milliseconds since the Unix epoch. Available to record and stream UDFs.
+
+`Err(Refused)` in an event handler, where a decision that reads the clock cannot converge across clusters;
+a handler takes its times from the data.
+
+It is not on the scale of `Record::last_update_time` and `EventRecord::bin_last_update_time`, which
+count milliseconds from the Citrusleaf epoch, 2010-01-01T00:00:00Z: add 1 262 304 000 000 to a last-update
+time to compare it with this.
 
 #### `log`
 
@@ -1252,15 +1908,27 @@ that reads the clock cannot converge across clusters; a handler takes its times 
 pub fn log(level: Level, message: &str)
 ```
 
-Write a line to the server log, under the UDF context.
+Write a line to the server log, under the UDF context. For diagnosing a UDF, not for data: it returns
+nothing and cannot fail.
+
+```rust
+as_udf::log(Level::Info, "withdraw: balance below the limit");
+```
+
+The server meters it. A call gets 16 lines and a module 100 lines a second; lines over either limit are
+dropped and counted, and the count is logged in their place. A line is cut at about 512 bytes, and control
+characters in it are escaped, so a message cannot forge a log line. In an `xdr-merge` handler the line is
+dropped: nothing is written.
 
 #### `MAX_ARGS`
 
 ```rust
-pub const MAX_ARGS: usize = 32
+pub const MAX_ARGS: usize = 128
 ```
 
-How many arguments a call may carry. Beyond this the call is rejected before the UDF runs.
+How many arguments a call may carry in all: 128. A call with more **fails** before the UDF runs, with a
+message naming this limit and the count that came; no argument is ever dropped. It is also the size of an
+`Args`.
 
 #### `Args`
 
@@ -1270,16 +1938,39 @@ pub struct Args
 
 The arguments of a call, decoded in one import call.
 
-The [`export!`] macro turns these into the typed parameters of a UDF; a parameter of this type takes the
-remaining arguments as they are, for a variadic function.
+The `export!` macro turns these into the typed parameters of a UDF; a parameter of this type takes the
+remaining arguments as they are, for a variadic function. It must be the last parameter.
+
+```rust
+export! {
+    fn add_all(numbers: Args) -> Result<Value, Error> {
+        let mut total = 0;
+
+        for n in numbers.iter() {
+            total += n.int()?;
+        }
+
+        Ok(Value::Int(total))
+    }
+}
+```
+
+Each argument is a `Value`, valid for the call: a string or blob is fetched like one read from a bin, a
+list or map is a `Coll`. `Args` is `Copy` and about 2 KB on the stack.
 
 #### `Args::from_handle`
 
 ```rust
-pub fn from_handle(handle: i32, argc: i32) -> Args
+pub fn from_handle(handle: i32, argc: i32) -> Result<Args, Error>
 ```
 
-Decode the call's arguments from the handle the host passed. Used by [`export!`].
+Decode the call's arguments from the two numbers the host passes an export: the handle of the argument
+list and the argument count. Used by `export!`; an export written without the macro calls it with
+its own two parameters, and fails the call when it answers `Err`. A call with no arguments gives an
+empty `Args`.
+
+`Err(Refused)` when the call carries more than `MAX_ARGS` arguments: they are not read, and none is
+dropped to make the rest fit. Any other `Err` is the host failing to hand the arguments over.
 
 #### `Args::len`
 
@@ -1303,7 +1994,8 @@ Whether there are no arguments (from this view's start).
 pub fn get(&self, index: usize) -> Option<Value<'static>>
 ```
 
-The argument at `index`, or `None` past the end.
+The argument at `index`, counting from 0 at this view's start, or `None` past the end. An argument the
+client passed as nil is `Some(Value::Nil)`, not `None`.
 
 #### `Args::iter`
 
@@ -1311,7 +2003,8 @@ The argument at `index`, or `None` past the end.
 pub fn iter(&self) -> impl Iterator<Item = Value<'static>> + '_
 ```
 
-Every argument, in order.
+Every argument, in order, as a `Value`. Unlike `Coll::iter` the items are not `Result`s: the
+arguments were already decoded, so the walk cannot fail and costs no import call.
 
 #### `Args::from`
 
@@ -1319,7 +2012,8 @@ Every argument, in order.
 pub fn from(&self, index: usize) -> Args
 ```
 
-The arguments from `index` on, as their own view.
+The arguments from `index` on, as their own view, in which they count from 0 again. An `index` past
+the end gives an empty view.
 
 #### `ArgError`
 
@@ -1342,7 +2036,7 @@ Why an argument could not become the parameter it was declared as.
 pub const ARG_BUF: usize = 256
 ```
 
-How many bytes the buffer a `&str` or `&[u8]` parameter borrows holds. [`Str`] and [`Bytes`] declare
+How many bytes the buffer a `&str` or `&[u8]` parameter borrows holds. `Str` and `Bytes` declare
 their own; `String` and `Vec<u8>` have no limit.
 
 #### `FromArg`
@@ -1351,9 +2045,9 @@ their own; `String` and `Vec<u8>` have no limit.
 pub trait FromArg<'a>: Sized
 ```
 
-A type the [`export!`] macro can decode an argument into.
+A type the `export!` macro can decode an argument into.
 
-The constants describe the parameter for the signature export (see [`export!`]): what the type is called
+The constants describe the parameter for the signature export (see `export!`): what the type is called
 there, the most bytes it takes when that is bounded, whether it may be absent, whether it takes the rest.
 
 #### `impl FromArg<'a> for i64`
@@ -1380,23 +2074,23 @@ impl<'a> FromArg<'a> for bool
 
 A `bool` parameter. Takes a boolean argument only.
 
-#### `impl FromArg<'a> for &'a`
+#### `impl FromArg<'a> for &'a str`
 
 ```rust
 impl<'a> FromArg<'a> for &'a str
 ```
 
-A `str` parameter that borrows the buffer [`export!`] declares for it, [`ARG_BUF`] bytes. Takes a string
-argument; a longer one is rejected as [`ArgError::TooLong`].
+A `str` parameter that borrows the buffer `export!` declares for it, `ARG_BUF` bytes. Takes a string
+argument; a longer one is rejected as `ArgError::TooLong`.
 
-#### `impl FromArg<'a> for &'a`
+#### `impl FromArg<'a> for &'a [u8]`
 
 ```rust
 impl<'a> FromArg<'a> for &'a [u8]
 ```
 
-A `bytes` parameter that borrows the buffer [`export!`] declares for it, [`ARG_BUF`] bytes. Takes a blob
-argument, or a string for its bytes; a longer one is rejected as [`ArgError::TooLong`].
+A `bytes` parameter that borrows the buffer `export!` declares for it, `ARG_BUF` bytes. Takes a blob
+argument, or a string for its bytes; a longer one is rejected as `ArgError::TooLong`.
 
 #### `impl FromArg<'a> for Str<N>`
 
@@ -1404,8 +2098,8 @@ argument, or a string for its bytes; a longer one is rejected as [`ArgError::Too
 impl<'a, const N: usize> FromArg<'a> for Str<N>
 ```
 
-A `str` parameter of at most `N` bytes, copied into the [`Str`]. A longer string argument is rejected
-as [`ArgError::TooLong`].
+A `str` parameter of at most `N` bytes, copied into the `Str`. A longer string argument is rejected
+as `ArgError::TooLong`.
 
 #### `impl FromArg<'a> for Bytes<N>`
 
@@ -1413,8 +2107,8 @@ as [`ArgError::TooLong`].
 impl<'a, const N: usize> FromArg<'a> for Bytes<N>
 ```
 
-A `bytes` parameter of at most `N` bytes, copied into the [`Bytes`]. Takes a blob argument only; a
-longer one is rejected as [`ArgError::TooLong`].
+A `bytes` parameter of at most `N` bytes, copied into the `Bytes`. Takes a blob argument only; a
+longer one is rejected as `ArgError::TooLong`.
 
 #### `impl FromArg<'a> for alloc::string::String`
 
@@ -1449,6 +2143,16 @@ impl<'a> FromArg<'a> for Coll
 
 A `coll` parameter. Takes a list or a map argument.
 
+#### `impl FromArg<'a> for Option<T>`
+
+```rust
+impl<'a, T: FromArg<'a>> FromArg<'a> for Option<T>
+```
+
+An optional parameter: `None` when the call does not supply the argument or supplies nil, `Some` of the
+inner type otherwise. An argument of the wrong kind is still rejected. In the signature export the
+parameter's name carries a `?`.
+
 #### `impl FromArg<'a> for Args`
 
 ```rust
@@ -1456,81 +2160,6 @@ impl<'a> FromArg<'a> for Args
 ```
 
 The rest parameter: every argument from this position on, which may be none. Never fails.
-
-#### `Message::new`
-
-```rust
-pub fn new() -> Message
-```
-
-An empty message.
-
-#### `Message::as_str`
-
-```rust
-pub fn as_str(&self) -> &str
-```
-
-The text written so far: 256 bytes at most, anything written past that having been dropped.
-
-#### `impl Default for Message`
-
-```rust
-impl Default for Message
-```
-
-An empty message, as [`Message::new`] gives one.
-
-#### `impl core::fmt::Write for Message`
-
-```rust
-impl core::fmt::Write for Message
-```
-
-Appends text, so `write!` works on a message. Never fails: what does not fit in the 256 bytes is
-dropped.
-
-#### `fn`
-
-```rust
-pub const fn new() -> Signature
-```
-
-An empty signature, `const` so that it can initialise a `static`. The text is written by the first
-call that asks for it.
-
-#### `Signature::function`
-
-```rust
-pub fn function(&mut self, name: &str, params: &[Param]) -> i32
-```
-
-`fn name(a: int, b: str[256], c?: bool, rest: any...) -> value`
-
-#### `Signature::literal`
-
-```rust
-pub fn literal(&mut self, text: &str) -> i32
-```
-
-Serve `text` as the signature, whatever it says.
-
-#### `impl Default for Signature`
-
-```rust
-impl Default for Signature
-```
-
-An empty signature, as [`Signature::new`] gives one.
-
-#### `impl core::fmt::Write for Signature`
-
-```rust
-impl core::fmt::Write for Signature
-```
-
-Appends text to the signature. Never fails: what does not fit in the 511 bytes the buffer has for
-text is dropped.
 
 #### `export!`
 
@@ -1540,21 +2169,21 @@ macro_rules! export
 
 Export one or more functions as UDFs.
 
-A UDF is an ordinary function with typed parameters and a `Result<Value, Error>` body:
+A UDF is an ordinary function with typed parameters, returning a `Result<Value, Error>`:
 
-```ignore
+```rust
 export! {
-fn transfer(rec: &mut Record, amount: i64, to: &str, dry_run: Option<bool>) -> Result<Value, Error> {
-...
-Ok(Value::Int(balance))
-}
+    fn transfer(rec: &mut Record, amount: i64, to: &str, dry_run: Option<bool>) -> Result<Value, Error> {
+        ...
+        Ok(Value::Int(balance))
+    }
 }
 ```
 
-# The record
+**The record**
 
 A function that reads its record takes `rec: &Record` as its first parameter, and one that writes it
-`rec: &mut Record`; see [`Record`]. It is written exactly so, with `Record` in scope under that name.
+`rec: &mut Record`; see `Record`. It is written exactly so, with `Record` in scope under that name.
 It is not an argument: a client does not pass it, it is not counted, and the signature export below
 does not list it.
 
@@ -1563,15 +2192,27 @@ the arguments into the parameters, checks their count and kinds, and rejects a m
 message naming the parameter - before the body runs. `Ok(value)` becomes the result the client receives;
 `Err(error)` fails the call with the error's message.
 
+**What it returns**
+
+`Result<Value, Error>` is the general form: a `Value` is any kind of result. A function that builds a
+string or blob returns it owned instead, because a `Value` only borrows one: `Result<String, Error>` or
+`Result<Vec<u8>, Error>` with the `alloc` feature, `Result<Str<N>, Error>` or `Result<Bytes<N>, Error>`
+without. A function that cannot fail may leave the `Result` off and return any of these directly. The
+return type is anything that is `Return`, written with `Value`, `Error` and the rest in scope under
+those names. The signature export says `-> value` for all of them.
+
+**The parameters**
+
 Parameter types: `i64`, `f64`, `bool`; `&str` and `&[u8]` (copied into a 256-byte buffer of the
-parameter's own); [`Str<N>`] and [`Bytes<N>`] for a string or blob of up to `N` bytes; `String` and
-`Vec<u8>` for any length, with the `alloc` feature; [`Value`] for anything, [`Coll`] for a list or map,
-`Option<T>` for an argument that may be absent or nil, and [`Args`] as the last parameter for every
+parameter's own); `Str<N>` and `Bytes<N>` for a string or blob of up to `N` bytes; `String` and
+`Vec<u8>` for any length, with the `alloc` feature; `Value` for anything, `Coll` for a list or map,
+`Option<T>` for an argument that may be absent or nil, and `Args` as the last parameter for every
 remaining argument. A string or blob longer than its parameter allows is rejected from its reported
 length, before any copy. A call with more arguments than parameters is rejected unless the last parameter
-is [`Args`].
+is `Args`, and a call with more than `MAX_ARGS` (128) arguments in all is rejected whatever the
+parameters are, with a message naming the limit and the count: no argument is dropped.
 
-# The signature export
+**The signature export**
 
 Beside each UDF the macro exports `__udf_sig_<name>`, which the host serves as a string result when a
 client executes it like any other function: `fn add_all(name: str[256], numbers: any...) -> value`. A
@@ -1591,30 +2232,40 @@ Export an event handler.
 
 The server has one event, `xdr-merge`, and the macro one arm for it, of exactly this shape:
 
-```ignore
+```rust
 event! {
-on xdr_merge
-fn resolve_account(current: EventRecord, incoming: EventRecord) -> Result<Resolution, Error> {
-let pair = Pair::of(current, incoming);
-let out = as_udf::map(2)?;
-out.insert("visits", pair.int("visits")?.max())?;
-Ok(Resolution::Record { bins: pair.with_newer(out)?, ttl: None })
-}
+    on xdr_merge
+    fn resolve_account(current: EventRecord, incoming: EventRecord) -> Result<Resolution, Error> {
+        let pair = Pair::of(current, incoming);
+        let out = as_udf::map(2)?;
+
+        if let Some(visits) = pair.int("visits")?.max() {
+            out.insert("visits", visits)?;
+        }
+
+        Ok(Resolution::Record { bins: pair.with_newer(out)?, ttl: None })
+    }
 }
 ```
 
 The handler takes the record this cluster holds and the one that arrived over XDR, in that order, and
 nothing else: what there is to know about the merge is asked of the record it is true of
-([`EventRecord::is_delete`], [`EventRecord::is_tombstone`] and their neighbours). The parameter types
-are part of the arm, so a handler with another signature does not compile. The macro
-exports the handler under its name, which `event-set` refers to, and `__udf_sig_<name>` reading
+(`EventRecord::is_delete`, `EventRecord::is_tombstone` and their neighbours). The parameter types are
+part of the arm, so a handler with another signature does not compile; `EventRecord`, `Resolution` and
+`Error` must be in scope under those names. It returns the `Resolution`, or an `Err` to fail the merge
+with the error's message. Several handlers may follow one another in one `event!`.
+
+The macro exports the handler under its name, which `event-set` refers to, and `__udf_sig_<name>` reading
 `event xdr-merge/1 ...`, which `event-set` checks before binding: the number is the version of the
 contract this SDK was written against, and a server that does not serve it refuses the binding.
 
 A handler must be a pure function of its inputs - no writes, no clock - and symmetric in them: two DCs
-that resolve the same pair in opposite order must produce the same record, or they diverge. The dry run
-(`execute_udf(key, "__event__", "xdr-merge", ...)`) reports whether a handler is: `symmetric`,
-`idempotent` and, given a third record, `associative` - the three laws a convergent merge obeys.
+that resolve the same pair in opposite order must produce the same record, or they diverge. There is no
+clock in a handler (`now` answers `Err(Refused)`), a `log` line is dropped, and the record-level
+`generation` and `last_update_time` are 0 on
+both sides. The dry run (`execute_udf(key,
+"__event__", "xdr-merge", ...)`) reports whether a handler is: `symmetric`, `idempotent` and, given a
+third record, `associative` - the three laws a convergent merge obeys.
 
 #### `udf_params!`
 

@@ -25,7 +25,9 @@
 //	//udf:stream <name> [params="(...)"] [end="(...)"]   on a `var x T`: a stream UDF; T has Record and End
 //
 // A typed function's parameters are int64, int, int32, float64, bool, string, []byte, udf.Value, their
-// pointer forms for an optional argument, or []udf.Value last for the rest; it returns nothing, an error, a
+// pointer forms for an optional argument, or []udf.Value last for the rest; every export checks the
+// number of arguments, and one that takes the rest fails a call with more than udf.MaxArgs (128) in
+// total. It returns nothing, an error, a
 // value, or a value and an error, the value being any of those types or *udf.Map / *udf.List. A handler
 // takes the two records, current then incoming, and returns a udf.Resolution and an error. A function declared
 // (args, argc int32) int32 is the raw form, exported as it is, with params giving the signature text.
@@ -574,16 +576,15 @@ func (g *generator) function(b *strings.Builder, e *export, id string) string {
 		decs = append(decs, d)
 		rest = rest || d.rest
 	}
-	capacity := len(names)
+	// The window holds every argument the function declares, or, when its last parameter takes the
+	// rest, the most a UDF may be passed. Either way a call with more fails: nothing is dropped.
 	if rest {
-		capacity = 128
-	} else if capacity == 0 {
-		capacity = 1
-	}
-	if len(names) > 0 {
-		fmt.Fprintf(b, "\tvar a [%d]udf.Value\n\tn := udf.Args(args, argc, a[:])\n", capacity)
-	}
-	if !rest {
+		fmt.Fprintf(b, "\tvar a [udf.MaxArgs]udf.Value\n\tn := udf.Args(args, argc, a[:])\n")
+		fmt.Fprintf(b, "\tif err := udf.Arity(%q, udf.MaxArgs, argc); err != nil {\n\t\treturn udf.FailErr(err)\n\t}\n", e.name)
+	} else {
+		if len(names) > 0 {
+			fmt.Fprintf(b, "\tvar a [%d]udf.Value\n\tn := udf.Args(args, argc, a[:])\n", len(names))
+		}
 		fmt.Fprintf(b, "\tif err := udf.Arity(%q, %d, argc); err != nil {\n\t\treturn udf.FailErr(err)\n\t}\n", e.name, len(names))
 	}
 	// The record goes in ahead of the decoded arguments; the indexes above never counted it.

@@ -15,7 +15,7 @@ UDF_ON_XDR_MERGE(merge_account)
 	udf::Pair pair = udf::Pair::of(current, incoming);
 	udf::Map out(4);
 
-	if (udf::Optional<int64_t> visits = pair.as_int("visits").max()) {   // both sides' increments are real
+	if (udf::Optional<int64_t> visits = UDF_TRY(pair.as_int("visits")).max()) {   // both sides' increments are real
 		out.put("visits", *visits);
 	}
 
@@ -28,14 +28,16 @@ UDF_ON_XDR_MERGE(merge_account)
 A `udf::EventRecord` is one record the event hands over, read-only, the C struct underneath. It reads its
 bins with the methods of `udf::ReadRecord`, the same ones `udf::Record` has in a record UDF: `get(name)`
 is the bin as an `Optional<Value>`, empty for absent or nil; `bin(name)` is the bin that must be there, a
-`Result<Value>`; `as_int(name)`, `as_double`, `as_bool`, `as_string<N>` and `as_blob<N>` answer an
-`Optional` of the type, empty for absent, nil or another kind; `int_or(name, 0)`, `double_or` and
-`bool_or` take a default; `has(name)` says whether the bin is there; `list(name)` and `map(name)` give a
-range over a collection bin. A helper written as `template <class R> ... (const udf::ReadRecord<R>& rec)`
+`Result<Value>`; `as_int(name)`, `as_double`, `as_bool`, `as_string<N>`, `as_blob<N>` and `as_bytes<N>`
+answer a `Result<Optional<T>>`: empty for absent or nil, the value, or an error of status
+`AS_UDF_TYPE_MISMATCH` for another kind; `int_or(name, 0)`, `double_or` and `bool_or` take a default for an
+absent bin only and answer a `Result<T>`; `has(name)` says whether the bin is there; `list(name)` and
+`map(name)` give a range over a collection bin, nothing for an absent one and an error for another kind. A helper written as `template <class R> ... (const udf::ReadRecord<R>& rec)`
 serves a handler and a UDF alike, as `load` does in `examples/counter`. An `EventRecord` has none of the
 writing methods, and a handler is not handed a `udf::Record`. Everything else about the record is a
 method too: `bin_names()` ranges over the record's bin names and `deleted_bins()` over the names of the
-bins this side deleted, `bin_last_update_time(name)` and `bin_source_id(name)` answer for one bin and fall
+bins this side deleted (the server sends no list at all when there are none, and the range is then empty, so
+`size()` is the count either way; `lost_bins()` is the same), `bin_last_update_time(name)` and `bin_source_id(name)` answer for one bin and fall
 back to the record's values where the server keeps none per bin, and `generation()`, `last_update_time()`,
 `ttl()` and `source_id()` are its metadata.
 
@@ -68,25 +70,30 @@ on this cluster; the other cluster decides for itself, so a merge that deletes h
 sides for the two to agree. A `record` answer takes a `udf::Map` of the final bins; a bin absent from it,
 or nil, is deleted, at least one bin must be left, and the map's own error, if a put was refused, fails
 the call. Its TTL is in seconds, 0 for the namespace default, and when left out the incoming write's is
-kept. `Value::cmp_stored` / `stored_bytes_into` compare stored bytes for a data-only tie-break.
+kept. `Value::cmp_stored` / `stored_bytes_into` compare stored bytes for a data-only tie-break;
+`cmp_stored` is a `Result<int32_t>`, an error for a value that is not stored and exactly -1, 0 or 1
+otherwise.
 
 ## Merging bin by bin
 
 `udf::Pair pair = udf::Pair::of(current, incoming);` puts the two records side by side and reads them bin
 by bin into a `udf::Both<T>`, the Rust SDK's `Pair` and `Both`. Each record knows which one it is, so the
 two may be given in either order. `pair.as_int(name)`, `as_double`, `as_bool`, `as_string<N>`,
-`as_blob<N>`, `bin`, `list` and `map` give the bin on each side (`current`, `incoming`, each an
-`Optional`), and `Both` carries the merges a resolver reaches for: `incoming_is_newer()`, by the bin's
+`as_blob<N>`, `list` and `map` give the bin on each side as a `Result<Both<T>>` (`current`, `incoming`, each
+an `Optional`, empty for absent or nil; the error when either side holds another kind), `bin` as a plain
+`Both<Value>`, and `Both` carries the merges a resolver reaches for: `incoming_is_newer()`, by the bin's
 last-update time and then source id, the order the server's own bin convergence uses; `newer()` and
 `older()`, and `ordered()` for both at once (`auto [older, newer] = both.ordered();`); `max()`, `min()`,
-`sum()`, `merge(f)`; `current_or_incoming()`, `incoming_or_current()`.
+`sum()` (0 when neither side has the bin, and an integer sum wraps rather than overflowing), `merge(f)`;
+`current_or_incoming()`, `incoming_or_current()`.
 `pair.with_newer(out)` fills in every bin the handler had no opinion on from the side that wrote it
-later, which is symmetric, and `pair.incoming_is_newer(name)` orders one bin. `deleted_any()` on a record says
-it deleted a bin, the case every merge has to guard against: `with_newer` alone would bring the other
-side's copy back.
+later, which is symmetric; a bin the newer side deleted stays deleted (it goes in as nil), so the other
+side's copy does not come back. `pair.incoming_is_newer(name)` orders one bin, and `deleted_any()` on a
+record says it deleted a bin. `with_bins(out)` on one record fills in that record's bins, never a bin it
+deleted; a name or bin it cannot read is kept as the map's error, which fails the answer.
 
 ```cpp
-if (udf::Optional<int64_t> visits = pair.as_int("visits").max()) {   // both sides' increments are real
+if (udf::Optional<int64_t> visits = UDF_TRY(pair.as_int("visits")).max()) {   // both sides' increments are real
 	out.put("visits", *visits);
 }
 if (udf::Optional<udf::Value> profile = pair.bin("profile").newer()) {   // last writer wins, by LUT

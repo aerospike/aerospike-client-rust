@@ -16,7 +16,10 @@ import udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk-wasm-go
 
 //udf:function increment
 func increment(rec *udf.Record, by int64) (int64, error) {
-	n, _ := rec.Int("n") // 0 when the bin is absent
+	n, err := rec.IntOr("n", 0) // 0 when the bin is absent; an error when it is not an integer
+	if err != nil {
+		return 0, err
+	}
 	next := n + by
 
 	if err := rec.Set("n", next); err != nil {
@@ -37,8 +40,8 @@ delivers its return as the result; the `__udf_sig_increment` export, whose text 
 macro or a Java annotation processor does, and the generated file is checked in with the module, so a
 build without the step still works.
 
-`rec` is the record the call is on. `rec.Int("n")` reads the bin as an integer, with false, and so 0, when
-it is absent. `rec.Set` stages a write, and `rec.Save()` makes it, creating the record if it does not
+`rec` is the record the call is on. `rec.IntOr("n", 0)` reads the bin as an integer, with 0 when it is
+absent, and an error when it holds anything else. `rec.Set` stages a write, and `rec.Save()` makes it, creating the record if it does not
 exist. Every call that can fail returns an `error`, and an error returned from the function fails the
 call with its message.
 
@@ -66,19 +69,23 @@ order. Their Go types decide both how an argument is decoded and what the signat
 | `[]byte` | `bytes` | a string or a blob, as its bytes |
 | `udf.Value` | `any` | anything, nil included, as the 16-byte value |
 | `*int64`, `*float64`, `*bool`, `*string`, `*udf.Value` | `name?: type` | an argument that may be absent or nil, `nil` then |
-| `[]udf.Value`, last | `any...` | every remaining argument |
+| `[]udf.Value`, last | `any...` | every remaining argument, up to 128 arguments in all |
 
 A call that leaves a required argument out, passes one of another kind, or passes more arguments than
 there are parameters, fails before the function runs, with a message that names the argument
 (`increment: argument 2 (n) is not an int`, `increment takes at most 2 arguments, got 3`), the same way
-the Rust macro rejects a call.
+the Rust macro rejects a call. A UDF takes `udf.MaxArgs`, 128, arguments at most in total: a function
+whose last parameter takes the rest fails a call with more (`ar takes at most 128 arguments, got 129`),
+and no argument is ever dropped.
 
 The function returns nothing (a nil result), an `error`, a value, or a value and an `error`; the value is
 any of the types above, or `*udf.Map` / `*udf.List` for a built collection, or `udf.Value` for anything
 (`udf.GeoJSONValue(doc)` is a GeoJSON result). A non-nil error fails the call with its message.
 
 **The raw form.** A function declared `(args, argc int32) int32` is exported as it is: it takes the
-handles and returns the status, and decodes its arguments itself with `udf.Args`. It may take the record
+handles and returns the status, and decodes its arguments itself with `udf.Args`, which reads no more
+than the window it is given: `udf.Arity(name, len(window), argc)` is the check that fails a call that
+passed more. It may take the record
 first as well: `(rec *udf.Record, args, argc int32) int32`. Since nothing can be derived, the directive's
 `params` gives the signature's parameter text: `//udf:function vec_distance params="(bin: str, query:
 bytes, metric: str)"`. This is the form for a hot path that wants to read its arguments once and keep
@@ -106,20 +113,28 @@ UDF and in a handler:
 
 ```go
 // The balance of any record: the one a UDF is called on, or a side of an event.
-func balanceOf(rec udf.RecordReader) int64 {
-	n, _ := rec.Int("balance")
-
-	return n
+func balanceOf(rec udf.RecordReader) (int64, error) {
+	return rec.IntOr("balance", 0)
 }
 
 //udf:function balance
-func balance(rec *udf.Record) int64 {
+func balance(rec *udf.Record) (int64, error) {
 	return balanceOf(rec)
 }
 
 //udf:on xdr-merge keep_richer
 func keepRicher(current, incoming *udf.EventRecord) (udf.Resolution, error) {
-	if balanceOf(incoming) > balanceOf(current) {
+	theirs, err := balanceOf(incoming)
+	if err != nil {
+		return udf.Resolution{}, err
+	}
+
+	mine, err := balanceOf(current)
+	if err != nil {
+		return udf.Resolution{}, err
+	}
+
+	if theirs > mine {
 		return udf.TakeRemote(), nil
 	}
 
@@ -130,15 +145,20 @@ func keepRicher(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 ## Reading
 
 `rec.Bin("name")` returns the bin as a `udf.Value`, or an error naming the bin when the record has none.
-It is the form for a bin that must be there. The others are for a bin that may not be. `rec.Get("name")`
-returns the value and whether there is one, false for an absent or nil bin. The typed readers
-`rec.Int("name")`, `Double`, `Bool`, `String` and `Blob` (a blob's bytes) return the Go value and false
-when the bin is absent, nil or of another kind; `rec.IntOr("name", 0)`, `DoubleOr` and `BoolOr` return a
-default instead. `rec.List("name")` and `rec.Map("name")` range over a
-collection bin and yield nothing when it is absent. `rec.Has("name")` says whether the bin is there, and
-`rec.BinCount()` how many there are.
+It is the form for a bin that must be there. The others are for a bin that may not be, and each has
+three outcomes a caller tells apart without reading a message: the value and `true`; `false` with a nil
+error when the bin is absent or nil; and an error with `Status` `udf.TypeMismatch` when the bin holds
+another kind. `rec.Get("name")` is the untyped one. The typed readers `rec.Int("name")`, `Double`,
+`Bool`, `String` and `Blob` return `(T, bool, error)` and convert nothing: an integer is not a double,
+a GeoJSON is not a string, and a string, GeoJSON or HLL is not a blob. `rec.Bytes("name")` reads the raw
+bytes of any of those four. `rec.IntOr("name", 0)`, `DoubleOr` and `BoolOr` return `(T, error)`: the
+default stands in for an absent or nil bin only, and a bin of another kind is still the error.
+`rec.List("name")` and `rec.Map("name")` return the stored collection as a `udf.Value` the same way, so
+an absent bin, a bin of another kind and an empty collection are three different answers.
+`rec.Has("name")` says whether the bin is there, and `rec.BinCount()` how many there are.
+`udf.StatusOf(err)` reads the status of any error the SDK returns.
 
-So a bin with a default is one line, `n, _ := rec.Int("n")`, and a bin that must be an integer is two
+So a bin with a default is one call, `n, err := rec.IntOr("n", 0)`, and a bin that must be there is two
 steps, each with its own error:
 
 ```go
@@ -222,22 +242,30 @@ func closeAccount(rec *udf.Record) error {
 Every read is a `udf.Value`: `Kind` (a `udf.Kind`: `KindNil`, `KindBool`, `KindInt`, `KindDouble`,
 `KindStr`, `KindBlob`, `KindList`, `KindMap`, `KindGeoJSON`, `KindHLL`, `KindAbsent`), `Len`, `Payload`,
 with the accessors `Int()`, `Double()`, `Bool()`, `String()`, `Blob()`, each `(T, error)`, and the
-`IsInt()`, `IsString()`, `IsList()`, `IsMap()`, `IsNull()` tests. A stored string or collection is held by
+`IsInt()`, `IsString()`, `IsGeoJSON()`, `IsHLL()`, `IsList()`, `IsMap()`, `IsNull()` tests. No accessor
+converts: `Double()` of an integer is an error, and `Blob()` reads a blob only, where `Bytes()` reads the
+raw bytes of a string, blob, GeoJSON or HLL. A stored string or collection is held by
 position, never copied until asked. `Len` is a list's element count or a map's entry count, known without
 a walk. `Lookup(key)` and `LookupInt(key)` read one entry of a stored map, and `Index(i)` one element of a
-stored list, each in one import, with false when there is none.
+stored list, each in one import, with the three outcomes of the readers: `false` when there is none (past
+the end, no such key), an error when the value is not a list or map.
 
-`List()` and `Map()` on a `Value`, and `rec.List(name)` and `rec.Map(name)` on a record, are Go 1.23
-iterators, the Rust SDK's `iter()` and `entries()`: a list ranges over its values, a map over key and
-value, 32 per import, and the cursor is released when the loop ends or breaks. Lists nest: a value that is
-itself a list can be ranged over inside the loop.
+`List()` and `Map()` on a `Value` are Go 1.23 iterators, the Rust SDK's `iter()` and `entries()`: a list
+ranges over its values, a map over key and value, 32 per import, and the cursor is released when the loop
+ends or breaks. Lists nest: a value that is itself a list can be ranged over inside the loop. A walk that
+cannot go on (the call holds its 256 handles) fails the call rather than end short in silence.
 
 ```go
 //udf:function sum_list
 func sumList(rec *udf.Record) (int64, error) {
+	list, _, err := rec.List("l") // an absent bin ranges over nothing
+	if err != nil {
+		return 0, err // a bin that is not a list
+	}
+
 	var total int64
 
-	for v := range rec.List("l") {
+	for v := range list.List() {
 		n, err := v.Int() // fails the call on anything but an int
 		if err != nil {
 			return 0, err
@@ -250,10 +278,15 @@ func sumList(rec *udf.Record) (int64, error) {
 
 //udf:function busiest_site
 func busiestSite(rec *udf.Record) (string, error) {
+	counts, _, err := rec.Map("counts")
+	if err != nil {
+		return "", err
+	}
+
 	var best int64
 	var where string
 
-	for site, v := range rec.Map("counts") {
+	for site, v := range counts.Map() {
 		if n, err := v.Int(); err == nil && n > best {
 			best = n
 			where, _ = site.String() // the entry's key
@@ -270,9 +303,12 @@ func lastPayment(rec *udf.Record) (udf.Value, error) {
 		return udf.NilValue(), err
 	}
 
-	last, ok := history.Index(int(history.Len) - 1) // one import, whatever the length
+	last, ok, err := history.Index(int(history.Len) - 1) // one import, whatever the length
+	if err != nil {
+		return udf.NilValue(), err // not a list
+	}
 	if !ok {
-		return udf.NilValue(), nil // an empty list, or not a list
+		return udf.NilValue(), nil // an empty list
 	}
 
 	return last, nil
@@ -288,7 +324,9 @@ v)` and `Add(v)` take a value of any supported Go type (`int64`, `int`, `int32`,
 `Put` is a string or an integer. `PutGeoJSON` / `AddGeoJSON` take a GeoJSON; `PutAll(stored)` and
 `AddAll(stored)` copy a stored map or list by position. They chain, each is one import, and the first
 refusal is kept and answered by `Err()`, the way `strings.Builder` keeps its error; a generated export
-checks it when a map or list is returned.
+checks it when a map or list is returned. No put or add takes one of the call's 256 handles, whatever
+the kinds, so a loop may build a collection of thousands of entries one call at a time; a refusal's
+status is `udf.Refused`.
 
 `Len()` is how many entries or elements a built collection holds. `Contains(key)` asks a map being built
 whether it has a key, a string or an integer. The host answers from the map as it stands, in one import,
@@ -317,8 +355,9 @@ All on the record: `rec.Exists()`, `rec.Generation()`, `rec.TTL()` in seconds, `
 milliseconds since the Aerospike epoch, `rec.Size()` in bytes on device, `rec.BinCount()` and
 `rec.SetName()` ("" when the record is in no set). `rec.Digest(buf)` copies the 20-byte digest into a
 buffer you own and returns that part of it. `rec.Key(buf)` is the user key when the record was written
-with one stored: an integer value, or a string or blob whose bytes go into `buf`, and false when there is
-none.
+with one stored: an integer value, or a string or blob whose bytes go into `buf`; false when there is
+none, and an error, whose `Needed()` is the size to call again with, when `buf` is too small. A key is
+never cut.
 
 `udf.Now()`, the server's clock, is not about the record and stays on the package. An event handler may
 not read it.
@@ -326,7 +365,8 @@ not read it.
 ## Under the typed tier
 
 A few calls allocate nothing, for a path that runs once per record of a query. `udf.Args` decodes the
-arguments into a window the caller owns. `udf.Bytes(v, buf)` copies a value's bytes into a buffer.
+arguments into a window the caller owns. `udf.Bytes(v, buf)` copies a value's raw bytes into a buffer,
+and answers a status, never a cut copy, when it does not fit.
 `rec.Get`, `rec.Digest(buf)` and `rec.Key(buf)` read the record without building an error or a string.
 The `udf.IntValue`, `StringValue`, `BlobValue` and `DoubleValue` constructors make values for a batch, which
 `PutEntries` and `AddValues` hand the host in one import. `udf.Fail` and the scalar `Result*` calls
@@ -396,7 +436,7 @@ Its state is the struct's fields. It keeps the raw form, since it reads its argu
 and keeps them, and gives the signatures through `params`. The record half, with the record first:
 
 ```go
-{{#include ../../../aerospike-udf-sdk-wasm-go/examples/vector/main.go:401:418}}
+{{#include ../../../aerospike-udf-sdk-wasm-go/examples/vector/main.go:412:429}}
 ```
 
 > **A GeoJSON bin is saved only if it is GeoJSON.** Staging takes any text; the save builds the

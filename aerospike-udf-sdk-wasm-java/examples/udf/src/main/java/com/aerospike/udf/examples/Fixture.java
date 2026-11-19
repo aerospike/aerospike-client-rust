@@ -41,7 +41,7 @@ public final class Fixture {
     static long sumList(Record rec) {
         long total = 0;
 
-        for (Value v : rec.getList("l")) {
+        for (Value v : rec.bin("l").asList()) {
             total += v.asInt();
         }
 
@@ -66,14 +66,14 @@ public final class Fixture {
     @Function("typed")
     static MapBuilder typed(Record rec) {
         MapBuilder out = Udf.map(8)
-                .put("i", rec.getInt("i"))
-                .put("d", rec.getDouble("d"))
-                .put("s", rec.getString("s"))
-                .put("b", rec.getBool("b"));
+                .put("i", rec.bin("i").asInt())
+                .put("d", rec.bin("d").asDouble())
+                .put("s", rec.bin("s").asString())
+                .put("b", rec.bin("b").asBool());
         long sum = 0;
         ListBuilder keys = Udf.list(4);
 
-        for (MapValue.Entry e : rec.getMap("m")) {
+        for (MapValue.Entry e : rec.bin("m").asMap()) {
             if (e.getValue().isInt()) {
                 sum += e.getValue().asInt();
             }
@@ -103,7 +103,7 @@ public final class Fixture {
      */
     @Function("relist")
     static ListBuilder relist(Record rec, long index) {
-        ListValue doc = rec.getList("doc");
+        ListValue doc = rec.bin("doc").asList();
 
         if (doc.isEmpty() || index < 0 || index >= doc.size()) {
             throw new UdfException("relist: doc has no element " + index);
@@ -196,7 +196,7 @@ public final class Fixture {
     @Function("index_probe")
     static MapBuilder indexProbe(Record rec, String name, long index) {
         MapBuilder out = Udf.map(4);
-        ListValue list = rec.getList(name);
+        ListValue list = rec.bin(name).asList();
 
         out.put("len", list.size());
 
@@ -223,8 +223,8 @@ public final class Fixture {
      */
     @Function("bridge")
     static Map<String, Object> bridge(Record rec) {
-        List<Object> items = rec.getList("l").toList();
-        Map<Object, Object> entries = rec.getMap("m").toMap();
+        List<Object> items = rec.bin("l").asList().toList();
+        Map<Object, Object> entries = rec.bin("m").asMap().toMap();
 
         List<Object> doubled = new ArrayList<>();
 
@@ -254,7 +254,7 @@ public final class Fixture {
      */
     @Function("early_exit")
     static long earlyExit(Record rec, long rounds) {
-        ListValue list = rec.getList("l");
+        ListValue list = rec.bin("l").asList();
 
         for (long round = 0; round < rounds; round++) {
             for (Value v : list) {

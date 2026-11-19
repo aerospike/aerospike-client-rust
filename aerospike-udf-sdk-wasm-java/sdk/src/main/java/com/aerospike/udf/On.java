@@ -42,8 +42,13 @@ public final class On {
     }
 
     /**
-     * {@code (EventRecord current, EventRecord incoming)}: the record as it is on this cluster and the one
-     * that arrived over XDR; answers keep-local, take-remote, policy, delete or record.
+     * Marks the handler of an {@code xdr-merge}: a method
+     * {@code Resolution name(EventRecord current, EventRecord incoming)} given the record as it is on this
+     * cluster and the one that arrived over XDR, which answers with a {@link Resolution}: keep-local,
+     * take-remote, policy, delete or record. The annotation's value is the name the export gets and
+     * {@code event-set} binds; the method's name when it is empty. The handler runs on an incoming XDR write
+     * to a record this node has, live or tombstone, before the write is applied, with no clock and nothing to
+     * write to: its answer is the only effect it has.
      */
     @Target(ElementType.METHOD)
     @Retention(RetentionPolicy.SOURCE)

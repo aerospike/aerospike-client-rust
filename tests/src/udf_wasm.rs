@@ -1745,3 +1745,149 @@ async fn a_wasm_module_describes_its_exports() {
         "names the missing export: {error}"
     );
 }
+
+/// The corners the API reference states, read off the server: a call that fails writes nothing, even
+/// what it had saved; a staged bin is not counted until it is saved; a key with no record answers zeros
+/// and refuses the writes that are not staged; and a per-bin time in a merge is in milliseconds since
+/// the Citrusleaf epoch.
+#[aerospike_macro::test]
+async fn a_wasm_udf_at_the_edges_the_reference_states() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("wasm_edges_{}", common::rand_str(6));
+    let write = WritePolicy::default();
+    let read = ReadPolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+
+    client.put(&write, &key, &[as_bin!("a", 1)]).await.unwrap();
+
+    if let Err(reason) = register(&client, package, &key).await {
+        skipped("a_wasm_udf_at_the_edges_the_reference_states", &reason);
+        return;
+    }
+
+    let only_a = HashMap::from([("a".to_string(), Value::from(1))]);
+
+    // A failure after a save undoes the save.
+    for function in ["save_then_fail", "ints_then_fail"] {
+        let failed = client.execute_udf(&write, &key, package, function, &[]).await;
+
+        assert!(failed.is_err(), "{function}: {failed:?}");
+        assert_eq!(client.get(&read, &key, Bins::All).await.unwrap().bins.into_iter().collect::<HashMap<_, _>>(), only_a, "{function} left nothing behind");
+    }
+
+    // A staged bin is not a bin yet.
+    assert_eq!(
+        client.execute_udf(&write, &key, package, "count_staged", &[]).await.unwrap(),
+        Some(Value::from(vec![Value::from(1), Value::from(1), Value::from(2)])),
+        "bin_count before staging, once staged, once saved"
+    );
+
+    // A key with no record: every number is zero, there is no TTL, and reading it creates nothing.
+    let absent = as_key!(namespace, set_name, 2);
+    let meta = match client.execute_udf(&write, &absent, package, "meta_probe", &[]).await.unwrap() {
+        Some(Value::SortedMap(m)) => m.into_iter().collect::<HashMap<_, _>>(),
+        Some(Value::HashMap(m)) => m,
+        Some(Value::OrderedMap(m)) => m.into_iter().collect(),
+        other => panic!("{other:?}"),
+    };
+
+    for (name, want) in [
+        ("exists", Value::Bool(false)),
+        ("has", Value::Bool(false)),
+        ("generation", Value::from(0)),
+        ("lut", Value::from(0)),
+        ("size", Value::from(0)),
+        ("bins", Value::from(0)),
+        ("ttl", Value::from(-1)),
+    ] {
+        assert_eq!(meta.get(&Value::from(name)), Some(&want), "{name} on a key with no record: {meta:?}");
+    }
+
+    assert!(client.get(&read, &absent, Bins::All).await.is_err(), "reading metadata made no record");
+
+    // The writes that are not staged are refused there, and make no record.
+    for verb in ["set_ints", "set_doubles", "delete"] {
+        assert_eq!(
+            client.execute_udf(&write, &absent, package, "verb_probe", &[Value::from(verb)]).await.unwrap(),
+            Some(Value::from(vec![Value::from("refused"), Value::Bool(false)])),
+            "{verb} on a key with no record"
+        );
+        assert!(client.get(&read, &absent, Bins::All).await.is_err(), "{verb} made no record");
+    }
+
+    // A save that stages no bin there fails the call: there is still no record to answer about.
+    for verb in ["remove", "ttl_never"] {
+        let failed = client.execute_udf(&write, &absent, package, "verb_probe", &[Value::from(verb)]).await;
+
+        assert!(matches!(&failed, Err(e) if e.matches(&[ResultCode::KeyNotFoundError])), "{verb}: {failed:?}");
+    }
+
+    // On a record that is there: removing a bin that is not there is not an error, and a TTL of
+    // u32::MAX is "never", which the client reads as no TTL even on a record that had one.
+    let expiring = WritePolicy { expiration: Expiration::Seconds(1000), ..WritePolicy::default() };
+
+    for verb in ["remove", "ttl_never"] {
+        let present = as_key!(namespace, set_name, verb);
+
+        client.put(&expiring, &present, &[as_bin!("a", 1)]).await.unwrap();
+        assert_eq!(
+            client.execute_udf(&write, &present, package, "verb_probe", &[Value::from(verb)]).await.unwrap(),
+            Some(Value::from(vec![Value::from("ok"), Value::Bool(true)])),
+            "{verb}"
+        );
+
+        let after = client.get(&read, &present, Bins::All).await.unwrap();
+
+        assert_eq!(after.bins.clone().into_iter().collect::<HashMap<_, _>>(), only_a, "{verb}");
+
+        if verb == "ttl_never" {
+            assert_eq!(after.time_to_live(), None, "u32::MAX is never");
+        }
+    }
+
+    // The merge's numbers, on the namespace that keeps a time per bin. The dry run needs a binding.
+    let admin = AdminPolicy::default();
+
+    if client.info(&admin, &["namespaces"]).await.unwrap().values().any(|v| v.split(';').any(|n| n == "testbc")) {
+        let merged = as_key!("testbc", set_name, "m");
+        let bind = format!("event-set:event=xdr-merge;namespace=testbc;set={set_name};module={package};function=meta_merge");
+        let unbind = format!("event-remove:event=xdr-merge;namespace=testbc;set={set_name}");
+
+        client.put(&expiring, &merged, &[as_bin!("a", 1)]).await.unwrap();
+        assert_eq!(client.info(&admin, &[bind.as_str()]).await.unwrap().values().next().map(String::as_str), Some("ok"));
+
+        let incoming = HashMap::from([(Value::from("a"), Value::from(2))]);
+        let incoming_meta = HashMap::from([(Value::from("src-id"), Value::from(2))]);
+        let answer = client
+            .execute_udf(&write, &merged, "__event__", "xdr-merge", &[Value::from(incoming), Value::from(incoming_meta)])
+            .await
+            .unwrap();
+        let text = format!("{answer:?}");
+        let number = |name: &str| -> i64 {
+            let at = text.find(&format!("String(\"{name}\"): Int(")).unwrap_or_else(|| panic!("no {name} in {text}"));
+            let rest = &text[at + name.len() + 16..];
+
+            rest[..rest.find(')').unwrap()].parse().unwrap()
+        };
+        // 2010-01-01T00:00:00Z, the epoch the server counts from.
+        let citrusleaf_now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
+            - 1_262_304_000_000;
+
+        assert!(
+            (number("c_blut") - citrusleaf_now).abs() < 60_000,
+            "a bin's time is milliseconds since the Citrusleaf epoch: {} against {citrusleaf_now}",
+            number("c_blut")
+        );
+        assert_eq!(number("c_bsrc"), 1, "written here");
+        assert_eq!(number("i_bsrc"), 2, "the incoming side's source");
+        assert_eq!((number("c_lut"), number("c_gen"), number("i_lut"), number("i_gen")), (0, 0, 0, 0), "record-level time and generation are not shown to a merge");
+        assert_eq!(number("now"), -1, "and it has no clock");
+
+        let _ = client.info(&admin, &[unbind.as_str()]).await;
+        let _ = client.delete(&write, &merged).await;
+    }
+
+    let _ = client.remove_udf(&admin, &format!("{package}.wasm")).await;
+}

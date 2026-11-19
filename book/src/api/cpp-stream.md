@@ -6,11 +6,29 @@
 UDF_STREAM_RECORD(name, ret, ...)
 ```
 
-A stream UDF: `UDF_STREAM_RECORD(name, ret, params...) { ... }` then `UDF_STREAM_END(name, ret, params...)
-{ ... }`, in that order; the record half returns void or Result&lt;void&gt;, the end half the partial. The
-record half may take the record first, as `const udf::Record& rec` only: a stream's record takes no
-write. The end half has no record. State is static. UDF_STREAM_RAW(name, "(record params)",
-"(end params)") declares both halves raw.
+The per-record half of a stream (aggregation) UDF: `UDF_STREAM_RECORD(name, ret, params...) { ... }`, followed
+by `UDF_STREAM_END(name, ret, params...) { ... }`, in that order. It is exported as `<name>_record` and called
+once for every record the query reads. It returns void or `Result<void>`: an error ends the stream with its
+message, and any other return is ignored. It may take the record first, as `const udf::Record& rec` only: a
+stream's record takes no write, and `udf::Record&` does not compile. Its parameters are decoded as
+UDF_FUNCTION's are, on every record.
+
+State is static: one instance of the module sees every record a query thread reads, and nothing resets a static
+between records. UDF_STREAM_RAW declares both halves raw.
+
+```cpp
+static int64_t total;
+
+UDF_STREAM_RECORD(sum_n, void, const udf::Record& rec)
+{
+	total += rec.int_or("n", 0);
+}
+
+UDF_STREAM_END(sum_n, int64_t)
+{
+	return total;
+}
+```
 
 #### `UDF_STREAM_END`
 
@@ -18,9 +36,10 @@ write. The end half has no record. State is static. UDF_STREAM_RAW(name, "(recor
 UDF_STREAM_END(name, ret, ...)
 ```
 
-The end half of a stream UDF, declared after its UDF_STREAM_RECORD and exported as `<name>_end`: its
-return is delivered as the result, the partial. It also emits the stream's signature, built from the
-parameter lists of both halves, which is why it comes second.
+The end half of a stream UDF, declared after its UDF_STREAM_RECORD and exported as `<name>_end`. It runs once
+after the last record a query thread reads, and its return is delivered as the result, the partial: any return
+type UDF_FUNCTION takes. It has no record, and a record parameter here does not compile. It also emits the
+stream's signature, built from the parameter lists of both halves, which is why it comes second.
 
 #### `UDF_STREAM_RAW`
 
@@ -28,8 +47,10 @@ parameter lists of both halves, which is why it comes second.
 UDF_STREAM_RAW(name, record_params, end_params)
 ```
 
-Both halves of a stream UDF in the raw form. Declares `int32_t name_record_udf_impl(int32_t args,
-int32_t argc)` and `name_end_udf_impl` likewise, exports them as `<name>_record` and `<name>_end`, and
-emits the signature from the two parameter strings. No body follows the macro: the module defines the
-two functions itself, each returning the status.
+Both halves of a stream UDF in the raw form: `UDF_STREAM_RAW(name, "(record params)", "(end params)")`.
+Declares `int32_t name_record_udf_impl(int32_t args, int32_t argc)` and `name_end_udf_impl` likewise, exports
+them as `<name>_record` and `<name>_end`, and emits the signature from the two parameter strings. No body
+follows the macro: the module defines the two functions itself, each returning the status, 0 or non-zero. A raw
+half is not handed a udf::Record: it reads the record with the C header's `as_udf_rec_` functions. The form for
+a stream that reads its arguments once, on the first record, and keeps them in statics.
 

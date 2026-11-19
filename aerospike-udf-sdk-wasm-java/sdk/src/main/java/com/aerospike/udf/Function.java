@@ -54,6 +54,25 @@ import java.lang.annotation.Target;
  * decodes its arguments its own way.
  *
  * <p>The generated class carries the module's {@code main}: name it as the TeaVM {@code mainClass}.
+ *
+ * <p>A typed function, whole:
+ *
+ * <pre>
+ * {@literal @}Function("visit")
+ * static long visit(Record rec, String page, {@literal @}Nullable Long weight) {
+ *     long visits = rec.getInt("visits", 0) + (weight == null ? 1 : weight);
+ *
+ *     if (visits &gt; 1_000_000) {
+ *         throw new UdfException("visit: counter overflow");   // the client's error message
+ *     }
+ *
+ *     rec.set("visits", visits);
+ *     rec.set("last", page);
+ *     rec.save();                                              // nothing is written without it
+ *
+ *     return visits;                                           // the client's result
+ * }
+ * </pre>
  */
 @Target(ElementType.METHOD)
 @Retention(RetentionPolicy.SOURCE)

@@ -629,11 +629,11 @@ public final class ExportsProcessor extends AbstractProcessor {
         out.append("            int n = ").append(PARAMS).append(".args(args, argc, ARGS_").append(prefix(e)).append(id)
                 .append(");\n");
 
-        // Params.args fills at most the array's length, so the surplus shows only in argc.
-        if (!rest) {
-            out.append("            ").append(PARAMS).append(".arity(\"").append(e.name).append("\", ")
-                    .append(params.size()).append(", argc);\n");
-        }
+        // Params.args fills at most the array's length, so the surplus shows only in argc: a call with more
+        // arguments than the method declares fails, and so does one with more than a call can pass when the
+        // method takes the rest. None is dropped.
+        out.append("            ").append(PARAMS).append(".arity(\"").append(e.name).append("\", ")
+                .append(rest ? PARAMS + ".MAX_ARGS" : Integer.toString(params.size())).append(", argc);\n");
 
         // The record of the call goes first when the method asks for it; it is no part of the signature.
         StringBuilder call = new StringBuilder(method + "(" + (e.takesRecord() ? PARAMS + ".record()" : ""));

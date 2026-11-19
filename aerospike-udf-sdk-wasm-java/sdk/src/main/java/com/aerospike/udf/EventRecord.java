@@ -30,6 +30,24 @@ import org.teavm.interop.Address;
  * <p>A handler changes a record by answering with the bins it should have
  * ({@link Resolution#record}); {@link #withBins} fills such an answer with every bin of this record the
  * handler did not decide.
+ *
+ * <pre>
+ * {@literal @}On.XdrMerge("keep_higher_score")
+ * static Resolution keepHigherScore(EventRecord current, EventRecord incoming) {
+ *     if (incoming.isDelete()) {
+ *         return Resolution.policy();
+ *     }
+ *
+ *     long mine = current.getInt("score", 0);
+ *     long theirs = incoming.getInt("score", 0);
+ *
+ *     return theirs &gt; mine ? Resolution.takeRemote() : Resolution.keepLocal();
+ * }
+ * </pre>
+ *
+ * <p>Both records are good for the whole call and for nothing after it. A handler has no record of its own
+ * and no clock: {@link Udf#now} answers -1 in one, a {@link Udf#log} line is dropped, and the
+ * {@link Record} of a record UDF is not there to read or write.
  */
 public final class EventRecord implements RecordReader {
     /** The index the record is read by: 0 for the first record the event hands over, 1 for the second. */
@@ -58,49 +76,84 @@ public final class EventRecord implements RecordReader {
     // What the event says about the record.
     //
 
-    /** The record's generation; 0 on both sides of an {@code xdr-merge}. */
+    /**
+     * The record's generation. It is 0 on both sides of an {@code xdr-merge}: each cluster counts its own
+     * writes, so a merge that read it could not converge.
+     */
     @Override
     public long generation() {
         return generation;
     }
 
-    /** When the record was last written; 0 on both sides of an {@code xdr-merge}. */
+    /**
+     * When the record was last written. It is 0 on both sides of an {@code xdr-merge}, for the reason
+     * {@link #generation} is; {@link #binLastUpdateTime} is the time a merge orders by.
+     */
     @Override
     public long lastUpdateTime() {
         return lastUpdateTime;
     }
 
+    /** This side's time to live, in seconds; 0 for a record that does not expire. */
     @Override
     public long ttl() {
         return ttl;
     }
 
-    /** The XDR source id of the data centre that wrote this version. */
+    /**
+     * The XDR source id of the data centre that wrote this version: the number each cluster is configured
+     * with as its {@code src-id}. It is the tie-break when two writes carry the same time.
+     */
     public long sourceId() {
         return sourceId;
     }
 
-    /** The names of the record's bins, as a list of strings. */
+    /**
+     * The names of the bins this side has, as a list of strings to iterate; empty for an incoming write that
+     * deletes the record and for a tombstone.
+     */
     public ListValue binNames() {
         return new ListValue(bins);
     }
 
-    /** The names of the bins this side deleted (bin deletes, or tombstones); empty when it deleted none. */
+    /**
+     * The names of the bins this side deleted (bin deletes, or tombstones), as a list of strings; empty when
+     * it deleted none, which is also what it is when the server sent no such list. A bin named here must not be brought back from the other side by a merge that copies
+     * whatever either side has.
+     */
     public ListValue deletedBins() {
         return new ListValue(deleted);
     }
 
-    /** Whether this side deleted any bin. */
+    /** Whether this side deleted any bin: {@link #deletedBins} is not empty. */
     public boolean deletedAny() {
         return deleted.kind() == Value.LIST && deleted.length() > 0;
     }
 
-    /** When this side last wrote the bin: per bin where the server keeps one, the record's otherwise. */
+    /**
+     * Whether this side deleted the bin {@code name}: it is in {@link #deletedBins}. A merge that takes the
+     * later write of a bin asks this of the later side, so that a delete is not undone by the older value.
+     */
+    public boolean deleted(String name) {
+        return deletedAny() && deletedBins().contains(name);
+    }
+
+    /**
+     * When this side last wrote the bin, in milliseconds since the Citrusleaf epoch, 2010-01-01T00:00:00Z
+     * (Unix milliseconds minus 1 262 304 000 000), for comparing with the other side's: the bin's own time
+     * where the server keeps one ({@link #usesBinConvergence} says whether it is meaningful), and
+     * {@link #lastUpdateTime} otherwise, also for a bin this side does not have. The record's time is 0 in an
+     * {@code xdr-merge}, so where no per-bin time is kept every bin answers 0 on both sides and only
+     * {@link #binSourceId} tells them apart.
+     */
     public long binLastUpdateTime(String name) {
         return Maps.getInt(binLastUpdateTimes, name, lastUpdateTime);
     }
 
-    /** The source id that wrote the bin: per bin where the server keeps one, the record's otherwise. */
+    /**
+     * The source id of the data centre that last wrote the bin on this side: the bin's own where the server
+     * keeps one, the record's {@link #sourceId} otherwise, also for a bin this side does not have.
+     */
     public long binSourceId(String name) {
         return Maps.getInt(binSourceIds, name, sourceId);
     }
@@ -123,7 +176,7 @@ public final class EventRecord implements RecordReader {
 
     /**
      * The names of the incoming bins that would lose under bin convergence, as a list of strings. Empty
-     * for the current record.
+     * for the current record, and when the server sent no such list.
      */
     public ListValue lostBins() {
         return new ListValue(lost);
@@ -163,33 +216,51 @@ public final class EventRecord implements RecordReader {
         return read(Names.of(name), v);
     }
 
-    private Value required(String name, int kind, String what) {
-        int rc = read(name);
-
-        if (rc == LowLevel.OK && v.kind() == kind) {
-            return v;
-        }
-
-        throw Reads.problem(Reads.state(rc, v, kind), "bin ", name, what);
-    }
-
-    private Value optional(String name, int kind, String what) {
-        int rc = read(name);
-
-        if (rc == LowLevel.OK && v.kind() == kind) {
-            return v;
-        }
-
+    /** Returns for an absent bin, which is nothing or a default; throws for any other miss. */
+    private void absent(int rc, String name, int kind, String what) {
         int state = Reads.state(rc, v, kind);
 
         if (state != Reads.NONE) {
             throw Reads.problem(state, "bin ", name, what);
         }
+    }
+
+    /** The scratch value when the bin is there and of {@code kind}; null when absent; throws for another. */
+    private Value typed(String name, int kind, String what) {
+        int rc = read(name);
+
+        if (rc == LowLevel.OK && v.kind() == kind) {
+            return v;
+        }
+
+        absent(rc, name, kind, what);
 
         return null;
     }
 
-    /** The bin as a value, or null when this side has no such bin or holds nil in it (a bin it deleted). */
+    /** The scratch value when the bin has bytes of any kind; null when absent; throws for another. */
+    private Value bytes(String name) {
+        int state = Reads.state(read(name), v, v.kind());
+
+        if (state == Reads.NONE) {
+            return null;
+        }
+
+        if (state != Reads.HIT || !v.hasBytes()) {
+            throw Reads.problem(state == Reads.HIT ? Reads.WRONG : state, "bin ", name,
+                    "a string, blob, GeoJSON or HLL");
+        }
+
+        return v;
+    }
+
+    /**
+     * The bin as a {@link Value} of whatever kind it is, or null when this side has no such bin or holds nil in it
+     * (a bin it deleted). The value is a fresh one that is not changed afterwards: a
+     * scalar is in it whole, and the text of a string or the elements of a list are read from the server when
+     * its {@code as*} reader asks for them. Throws {@link UdfException} only when the host could not read the
+     * bin.
+     */
     @Override
     public Value get(String name) {
         int state = Reads.state(read(name), v, v.kind());
@@ -205,6 +276,12 @@ public final class EventRecord implements RecordReader {
         return v.copy();
     }
 
+    /**
+     * As {@link #get}, for a bin that has to be there: throws {@link UdfException} reading
+     * {@code bin <name> is absent}, with the status {@link LowLevel#NOT_FOUND}, when this side has no such
+     * bin, and never answers null. With the value's own reader it is the read that insists:
+     * {@code incoming.bin("score").asInt()}.
+     */
     @Override
     public Value bin(String name) {
         Value x = get(name);
@@ -216,127 +293,233 @@ public final class EventRecord implements RecordReader {
         return x;
     }
 
+    /**
+     * Whether this side has the bin, of any kind. False for a bin it deleted, and for a name that is not 1 to
+     * 15 bytes.
+     */
     @Override
     public boolean has(String name) {
         return Reads.state(read(name), v, v.kind()) == Reads.HIT;
     }
 
+    /**
+     * An integer bin, or null when this side has no such bin. Throws {@link UdfException} naming the bin
+     * ({@code bin n is not an int}, status {@link LowLevel#TYPE_MISMATCH}) when it holds another kind; a
+     * double is not truncated to one. The answer is boxed so that it can be null: assigning it to a
+     * {@code long} without looking fails the call with a {@code NullPointerException} for an absent bin, so
+     * give a default ({@link #getInt(String, long)}) or insist ({@code incoming.bin(name).asInt()}) where no test
+     * for null is wanted.
+     *
+     * <pre>
+     * Long theirs = incoming.getInt("score");
+     *
+     * if (theirs == null) {
+     *     // the incoming write does not carry the bin
+     * }
+     * </pre>
+     */
     @Override
-    public long getInt(String name) {
-        return required(name, Value.INT, "an int").payload();
+    public Long getInt(String name) {
+        int rc = read(name);
+
+        if (rc == LowLevel.OK && v.kind() == Value.INT) {
+            return v.payload();
+        }
+
+        absent(rc, name, Value.INT, "an int");
+
+        return null;
     }
 
+    /**
+     * An integer bin, or {@code dflt} when this side has no such bin. A bin of another kind still throws
+     * {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}): the default stands in for a missing bin, not for
+     * a wrong one. In a merge the default is what a side that never wrote the bin counts as, so choose one
+     * that leaves the other side's value standing: 0 for a sum or a maximum of counts.
+     */
     @Override
     public long getInt(String name, long dflt) {
-        Value x = optional(name, Value.INT, "an int");
+        int rc = read(name);
 
-        return x == null ? dflt : x.payload();
+        if (rc == LowLevel.OK && v.kind() == Value.INT) {
+            return v.payload();
+        }
+
+        absent(rc, name, Value.INT, "an int");
+
+        return dflt;
     }
 
+    /**
+     * A double bin, or null when this side has no such bin. Throws {@link UdfException}
+     * ({@link LowLevel#TYPE_MISMATCH}) naming the bin when it holds another kind, and an integer bin is
+     * another kind: it is not widened.
+     */
     @Override
-    public double getDouble(String name) {
-        return required(name, Value.DOUBLE, "a double").doubleBits();
+    public Double getDouble(String name) {
+        int rc = read(name);
+
+        if (rc == LowLevel.OK && v.kind() == Value.DOUBLE) {
+            return v.doubleBits();
+        }
+
+        absent(rc, name, Value.DOUBLE, "a double");
+
+        return null;
     }
 
+    /**
+     * A double bin, or {@code dflt} when this side has no such bin. A bin of another kind, an integer
+     * included, still throws {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}).
+     */
     @Override
     public double getDouble(String name, double dflt) {
-        Value x = optional(name, Value.DOUBLE, "a double");
+        int rc = read(name);
 
-        return x == null ? dflt : x.doubleBits();
+        if (rc == LowLevel.OK && v.kind() == Value.DOUBLE) {
+            return v.doubleBits();
+        }
+
+        absent(rc, name, Value.DOUBLE, "a double");
+
+        return dflt;
     }
 
+    /**
+     * A boolean bin, or null when this side has no such bin. Throws {@link UdfException}
+     * ({@link LowLevel#TYPE_MISMATCH}) naming the bin when it holds another kind; an integer 0 or 1 is not a
+     * boolean.
+     */
     @Override
-    public boolean getBool(String name) {
-        return required(name, Value.BOOL, "a bool").payload() != 0;
+    public Boolean getBool(String name) {
+        int rc = read(name);
+
+        if (rc == LowLevel.OK && v.kind() == Value.BOOL) {
+            return v.payload() != 0;
+        }
+
+        absent(rc, name, Value.BOOL, "a bool");
+
+        return null;
     }
 
+    /**
+     * A boolean bin, or {@code dflt} when this side has no such bin. A bin of another kind still throws
+     * {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}).
+     */
     @Override
     public boolean getBool(String name, boolean dflt) {
-        Value x = optional(name, Value.BOOL, "a bool");
+        int rc = read(name);
 
-        return x == null ? dflt : x.payload() != 0;
+        if (rc == LowLevel.OK && v.kind() == Value.BOOL) {
+            return v.payload() != 0;
+        }
+
+        absent(rc, name, Value.BOOL, "a bool");
+
+        return dflt;
     }
 
+    /**
+     * The text of a string bin, decoded from UTF-8 into a new {@code String} on every call, or null when this
+     * side has no such bin. Throws {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}) naming the bin
+     * when it is not a string. A GeoJSON bin is not a string here: {@link #getBytes(String)} gives its text
+     * as bytes.
+     */
     @Override
     public String getString(String name) {
-        return required(name, Value.STR, "a string").asString();
+        return getString(name, null);
     }
 
+    /**
+     * The text of a string bin, or {@code dflt} (which may be null) when this side has no such bin. A bin of
+     * another kind still throws {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}).
+     */
     @Override
     public String getString(String name, String dflt) {
-        Value x = optional(name, Value.STR, "a string");
+        Value x = typed(name, Value.STR, "a string");
 
         return x == null ? dflt : x.asString();
     }
 
+    /**
+     * The bytes of a blob bin, copied into a new array on every call, or null when this side has no such
+     * bin. It is strict: throws {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}) naming the bin when it
+     * holds anything but a blob, a string, a GeoJSON document and an HLL included. {@link #getBytes(String)}
+     * is the reader that takes those.
+     */
     @Override
     public byte[] getBlob(String name) {
-        byte[] b = getBlob(name, null);
-
-        if (b == null) {
-            throw Reads.problem(Reads.NONE, "bin ", name, "a string or blob");
-        }
-
-        return b;
+        return getBlob(name, null);
     }
 
+    /**
+     * The bytes of a blob bin, copied into a new array, or {@code dflt} (which may be null, and is returned as
+     * it is, not copied) when this side has no such bin. A bin of another kind still throws
+     * {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}).
+     */
     @Override
     public byte[] getBlob(String name, byte[] dflt) {
-        int state = Reads.state(read(name), v, v.kind());
+        Value x = typed(name, Value.BLOB, "a blob");
 
-        if (state == Reads.NONE) {
-            return dflt;
-        }
-
-        if (state != Reads.HIT || !v.isStored() || v.isList() || v.isMap()) {
-            throw Reads.problem(state == Reads.HIT ? Reads.WRONG : state, "bin ", name, "a string or blob");
-        }
-
-        return v.asBlob();
+        return x == null ? dflt : x.asBytes();
     }
 
+    /**
+     * The raw bytes of a string, blob, GeoJSON or HLL bin, copied into a new array on every call, or null
+     * when this side has no such bin: the UTF-8 bytes of a string or a document, the bytes of a blob, an HLL
+     * as the server stores it. Throws {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}) naming the bin
+     * when it is a number, a boolean, a list or a map.
+     */
+    @Override
+    public byte[] getBytes(String name) {
+        Value x = bytes(name);
+
+        return x == null ? null : x.asBytes();
+    }
+
+    /**
+     * A list bin, as a view that reads it where the server holds it: nothing is copied until an element is
+     * asked for. Null when this side has no such bin, which is not an empty list: an empty list bin is a
+     * view whose {@link ListValue#isEmpty} is true. Throws {@link UdfException}
+     * ({@link LowLevel#TYPE_MISMATCH}) naming the bin when it is not a list. The view goes into an answer by position:
+     * {@code out.put("tags", incoming.getList("tags").asValue())}.
+     */
     @Override
     public ListValue getList(String name) {
-        return new ListValue(required(name, Value.LIST, "a list").copy());
+        return getList(name, null);
     }
 
+    /**
+     * A list bin as a view, or {@code dflt} (which may be null) when this side has no such bin. A bin of
+     * another kind still throws {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}).
+     */
     @Override
     public ListValue getList(String name, ListValue dflt) {
-        Value x = optional(name, Value.LIST, "a list");
+        Value x = typed(name, Value.LIST, "a list");
 
         return x == null ? dflt : new ListValue(x.copy());
     }
 
+    /**
+     * A map bin, as a view that looks keys up and iterates where the server holds it: nothing is copied until
+     * an entry is asked for. Null when this side has no such bin, which is not an empty map. Throws
+     * {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}) naming the bin when it is not a map.
+     */
     @Override
     public MapValue getMap(String name) {
-        return new MapValue(required(name, Value.MAP, "a map").copy());
+        return getMap(name, null);
     }
 
+    /**
+     * A map bin as a view, or {@code dflt} (which may be null) when this side has no such bin. A bin of
+     * another kind still throws {@link UdfException} ({@link LowLevel#TYPE_MISMATCH}).
+     */
     @Override
     public MapValue getMap(String name, MapValue dflt) {
-        Value x = optional(name, Value.MAP, "a map");
+        Value x = typed(name, Value.MAP, "a map");
 
         return x == null ? dflt : new MapValue(x.copy());
-    }
-
-    // The boxed readers Pair builds a Both from: null for a side without the bin.
-
-    Long boxedInt(String name) {
-        Value x = optional(name, Value.INT, "an int");
-
-        return x == null ? null : x.payload();
-    }
-
-    Double boxedDouble(String name) {
-        Value x = optional(name, Value.DOUBLE, "a double");
-
-        return x == null ? null : x.doubleBits();
-    }
-
-    Boolean boxedBool(String name) {
-        Value x = optional(name, Value.BOOL, "a bool");
-
-        return x == null ? null : x.payload() != 0;
     }
 
     //==========================================================
@@ -344,10 +527,18 @@ public final class EventRecord implements RecordReader {
     //
 
     /**
-     * Puts every bin of this record that {@code overrides} lacks into it, by position, and returns it: for
-     * a {@code record} answer that changes a few bins and keeps the rest. This prefers one side, so an
-     * {@code xdr-merge} handler that uses it on the current record is not symmetric;
-     * {@link Pair#withNewer} is the symmetric form.
+     * Puts every bin of this record that {@code overrides} lacks into it, by position, and returns it: for a
+     * {@code record} answer that changes a few bins and keeps the rest. A bin this side deleted is not put,
+     * so in the answer it stays deleted. This prefers one side, so an {@code xdr-merge} handler that uses it
+     * on the current record is not symmetric; {@link Pair#withNewer} is the symmetric form. It never brings
+     * back a bin from the other side, so a bin the other side has and this one deleted stays out too. Throws
+     * {@link UdfException} when a bin could not be read or put.
+     *
+     * <pre>
+     * MapBuilder out = Udf.map(4).put("visits", visits);
+     *
+     * return Resolution.record(incoming.withBins(out));   // visits as merged, the rest as it arrived
+     * </pre>
      */
     public MapBuilder withBins(MapBuilder overrides) {
         for (Value name : binNames()) {

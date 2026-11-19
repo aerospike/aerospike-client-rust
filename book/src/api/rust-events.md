@@ -6,14 +6,27 @@
 impl ReadRecord for EventRecord
 ```
 
+Reads one side of an event. `bin` is `EventRecord::bin`, and the typed readers come from the trait, so a
+helper written against `&impl ReadRecord` works on either side of a merge as it does on a `Record`.
+`generation` and `last_update_time` are zero on both sides of an `xdr-merge`.
+
 #### `EventRecord`
 
 ```rust
 pub struct EventRecord
 ```
 
-One side of an event: a read-only record with its metadata. Its bins are read through the event's own
-import, never the ordinary record natives, which in an event answer "nothing".
+One side of an event: a read-only record with its metadata. An `xdr-merge` handler is given two, the
+record this cluster holds (`current`) and the write that arrived over XDR (`incoming`); see `event!`.
+
+It reads like a `Record` - `bin`, `get`, `has` and the typed readers, with the same answers - and has
+nothing that writes: a handler changes the record by what it returns (`Resolution`). Besides the bins it
+answers what the server knows about its side of the merge: `is_delete` and
+`is_partial` of the incoming write, `is_tombstone`
+of the current record, and per bin when and by which DC it was written.
+
+It is `Copy`, and valid until the handler returns. Its bins are read through the event's own import, never
+the ordinary record natives, which in an event answer "nothing": a `Record` has no place in a handler.
 
 #### `EventRecord::bin`
 
@@ -21,7 +34,10 @@ import, never the ordinary record natives, which in an event answer "nothing".
 pub fn bin(&self, name: &str) -> Result<Value<'static>, Error>
 ```
 
-A bin, as [`Record::bin`] reads one: `Err(Absent)` when the record has no such bin.
+A bin of this side, as `Record::bin` reads one, in one import call: `Err(Absent)` when this side has
+no such bin, or `name` cannot be a bin name (1 to 15 bytes). A bin this side deleted is absent too;
+`deleted_bins` tells the two apart. An incoming record delete has no
+bins.
 
 #### `EventRecord::get`
 
@@ -29,7 +45,8 @@ A bin, as [`Record::bin`] reads one: `Err(Absent)` when the record has no such b
 pub fn get(&self, name: &str) -> Result<Option<Value<'static>>, Error>
 ```
 
-A bin that may be absent: `None` when it is absent or nil.
+A bin that may be absent: `Ok(None)` when this side has no such bin, `Ok(Some(value))` otherwise,
+whatever kind it holds.
 
 #### `EventRecord::has`
 
@@ -37,7 +54,7 @@ A bin that may be absent: `None` when it is absent or nil.
 pub fn has(&self, name: &str) -> bool
 ```
 
-Whether the record has the bin.
+Whether this side has the bin. False for a bin it deleted, and for a name that cannot be a bin name.
 
 #### `EventRecord::int`
 
@@ -45,7 +62,8 @@ Whether the record has the bin.
 pub fn int(&self, name: &str) -> Result<Option<i64>, Error>
 ```
 
-An integer bin, or `None` when the bin is absent or nil. A bin of another kind is `Err(WrongType)`.
+An integer bin, or `None` when this side does not have the bin. A bin of another kind is
+`Err(WrongType)`, a double included: nothing is converted.
 
 #### `EventRecord::int_or`
 
@@ -53,7 +71,7 @@ An integer bin, or `None` when the bin is absent or nil. A bin of another kind i
 pub fn int_or(&self, name: &str, default: i64) -> Result<i64, Error>
 ```
 
-An integer bin, or `default` when it is absent or nil. A bin of another kind is still
+An integer bin, or `default` when this side does not have it. A bin of another kind is still
 `Err(WrongType)`.
 
 #### `EventRecord::double_or`
@@ -62,7 +80,8 @@ An integer bin, or `default` when it is absent or nil. A bin of another kind is 
 pub fn double_or(&self, name: &str, default: f64) -> Result<f64, Error>
 ```
 
-A double bin, or `default` when it is absent or nil.
+A double bin, or `default` when this side does not have it. A bin of another kind, an integer
+included, is still `Err(WrongType)`.
 
 #### `EventRecord::bool_or`
 
@@ -70,7 +89,8 @@ A double bin, or `default` when it is absent or nil.
 pub fn bool_or(&self, name: &str, default: bool) -> Result<bool, Error>
 ```
 
-A boolean bin, or `default` when it is absent or nil.
+A boolean bin, or `default` when this side does not have it. A bin of another kind is still
+`Err(WrongType)`.
 
 #### `EventRecord::double`
 
@@ -78,7 +98,8 @@ A boolean bin, or `default` when it is absent or nil.
 pub fn double(&self, name: &str) -> Result<Option<f64>, Error>
 ```
 
-A double bin, or `None` when absent or nil.
+A double bin, or `None` when this side does not have the bin. A bin of another kind is
+`Err(WrongType)`, an integer included.
 
 #### `EventRecord::bool`
 
@@ -86,7 +107,8 @@ A double bin, or `None` when absent or nil.
 pub fn bool(&self, name: &str) -> Result<Option<bool>, Error>
 ```
 
-A boolean bin, or `None` when absent or nil.
+A boolean bin, or `None` when this side does not have the bin. A bin of another kind is
+`Err(WrongType)`.
 
 #### `EventRecord::string`
 
@@ -94,7 +116,9 @@ A boolean bin, or `None` when absent or nil.
 pub fn string(&self, name: &str) -> Result<Option<Text<'static>>, Error>
 ```
 
-A string bin's text, or `None` when absent or nil.
+A string bin's text, or `None` when this side does not have the bin. A bin of another kind is
+`Err(WrongType)`, a GeoJson bin included: read that with `bin(name)?.geojson()`. Fetch the text with
+`Text::as_str` or `Text::to_inline`.
 
 #### `EventRecord::blob`
 
@@ -102,7 +126,18 @@ A string bin's text, or `None` when absent or nil.
 pub fn blob(&self, name: &str) -> Result<Option<Blob<'static>>, Error>
 ```
 
-A blob bin's bytes, or `None` when absent or nil.
+A blob bin's bytes, or `None` when this side does not have the bin. Strict: a bin of another kind is
+`Err(WrongType)`, a string, GeoJson or HLL bin included; `bytes` reads the raw
+bytes of any of those.
+
+#### `EventRecord::bytes`
+
+```rust
+pub fn bytes(&self, name: &str) -> Result<Option<Blob<'static>>, Error>
+```
+
+The raw bytes of a bin that has bytes - a string, blob, GeoJson or HLL bin - or `None` when this side
+does not have the bin. A bin of any other kind is `Err(WrongType)`. See `Value::bytes`.
 
 #### `EventRecord::list`
 
@@ -110,7 +145,8 @@ A blob bin's bytes, or `None` when absent or nil.
 pub fn list(&self, name: &str) -> Result<Option<Coll>, Error>
 ```
 
-A list bin, or `None` when absent or nil.
+A list bin as a `Coll`, or `None` when this side does not have the bin. A bin of another kind, a map
+included, is `Err(WrongType)`.
 
 #### `EventRecord::map`
 
@@ -118,7 +154,8 @@ A list bin, or `None` when absent or nil.
 pub fn map(&self, name: &str) -> Result<Option<Coll>, Error>
 ```
 
-A map bin, or `None` when absent or nil.
+A map bin as a `Coll`, or `None` when this side does not have the bin. A bin of another kind, a list
+included, is `Err(WrongType)`.
 
 #### `EventRecord::bin_names`
 
@@ -126,7 +163,19 @@ A map bin, or `None` when absent or nil.
 pub fn bin_names(&self) -> Coll
 ```
 
-The names of this record's bins, as a stored list to iterate.
+The names of the bins this side has, as a stored list of strings to iterate. Each is at most 15 bytes,
+so a 16-byte buffer reads any of them. Empty for an incoming record delete and for a tombstone. Bins
+this side deleted are not in it; see `deleted_bins`.
+
+```rust
+let mut buf = [0u8; 16];
+
+for name in incoming.bin_names().iter() {
+    let name = name?;
+    let name = name.as_str(&mut buf)?;
+    // ...
+}
+```
 
 #### `EventRecord::generation`
 
@@ -135,7 +184,7 @@ pub fn generation(&self) -> i64
 ```
 
 The record's generation. Zero on both sides of an `xdr-merge`: each cluster sets its own, and a merge
-must not read it.
+that read it would answer differently on each. Here only because `ReadRecord` has it.
 
 #### `EventRecord::last_update_time`
 
@@ -144,7 +193,8 @@ pub fn last_update_time(&self) -> i64
 ```
 
 When the record was last written. Zero on both sides of an `xdr-merge`, for the same reason as
-[`generation`](EventRecord::generation).
+`generation`. The time a merge may use is per bin:
+`bin_last_update_time`.
 
 #### `EventRecord::ttl`
 
@@ -152,7 +202,7 @@ When the record was last written. Zero on both sides of an `xdr-merge`, for the 
 pub fn ttl(&self) -> i64
 ```
 
-The time to live in seconds; 0 for a record that does not expire.
+This side's time to live, in seconds; 0 for a record that does not expire.
 
 #### `EventRecord::source_id`
 
@@ -160,7 +210,8 @@ The time to live in seconds; 0 for a record that does not expire.
 pub fn source_id(&self) -> i64
 ```
 
-The XDR source id of the DC that wrote this version.
+The XDR source id of the DC that wrote this version (`src-id` in that cluster's XDR configuration). It
+is the tie-break between two sides written at the same time; see `Both::incoming_is_newer`.
 
 #### `EventRecord::deleted_bins`
 
@@ -168,10 +219,10 @@ The XDR source id of the DC that wrote this version.
 pub fn deleted_bins(&self) -> Coll
 ```
 
-The names of the bins this side deleted: for the incoming write, its bin-delete ops; for the
-current record, its bin tombstones. A deleted bin reads as absent, so this is the only way to tell
-"never had it" from "removed it", and
-[`bin_last_update_time`](EventRecord::bin_last_update_time) says when.
+The names of the bins this side deleted, as a stored list of strings: for the incoming write, its
+bin-delete ops; for the current record, its bin tombstones. Empty when there are none. A deleted bin
+reads as absent, so this is the only way to tell "never had it" from "removed it", and
+`bin_last_update_time` says when.
 
 #### `EventRecord::deleted_any`
 
@@ -179,7 +230,8 @@ current record, its bin tombstones. A deleted bin reads as absent, so this is th
 pub fn deleted_any(&self) -> bool
 ```
 
-Whether this side deleted any bin.
+Whether this side deleted any bin: whether `deleted_bins` has anything in
+it.
 
 #### `EventRecord::bin_last_update_time`
 
@@ -187,9 +239,15 @@ Whether this side deleted any bin.
 pub fn bin_last_update_time(&self, name: &str) -> i64
 ```
 
-When this side last wrote the bin, when the server knows per bin (bin convergence keeps a time per
-bin); the record's last update time otherwise. This is what decides a bin under the `bin-lut` policy, so a merge
-that orders the sides per bin agrees with the policy on the bins it does not merge.
+When this side last wrote the bin, where the server keeps a time per bin: under bin convergence
+(`uses_bin_convergence`). It is in milliseconds since the
+Citrusleaf epoch, 2010-01-01T00:00:00Z: Unix milliseconds minus 1 262 304 000 000. It covers a bin this
+side deleted as well. This is what decides a bin under the `bin-lut` policy, so a merge that orders the
+sides per bin agrees with the policy on the bins it does not merge.
+
+Where the server keeps no time for the bin, the answer is the record's
+`last_update_time`, which in an `xdr-merge` is 0 on both sides: the
+two sides then tie on time, and `Both::incoming_is_newer` falls to the source id.
 
 #### `EventRecord::bin_source_id`
 
@@ -197,7 +255,8 @@ that orders the sides per bin agrees with the policy on the bins it does not mer
 pub fn bin_source_id(&self, name: &str) -> i64
 ```
 
-The source id that wrote the bin, per bin when known; the record's otherwise.
+The source id of the DC that wrote the bin, where the server keeps one per bin; this side's
+`source_id` otherwise.
 
 #### `EventRecord::is_delete`
 
@@ -206,7 +265,7 @@ pub fn is_delete(&self) -> bool
 ```
 
 Whether this is the incoming write and it is a record delete, in which case it has no bins. Always
-false of the current record.
+false of the current record. A handler that does not ask sees only an incoming record with no bins.
 
 #### `EventRecord::is_partial`
 
@@ -223,8 +282,9 @@ bin it lacks may well exist on the other DC. Always false of the current record.
 pub fn lost_bins(&self) -> Coll
 ```
 
-The names of the incoming bins that would lose under bin convergence, as a stored list. Empty for
-the current record, whose bins are not the ones being applied.
+The names of the incoming bins that would lose under bin convergence, as a stored list of strings: the
+bins the policy would have kept the current value of. Empty for the current record, whose bins are not
+the ones being applied, and when no incoming bin would lose.
 
 #### `EventRecord::is_tombstone`
 
@@ -233,7 +293,7 @@ pub fn is_tombstone(&self) -> bool
 ```
 
 Whether this is the current record and it is a tombstone: it exists, with no bins. Always false
-of the incoming write; see [`is_delete`](EventRecord::is_delete) for that side.
+of the incoming write; see `is_delete` for that side.
 
 #### `EventRecord::uses_bin_convergence`
 
@@ -244,7 +304,7 @@ pub fn uses_bin_convergence(&self) -> bool
 Whether the policy the handler stands in for is bin convergence (`bin-lut`) rather than a plain
 apply of the incoming bins (`replace`). Only under bin convergence does the server keep a time
 per bin, so a time-based merge asks this before trusting
-[`bin_last_update_time`](EventRecord::bin_last_update_time). It is a fact about the merge, and both
+`bin_last_update_time`. It is a fact about the merge, and both
 records give the same answer.
 
 #### `EventRecord::with_bins`
@@ -254,11 +314,24 @@ pub fn with_bins(&self, overrides: Map) -> Result<Map, Error>
 ```
 
 A new record built from this one's bins with `overrides` on top: every bin of this record goes in
-unless the map already has it. The bins travel by position, never through the guest.
+unless the map already has it. The bins travel by position, never through the guest. `overrides` is
+the map returned, filled in; it is what goes into `Resolution::Record`.
 
 This prefers one side, so a handler that uses it on `current` is not symmetric: the two DCs would
-resolve the same pair to different records. [`Pair::with_newer`] is the symmetric form; use this one
+resolve the same pair to different records. `Pair::with_newer` is the symmetric form; use this one
 when the side is chosen by something both DCs agree on, such as the source id.
+
+```rust
+let winner = if incoming.source_id() > current.source_id() { incoming } else { current };
+let out = as_udf::map(1)?;
+
+out.insert("merged", true)?;
+
+Ok(Resolution::Record { bins: winner.with_bins(out)?, ttl: None })
+```
+
+Only bins this record has go in. A bin it deleted is not one of them (see
+`deleted_bins`), so nothing deleted comes back.
 
 #### `Pair`
 
@@ -266,7 +339,25 @@ when the side is chosen by something both DCs agree on, such as the source id.
 pub struct Pair
 ```
 
-The two sides of a merge, read bin by bin into a [`Both`]. Made by [`Pair::of`].
+The two sides of a merge, read bin by bin into a `Both`. Made by `Pair::of`.
+
+A handler that merges some bins itself and wants the rest as the policy would have left them reads the
+bins it knows through the pair and finishes with `with_newer`:
+
+```rust
+let pair = Pair::of(current, incoming);
+let out = as_udf::map(2)?;
+
+if let Some(visits) = pair.int("visits")?.max() {      // a counter that only grows
+    out.insert("visits", visits)?;
+}
+
+out.insert("total", pair.int("total")?.sum())?;        // each DC's own share, added
+
+Ok(Resolution::Record { bins: pair.with_newer(out)?, ttl: None })
+```
+
+Each reader is the `EventRecord` reader of the same name asked of both sides. `Pair` is `Copy`.
 
 #### `Pair::of`
 
@@ -283,8 +374,8 @@ which of the two it is, so the pair comes out the same if they are passed the ot
 pub fn int(&self, name: &str) -> Result<Both<i64>, Error>
 ```
 
-An integer bin on each side; a side where it is absent or nil is `None`. `Err(WrongType)` when either
-side holds another kind.
+An integer bin on each side; a side that does not have the bin is `None`. `Err(WrongType)` when either
+side holds another kind, which fails the handler if passed on with `?`.
 
 #### `Pair::double`
 
@@ -292,7 +383,8 @@ side holds another kind.
 pub fn double(&self, name: &str) -> Result<Both<f64>, Error>
 ```
 
-A double bin on each side; a side where it is absent or nil is `None`.
+A double bin on each side; a side that does not have the bin is `None`. `Err(WrongType)` when either
+side holds another kind, an integer included.
 
 #### `Pair::bool`
 
@@ -300,7 +392,8 @@ A double bin on each side; a side where it is absent or nil is `None`.
 pub fn bool(&self, name: &str) -> Result<Both<bool>, Error>
 ```
 
-A boolean bin on each side; a side where it is absent or nil is `None`.
+A boolean bin on each side; a side that does not have the bin is `None`. `Err(WrongType)` when either
+side holds another kind.
 
 #### `Pair::string`
 
@@ -308,7 +401,9 @@ A boolean bin on each side; a side where it is absent or nil is `None`.
 pub fn string(&self, name: &str) -> Result<Both<Text<'static>>, Error>
 ```
 
-A string bin's text on each side; a side where it is absent or nil is `None`.
+A string bin's text on each side; a side that does not have the bin is `None`. `Err(WrongType)` when
+either side holds another kind. A `Text` has no order of its own, so `max` and `min` are not offered
+on it: fetch the two texts and compare them, or take `Both::newer`.
 
 #### `Pair::blob`
 
@@ -316,7 +411,8 @@ A string bin's text on each side; a side where it is absent or nil is `None`.
 pub fn blob(&self, name: &str) -> Result<Both<Blob<'static>>, Error>
 ```
 
-A blob bin's bytes on each side; a side where it is absent or nil is `None`.
+A blob bin's bytes on each side; a side that does not have the bin is `None`. `Err(WrongType)` when
+either side holds another kind.
 
 #### `Pair::list`
 
@@ -324,7 +420,8 @@ A blob bin's bytes on each side; a side where it is absent or nil is `None`.
 pub fn list(&self, name: &str) -> Result<Both<Coll>, Error>
 ```
 
-A list bin on each side; a side where it is absent or nil is `None`.
+A list bin on each side; a side that does not have the bin is `None`. `Err(WrongType)` when either
+side holds another kind.
 
 #### `Pair::map`
 
@@ -332,7 +429,8 @@ A list bin on each side; a side where it is absent or nil is `None`.
 pub fn map(&self, name: &str) -> Result<Both<Coll>, Error>
 ```
 
-A map bin on each side; a side where it is absent or nil is `None`.
+A map bin on each side; a side that does not have the bin is `None`. `Err(WrongType)` when either side
+holds another kind.
 
 #### `Pair::bin`
 
@@ -340,7 +438,8 @@ A map bin on each side; a side where it is absent or nil is `None`.
 pub fn bin(&self, name: &str) -> Result<Both<Value<'static>>, Error>
 ```
 
-The bin as a value on each side; absent sides are `None`.
+The bin as a value on each side, whatever kind it holds; a side that does not have the bin is `None`.
+The form for a bin the handler passes on without looking inside: `pair.bin("profile")?.newer()`.
 
 #### `Pair::with_newer`
 
@@ -352,13 +451,22 @@ Every bin either side has that `overrides` lacks, from the side that wrote it la
 the policy would have kept - so a handler merges the bins it knows about and leaves the rest as they
 would have been. Symmetric: both DCs order the two sides the same way.
 
+`overrides` is the map returned, filled in, and is what goes into `Resolution::Record`. A bin
+already in it is left as the handler set it. A bin that exists on one side only is taken from that
+side, whichever wrote later - **unless the side that wrote later deleted it**: a bin named in the
+newer side's `deleted_bins` is left out of the map, which deletes it, so
+the older side's value does not bring a deleted bin back.
+
 #### `Pair::incoming_is_newer`
 
 ```rust
 pub fn incoming_is_newer(&self, name: &str) -> bool
 ```
 
-Whether the incoming side wrote `name` later, per bin: the order the `bin-lut` policy uses.
+Whether the incoming side wrote the bin `name` later than the current side, per bin: the order the
+`bin-lut` policy uses. The later `bin_last_update_time` wins, and
+on equal times the greater `bin_source_id`; see
+`Both::incoming_is_newer`.
 
 #### `Both`
 
@@ -366,16 +474,28 @@ Whether the incoming side wrote `name` later, per bin: the order the `bin-lut` p
 pub struct Both<T> {
     pub current: Option<T>,
     pub incoming: Option<T>,
-    current_last_update_time: i64,
-    incoming_last_update_time: i64,
-    current_source_id: i64,
-    incoming_source_id: i64,
+    // and private fields
 }
 ```
 
 A bin on both sides of a merge, either of which may be missing, with the merges a resolver reaches for.
+Made by the readers of a `Pair`. `current` and `incoming` are the two values, `None` on a side that does
+not have the bin; they are public for a merge that none of the methods covers.
 
-#### `Both<T>::incoming_is_newer`
+```rust
+let visits = pair.int("visits")?.max();             // Option<i64>: the larger
+let total = pair.int("total")?.sum();               // i64: a missing side counts as 0
+let name = pair.string("name")?.newer();            // Option<Text>: last writer wins
+
+if let Some(visits) = visits {
+    out.insert("visits", visits)?;
+}
+```
+
+The methods take `self`: a `Both` is read once. The ones that return an `Option` give `None` only when
+neither side has the bin.
+
+#### `Both::incoming_is_newer`
 
 ```rust
 pub fn incoming_is_newer(&self) -> bool
@@ -386,86 +506,97 @@ keeps one, the record's otherwise, and on a tie by source id - the order the ser
 convergence uses, so "newer" means the same on both DCs even when the clocks agreed to the
 millisecond.
 
-#### `Both<T>::newer`
+#### `Both::newer`
 
 ```rust
 pub fn newer(self) -> Option<T>
 ```
 
-The side written later; whichever exists when only one does.
+The side written later, by `incoming_is_newer`; whichever exists when only
+one does, and `None` when neither does. Last writer wins, for one bin.
 
-#### `Both<T>::older`
+#### `Both::older`
 
 ```rust
 pub fn older(self) -> Option<T>
 ```
 
-The side written earlier; whichever exists when only one does.
+The side written earlier; whichever exists when only one does, and `None` when neither does. First
+writer wins, for one bin.
 
-#### `Both<T>::ordered`
+#### `Both::ordered`
 
 ```rust
 pub fn ordered(self) -> (Option<T>, Option<T>)
 ```
 
-Both sides, as `(older, newer)`: the order both DCs agree on, for a merge whose result depends on
-the order its inputs are taken in.
+Both sides, as `(older, newer)`: the order both DCs agree on, for a merge whose result depends on the
+order its inputs are taken in. A missing side stays `None` in its place.
 
-#### `Both<T>::current_or_incoming`
+#### `Both::current_or_incoming`
 
 ```rust
 pub fn current_or_incoming(self) -> Option<T>
 ```
 
-The current value when there is one, else the incoming.
+The current value when there is one, else the incoming. It prefers a side by which cluster is asking,
+so the two DCs can disagree: use it only where the other DC's answer does not have to match.
 
-#### `Both<T>::incoming_or_current`
+#### `Both::incoming_or_current`
 
 ```rust
 pub fn incoming_or_current(self) -> Option<T>
 ```
 
-The incoming value when there is one, else the current.
+The incoming value when there is one, else the current. Like
+`current_or_incoming`, it is not symmetric between the two DCs.
 
-#### `Both<T>::merge`
+#### `Both::merge`
 
 ```rust
 pub fn merge(self, f: impl FnOnce(T, T) -> T) -> Option<T>
 ```
 
-Combine the two when both exist; the one that exists otherwise.
+Combine the two when both exist, as `f(current, incoming)`; the one that exists otherwise, without
+calling `f`; `None` when neither does. For the two DCs to agree, `f` must give the same answer with
+its arguments swapped.
 
-#### `Both<T>::max`
+#### `Both::max`
 
 ```rust
 pub fn max(self) -> Option<T>
 ```
 
-The larger of the two; the one that exists when only one does.
+The larger of the two; the one that exists when only one does, and `None` when neither does. The merge
+of a value that only grows.
 
-#### `Both<T>::min`
+#### `Both::min`
 
 ```rust
 pub fn min(self) -> Option<T>
 ```
 
-The smaller of the two; the one that exists when only one does.
+The smaller of the two; the one that exists when only one does, and `None` when neither does.
 
-#### `Both<i64>::sum`
+#### `Both::sum`
 
 ```rust
 pub fn sum(self) -> i64
 ```
 
-The sum, a missing side counting as zero.
+The sum, a missing side counting as zero, so it is `0` when neither side has the bin: unlike `max`
+and `min` it never answers "nothing". It wraps on overflow, as two's complement does, rather than
+trapping. Adding the two sides is right only when each holds its own DC's share; summing two copies
+of one counter counts twice.
 
-#### `Both<f64>::sum`
+#### `Both::sum`
 
 ```rust
 pub fn sum(self) -> f64
 ```
 
-The sum, a missing side counting as zero.
+The sum, a missing side counting as zero, so it is `0.0` when neither side has the bin. Right only
+when each side holds its own DC's share.
 
 #### `Resolution`
 
@@ -491,7 +622,23 @@ pub enum Resolution {
 }
 ```
 
-What an `xdr-merge` handler answers.
+What an `xdr-merge` handler answers: which record this cluster ends up with. A handler returns
+`Ok(resolution)`; an `Err` fails the merge with the error's message.
+
+```rust
+if incoming.is_delete() {
+    return Ok(Resolution::TakeRemote);
+}
+
+let pair = Pair::of(current, incoming);
+let out = as_udf::map(1)?;
+
+out.insert("visits", pair.int("visits")?.max().unwrap_or(0))?;
+
+Ok(Resolution::Record { bins: pair.with_newer(out)?, ttl: None })
+```
+
+A `Map` of bins converts to `Resolution::Record` with `ttl: None`, so `Ok(bins.into())` is enough.
 
 #### `impl From<Map> for Resolution`
 
@@ -499,6 +646,6 @@ What an `xdr-merge` handler answers.
 impl From<Map> for Resolution
 ```
 
-A map of bins as the final record, with the TTL the incoming write asked for: [`Resolution::Record`]
+A map of bins as the final record, with the TTL the incoming write asked for: `Resolution::Record`
 with `ttl: None`.
 

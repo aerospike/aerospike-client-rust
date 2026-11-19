@@ -64,11 +64,14 @@ func (t table) offerAll(stored udf.Value) error {
 // The counts bin of a record. A udf.RecordReader is the record a UDF is called on or a side of the
 // merge, so the write UDFs and the merge read through this one function.
 func (t table) offerRecord(rec udf.RecordReader) error {
-	if stored, ok := rec.Get("counts"); ok {
-		return t.offerAll(stored)
+	// No bin is a counter nobody has counted on yet, and offerAll walks nothing; a bin that is not a
+	// map is an error.
+	stored, _, err := rec.Map("counts")
+	if err != nil {
+		return err
 	}
 
-	return nil
+	return t.offerAll(stored)
 }
 
 func (t table) total() int64 {

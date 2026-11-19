@@ -115,6 +115,13 @@ tag; a tie goes to the removal; the write UDFs stamp with `now()`, which the han
 `twopset_merge_converges` and `lwwset_merge_converges` run them through the dry run,
 `twopset_converges_two_clusters` and `lwwset_converges_two_clusters` across two live clusters.
 
+`registers*.wasm`, in the same four languages, is step 6: a record whose bins are last-writer-wins
+registers stamped by the server (`examples/registers`), with one bin, `seen`, kept as a maximum by the
+UDF `saw`. Its merge reads each bin's last-update time and source id, which only a namespace with
+`conflict-resolve-writes true` keeps: `registers_merge_converges` and `registers_converge_two_clusters`
+use the namespace `testbc` and skip themselves where there is none. `AEROSPIKE_REGISTERS_MODULE` makes
+the two-cluster test run one compiled module of your choice instead of the four.
+
 ## The CRDT
 
 `crdt.wasm` is `aerospike-udf-sdk-wasm/examples/crdt`: the design note's last-writer-wins map of devices

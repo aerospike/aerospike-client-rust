@@ -111,9 +111,11 @@ to a handler: a merge is a function of the two records, and should answer the sa
 
 A `record` answer equal to the current record writes nothing and answers the source `lost-conflict`,
 which it counts as success; so does `keep-local`. One that differs is committed whole as an XDR write, so
-it is not shipped back, and under bin convergence is stamped bin by bin with the later of the two sides'
-LUTs and the source id that wrote it, which is what lets the other DC, merging the mirror pair, land on
-the same record. The record-level `gen` and `lut` are 0 on both sides and `now` fails in the handler:
+it is not shipped back. Under bin convergence, where bins ship one by one, that is decided per bin: a bin
+whose value is the incoming one takes the incoming stamp and is not shipped back; a bin whose value is
+this cluster's own is left as it was, so a local write that had not been shipped yet still is; and a
+value the handler computed, which is neither side's, is stamped as a write made here and shipped once.
+The other DC, merging the mirror pair, lands on the same record with the same stamps. The record-level `gen` and `lut` are 0 on both sides and `now` fails in the handler:
 each cluster sets its own, and a merge that reads them cannot converge.
 
 **What makes an answer a failure.** The answer is checked before it is taken, and what is wrong with it

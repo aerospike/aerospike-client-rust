@@ -47,15 +47,20 @@ iterates them, a map lookup returns one, and a UDF returns one as its result. It
 its length and where it sits, fetched on request into a buffer you own (`as_str(&mut buf)`), a `Str<N>` of a
 declared capacity, or — with the `alloc` feature — a `String`. A nested list or map is a `Coll` you iterate
 (`iter()`, `entries()`), look up by key (`get("k")`, `get(7)`) or by index (`at(3)`), 128 values per import
-call. A list or map you build is a `List` (`push`, `extend`) or a `Map` (`insert`, `extend`, `contains_key`).
+call; a missing key or an index past the end is `Ok(None)`. Typed readers do not convert: `int` is not
+`double`, `string` is not `geojson`, `blob` is not `string`, and `bytes` is the one reader of raw bytes
+whatever their kind. A list or map you build is a `List` (`push`, `extend`) or a `Map` (`insert`, `extend`, `contains_key`).
 
 **Every failure is an `Error`**, and a UDF is `fn name(params) -> Result<Value, Error>`: `Ok` is the result the
-client receives, `Err` fails the call with the error's message, `Error::Custom` carries your own.
+client receives, `Err` fails the call with the error's message, `Error::Custom` carries your own, and
+`Error::status()` gives the host's status. A UDF that builds a string or blob returns it owned:
+`Result<String, Error>`, `Result<Vec<u8>, Error>` (with `alloc`), `Str<N>`, `Bytes<N>`.
 
 **Arguments are typed in the signature.** `export!` decodes `i64`, `f64`, `bool`, `&str`, `&[u8]`, `Str<N>`,
 `Bytes<N>`, `String`, `Vec<u8>`, `Value`, `Coll`, `Option<T>` and a trailing `Args`, checks the count and the
 kinds, and rejects a mismatched call before the body runs — `withdraw: argument 0 (amount): expected an
-integer, got a string`, or `is 300 bytes, at most 64` for a string past its parameter's capacity.
+integer, got a string`, or `is 300 bytes, at most 64` for a string past its parameter's capacity. A call
+takes at most 128 arguments in all; one with more fails, naming the limit and the count.
 
 **A module describes its exports.** Beside each UDF the macros export `__udf_sig_<name>`, which the server
 serves as a string when a client executes it like any other function, without running a body:
@@ -75,7 +80,7 @@ straight from a stored collection's iterator, `list.extend(stored.iter())`. Read
 0.27 ms round trip.
 
 **No allocator unless you ask for one.** Nothing here allocates by default; buffers are yours, and a module
-built this way is a few tens of KB. The `alloc` feature adds `String` and `Vec<u8>` as parameter types and as
+built this way is a few tens of KB. The `alloc` feature adds `String` and `Vec<u8>` as parameter and return types and as
 what `Text::to_string` / `Blob::to_vec` return; the `allocator` feature adds dlmalloc as the global allocator
 so a UDF crate needs nothing else. The example module grew from 39 KB to 62 KB when it turned that on.
 
@@ -115,7 +120,8 @@ not exist. What the server knows about the merge is asked of the record it is tr
 bin convergence), `current.is_tombstone()`, and on either `uses_bin_convergence()`.
 `Pair::of(current, incoming)` reads a bin from both
 sides into a `Both<T>` with the merges a resolver reaches for: `max`, `min`, `sum`, `merge(f)`, `newer`,
-`older`, `ordered()`, and its two members are `current` and `incoming`. `Resolution` is `KeepLocal`, `TakeRemote`, `Policy`, `Delete` or
+`older`, `ordered()` (`sum` is 0 when neither side has the bin, and wraps), and its two members are
+`current` and `incoming`. `Resolution` is `KeepLocal`, `TakeRemote`, `Policy`, `Delete` or
 `Record { bins, ttl }`, where the bins are the whole record; a record equal to the current one writes
 nothing.
 
@@ -130,7 +136,7 @@ is this. The data-only way: versions and removal markers in the record itself, w
 `Value::cmp_stored` (the stored bytes of two values compared) as the tie-break, so the merge is a function
 of the data alone; `examples/counter` (a grow-only counter, the smallest possible), `examples/pncounter` (the same with a second
 map, so it can go down), `examples/twopset` (a set with removals), `examples/lwwset` (a set with re-adds, on
-a clock) and `examples/crdt` are this, and the book's CRDT tutorial walks them in that order. The server's dry run (`execute_udf` on package `__event__`,
+a clock) and `examples/crdt` are this, and the book's CRDT tutorial walks them in that order. Its last step, `examples/registers`, is the first way done explicitly: a merge that reads `bin_last_update_time` and `bin_source_id` bin by bin, on a namespace with bin convergence, beside one bin it merges on the data. The server's dry run (`execute_udf` on package `__event__`,
 function `xdr-merge`, arguments `[incoming bins, incoming metadata, other bins?]`) runs a handler against
 a real record and reports `symmetric`, `idempotent` and, given the third record, `associative`.
 

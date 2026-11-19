@@ -49,7 +49,8 @@ final class Walk {
         cursor = Natives.cursorEnterAt(coll.src(), coll.at());
 
         if (cursor <= 0) {
-            throw new UdfException("could not open the " + (coll.kind() == Value.MAP ? "map" : "list"));
+            // The host gives no reason: the value can no longer be read, or the call has no handle left.
+            throw new UdfException(LowLevel.ERR, "could not open the " + (coll.kind() == Value.MAP ? "map" : "list"));
         }
 
         fill();

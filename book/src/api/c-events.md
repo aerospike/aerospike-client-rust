@@ -6,9 +6,11 @@
 int32_t as_udf_event_bin_value(int32_t which, const char* name, int32_t name_len, void* out, int32_t cap)
 ```
 
-A bin of one of an event's records, as a 16-byte value in `out` (`cap` at least 16): `which` is 0 for the
-current record, 1 for the incoming one. Returns AS_UDF_OK, AS_UDF_NOT_FOUND when that record or
-bin is not there, or AS_UDF_ERR when `cap` is too small.
+Read a bin of one of an event's records into `out` as a 16-byte value (`cap` at least 16): `which` is 0 for the
+current record, 1 for the incoming one, and `name` is `name_len` bytes. Returns AS_UDF_OK; AS_UDF_NOT_FOUND
+when that record has no such bin, when there is no such record (the call is not an event, or the side is
+absent) or the name is not a bin name; AS_UDF_ERR when `cap` is under 16. Unlike as_udf_rec_bin_value, `out` is
+left as it was on AS_UDF_NOT_FOUND. as_udf_event_bin is this call on a decoded record.
 
 #### `as_udf_event_record`
 
@@ -20,10 +22,10 @@ typedef struct as_udf_event_record_s {
 	int64_t ttl;
 	int64_t source_id;
 	as_udf_value bin_names;   /* list of bin names */
-	as_udf_value deleted_bins; /* list of bin names this side deleted (AS_UDF_ABSENT when none) */
+	as_udf_value deleted_bins; /* list of bin names this side deleted; AS_UDF_ABSENT, not an empty list, when none */
 	as_udf_value bin_last_update_times; /* map name -> last-update time, per bin, when the server keeps one (else AS_UDF_ABSENT) */
 	as_udf_value bin_source_ids; /* map name -> source id, likewise */
-	as_udf_value lost_bins;   /* incoming: list of the names of its bins that would lose under bin convergence */
+	as_udf_value lost_bins;   /* incoming: list of the names of its bins that would lose under bin convergence; AS_UDF_ABSENT when none */
 	bool is_delete;           /* incoming: the write is a record delete, so this record has no bins */
 	bool is_partial;          /* incoming: the write carries only the bins that changed */
 	bool is_tombstone;        /* current: the record exists but has no bins */
@@ -31,9 +33,21 @@ typedef struct as_udf_event_record_s {
 } as_udf_event_record;
 ```
 
-One of the two records of an xdr-merge, as as_udf_event_decode fills it: its metadata, its bin names, and
-the facts of the merge that are about this record. A fact that is about the other record is false here,
-and `lost_bins` is AS_UDF_ABSENT on the current record.
+One of the two records of an xdr-merge, as as_udf_event_decode fills it: its metadata, its bin names, and the
+facts of the merge that are about this record. Read-only: its bins are read with the `as_udf_event_` functions
+and nothing writes it; the handler's answer is what changes the record. `ttl` is in seconds. `source_id` is the
+XDR source id of the cluster that wrote this version. `generation` and `last_update_time` are 0 on both records
+of an xdr-merge: each cluster has its own, so a merge that read them could not converge, and it is the per-bin
+times that order the two sides. A metadata field the server did not send is 0. The list and map fields are
+values to read by position, of kind AS_UDF_ABSENT when the server sent none; read the per-bin maps through
+as_udf_event_bin_last_update_time and as_udf_event_bin_source_id, which fall back to the record's. A fact that
+is about the other record is false here, and `lost_bins` is AS_UDF_ABSENT on the current record.
+
+`deleted_bins` and `lost_bins` have one of two shapes, and never a third: a list of names (kind AS_UDF_LIST)
+when there are some, and no value at all (kind AS_UDF_ABSENT) when there are none. The server does not send an
+empty list for "none". So do not read `.len` without testing the kind: as_udf_list_count answers the count for
+either shape, as_udf_list_has_string answers false for the absent one, and as_udf_event_deleted_any is the
+test for `deleted_bins`.
 
 #### `as_udf_map_get`
 
@@ -41,15 +55,49 @@ and `lost_bins` is AS_UDF_ABSENT on the current record.
 as_udf_value as_udf_map_get(const as_udf_value* m, const char* key)
 ```
 
-A map entry by string key; AS_UDF_ABSENT kind when there is none or `m` is not a map.
+The entry under a NUL-terminated string key of a stored map, as a value. Of kind AS_UDF_ABSENT when there is no
+such key or `m` is not of kind AS_UDF_MAP: a key the map does not have is nothing, not an error. An entry that
+holds nil is of kind AS_UDF_NIL. The lookup is linear in the map's entries. For a map bin, a nested map, or a
+map argument; a map being built is asked with as_udf_map_contains.
+
+#### `as_udf_map_get_int`
+
+```c
+as_udf_value as_udf_map_get_int(const as_udf_value* m, int64_t key)
+```
+
+The entry under an integer key of a stored map, as a value. Of kind AS_UDF_ABSENT when there is no such key or
+`m` is not of kind AS_UDF_MAP; otherwise as as_udf_map_get.
 
 #### `as_udf_map_int`
 
 ```c
-int64_t as_udf_map_int(const as_udf_value* m, const char* key, int64_t dflt)
+int32_t as_udf_map_int(const as_udf_value* m, const char* key, int64_t* out)
 ```
 
-An integer entry of a map by string key; `dflt` when there is none or it is not an integer.
+The integer under a NUL-terminated string key of a stored map, into `out`. Returns AS_UDF_OK; AS_UDF_NOT_FOUND,
+with `out` untouched, when there is no such key, the entry is nil or `m` is absent or nil;
+AS_UDF_TYPE_MISMATCH, with `out` untouched, when the entry is not an integer or `m` is a value of another kind
+than a map.
+
+#### `as_udf_map_int_or`
+
+```c
+int32_t as_udf_map_int_or(const as_udf_value* m, const char* key, int64_t dflt, int64_t* out)
+```
+
+The integer under a NUL-terminated string key of a stored map into `out`, or `dflt` when there is nothing
+there (no such key, a nil entry, no map). Returns AS_UDF_OK either way, or AS_UDF_TYPE_MISMATCH, with `out`
+untouched, when the entry is of another kind or `m` is not a map: the default stands in for nothing else.
+
+#### `as_udf_string_eq`
+
+```c
+bool as_udf_string_eq(const as_udf_value* v, const char* text, int32_t n, char* buf)
+```
+
+Whether a stored string value is exactly the `n` bytes at `text`, read through `buf`, which holds at least `n`
+bytes. Plumbing of as_udf_string_is and as_udf_list_has_string, which size the buffer.
 
 #### `as_udf_string_is`
 
@@ -57,7 +105,10 @@ An integer entry of a map by string key; `dflt` when there is none or it is not 
 bool as_udf_string_is(const as_udf_value* v, const char* text)
 ```
 
-Whether a string value reads as `text`.
+Whether a stored string value reads as the NUL-terminated `text`, of any length. False when `v` is not of kind
+AS_UDF_STR: GeoJSON text is not a string. The lengths are compared first, and only a string as long as `text`
+is copied out, into as many bytes of stack as `text` is long; so a `text` of many kilobytes needs a stack that
+size (clang's default for wasm32 is 64 KB; `-Wl,-z,stack-size=N` raises it).
 
 #### `as_udf_event_flag`
 
@@ -65,7 +116,8 @@ Whether a string value reads as `text`.
 bool as_udf_event_flag(const as_udf_value* m, const char* key)
 ```
 
-Whether a description map has a true boolean under `key`.
+Whether a stored map has a true boolean under `key`: false when the key is missing or holds anything else.
+Plumbing of as_udf_event_decode, which reads the event's flags with it.
 
 #### `as_udf_event_side`
 
@@ -73,9 +125,10 @@ Whether a description map has a true boolean under `key`.
 bool as_udf_event_side(const as_udf_value* description, const char* key, int32_t which, as_udf_event_record* out)
 ```
 
-Decode the record under `key` of the call's description into `out`, marked as record `which` for
-as_udf_event_bin, with the facts that are about that record. False when the entry is not a map or carries
-no list of bins. Plumbing of as_udf_event_decode.
+Decode the record under `key` ("current" or "incoming") of the event's description map into `out`, marked as
+record `which` for as_udf_event_bin, with the facts that are about that record. False when the entry is not a
+map or carries no list of bins; `out` is then partly filled and not to be used. Plumbing of
+as_udf_event_decode, which is what a handler calls.
 
 #### `as_udf_event_decode`
 
@@ -83,9 +136,11 @@ no list of bins. Plumbing of as_udf_event_decode.
 int32_t as_udf_event_decode(int32_t args, int32_t argc, as_udf_event_record* current, as_udf_event_record* incoming)
 ```
 
-Decode an xdr-merge call's arguments into its two records: `current`, the record as it is on this cluster,
-and `incoming`, the one that arrived over XDR. Returns AS_UDF_OK, or AS_UDF_ERR when the arguments are not
-those of an xdr-merge.
+Decode an xdr-merge call's arguments into its two records: `current`, the record as it is on this cluster, and
+`incoming`, the one that arrived over XDR. `args` and `argc` are the handler's own parameters. Returns
+AS_UDF_OK, or AS_UDF_ERR when the arguments are not those of an xdr-merge, in which case neither record is to
+be used and the handler should fail. Call it once, first: the records hold values that stay valid for the whole
+call.
 
 #### `as_udf_event_bin`
 
@@ -93,7 +148,10 @@ those of an xdr-merge.
 int32_t as_udf_event_bin(const as_udf_event_record* r, const char* name, as_udf_value* out)
 ```
 
-A bin of one side. AS_UDF_NOT_FOUND when that side has no such bin.
+Read a bin of one of the event's records, of any kind, into `out`; `name` is NUL-terminated. Returns AS_UDF_OK,
+or AS_UDF_NOT_FOUND when that record has no such bin, which leaves `out` as it was. A bin the incoming write
+does not carry is not found even if the other cluster has it (see `is_partial`), and so is a bin that side
+deleted (see `deleted_bins`).
 
 #### `as_udf_event_has`
 
@@ -101,7 +159,8 @@ A bin of one side. AS_UDF_NOT_FOUND when that side has no such bin.
 bool as_udf_event_has(const as_udf_event_record* r, const char* name)
 ```
 
-Whether one side has the bin, a nil one included.
+Whether one of the event's records has the bin. False for a bin that side deleted or that a partial incoming
+write does not carry.
 
 #### `as_udf_event_get`
 
@@ -109,35 +168,43 @@ Whether one side has the bin, a nil one included.
 bool as_udf_event_get(const as_udf_event_record* r, const char* name, as_udf_value* out)
 ```
 
-A bin of one side that holds something, as a value. False, with `out` of kind AS_UDF_ABSENT, when that side
-has no such bin or the bin is nil.
+A bin of one of the event's records as a value of any kind. False, with `out` of kind AS_UDF_ABSENT, when that
+record has no such bin; true with the value otherwise.
 
 #### `as_udf_event_int`
 
 ```c
-bool as_udf_event_int(const as_udf_event_record* r, const char* name, int64_t* out)
+int32_t as_udf_event_int(const as_udf_event_record* r, const char* name, int64_t* out)
 ```
 
-A bin of one side as an integer, into `out`. False, with `out` untouched, when that side has no such bin, it
-is nil or it is of another kind.
+A bin of one of the event's records as an integer, into `out`. Returns AS_UDF_OK with the value;
+AS_UDF_NOT_FOUND, with `out` untouched, when that record has no such bin or it is nil; AS_UDF_TYPE_MISMATCH,
+with `out` untouched, when the bin is of another kind. The three outcomes of as_udf_rec_int, on an event
+record.
+```c
+int64_t mine, theirs;
+if (as_udf_event_int_or(&current, "visits", 0, &mine) != AS_UDF_OK) return as_udf_fail_str("visits is not an integer");
+if (as_udf_event_int_or(&incoming, "visits", 0, &theirs) != AS_UDF_OK) return as_udf_fail_str("visits is not an integer");
+as_udf_map_put_string_int(out, "visits", 6, mine > theirs ? mine : theirs);
+```
 
 #### `as_udf_event_double`
 
 ```c
-bool as_udf_event_double(const as_udf_event_record* r, const char* name, double* out)
+int32_t as_udf_event_double(const as_udf_event_record* r, const char* name, double* out)
 ```
 
-A bin of one side as a double, into `out`. False, with `out` untouched, when that side has no such bin, it is
-nil or it is of another kind: an integer bin is not widened.
+A bin of one of the event's records as a double, into `out`. Statuses as as_udf_event_int. An integer bin is
+not widened: it is another kind.
 
 #### `as_udf_event_bool`
 
 ```c
-bool as_udf_event_bool(const as_udf_event_record* r, const char* name, bool* out)
+int32_t as_udf_event_bool(const as_udf_event_record* r, const char* name, bool* out)
 ```
 
-A bin of one side as a boolean, into `out`. False, with `out` untouched, when that side has no such bin, it
-is nil or it is of another kind.
+A bin of one of the event's records as a boolean, into `out`. Statuses as as_udf_event_int. The return says
+whether the bin was read, not what it holds.
 
 #### `as_udf_event_string`
 
@@ -145,8 +212,9 @@ is nil or it is of another kind.
 int32_t as_udf_event_string(const as_udf_event_record* r, const char* name, char* out, int32_t cap)
 ```
 
-Copy a string bin of one side into `out`, without a terminator. Returns the length, a needed-length status
-when `cap` is too small, AS_UDF_NOT_FOUND for no such bin, or AS_UDF_TYPE_MISMATCH when it is not a string.
+Copy a string bin of one of the event's records into `out`, which holds `cap` bytes; no terminator is written.
+Returns the length, a needed-length status when `cap` is too small (nothing is written), AS_UDF_NOT_FOUND for
+no such bin, or AS_UDF_TYPE_MISMATCH when it is not a string.
 
 #### `as_udf_event_blob`
 
@@ -154,51 +222,80 @@ when `cap` is too small, AS_UDF_NOT_FOUND for no such bin, or AS_UDF_TYPE_MISMAT
 int32_t as_udf_event_blob(const as_udf_event_record* r, const char* name, void* out, int32_t cap)
 ```
 
-Copy a blob bin of one side into `out`. Returns the length, a needed-length status when `cap` is too small,
-AS_UDF_NOT_FOUND for no such bin, or AS_UDF_TYPE_MISMATCH when it is not a blob.
+Copy a blob bin of one of the event's records into `out`, which holds `cap` bytes. Strict: only a plain blob.
+Returns the length, a needed-length status when `cap` is too small (nothing is written), AS_UDF_NOT_FOUND for
+no such bin, or AS_UDF_TYPE_MISMATCH when it is not a plain blob; as_udf_event_bytes reads the raw bytes of a
+string, GeoJSON or HLL bin too.
+
+#### `as_udf_event_bytes`
+
+```c
+int32_t as_udf_event_bytes(const as_udf_event_record* r, const char* name, void* out, int32_t cap)
+```
+
+Copy the raw bytes of a string, blob, GeoJSON or HLL bin of one of the event's records into `out`, which holds
+`cap` bytes. Returns the length, a needed-length status when `cap` is too small (nothing is written),
+AS_UDF_NOT_FOUND for no such bin, or AS_UDF_TYPE_MISMATCH for a bin of any other kind.
 
 #### `as_udf_event_list`
 
 ```c
-bool as_udf_event_list(const as_udf_event_record* r, const char* name, as_udf_value* out)
+int32_t as_udf_event_list(const as_udf_event_record* r, const char* name, as_udf_value* out)
 ```
 
-A list bin of one side, as a value to walk by position. False when that side has no such bin or it is not a
-list.
+A list bin of one of the event's records, as a value to walk by position. Returns AS_UDF_OK, with a list that
+may be empty; AS_UDF_NOT_FOUND when that record has no such bin; AS_UDF_TYPE_MISMATCH when the bin is not a
+list. On any answer but AS_UDF_OK, `out` is not to be read as a list.
 
 #### `as_udf_event_map`
 
 ```c
-bool as_udf_event_map(const as_udf_event_record* r, const char* name, as_udf_value* out)
+int32_t as_udf_event_map(const as_udf_event_record* r, const char* name, as_udf_value* out)
 ```
 
-A map bin of one side, as a value to read by position. False when that side has no such bin or it is not a
-map.
+A map bin of one of the event's records, as a value to read by position. Returns AS_UDF_OK, with a map that may
+be empty; AS_UDF_NOT_FOUND when that record has no such bin; AS_UDF_TYPE_MISMATCH when the bin is not a map. On
+any answer but AS_UDF_OK, `out` is not to be read as a map.
 
 #### `as_udf_event_int_or`
 
 ```c
-int64_t as_udf_event_int_or(const as_udf_event_record* r, const char* name, int64_t dflt)
+int32_t as_udf_event_int_or(const as_udf_event_record* r, const char* name, int64_t dflt, int64_t* out)
 ```
 
-The integer of a bin of one side, or `dflt` when the bin is absent, nil or of another kind.
+The integer of a bin of one of the event's records into `out`, or `dflt` when that record has no such bin: the
+default stands in for an absent or nil bin only. Returns AS_UDF_OK either way, or AS_UDF_TYPE_MISMATCH, with
+`out` untouched, when the bin is of another kind.
 
 #### `as_udf_event_double_or`
 
 ```c
-double as_udf_event_double_or(const as_udf_event_record* r, const char* name, double dflt)
+int32_t as_udf_event_double_or(const as_udf_event_record* r, const char* name, double dflt, double* out)
 ```
 
-The double of a bin of one side, or `dflt` when the bin is absent, nil or of another kind. An integer bin is
-not widened: it gives the default.
+The double of a bin of one of the event's records into `out`, or `dflt` when that record has no such bin.
+Statuses as as_udf_event_int_or: an integer bin is not widened and does not give the default.
 
 #### `as_udf_event_bool_or`
 
 ```c
-bool as_udf_event_bool_or(const as_udf_event_record* r, const char* name, bool dflt)
+int32_t as_udf_event_bool_or(const as_udf_event_record* r, const char* name, bool dflt, bool* out)
 ```
 
-The boolean of a bin of one side, or `dflt` when the bin is absent, nil or of another kind.
+The boolean of a bin of one of the event's records into `out`, or `dflt` when that record has no such bin.
+Statuses as as_udf_event_int_or.
+
+#### `as_udf_list_count`
+
+```c
+int32_t as_udf_list_count(const as_udf_value* list)
+```
+
+How many elements a list value has, and 0 for a value that is not a list. The count for the fields of an event
+record that are a list or nothing at all: `deleted_bins` and `lost_bins` are of kind AS_UDF_LIST when the
+server sent the names and of kind AS_UDF_ABSENT when it sent none, and never an empty list for "none". This
+answers the count either way, so a handler need not test the kind first:
+`as_udf_list_count(&incoming.lost_bins)`.
 
 #### `as_udf_event_deleted_any`
 
@@ -206,7 +303,11 @@ The boolean of a bin of one side, or `dflt` when the bin is absent, nil or of an
 bool as_udf_event_deleted_any(const as_udf_event_record* r)
 ```
 
-Whether this side deleted any bin: its `deleted_bins` list is there and not empty.
+Whether this side deleted any bin: its `deleted_bins` list is there and not empty (the field is a list of
+names, or of kind AS_UDF_ABSENT when this side deleted none; as_udf_list_count answers its length either
+way). The case every merge has to guard against, since a deleted bin reads as absent and taking the other
+side's copy would bring it back; as_udf_list_has_string on `deleted_bins` says whether a given bin was one of
+them.
 
 #### `as_udf_event_bin_last_update_time`
 
@@ -214,8 +315,11 @@ Whether this side deleted any bin: its `deleted_bins` list is there and not empt
 int64_t as_udf_event_bin_last_update_time(const as_udf_event_record* r, const char* name)
 ```
 
-When this side last wrote the bin: per bin where the server keeps one, the record's last-update time
-otherwise.
+When this side last wrote the bin, as the server's timestamp for it, in milliseconds since the Citrusleaf
+epoch, 2010-01-01T00:00:00Z (Unix milliseconds minus 1262304000000): the bin's own where the server keeps one
+(see `uses_bin_convergence`), the record's `last_update_time` otherwise, also for a bin the record does not
+have; in an xdr-merge the record's is 0. `name` is NUL-terminated. A number to order the two sides by, not to
+compare with a clock, which a handler does not have.
 
 #### `as_udf_event_bin_source_id`
 
@@ -223,8 +327,8 @@ otherwise.
 int64_t as_udf_event_bin_source_id(const as_udf_event_record* r, const char* name)
 ```
 
-The id of the source that last wrote the bin on this side: per bin where the server keeps one, the record's
-source id otherwise.
+The id of the XDR source that last wrote the bin on this side: the bin's own where the server keeps one, the
+record's source id otherwise. What breaks a tie between equal last-update times.
 
 #### `as_udf_event_incoming_is_newer`
 
@@ -232,8 +336,10 @@ source id otherwise.
 bool as_udf_event_incoming_is_newer(const as_udf_event_record* current, const as_udf_event_record* incoming, const char* name)
 ```
 
-Whether the incoming record wrote the bin later than the current one: by LUT, then source id - the order
-the server's bin convergence uses, so both DCs answer the same.
+Whether the incoming record wrote the bin later than the current one: by last-update time, then by source id,
+the order the server's bin convergence uses. Both clusters see the same two times and ids, so both give the
+same side as newer whichever of them is `current`: a rule built on this is symmetric. False when the two are
+equal in both.
 
 #### `as_udf_list_has_string`
 
@@ -241,16 +347,13 @@ the server's bin convergence uses, so both DCs answer the same.
 bool as_udf_list_has_string(const as_udf_value* list, const char* text)
 ```
 
-Whether a list of strings (by position) holds `text`.
-
-#### `as_udf_map_put_value`
-
-```c
-int32_t as_udf_map_put_value(int32_t handle, const char* key, const as_udf_value* v)
-```
-
-Put any value under a string key: a scalar by value, guest bytes by address, a stored value by position, a
-built collection by handle.
+Whether a stored list holds the string `text` (NUL-terminated, of any length) among its elements; elements
+that are not strings are not it. False when `list` is not of kind AS_UDF_LIST, which includes the
+AS_UDF_ABSENT of an event record's `deleted_bins` or `lost_bins` when there are none. Linear in the list. Only
+elements as long as `text` are copied out, into as many bytes of stack as `text` is long (see
+as_udf_string_is). The walk takes one handle for its cursor and gives it back; when no handle is free it
+cannot be made, and the answer is found the slow way, an element at a time, rather than given as false. For an
+event record's `bin_names`, `deleted_bins` and `lost_bins`, and any list of strings.
 
 #### `as_udf_event_with_bins`
 
@@ -258,9 +361,19 @@ built collection by handle.
 int32_t as_udf_event_with_bins(const as_udf_event_record* r, int32_t overrides)
 ```
 
-Put every bin of one side that the built map `overrides` lacks into it, by position, and return the map's
-handle: that record with `overrides` on top. It prefers a side, so two clusters that each use it on their
-own current record do not converge; use it on a side both agree on.
+Put every bin of one of the event's records that the built map `overrides` lacks into it, by position, and
+return the map's handle: that record with `overrides` on top. For a handler that decides a few bins and keeps
+the rest of one record. A bin this side deleted is not among its bins, so it is not put and the answer leaves
+it out: nothing is brought back. Returns `overrides`, or 0 when a bin could not be carried over (its name or
+value could not be read, or the map did not take it): 0 is no handle, and as_udf_resolve_record fails the call
+for it, so a record answer is never built short of a bin. It prefers a side, so two clusters that each use it
+on their own current record do not converge; use it on a side both agree on, such as the one
+as_udf_event_incoming_is_newer names.
+```c
+int32_t out = as_udf_map_new(8);
+as_udf_map_put_string_int(out, "visits", 6, visits);
+return as_udf_resolve_record(as_udf_event_with_bins(&incoming, out), -1);
+```
 
 #### `as_udf_resolve_keep_local`
 
@@ -268,8 +381,8 @@ own current record do not converge; use it on a side both agree on.
 int32_t as_udf_resolve_keep_local(void) { as_udf_result_string("keep-local", 10); return 0; }
 ```
 
-Answer `keep-local`: the local record stays and the incoming write is dropped. Returns the status the handler
-returns.
+Answer `keep-local`: the record on this cluster stays as it is and the incoming write is dropped. Sets the
+call's result and returns 0, the status the handler returns: `return as_udf_resolve_keep_local();`.
 
 #### `as_udf_resolve_take_remote`
 
@@ -277,7 +390,8 @@ returns.
 int32_t as_udf_resolve_take_remote(void) { as_udf_result_string("take-remote", 11); return 0; }
 ```
 
-Answer `take-remote`: the incoming write is applied whole. Returns the status the handler returns.
+Answer `take-remote`: the incoming write is applied, its bins over the current record. Sets the call's result
+and returns 0, the status the handler returns: `return as_udf_resolve_take_remote();`.
 
 #### `as_udf_resolve_policy`
 
@@ -285,8 +399,9 @@ Answer `take-remote`: the incoming write is applied whole. Returns the status th
 int32_t as_udf_resolve_policy(void) { as_udf_result_string("policy", 6); return 0; }
 ```
 
-Answer `policy`: the namespace's policy decides, as it would have without the event. Returns the status the
-handler returns.
+Answer `policy`: the namespace's conflict policy decides, as it would have without a handler. The answer for
+the cases a handler has no opinion on. Sets the call's result and returns 0, the status the handler returns:
+`return as_udf_resolve_policy();`.
 
 #### `as_udf_resolve_delete`
 
@@ -294,9 +409,10 @@ handler returns.
 int32_t as_udf_resolve_delete(void) { as_udf_result_string("delete", 6); return 0; }
 ```
 
-Answer `delete`: the record is removed on this cluster. The other cluster decides for itself, so a merge
-that deletes has to delete on both sides for the two to agree. A record answer with no bins left in it is
-not this: it is the handler's failure. Returns the status the handler returns.
+Answer `delete`: the record is removed on this cluster. The other cluster decides for itself, so a merge that
+deletes has to delete on both sides for the two to agree. A record answer with no bins left in it is not this:
+it is the handler's failure. Sets the call's result and returns 0, the status the handler returns: `return
+as_udf_resolve_delete();`.
 
 #### `as_udf_resolve_record`
 
@@ -304,8 +420,19 @@ not this: it is the handler's failure. Returns the status the handler returns.
 int32_t as_udf_resolve_record(int32_t bins, int64_t ttl)
 ```
 
-The final record: `bins` (a built map; a bin absent or nil is deleted) and a TTL with a write's meaning,
-or -1 to keep the one the incoming write asked for.
+Answer with the final record. `bins` is the handle of a built map from bin name to value: the record is left
+with exactly these bins, a bin that is absent from the map or nil in it is deleted, and at least one bin must
+remain. `ttl` is the record's time to live in seconds with a write's meaning (0 for the namespace default), or
+-1 to keep the one the incoming write asked for. Returns the status the handler returns: 0, or non-zero with
+the call failed when the answer could not be built.
+```c
+int32_t out = as_udf_map_new(4);
+int64_t a, b;
+if (as_udf_event_int_or(&current, "visits", 0, &a) != AS_UDF_OK) return as_udf_fail_str("visits is not an integer");
+if (as_udf_event_int_or(&incoming, "visits", 0, &b) != AS_UDF_OK) return as_udf_fail_str("visits is not an integer");
+as_udf_map_put_string_int(out, "visits", 6, a > b ? a : b);
+return as_udf_resolve_record(out, -1);
+```
 
 #### `AS_UDF_EVENT_XDR_MERGE(name)`
 
@@ -315,6 +442,19 @@ or -1 to keep the one the incoming write asked for.
 	AS_UDF_EXPORT(name) int32_t name(int32_t args, int32_t argc)
 ```
 
-Declare an xdr-merge handler: `AS_UDF_EVENT_XDR_MERGE(name) { ... }` with `args` and `argc` in
-scope for as_udf_event_decode.
+Declare an xdr-merge handler: `AS_UDF_EVENT_XDR_MERGE(name) { ... }` defines and exports `int32_t name(int32_t
+args, int32_t argc)` and the signature `event-set` checks before binding it. The body decodes the two records
+with as_udf_event_decode and returns one of the `as_udf_resolve_` answers. A handler cannot write a record,
+read the clock or log, and must be symmetric: both clusters resolve the same pair with the sides swapped and
+have to land on the same record.
+```c
+AS_UDF_EVENT_XDR_MERGE(newest_wins)
+{
+	as_udf_event_record current, incoming;
+	if (as_udf_event_decode(args, argc, &current, &incoming) != AS_UDF_OK) return as_udf_fail_str("not an xdr-merge");
+	if (incoming.is_delete) return as_udf_resolve_policy();
+	return as_udf_event_incoming_is_newer(&current, &incoming, "profile") ?
+		as_udf_resolve_take_remote() : as_udf_resolve_keep_local();
+}
+```
 

@@ -76,8 +76,8 @@ struct Stamps {
 	udf::Result<void> offer_all(const udf::Value& stored)
 	{
 		for (udf::Entry e : stored.map()) {
-			Tag tag = UDF_TRY(e.key.as_string<TAG_MAX>());
-			int64_t stamp = UDF_TRY(e.value.as_int());
+			Tag tag = UDF_TRY(udf::required(e.key.as_string<TAG_MAX>(), "lwwset: a nil tag"));
+			int64_t stamp = UDF_TRY(udf::required(e.value.as_int(), "lwwset: a nil stamp"));
 
 			UDF_TRY(offer(tag.view(), stamp));
 		}

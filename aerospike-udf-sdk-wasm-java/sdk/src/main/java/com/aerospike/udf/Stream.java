@@ -42,6 +42,11 @@ import java.lang.annotation.Target;
  * since it runs after the last record. In the raw form both are {@code int name(int args, int argc)} and {@link #params} and
  * {@link #endParams} give the signature's parameter text, which is the form for a stream that reads its
  * arguments once, on the first record, and keeps them.
+ *
+ * <p>A query runs on several threads, on every node, and each thread has its own instance: {@code end}
+ * returns that thread's partial, and the client receives one partial per query thread per node and combines
+ * them itself. So return something cheap to merge, such as a map of the state. {@link Record#save} and every
+ * other write to the record throw here.
  */
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.SOURCE)

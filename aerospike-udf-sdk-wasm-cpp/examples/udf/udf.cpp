@@ -26,8 +26,8 @@ UDF_FUNCTION(sum_list, udf::Result<int64_t>, const udf::Record& rec)
 {
 	int64_t total = 0;
 
-	for (udf::Value v : rec.list("l")) {
-		total += UDF_TRY(v.as_int());
+	for (udf::Value v : UDF_TRY(rec.list("l")).value_or(udf::ListRange())) {
+		total += UDF_TRY(udf::required(v.as_int(), "sum_list: a nil element"));
 	}
 
 	return total;
@@ -62,20 +62,20 @@ UDF_FUNCTION(describe, udf::Result<udf::Map>, const udf::Record& rec)
 // missing, and the bin with a default - and a map ranged over entry by entry.
 UDF_FUNCTION(typed, udf::Result<udf::Map>, const udf::Record& rec)
 {
-	int64_t i = UDF_TRY(UDF_TRY(rec.bin("i")).as_int());
-	double d = UDF_TRY(UDF_TRY(rec.bin("d")).as_double());
-	udf::Optional<udf::Text<64>> s = rec.as_string<64>("s");
-	bool b = rec.bool_or("b", false);
+	int64_t i = UDF_TRY(udf::required(UDF_TRY(rec.bin("i")).as_int(), "typed: bin i is nil"));
+	double d = UDF_TRY(udf::required(UDF_TRY(rec.bin("d")).as_double(), "typed: bin d is nil"));
+	udf::Optional<udf::Text<64>> s = UDF_TRY(rec.as_string<64>("s"));
+	bool b = UDF_TRY(rec.bool_or("b", false));
 
 	if (!s) return udf::error(AS_UDF_NOT_FOUND, "typed: bin s is not a string");
-	if (rec.as_int("nope") || rec.int_or("nope", -1) != -1 || rec.has("nope") || rec.bin("nope")) {
+	if (UDF_TRY(rec.as_int("nope")) || UDF_TRY(rec.int_or("nope", -1)) != -1 || rec.has("nope") || rec.bin("nope")) {
 		return udf::error(AS_UDF_ERR, "typed: a bin that is not there was read");
 	}
 
 	int64_t sum = 0;
 	udf::List keys(4);
 
-	for (udf::Entry e : rec.map("m")) {
+	for (udf::Entry e : UDF_TRY(rec.map("m")).value_or(udf::MapRange())) {
 		if (e.value.is_int()) sum += e.value.payload;
 		keys.add(e.key);
 	}
@@ -113,7 +113,7 @@ UDF_FUNCTION(relist, udf::Result<udf::List>, const udf::Record& rec, int64_t ind
 	bool found = false;
 	int64_t i = 0;
 
-	for (udf::Value v : rec.list("doc")) {
+	for (udf::Value v : UDF_TRY(rec.list("doc")).value_or(udf::ListRange())) {
 		if (i == 0) first = v;
 
 		if (i == index) {

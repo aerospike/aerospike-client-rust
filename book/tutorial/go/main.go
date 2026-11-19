@@ -30,7 +30,10 @@ import (
 //
 //udf:function visit
 func visit(rec *udf.Record, by int64) (int64, error) {
-	visits := rec.IntOr("visits", 0) // 0 when the bin is absent
+	visits, err := rec.IntOr("visits", 0) // 0 when the bin is absent; an error when it is not an integer
+	if err != nil {
+		return 0, err
+	}
 	n := visits + by
 
 	if err := rec.Set("visits", n); err != nil { // staged, not yet written
@@ -103,9 +106,14 @@ func rename(rec *udf.Record, name string) (bool, error) {
 //
 //udf:function total
 func total(rec *udf.Record) (int64, error) {
+	history, _, err := rec.List("history") // no bin: nothing to add up
+	if err != nil {
+		return 0, err // a bin that is not a list
+	}
+
 	var sum int64
 
-	for payment := range rec.List("history") {
+	for payment := range history.List() {
 		n, err := payment.Int()
 		if err != nil {
 			return 0, err
@@ -128,7 +136,10 @@ func limitFor(rec *udf.Record, kind string) (int64, error) {
 		return 0, err
 	}
 
-	limit, ok := limits.Lookup(kind)
+	limit, ok, err := limits.Lookup(kind)
+	if err != nil { // limits is not a map
+		return 0, err
+	}
 	if !ok { // no such key
 		return 0, nil
 	}
@@ -143,9 +154,14 @@ func limitFor(rec *udf.Record, kind string) (int64, error) {
 //
 //udf:function limits_total
 func limitsTotal(rec *udf.Record) (int64, error) {
+	limits, _, err := rec.Map("limits")
+	if err != nil {
+		return 0, err
+	}
+
 	var sum int64
 
-	for _, limit := range rec.Map("limits") {
+	for _, limit := range limits.Map() {
 		n, err := limit.Int()
 		if err != nil {
 			return 0, err
@@ -185,8 +201,14 @@ func logPayment(rec *udf.Record, amount int64) (int64, error) {
 //
 //udf:function summary
 func summary(rec *udf.Record) (*udf.Map, error) {
-	name, _ := rec.Get("owner")
-	amount, _ := rec.Get("balance")
+	name, _, err := rec.Get("owner")
+	if err != nil {
+		return nil, err
+	}
+	amount, _, err := rec.Get("balance")
+	if err != nil {
+		return nil, err
+	}
 
 	out := udf.NewMap(5).
 		Put("owner", name). // a stored value goes in as it is
@@ -205,7 +227,10 @@ func summary(rec *udf.Record) (*udf.Map, error) {
 //
 //udf:function renew
 func renew(rec *udf.Record, seconds int64) (int64, error) {
-	renewals := rec.IntOr("renewals", 0)
+	renewals, err := rec.IntOr("renewals", 0)
+	if err != nil {
+		return 0, err
+	}
 	n := renewals + 1
 
 	if err := rec.Set("renewals", n); err != nil {

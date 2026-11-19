@@ -45,8 +45,25 @@ const LWWSET: &[u8] = include_bytes!("../fixtures/wasm/lwwset.wasm");
 const LWWSET_JAVA: &[u8] = include_bytes!("../fixtures/wasm/lwwset_java.wasm");
 const LWWSET_GO: &[u8] = include_bytes!("../fixtures/wasm/lwwset_go.wasm");
 const LWWSET_CPP: &[u8] = include_bytes!("../fixtures/wasm/lwwset_cpp.wasm");
+const REGISTERS: &[u8] = include_bytes!("../fixtures/wasm/registers.wasm");
+const REGISTERS_JAVA: &[u8] = include_bytes!("../fixtures/wasm/registers_java.wasm");
+const REGISTERS_GO: &[u8] = include_bytes!("../fixtures/wasm/registers_go.wasm");
+const REGISTERS_CPP: &[u8] = include_bytes!("../fixtures/wasm/registers_cpp.wasm");
+const RESOLVER: &[u8] = include_bytes!("../fixtures/wasm/resolver.wasm");
+const RESOLVER_JAVA: &[u8] = include_bytes!("../fixtures/wasm/resolver_java.wasm");
+const RESOLVER_GO: &[u8] = include_bytes!("../fixtures/wasm/resolver_go.wasm");
+const RESOLVER_C: &[u8] = include_bytes!("../fixtures/wasm/resolver_c.wasm");
+const RESOLVER_CPP: &[u8] = include_bytes!("../fixtures/wasm/resolver_cpp.wasm");
+const APITEST: &[u8] = include_bytes!("../fixtures/wasm/apitest.wasm");
+const APITEST_JAVA: &[u8] = include_bytes!("../fixtures/wasm/apitest_java.wasm");
+const APITEST_GO: &[u8] = include_bytes!("../fixtures/wasm/apitest_go.wasm");
+const APITEST_C: &[u8] = include_bytes!("../fixtures/wasm/apitest_c.wasm");
+const APITEST_CPP: &[u8] = include_bytes!("../fixtures/wasm/apitest_cpp.wasm");
 
 const SHIP_LAG: Duration = Duration::from_secs(20);
+
+/// The namespace both clusters keep with bin convergence on, so that every bin has its own last-update time.
+const BIN_CONVERGENCE_NS: &str = "testbc";
 
 fn dcs() -> Option<(String, String)> {
     Some((env::var("AEROSPIKE_XDR_DC1").ok()?, env::var("AEROSPIKE_XDR_DC2").ok()?))
@@ -604,4 +621,404 @@ async fn lwwset_converges_two_clusters() {
 
         unbind_set(&c1, &c2, &key, package, set_name).await;
     }
+}
+
+/// The bins of a record as plain pairs, sorted by name; None when the record is not there.
+async fn bins_of(client: &Client, key: &Key) -> Option<Vec<(String, Value)>> {
+    let record = match client.get(&ReadPolicy::default(), key, Bins::All).await {
+        Ok(r) => r,
+        Err(e) if e.matches(&[ResultCode::KeyNotFoundError]) => return None,
+        Err(e) => panic!("{e:?}"),
+    };
+    let mut bins: Vec<(String, Value)> = record.bins.into_iter().collect();
+
+    bins.sort_by(|a, b| a.0.cmp(&b.0));
+
+    Some(bins)
+}
+
+/// Waits until both clusters hold exactly `expected`, or fails naming the sides.
+async fn converge_bins(c1: &Client, c2: &Client, key: &Key, expected: &[(&str, Value)], what: &str) {
+    let expected: Vec<(String, Value)> = expected.iter().map(|(n, v)| (n.to_string(), v.clone())).collect();
+    let deadline = std::time::Instant::now() + SHIP_LAG;
+
+    loop {
+        let (b1, b2) = (bins_of(c1, key).await, bins_of(c2, key).await);
+
+        if b1.as_ref() == Some(&expected) && b2.as_ref() == Some(&expected) {
+            return;
+        }
+
+        assert!(std::time::Instant::now() < deadline, "{what}: both sides should reach {expected:?}: dc1 {b1:?}, dc2 {b2:?}");
+        aerospike_rt::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+/// The record of registers across the two clusters, on the namespace that keeps a last-update time per
+/// bin: writes to different bins both survive, the later write to one bin wins on both sides, a bin that
+/// is not a register (`seen`, a maximum) keeps the larger number although the smaller was written later,
+/// and a delete that is the later write stays a delete.
+#[aerospike_macro::test]
+async fn registers_converge_two_clusters() {
+    let Some((dc1, dc2)) = dcs() else {
+        eprintln!("skipped registers_converge_two_clusters: set AEROSPIKE_XDR_DC1 and AEROSPIKE_XDR_DC2");
+        return;
+    };
+
+    let c1 = Client::new(&ClientPolicy::default(), &dc1).await.expect("dc1");
+    let c2 = Client::new(&ClientPolicy::default(), &dc2).await.expect("dc2");
+    let write = WritePolicy::default();
+
+    if !info(&c1, "namespaces").await.split(';').any(|n| n == BIN_CONVERGENCE_NS) {
+        eprintln!("skipped registers_converge_two_clusters: the clusters have no {BIN_CONVERGENCE_NS} namespace");
+        return;
+    }
+
+    // A port that is not checked in yet can be tried alone: point this at its compiled module.
+    let trial = env::var("AEROSPIKE_REGISTERS_MODULE").ok().map(|path| std::fs::read(&path).expect(&path));
+    let modules: Vec<(&str, &[u8])> = match &trial {
+        Some(module) => vec![("trial", module.as_slice())],
+        None => vec![("rust", REGISTERS), ("java", REGISTERS_JAVA), ("go", REGISTERS_GO), ("cpp", REGISTERS_CPP)],
+    };
+
+    for (lang, module) in modules {
+        let set_name = &format!("settings_{}", crate::common::rand_str(6));
+        let package = &format!("registers_{lang}_{}", crate::common::rand_str(6));
+        let key = as_key!(BIN_CONVERGENCE_NS, set_name, "ada");
+        let bind = format!(
+            "event-set:event=xdr-merge;namespace={BIN_CONVERGENCE_NS};set={set_name};module={package};function=merge_settings;on-failure=abandon"
+        );
+
+        for c in [&c1, &c2] {
+            register_module(c, module, package).await;
+            assert_eq!(info(c, &bind).await, "ok", "{lang}");
+        }
+
+        let put = |c: &Client, bins: Vec<Bin>| {
+            let (c, key, write) = (c.clone(), key.clone(), write.clone());
+
+            async move { c.put(&write, &key, &bins).await.unwrap() }
+        };
+
+        let saw = |c: &Client, n: i64| {
+            let (c, key, write, package) = (c.clone(), key.clone(), write.clone(), package.clone());
+
+            async move { c.execute_udf(&write, &key, &package, "saw", &[Value::from(n)]).await.unwrap() }
+        };
+
+        put(&c1, vec![as_bin!("theme", "dark"), as_bin!("lang", "en")]).await;
+        saw(&c1, 3).await;
+        converge_bins(
+            &c1,
+            &c2,
+            &key,
+            &[("lang", Value::from("en")), ("seen", Value::from(3)), ("theme", Value::from("dark"))],
+            &format!("{lang}: the first write"),
+        )
+        .await;
+
+        // Different bins at the same time: each side's write survives the other's.
+        futures::join!(put(&c1, vec![as_bin!("theme", "light")]), put(&c2, vec![as_bin!("lang", "fr")]));
+        converge_bins(
+            &c1,
+            &c2,
+            &key,
+            &[("lang", Value::from("fr")), ("seen", Value::from(3)), ("theme", Value::from("light"))],
+            &format!("{lang}: different bins at once"),
+        )
+        .await;
+
+        // The same bin on both sides, dc2's write a little later: the later stamp wins on both.
+        futures::join!(put(&c1, vec![as_bin!("theme", "solar")]), async {
+            aerospike_rt::sleep(Duration::from_millis(5)).await;
+            put(&c2, vec![as_bin!("theme", "mono")]).await
+        });
+        converge_bins(
+            &c1,
+            &c2,
+            &key,
+            &[("lang", Value::from("fr")), ("seen", Value::from(3)), ("theme", Value::from("mono"))],
+            &format!("{lang}: one bin, the later write"),
+        )
+        .await;
+
+        // `seen` is not a register: the larger number stays, though the smaller one was written later.
+        futures::join!(saw(&c1, 9), async {
+            aerospike_rt::sleep(Duration::from_millis(5)).await;
+            saw(&c2, 5).await
+        });
+        converge_bins(
+            &c1,
+            &c2,
+            &key,
+            &[("lang", Value::from("fr")), ("seen", Value::from(9)), ("theme", Value::from("mono"))],
+            &format!("{lang}: seen keeps the maximum"),
+        )
+        .await;
+
+        // A delete that is the later write stays a delete, and the other side's write to another bin
+        // does not bring the bin back.
+        futures::join!(put(&c1, vec![as_bin!("theme", "dark")]), async {
+            aerospike_rt::sleep(Duration::from_millis(5)).await;
+            put(&c2, vec![as_bin!("lang", Value::Nil)]).await
+        });
+        converge_bins(
+            &c1,
+            &c2,
+            &key,
+            &[("seen", Value::from(9)), ("theme", Value::from("dark"))],
+            &format!("{lang}: a later delete"),
+        )
+        .await;
+
+        // And a register written after its delete is back.
+        put(&c1, vec![as_bin!("lang", "de")]).await;
+        converge_bins(
+            &c1,
+            &c2,
+            &key,
+            &[("lang", Value::from("de")), ("seen", Value::from(9)), ("theme", Value::from("dark"))],
+            &format!("{lang}: written again after the delete"),
+        )
+        .await;
+
+        // Every merge answered with a record: none failed, and none fell back to the policy.
+        for c in [&c1, &c2] {
+            assert_eq!(
+                counter(c, set_name, "fired").await,
+                counter(c, set_name, "record").await + counter(c, set_name, "keep-local").await,
+                "{lang}"
+            );
+        }
+
+        for c in [&c1, &c2] {
+            assert_eq!(info(c, &format!("event-remove:event=xdr-merge;namespace={BIN_CONVERGENCE_NS};set={set_name}")).await, "ok");
+            let _ = c.delete(&write, &key).await;
+            let _ = c.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
+        }
+    }
+}
+
+/// A value in a form two values that mean the same compare equal in: map entries in one order, whatever
+/// map type the client chose, and a map's nil entries dropped (nil is "no such bin").
+fn canonical(v: &Value) -> String {
+    fn entries<'a>(m: impl Iterator<Item = (&'a Value, &'a Value)>) -> String {
+        let mut e: Vec<String> = m
+            .filter(|(_, v)| !matches!(v, Value::Nil))
+            .map(|(k, v)| format!("{}={}", canonical(k), canonical(v)))
+            .collect();
+
+        e.sort();
+        format!("{{{}}}", e.join(","))
+    }
+
+    match v {
+        Value::HashMap(m) => entries(m.iter()),
+        Value::OrderedMap(m) => entries(m.iter()),
+        Value::SortedMap(m) => entries(m.iter()),
+        Value::List(l) => format!("[{}]", l.iter().map(canonical).collect::<Vec<_>>().join(",")),
+        other => format!("{other:?}"),
+    }
+}
+
+/// A record's bins as a map value, for `canonical`.
+fn bins_value(bins: impl IntoIterator<Item = (String, Value)>) -> Value {
+    Value::from(bins.into_iter().map(|(k, v)| (Value::from(k), v)).collect::<HashMap<Value, Value>>())
+}
+
+fn hmap(entries: &[(&str, Value)]) -> Value {
+    Value::from(entries.iter().map(|(k, v)| (Value::from(*k), v.clone())).collect::<HashMap<Value, Value>>())
+}
+
+fn strs(items: &[&str]) -> Value {
+    Value::from(items.iter().map(|s| Value::from(*s)).collect::<Vec<Value>>())
+}
+
+/// **The dry run answers what the live merge does.** For each handler, in every language it is written
+/// in: a record is made the same on both clusters, the handler is bound on dc1 only, and dc2 writes to the
+/// record, so dc1 merges dc2's record into its own for real. Then dc1's dry run is asked to merge the same
+/// incoming record into a second record that holds what the first one held before. The record the live
+/// merge left and the record the dry run answers must be the same.
+///
+/// Runs on the namespace without bin convergence: there the merge sees no per-bin time, so the two
+/// records, written a moment apart, are the same input. Under bin convergence each bin's time differs
+/// between them, and a merge that reads it is entitled to answer differently.
+#[aerospike_macro::test]
+async fn the_dry_run_answers_what_the_live_merge_does() {
+    let Some((dc1, dc2)) = dcs() else {
+        eprintln!("skipped the_dry_run_answers_what_the_live_merge_does: set AEROSPIKE_XDR_DC1 and AEROSPIKE_XDR_DC2");
+        return;
+    };
+
+    let c1 = Client::new(&ClientPolicy::default(), &dc1).await.expect("dc1");
+    let c2 = Client::new(&ClientPolicy::default(), &dc2).await.expect("dc2");
+    let write = WritePolicy::default();
+    let read = ReadPolicy::default();
+
+    struct Case {
+        name: &'static str,
+        function: &'static str,
+        modules: Vec<(&'static str, &'static [u8])>,
+        current: Vec<(&'static str, Value)>,
+        written: Vec<(&'static str, Value)>,
+    }
+
+    let four = |rust, java, go, cpp| vec![("rust", rust), ("java", java), ("go", go), ("cpp", cpp)];
+    let cases = vec![
+        Case {
+            name: "counter",
+            function: "merge_counter",
+            modules: four(COUNTER, COUNTER_JAVA, COUNTER_GO, COUNTER_CPP),
+            current: vec![("counts", hmap(&[("dc1", Value::from(3)), ("dc2", Value::from(1))]))],
+            written: vec![("counts", hmap(&[("dc2", Value::from(5))]))],
+        },
+        Case {
+            name: "pncounter",
+            function: "merge_pncounter",
+            modules: four(PNCOUNTER, PNCOUNTER_JAVA, PNCOUNTER_GO, PNCOUNTER_CPP),
+            current: vec![
+                ("inc", hmap(&[("dc1", Value::from(7))])),
+                ("dec", hmap(&[("dc1", Value::from(2))])),
+            ],
+            written: vec![("inc", hmap(&[("dc2", Value::from(4))])), ("dec", hmap(&[("dc2", Value::from(1))]))],
+        },
+        Case {
+            name: "twopset",
+            function: "merge_twopset",
+            modules: four(TWOPSET, TWOPSET_JAVA, TWOPSET_GO, TWOPSET_CPP),
+            current: vec![("added", strs(&["art", "news"])), ("removed", strs(&["news"]))],
+            written: vec![("added", strs(&["sport"])), ("removed", strs(&[]))],
+        },
+        Case {
+            name: "lwwset",
+            function: "merge_lwwset",
+            modules: four(LWWSET, LWWSET_JAVA, LWWSET_GO, LWWSET_CPP),
+            current: vec![
+                ("addedAt", hmap(&[("art", Value::from(100)), ("news", Value::from(300))])),
+                ("removedAt", hmap(&[("news", Value::from(200))])),
+            ],
+            written: vec![
+                ("addedAt", hmap(&[("news", Value::from(150)), ("sport", Value::from(400))])),
+                ("removedAt", hmap(&[("art", Value::from(500))])),
+            ],
+        },
+        Case {
+            name: "resolver",
+            function: "merge_account",
+            modules: vec![
+                ("rust", RESOLVER),
+                ("java", RESOLVER_JAVA),
+                ("go", RESOLVER_GO),
+                ("c", RESOLVER_C),
+                ("cpp", RESOLVER_CPP),
+            ],
+            current: vec![
+                ("visits", Value::from(7)),
+                ("tags", strs(&["a", "b"])),
+                ("profile", hmap(&[("name", Value::from("ada"))])),
+                ("balance", Value::from(100)),
+            ],
+            written: vec![("visits", Value::from(5)), ("tags", strs(&["c"])), ("balance", Value::from(50))],
+        },
+        Case {
+            name: "apitest",
+            function: "merge_api",
+            modules: vec![
+                ("rust", APITEST),
+                ("java", APITEST_JAVA),
+                ("go", APITEST_GO),
+                ("c", APITEST_C),
+                ("cpp", APITEST_CPP),
+            ],
+            current: vec![("n", Value::from(4)), ("s", Value::from("here")), ("only_c", Value::from(1))],
+            written: vec![("n", Value::from(9)), ("s", Value::from("there")), ("only_i", Value::from(2))],
+        },
+    ];
+
+    let mut compared = 0;
+
+    for case in &cases {
+        for (lang, module) in &case.modules {
+            let what = format!("{} ({lang})", case.name);
+            let set_name = &format!("dry_{}", crate::common::rand_str(6));
+            let package = &format!("dry_{}_{lang}_{}", case.name, crate::common::rand_str(6));
+            let live = as_key!("test", set_name, "live");
+            let dry = as_key!("test", set_name, "dry");
+            let current: Vec<Bin> = case.current.iter().map(|(n, v)| Bin::new(*n, v.clone())).collect();
+            let written: Vec<Bin> = case.written.iter().map(|(n, v)| Bin::new(*n, v.clone())).collect();
+
+            // The same record on both clusters, before anything is bound.
+            c1.put(&write, &live, &current).await.unwrap();
+
+            let want = canonical(&bins_value(c1.get(&read, &live, Bins::All).await.unwrap().bins));
+            let deadline = std::time::Instant::now() + SHIP_LAG;
+
+            loop {
+                if let Ok(r) = c2.get(&read, &live, Bins::All).await {
+                    if canonical(&bins_value(r.bins)) == want {
+                        break;
+                    }
+                }
+
+                assert!(std::time::Instant::now() < deadline, "{what}: dc2 never had the record");
+                aerospike_rt::sleep(Duration::from_millis(100)).await;
+            }
+
+            // Bound on dc1 only, so dc2 takes dc1's later writes as they are.
+            register_module(&c1, module, package).await;
+            assert_eq!(
+                info(&c1, &format!("event-set:event=xdr-merge;namespace=test;set={set_name};module={package};function={}", case.function)).await,
+                "ok",
+                "{what}"
+            );
+
+            // dc2 writes; what it then holds is what reaches dc1, and dc1 merges it live.
+            let fired = counter(&c1, set_name, "fired").await;
+
+            c2.put(&write, &live, &written).await.unwrap();
+
+            let incoming = c2.get(&read, &live, Bins::All).await.unwrap().bins;
+            let deadline = std::time::Instant::now() + SHIP_LAG;
+
+            while counter(&c1, set_name, "fired").await == fired {
+                assert!(std::time::Instant::now() < deadline, "{what}: the merge never ran on dc1");
+                aerospike_rt::sleep(Duration::from_millis(100)).await;
+            }
+
+            aerospike_rt::sleep(Duration::from_millis(300)).await;
+
+            let merged = canonical(&bins_value(c1.get(&read, &live, Bins::All).await.unwrap().bins));
+
+            // The dry run: the same incoming record against a record holding what the first one held.
+            c1.put(&write, &dry, &current).await.unwrap();
+
+            let incoming_bins: HashMap<Value, Value> = incoming.into_iter().map(|(k, v)| (Value::from(k), v)).collect();
+            let incoming_meta = HashMap::from([(Value::from("src-id"), Value::from(2))]);
+            let answer = c1
+                .execute_udf(&write, &dry, "__event__", "xdr-merge", &[Value::from(incoming_bins), Value::from(incoming_meta)])
+                .await
+                .unwrap_or_else(|e| panic!("{what}: the dry run failed: {e}"));
+            let answer = match answer {
+                Some(Value::HashMap(m)) => m,
+                Some(Value::OrderedMap(m)) => m.into_iter().collect(),
+                Some(Value::SortedMap(m)) => m.into_iter().collect(),
+                other => panic!("{what}: {other:?}"),
+            };
+            let predicted = canonical(answer.get(&Value::from("bins")).unwrap_or_else(|| panic!("{what}: no bins in {answer:?}")));
+
+            assert_eq!(predicted, merged, "{what}: the dry run predicted one record, the live merge made another");
+            compared += 1;
+
+            assert_eq!(info(&c1, &format!("event-remove:event=xdr-merge;namespace=test;set={set_name}")).await, "ok");
+
+            for c in [&c1, &c2] {
+                let _ = c.delete(&write, &live).await;
+                let _ = c.delete(&write, &dry).await;
+            }
+
+            let _ = c1.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
+        }
+    }
+
+    assert_eq!(compared, 26);
 }

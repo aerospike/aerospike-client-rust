@@ -14,9 +14,20 @@ package udf
 
 import "strconv"
 
-// Error is what the typed tier returns when the host refuses a call or a value is not of the kind asked
-// for: the native's status and a message naming what failed. A UDF returns it (or any other error) from a
-// `//udf:function` or handler, and the generated export fails the call with its message.
+// Error is what the typed tier returns when the host refuses a call or a value is not of the kind
+// asked for. Status is the status behind it, one of the constants beside OK: NotFound for a bin or an
+// argument that is not there, TypeMismatch for a value of another kind, Refused for a write the host
+// would not take, Err for anything else. Msg names what failed.
+//
+// A function under `//udf:function`, or a handler, returns it like any other error, and the generated
+// export fails the call with its message. Code that has to tell one failure from another reads Status:
+//
+//	if err := rec.Save(); err != nil {
+//		if e, ok := err.(*udf.Error); ok && e.Status == udf.Refused {
+//			udf.Log(udf.LogWarn, "the record is read-only here")
+//		}
+//		return err
+//	}
 type Error struct {
 	Status int32
 	Msg    string
@@ -24,6 +35,39 @@ type Error struct {
 
 // Error is the message, which makes *Error an error.
 func (e *Error) Error() string { return e.Msg }
+
+// Needed is the size a buffer has to have, when the error is a buffer that was too small: its Status
+// is at or below NeededBase, and this is the -(Status) - 16 behind it. It is 0 for any other error.
+//
+//	key, ok, err := rec.Key(buf)
+//	if e, is := err.(*udf.Error); is && e.Needed() > 0 {
+//		buf = make([]byte, e.Needed())
+//		key, ok, err = rec.Key(buf)
+//	}
+func (e *Error) Needed() int {
+	if e.Status <= NeededBase {
+		return int(-e.Status) - 16
+	}
+	return 0
+}
+
+// StatusOf is the host status an error carries, as a value: OK for nil, the Status of an *Error,
+// and Err for an error of any other type, such as one a UDF made itself with errors.New. Every error
+// the SDK returns is an *Error, so this is how a caller tells an absent bin (NotFound) from one of
+// another kind (TypeMismatch) or a write the host refused (Refused) without reading the message.
+//
+//	if _, err := rec.IntOr("visits", 0); udf.StatusOf(err) == udf.TypeMismatch {
+//		// the bin is there and is not an integer
+//	}
+func StatusOf(err error) int32 {
+	if err == nil {
+		return OK
+	}
+	if e, ok := err.(*Error); ok {
+		return e.Status
+	}
+	return Err
+}
 
 // Errorf-free message building, so that fmt stays out of the module.
 func errorf(status int32, parts ...string) error {
@@ -46,7 +90,9 @@ func statusError(rc int32, what string) error {
 	return errorf(rc, what, " (", strconv.Itoa(int(rc)), ")")
 }
 
-// FailErr fails the call with the error's message and returns the status an export then returns.
+// FailErr fails the call with the error's message, as Fail does, and returns the non-zero status for
+// the export to return. err must not be nil. The generated exports call it with what a function
+// returned; an export in the raw form calls it with an error from the Arg functions or the record.
 func FailErr(err error) int32 {
 	return Fail(err.Error())
 }

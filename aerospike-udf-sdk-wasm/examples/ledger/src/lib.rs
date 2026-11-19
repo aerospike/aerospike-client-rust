@@ -84,7 +84,7 @@ export! {
 
         if let Some(postings) = rec.list("postings")? {
             for posting in postings.iter() {
-                let amount = posting?.map()?.get("amount")?.int()?;
+                let amount = posting?.map()?.get("amount")?.ok_or(Error::Absent)?.int()?;
 
                 count += 1;
                 largest = largest.max(amount);

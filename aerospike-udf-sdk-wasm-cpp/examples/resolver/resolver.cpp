@@ -20,21 +20,23 @@
 #include "aerospike_udf.hpp"
 
 // A bin one side deleted stays deleted when the delete is the later write for that bin: a nil in the
-// returned record is "no such bin". Without this, the other side's copy would come back through
-// with_newer below - the resurrection every merge has to guard against.
-static void apply_deletes(const udf::Pair& pair, udf::Map& out, const udf::EventRecord& side, bool by_incoming)
+// returned record is "no such bin". with_newer below honours the same rule; saying it here first keeps the
+// rule in the handler, where the resurrection every merge has to guard against is visible.
+static udf::Ok apply_deletes(const udf::Pair& pair, udf::Map& out, const udf::EventRecord& side, bool by_incoming)
 {
 	if (!side.deleted_any()) {
-		return;
+		return {};
 	}
 
 	for (udf::Value name : side.deleted_bins()) {
-		udf::Result<udf::Text<64>> bin = name.as_string<64>();
+		udf::Text<64> bin = UDF_TRY(udf::required(name.as_string<64>(), "merge_account: a nil deleted bin name"));
 
-		if (bin && pair.incoming_is_newer(bin->view()) == by_incoming) {
-			out.put_nil(bin->view());
+		if (pair.incoming_is_newer(bin.view()) == by_incoming) {
+			out.put_nil(bin.view());
 		}
 	}
+
+	return {};
 }
 
 UDF_ON_XDR_MERGE(merge_account)
@@ -44,13 +46,13 @@ UDF_ON_XDR_MERGE(merge_account)
 
 	// A count each DC advanced on its own: both sides' increments are real, so the merge is the larger
 	// of the two, not the sum (the sum would double-count the visits both already knew of).
-	if (udf::Optional<int64_t> visits = pair.as_int("visits").max()) {
+	if (udf::Optional<int64_t> visits = UDF_TRY(pair.as_int("visits")).max()) {
 		out.put("visits", *visits);
 	}
 
 	// A set each DC added to: the union. Its order is part of the result, so it is the order both DCs
 	// agree on - the older side's tags, then the newer side's new ones - never "mine first".
-	auto [older, newer] = pair.list("tags").ordered();
+	auto [older, newer] = UDF_TRY(pair.list("tags")).ordered();
 	udf::List tags(16);
 
 	if (older) {
@@ -59,7 +61,7 @@ UDF_ON_XDR_MERGE(merge_account)
 
 	if (newer) {
 		for (udf::Value tag : newer->list()) {
-			udf::Text<64> text = UDF_TRY(tag.as_string<64>());
+			udf::Text<64> text = UDF_TRY(udf::required(tag.as_string<64>(), "merge_account: a nil tag"));
 
 			if (!older || !udf::contains(*older, text.view())) {
 				tags.add(tag);
@@ -74,8 +76,8 @@ UDF_ON_XDR_MERGE(merge_account)
 		out.put("profile", *profile);
 	}
 
-	apply_deletes(pair, out, current, false);
-	apply_deletes(pair, out, incoming, true);
+	UDF_TRY(apply_deletes(pair, out, current, false));
+	UDF_TRY(apply_deletes(pair, out, incoming, true));
 
 	// Everything else is the newer side's - the policy's answer for a bin this handler has no opinion on.
 	// `current.with_bins(out)` would read more naturally and be wrong: it prefers a side, and the other

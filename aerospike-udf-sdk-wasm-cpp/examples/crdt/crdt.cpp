@@ -61,7 +61,10 @@ static const Candidate& higher(const Candidate& a, const Candidate& b)
 
 	// Two different changes at one version are concurrent: the stored bytes pick one, the same on both
 	// clusters, since each side compares the same two byte strings.
-	return a.value.cmp_stored(b.value) >= 0 ? a : b;
+	// Both values are entries read from a record, so they are stored and the comparison cannot fail; were it
+	// to, the first candidate would stand.
+	udf::Result<int32_t> order = a.value.cmp_stored(b.value);
+	return !order || *order >= 0 ? a : b;
 }
 
 // The candidates seen so far, one per device: offer keeps the higher. Static, since a module has no
@@ -109,7 +112,7 @@ static udf::Result<Id> id_of(const udf::Value& entry)
 
 	if (!id) return udf::error(AS_UDF_NOT_FOUND, "an entry has no deviceId");
 
-	return id->as_string<64>();
+	return udf::required(id->as_string<64>(), "an entry's deviceId is nil");
 }
 
 static udf::Result<int64_t> int_field(const udf::Value& m, udf::StrView key)
@@ -118,7 +121,7 @@ static udf::Result<int64_t> int_field(const udf::Value& m, udf::StrView key)
 
 	if (!v) return udf::error(AS_UDF_NOT_FOUND, "a map lacks a field");
 
-	return v->as_int();
+	return udf::required(v->as_int(), "a map field is nil");
 }
 
 // Every live entry of a devices list as a candidate.
@@ -141,12 +144,12 @@ static udf::Result<void> offer_live(const udf::Value& list)
 static udf::Result<void> offer_markers(const udf::Value& removed, int64_t& horizon, int64_t& floor)
 {
 	if (udf::Optional<udf::Value> h = removed.get("purgedBefore")) {
-		int64_t n = UDF_TRY(h->as_int());
+		int64_t n = UDF_TRY(udf::required(h->as_int(), "purgedBefore is nil"));
 		if (n > horizon) horizon = n;
 	}
 
 	if (udf::Optional<udf::Value> f = removed.get("versionFloor")) {
-		int64_t n = UDF_TRY(f->as_int());
+		int64_t n = UDF_TRY(udf::required(f->as_int(), "versionFloor is nil"));
 		if (n > floor) floor = n;
 	}
 
@@ -157,7 +160,7 @@ static udf::Result<void> offer_markers(const udf::Value& removed, int64_t& horiz
 	for (udf::Entry e : markers->map()) {
 		Candidate c;
 
-		c.id = UDF_TRY(e.key.as_string<64>());
+		c.id = UDF_TRY(udf::required(e.key.as_string<64>(), "a marker's key is nil"));
 		c.version = UDF_TRY(int_field(e.value, "version"));
 		c.removed = true;
 		c.value = e.value;
@@ -178,7 +181,7 @@ UDF_ON_XDR_MERGE(xdr_merge)
 
 	// Other bins: as XDR does today.
 	for (udf::Value name : incoming.bin_names()) {
-		udf::Text<64> n = UDF_TRY(name.as_string<64>());
+		udf::Text<64> n = UDF_TRY(udf::required(name.as_string<64>(), "a bin name is nil"));
 
 		if (n == "devices" || n == "devicesRemoved") continue;
 
@@ -272,7 +275,7 @@ static udf::Result<int> live_entries(const udf::Record& rec)
 {
 	int n = 0;
 
-	for (udf::Value item : rec.list(DEVICES)) {
+	for (udf::Value item : UDF_TRY(rec.list(DEVICES)).value_or(udf::ListRange())) {
 		if (n == MAX_DEVICES) return udf::error(AS_UDF_ERR, "too many devices");
 
 		entries[n].id = UDF_TRY(id_of(item));
@@ -371,7 +374,7 @@ static udf::Result<void> store_removed(udf::Record& rec, udf::StrView drop, cons
 	if (udf::Optional<udf::Value> removed = rec.get(DEVICES_REMOVED)) {
 		if (udf::Optional<udf::Value> existing = removed->get("markers")) {
 			for (udf::Entry e : existing->map()) {
-				Id id = UDF_TRY(e.key.as_string<64>());
+				Id id = UDF_TRY(udf::required(e.key.as_string<64>(), "a marker's key is nil"));
 
 				if ((drop.len > 0 && id == drop) || (add != nullptr && id == add->id)) continue;
 

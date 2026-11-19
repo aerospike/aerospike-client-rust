@@ -71,16 +71,18 @@ Java types decide both how an argument is decoded and what the signature says:
 | `long`, `int` | `int` | an integer (`int` must fit 32 bits) |
 | `double` | `double` | a double, or an integer widened |
 | `boolean` | `bool` | a boolean |
-| `String` | `str` | a string |
-| `byte[]` | `bytes` | a string or a blob, as its bytes |
+| `String` | `str` | a string; bytes that are not UTF-8 are replaced with U+FFFD |
+| `byte[]` | `bytes` | a string or a blob, as its bytes, untouched: the way to take raw bytes |
 | `Value` | `any` | anything, nil included, as the 16-byte value |
-| `Value[]`, last | `any...` | every remaining argument |
+| `Value[]`, last | `any...` | every remaining argument, up to 128 arguments in all |
 
 A parameter marked `@Nullable` may be absent or nil and is then `null`; it reads `name?: type` in the
 signature, and a scalar one is boxed: `@Nullable Long n`. A call that leaves a required argument out,
 passes one of another kind, or passes more arguments than there are parameters, fails before the method
 runs, with a message that names the argument (`increment: argument 2 (n) is not an int`,
-`increment takes at most 2 arguments, got 3`), the same way the Rust macro rejects a call.
+`increment takes at most 2 arguments, got 3`), the same way the Rust macro rejects a call. A call can
+pass at most 128 arguments: one with more fails, even when the last parameter takes the rest
+(`ar takes at most 128 arguments, got 129`). No argument is dropped.
 
 The return type is the result: `void` is nil, `long` and `int` an integer, `double`, `boolean`, `String`,
 `byte[]` a blob, `MapBuilder` and `ListBuilder` a built collection, `MapValue` and `ListValue` a stored
@@ -128,19 +130,23 @@ static long balanceOf(RecordReader rec) {
 ## Reading
 
 `rec.get("name")` returns the bin as a `Value`, or `null` when the record has no such bin. The typed
-readers say what the UDF expects: `getInt`, `getDouble`, `getBool`, `getString`, `getBlob` (a string
-or blob's bytes), `getList`, `getMap`, and `getFloats(name, float[])` for a blob of 32-bit floats read
-straight into the array. Each comes in two forms. Without a default the bin must be there:
-`rec.getInt("n")` throws `UdfException` naming the bin when it is absent. With a default,
-`rec.getInt("n", 0)` answers the default for an absent bin. Both throw for a bin of another kind.
-`rec.has("name")` says whether there is one, and `rec.bin("name")` is `get` for a bin that has to be
-there: it throws when the record has no such bin.
+readers say what the UDF expects: `getInt`, `getDouble`, `getBool`, `getString`, `getBlob` (a blob and
+nothing else), `getList`, `getMap`, and `getBytes` for the raw bytes of a string, blob, GeoJSON or HLL.
+Each has three outcomes: `null` when the bin is absent, the value when it is of that kind, and an
+`UdfException` whose `status()` is `LowLevel.TYPE_MISMATCH` when it holds another kind. Nothing is
+widened: an integer bin is not a double, a string bin is not a blob. The scalar readers answer `Long`,
+`Double` and `Boolean` so that they can be `null`. With a default, `rec.getInt("n", 0)` answers the
+default for an absent bin, and still throws for another kind. `rec.has("name")` says whether there is
+one, and `rec.bin("name")` is the read that insists: it throws (`LowLevel.NOT_FOUND`) when the record
+has no such bin, so `rec.bin("n").asInt()` is the strict integer read. `getFloats(name, float[])` reads
+a blob of 32-bit floats straight into the array.
 
 A `Value` is one value, read-only. `kind()` gives its kind as one of `Value.NIL`, `BOOL`, `INT`,
 `DOUBLE`, `STR`, `BLOB`, `LIST`, `MAP`, `GEOJSON`, `HLL`, `ABSENT`. The tests `isInt()`, `isString()`,
 `isList()`, `isMap()`, `isNull()` and the rest say the same one at a time. The readers `asInt()`,
 `asDouble()`, `asBool()`, `asString()`, `asBlob()`, `asList()`, `asMap()` each throw when the kind is
-another. A stored string or collection is held by position and is not copied until it is asked for.
+another (`asBlob()` takes only a blob), and `asBytes()` reads the bytes of a string, blob, GeoJSON or
+HLL. `isGeoJson()` and `isHll()` complete the tests. A stored string or collection is held by position and is not copied until it is asked for.
 
 ## Lists and maps
 
@@ -149,11 +155,12 @@ A list the server holds is a `ListValue` and a map is a `MapValue`. Both read th
 A `ListValue` has `size()`, `isEmpty()`, `get(index)`, the typed `getInt(index)`, `getString(index)` and
 so on, and `contains(text)` or `contains(number)`. It is an `Iterable<Value>`. `get(index)` is one call
 to the server, which steps over the elements before it without decoding them. An index past the end
-throws.
+throws (`LowLevel.NOT_FOUND`), as it does on a `java.util.List`; test `size()` first. The typed element
+readers answer `null` for a nil element.
 
 A `MapValue` has `get(key)`, which answers `null` for a key the map does not have, `containsKey(key)`,
-`size()`, `isEmpty()`, and the typed readers in the same two forms as the record's: `getInt(key)` throws
-when there is no such key, `getInt(key, dflt)` answers the default. A key is a `String` or a `long`. It
+`size()`, `isEmpty()`, and the typed readers in the same forms as the record's: `getInt(key)` answers
+`null` when there is no such key or the entry is nil, `getInt(key, dflt)` answers the default. A key is a `String` or a `long`. It
 is an `Iterable<MapValue.Entry>`, and an entry has `getKey()` and `getValue()`. A wrong kind throws
 `UdfException` naming the key or the index.
 
@@ -162,7 +169,7 @@ is an `Iterable<MapValue.Entry>`, and an entry has `getKey()` and `getValue()`. 
 static long sumList(Record rec) {
     long total = 0;
 
-    for (Value v : rec.getList("l")) {
+    for (Value v : rec.bin("l").asList()) {
         total += v.asInt();         // throws, and fails the call, on anything but an int
     }
 
@@ -173,7 +180,7 @@ static long sumList(Record rec) {
 static long maxCount(Record rec) {
     long max = 0;
 
-    for (MapValue.Entry e : rec.getMap("counts")) {
+    for (MapValue.Entry e : rec.bin("counts").asMap()) {
         max = Math.max(max, e.getValue().asInt());    // e.getKey() is the site
     }
 
@@ -182,7 +189,7 @@ static long maxCount(Record rec) {
 
 @Function("limit_for")
 static long limitFor(Record rec, String kind) {
-    return rec.getMap("limits").getInt(kind, 0);      // 0 when the map has no such key
+    return rec.bin("limits").asMap().getInt(kind, 0); // 0 when the map has no such key
 }
 ```
 
@@ -197,7 +204,7 @@ element. So `break` and `return` hold nothing:
 ```java
 @Function("first_over")
 static long firstOver(Record rec, long limit) {
-    for (Value v : rec.getList("l")) {
+    for (Value v : rec.bin("l").asList()) {
         if (v.asInt() > limit) {
             return v.asInt();
         }
@@ -279,7 +286,7 @@ Anything else throws `UdfException`.
 static List<Object> doubleAll(Record rec) {
     List<Object> doubled = new ArrayList<>();
 
-    for (Object item : rec.getList("l").toList()) {
+    for (Object item : rec.bin("l").asList().toList()) {
         doubled.add(((Long) item) * 2);
     }
 
@@ -352,7 +359,9 @@ call, so a hand-written export can use them too.
   `String` parameter. A bin name is encoded once and kept, and a `byte[]` parameter takes a string
   argument as its bytes.
 - **Exceptions.** A generated export catches what the method throws and fails the call with the message;
-  `UdfException` is the one to throw on purpose, and what the SDK throws.
+  `UdfException` is the one to throw on purpose, and what the SDK throws, carrying the host's status
+  (`status()`: `LowLevel.NOT_FOUND`, `TYPE_MISMATCH`, `REFUSED`, `ERR`, or a too-small status) so that
+  code which catches one can tell the cases apart without reading the message.
 - **The runtime.** A Java module is larger (200 to 330 KB for the examples) and its instance costs more
   to start. On the vector top-k over 20,000 records it took 131 ms where the Rust module took 80 ms and
   the Go module 61 ms, measured on 2026-11-18 on one aarch64 node.

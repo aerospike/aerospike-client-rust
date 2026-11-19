@@ -12,18 +12,27 @@ method, called once afterwards, whose return is the partial; its fields are the 
 one instance sees the whole stream. The processor instantiates the class once (it needs a no-argument
 constructor the generated class can reach) and exports `<name>_record` and `<name>_end`
 with the signature `stream <name>` followed by the two parameter lists.
-```text
+
+```java
 @Stream("sum")
 final class Sum {
-private long total;
-void record(Record rec, String bin) { total += rec.getInt(bin, 0); }
-long end(String bin) { return total; }
+    private long total;
+
+    void record(Record rec, String bin) { total += rec.getInt(bin, 0); }
+
+    long end(String bin) { return total; }
 }
 ```
+
 Parameters and returns are as for `Function`: `record` returns `void`, `end`
 the partial. `record` may take the `Record` as its first parameter, which is the record the
 query thread is on and is read-only: a write to it throws `UdfException`. `end` takes none,
 since it runs after the last record. In the raw form both are `int name(int args, int argc)` and `params` and
 `endParams` give the signature's parameter text, which is the form for a stream that reads its
 arguments once, on the first record, and keeps them.
+
+A query runs on several threads, on every node, and each thread has its own instance: `end`
+returns that thread's partial, and the client receives one partial per query thread per node and combines
+them itself. So return something cheap to merge, such as a map of the state. `Record.save` and every
+other write to the record throw here.
 

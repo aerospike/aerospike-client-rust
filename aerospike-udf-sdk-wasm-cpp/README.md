@@ -13,7 +13,7 @@ is the reference for the contract.
 
 UDF_FUNCTION(increment, udf::Result<int64_t>, udf::Record& rec, int64_t by)
 {
-	int64_t next = rec.int_or("n", 0) + by;
+	int64_t next = UDF_TRY(rec.int_or("n", 0)) + by;
 
 	UDF_TRY(rec.set("n", next));
 	UDF_TRY(rec.save());
@@ -38,6 +38,22 @@ no `operator new`; the C header provides the `memcpy` and `memset` the compiler 
 `make SIMD=1` (that is, `-msimd128`) for a kernel that should vectorise; off by default, since a server whose
 WASM tier has no SIMD (Fast JIT, the x86-64 default) refuses a module built with it. The one extension used is the statement expression behind
 `UDF_TRY`, which clang and gcc provide. Register the `.wasm` with `UdfLang::Wasm`.
+
+**The stack.** `Text<N>` and `Bytes<N>` hold their bytes inline, so a parameter or local of one is N bytes of
+the wasm stack, and the generated export holds every parameter at once plus a copy on the way into the
+function. clang gives a module 64 KB of stack, which a single `Text<65536>` parameter already overflows; an
+overflow is not caught at build time and traps the call (or, without a guard, overwrites the module's
+statics). Add up the capacities of the largest function's parameters and locals, double it, leave about
+16 KB for the SDK, and link with `-Wl,-z,stack-size=N` for that much: a function with two `Text<65536>`
+parameters wants about 512 KB, and `examples/apitest`, which has several, links with 4 MiB (see the
+Makefile). Keep large buffers in statics where the function allows it; a bigger stack makes every
+instance's linear memory bigger.
+
+**Errors.** Every failure is a `udf::Error` with the host's `status` (`AS_UDF_NOT_FOUND`,
+`AS_UDF_TYPE_MISMATCH`, `AS_UDF_REFUSED`, `AS_UDF_ERR`, or a needed-length status for a buffer too small)
+and a message. A message the SDK builds lives in one of eight static buffers used in turn, so it is not
+overwritten by the next error: it stays readable across further SDK calls until eight more messages have been
+built. Keep the status, or copy the text, to hold an error longer than that.
 
 ## The macros
 
@@ -70,9 +86,14 @@ WASM tier has no SIMD (Fast JIT, the x86-64 default) refuses a module built with
   - Reading (const): `get(name)` as an `Optional<Value>`, nothing when the bin is absent or nil;
     `bin(name)` for the bin that must be there, a `Result<Value>` whose error names the bin, chained with
     the value's own reader when the kind must hold too (`UDF_TRY(UDF_TRY(rec.bin("n")).as_int())`); the
-    typed readers `as_int(name)`, `as_double`, `as_bool`, `as_string<N>`, `as_blob<N>`, each an `Optional`
-    that is empty when the bin is absent, nil or of another kind; `int_or(name, 0)`, `double_or`, `bool_or`
-    for a default; `has(name)`; `floats_into`; `list(name)` / `map(name)` to range over.
+    typed readers `as_int(name)`, `as_double`, `as_bool`, `as_string<N>`, `as_blob<N>` (only a blob) and
+    `as_bytes<N>` (the raw bytes of a string, blob, GeoJSON or HLL), each a `Result<Optional<T>>`: empty
+    when the bin is absent or nil, the value, or an error of status `AS_UDF_TYPE_MISMATCH` when it holds
+    another kind (nothing is widened); `int_or(name, 0)`, `double_or`, `bool_or`, a `Result<T>` whose
+    default stands in for an absent bin only; `udf::required(reader, "msg")` for a value that must be
+    there; `has(name)`; `floats_into`; `list(name)` / `map(name)`, a `Result<Optional<ListRange>>`
+    (`MapRange`) that tells absent, another kind and empty apart and gives the stored value back with
+    `value()`.
   - Writing (not const): `set(name, value)` overloads for every kind, `set_blob`, `set_geojson`,
     `set_ints`, `set_doubles`, and `remove(name)` to remove a bin. There is no `set_nil`: a bin cannot hold
     nil, and `set(name, udf::Value::nil())` removes it as `remove` does. Writes are staged until `save()`;
@@ -89,14 +110,17 @@ WASM tier has no SIMD (Fast JIT, the x86-64 default) refuses a module built with
   a helper written as `template <class R> ... (const udf::ReadRecord<R>& rec)` reads from the record of a
   call and from either side of an event. `examples/counter` loads its table that way.
 - **`udf::Value`**: the 16-byte value every read is, with `kind()`, the `is_*` tests, `as_int()`,
-  `as_double()`, `as_bool()`, `as_string<N>()`, `as_blob<N>()`, `floats_into()`, `cmp_stored()`
+  `as_double()`, `as_bool()`, `as_string<N>()`, `as_blob<N>()`, `as_bytes<N>()` (the same three
+  outcomes), `bytes_into()`, `floats_into()`, `cmp_stored()` (a `Result<int32_t>`: exactly -1, 0 or 1, or a
+  type-mismatch error for a value that is not stored), `is_geojson()` and `is_hll()` among the tests
   (`is_null()` is not `is_nil()`: it is true of a nil and of an absent value alike); for a
   stored collection `size()`, `empty()`, `get(key)` and `contains(key)` on a map, `at(index)` on a list
   (one import, no walk); and **`list()` / `map()`** as ranges: `for (udf::Value v : v.list())`,
   `for (udf::Entry e : v.map())`, 32 per import, the cursor released when the loop ends or breaks.
 - **`udf::Map` and `udf::List`**: collections built on the host, with chainable `put` / `add` overloads for
-  every kind, string and integer keys, `put_nil`, `put_geojson`, `put_all` / `add_all` by position; the
-  first refusal is kept and answered by `error()` / `result()`. `size()` and `empty()` on both, and
+  every kind, string and integer keys of any length, `put_nil`, `put_geojson`, `put_all` / `add_all` by
+  position; no put or add takes one of the call's 256 handles, so a loop builds as many elements as the
+  call's memory allows; the first refusal is kept and answered by `error()` / `result()`. `size()` and `empty()` on both, and
   `Map::contains(key)` for a string or an integer key, answered by the host for the map being built.
   Written to a bin, returned as the result, nested, or handed back from a handler.
 - **Strings**: `udf::StrView` (a pointer and a length over bytes the caller keeps alive) and
@@ -111,10 +135,13 @@ WASM tier has no SIMD (Fast JIT, the x86-64 default) refuses a module built with
   record it is about: `incoming.is_delete()`, `incoming.is_partial()`, `incoming.lost_bins()`,
   `current.is_tombstone()`, and `uses_bin_convergence()` on either. The merge bin by bin goes through
   `udf::Pair pair = udf::Pair::of(current, incoming);`: its typed readers (`as_int`, `as_double`,
-  `as_bool`, `as_string<N>`, `as_blob<N>`, `bin`, `list`, `map`) each give a `Both<T>` with the two sides
+  `as_bool`, `as_string<N>`, `as_blob<N>`, `list`, `map`) each give a `Result<Both<T>>`, an error when a
+  side holds another kind, and `bin` a `Both<Value>`, with the two sides
   as `current` and `incoming` and `incoming_is_newer`, `newer`, `older`, `ordered`, `current_or_incoming`,
-  `incoming_or_current`, `max`, `min`, `sum`, `merge`; `pair.incoming_is_newer(name)` and
-  `pair.with_newer(out)` are asked of the pair itself. `examples/resolver` is the worked example, held to the same behaviour as the
+  `incoming_or_current`, `max`, `min`, `sum` (0 when neither side has the bin; wraps on overflow), `merge`;
+  `pair.incoming_is_newer(name)` and `pair.with_newer(out)` (which never brings back a bin the newer side
+  deleted) are asked of the pair itself. A function taking `udf::Args` takes at most 128 arguments in all;
+  a call with more fails. `examples/resolver` is the worked example, held to the same behaviour as the
   other languages' by the client tests.
 - **The low-level tier**: the whole C header, under the C++ one. `udf::Map::wrap` / `List::wrap` bridge a
   handle to the typed collections, and `udf::Value` is layout-compatible with `as_udf_value`.
@@ -131,6 +158,10 @@ WASM tier has no SIMD (Fast JIT, the x86-64 default) refuses a module built with
 - `examples/twopset` and `examples/lwwset`: steps 3 and 4 of the book's CRDT tutorial, a set with
   removals (two sorted `Text<32>` arrays merged by union) and a set with re-adds (two maps of `udf::now()`
   stamps merged by the later stamp); both return `udf::Result<udf::List>` of members.
+- `examples/registers`: a record whose bins are last-writer-wins registers stamped by the server, on a
+  namespace with bin convergence: the handler asks each side for `bin_last_update_time(name)` and
+  `bin_source_id(name)`, keeps the later write bin by bin (a delete included, from `deleted_bins()`), and
+  merges the one bin that is not a register, `seen`, by the larger number.
 - `examples/crdt`: the active-active CRDT of the design note, rule for rule the same as the Rust one, held
   to the same nine dry-run scenarios by `tests/src/events.rs`.
 - `examples/udf`: the SDK's own fixture, one function per corner of the record API, which

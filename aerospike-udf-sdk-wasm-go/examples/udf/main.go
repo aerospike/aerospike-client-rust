@@ -33,7 +33,12 @@ const geo = `{"type":"Point","coordinates":[1.0,2.0]}`
 func sumList(rec *udf.Record) (int64, error) {
 	var total int64
 
-	for v := range rec.List("l") {
+	list, _, err := rec.List("l")
+	if err != nil {
+		return 0, err
+	}
+
+	for v := range list.List() {
 		n, err := v.Int()
 		if err != nil {
 			return 0, errors.New("bin `l` holds something that is not an integer")
@@ -82,23 +87,37 @@ func typed(rec *udf.Record) (*udf.Map, error) {
 	if err != nil {
 		return nil, err
 	}
-	d, ok := rec.Double("d")
-	if !ok {
-		return nil, errors.New("bin `d` is not a double")
+	d, ok, err := rec.Double("d")
+	if err != nil {
+		return nil, err
 	}
-	s, ok := rec.String("s")
 	if !ok {
-		return nil, errors.New("bin `s` is not a string")
+		return nil, errors.New("bin `d` is absent")
 	}
-	b, ok := rec.Bool("b")
+	s, ok, err := rec.String("s")
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
-		return nil, errors.New("bin `b` is not a bool")
+		return nil, errors.New("bin `s` is absent")
+	}
+	b, ok, err := rec.Bool("b")
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errors.New("bin `b` is absent")
+	}
+
+	m, _, err := rec.Map("m")
+	if err != nil {
+		return nil, err
 	}
 
 	var sum int64
 	keys := udf.NewList(4)
 
-	for k, v := range rec.Map("m") {
+	for k, v := range m.Map() {
 		if n, err := v.Int(); err == nil {
 			sum += n
 		}
@@ -144,7 +163,12 @@ func relist(rec *udf.Record, index int64) (*udf.List, error) {
 	found := false
 	i := int64(0)
 
-	for v := range rec.List("doc") {
+	doc, _, err := rec.List("doc")
+	if err != nil {
+		return nil, err
+	}
+
+	for v := range doc.List() {
 		if i == 0 {
 			first = v
 		}
@@ -170,9 +194,12 @@ func relist(rec *udf.Record, index int64) (*udf.List, error) {
 //
 //udf:function geo_roundtrip
 func geoRoundtrip(rec *udf.Record, name string) (int64, error) {
-	v, ok := rec.Get(name)
+	v, ok, err := rec.Get(name)
+	if err != nil {
+		return 0, err
+	}
 
-	if !ok || v.Kind != udf.KindGeoJSON {
+	if !ok || !v.IsGeoJSON() {
 		return 0, errors.New("that bin does not hold geojson")
 	}
 
@@ -287,7 +314,9 @@ func indexProbe(rec *udf.Record, name string, index int64) (*udf.Map, error) {
 	// An index too large for this target's int is past the end of any list it could hold.
 	if index < 0 || index > math.MaxInt32 {
 		out.Put("at", "absent")
-	} else if v, ok := list.Index(int(index)); ok {
+	} else if v, ok, err := list.Index(int(index)); err != nil {
+		return nil, err
+	} else if ok {
 		out.Put("at", v)
 	} else {
 		out.Put("at", "absent")

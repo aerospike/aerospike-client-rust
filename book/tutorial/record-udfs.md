@@ -44,7 +44,7 @@ This is the read-modify-write most UDFs are.
 The read needs a default, because a new account has no `visits` bin. The write is staged, so the function
 must save. The save creates the record when the key has none, in every language.
 
-The defaults differ in one detail. In Go and C++ a bin of another kind also answers the default. In Java
+The defaults differ in one detail. In C++ a bin of another kind also answers the default. In Go it is an error, in Java
 it throws, and the Rust code here fails with `WrongType`.
 
 {{snippet visit}}
@@ -87,8 +87,8 @@ and Java give an iterator. C drives the cursor itself.
 The task: read one entry of a map bin without walking the map.
 
 The lookup is one call into the server, which searches the map and returns the entry's value. A missing
-key is an ordinary outcome, not a failure: `Error::Absent` in Rust, `false` in Go, an empty `Optional` in
-C++, `AS_UDF_NOT_FOUND` in C and a status other than `Udf.OK` in Java.
+key is an ordinary outcome, not a failure: `Ok(None)` in Rust, `false` in Go, an empty `Optional` in
+C++, `AS_UDF_NOT_FOUND` in C and `null` in Java.
 
 {{snippet limit_for}}
 
@@ -157,13 +157,13 @@ carries it out when the call returns, so inside the call the record still answer
 | --- | --- | --- | --- | --- | --- |
 | Take the record | `rec: &mut Record` or `&Record`, first | `rec *udf.Record`, first | implied | `udf::Record& rec` or `const udf::Record&`, first | `Record rec`, first |
 | Read a bin of any kind | `rec.bin(name)` | `rec.Get(name)` | `as_udf_rec_bin(name, &v)` | `rec.get(name)` | `rec.get(name)` |
-| Integer with a default | `rec.int_or(name, d)?` | `rec.IntOr(name, d)` | `as_udf_rec_int_or(name, d)` | `rec.int_or(name, d)` | `rec.getInt(name, d)` |
-| Required, typed | `rec.bin(name)?` then `.int()?` `.double()?` `.bool()?` `.string()?` | `rec.Bin(name)` then `Int()` `Double()` `Bool()` `String()` | test `v.kind`, read `v.payload` | `rec.bin(name)` then `as_int()` `as_double()` `as_bool()` `as_string<N>()` | `rec.getInt(name)` `getDouble` `getBool` `getString` |
+| Integer with a default | `rec.int_or(name, d)?` | `rec.IntOr(name, d)` (and an `error`) | `as_udf_rec_int_or(name, d)` | `rec.int_or(name, d)` | `rec.getInt(name, d)` |
+| Required, typed | `rec.bin(name)?` then `.int()?` `.double()?` `.bool()?` `.string()?` | `rec.Bin(name)` then `Int()` `Double()` `Bool()` `String()` | test `v.kind`, read `v.payload` | `rec.bin(name)` then `as_int()` `as_double()` `as_bool()` `as_string<N>()` | `rec.bin(name)` then `asInt()` `asDouble()` `asBool()` `asString()` |
 | Write a bin | `rec.set(name, v)` | `rec.Set(name, v)` | `as_udf_rec_set_int` `as_udf_rec_set_string` ... | `rec.set(name, v)` | `rec.set(name, v)` |
 | Save | `rec.save()` | `rec.Save()` | `as_udf_rec_save()` | `rec.save()` | `rec.save()` |
-| Fail the call | `Err(Error::Custom(msg))` | return an `error` | `return as_udf_failf(msg)` | `return udf::error(status, msg)` | `throw new UdfException(msg)` |
-| Walk a list | `.list()?.iter()` | `range rec.List(name)` | cursor | `for (udf::Value v : rec.list(name))` | `for (Value v : rec.getList(name))` |
-| Walk a map | `.map()?.entries()` | `range rec.Map(name)` | cursor, key then value | `for (udf::Entry e : rec.map(name))` | `for (MapValue.Entry e : rec.getMap(name))` |
+| Fail the call | `Err(Error::Custom(msg))` | return an `error` | `return as_udf_fail_str(msg)` | `return udf::error(status, msg)` | `throw new UdfException(msg)` |
+| Walk a list | `.list()?.iter()` | `rec.List(name)` then `range v.List()` | cursor | `for (udf::Value v : rec.list(name))` | `for (Value v : rec.bin(name).asList())` |
+| Walk a map | `.map()?.entries()` | `rec.Map(name)` then `range v.Map()` | cursor, key then value | `for (udf::Entry e : rec.map(name))` | `for (MapValue.Entry e : rec.bin(name).asMap())` |
 | Look up a key | `map.get(key)` | `value.Lookup(key)` | `as_udf_coll_get(...)` | `value.get(key)` | `map.get(key)` |
 | One element of a list | `list.at(i)` | `value.Index(i)` | `as_udf_list_at(&list, i)` | `value.at(i)` | `list.get(i)` |
 | Build a list | `as_udf::list(n)`, `push`, `extend` | `udf.NewList(n)`, `Add`, `AddAll` | `as_udf_list_new`, `as_udf_list_push_*` | `udf::List`, `add`, `add_all` | `Udf.list()`, `add`, `addAll` |
