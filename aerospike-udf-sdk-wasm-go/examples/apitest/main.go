@@ -687,7 +687,9 @@ func mergeAPI(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 	if v, ok := udf.Min(n); ok {
 		out.Put("min", v)
 	}
-	out.Put("sum", udf.Sum(n))
+	if v, ok := udf.Sum(n); ok {
+		out.Put("sum", v)
+	}
 
 	s, err := pair.String("s")
 	if err != nil {

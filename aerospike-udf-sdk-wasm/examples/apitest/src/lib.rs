@@ -716,8 +716,10 @@ as_udf::event! {
             out.insert("min", min)?;
         }
 
-        // `sum` always answers: a missing side counts as zero.
-        out.insert("sum", pair.int("n")?.sum())?;
+        // A missing side counts as zero; neither side, and `sum` answers nothing, as `max` and `min` do.
+        if let Some(sum) = pair.int("n")?.sum() {
+            out.insert("sum", sum)?;
+        }
 
         if let Some(text) = pair.string("s")?.newer() {
             out.insert("newer_s", Value::String(text))?;

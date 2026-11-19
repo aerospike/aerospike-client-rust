@@ -141,6 +141,10 @@ the C++ SDK's own fixture, the counterpart of `udf_test.wasm`: `cpp_sdk_covers_t
 `tests/src/udf_cpp.rs` drives range-for iteration, the typed bin readers, every write kind, integer map
 keys, GeoJSON, metadata, TTL and deletion through it, and `cpp_generated_exports_decode_arguments` drives
 the rejections (including a string longer than its `Text<32>` parameter) through `counter_cpp.wasm`.
+`stop_probe`, in `udf_cpp.wasm` and (outside the conformance specification) in `apitest_c.wasm`, takes
+every handle of the call, or ends the values read from the record with a save the server refuses, and then
+does a read that cannot answer; `cpp_unreadable_collections_stop_the_call` and
+`c_unreadable_bins_stop_the_call` assert that the call stops with the SDK's message.
 
 ## The Go modules
 

@@ -129,7 +129,7 @@ The three directives are the Go face of the Rust SDK's `export!`, `stream!` and 
   either. `udf.PairOf(current, incoming)` is the two side by side, a `udf.Pair`, read into
   `udf.Both[T]` (its sides are `Current` and `Incoming`) with `IncomingIsNewer`, `Newer`, `Older`,
   `Ordered`, `CurrentOrIncoming`, `IncomingOrCurrent`, `Merge`, and `udf.Max` / `Min` / `Sum` over a
-  `Both` (`Sum` is 0 when neither side has the bin, and wraps on overflow); the `Pair` readers answer an
+  `Both` (`Sum`, like `Max` and `Min`, answers false when neither side has the bin, and wraps on overflow); the `Pair` readers answer an
   error when a side holds another kind; `Pair.WithNewer(out)` keeps the rest of the record from whichever
   side wrote each bin later, and leaves out a bin that side deleted. `examples/resolver` is the worked example, held to the same behaviour as the other
   languages' by the client tests.

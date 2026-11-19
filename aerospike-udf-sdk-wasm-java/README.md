@@ -152,7 +152,7 @@ per export, and `main`. Name it as the TeaVM `mainClass`; the annotated class ne
   `lostBins()` of the incoming write, `isTombstone()` of the current record, `usesBinConvergence()` of
   either), `Resolution` for the answer, and the merge itself through `Pair.of(current, incoming)` (`Pair`
   and `Both` with `current`, `incoming`, `newer`, `older`, `ordered`, `max`, `min`, `merge`, `sumInt`
-  (0 when neither side has the bin), `withNewer`, which leaves out a bin the later side deleted). A handler in the raw form reads the two records with `Pair.decode(args, argc)` and
+  (null when neither side has the bin, as `max` and `min`), `withNewer`, which leaves out a bin the later side deleted). A handler in the raw form reads the two records with `Pair.decode(args, argc)` and
   returns a resolution's `deliver()`. `examples/resolver` is the worked example, held to the same
   behaviour as the other languages' by the client tests.
 - **`LowLevel`**: the server's calls one at a time, for a hot path that must allocate nothing: names as

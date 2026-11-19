@@ -841,8 +841,12 @@ public final class ApiTest {
             out.put("min", min);
         }
 
-        // sumInt() always answers: a missing side counts as zero.
-        out.put("sum", n.sumInt());
+        // A missing side counts as zero; neither side, and sumInt() answers null, as max() and min() do.
+        Long sum = n.sumInt();
+
+        if (sum != null) {
+            out.put("sum", sum);
+        }
 
         Both<String> s = pair.getString("s");
         String newer = s.newer();

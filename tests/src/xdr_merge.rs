@@ -840,9 +840,13 @@ fn strs(items: &[&str]) -> Value {
 /// incoming record into a second record that holds what the first one held before. The record the live
 /// merge left and the record the dry run answers must be the same.
 ///
-/// Runs on the namespace without bin convergence: there the merge sees no per-bin time, so the two
-/// records, written a moment apart, are the same input. Under bin convergence each bin's time differs
-/// between them, and a merge that reads it is entitled to answer differently.
+/// Every handler runs on the namespace without bin convergence, where the merge sees no per-bin time, so
+/// the two records, written a moment apart, are the same input. The handlers that merge on the data alone
+/// (the counters and the sets) run again on the namespace with bin convergence, where only the changed
+/// bins travel and the handler is told bin convergence is on. A handler that reads per-bin times (the
+/// resolver, the registers, `merge_api`) is left out there: each bin's time differs between the two
+/// records, and it is entitled to answer differently. Those are checked by
+/// `registers_converge_two_clusters` and, in the dry run, by `registers_merge_converges`.
 #[aerospike_macro::test]
 async fn the_dry_run_answers_what_the_live_merge_does() {
     let Some((dc1, dc2)) = dcs() else {
@@ -936,14 +940,21 @@ async fn the_dry_run_answers_what_the_live_merge_does() {
     ];
 
     let mut compared = 0;
+    let data_only = ["counter", "pncounter", "twopset", "lwwset"];
+    let with_bc = info(&c1, "namespaces").await.split(';').any(|n| n == BIN_CONVERGENCE_NS);
+    let runs: Vec<(&str, &Case)> = cases
+        .iter()
+        .map(|c| ("test", c))
+        .chain(cases.iter().filter(|c| with_bc && data_only.contains(&c.name)).map(|c| (BIN_CONVERGENCE_NS, c)))
+        .collect();
 
-    for case in &cases {
+    for (ns, case) in runs {
         for (lang, module) in &case.modules {
-            let what = format!("{} ({lang})", case.name);
+            let what = format!("{} ({lang}, {ns})", case.name);
             let set_name = &format!("dry_{}", crate::common::rand_str(6));
             let package = &format!("dry_{}_{lang}_{}", case.name, crate::common::rand_str(6));
-            let live = as_key!("test", set_name, "live");
-            let dry = as_key!("test", set_name, "dry");
+            let live = as_key!(ns, set_name, "live");
+            let dry = as_key!(ns, set_name, "dry");
             let current: Vec<Bin> = case.current.iter().map(|(n, v)| Bin::new(*n, v.clone())).collect();
             let written: Vec<Bin> = case.written.iter().map(|(n, v)| Bin::new(*n, v.clone())).collect();
 
@@ -967,7 +978,7 @@ async fn the_dry_run_answers_what_the_live_merge_does() {
             // Bound on dc1 only, so dc2 takes dc1's later writes as they are.
             register_module(&c1, module, package).await;
             assert_eq!(
-                info(&c1, &format!("event-set:event=xdr-merge;namespace=test;set={set_name};module={package};function={}", case.function)).await,
+                info(&c1, &format!("event-set:event=xdr-merge;namespace={ns};set={set_name};module={package};function={}", case.function)).await,
                 "ok",
                 "{what}"
             );
@@ -992,7 +1003,12 @@ async fn the_dry_run_answers_what_the_live_merge_does() {
             // The dry run: the same incoming record against a record holding what the first one held.
             c1.put(&write, &dry, &current).await.unwrap();
 
-            let incoming_bins: HashMap<Value, Value> = incoming.into_iter().map(|(k, v)| (Value::from(k), v)).collect();
+            // Under bin convergence only the bins dc2's write changed travel.
+            let incoming_bins: HashMap<Value, Value> = incoming
+                .into_iter()
+                .filter(|(k, _)| ns == "test" || case.written.iter().any(|(n, _)| n == k))
+                .map(|(k, v)| (Value::from(k), v))
+                .collect();
             let incoming_meta = HashMap::from([(Value::from("src-id"), Value::from(2))]);
             let answer = c1
                 .execute_udf(&write, &dry, "__event__", "xdr-merge", &[Value::from(incoming_bins), Value::from(incoming_meta)])
@@ -1009,7 +1025,7 @@ async fn the_dry_run_answers_what_the_live_merge_does() {
             assert_eq!(predicted, merged, "{what}: the dry run predicted one record, the live merge made another");
             compared += 1;
 
-            assert_eq!(info(&c1, &format!("event-remove:event=xdr-merge;namespace=test;set={set_name}")).await, "ok");
+            assert_eq!(info(&c1, &format!("event-remove:event=xdr-merge;namespace={ns};set={set_name}")).await, "ok");
 
             for c in [&c1, &c2] {
                 let _ = c.delete(&write, &live).await;
@@ -1020,5 +1036,5 @@ async fn the_dry_run_answers_what_the_live_merge_does() {
         }
     }
 
-    assert_eq!(compared, 26);
+    assert_eq!(compared, if with_bc { 26 + 16 } else { 26 });
 }

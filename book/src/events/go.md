@@ -108,7 +108,8 @@ into a `udf.Both[T]`, the Rust SDK's `Pair` and `Both`: `pair.Int(name)`, `Doubl
 `IncomingIsNewer()`, by the bin's last update time and then source id, the order the server's own bin convergence uses;
 `Newer()` and `Older()`; `Ordered()` as (older, newer); `Merge(f)`; `CurrentOrIncoming()`, `IncomingOrCurrent()`.
 `udf.Max`, `udf.Min` and `udf.Sum` are functions over a `Both`, since a method cannot add the ordering
-constraint; `Sum` is 0 when neither side has the bin, and an integer sum wraps on overflow.
+constraint; `Sum`, like `Max` and `Min`, answers false when neither side has the bin, and an integer sum
+wraps on overflow.
 `pair.WithNewer(out)` fills in every bin the handler had no opinion on from the side that
 wrote it later, which is symmetric, and `pair.IncomingIsNewer(name)` orders one bin. When the side that
 wrote a bin later deleted it, `WithNewer` leaves the bin out, so the delete stands. `rec.DeletedAny()` says

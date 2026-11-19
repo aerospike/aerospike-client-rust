@@ -69,8 +69,8 @@ and `Both`: `pair.getInt(name)`, `getDouble`, `getBool`, `getString`, `getBlob`,
 holds nil; `getList` and `getMap` give a `ListValue` and a `MapValue`), and `Both` carries the merges a
 resolver reaches for: `incomingIsNewer()`, by the bin's LUT and then source id, the order the server's
 own bin convergence uses; `newer()` and `older()`, and `ordered()`, the two as a list, older first, for a
-merge whose result depends on the order; `max()`, `min()`, `merge(f)`, `sumInt()` and `sumDouble()` (0
-when neither side has the bin; `sumInt()` wraps on overflow);
+merge whose result depends on the order; `max()`, `min()`, `merge(f)`, `sumInt()` and `sumDouble()` (null
+when neither side has the bin, as `max()` and `min()`; `sumInt()` wraps on overflow);
 `currentOrIncoming()`, `incomingOrCurrent()`. `pair.withNewer(out)` fills in every bin the handler had no
 opinion on from the side that wrote it later, which is symmetric, and leaves out a bin that side deleted
 (rather than bring the older side's value back); `pair.incomingIsNewer(name)` orders

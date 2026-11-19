@@ -24,15 +24,15 @@ import java.util.function.BinaryOperator;
  * Both&lt;Long&gt; visits = pair.getInt("visits");
  *
  * Long merged = visits.merge(Math::max);       // null only when neither side has the bin
- * long total = visits.sumInt();                // never null: a missing side is 0
+ * Long total = visits.sumInt();                // a missing side is 0; null when both are
  *
  * if (visits.current == null) {
  *     // the bin is new to this cluster
  * }
  * </pre>
  *
- * <p>Every merge here answers null when both sides are missing, except the two sums. {@code current} and
- * {@code incoming} are the values themselves, to read when no merge here fits.
+ * <p>Every merge here answers null when both sides are missing. {@code current} and {@code incoming} are the
+ * values themselves, to read when no merge here fits.
  */
 public final class Both<T> {
     /** The current record's value, or null when it has no such bin or the bin is nil. */
@@ -139,19 +139,27 @@ public final class Both<T> {
     }
 
     /**
-     * The sum of a {@code Both<Long>}, a missing side counting as zero, so it is 0 and not null when neither
-     * side has the bin; it wraps on overflow as {@code long} addition does. Only for a {@code Both<Long>}: on
-     * any other it is a bad cast.
+     * The sum of a {@code Both<Long>}; the one that exists when only one does, a missing side counting as
+     * zero, and null when neither does, as {@link #max} and {@link #min}. It wraps on overflow as {@code long}
+     * addition does. Only for a {@code Both<Long>}: on any other it is a bad cast.
      */
-    public long sumInt() {
+    public Long sumInt() {
+        if (current == null && incoming == null) {
+            return null;
+        }
+
         return (current == null ? 0 : (Long) current) + (incoming == null ? 0 : (Long) incoming);
     }
 
     /**
-     * The sum of a {@code Both<Double>}, a missing side counting as zero, so it is 0.0 and not null when
-     * neither side has the bin. Only for a {@code Both<Double>}: on any other it is a bad cast.
+     * The sum of a {@code Both<Double>}; the one that exists when only one does, and null when neither does,
+     * as {@link #max} and {@link #min}. Only for a {@code Both<Double>}: on any other it is a bad cast.
      */
-    public double sumDouble() {
+    public Double sumDouble() {
+        if (current == null && incoming == null) {
+            return null;
+        }
+
         return (current == null ? 0.0 : (Double) current) + (incoming == null ? 0.0 : (Double) incoming);
     }
 

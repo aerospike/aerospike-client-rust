@@ -143,12 +143,16 @@ The data-only way keeps versions and removal markers in the record and breaks ti
 `trigger=always` without bin convergence is its binding.
 
 **The dry run.** `execute_udf(key, "__event__", "xdr-merge", [incoming bins, incoming metadata, other
-bins])` runs the binding of the record's set against the real current record and an incoming record
+bins, other metadata])`, the last two optional, runs the binding of the record's set against the real current record and an incoming record
 described by the arguments, writes nothing and counts nothing, and answers `{verdict, bins, ttl,
 symmetric, idempotent, associative}`: the three CRDT laws checked on real bytes, the sides swapped, the
 merge merged with the incoming again, and, given the third record, `(current ⊕ incoming) ⊕ other`
 against `current ⊕ (incoming ⊕ other)`. The metadata is a map of `ttl`, `src-id`, and optionally
-`bin-luts`, `bin-srcs` and `deleted`. It is the way to check a merge on one cluster;
+`bin-luts`, `bin-srcs` and `deleted`; the third record's metadata is the same map, its `src-id` 3 when
+not given. The handler is told what a live merge on that namespace would tell it, bin convergence
+included, and the merged record is stamped as a live merge would stamp it before it is merged again.
+`the_dry_run_answers_what_the_live_merge_does` holds the dry run to the live merge between two
+clusters, for every handler in every language. It is the way to check a merge on one cluster;
 `crdt_merge_converges_in_the_eight_scenarios` in the test suite is nine of them, and
 [step 5 of the CRDT tutorial](../crdt/device-map.md) builds the module they exercise.
 

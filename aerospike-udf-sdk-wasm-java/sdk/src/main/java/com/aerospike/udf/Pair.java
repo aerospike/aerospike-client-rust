@@ -23,7 +23,7 @@ package com.aerospike.udf;
  *
  * Long visits = pair.getInt("visits").max();          // null when neither side has the bin
  * String name = pair.getString("name").newer();       // last writer wins
- * long spent = pair.getInt("spent").sumInt();         // a missing side counts as 0
+ * Long spent = pair.getInt("spent").sumInt();         // a missing side counts as 0
  * </pre>
  *
  * <p>Every reader reads the bin on both sides, so each costs two reads; keep the {@link Both} when more than

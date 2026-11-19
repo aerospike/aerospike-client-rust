@@ -74,7 +74,8 @@ built. Keep the status, or copy the text, to hold an error longer than that.
 - **`UDF_ON_XDR_MERGE(name)`**: an `xdr-merge` event handler, with the event's two parameters under
   fixed names (`current`, the record as it is on this cluster, and `incoming`, the one that arrived over
   XDR) and returning a `udf::Result<udf::Resolution>`: `keep_local()`, `take_remote()`, `policy()`,
-  `delete_record()` or `record(bins[, ttl])`. The two records are read-only `udf::EventRecord`s.
+  `delete_record()` or `record(bins[, ttl])`. The two records are read-only `udf::EventRecord`s, whose C
+  struct is private: everything about them is a method.
 - **The raw form**: `UDF_FUNCTION_RAW(name, "(params)")` and `UDF_STREAM_RAW(name, "(record)", "(end)")`
   declare `(int32_t args, int32_t argc)` functions exported as they are, for a hot path that reads its
   arguments once and keeps them, as `examples/vector` does.
@@ -128,7 +129,8 @@ built. Keep the status, or copy the text, to hold an error longer than that.
 - **What is not about the record** stays in the namespace: `udf::now`, `udf::log`, `udf::fail`,
   `udf::result`.
 - **The `xdr-merge` event**: `udf::EventRecord` for each of the two records the event hands over (the
-  reading methods of `ReadRecord`; `generation()`, `last_update_time()`, `ttl()`, `source_id()`;
+  reading methods of `ReadRecord`; `generation()`, `last_update_time()`, `ttl()`, `source_id()`,
+  `is_incoming()`;
   `bin_names()`, `deleted_bins()`, `deleted_any()`; `bin_last_update_time(name)` and `bin_source_id(name)`;
   `with_bins(out)` to keep the rest of a record under a few decided bins) and `udf::Resolution` for the
   answer. What the server says of the merge is asked of the
@@ -138,7 +140,8 @@ built. Keep the status, or copy the text, to hold an error longer than that.
   `as_bool`, `as_string<N>`, `as_blob<N>`, `list`, `map`) each give a `Result<Both<T>>`, an error when a
   side holds another kind, and `bin` a `Both<Value>`, with the two sides
   as `current` and `incoming` and `incoming_is_newer`, `newer`, `older`, `ordered`, `current_or_incoming`,
-  `incoming_or_current`, `max`, `min`, `sum` (0 when neither side has the bin; wraps on overflow), `merge`;
+  `incoming_or_current`, `max`, `min`, `sum` (each an `Optional`, nothing when neither side has the bin; the
+  sum takes a missing side as 0 and wraps on overflow), `merge`;
   `pair.incoming_is_newer(name)` and `pair.with_newer(out)` (which never brings back a bin the newer side
   deleted) are asked of the pair itself. A function taking `udf::Args` takes at most 128 arguments in all;
   a call with more fails. `examples/resolver` is the worked example, held to the same behaviour as the
@@ -167,7 +170,8 @@ built. Keep the status, or copy the text, to hold an error longer than that.
 - `examples/udf`: the SDK's own fixture, one function per corner of the record API, which
   `cpp_sdk_covers_the_rust_surface`, `cpp_udf_saves_removes_and_deletes` and
   `cpp_udf_indexes_a_list_and_asks_a_built_map` in `tests/src/udf_cpp.rs` hold to the Rust fixture's
-  expectations. Not an example to copy.
+  expectations, and `stop_probe`, which `cpp_unreadable_collections_stop_the_call` uses to check that a walk
+  or lookup the host cannot serve stops the call. Not an example to copy.
 
 `make` builds every example (`make CLANG=clang-18` for a specific clang; `wasm-ld` from lld must be on the
 path); `make fixtures` copies them to `tests/fixtures/wasm/` as `*_cpp.wasm`. Apple's clang targets

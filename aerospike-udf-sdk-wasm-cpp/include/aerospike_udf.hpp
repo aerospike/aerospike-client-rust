@@ -475,8 +475,8 @@ namespace detail {
 // message that says why and stopped.
 [[noreturn]] inline void unreadable()
 {
-	as_udf_fail_str("could not read a stored list or map: the call's 256 handles are all in use, or the value "
-	                "is no longer readable after a failed save");
+	as_udf_fail_str("could not read a bin or a stored list or map: the call's 256 handles are all in use, or "
+	                "the value is no longer readable after a failed save");
 	__builtin_trap();
 }
 
@@ -1330,24 +1330,28 @@ inline Map& Map::put(int64_t key, const List& v) { return put(key, v.value()).ca
 template <class Self>
 class ReadRecord {
 public:
-	// The bin as a value of any kind; nothing when the record has no such bin, and nothing too when the bin could
-	// not be read at all (no handle free), which bin() and the typed readers report as an error. A string, blob,
-	// list or map bin takes one of the call's 256 handles each time it is read, so read a bin once and keep the
-	// value rather than reading it in a loop.
+	// The bin as a value of any kind; nothing when the record has no such bin or it holds nil. A read that fails
+	// for another reason (no handle free) would look like an absent bin here, so it stops the call instead, as
+	// C's as_udf_rec_get does; bin() and the typed readers report it as an error. Reading the same string, blob,
+	// list or map bin again reuses the handle the first read took.
 	Optional<Value> get(StrView name) const
 	{
 		Value v;
-		if (self().read(name, v) != AS_UDF_OK || v.is_nil()) return {};
+		Status rc = self().read(name, v);
+		if (rc != AS_UDF_OK && rc != AS_UDF_NOT_FOUND) detail::unreadable();
+		if (rc != AS_UDF_OK || v.is_nil()) return {};
 		return v;
 	}
 
 	// Whether the record has the bin. On the record of a UDF, a bin the call has set counts and one it has
 	// removed does not; on an event record, a bin that side deleted, or that a partial incoming write does not
-	// carry, does not.
+	// carry, does not. A read that fails for another reason stops the call, as get() does.
 	bool has(StrView name) const
 	{
 		Value v;
-		return self().read(name, v) == AS_UDF_OK;
+		Status rc = self().read(name, v);
+		if (rc != AS_UDF_OK && rc != AS_UDF_NOT_FOUND) detail::unreadable();
+		return rc == AS_UDF_OK;
 	}
 
 	// The bin that must be there, as a value: an error of status AS_UDF_NOT_FOUND naming the bin when the record
@@ -1755,8 +1759,9 @@ inline Result<void> result(const Value& v)
 // default, list() and map(). It has none of the writing methods: what a handler returns is what changes the
 // record. An xdr-merge hands over two, `current` and `incoming`, and what the server says of the merge is asked
 // of the record it is about: is_delete(), is_partial() and lost_bins() of the incoming one, is_tombstone() of the
-// current one, uses_bin_convergence() of either. Everything is asked through a method: each one hides the C field
-// of the same name.
+// current one, uses_bin_convergence() of either. Everything is asked through a method. The C struct underneath is
+// a private base: its fields are not reachable, so a handler cannot read a raw field where a method says what it
+// means (bin_last_update_time(name) rather than the map of times), nor change one the SDK relies on.
 //
 // ```cpp
 // UDF_ON_XDR_MERGE(keep_larger)
@@ -1766,7 +1771,11 @@ inline Result<void> result(const Value& v)
 // 	return theirs > mine ? udf::Resolution::take_remote() : udf::Resolution::keep_local();
 // }
 // ```
-struct EventRecord : as_udf_event_record, ReadRecord<EventRecord> {
+namespace detail {
+struct EventAccess;
+}
+
+struct EventRecord : private as_udf_event_record, public ReadRecord<EventRecord> {
 	// What ReadRecord reads through: the bin of this record as the host hands it out, and the host's status:
 	// AS_UDF_NOT_FOUND when the record has no such bin, in which case `out` is left as it was. A handler reads
 	// with get(), bin() and the typed readers, which are built on it.
@@ -1786,6 +1795,9 @@ struct EventRecord : as_udf_event_record, ReadRecord<EventRecord> {
 	int64_t ttl() const { return as_udf_event_record::ttl; }
 	// The XDR source id of the cluster that wrote this version of the record.
 	int64_t source_id() const { return as_udf_event_record::source_id; }
+
+	// Whether this is the incoming record, the one that arrived over XDR; false for the current one.
+	bool is_incoming() const { return which != 0; }
 
 	// The record's bin names.
 	ListRange bin_names() const { return ListRange(Value(as_udf_event_record::bin_names)); }
@@ -1846,6 +1858,8 @@ struct EventRecord : as_udf_event_record, ReadRecord<EventRecord> {
 	}
 
 private:
+	friend struct detail::EventAccess;
+
 	// The integer under `name` in one of the per-bin maps, or `dflt` when the map has none (or is absent).
 	static int64_t per_bin(const as_udf_value& map, StrView name, int64_t dflt)
 	{
@@ -1853,6 +1867,19 @@ private:
 		return v && v->is_int() ? v->payload : dflt;
 	}
 };
+
+namespace detail {
+
+// What the generated xdr-merge export decodes the event through: the C decoder fills the struct a handler
+// cannot reach.
+struct EventAccess {
+	static int32_t decode(int32_t args, int32_t argc, EventRecord& current, EventRecord& incoming)
+	{
+		return as_udf_event_decode(args, argc, &current, &incoming);
+	}
+};
+
+} // namespace detail
 
 static_assert(sizeof(EventRecord) == sizeof(as_udf_event_record), "EventRecord adds no state");
 
@@ -1918,10 +1945,11 @@ struct Both {
 	Optional<T> max() const { return merge([](const T& c, const T& i) { return i > c ? i : c; }); }
 	// The smaller of the two values, or the one there is; nothing when neither side has one.
 	Optional<T> min() const { return merge([](const T& c, const T& i) { return i < c ? i : c; }); }
-	// The sum of both sides, a missing side counting as a value-initialised T (zero for a number): 0 when neither
-	// side has the bin, not nothing. An integer sum wraps on overflow (two's complement), as it would in Rust's
-	// release builds, rather than being undefined.
-	T sum() const { return detail::wrapping_add(current.value_or(T()), incoming.value_or(T())); }
+	// The sum of both sides, or the one value there is (a missing side counts as zero); nothing when neither side
+	// has the bin, as for max() and min(), so a handler leaves out a bin neither side has rather than writing a 0
+	// nobody wrote. An integer sum wraps on overflow (two's complement), as it would in Rust's release builds,
+	// rather than being undefined.
+	Optional<T> sum() const { return merge([](const T& c, const T& i) { return detail::wrapping_add(c, i); }); }
 
 private:
 	friend struct Pair;
@@ -1953,7 +1981,7 @@ struct Pair {
 
 	// The pair of the two records of a merge. Each record knows which one it is, so the two may be given in
 	// either order: of(current, incoming) and of(incoming, current) are the same pair.
-	static Pair of(const EventRecord& a, const EventRecord& b) { return a.which <= b.which ? Pair{a, b} : Pair{b, a}; }
+	static Pair of(const EventRecord& a, const EventRecord& b) { return !a.is_incoming() || b.is_incoming() ? Pair{a, b} : Pair{b, a}; }
 
 	// An integer bin on both sides, with what orders the two sides for it. A side is empty where the bin is
 	// absent or nil. A side that holds another kind is an error of status AS_UDF_TYPE_MISMATCH, as it is for the
@@ -2012,7 +2040,7 @@ struct Pair {
 				if (overrides.contains(bin_name)) continue;
 				const EventRecord& newer = incoming_is_newer(bin_name) ? incoming : current;
 				const EventRecord& older = &newer == &incoming ? current : incoming;
-				if (contains(Value(newer.as_udf_event_record::deleted_bins), bin_name)) {
+				if (contains(newer.deleted_bins().value(), bin_name)) {
 					overrides.put_nil(bin_name);
 					continue;
 				}
@@ -2700,7 +2728,7 @@ int32_t invoke(const char* fn, const ParamNames& names, int32_t args, int32_t ar
 	extern "C" __attribute__((export_name(#name))) int32_t udf_export_##name(int32_t args, int32_t argc)  \
 	{                                                                                                    \
 		::udf::EventRecord current, incoming;                                                            \
-		if (as_udf_event_decode(args, argc, &current, &incoming) != AS_UDF_OK) return ::udf::fail(#name ": not an xdr-merge event"); \
+		if (::udf::detail::EventAccess::decode(args, argc, current, incoming) != AS_UDF_OK) return ::udf::fail(#name ": not an xdr-merge event"); \
 		::udf::Result<::udf::Resolution> r = name##_udf_impl(current, incoming);                         \
 		if (!r) return ::udf::fail(r.error());                                                           \
 		return r->deliver();                                                                             \

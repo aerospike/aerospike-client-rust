@@ -185,10 +185,8 @@ UDF_ON_XDR_MERGE(xdr_merge)
 
 		if (n == "devices" || n == "devicesRemoved") continue;
 
-		udf::Value v;
-
-		if (as_udf_event_bin_value(incoming.which, n.buf, n.len, &v, (int32_t)sizeof(v)) == AS_UDF_OK) {
-			out.put(n.view(), v);
+		if (udf::Optional<udf::Value> v = incoming.get(n.view())) {
+			out.put(n.view(), *v);
 		}
 	}
 

@@ -1074,3 +1074,52 @@ AS_UDF_EVENT_XDR_MERGE(merge_api)
 
 	return as_udf_resolve_record(out, -1);
 }
+
+/*==========================================================
+ * stop_probe(what): not part of the specification, and not called by the conformance harness. The bin reads
+ * that cannot answer when the call has no handle left: as_udf_rec_has and as_udf_rec_get stop the call with
+ * the header's message rather than say "no such bin". tests/src/udf_cpp.rs calls it.
+ */
+
+/* Takes every handle the call has left, by building empty lists until the host refuses one. Nothing gives
+ * them back before the call ends. */
+static void take_every_handle(void)
+{
+	while (as_udf_list_new(0) > 0) {
+	}
+}
+
+/* Reads the string bin s, saves a bin x, takes every handle, and then: "has" asks whether the list bin l is
+ * there and "get" reads it, both of which need a handle and must stop the call; "reread" reads s again, which
+ * reuses the handle of the first read and must succeed. The saved x is undone with the rest of a call that
+ * fails. */
+AS_UDF_EXPORT(stop_probe) int32_t
+stop_probe(int32_t args, int32_t argc)
+{
+	as_udf_value a[1], s, v;
+	if (! arity("stop_probe", argc, 1)) return 1;
+	int32_t n = as_udf_args(args, argc, a, 1);
+	if (! arg_is_string("stop_probe", a, n, 0, "what")) return 1;
+	if (as_udf_rec_bin("s", &s) != AS_UDF_OK || s.kind != AS_UDF_STR) return as_udf_fail_str("stop_probe: no string bin s");
+	if (as_udf_rec_set_int("x", 1, 1) != AS_UDF_OK || as_udf_rec_save() != AS_UDF_OK) {
+		return as_udf_fail_str("stop_probe: could not save x");
+	}
+
+	take_every_handle();
+
+	if (as_udf_string_is(&a[0], "has")) {
+		as_udf_result_bool(as_udf_rec_has("l"));
+		return 0;
+	}
+	if (as_udf_string_is(&a[0], "get")) {
+		as_udf_result_bool(as_udf_rec_get("l", &v));
+		return 0;
+	}
+	if (as_udf_string_is(&a[0], "reread")) {
+		if (! as_udf_rec_get("s", &v) || v.kind != AS_UDF_STR) return as_udf_fail_str("stop_probe: s is gone");
+		as_udf_result_int((int64_t)v.len);
+		return 0;
+	}
+	return as_udf_fail_str("stop_probe: no such probe");
+}
+AS_UDF_SIGNATURE(stop_probe, "fn stop_probe(what: str) -> value")

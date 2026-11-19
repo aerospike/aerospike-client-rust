@@ -914,13 +914,13 @@ and false when neither does.
 #### `Sum`
 
 ```go
-func Sum[T int64 | float64](b Both[T]) T
+func Sum[T int64 | float64](b Both[T]) (T, bool)
 ```
 
-Sum is the sum of the two sides' values, a missing side counting as zero, so it is 0 when neither
-side has the bin: unlike Max and Min it has no "nothing" answer, and a caller that must tell reads
-HasCurrent and HasIncoming. An integer sum that overflows wraps around, as Go's addition does; it
-is never undefined. A sum is not idempotent: a merge that stores it and then meets the same write
-again adds it again. It is for adding up parts that belong to different clusters, never for merging
-two copies of one count, which is what Max is for.
+Sum is the sum of the two sides' values; the one that is there when only one side has the bin, a
+missing side counting as zero, and false when neither does, as Max and Min. An integer sum that
+overflows wraps around, as Go's addition does; it is never undefined. A sum is not idempotent: a
+merge that stores it and then meets the same write again adds it again. It is for adding up parts
+that belong to different clusters, never for merging two copies of one count, which is what Max is
+for.
 

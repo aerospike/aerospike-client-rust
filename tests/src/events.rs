@@ -1162,6 +1162,54 @@ async fn registers_merge_converges() {
         assert_eq!(answer.get(&Value::from("symmetric")), Some(&Value::from(true)), "{lang}: {answer:?}");
         assert_eq!(answer.get(&Value::from("idempotent")), Some(&Value::from(true)), "{lang}: {answer:?}");
 
+        // Associative with a third record that has per-bin times of its own (the dry run's fourth
+        // argument): its `theme` is the latest of the three, its `lang` the oldest, its `seen` the largest.
+        let third = bins_map(&[("theme", Value::from("mono")), ("lang", Value::from("de")), ("seen", Value::from(12))]);
+        let mut third_meta = meta(1, THEN, 0, 3);
+
+        third_meta.insert(
+            Value::from("bin-luts"),
+            Value::from(bins_map(&[
+                ("theme", Value::from(LATER + 5)),
+                ("lang", Value::from(1)),
+                ("seen", Value::from(THEN)),
+            ])),
+        );
+
+        let incoming = bins_map(&[
+            ("theme", Value::from("solar")),
+            ("lang", Value::from("fr")),
+            ("seen", Value::from(7)),
+            ("tz", Value::from("utc")),
+        ]);
+        let mut incoming_meta = meta(4, THEN, 0, 2);
+
+        incoming_meta.insert(
+            Value::from("bin-luts"),
+            Value::from(bins_map(&[
+                ("theme", Value::from(LATER)),
+                ("email", Value::from(LATER)),
+                ("lang", Value::from(THEN)),
+                ("seen", Value::from(THEN)),
+                ("tz", Value::from(THEN)),
+            ])),
+        );
+        incoming_meta.insert(Value::from("deleted"), strings(&["email"]));
+
+        let answer = client
+            .execute_udf(
+                &write,
+                &key,
+                "__event__",
+                "xdr-merge",
+                &[Value::from(incoming), Value::from(incoming_meta), Value::from(third), Value::from(third_meta)],
+            )
+            .await
+            .unwrap();
+        let text = format!("{answer:?}");
+
+        assert!(text.contains("\"associative\"): Bool(true)"), "{lang}: with a third record that has per-bin times: {text}");
+
         assert_eq!(info(&client, &unbind_command(BIN_CONVERGENCE_NS, set_name)).await, "ok");
         let _ = client.delete(&write, &key).await;
 

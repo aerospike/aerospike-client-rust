@@ -120,7 +120,8 @@ not exist. What the server knows about the merge is asked of the record it is tr
 bin convergence), `current.is_tombstone()`, and on either `uses_bin_convergence()`.
 `Pair::of(current, incoming)` reads a bin from both
 sides into a `Both<T>` with the merges a resolver reaches for: `max`, `min`, `sum`, `merge(f)`, `newer`,
-`older`, `ordered()` (`sum` is 0 when neither side has the bin, and wraps), and its two members are
+`older`, `ordered()` (`sum` answers nothing when neither side has the bin, as `max` and `min` do, and
+wraps), and its two members are
 `current` and `incoming`. `Resolution` is `KeepLocal`, `TakeRemote`, `Policy`, `Delete` or
 `Record { bins, ttl }`, where the bins are the whole record; a record equal to the current one writes
 nothing.
@@ -137,7 +138,7 @@ is this. The data-only way: versions and removal markers in the record itself, w
 of the data alone; `examples/counter` (a grow-only counter, the smallest possible), `examples/pncounter` (the same with a second
 map, so it can go down), `examples/twopset` (a set with removals), `examples/lwwset` (a set with re-adds, on
 a clock) and `examples/crdt` are this, and the book's CRDT tutorial walks them in that order. Its last step, `examples/registers`, is the first way done explicitly: a merge that reads `bin_last_update_time` and `bin_source_id` bin by bin, on a namespace with bin convergence, beside one bin it merges on the data. The server's dry run (`execute_udf` on package `__event__`,
-function `xdr-merge`, arguments `[incoming bins, incoming metadata, other bins?]`) runs a handler against
+function `xdr-merge`, arguments `[incoming bins, incoming metadata, other bins?, other metadata?]`) runs a handler against
 a real record and reports `symmetric`, `idempotent` and, given the third record, `associative`.
 
 The macro exports the handler and a signature `event xdr-merge/1 ...`, which `event-set` checks before

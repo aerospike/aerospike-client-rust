@@ -542,7 +542,7 @@ Pair pair = Pair.of(current, incoming);
 
 Long visits = pair.getInt("visits").max();          // null when neither side has the bin
 String name = pair.getString("name").newer();       // last writer wins
-long spent = pair.getInt("spent").sumInt();         // a missing side counts as 0
+Long spent = pair.getInt("spent").sumInt();         // a missing side counts as 0
 ```
 
 Every reader reads the bin on both sides, so each costs two reads; keep the `Both` when more than
@@ -710,15 +710,15 @@ reaches for: the Java face of the Rust SDK's `Both<T>`. `Pair` builds one per bi
 Both<Long> visits = pair.getInt("visits");
 
 Long merged = visits.merge(Math::max);       // null only when neither side has the bin
-long total = visits.sumInt();                // never null: a missing side is 0
+Long total = visits.sumInt();                // a missing side is 0; null when both are
 
 if (visits.current == null) {
     // the bin is new to this cluster
 }
 ```
 
-Every merge here answers null when both sides are missing, except the two sums. `current` and
-`incoming` are the values themselves, to read when no merge here fits.
+Every merge here answers null when both sides are missing. `current` and `incoming` are the
+values themselves, to read when no merge here fits.
 
 #### `Both.current`
 
@@ -825,19 +825,19 @@ does. For a `Comparable` T, as `max` is.
 #### `Both.sumInt`
 
 ```java
-public long sumInt()
+public Long sumInt()
 ```
 
-The sum of a `Both<Long>`, a missing side counting as zero, so it is 0 and not null when neither
-side has the bin; it wraps on overflow as `long` addition does. Only for a `Both<Long>`: on
-any other it is a bad cast.
+The sum of a `Both<Long>`; the one that exists when only one does, a missing side counting as
+zero, and null when neither does, as `max` and `min`. It wraps on overflow as `long`
+addition does. Only for a `Both<Long>`: on any other it is a bad cast.
 
 #### `Both.sumDouble`
 
 ```java
-public double sumDouble()
+public Double sumDouble()
 ```
 
-The sum of a `Both<Double>`, a missing side counting as zero, so it is 0.0 and not null when
-neither side has the bin. Only for a `Both<Double>`: on any other it is a bad cast.
+The sum of a `Both<Double>`; the one that exists when only one does, and null when neither does,
+as `max` and `min`. Only for a `Both<Double>`: on any other it is a bad cast.
 

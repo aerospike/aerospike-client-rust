@@ -15,8 +15,9 @@
 //! generated argument decoding through every rejection, and `udf_cpp.wasm`
 //! (`aerospike-udf-sdk-wasm-cpp/examples/udf`) is the SDK's fixture, one function per corner of the record
 //! API, held here to the Rust fixture tests' expectations. The resolver, counter and CRDT modules
-//! sit in the agreement tests of `events.rs` and `xdr_merge.rs`. The fixtures are built as
-//! `aerospike-udf-sdk-wasm-cpp/README.md` says.
+//! sit in the agreement tests of `events.rs` and `xdr_merge.rs`. `apitest_c.wasm` is here for one export
+//! outside the conformance specification, `stop_probe`, which tests the C SDK's reads that stop the call.
+//! The fixtures are built as `aerospike-udf-sdk-wasm-cpp/README.md` says.
 
 use crate::common;
 use aerospike::Task;
@@ -425,6 +426,113 @@ async fn cpp_udf_indexes_a_list_and_asks_a_built_map() {
     assert_eq!(probe(4).await("at"), Some(Value::String("absent".into())), "one past the end");
     assert_eq!(probe(1 << 40).await("at"), Some(Value::String("absent".into())), "far past the end");
     assert_eq!(probe(-1).await("at"), Some(Value::String("absent".into())), "before the start");
+
+    let _ = client.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
+}
+
+const APITEST_C: &[u8] = include_bytes!("../fixtures/wasm/apitest_c.wasm");
+
+/// What the C++ SDK fails a call with when it cannot read a bin or a stored list or map
+/// (`detail::unreadable`).
+const CPP_UNREADABLE: &str = "could not read a bin or a stored list or map: the call's 256 handles are all in \
+                              use, or the value is no longer readable after a failed save";
+/// What the C SDK fails a call with when a bin read fails for a reason other than "no such bin"
+/// (`as_udf_rec_unreadable`).
+const C_UNREADABLE: &str = "could not read a bin: the call's 256 handles are all in use";
+
+/// Calls `function(what)` on `key` and asserts that it failed with `message` rather than answering, and
+/// that the record is as it was before: the probes save a bin `x` first, which a failed call undoes.
+async fn assert_stops(client: &Client, key: &Key, package: &str, function: &str, what: &str, message: &str) {
+    let read = ReadPolicy::default();
+    let before = client.get(&read, key, Bins::All).await.unwrap();
+    let result = client
+        .execute_udf(&WritePolicy::default(), key, package, function, &[Value::from(what)])
+        .await;
+
+    match result {
+        Ok(answer) => panic!("{function}({what}) answered {answer:?}; it must stop the call"),
+        Err(e) => {
+            let text = e.to_string();
+            assert!(text.contains(message), "{function}({what}) failed, but not with the SDK's message: {text}");
+        }
+    }
+
+    let after = client.get(&read, key, Bins::All).await.unwrap();
+    assert_eq!(after.bins, before.bins, "{function}({what}): a call that stops changes no bin");
+    assert_eq!(after.generation, before.generation, "{function}({what}): and writes nothing");
+}
+
+/// A walk of a stored list or map that the host cannot open, and a lookup in a stored map it can no longer
+/// read, stop the call with the SDK's message: a range-for cannot return an error, and an empty walk or a
+/// "no such key" there would be a wrong answer taken for a right one. The walks are starved of handles
+/// (every one of the call's 256 taken by empty lists); a lookup takes no handle, so it is starved
+/// instead by a save the server refuses, which ends every value read from the stored record. A bin read
+/// before the table filled is read again on the handle it already has.
+#[aerospike_macro::test]
+async fn cpp_unreadable_collections_stop_the_call() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("cpp_stop_{}", common::rand_str(6));
+
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+    let map = as_map!("a" => 1, "b" => 2);
+    client
+        .put(&write, &key, &[as_bin!("l", as_list!(1, 2, 3)), as_bin!("m", map)])
+        .await
+        .unwrap();
+
+    if let Err(reason) = register(&client, FIXTURE, package).await {
+        skipped("cpp_unreadable_collections_stop_the_call", &reason);
+        return;
+    }
+
+    for what in ["walk", "map_walk", "contains", "get"] {
+        assert_stops(&client, &key, package, "stop_probe", what, CPP_UNREADABLE).await;
+    }
+
+    // Reading l again reuses the handle of the first read, so a full table does not stop it.
+    let result = client
+        .execute_udf(&write, &key, package, "stop_probe", &[Value::from("reread")])
+        .await
+        .unwrap();
+    assert_eq!(result, Some(Value::Int(3)), "a bin read before the table filled reads again");
+
+    let _ = client.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
+}
+
+/// The C SDK's `as_udf_rec_has` and `as_udf_rec_get` answer only yes or no, so a read that fails because
+/// no handle is free stops the call with the header's message instead of answering "no such bin". The
+/// bin read before the table filled is read again on the handle it already has.
+#[aerospike_macro::test]
+async fn c_unreadable_bins_stop_the_call() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("c_stop_{}", common::rand_str(6));
+
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+    client
+        .put(&write, &key, &[as_bin!("s", "hello"), as_bin!("l", as_list!(1, 2, 3))])
+        .await
+        .unwrap();
+
+    if let Err(reason) = register(&client, APITEST_C, package).await {
+        skipped("c_unreadable_bins_stop_the_call", &reason);
+        return;
+    }
+
+    for what in ["has", "get"] {
+        assert_stops(&client, &key, package, "stop_probe", what, C_UNREADABLE).await;
+    }
+
+    let result = client
+        .execute_udf(&write, &key, package, "stop_probe", &[Value::from("reread")])
+        .await
+        .unwrap();
+    assert_eq!(result, Some(Value::Int(5)), "a bin read before the table filled reads again");
 
     let _ = client.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
 }

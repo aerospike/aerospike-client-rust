@@ -3719,7 +3719,9 @@ impl EventRecord {
 ///     out.insert("visits", visits)?;
 /// }
 ///
-/// out.insert("total", pair.int("total")?.sum())?;        // each DC's own share, added
+/// if let Some(total) = pair.int("total")?.sum() {       // each DC's own share, added
+///     out.insert("total", total)?;
+/// }
 ///
 /// Ok(Resolution::Record { bins: pair.with_newer(out)?, ttl: None })
 /// ```
@@ -3866,7 +3868,7 @@ impl Pair {
 ///
 /// ```ignore
 /// let visits = pair.int("visits")?.max();             // Option<i64>: the larger
-/// let total = pair.int("total")?.sum();               // i64: a missing side counts as 0
+/// let total = pair.int("total")?.sum();               // Option<i64>: a missing side counts as 0
 /// let name = pair.string("name")?.newer();            // Option<Text>: last writer wins
 ///
 /// if let Some(visits) = visits {
@@ -3964,22 +3966,22 @@ impl<T: PartialOrd> Both<T> {
 }
 
 impl Both<i64> {
-    /// The sum, a missing side counting as zero, so it is `0` when neither side has the bin: unlike `max`
-    /// and `min` it never answers "nothing". It wraps on overflow, as two's complement does, rather than
-    /// trapping. Adding the two sides is right only when each holds its own DC's share; summing two copies
-    /// of one counter counts twice.
+    /// The sum; the one that exists when only one side has the bin, a missing side counting as zero, and
+    /// `None` when neither does, as `max` and `min`. It wraps on overflow, as two's complement does, rather
+    /// than trapping. Adding the two sides is right only when each holds its own DC's share; summing two
+    /// copies of one counter counts twice.
     #[must_use]
-    pub fn sum(self) -> i64 {
-        self.current.unwrap_or(0).wrapping_add(self.incoming.unwrap_or(0))
+    pub fn sum(self) -> Option<i64> {
+        self.merge(i64::wrapping_add)
     }
 }
 
 impl Both<f64> {
-    /// The sum, a missing side counting as zero, so it is `0.0` when neither side has the bin. Right only
-    /// when each side holds its own DC's share.
+    /// The sum; the one that exists when only one side has the bin, and `None` when neither does, as `max`
+    /// and `min`. Right only when each side holds its own DC's share.
     #[must_use]
-    pub fn sum(self) -> f64 {
-        self.current.unwrap_or(0.0) + self.incoming.unwrap_or(0.0)
+    pub fn sum(self) -> Option<f64> {
+        self.merge(|l, r| l + r)
     }
 }
 

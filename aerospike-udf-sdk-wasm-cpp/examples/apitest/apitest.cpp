@@ -852,8 +852,7 @@ UDF_ON_XDR_MERGE(merge_api)
 
 	if (udf::Optional<int64_t> max = n.max()) out.put("max", *max);
 	if (udf::Optional<int64_t> min = n.min()) out.put("min", *min);
-	// Both::sum() is a number, not an Optional: it answers 0 where neither side has the bin.
-	out.put("sum", n.sum());
+	if (udf::Optional<int64_t> sum = n.sum()) out.put("sum", *sum);
 
 	udf::Both<Str> s = UDF_TRY(pair.as_string<65536>("s"));
 

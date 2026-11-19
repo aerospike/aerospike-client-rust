@@ -62,6 +62,7 @@ mod truncate;
 mod txn;
 mod udf;
 mod udf_agg_bench;
+mod udf_conform;
 mod udf_cpp;
 mod udf_go;
 mod udf_java;
@@ -75,6 +76,7 @@ mod value_order;
 mod vector;
 mod xdr_merge;
 mod xdr_merge_limits;
+mod xdr_merge_answers;
 
 pub(crate) async fn count_results(rs: Arc<Recordset>) -> usize {
     let mut count = 0;

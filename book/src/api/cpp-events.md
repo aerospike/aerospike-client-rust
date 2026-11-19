@@ -3,24 +3,7 @@
 #### `EventRecord`
 
 ```cpp
-struct EventRecord : as_udf_event_record, ReadRecord<EventRecord>
-```
-
-One record the event hands over, read-only, with its metadata; the C struct underneath. Its bins are read with
-ReadRecord's methods, the ones udf::Record has: get(), has(), bin(), the typed readers with and without a
-default, list() and map(). It has none of the writing methods: what a handler returns is what changes the
-record. An xdr-merge hands over two, `current` and `incoming`, and what the server says of the merge is asked
-of the record it is about: is_delete(), is_partial() and lost_bins() of the incoming one, is_tombstone() of the
-current one, uses_bin_convergence() of either. Everything is asked through a method: each one hides the C field
-of the same name.
-
-```cpp
-UDF_ON_XDR_MERGE(keep_larger)
-{
-	if (incoming.is_delete()) return udf::Resolution::policy();
-	int64_t mine = current.int_or("visits", 0), theirs = incoming.int_or("visits", 0);
-	return theirs > mine ? udf::Resolution::take_remote() : udf::Resolution::keep_local();
-}
+struct EventRecord : private as_udf_event_record, public ReadRecord<EventRecord>
 ```
 
 #### `EventRecord::read`
@@ -67,6 +50,14 @@ int64_t source_id() const
 ```
 
 The XDR source id of the cluster that wrote this version of the record.
+
+#### `EventRecord::is_incoming`
+
+```cpp
+bool is_incoming() const
+```
+
+Whether this is the incoming record, the one that arrived over XDR; false for the current one.
 
 #### `EventRecord::bin_names`
 
@@ -276,12 +267,13 @@ The smaller of the two values, or the one there is; nothing when neither side ha
 #### `Both::sum`
 
 ```cpp
-T sum() const
+Optional<T> sum() const
 ```
 
-The sum of both sides, a missing side counting as a value-initialised T (zero for a number): 0 when neither
-side has the bin, not nothing. An integer sum wraps on overflow (two's complement), as it would in Rust's
-release builds, rather than being undefined.
+The sum of both sides, or the one value there is (a missing side counts as zero); nothing when neither side
+has the bin, as for max() and min(), so a handler leaves out a bin neither side has rather than writing a 0
+nobody wrote. An integer sum wraps on overflow (two's complement), as it would in Rust's release builds,
+rather than being undefined.
 
 #### `Pair`
 

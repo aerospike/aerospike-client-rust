@@ -241,3 +241,51 @@ UDF_FUNCTION(index_probe, udf::Result<udf::Map>, const udf::Record& rec, udf::Te
 
 	return out;
 }
+
+// Takes every handle the call has left, by building empty lists until the host refuses one. Nothing gives
+// them back before the call ends.
+static void take_every_handle()
+{
+	while (as_udf_list_new(0) > 0) {
+	}
+}
+
+// The reads that cannot answer when the host cannot read a stored list or map, after the record's list bin l
+// and map bin m have been read and a bin x saved. With `what` a walk ("walk", "map_walk") the call's handles
+// are first all taken, so the walk cannot open its cursor; with a lookup ("contains", "get") a save that the
+// server refuses (GeoJSON it does not accept) first ends the values read from the stored record, since a
+// lookup takes no handle. Either way the call must stop with the SDK's message rather than answer: there is
+// no answer here that is not a lie. "reread" takes every handle and then reads l again, which reuses the
+// handle of the first read and must succeed. The saved x is undone with the rest of a call that fails.
+UDF_FUNCTION(stop_probe, udf::Result<int64_t>, udf::Record& rec, udf::Text<16> what)
+{
+	udf::ListRange l = UDF_TRY(udf::required(rec.list("l"), "stop_probe: no list bin l"));
+	udf::MapRange m = UDF_TRY(udf::required(rec.map("m"), "stop_probe: no map bin m"));
+
+	UDF_TRY(rec.set("x", 1));
+	UDF_TRY(rec.save());
+
+	if (what == "walk" || what == "map_walk" || what == "reread") {
+		take_every_handle();
+	}
+	else {
+		UDF_TRY(rec.set_geojson("g", "not geojson"));
+		if (rec.save()) return udf::error(AS_UDF_ERR, "stop_probe: the server took a save it should refuse");
+	}
+
+	if (what == "walk") {
+		int64_t total = 0;
+		for (udf::Value v : l) total += v.is_int() ? v.payload : 0;
+		return total;
+	}
+	if (what == "map_walk") {
+		int64_t entries = 0;
+		for (udf::Entry e : m) entries += e.value.is_null() ? 0 : 1;
+		return entries;
+	}
+	if (what == "contains") return m.contains("a") ? 1 : 0;
+	if (what == "get") return m.value().get("a").has_value() ? 1 : 0;
+	if (what == "reread") return UDF_TRY(udf::required(rec.list("l"), "stop_probe: l unreadable again")).size();
+
+	return udf::error(AS_UDF_ERR, "stop_probe: no such probe");
+}

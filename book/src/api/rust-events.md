@@ -352,7 +352,9 @@ if let Some(visits) = pair.int("visits")?.max() {      // a counter that only gr
     out.insert("visits", visits)?;
 }
 
-out.insert("total", pair.int("total")?.sum())?;        // each DC's own share, added
+if let Some(total) = pair.int("total")?.sum() {       // each DC's own share, added
+    out.insert("total", total)?;
+}
 
 Ok(Resolution::Record { bins: pair.with_newer(out)?, ttl: None })
 ```
@@ -484,7 +486,7 @@ not have the bin; they are public for a merge that none of the methods covers.
 
 ```rust
 let visits = pair.int("visits")?.max();             // Option<i64>: the larger
-let total = pair.int("total")?.sum();               // i64: a missing side counts as 0
+let total = pair.int("total")?.sum();               // Option<i64>: a missing side counts as 0
 let name = pair.string("name")?.newer();            // Option<Text>: last writer wins
 
 if let Some(visits) = visits {
@@ -581,22 +583,22 @@ The smaller of the two; the one that exists when only one does, and `None` when 
 #### `Both::sum`
 
 ```rust
-pub fn sum(self) -> i64
+pub fn sum(self) -> Option<i64>
 ```
 
-The sum, a missing side counting as zero, so it is `0` when neither side has the bin: unlike `max`
-and `min` it never answers "nothing". It wraps on overflow, as two's complement does, rather than
-trapping. Adding the two sides is right only when each holds its own DC's share; summing two copies
-of one counter counts twice.
+The sum; the one that exists when only one side has the bin, a missing side counting as zero, and
+`None` when neither does, as `max` and `min`. It wraps on overflow, as two's complement does, rather
+than trapping. Adding the two sides is right only when each holds its own DC's share; summing two
+copies of one counter counts twice.
 
 #### `Both::sum`
 
 ```rust
-pub fn sum(self) -> f64
+pub fn sum(self) -> Option<f64>
 ```
 
-The sum, a missing side counting as zero, so it is `0.0` when neither side has the bin. Right only
-when each side holds its own DC's share.
+The sum; the one that exists when only one side has the bin, and `None` when neither does, as `max`
+and `min`. Right only when each side holds its own DC's share.
 
 #### `Resolution`
 

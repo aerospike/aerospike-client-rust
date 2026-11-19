@@ -1454,10 +1454,10 @@ bool busy = history && history->size() > 100;
 Optional<Value> get(StrView name) const
 ```
 
-The bin as a value of any kind; nothing when the record has no such bin, and nothing too when the bin could
-not be read at all (no handle free), which bin() and the typed readers report as an error. A string, blob,
-list or map bin takes one of the call's 256 handles each time it is read, so read a bin once and keep the
-value rather than reading it in a loop.
+The bin as a value of any kind; nothing when the record has no such bin or it holds nil. A read that fails
+for another reason (no handle free) would look like an absent bin here, so it stops the call instead, as
+C's as_udf_rec_get does; bin() and the typed readers report it as an error. Reading the same string, blob,
+list or map bin again reuses the handle the first read took.
 
 #### `ReadRecord::has`
 
@@ -1467,7 +1467,7 @@ bool has(StrView name) const
 
 Whether the record has the bin. On the record of a UDF, a bin the call has set counts and one it has
 removed does not; on an event record, a bin that side deleted, or that a partial incoming write does not
-carry, does not.
+carry, does not. A read that fails for another reason stops the call, as get() does.
 
 #### `ReadRecord::bin`
 
