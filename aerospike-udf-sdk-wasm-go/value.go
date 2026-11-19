@@ -127,7 +127,7 @@ func (v Value) Bool() (bool, error) {
 // it shares the bytes the value was made over.
 func (v Value) String() (string, error) {
 	if v.Kind == KindGuestStr {
-		return unsafe.String((*byte)(unsafe.Pointer(uintptr(v.Payload))), int(v.Len)), nil
+		return unsafe.String((*byte)(guestAddr(v.Payload)), int(v.Len)), nil
 	}
 	if v.Kind != KindStr {
 		return "", v.kindError("a string")

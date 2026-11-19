@@ -311,6 +311,17 @@ func DoubleValue(d float64) Value {
 	return Value{Kind: KindDouble, Payload: int64(math.Float64bits(d))}
 }
 
+// guestAddr is the address a guest value was made over (StringValue, BlobValue, StringBytesValue) as a
+// pointer again. The value keeps the address as an integer, because a Value is the 16-byte layout the
+// host reads, and that is sound only because of how TinyGo collects: with -gc=leaking nothing is freed,
+// and the conservative collector takes every aligned word that points into an object as a reference, which
+// the address's low word in the payload is on wasm32. The precise collector would not, so a build with it
+// is refused (gc_precise.go). Built with unsafe.Add rather than a conversion from uintptr: the result is
+// the same, and the one place the SDK relies on the rule is this one, with its reason.
+func guestAddr(payload int64) unsafe.Pointer {
+	return unsafe.Add(unsafe.Pointer(nil), uintptr(payload))
+}
+
 // StringValue is a string of the guest's as a Value, for the same calls as IntValue. It holds the
 // address of s's bytes, not a copy, so s must stay alive and unchanged until the call that is given
 // the value has returned; the host copies the bytes during that call.

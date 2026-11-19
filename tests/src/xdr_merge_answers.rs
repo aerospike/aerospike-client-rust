@@ -53,17 +53,11 @@ enum Dry {
     Record,
     /// `{verdict: delete}`.
     Delete,
-    /// A record, or a failure when building it takes the handler longer than the binding's timeout: the
-    /// answer is 40000 host calls, which a slow build of the server does not finish in time.
-    RecordOrFailed,
 }
 
 impl Dry {
     fn admits(self, got: Option<Dry>) -> bool {
-        match self {
-            Dry::RecordOrFailed => got == Some(Dry::Record) || got == Some(Dry::Failed),
-            want => got == Some(want),
-        }
+        got == Some(self)
     }
 }
 
@@ -115,7 +109,10 @@ const CASES: &[(Option<&str>, i64, Dry)] = &[
     (Some("r-many"), 100, Dry::Record),
     // More bins than a record holds, but each one small: `bins_are_bins` counts bytes, not bins, so the
     // dry run takes it, and only a write would find out - if the handler builds it within its timeout.
-    (Some("r-many"), 40000, Dry::RecordOrFailed),
+    // The probe makes a handle for every key, so the call's 256 run out early and the rest of its puts are
+    // refused; it answers nothing, and the server says why ("answered nothing after the server refused
+    // ... requests, the first for want of the call's 256 handles").
+    (Some("r-many"), 40000, Dry::Failed),
     // A record that cannot be stored as it is given.
     (Some("r-ttl"), -1, Dry::Failed),
     (Some("r-ttl"), 0x1_0000_0000, Dry::Failed),
@@ -242,7 +239,7 @@ fn classify(result: &aerospike::Result<Option<Value>>) -> (Option<Dry>, String) 
             if detail.contains("deferred to the policy") {
                 (Some(Dry::Policy), "policy".into())
             } else if matches!(e.kind(), ErrorKind::UdfBadResponse) {
-                let short: String = e.base_message().chars().take(90).collect();
+                let short: String = e.base_message().chars().take(200).collect();
 
                 (Some(Dry::Failed), format!("failed: {short}"))
             } else {
@@ -292,6 +289,12 @@ async fn answers_on(client: &Client, namespace: &str, package: &str, third: bool
 
         if !want.admits(got) {
             wrong.push(format!("{namespace} third={third} {what:?}({n}): wanted {want:?}, got {line}"));
+        }
+
+        // A handler that answers nothing because the server refused it room is told so: the failure names
+        // the ceiling, not "neither a verdict nor a map".
+        if *what == Some("r-many") && *n > 1000 && !line.contains("the first for want of the call's 256 handles") {
+            wrong.push(format!("{namespace} third={third} {what:?}({n}): the failure does not say why: {line}"));
         }
 
         // A handler that never answers is stopped by the binding's timeout, not by the client's.

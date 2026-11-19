@@ -408,7 +408,7 @@ func Contains(list Value, text string) bool {
 // Under the builders: integer keys, and the lookups in a stored map.
 //
 
-func guestPtr(v Value) unsafe.Pointer { return unsafe.Pointer(uintptr(v.Payload)) }
+func guestPtr(v Value) unsafe.Pointer { return guestAddr(v.Payload) }
 
 // guestBytes is the bytes a value of the guest's own was made over.
 func guestBytes(v Value) []byte {
