@@ -370,17 +370,22 @@ topk_end(int32_t args, int32_t argc)
 			as_udf_v_string("key", 3), as_udf_v_string(h->key, (int32_t)h->key_len),
 		};
 
-		if (entry <= 0 || as_udf_map_put_entries(entry, pairs, (int32_t)sizeof(pairs)) != 3 ||
-				as_udf_list_push(hits, entry) != AS_UDF_OK) {
-			return as_udf_fail_str("topk: could not build a hit");
-		}
+		bool built = entry > 0 && as_udf_map_put_entries(entry, pairs, (int32_t)sizeof(pairs)) == 3 &&
+				as_udf_list_push(hits, entry) == AS_UDF_OK;
+
+		/* The list keeps the hit, so its handle goes back at once: one handle per hit, not one per call. */
+		as_udf_handle_close(entry);
+		if (! built) return as_udf_fail_str("topk: could not build a hit");
 	}
 
 	as_udf_map_put_string_handle(out, "hits", 4, hits);
+	as_udf_handle_close(hits);
 	as_udf_map_put_string_int(out, "skipped_dim", 11, S.skipped_dim);
 	as_udf_map_put_string_int(out, "skipped_none", 12, S.skipped_none);
 
-	return as_udf_result_handle(out) == AS_UDF_OK ? 0 : as_udf_fail_str("topk: could not return the partial");
+	int32_t rc = as_udf_result_handle(out);
+	as_udf_handle_close(out);
+	return rc == AS_UDF_OK ? 0 : as_udf_fail_str("topk: could not return the partial");
 }
 
 /* The distance from this record's vector to the query: one record, one number, nil for no such vector. */

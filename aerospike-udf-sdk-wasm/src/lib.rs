@@ -264,9 +264,10 @@ pub enum Error {
     /// The host would not do it. The record is read-only here (a stream UDF's record; an event handler has no
     /// record to write), the server rejected the write, the clock was asked for in an event handler, a
     /// collection would nest more than 64 deep, a call came with more than [`MAX_ARGS`] arguments, or the
-    /// call has used up what it may hold on the host: 256 collections, strings read and open iterators at a
-    /// time, and a memory budget. It is also what [`List::push`] and [`Map::insert`] answer when the host
-    /// does not take the value, whatever the reason.
+    /// call has used up the memory it may hold on the server: every collection, string read and open
+    /// iterator counts against that budget, and there is no limit on how many of them there are. It is also
+    /// what [`List::push`] and [`Map::insert`] answer when the host does not take the value, whatever the
+    /// reason.
     Refused,
     /// The host could not decode the stored bytes, or text that had to be UTF-8 was not. Also what a write
     /// answers for a name that cannot be a bin name (empty, longer than 15 bytes, or with a zero byte in it),
@@ -1178,9 +1179,11 @@ impl Coll {
     /// A nested list or map comes out as a [`Value::List`] / [`Value::Map`] that iterates the same way, and
     /// the walk continues after it.
     ///
-    /// An iterator holds one of the call's 256 host slots until it is dropped. When none is left, or the
-    /// collection is no longer valid (see [`Value`]), the iterator yields one `Err(Refused)` and ends. A
-    /// built collection is walked through a packed copy of it, so finish building it before iterating it.
+    /// An iterator holds a cursor on the host until it is dropped, which gives it back. When the call's
+    /// memory on the server has no room for one, or the collection is no longer valid (see [`Value`]), the
+    /// iterator yields one `Err(Refused)` and ends. A built collection is walked through a packed copy of
+    /// it, so finish building it before iterating it; the copy stays until the call ends, because the
+    /// values the walk yields read from it.
     ///
     /// ```ignore
     /// let mut longest = 0;
@@ -1221,7 +1224,11 @@ impl Coll {
     /// first, and `Err(Refused)` when the host cannot. See [`Value::stored_bytes`].
     pub fn bytes<'b>(&self, buf: &'b mut [u8]) -> Result<&'b [u8], Error> {
         let (src, at) = self.position()?;
-        let n = bytes_result(unsafe { raw_coll_bytes_at(src, at as i32, buf.as_mut_ptr(), buf.len() as i32) }, buf.len())?;
+        let rc = unsafe { raw_coll_bytes_at(src, at as i32, buf.as_mut_ptr(), buf.len() as i32) };
+
+        self.done_with(src);
+
+        let n = bytes_result(rc, buf.len())?;
 
         Ok(&buf[..n])
     }
@@ -1232,8 +1239,17 @@ impl Coll {
     /// them, `Err(Refused)` when a built collection cannot be packed: never an ordering.
     pub fn cmp_bytes(&self, other: &Coll) -> Result<core::cmp::Ordering, Error> {
         let (a, at_a) = self.position()?;
-        let (b, at_b) = other.position()?;
+        let (b, at_b) = match other.position() {
+            Ok(pos) => pos,
+            Err(e) => {
+                self.done_with(a);
+                return Err(e);
+            }
+        };
         let c = unsafe { raw_coll_cmp_at(a, at_a as i32, b, at_b as i32) };
+
+        other.done_with(b);
+        self.done_with(a);
 
         if c < -1 {
             return Err(Error::from_status(c));
@@ -1328,6 +1344,14 @@ impl Coll {
         found(rc, &raw)
     }
 
+    // Give back the packed copy `position` made of a built collection, once nothing read from it is handed
+    // out (a byte copy, a comparison). A lookup keeps it: the value it returns may read from it.
+    fn done_with(&self, src: i32) {
+        if let Coll::Built(_) = self {
+            unsafe { raw_cursor_close(src) };
+        }
+    }
+
     // Where this collection sits, packing a built one on request.
     fn position(&self) -> Result<(i32, u32), Error> {
         match *self {
@@ -1355,7 +1379,7 @@ fn found(rc: i32, raw: &[u8; VALUE_SZ]) -> Result<Option<Value<'static>>, Error>
 }
 
 /// The values of a collection, 128 per import call. Made by [`Coll::iter`]; an `Iterator` of `Result<Value,
-/// Error>`. About 2 KB on the guest's stack, and one of the call's 256 host slots while it lives.
+/// Error>`. About 2 KB on the guest's stack, and a cursor on the host until it is dropped.
 pub struct Iter {
     cursor: i32,
     window: [[u8; VALUE_SZ]; WINDOW],
@@ -1416,8 +1440,7 @@ impl Iterator for Iter {
 /// Gives the iterator's cursor back to the host when the iterator is dropped.
 impl Drop for Iter {
     fn drop(&mut self) {
-        // Give the cursor's slot back. Iterators end last-in-first-out in practice, which is exactly when
-        // the host can reclaim it; any other order is harmless and merely keeps the slot until the call ends.
+        // Give the cursor back, in whatever order iterators end: the host reuses its slot.
         if self.cursor > 0 {
             unsafe { raw_cursor_close(self.cursor) };
         }
@@ -2073,7 +2096,7 @@ fn status(rc: i32) -> Result<(), Error> {
 /// Start a list. It lives on the host; hand it to [`Record::set`], return it, or nest it in another.
 ///
 /// `capacity` is a hint of how many elements to make room for, not a limit: the list grows as needed, and `0`
-/// is fine. The list lasts until the call ends.
+/// is fine. The [`List`] gives its handle back when it is dropped; what it was handed to keeps the list.
 ///
 /// ```ignore
 /// let recent = as_udf::list(3)?;
@@ -2083,8 +2106,8 @@ fn status(rc: i32) -> Result<(), Error> {
 /// rec.save()?;
 /// ```
 ///
-/// `Err(Refused)` when the host cannot make one: the call may hold 256 host values at a time, within a memory
-/// budget.
+/// `Err(Refused)` when the host cannot make one: what a call holds on the host is bounded by its memory
+/// budget, not by a count.
 pub fn list(capacity: usize) -> Result<List, Error> {
     let handle = unsafe { list_new(capacity as i32) };
 
@@ -2098,8 +2121,9 @@ pub fn list(capacity: usize) -> Result<List, Error> {
 /// Start a map. Entries come out ordered by key, whatever order they go in: that is how it is stored,
 /// returned and iterated.
 ///
-/// `capacity` is a hint of how many entries to make room for, not a limit. The map lives on the host until
-/// the call ends; hand it to [`Record::set`], return it, or nest it in another.
+/// `capacity` is a hint of how many entries to make room for, not a limit. The map lives on the host; hand
+/// it to [`Record::set`], return it, or nest it in another. The [`Map`] gives its handle back when it is
+/// dropped; what it was handed to keeps the map.
 ///
 /// ```ignore
 /// let summary = as_udf::map(2)?;
@@ -2109,8 +2133,8 @@ pub fn list(capacity: usize) -> Result<List, Error> {
 /// Ok(summary.into())
 /// ```
 ///
-/// `Err(Refused)` when the host cannot make one: the call may hold 256 host values at a time, within a memory
-/// budget.
+/// `Err(Refused)` when the host cannot make one: what a call holds on the host is bounded by its memory
+/// budget, not by a count.
 pub fn map(capacity: usize) -> Result<Map, Error> {
     let handle = unsafe { map_new(capacity as i32) };
 
@@ -2121,12 +2145,19 @@ pub fn map(capacity: usize) -> Result<Map, Error> {
     }
 }
 
-/// A list under construction, made by [`list`]. It lives on the host; this is its handle, which is `Copy`, so
-/// every copy is the same list. Elements are added with [`push`](List::push) and [`extend`](List::extend)
-/// through `&self`, and the list is finished by handing it over: to [`Record::set`], to another collection,
-/// or as the UDF's result (`Ok(list.into())`). It can still be added to after that, and what it was handed to
-/// sees the additions, because the host shares the list rather than copying it.
-#[derive(Clone, Copy, Debug)]
+/// A list under construction, made by [`list`]. It lives on the host; this is its handle, and it owns it.
+/// Elements are added with [`push`](List::push) and [`extend`](List::extend) through `&self`, and the list is
+/// finished by handing it over: to [`Record::set`] or to another collection by reference (`rec.set("b",
+/// &list)`, `outer.push(&list)`), or as the UDF's result by value (`Ok(list.into())`). It can still be added
+/// to after it was handed over by reference, and what it was handed to sees the additions, because the host
+/// shares the list rather than copying it.
+///
+/// **Dropping it gives the handle back**, so a loop that builds a list per iteration and hands each one over
+/// by reference holds one at a time, and is bounded by the call's memory budget, not by a count. What it was
+/// handed to keeps the list: the host holds its own reference. A list turned into a value
+/// ([`into_value`](List::into_value), `list.into()`) is no longer dropped: its handle stays until the call
+/// ends, because the value may still name it.
+#[derive(Debug)]
 pub struct List {
     handle: i32,
 }
@@ -2138,8 +2169,7 @@ impl List {
     /// `list.push(1)?.push("two")?`.
     ///
     /// A push holds nothing on the host but the element itself, whatever its kind, so a loop may push as many
-    /// as the call's memory budget takes: the limit of 256 is on collections, strings read and iterators,
-    /// not on elements.
+    /// as the call's memory budget takes.
     ///
     /// `Err(WrongType)` for a value that cannot be an element: [`Value::Other`], an HLL made from guest
     /// bytes. `Err(Refused)` when the host does not take it: a list may not contain itself or nest more than
@@ -2191,19 +2221,41 @@ impl List {
     }
 
     /// The finished list, as a value to return or store: a [`Value::List`] holding the same host list.
-    /// `list.into()` does the same.
+    /// `list.into()` does the same. The handle is kept until the call ends, since the value names it; to
+    /// store or nest a list and give its handle back, pass `&list` instead.
     #[must_use]
     pub fn into_value(self) -> Value<'static> {
+        let handle = self.handle;
+
+        core::mem::forget(self);
+        Value::List(Coll::Built(handle))
+    }
+
+    /// The list as a value borrowed from it, for [`Record::set`] or a push into another collection, which
+    /// take their own reference to the list: the list still gives its handle back when dropped. `&list`
+    /// converts the same way.
+    #[must_use]
+    pub fn as_value(&self) -> Value<'_> {
         Value::List(Coll::Built(self.handle))
     }
 }
 
+/// Gives the list's handle back to the host. What the list was set into or pushed into keeps it.
+impl Drop for List {
+    fn drop(&mut self) {
+        unsafe { raw_cursor_close(self.handle) };
+    }
+}
+
 /// A map under construction, made by [`map`], keyed by strings or integers. It lives on the host; this is its
-/// handle, which is `Copy`, so every copy is the same map. Entries are added with [`insert`](Map::insert) and
-/// [`extend`](Map::extend) through `&self`, and the map is finished by handing it over: to [`Record::set`],
-/// to another collection, or as the UDF's result (`Ok(map.into())`). Whatever order entries go in, the map is
-/// ordered by key.
-#[derive(Clone, Copy, Debug)]
+/// handle, and it owns it. Entries are added with [`insert`](Map::insert) and [`extend`](Map::extend) through
+/// `&self`, and the map is finished by handing it over: to [`Record::set`] or to another collection by
+/// reference (`&map`), or as the UDF's result by value (`Ok(map.into())`). Whatever order entries go in, the
+/// map is ordered by key.
+///
+/// **Dropping it gives the handle back**, as for a [`List`]; a map turned into a value keeps its handle until
+/// the call ends.
+#[derive(Debug)]
 pub struct Map {
     handle: i32,
 }
@@ -2335,10 +2387,29 @@ impl Map {
     }
 
     /// The finished map, as a value to return or store: a [`Value::Map`] holding the same host map.
-    /// `map.into()` does the same.
+    /// `map.into()` does the same. The handle is kept until the call ends, since the value names it; to
+    /// store or nest a map and give its handle back, pass `&map` instead.
     #[must_use]
     pub fn into_value(self) -> Value<'static> {
+        let handle = self.handle;
+
+        core::mem::forget(self);
+        Value::Map(Coll::Built(handle))
+    }
+
+    /// The map as a value borrowed from it, for [`Record::set`] or a push into another collection, which
+    /// take their own reference to the map: the map still gives its handle back when dropped. `&map`
+    /// converts the same way.
+    #[must_use]
+    pub fn as_value(&self) -> Value<'_> {
         Value::Map(Coll::Built(self.handle))
+    }
+}
+
+/// Gives the map's handle back to the host. What the map was set into or pushed into keeps it.
+impl Drop for Map {
+    fn drop(&mut self) {
+        unsafe { raw_cursor_close(self.handle) };
     }
 }
 
@@ -2353,6 +2424,21 @@ impl From<List> for Value<'_> {
 impl From<Map> for Value<'_> {
     fn from(value: Map) -> Self {
         value.into_value()
+    }
+}
+
+/// The list as a value borrowed from it, as [`List::as_value`] gives it: the list keeps its handle and gives
+/// it back when dropped.
+impl<'a> From<&'a List> for Value<'a> {
+    fn from(value: &'a List) -> Self {
+        value.as_value()
+    }
+}
+
+/// The map as a value borrowed from it, as [`Map::as_value`] gives it.
+impl<'a> From<&'a Map> for Value<'a> {
+    fn from(value: &'a Map) -> Self {
+        value.as_value()
     }
 }
 
@@ -2383,8 +2469,9 @@ macro_rules! pushable {
 }
 
 // By reference only for anything with bytes of the guest's: a batch keeps the address until it is flushed,
-// so an owned string yielded by an iterator would be freed before the host read it.
-pushable!(Value<'a>, i64, f64, bool, &'a str, &'a [u8], List, Map);
+// so an owned string yielded by an iterator would be freed before the host read it. A built collection goes
+// either way: by reference it is given back when dropped, by value its handle stays until the call ends.
+pushable!(Value<'a>, i64, f64, bool, &'a str, &'a [u8], List, Map, &'a List, &'a Map);
 
 /// A [`Str`] by reference, pushed as a string that borrows its text.
 impl<'a, const N: usize> Pushable<'a> for &'a Str<N> {
@@ -4092,13 +4179,13 @@ pub fn deliver_resolution(r: Result<Resolution, Error>) -> i32 {
         Ok(Resolution::Record { bins, ttl }) => (|| {
             let out = map(3)?;
 
-            out.insert("verdict", "record")?.insert("bins", bins)?;
+            out.insert("verdict", "record")?.insert("bins", &bins)?;
 
             if let Some(ttl) = ttl {
                 out.insert("ttl", i64::from(ttl))?;
             }
 
-            result(&out.into_value())
+            result(&out.as_value())
         })(),
         Err(e) => Err(e),
     };

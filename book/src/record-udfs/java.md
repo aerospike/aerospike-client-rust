@@ -216,8 +216,10 @@ static long firstOver(Record rec, long limit) {
 
 One case still holds something. A collection longer than one window keeps its cursor between windows. A
 loop over one that is left early leaves that cursor open until the call returns, when the server releases
-every handle the call held. That costs one of the call's 256 handle slots until then. The thing to avoid
-is leaving a loop over a long collection early hundreds of times in one call.
+every handle the call held. That costs a little of the call's memory until then. The thing to avoid is
+leaving a loop over a long collection early thousands of times in one call. `forEach` on a `ListValue` or
+`MapValue` gives the cursor back however it ends, an exception included, and so does every walk the SDK
+makes for itself.
 
 ## Writing
 
@@ -256,6 +258,21 @@ is one call to the server, and each throws when the server refuses it. `addAll(s
 built whether it has a key, in one call.
 
 They are builders, not collections. What went in is not read back from them.
+
+A builder holds its handle until `close()` gives it back, or the call ends. Both builders are
+`AutoCloseable`, so try-with-resources closes one once it has been set, added, put or returned, which is
+safe because the host keeps its own reference to what it is handed. The exception is the map given to
+`Resolution.record`, which is read after the handler returns. A call is bounded by its memory on the
+server, not by a count of handles, so a loop that builds a collection per turn and closes it runs as long
+as that memory lasts:
+
+```java
+for (String site : sites) {
+    try (MapBuilder entry = Udf.map(2).put("site", site).put("seen", now)) {
+        out.add(entry);   // out keeps the entry
+    }
+}
+```
 
 ```java
 @Function("describe")

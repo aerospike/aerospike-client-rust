@@ -252,8 +252,9 @@ the end, no such key), an error when the value is not a list or map.
 
 `List()` and `Map()` on a `Value` are Go 1.23 iterators, the Rust SDK's `iter()` and `entries()`: a list
 ranges over its values, a map over key and value, 32 per import, and the cursor is released when the loop
-ends or breaks. Lists nest: a value that is itself a list can be ranged over inside the loop. A walk that
-cannot go on (the call holds its 256 handles) fails the call rather than end short in silence.
+ends, breaks or returns. Lists nest: a value that is itself a list can be ranged over inside the loop. A
+walk that cannot go on (the call's memory on the server is spent) fails the call rather than end short in
+silence.
 
 ```go
 //udf:function sum_list
@@ -324,9 +325,23 @@ v)` and `Add(v)` take a value of any supported Go type (`int64`, `int`, `int32`,
 `Put` is a string or an integer. `PutGeoJSON` / `AddGeoJSON` take a GeoJSON; `PutAll(stored)` and
 `AddAll(stored)` copy a stored map or list by position. They chain, each is one import, and the first
 refusal is kept and answered by `Err()`, the way `strings.Builder` keeps its error; a generated export
-checks it when a map or list is returned. No put or add takes one of the call's 256 handles, whatever
-the kinds, so a loop may build a collection of thousands of entries one call at a time; a refusal's
-status is `udf.Refused`.
+checks it when a map or list is returned. No put or add takes a handle, whatever the kinds, so a loop may
+build a collection of thousands of entries one call at a time; a refusal's status is `udf.Refused`.
+
+Go has no destructors, so a `*udf.Map` or `*udf.List` holds its handle until `Close()` gives it back, or
+the call ends. Close one once it has been put, added, set or returned, since the host keeps its own
+reference to what it is handed; `Close` is safe twice and on nil. A call is bounded by its memory on the
+server, not by a count of handles, so a loop that builds and closes a collection per turn runs as long as
+that memory lasts:
+
+```go
+out := udf.NewList(len(sites))
+for _, site := range sites {
+	entry := udf.NewMap(2).Put("site", site).Put("seen", now)
+	out.Add(entry)
+	entry.Close() // out keeps the entry
+}
+```
 
 `Len()` is how many entries or elements a built collection holds. `Contains(key)` asks a map being built
 whether it has a key, a string or an integer. The host answers from the map as it stands, in one import,

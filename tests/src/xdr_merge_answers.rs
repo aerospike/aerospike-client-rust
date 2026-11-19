@@ -107,11 +107,9 @@ const CASES: &[(Option<&str>, i64, Dry)] = &[
     (Some("r-deep"), 60, Dry::Record),
     (Some("r-big"), 64, Dry::Record),
     (Some("r-many"), 100, Dry::Record),
-    // More bins than a record holds, but each one small: `bins_are_bins` counts bytes, not bins, so the
-    // dry run takes it, and only a write would find out - if the handler builds it within its timeout.
-    // The probe makes a handle for every key, so the call's 256 run out early and the rest of its puts are
-    // refused; it answers nothing, and the server says why ("answered nothing after the server refused
-    // ... requests, the first for want of the call's 256 handles").
+    // More bins than a record holds, each one small. The probe makes a handle for every key; the call's
+    // handle table grows as its memory allows, so the handler builds all of them, and the server refuses
+    // the record for its count of bins ("more bins than a record holds").
     (Some("r-many"), 40000, Dry::Failed),
     // A record that cannot be stored as it is given.
     (Some("r-ttl"), -1, Dry::Failed),
@@ -291,9 +289,8 @@ async fn answers_on(client: &Client, namespace: &str, package: &str, third: bool
             wrong.push(format!("{namespace} third={third} {what:?}({n}): wanted {want:?}, got {line}"));
         }
 
-        // A handler that answers nothing because the server refused it room is told so: the failure names
-        // the ceiling, not "neither a verdict nor a map".
-        if *what == Some("r-many") && *n > 1000 && !line.contains("the first for want of the call's 256 handles") {
+        // A record of too many bins is refused for that, not for something else on the way.
+        if *what == Some("r-many") && *n > 1000 && !line.contains("more bins than a record holds") {
             wrong.push(format!("{namespace} third={third} {what:?}({n}): the failure does not say why: {line}"));
         }
 

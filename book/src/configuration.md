@@ -72,7 +72,7 @@ security is configured. [Security](security.md) has the detail.
 - A record UDF runs under the transaction's deadline: the engine's watchdog stops a runaway module when the
   transaction times out.
 - A stream UDF has no deadline from the query, so a stream module that loops will hold a query thread.
-- Each call has a table of 256 handles for cursors and built collections, and takes at most 128 arguments; a call with more fails.
+- A call's cursors and built collections are bounded by its memory budget, not by a count of handles, and a call takes at most 128 arguments; a call with more fails.
 - A record UDF gets a fresh instance per call and a stream UDF one instance per query thread, kept across
   that thread's partition slices; linear memory persists across the calls of one instance, so the Rust
   SDK's optional allocator is a real one that frees, not an arena reset per call. [How the engine runs a

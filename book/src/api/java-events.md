@@ -104,7 +104,8 @@ The final record: these bins, whole - a bin not in the map, or set to nil, is de
 the incoming write asked for. The map's keys are the bin names, so each is a string of 1 to 15 bytes.
 At least one bin must be left: an empty map, or one whose values are all nil, is the handler's failure
 and not a deletion, which is what `delete` is for. The builder is not used up and may still be
-added to before the handler returns.
+added to before the handler returns; it is read after the handler returns, so it must not be closed
+(nor made in a try-with-resources block) in the handler.
 
 #### `Resolution.record`
 

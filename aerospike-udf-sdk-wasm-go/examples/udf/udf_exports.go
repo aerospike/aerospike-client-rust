@@ -302,3 +302,29 @@ var udfSig_index_probe = []byte("fn index_probe(name: str, index: int) -> value\
 
 //export __udf_sig_index_probe
 func udfSigFn_index_probe() int32 { return udf.Signature(&udfSig_index_probe) }
+
+//export churn
+func udfExport_churn(args, argc int32) int32 {
+	var a [1]udf.Value
+	n := udf.Args(args, argc, a[:])
+	if err := udf.Arity("churn", 1, argc); err != nil {
+		return udf.FailErr(err)
+	}
+	p0, err := udf.ArgInt(a[:], n, 0, "churn", "count")
+	if err != nil {
+		return udf.FailErr(err)
+	}
+	r, err := churn(udf.CurrentRecord(), p0)
+	if err != nil {
+		return udf.FailErr(err)
+	}
+	if err := udf.ResultList(r); err != nil {
+		return udf.FailErr(err)
+	}
+	return 0
+}
+
+var udfSig_churn = []byte("fn churn(count: int) -> value\x00")
+
+//export __udf_sig_churn
+func udfSigFn_churn() int32 { return udf.Signature(&udfSig_churn) }

@@ -146,8 +146,14 @@ you push or insert into: `push(value)`, `insert("key", value)`, `insert(7, value
 collection of any size the call's memory allows; the host refusing one is `Err(Error::Refused)`.
 `contains_key("key")` asks a map you are building whether it has a key. `extend(iterator)` takes a whole iterator 128 values per import, including a stored collection's
 own iterator, so `list.extend(stored.iter())` copies a list without the guest seeing an element. A built
-collection converts into a `Value` with `into_value()` and can be returned, written to a bin, or nested
-in another.
+collection is written to a bin or nested in another by reference (`rec.set("tags", &list)`,
+`outer.push(&inner)`), and returned by value (`Ok(list.into())`, or `into_value()`).
+
+A `List` or `Map` owns its handle and gives it back when it is dropped; what it was set into or pushed
+into keeps the collection, because the host holds its own reference. So a loop that builds a collection
+per turn and nests it by reference holds one at a time, and an iterator gives its cursor back when it is
+dropped too. A call is bounded by its memory on the server, not by a count of handles. A collection turned
+into a `Value` by value keeps its handle until the call ends, since the value names it.
 
 ## Arguments
 

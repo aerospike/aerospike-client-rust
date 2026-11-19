@@ -272,7 +272,7 @@ fn mk_value(what: &str, n: i64) -> Result<Made, Error> {
                 let outer = as_udf::list(1)?;
 
                 // Deeper than the host nests, or more lists than a call may hold: refused.
-                outer.push(out)?;
+                outer.push(&out)?;
                 out = outer;
             }
 
@@ -745,14 +745,14 @@ as_udf::event! {
             .insert("lost", names(incoming.lost_bins()))?
             .insert(
                 "c_meta",
-                side_meta(&current, current.is_tombstone(), current.uses_bin_convergence())?,
+                &side_meta(&current, current.is_tombstone(), current.uses_bin_convergence())?,
             )?
-            .insert("i_meta", side_meta(&incoming, incoming.is_delete(), incoming.is_partial())?)?
+            .insert("i_meta", &side_meta(&incoming, incoming.is_delete(), incoming.is_partial())?)?
             .insert(
                 "blut",
-                sides(current.bin_last_update_time("s"), incoming.bin_last_update_time("s"))?,
+                &sides(current.bin_last_update_time("s"), incoming.bin_last_update_time("s"))?,
             )?
-            .insert("bsrc", sides(current.bin_source_id("s"), incoming.bin_source_id("s"))?)?;
+            .insert("bsrc", &sides(current.bin_source_id("s"), incoming.bin_source_id("s"))?)?;
 
         Ok(Resolution::Record { bins: out, ttl: None })
     }

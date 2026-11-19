@@ -20,14 +20,12 @@ import org.teavm.interop.Address;
  *
  * <p><b>The host's cursor is given back as soon as the last window is read</b>, which is before the walk
  * hands out its first element when the collection fits one window (128 values, 64 map entries). So a
- * for-each left early holds nothing in that case. A longer collection keeps its cursor between windows,
- * and a walk abandoned part way leaves it open; the host releases every handle of a call when the call
- * returns (per record, in a stream), so that costs one of the call's 256 handle slots until then and
- * nothing afterwards. There is no finalizer to do better with, and nothing for an entry point to release
- * that the host does not already.
- *
- * <p>The host gives a slot back only when it is the last one handed out, so walks nest (a list inside a
- * map) as loops do: the inner one finishes before the outer one steps on.
+ * for-each left early holds nothing in that case. A longer collection keeps its cursor between windows, and
+ * an iterator abandoned part way (a {@code break} or {@code return} out of a for-each) leaves it open: there
+ * is no finalizer to close it with. The host releases it when the call returns (per record, in a stream),
+ * and until then it costs the call a little of its memory, not a count of anything, so even a loop of
+ * abandoned walks runs until that memory is spent. Every walk the SDK makes for itself ({@code contains},
+ * {@code forEach}, the {@code java.util} conversions, the lookups) closes its cursor on every path out.
  */
 final class Walk {
     private final byte[] window;
@@ -49,7 +47,7 @@ final class Walk {
         cursor = Natives.cursorEnterAt(coll.src(), coll.at());
 
         if (cursor <= 0) {
-            // The host gives no reason: the value can no longer be read, or the call has no handle left.
+            // The host gives no reason: the value can no longer be read, or the call's memory is spent.
             throw new UdfException(LowLevel.ERR, "could not open the " + (coll.kind() == Value.MAP ? "map" : "list"));
         }
 

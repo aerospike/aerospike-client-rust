@@ -88,7 +88,7 @@ The kinds are `AS_UDF_NIL`, `AS_UDF_BOOL`, `AS_UDF_INT`, `AS_UDF_DOUBLE`, `AS_UD
   `AS_UDF_TYPE_MISMATCH` for any other kind.
 - `as_udf_cursor_enter_at(src, at)` opens a cursor over a list or map at a value's position;
   `as_udf_cursor_values(cur, out, cap)` fills `out` with the next values, 128 per import;
-  `as_udf_cursor_close(cur)` gives the slot back.
+  `as_udf_cursor_close(cur)` gives the cursor back.
 - `as_udf_coll_get(src, at, key, key_len, &v, sizeof v)` looks a string key up in a map; `as_udf_coll_get_int`
   an integer key. `as_udf_map_get(&map, "key")` and `as_udf_map_get_int(&map, 1)` are the same lookups on a
   value; a key the map does not have gives a value of kind `AS_UDF_ABSENT`, not an error.
@@ -196,8 +196,14 @@ none, a needed-length status when it does not fit), and `as_udf_rec_digest(buf, 
 `map_put_string_string`, `as_udf_map_put_string_value` (or `as_udf_map_put_value` with a NUL-terminated key)
 and `as_udf_map_put_int_value` for any kind. None of these takes a handle, so a loop builds as many elements as
 the call's memory allows. `as_udf_val_*` makes a value of its own on the host, by handle, for `list_push`,
-`map_put` and `map_put_string_handle`: each takes one of the call's 256 handles for good, so they are not for
-a loop. `list_push_values` and `map_put_entries` take an array of values in one import; build them with
+`map_put` and `map_put_string_handle`: each holds a handle until it is closed.
+
+`as_udf_handle_close(h)` gives any handle back: a built list or map once it has been stored, nested or
+returned (each of which takes its own reference on the host), an `as_udf_val_*` value once it is in, a
+cursor once its walk is done (`as_udf_cursor_close` is the same import). What is not closed is released
+when the call ends; closing twice, or a handle the host still needs (a bin a value reads from), does
+nothing. A call is bounded by its memory on the server, not by a count of handles, so a loop that builds
+and closes a collection per turn runs as long as that memory lasts. `list_push_values` and `map_put_entries` take an array of values in one import; build them with
 `as_udf_v_int`, `as_udf_v_double`, `as_udf_v_bool`, `as_udf_v_nil`, `as_udf_v_string`, `as_udf_v_blob`,
 `as_udf_v_geojson`, `as_udf_v_handle`. `as_udf_rec_set_value(name, len, &v)` stages a value of any kind into a
 bin. `as_udf_result_handle(h)` returns a built collection; `as_udf_result_at(src, at)` returns a stored value

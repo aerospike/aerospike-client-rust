@@ -351,8 +351,8 @@ Whether a stored list holds the string `text` (NUL-terminated, of any length) am
 that are not strings are not it. False when `list` is not of kind AS_UDF_LIST, which includes the
 AS_UDF_ABSENT of an event record's `deleted_bins` or `lost_bins` when there are none. Linear in the list. Only
 elements as long as `text` are copied out, into as many bytes of stack as `text` is long (see
-as_udf_string_is). The walk takes one handle for its cursor and gives it back; when no handle is free it
-cannot be made, and the answer is found the slow way, an element at a time, rather than given as false. For an
+as_udf_string_is). The walk takes one handle for its cursor and gives it back before it returns; when the
+call's memory has no room for one it cannot be made, and the answer is found the slow way, an element at a time, rather than given as false. For an
 event record's `bin_names`, `deleted_bins` and `lost_bins`, and any list of strings.
 
 #### `as_udf_event_with_bins`

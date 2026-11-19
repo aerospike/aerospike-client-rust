@@ -95,7 +95,7 @@ event! {
 
         let out = as_udf::map(1)?;
 
-        out.insert("counts", counts.into_map()?)?;
+        out.insert("counts", &counts.into_map()?)?;
 
         Ok(Resolution::Record { bins: incoming.with_bins(out)?, ttl: None })
     }
@@ -128,7 +128,7 @@ export! {
             counts.offer(site, n)?;
         }
 
-        rec.set("counts", counts.into_map()?)?;
+        rec.set("counts", &counts.into_map()?)?;
 
         rec.save()?;
 

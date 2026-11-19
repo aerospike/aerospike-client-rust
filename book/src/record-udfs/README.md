@@ -62,7 +62,7 @@ digest, set the TTL, and tell whether the record exists. It can write to the ser
 ## Limits
 
 A record UDF runs under the transaction's deadline and is stopped by the watchdog when that expires. It
-has 256 handles for cursors and built collections per call, 128 arguments at most (a call with more fails), and the module's
+holds its cursors and built collections within its memory budget, not up to a fixed count (each SDK gives them back when it is done with them), 128 arguments at most (a call with more fails), and the module's
 `max-memory` of linear memory. It cannot read or write another record.
 
 ## Calling from a client

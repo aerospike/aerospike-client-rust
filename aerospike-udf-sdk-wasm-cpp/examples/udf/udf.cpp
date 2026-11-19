@@ -242,8 +242,8 @@ UDF_FUNCTION(index_probe, udf::Result<udf::Map>, const udf::Record& rec, udf::Te
 	return out;
 }
 
-// Takes every handle the call has left, by building empty lists until the host refuses one. Nothing gives
-// them back before the call ends.
+// Takes what the call has left, by building empty lists through the C API until the host refuses one: when the
+// call's memory on the server is spent. Nothing gives them back before the call ends.
 static void take_every_handle()
 {
 	while (as_udf_list_new(0) > 0) {
@@ -288,4 +288,35 @@ UDF_FUNCTION(stop_probe, udf::Result<int64_t>, udf::Record& rec, udf::Text<16> w
 	if (what == "reread") return UDF_TRY(udf::required(rec.list("l"), "stop_probe: l unreadable again")).size();
 
 	return udf::error(AS_UDF_ERR, "stop_probe: no such probe");
+}
+
+// Builds `count` maps, each holding a list, nested in one outer list: each is given back when it goes out of
+// scope, the outer list keeping it. Then walks every list of list bin `nested` with a range-for of its own,
+// whose cursor closes when the loop ends. Answers [elements, sum]. The call holds a few handles at a time
+// however large `count` is: what bounds it is its memory, not a number of handles.
+UDF_FUNCTION(churn, udf::Result<udf::List>, const udf::Record& rec, int64_t count)
+{
+	udf::List out(0);
+
+	for (int64_t i = 0; i < count; i++) {
+		udf::List inner(2);
+		udf::Map entry(1);
+
+		inner.add(i).add(1);
+		entry.put("l", inner);
+		out.add(entry);
+	}
+	UDF_TRY(out.result());
+
+	udf::ListRange nested = UDF_TRY(udf::required(rec.list("nested"), "churn: no list bin nested"));
+	int64_t sum = 0;
+
+	for (udf::Value row : nested) {
+		for (udf::Value cell : row.list()) sum += UDF_TRY(cell.as_int()).value_or(0);
+	}
+
+	udf::List answer(2);
+
+	answer.add((int64_t)out.size()).add(sum);
+	return answer;
 }

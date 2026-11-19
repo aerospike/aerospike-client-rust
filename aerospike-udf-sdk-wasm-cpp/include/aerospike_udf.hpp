@@ -470,13 +470,13 @@ class MapRange;
 namespace detail {
 
 // A stored value the host could not read where an answer of "nothing" would be taken for "not there": a
-// lookup or a walk in a value a failed save has ended, or a walk with every handle in use. There is no
+// lookup or a walk in a value a failed save has ended, or a walk the call's memory has no room for. There is no
 // error to return from those, and a wrong "nothing" is worse than none, so the call is failed with a
 // message that says why and stopped.
 [[noreturn]] inline void unreadable()
 {
-	as_udf_fail_str("could not read a bin or a stored list or map: the call's 256 handles are all in use, or "
-	                "the value is no longer readable after a failed save");
+	as_udf_fail_str("could not read a bin or a stored list or map: the call has spent the memory it may hold on "
+	                "the server, or the value is no longer readable after a failed save");
 	__builtin_trap();
 }
 
@@ -884,10 +884,10 @@ struct RangeEnd {};
 
 // The elements of a stored list, for a range-for. Made by Value::list(), and handed out by Record::list() and
 // EventRecord::list() when the bin is a list; empty when the value it was made from is not a list. The loop reads the list 32 elements a host call and holds
-// one of the call's handles while it runs, given back when it ends or breaks unless the body took a handle of its
-// own in the meantime. Each element is a Value: a scalar in itself, a string or nested collection by position.
-// If the host cannot open or continue the walk (every handle in use, or the value ended by a failed save), the
-// call is failed and stopped there: a loop is never handed a shorter list than the stored one.
+// a cursor on the host while it runs, given back when it ends, breaks or returns. Each element is a Value: a
+// scalar in itself, a string or nested collection by position. If the host cannot open or continue the walk (the
+// call's memory on the server has no room for the cursor, or the value ended by a failed save), the call is
+// failed and stopped there: a loop is never handed a shorter list than the stored one.
 //
 // ```cpp
 // int64_t total = 0;
@@ -1027,7 +1027,10 @@ class List;
 // order the entries were put in. It is built once and not read back entry by entry: contains() and size() are
 // what it answers.
 //
-// Copying a Map copies the handle, not the entries: both copies are the same map.
+// A Map owns its handle and gives it back to the host when it is destroyed. It moves and does not copy; a
+// moved-from Map is null and gives nothing back. What it was put into, added to, set as a bin or returned as keeps
+// the map, since the host holds its own reference to what it is handed, so a loop that builds a map per iteration
+// and nests it holds one at a time: a call is bounded by its memory on the server, not by a count of handles.
 //
 // ```cpp
 // udf::Map profile(4);
@@ -1045,9 +1048,40 @@ public:
 	{
 		if (handle_ <= 0) err_ = udf::error(AS_UDF_ERR, "could not build a map");
 	}
+	Map(const Map&) = delete;
+	Map& operator=(const Map&) = delete;
+	Map(Map&& o) : handle_(o.handle_), err_(o.err_) { o.handle_ = 0; }
+	Map& operator=(Map&& o)
+	{
+		if (this != &o) {
+			close();
+			handle_ = o.handle_;
+			err_ = o.err_;
+			o.handle_ = 0;
+		}
+		return *this;
+	}
+	~Map() { close(); }
 	// wrap() adopts a handle the host already issued (one from the C header's as_udf_map_new), without building a
-	// new map. The handle is not checked: a put on one that is not a built map fails.
+	// new map, and owns it from then on: it is given back when the Map is destroyed. The handle is not checked: a
+	// put on one that is not a built map fails.
 	static Map wrap(int32_t handle) { Map m(Wrapped{}, handle); return m; }
+
+	// Gives the handle back to the host now rather than at destruction, leaving a null map. What the map was
+	// handed to keeps it. Closing twice, or a null map, does nothing.
+	void close()
+	{
+		if (handle_ > 0) as_udf_handle_close(handle_);
+		handle_ = 0;
+	}
+	// Gives up the handle without closing it, leaving a null map: for a caller that hands it to the C API and
+	// closes it there, or lets it go at the end of the call.
+	int32_t release()
+	{
+		int32_t h = handle_;
+		handle_ = 0;
+		return h;
+	}
 
 	// The host's handle of the map: 0 for a null map, not positive when the map could not be built.
 	int32_t handle() const { return handle_; }
@@ -1058,7 +1092,8 @@ public:
 	// The number of entries the map holds, asked of the host; negative when the handle is not a valid one.
 	int32_t size() const { return as_udf_coll_size(handle_); }
 	// The map as a Value of kind Handle, to nest it in a batch (List::add_values, Map::put_entries) or to
-	// pass it to udf::result().
+	// pass it to udf::result(). The Value names the map's handle, so it is good while the Map lives; a Value
+	// that has to outlive the Map, such as one a function returns, is `udf::Value::handle(m.release())`.
 	Value value() const { return Value::handle(handle_); }
 
 	// Whether the map holds no entry, which is also what a map that could not be built answers.
@@ -1076,8 +1111,8 @@ public:
 	Map& put(StrView key, int64_t v) { return check(as_udf_map_put_string_int(handle_, key.data, key.len, v), key); }
 	// Puts an int under a string key, widened to 64 bits.
 	Map& put(StrView key, int v) { return put(key, (int64_t)v); }
-	// Puts a double under a string key. Like every put, it takes none of the call's 256 handles, so a loop puts
-	// as many entries as the call's memory allows.
+	// Puts a double under a string key. Like every put, it takes no handle, so a loop puts as many entries as the
+	// call's memory allows.
 	Map& put(StrView key, double v) { return put(key, Value::of(v)); }
 	// Puts a boolean under a string key.
 	Map& put(StrView key, bool v) { return put(key, Value::of(v)); }
@@ -1183,8 +1218,8 @@ private:
 // A list being built on the host, held by handle: the way to make a list bin or a list result. `udf::List
 // l(capacity)` starts one; the capacity is a hint and the list grows past it. The adds chain, and an add the host
 // refuses does not stop the chain: the first failure is kept and reported by error() and result(), and
-// Record::set and a returned List fail with it. It is built once and not read back element by element. Copying a
-// List copies the handle: both copies are the same list.
+// Record::set and a returned List fail with it. It is built once and not read back element by element. Like a
+// Map, a List owns its handle, gives it back when destroyed, and moves rather than copies.
 //
 // ```cpp
 // UDF_FUNCTION(evens, udf::Result<udf::List>, const udf::Record& rec)
@@ -1206,9 +1241,39 @@ public:
 	{
 		if (handle_ <= 0) err_ = udf::error(AS_UDF_ERR, "could not build a list");
 	}
+	List(const List&) = delete;
+	List& operator=(const List&) = delete;
+	List(List&& o) : handle_(o.handle_), err_(o.err_) { o.handle_ = 0; }
+	List& operator=(List&& o)
+	{
+		if (this != &o) {
+			close();
+			handle_ = o.handle_;
+			err_ = o.err_;
+			o.handle_ = 0;
+		}
+		return *this;
+	}
+	~List() { close(); }
 	// wrap() adopts a handle the host already issued (one from the C header's as_udf_list_new), without building
-	// a new list. The handle is not checked: an add to one that is not a built list fails.
+	// a new list, and owns it from then on. The handle is not checked: an add to one that is not a built list
+	// fails.
 	static List wrap(int32_t handle) { List l(Wrapped{}, handle); return l; }
+
+	// Gives the handle back to the host now, leaving a null list; what the list was handed to keeps it. Closing
+	// twice, or a null list, does nothing.
+	void close()
+	{
+		if (handle_ > 0) as_udf_handle_close(handle_);
+		handle_ = 0;
+	}
+	// Gives up the handle without closing it, leaving a null list.
+	int32_t release()
+	{
+		int32_t h = handle_;
+		handle_ = 0;
+		return h;
+	}
 
 	// The host's handle of the list: 0 for a null list, not positive when the list could not be built.
 	int32_t handle() const { return handle_; }
@@ -1221,7 +1286,7 @@ public:
 	// Whether the list holds no element, which is also what a list that could not be built answers.
 	bool empty() const { return size() <= 0; }
 	// The list as a Value of kind Handle, to nest it in a batch (List::add_values, Map::put_entries) or to
-	// pass it to udf::result().
+	// pass it to udf::result(). Good while the List lives, as Map::value() says.
 	Value value() const { return Value::handle(handle_); }
 
 	// Appends an integer. Like every add, returns the list for chaining and keeps the first failure for
@@ -1229,8 +1294,8 @@ public:
 	List& add(int64_t v) { return check(as_udf_list_push_int(handle_, v)); }
 	// Appends an int, widened to 64 bits.
 	List& add(int v) { return add((int64_t)v); }
-	// Appends a double. Like every add, it takes none of the call's 256 handles, so a loop adds as many elements as
-	// the call's memory allows.
+	// Appends a double. Like every add, it takes no handle, so a loop adds as many elements as the call's memory
+	// allows.
 	List& add(double v) { return check(as_udf_list_push_double(handle_, v)); }
 	// Appends a boolean.
 	List& add(bool v) { return check(as_udf_list_push_bool(handle_, v)); }
@@ -2077,14 +2142,16 @@ private:
 // ```
 struct Resolution {
 	const char* verdict;
-	int32_t bins;
+	// The bins of record(), owned until the resolution is delivered and then given back with it.
+	Map bins;
 	int64_t ttl;
 	Error err;
 
 	// An empty resolution, for a Result that failed; never delivered.
-	Resolution() : verdict(""), bins(0), ttl(-1), err() {}
-	Resolution(const char* verdict_, int32_t bins_ = 0, int64_t ttl_ = -1, Error err_ = {})
-	    : verdict(verdict_), bins(bins_), ttl(ttl_), err(err_) {}
+	Resolution() : verdict(""), bins(), ttl(-1), err() {}
+	Resolution(const char* verdict_) : verdict(verdict_), bins(), ttl(-1), err() {}
+	Resolution(const char* verdict_, Map&& bins_, int64_t ttl_, Error err_)
+	    : verdict(verdict_), bins(static_cast<Map&&>(bins_)), ttl(ttl_), err(err_) {}
 
 	// Keeps the current record as it is on this cluster; the incoming write is not applied.
 	static Resolution keep_local() { return Resolution{"keep-local"}; }
@@ -2100,8 +2167,15 @@ struct Resolution {
 	// it or nil in it is deleted. At least one bin must be left: a record of no bins is the handler's failure,
 	// not a deletion, which is delete_record(). `ttl` is the record's time to live in seconds, 0 for the
 	// namespace default; -1, the default, keeps the incoming write's. A failure the map kept from one of its puts
-	// fails the call when the resolution is delivered.
-	static Resolution record(const Map& bins, int64_t ttl = -1) { return Resolution{"record", bins.handle(), ttl, bins.error()}; }
+	// fails the call when the resolution is delivered. The resolution takes the map over, so it outlives the
+	// handler's own Map, which is left null: `record(pair.with_newer(out))` is the usual form.
+	static Resolution record(Map& bins, int64_t ttl = -1)
+	{
+		Error e = bins.error();
+		return Resolution{"record", static_cast<Map&&>(bins), ttl, e};
+	}
+	// The same, for a map made in place.
+	static Resolution record(Map&& bins, int64_t ttl = -1) { return record(bins, ttl); }
 
 	// Delivers the resolution and returns the status the export returns: the verdict word, or for record()
 	// the final bins and TTL. Fails the call instead when the bins map kept a failure. The generated export
@@ -2109,11 +2183,11 @@ struct Resolution {
 	int32_t deliver() const
 	{
 		if (err.failed()) return fail(err);
-		if (bins == 0) {
+		if (bins.handle() == 0) {
 			as_udf_result_string(verdict, detail::cstrlen(verdict));
 			return 0;
 		}
-		return as_udf_resolve_record(bins, ttl);
+		return as_udf_resolve_record(bins.handle(), ttl);
 	}
 };
 

@@ -313,12 +313,27 @@ public final class Params {
 
     /** Delivers a {@code java.util.List} as a list result, its elements as a builder takes them; null is nil. */
     public static void result(List<?> l) {
-        Udf.result(l == null ? null : Udf.list(l.size()).addAll(l).asValue());
+        if (l == null) {
+            Udf.result(null);
+            return;
+        }
+
+        // The result is the host's own reference, so the list built for it is given back at once.
+        try (ListBuilder out = Udf.list(l.size())) {
+            Udf.result(out.addAll(l).asValue());
+        }
     }
 
     /** Delivers a {@code java.util.Map} as a map result, its entries as a builder takes them; null is nil. */
     public static void result(Map<?, ?> m) {
-        Udf.result(m == null ? null : Udf.map(m.size()).putAll(m).asValue());
+        if (m == null) {
+            Udf.result(null);
+            return;
+        }
+
+        try (MapBuilder out = Udf.map(m.size())) {
+            Udf.result(out.putAll(m).asValue());
+        }
     }
 
     /** Delivers a string as the result; null is nil, which is the difference from {@link Udf#resultString}. */

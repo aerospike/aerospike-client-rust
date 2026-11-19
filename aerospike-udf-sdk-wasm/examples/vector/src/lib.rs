@@ -438,10 +438,10 @@ fn end() -> Result<Value<'static>, Error> {
             ("digest", Value::from(&hit.digest[..])),
             ("key", Value::from(key)),
         ])?;
-        hits.push(entry)?;
+        hits.push(&entry)?;
     }
 
-    out.insert("hits", hits)?
+    out.insert("hits", &hits)?
         .insert("skipped_dim", s.skipped_dim)?
         .insert("skipped_none", s.skipped_none)?;
 

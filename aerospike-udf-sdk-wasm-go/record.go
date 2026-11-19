@@ -304,8 +304,9 @@ func CurrentRecord() *Record { return &current }
 // absent too, since a bin cannot hold nil, and so is a name that is empty or longer than 15 bytes.
 //
 // The value is what the call has staged for the bin, if it has staged anything, and what is stored
-// otherwise. Reading a string, blob, list or map bin takes one of the 256 handles a call may hold,
-// each time it is read: read such a bin once and keep the Value.
+// otherwise. Reading a string, blob, list or map bin takes a handle on the host, charged to the call's
+// memory and kept until the call ends, since the Value reads from it: read such a bin once and keep
+// the Value.
 //
 //	balance, err := rec.Bin("balance")
 //	if err != nil {
@@ -330,8 +331,8 @@ func (r *Record) Bin(name string) (Value, error) {
 // stream's per-record path.
 //
 // The error is the bin that could not be read at all, which is not the same as absent: Status Err
-// for a name that is not a bin name - empty, longer than 15 bytes - or for a call that holds its 256
-// handles.
+// for a name that is not a bin name - empty, longer than 15 bytes - or for a call that has spent the
+// memory it may hold on the server.
 func (r *Record) Get(name string) (Value, bool, error) {
 	var v Value
 	rc := binValue(strptr(name), int32(len(name)), unsafe.Pointer(&v), 16)

@@ -541,11 +541,12 @@ public final class EventRecord implements RecordReader {
      * </pre>
      */
     public MapBuilder withBins(MapBuilder overrides) {
-        for (Value name : binNames()) {
+        // forEach gives the walk's cursor back when a read or a put throws part way.
+        binNames().forEach(name -> {
             String bin = name.asString();
 
             if (overrides.containsKey(bin)) {
-                continue;
+                return;
             }
 
             Value val = get(bin);
@@ -553,7 +554,7 @@ public final class EventRecord implements RecordReader {
             if (val != null) {
                 overrides.put(bin, val);
             }
-        }
+        });
 
         return overrides;
     }

@@ -115,9 +115,13 @@ The three directives are the Go face of the Rust SDK's `export!`, `stream!` and 
 - **`*udf.Map` and `*udf.List`**: collections built on the host, with chainable `Put(key, any)` / `Add(any)`
   over every kind, the key a string or an integer, `PutGeoJSON` / `AddGeoJSON`, `PutAll` / `AddAll` from a
   stored collection by position, `PutEntries` / `AddValues` for a batch in one import, `Len()`, and
-  `Map.Contains(key)`, which the host answers without packing the map; no put or add takes one of the
-  call's 256 handles, so a loop builds thousands of entries; the first refusal is kept and answered by
-  `Err()`. Written to a bin, returned as the result, nested, or handed back from a handler.
+  `Map.Contains(key)`, which the host answers without packing the map; no put or add takes a handle, so a
+  loop builds thousands of entries; the first refusal is kept and answered by `Err()`. Written to a bin,
+  returned as the result, nested, or handed back from a handler. **`Close()`** gives the collection's
+  handle back once it has been handed over (the host keeps its own reference to what it is given);
+  one not closed is given back when the call ends. A call is bounded by its memory on the server, not by
+  a count of handles, so a loop that builds and closes a collection per iteration runs as long as the
+  memory lasts. Every walk the SDK makes closes its cursor when it ends, early exit included.
 - **Not about the record**, so on the package: `udf.Now`, `udf.Log`, `udf.Fail`, the `Result*` calls.
 - **Errors carry their status.** Every error the SDK returns is a `*udf.Error` whose `Status` is the
   host's (`udf.NotFound`, `udf.TypeMismatch`, `udf.Refused`, `udf.Err`, or at or below `udf.NeededBase`

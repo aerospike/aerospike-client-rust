@@ -69,11 +69,16 @@ final class Convert {
         }
 
         // Each element is taken out of the walk's window before it is converted, so a nested collection
-        // opens its own walk only after this one has stepped.
+        // opens its own walk only after this one has stepped. The cursor goes back however the walk ends.
         Walk walk = new Walk(list);
 
-        while (walk.more()) {
-            out.add(toObject(walk.next(new Value())));
+        try {
+            while (walk.more()) {
+                out.add(toObject(walk.next(new Value())));
+            }
+        }
+        finally {
+            walk.close();
         }
 
         return out;
@@ -89,16 +94,21 @@ final class Convert {
 
         Walk walk = new Walk(map);
 
-        while (walk.more()) {
-            Value key = walk.next(new Value());
+        try {
+            while (walk.more()) {
+                Value key = walk.next(new Value());
 
-            if (!walk.more()) {
-                throw new UdfException(LowLevel.ERR, "the map ended on a key");
+                if (!walk.more()) {
+                    throw new UdfException(LowLevel.ERR, "the map ended on a key");
+                }
+
+                Value value = walk.next(new Value());
+
+                out.put(toObject(key), toObject(value));
             }
-
-            Value value = walk.next(new Value());
-
-            out.put(toObject(key), toObject(value));
+        }
+        finally {
+            walk.close();
         }
 
         return out;
@@ -150,7 +160,7 @@ final class Convert {
         }
     }
 
-    /** The value a Java object is, for a map entry: scalars and bytes as they are, collections built. */
+    /** The value a Java object is, for a map entry: scalars, bytes and what is already a value. */
     static Value valueOf(Object o) {
         if (o == null) {
             return Value.ofNil();
@@ -196,24 +206,36 @@ final class Convert {
             return ((MapBuilder) o).asValue();
         }
 
-        if (o instanceof List) {
-            return Udf.list(((List<?>) o).size()).addAll((List<?>) o).asValue();
-        }
-
-        if (o instanceof Map) {
-            return Udf.map(((Map<?, ?>) o).size()).putAll((Map<?, ?>) o).asValue();
-        }
-
         throw new UdfException(LowLevel.TYPE_MISMATCH, "a " + o.getClass().getName() + " cannot go into a map");
     }
 
-    /** Puts one entry of a {@code java.util.Map} into a map being built; the key is a string or an integer. */
+    /**
+     * Puts one entry of a {@code java.util.Map} into a map being built; the key is a string or an integer. A
+     * nested {@code java.util} collection is built for the entry and its handle given back once the map
+     * holds it.
+     */
     static void put(MapBuilder map, Object key, Object value) {
+        if (value instanceof List) {
+            try (ListBuilder nested = Udf.list(((List<?>) value).size())) {
+                putValue(map, key, nested.addAll((List<?>) value).asValue());
+            }
+        }
+        else if (value instanceof Map) {
+            try (MapBuilder nested = Udf.map(((Map<?, ?>) value).size())) {
+                putValue(map, key, nested.putAll((Map<?, ?>) value).asValue());
+            }
+        }
+        else {
+            putValue(map, key, valueOf(value));
+        }
+    }
+
+    private static void putValue(MapBuilder map, Object key, Value value) {
         if (key instanceof String) {
-            map.put((String) key, valueOf(value));
+            map.put((String) key, value);
         }
         else if (key instanceof Long || key instanceof Integer || key instanceof Short || key instanceof Byte) {
-            map.put(((Number) key).longValue(), valueOf(value));
+            map.put(((Number) key).longValue(), value);
         }
         else {
             throw new UdfException(LowLevel.TYPE_MISMATCH, "a map key is a String or an integer, not "

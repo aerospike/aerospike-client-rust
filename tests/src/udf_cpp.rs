@@ -434,11 +434,11 @@ const APITEST_C: &[u8] = include_bytes!("../fixtures/wasm/apitest_c.wasm");
 
 /// What the C++ SDK fails a call with when it cannot read a bin or a stored list or map
 /// (`detail::unreadable`).
-const CPP_UNREADABLE: &str = "could not read a bin or a stored list or map: the call's 256 handles are all in \
-                              use, or the value is no longer readable after a failed save";
+const CPP_UNREADABLE: &str = "could not read a bin or a stored list or map: the call has spent the memory it \
+                              may hold on the server, or the value is no longer readable after a failed save";
 /// What the C SDK fails a call with when a bin read fails for a reason other than "no such bin"
 /// (`as_udf_rec_unreadable`).
-const C_UNREADABLE: &str = "could not read a bin: the call's 256 handles are all in use";
+const C_UNREADABLE: &str = "could not read a bin: the call has spent the memory it may hold on the server";
 
 /// Calls `function(what)` on `key` and asserts that it failed with `message` rather than answering, and
 /// that the record is as it was before: the probes save a bin `x` first, which a failed call undoes.
@@ -535,4 +535,49 @@ async fn c_unreadable_bins_stop_the_call() {
     assert_eq!(result, Some(Value::Int(5)), "a bin read before the table filled reads again");
 
     let _ = client.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
+}
+
+/// Calls `churn(count)` on a record whose bin `nested` holds `count` lists `[i, 1]`, and checks its answer:
+/// `count` maps each holding a list built and given back as they go, and `count` walks of the nested lists
+/// with a cursor each, closed as each ends. 6000 handles in one call, a few at a time.
+async fn assert_churn(module: &[u8], prefix: &str, test: &str) {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("{prefix}_{}", common::rand_str(6));
+
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+    let count = 2000i64;
+    let nested: Vec<Value> = (0..count).map(|i| as_list!(i, 1)).collect();
+    client.put(&write, &key, &[as_bin!("nested", Value::List(nested))]).await.unwrap();
+
+    if let Err(reason) = register(&client, module, package).await {
+        skipped(test, &reason);
+        return;
+    }
+
+    let result = client
+        .execute_udf(&write, &key, package, "churn", &[Value::Int(count)])
+        .await
+        .unwrap();
+    let sum = (0..count).sum::<i64>() + count;
+
+    assert_eq!(result, Some(Value::List(vec![Value::Int(count), Value::Int(sum)])), "{test}");
+
+    let _ = client.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
+}
+
+/// The C++ SDK gives a built collection's handle back when it is destroyed, and a range-for's cursor when the
+/// loop ends.
+#[aerospike_macro::test]
+async fn a_cpp_udf_gives_back_what_it_builds_and_walks() {
+    assert_churn(FIXTURE, "cpp_churn", "a_cpp_udf_gives_back_what_it_builds_and_walks").await;
+}
+
+/// The C SDK gives back what `as_udf_handle_close` is given: the C apitest's `churn` closes every map, list
+/// and cursor it makes.
+#[aerospike_macro::test]
+async fn a_c_udf_gives_back_what_it_closes() {
+    assert_churn(APITEST_C, "c_churn", "a_c_udf_gives_back_what_it_closes").await;
 }

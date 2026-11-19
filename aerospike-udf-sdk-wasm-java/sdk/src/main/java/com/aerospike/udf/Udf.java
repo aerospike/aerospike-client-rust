@@ -82,7 +82,7 @@ public final class Udf {
 
     /**
      * Starts an empty list on the server, to add to and then write to a bin, return, or nest. Throws
-     * {@link UdfException} when the call has no handle left for it, or has built as much as it is allowed.
+     * {@link UdfException} when the call has spent the memory it may hold on the server.
      *
      * <pre>
      * ListBuilder recent = Udf.list().add(page).addAll(rec.getList("recent"));
@@ -105,7 +105,7 @@ public final class Udf {
 
     /**
      * Starts an empty map on the server, to put into and then write to a bin, return, or nest. Throws
-     * {@link UdfException} when the call has no handle left for it, or has built as much as it is allowed.
+     * {@link UdfException} when the call has spent the memory it may hold on the server.
      *
      * <pre>
      * MapBuilder stats = Udf.map().put("visits", visits).put("last", page);

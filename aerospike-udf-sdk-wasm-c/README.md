@@ -63,8 +63,12 @@ SSE ahead of time. Off by default: a module built with it is refused by a server
   (`as_udf_list_push_int`, `_double`, `_bool`, `_nil`, `_string`, `_blob`, `_geojson`, `as_udf_list_push_value`
   for any kind; `as_udf_map_put_string_value` and `as_udf_map_put_int_value` for an entry of any kind), none
   of which takes a handle, or in a batch of guest values with `as_udf_map_put_entries` /
-  `as_udf_list_push_values`. The `as_udf_val_*` values each take one of the call's 256 handles for good: not
-  for a loop. `as_udf_rec_set_value` stages a value of any kind into a bin.
+  `as_udf_list_push_values`. A built list or map, an `as_udf_val_*` value and a cursor each hold a handle until
+  `as_udf_handle_close(h)` gives it back (`as_udf_cursor_close` is the same import), or the call ends: close
+  each once it is stored, nested or returned, since the host keeps its own reference to what it is handed. A
+  call is bounded by its memory on the server, not by a count of handles, so a loop that builds and closes
+  one collection per iteration runs as long as the memory lasts. The SDK's own walks close their cursors.
+  `as_udf_rec_set_value` stages a value of any kind into a bin.
   `as_udf_map_contains(handle, "key")` asks the host whether a map being built has a key, and
   `as_udf_list_at(&list, index)` reads one element of a stored list without a cursor.
 - `AS_UDF_SIGNATURE(name, "fn name(a: int) -> value")` exports the signature a client can read with an

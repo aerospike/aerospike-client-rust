@@ -17,9 +17,10 @@ pub enum Error {
     /// The host would not do it. The record is read-only here (a stream UDF's record; an event handler has no
     /// record to write), the server rejected the write, the clock was asked for in an event handler, a
     /// collection would nest more than 64 deep, a call came with more than [`MAX_ARGS`] arguments, or the
-    /// call has used up what it may hold on the host: 256 collections, strings read and open iterators at a
-    /// time, and a memory budget. It is also what [`List::push`] and [`Map::insert`] answer when the host
-    /// does not take the value, whatever the reason.
+    /// call has used up the memory it may hold on the server: every collection, string read and open
+    /// iterator counts against that budget, and there is no limit on how many of them there are. It is also
+    /// what [`List::push`] and [`Map::insert`] answer when the host does not take the value, whatever the
+    /// reason.
     Refused,
     /// The host could not decode the stored bytes, or text that had to be UTF-8 was not. Also what a write
     /// answers for a name that cannot be a bin name (empty, longer than 15 bytes, or with a zero byte in it),
@@ -854,9 +855,11 @@ and the iterator ends after it.
 A nested list or map comes out as a `Value::List` / `Value::Map` that iterates the same way, and
 the walk continues after it.
 
-An iterator holds one of the call's 256 host slots until it is dropped. When none is left, or the
-collection is no longer valid (see `Value`), the iterator yields one `Err(Refused)` and ends. A
-built collection is walked through a packed copy of it, so finish building it before iterating it.
+An iterator holds a cursor on the host until it is dropped, which gives it back. When the call's
+memory on the server has no room for one, or the collection is no longer valid (see `Value`), the
+iterator yields one `Err(Refused)` and ends. A built collection is walked through a packed copy of
+it, so finish building it before iterating it; the copy stays until the call ends, because the
+values the walk yields read from it.
 
 ```rust
 let mut longest = 0;
@@ -955,7 +958,7 @@ pub struct Iter
 ```
 
 The values of a collection, 128 per import call. Made by `Coll::iter`; an `Iterator` of `Result<Value,
-Error>`. About 2 KB on the guest's stack, and one of the call's 256 host slots while it lives.
+Error>`. About 2 KB on the guest's stack, and a cursor on the host until it is dropped.
 
 #### `impl Iterator for Iter`
 
@@ -1517,7 +1520,7 @@ pub fn list(capacity: usize) -> Result<List, Error>
 Start a list. It lives on the host; hand it to `Record::set`, return it, or nest it in another.
 
 `capacity` is a hint of how many elements to make room for, not a limit: the list grows as needed, and `0`
-is fine. The list lasts until the call ends.
+is fine. The `List` gives its handle back when it is dropped; what it was handed to keeps the list.
 
 ```rust
 let recent = as_udf::list(3)?;
@@ -1527,8 +1530,8 @@ rec.set("recent", recent)?;
 rec.save()?;
 ```
 
-`Err(Refused)` when the host cannot make one: the call may hold 256 host values at a time, within a memory
-budget.
+`Err(Refused)` when the host cannot make one: what a call holds on the host is bounded by its memory
+budget, not by a count.
 
 #### `map`
 
@@ -1539,8 +1542,9 @@ pub fn map(capacity: usize) -> Result<Map, Error>
 Start a map. Entries come out ordered by key, whatever order they go in: that is how it is stored,
 returned and iterated.
 
-`capacity` is a hint of how many entries to make room for, not a limit. The map lives on the host until
-the call ends; hand it to `Record::set`, return it, or nest it in another.
+`capacity` is a hint of how many entries to make room for, not a limit. The map lives on the host; hand
+it to `Record::set`, return it, or nest it in another. The `Map` gives its handle back when it is
+dropped; what it was handed to keeps the map.
 
 ```rust
 let summary = as_udf::map(2)?;
@@ -1550,8 +1554,8 @@ summary.insert("balance", balance)?.insert("owner", "alice")?;
 Ok(summary.into())
 ```
 
-`Err(Refused)` when the host cannot make one: the call may hold 256 host values at a time, within a memory
-budget.
+`Err(Refused)` when the host cannot make one: what a call holds on the host is bounded by its memory
+budget, not by a count.
 
 #### `List`
 
@@ -1559,11 +1563,18 @@ budget.
 pub struct List
 ```
 
-A list under construction, made by `list`. It lives on the host; this is its handle, which is `Copy`, so
-every copy is the same list. Elements are added with `push` and `extend`
-through `&self`, and the list is finished by handing it over: to `Record::set`, to another collection,
-or as the UDF's result (`Ok(list.into())`). It can still be added to after that, and what it was handed to
-sees the additions, because the host shares the list rather than copying it.
+A list under construction, made by `list`. It lives on the host; this is its handle, and it owns it.
+Elements are added with `push` and `extend` through `&self`, and the list is
+finished by handing it over: to `Record::set` or to another collection by reference (`rec.set("b",
+&list)`, `outer.push(&list)`), or as the UDF's result by value (`Ok(list.into())`). It can still be added
+to after it was handed over by reference, and what it was handed to sees the additions, because the host
+shares the list rather than copying it.
+
+**Dropping it gives the handle back**, so a loop that builds a list per iteration and hands each one over
+by reference holds one at a time, and is bounded by the call's memory budget, not by a count. What it was
+handed to keeps the list: the host holds its own reference. A list turned into a value
+(`into_value`, `list.into()`) is no longer dropped: its handle stays until the call
+ends, because the value may still name it.
 
 #### `List::push`
 
@@ -1577,8 +1588,7 @@ through the guest. Guest bytes are copied during the call. Returns the list, so 
 `list.push(1)?.push("two")?`.
 
 A push holds nothing on the host but the element itself, whatever its kind, so a loop may push as many
-as the call's memory budget takes: the limit of 256 is on collections, strings read and iterators,
-not on elements.
+as the call's memory budget takes.
 
 `Err(WrongType)` for a value that cannot be an element: `Value::Other`, an HLL made from guest
 bytes. `Err(Refused)` when the host does not take it: a list may not contain itself or nest more than
@@ -1606,7 +1616,26 @@ pub fn into_value(self) -> Value<'static>
 ```
 
 The finished list, as a value to return or store: a `Value::List` holding the same host list.
-`list.into()` does the same.
+`list.into()` does the same. The handle is kept until the call ends, since the value names it; to
+store or nest a list and give its handle back, pass `&list` instead.
+
+#### `List::as_value`
+
+```rust
+pub fn as_value(&self) -> Value<'_>
+```
+
+The list as a value borrowed from it, for `Record::set` or a push into another collection, which
+take their own reference to the list: the list still gives its handle back when dropped. `&list`
+converts the same way.
+
+#### `impl Drop for List`
+
+```rust
+impl Drop for List
+```
+
+Gives the list's handle back to the host. What the list was set into or pushed into keeps it.
 
 #### `Map`
 
@@ -1615,10 +1644,13 @@ pub struct Map
 ```
 
 A map under construction, made by `map`, keyed by strings or integers. It lives on the host; this is its
-handle, which is `Copy`, so every copy is the same map. Entries are added with `insert` and
-`extend` through `&self`, and the map is finished by handing it over: to `Record::set`,
-to another collection, or as the UDF's result (`Ok(map.into())`). Whatever order entries go in, the map is
-ordered by key.
+handle, and it owns it. Entries are added with `insert` and `extend` through
+`&self`, and the map is finished by handing it over: to `Record::set` or to another collection by
+reference (`&map`), or as the UDF's result by value (`Ok(map.into())`). Whatever order entries go in, the
+map is ordered by key.
+
+**Dropping it gives the handle back**, as for a `List`; a map turned into a value keeps its handle until
+the call ends.
 
 #### `MapKey`
 
@@ -1693,7 +1725,26 @@ pub fn into_value(self) -> Value<'static>
 ```
 
 The finished map, as a value to return or store: a `Value::Map` holding the same host map.
-`map.into()` does the same.
+`map.into()` does the same. The handle is kept until the call ends, since the value names it; to
+store or nest a map and give its handle back, pass `&map` instead.
+
+#### `Map::as_value`
+
+```rust
+pub fn as_value(&self) -> Value<'_>
+```
+
+The map as a value borrowed from it, for `Record::set` or a push into another collection, which
+take their own reference to the map: the map still gives its handle back when dropped. `&map`
+converts the same way.
+
+#### `impl Drop for Map`
+
+```rust
+impl Drop for Map
+```
+
+Gives the map's handle back to the host. What the map was set into or pushed into keeps it.
 
 #### `impl From<List> for Value<'_>`
 
@@ -1710,6 +1761,23 @@ impl From<Map> for Value<'_>
 ```
 
 The finished map as a value, as `Map::into_value` gives it.
+
+#### `impl From<&'a List> for Value<'a>`
+
+```rust
+impl<'a> From<&'a List> for Value<'a>
+```
+
+The list as a value borrowed from it, as `List::as_value` gives it: the list keeps its handle and gives
+it back when dropped.
+
+#### `impl From<&'a Map> for Value<'a>`
+
+```rust
+impl<'a> From<&'a Map> for Value<'a>
+```
+
+The map as a value borrowed from it, as `Map::as_value` gives it.
 
 #### `Pushable`
 

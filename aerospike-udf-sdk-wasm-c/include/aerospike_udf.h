@@ -55,10 +55,11 @@
  * is its size in bytes, at least 16. `name` is the bin name, `name_len` bytes with no terminator needed: 1 to 15
  * bytes, none of them zero. Returns AS_UDF_OK; AS_UDF_NOT_FOUND, with `out` of kind AS_UDF_ABSENT, when the
  * record has no such bin, the name is not a bin name or the call has no record (an event handler reads with
- * as_udf_event_bin_value); AS_UDF_ERR when `cap` is under 16 or no handle is free. A bin never reads as nil: a
- * record has no nil bins. A scalar comes in the value itself. A string, blob, GeoJSON, HLL, list or map stays on
- * the host and the value says where it is; each such read takes one of the call's 256 handles, so read a bin once
- * and keep the value rather than reading it in a loop. The read sees what the call has staged: a bin set earlier
+ * as_udf_event_bin_value); AS_UDF_ERR when `cap` is under 16 or the call's memory on the server has no room for
+ * the handle. A bin never reads as nil: a record has no nil bins. A scalar comes in the value itself. A string,
+ * blob, GeoJSON, HLL, list or map stays on the host and the value says where it is; each such read takes a handle,
+ * kept until the call ends since the value reads from it, so read a bin once and keep the value rather than
+ * reading it in a loop. The read sees what the call has staged: a bin set earlier
  * reads as set, a bin removed earlier as not found. A list, map or blob value read before a save that failed
  * answers AS_UDF_ERR afterwards: read the bin again. as_udf_rec_bin is this call for a NUL-terminated name. */
 AS_UDF_IMPORT(bin_value) int32_t as_udf_rec_bin_value(const char* name, int32_t name_len, void* out, int32_t cap);
@@ -171,8 +172,9 @@ AS_UDF_IMPORT(coll_cmp_at) int32_t as_udf_coll_cmp_at(int32_t src1, int32_t at1,
 /* Open a cursor over the list or map at offset `at` of source `src`, positioned at its first element, to read
  * with as_udf_cursor_values. `src` and `at` are as_udf_value_src and as_udf_value_at of a value the call read: a
  * bin, an argument, an element of a collection. Returns the cursor's handle, or 0 when the value is not a list or
- * map or no handle is free: a call holds at most 256 handles. Close it with as_udf_cursor_close when the walk is
- * done; whatever is left open is released when the call ends. */
+ * map or the call's memory on the server has no room for one. Close it with as_udf_cursor_close when the walk is
+ * done, so that a loop of walks holds one cursor at a time; whatever is left open is released when the call
+ * ends. */
 AS_UDF_IMPORT(cursor_enter_at) int32_t as_udf_cursor_enter_at(int32_t src, int32_t at);
 /* Look up a string key in the map at offset `at` of source `src` and write the entry's value to `out` as a
  * 16-byte value (`cap` at least 16). `key` is `key_len` bytes, no terminator needed. Returns AS_UDF_OK;
@@ -188,14 +190,35 @@ AS_UDF_IMPORT(coll_get_i) int32_t as_udf_coll_get_int(int32_t src, int32_t at, i
  * of kind AS_UDF_ABSENT, past the end or when the value is not a list; or AS_UDF_ERR for a bad source, offset or
  * `cap`. as_udf_list_at is this call on a value. */
 AS_UDF_IMPORT(list_get) int32_t as_udf_list_get(int32_t src, int32_t at, int32_t index, void* out, int32_t cap);
-/* Give a cursor's handle back. Only the most recently created handle is released, so close cursors in the reverse
- * of the order they were opened in; any other handle stays taken until the call ends, when the host releases them
- * all. Closing 0 or a handle that is not valid does nothing. */
+/* Give a handle back to the host: a cursor, and through as_udf_handle_close, which is this import, any handle the
+ * call made - a built list or map, an `as_udf_val_` value, a packed copy. The host reuses the slot, in whatever
+ * order handles are closed, and a handle used after its close is refused (AS_UDF_ERR or AS_UDF_NOT_FOUND), never
+ * misread. Closing a handle the host still needs - a bin or argument that values read from, a slot handed out
+ * more than once - does nothing, and so does closing 0 or a handle that is not valid. */
 AS_UDF_IMPORT(cursor_close) void as_udf_cursor_close(int32_t cursor);
+/* Give back a handle the call is done with: a list or map built with as_udf_list_new / as_udf_map_new once it has
+ * been stored (as_udf_rec_set_handle), nested (as_udf_list_push, as_udf_map_put_string_handle, ...) or returned
+ * (as_udf_result_handle), since each of those takes its own reference; an `as_udf_val_` value once it is in; a
+ * packed copy from as_udf_pack_handle once nothing read from it is still in use. It is as_udf_cursor_close by its
+ * general name. A call is bounded by the memory it holds on the server, not by a count of handles, so a loop that
+ * builds or walks one collection per iteration and closes it can run as long as the memory lasts; what is not
+ * closed is released when the call ends. Closing twice, 0, or a handle the host still needs does nothing.
+ * ```c
+ * int32_t out = as_udf_list_new(0);
+ * for (int64_t i = 0; i < n; i++) {
+ * 	int32_t entry = as_udf_map_new(1);
+ * 	as_udf_map_put_string_int(entry, "i", 1, i);
+ * 	as_udf_list_push(out, entry);   // the list keeps the entry
+ * 	as_udf_handle_close(entry);
+ * }
+ * ```
+ */
+static inline void as_udf_handle_close(int32_t handle) { as_udf_cursor_close(handle); }
 /* Make a list or map built on the host readable by position: returns a source handle over a packed copy of it, to
  * read at offset 0 with as_udf_cursor_enter_at, as_udf_coll_get or as_udf_list_get. The copy is of the collection
- * as it is now: what is added afterwards is not in it. Returns 0 when `handle` is not a list or map or no handle
- * is free. The copy counts against the memory the call may build on the host. */
+ * as it is now: what is added afterwards is not in it. Returns 0 when `handle` is not a list or map or the call's
+ * memory has no room for it. The copy counts against the memory the call may build on the host; close it with
+ * as_udf_handle_close once nothing read from it is in use (a close the host cannot honour yet does nothing). */
 AS_UDF_IMPORT(pack_handle) int32_t as_udf_pack_handle(int32_t handle);
 /* Read the call's arguments into `out` as 16-byte values, as many as `cap` bytes hold. `handle` is the `args`
  * parameter the export was called with. Returns the count written, which is less than the export's `argc` when
@@ -212,25 +235,27 @@ AS_UDF_IMPORT(coll_size) int32_t as_udf_coll_size(int32_t handle);
 /* Collections - building, on the host, as handles. */
 
 /* Start an empty list on the host. `capacity` is a hint of how many elements it will hold: the list grows past
- * it, and 0 asks for a default. Returns its handle, or 0 when none is free: a call holds at most 256 handles, and
+ * it, and 0 asks for a default. Returns its handle, or 0 when the call's memory on the server has no room for it;
  * 0 is never a valid one. Fill it with the `as_udf_list_push` calls, then store it with as_udf_rec_set_handle,
- * nest it with as_udf_list_push or as_udf_map_put_string_handle, or return it with as_udf_result_handle. What it
- * holds lives on the host and is charged to the call's memory limit.
+ * nest it with as_udf_list_push or as_udf_map_put_string_handle, or return it with as_udf_result_handle, and give
+ * the handle back with as_udf_handle_close: what it was handed to keeps the list. What it holds lives on the host
+ * and is charged to the call's memory limit.
  * ```c
  * int32_t tags = as_udf_list_new(2);
  * if (tags <= 0) return as_udf_fail_str("could not build the list");
  * as_udf_list_push_string(tags, "new", 3);
  * as_udf_list_push_int(tags, 7);
  * if (as_udf_rec_set_handle("tags", 4, tags) != AS_UDF_OK) return as_udf_fail_str("could not set tags");
+ * as_udf_handle_close(tags);
  * if (as_udf_rec_save() != AS_UDF_OK) return as_udf_fail_str("could not save");
  * ```
  */
 AS_UDF_IMPORT(list_new) int32_t as_udf_list_new(int32_t capacity);
 /* Start an empty map on the host. `capacity` is a hint of how many entries it will hold: the map grows past it,
  * and 0 asks for a default. The map is ordered by key, whatever order the entries are put in, and that is the
- * order the client receives it in. Returns its handle, or 0 when none is free: a call holds at most 256 handles,
- * and 0 is never a valid one. Fill it with the `as_udf_map_put` calls; a put under a key that is already there
- * replaces its value.
+ * order the client receives it in. Returns its handle, or 0 when the call's memory on the server has no room for
+ * it; 0 is never a valid one. Fill it with the `as_udf_map_put` calls; a put under a key that is already there
+ * replaces its value. Give the handle back with as_udf_handle_close once the map is handed over, as for a list.
  * ```c
  * int32_t out = as_udf_map_new(2);
  * if (out <= 0) return as_udf_fail_str("could not build the map");
@@ -250,33 +275,33 @@ AS_UDF_IMPORT(map_has) int32_t as_udf_map_has(int32_t handle, const char* key, i
 AS_UDF_IMPORT(map_has_i) int32_t as_udf_map_has_int(int32_t handle, int64_t key);
 /* An integer as a value of its own on the host, for the calls that take a value by handle: as_udf_list_push,
  * as_udf_map_put (as a key or as a value), as_udf_rec_set_handle and as_udf_result_handle. Returns its handle, or
- * 0 when none is free: a call holds at most 256 handles, and 0 is never a valid one. Every such value takes a
- * handle for the rest of the call, so none of the `as_udf_val_` calls belongs in a loop: a loop that makes one
- * value an element stops near 250 elements. An element of a collection needs no handle: as_udf_list_push_value
+ * 0 when the call's memory on the server has no room for it; 0 is never a valid one. Every such value takes a
+ * handle until as_udf_handle_close gives it back or the call ends, so a loop that makes one closes it once it is
+ * in. An element of a collection needs no handle at all: as_udf_list_push_value
  * and its typed forms (as_udf_list_push_double and the rest), as_udf_map_put_string_value and
  * as_udf_map_put_int_value hand the value over as it is, and take any number of elements. */
 AS_UDF_IMPORT(val_int) int32_t as_udf_val_int(int64_t value);
-/* A double as a value of its own, by handle. Returns its handle, or 0 when none is free. Not for a loop: see
- * as_udf_val_int, and as_udf_list_push_double for a double that enters a list without a handle. */
+/* A double as a value of its own, by handle. Returns its handle, or 0 when the call's memory has no room for it.
+ * Close it once it is in (see as_udf_val_int), or use as_udf_list_push_double, which takes no handle. */
 AS_UDF_IMPORT(val_double) int32_t as_udf_val_double(double value);
-/* A boolean as a value of its own, by handle: any non-zero `value` is true. Returns its handle, or 0 when none is
- * free. Not for a loop: see as_udf_val_int. */
+/* A boolean as a value of its own, by handle: any non-zero `value` is true. Returns its handle, or 0 when the
+ * call's memory has no room for it. Close it once it is in: see as_udf_val_int. */
 AS_UDF_IMPORT(val_bool) int32_t as_udf_val_bool(int32_t value);
 /* Nil as a value of its own, by handle: a nil element of a list or a nil entry of a map, which in an xdr-merge
- * record answer means "delete this bin". Returns its handle, or 0 when none is free. Not for a loop: see
- * as_udf_val_int. */
+ * record answer means "delete this bin". Returns its handle, or 0 when the call's memory has no room for it.
+ * Close it once it is in: see as_udf_val_int. */
 AS_UDF_IMPORT(val_nil) int32_t as_udf_val_nil(void);
 /* A string as a value of its own, by handle: `value_len` bytes, no terminator needed, copied by the host. Returns
- * its handle, or 0 when none is free or the copy would exceed the memory the call may build on the host. Not for
- * a loop: see as_udf_val_int. */
+ * its handle, or 0 when the copy would exceed the memory the call may build on the host. Close it once it is in:
+ * see as_udf_val_int. */
 AS_UDF_IMPORT(val_str) int32_t as_udf_val_string(const char* value, int32_t value_len);
 /* A blob as a value of its own, by handle: `value_len` bytes, copied by the host. Returns its handle, or 0 when
- * none is free or the copy would exceed the memory the call may build on the host. Not for a loop: see
+ * the copy would exceed the memory the call may build on the host. Close it once it is in: see
  * as_udf_val_int. */
 AS_UDF_IMPORT(val_blob) int32_t as_udf_val_blob(const void* value, int32_t value_len);
 /* GeoJSON text as a value of its own, by handle, so that it enters a built collection or a bin as GeoJSON rather
  * than as a string. `value_len` bytes, copied by the host and not validated here. Returns its handle, or 0 when
- * none is free. Not for a loop: see as_udf_val_int. */
+ * the call's memory has no room for it. Close it once it is in: see as_udf_val_int. */
 AS_UDF_IMPORT(val_geojson) int32_t as_udf_val_geojson(const char* value, int32_t value_len);
 /* Append the value behind handle `value` to a built list: a value from an `as_udf_val_` call, or another built
  * list or map, which nests it. The list and the handle share the value and the handle stays usable. Returns
@@ -293,9 +318,10 @@ AS_UDF_IMPORT(list_push_int) int32_t as_udf_list_push_int(int32_t handle, int64_
  * call's host memory is used up. */
 AS_UDF_IMPORT(list_push_str) int32_t as_udf_list_push_string(int32_t handle, const char* value, int32_t value_len);
 /* Put an entry into a built map, key and value both by handle (see as_udf_val_int). A key that is already there
- * has its value replaced. The map shares both values with their handles, which stay usable. Each handle made for
- * the call is taken for good, so this is not the form for a loop: as_udf_map_put_int_value puts under an integer
- * key, and as_udf_map_put_string_value under a string key, with no handle at all. Returns AS_UDF_OK; AS_UDF_ERR
+ * has its value replaced. The map shares both values with their handles, which stay usable until they are closed
+ * (as_udf_handle_close), which the map does not notice. A loop that makes a handle per entry closes them as it
+ * goes; as_udf_map_put_int_value puts under an integer key, and as_udf_map_put_string_value under a string key,
+ * with no handle at all. Returns AS_UDF_OK; AS_UDF_ERR
  * when `handle` is not a map the call built or either handle holds no value; AS_UDF_REFUSED when the collection
  * does not take the value: it would come to contain itself, nest more than 64 levels deep, or exceed the memory
  * the call may build on the host. */
@@ -985,12 +1011,12 @@ static inline int32_t as_udf_rec_set_value(const char* name, int32_t name_len, c
 }
 
 /* A bin read that failed for a reason other than "no such bin" (a name that cannot be a bin name reads as no
- * such bin): the call's handles all in use. as_udf_rec_has, as_udf_rec_get and their event forms answer only
+ * such bin): the call's memory on the server has no room for another handle. as_udf_rec_has, as_udf_rec_get and their event forms answer only
  * yes or no, and a "no" here would be taken for an absent bin, so the call is failed with a message that says
  * so and stopped. */
 static inline void as_udf_rec_unreadable(void)
 {
-	static const char msg[] = "could not read a bin: the call's 256 handles are all in use";
+	static const char msg[] = "could not read a bin: the call has spent the memory it may hold on the server";
 	as_udf_fail(msg, (int32_t)(sizeof(msg) - 1));
 	__builtin_trap();
 }
@@ -1575,8 +1601,8 @@ static inline bool as_udf_event_incoming_is_newer(const as_udf_event_record* cur
  * that are not strings are not it. False when `list` is not of kind AS_UDF_LIST, which includes the
  * AS_UDF_ABSENT of an event record's `deleted_bins` or `lost_bins` when there are none. Linear in the list. Only
  * elements as long as `text` are copied out, into as many bytes of stack as `text` is long (see
- * as_udf_string_is). The walk takes one handle for its cursor and gives it back; when no handle is free it
- * cannot be made, and the answer is found the slow way, an element at a time, rather than given as false. For an
+ * as_udf_string_is). The walk takes one handle for its cursor and gives it back before it returns; when the
+ * call's memory has no room for one it cannot be made, and the answer is found the slow way, an element at a time, rather than given as false. For an
  * event record's `bin_names`, `deleted_bins` and `lost_bins`, and any list of strings. */
 static inline bool as_udf_list_has_string(const as_udf_value* list, const char* text)
 {
@@ -1677,8 +1703,14 @@ static inline int32_t as_udf_resolve_record(int32_t bins, int64_t ttl)
 	int32_t rc = as_udf_map_put_string_string(out, "verdict", 7, "record", 6);
 	if (rc == AS_UDF_OK) rc = as_udf_map_put_string_handle(out, "bins", 4, bins);
 	if (rc == AS_UDF_OK && ttl >= 0) rc = as_udf_map_put_string_int(out, "ttl", 3, ttl);
-	if (rc != AS_UDF_OK) return as_udf_fail_str("resolve: could not build the record answer");
-	return as_udf_result_handle(out) == AS_UDF_OK ? 0 : as_udf_fail_str("resolve: could not return the record");
+	if (rc != AS_UDF_OK) {
+		as_udf_handle_close(out);
+		return as_udf_fail_str("resolve: could not build the record answer");
+	}
+	/* The result takes its own reference, so the map the handler never sees is given back at once. */
+	rc = as_udf_result_handle(out);
+	as_udf_handle_close(out);
+	return rc == AS_UDF_OK ? 0 : as_udf_fail_str("resolve: could not return the record");
 }
 
 /* Declare an xdr-merge handler: `AS_UDF_EVENT_XDR_MERGE(name) { ... }` defines and exports `int32_t name(int32_t

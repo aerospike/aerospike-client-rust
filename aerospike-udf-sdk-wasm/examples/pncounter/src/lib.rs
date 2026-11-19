@@ -111,7 +111,7 @@ event! {
 
             counts.offer_all(current.map(bin)?)?;
             counts.offer_all(incoming.map(bin)?)?;
-            out.insert(bin, counts.into_map()?)?;
+            out.insert(bin, &counts.into_map()?)?;
         }
 
         Ok(Resolution::Record { bins: incoming.with_bins(out)?, ttl: None })
@@ -141,7 +141,7 @@ fn grow(rec: &mut Record, bin: &str, site: &str, n: i64) -> Result<i64, Error> {
     let mut counts = stored(rec, bin)?;
 
     counts.add(Site::new(site)?, n)?;
-    rec.set(bin, counts.into_map()?)?;
+    rec.set(bin, &counts.into_map()?)?;
 
     rec.save()?;
 

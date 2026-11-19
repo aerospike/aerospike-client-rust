@@ -150,81 +150,112 @@ public final class ApiTest {
     @Function("rd")
     static ListBuilder rd(Record rec, String name, String how) {
         // A typed reader answers null for a bin that is not there and throws for one of another kind; what
-        // it throws carries the status.
-        ListBuilder out;
+        // it throws carries the status. Only the read is in the try: building the answer can fail too (a
+        // stored value nested deeper than a list may hold cannot be put into the answer), and that is a
+        // failure of the call, not something the reader said.
+        Object got;
 
         try {
-            out = read(rec, name, how);
+            got = read(rec, name, how);
         }
         catch (UdfException e) {
             return tag(status(e));
         }
 
-        if (out == null) {
+        if (got == null) {
             throw new UdfException("rd: unknown how");
+        }
+
+        if (got == NONE) {
+            return tag("none");
+        }
+
+        ListBuilder out = some();
+
+        if (got instanceof Value) {
+            out.add((Value) got);
+        }
+        else if (got instanceof Long) {
+            out.add(((Long) got).longValue());
+        }
+        else if (got instanceof Double) {
+            out.add(((Double) got).doubleValue());
+        }
+        else if (got instanceof Boolean) {
+            out.add(((Boolean) got).booleanValue());
+        }
+        else if (got instanceof String) {
+            out.add((String) got);
+        }
+        else {
+            out.add((byte[]) got);
         }
 
         return out;
     }
 
+    /** What a reader answers when the bin is not there or holds nil. */
+    private static final Object NONE = new Object();
+
     /**
-     * The answer of reader {@code how}, or null when there is no such reader. In a method of its own: TeaVM
-     * 0.13.1 compiles this switch, written inline in a try whose catch returns, into code the server's WAMR
-     * loader refuses ("type mismatch: expect data but stack was empty").
+     * What reader {@code how} reads - a Value, Long, Double, Boolean, String or byte[], or NONE - or null
+     * when there is no such reader. In a method of its own: TeaVM 0.13.1 compiles this switch, written
+     * inline in a try whose catch returns, into code the server's WAMR loader refuses ("type mismatch:
+     * expect data but stack was empty").
      */
-    private static ListBuilder read(Record rec, String name, String how) {
+    private static Object read(Record rec, String name, String how) {
         switch (how) {
         case "has":
-            return some().add(rec.has(name));
+            return Boolean.valueOf(rec.has(name));
         case "get": {
             Value v = rec.get(name);
 
-            return v == null ? tag("none") : some().add(v);
+            return v == null ? NONE : v;
         }
         case "bin":
             // bin() throws for a record without the bin: that exception is the SDK's "no such bin".
-            return some().add(rec.bin(name));
+            return rec.bin(name);
         case "int": {
             Long v = rec.getInt(name);
 
-            return v == null ? tag("none") : some().add(v.longValue());
+            return v == null ? NONE : v;
         }
         case "double": {
             Double v = rec.getDouble(name);
 
-            return v == null ? tag("none") : some().add(v.doubleValue());
+            return v == null ? NONE : v;
         }
         case "bool": {
             Boolean v = rec.getBool(name);
 
-            return v == null ? tag("none") : some().add(v.booleanValue());
+            return v == null ? NONE : v;
         }
         case "string": {
             String v = rec.getString(name);
 
-            return v == null ? tag("none") : some().add(v);
+            return v == null ? NONE : v;
         }
         case "blob": {
             byte[] v = rec.getBlob(name);
 
-            return v == null ? tag("none") : some().add(v);
+            return v == null ? NONE : v;
         }
         case "list": {
             ListValue v = rec.getList(name);
 
-            return v == null ? tag("none") : some().add(v.asValue());
+            return v == null ? NONE : v.asValue();
         }
         case "map": {
             MapValue v = rec.getMap(name);
 
-            return v == null ? tag("none") : some().add(v.asValue());
+            return v == null ? NONE : v.asValue();
         }
         case "int_or":
-            return some().add(rec.getInt(name, 7));
+            return Long.valueOf(rec.getInt(name, 7));
         case "double_or":
-            return some().add(rec.getDouble(name, 7.5));
+            return Double.valueOf(rec.getDouble(name, 7.5));
         case "bool_or":
-            return some().add(rec.getBool(name, true));
+            return Boolean.valueOf(rec.getBool(name, true));
         default:
             return null;
         }
@@ -508,7 +539,10 @@ public final class ApiTest {
             ListBuilder out = Udf.list(1).add(n);
 
             for (long i = 1; i < n; i++) {
-                out = Udf.list(1).add(out);
+                ListBuilder inner = out;
+
+                out = Udf.list(1).add(inner);
+                inner.close(); // the outer list keeps it
             }
 
             return out.asValue();

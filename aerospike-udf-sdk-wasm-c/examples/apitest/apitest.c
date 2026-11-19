@@ -650,6 +650,7 @@ mk(int32_t args, int32_t argc)
 			int32_t outer = as_udf_list_new(1);
 			if (outer <= 0) return mk_fail(AS_UDF_ERR);
 			rc = as_udf_list_push(outer, inner);
+			as_udf_handle_close(inner); /* the outer list keeps it */
 			inner = outer;
 		}
 		if (rc == AS_UDF_OK) rc = as_udf_result_handle(inner);
@@ -1019,6 +1020,7 @@ static int32_t put_meta(int32_t out, const char* key, const as_udf_event_record*
 	if (rc == AS_UDF_OK) rc = as_udf_list_push_bool(list, flag1);
 	if (rc == AS_UDF_OK) rc = as_udf_list_push_bool(list, flag2);
 	if (rc == AS_UDF_OK) rc = as_udf_map_put_string_handle(out, key, as_udf_strlen(key), list);
+	as_udf_handle_close(list);
 	return rc;
 }
 
@@ -1030,6 +1032,7 @@ static int32_t put_two(int32_t out, const char* key, int64_t first, int64_t seco
 	int32_t rc = as_udf_list_push_int(list, first);
 	if (rc == AS_UDF_OK) rc = as_udf_list_push_int(list, second);
 	if (rc == AS_UDF_OK) rc = as_udf_map_put_string_handle(out, key, as_udf_strlen(key), list);
+	as_udf_handle_close(list);
 	return rc;
 }
 
@@ -1077,12 +1080,12 @@ AS_UDF_EVENT_XDR_MERGE(merge_api)
 
 /*==========================================================
  * stop_probe(what): not part of the specification, and not called by the conformance harness. The bin reads
- * that cannot answer when the call has no handle left: as_udf_rec_has and as_udf_rec_get stop the call with
+ * that cannot answer when the call can take no more handles: as_udf_rec_has and as_udf_rec_get stop the call with
  * the header's message rather than say "no such bin". tests/src/udf_cpp.rs calls it.
  */
 
-/* Takes every handle the call has left, by building empty lists until the host refuses one. Nothing gives
- * them back before the call ends. */
+/* Takes what the call has left, by building empty lists until the host refuses one: when its memory on the
+ * server is spent. Nothing gives them back before the call ends. */
 static void take_every_handle(void)
 {
 	while (as_udf_list_new(0) > 0) {
@@ -1123,3 +1126,57 @@ stop_probe(int32_t args, int32_t argc)
 	return as_udf_fail_str("stop_probe: no such probe");
 }
 AS_UDF_SIGNATURE(stop_probe, "fn stop_probe(what: str) -> value")
+
+/*==========================================================
+ * churn(count): not part of the specification, and not called by the conformance harness. Builds `count` maps,
+ * each holding a list, nests each in one outer list and closes both at once, then walks every list of list bin
+ * `nested` with a cursor of its own, closed when its walk ends. Answers [elements, sum]. The call holds a few
+ * handles at a time however large `count` is: what bounds it is its memory. tests/src/udf_cpp.rs calls it.
+ */
+AS_UDF_EXPORT(churn) int32_t
+churn(int32_t args, int32_t argc)
+{
+	as_udf_value a[1], nested;
+	if (! arity("churn", argc, 1)) return 1;
+	int32_t n = as_udf_args(args, argc, a, 1);
+	if (n < 1 || a[0].kind != AS_UDF_INT) return as_udf_fail_str("churn: count must be an integer");
+
+	int32_t out = as_udf_list_new(0);
+	if (out <= 0) return as_udf_fail_str("churn: could not build the list");
+	for (int64_t i = 0; i < a[0].payload; i++) {
+		int32_t inner = as_udf_list_new(2);
+		int32_t entry = as_udf_map_new(1);
+		int32_t rc = inner > 0 && entry > 0 ? as_udf_list_push_int(inner, i) : AS_UDF_REFUSED;
+		if (rc == AS_UDF_OK) rc = as_udf_list_push_int(inner, 1);
+		if (rc == AS_UDF_OK) rc = as_udf_map_put_string_handle(entry, "l", 1, inner);
+		if (rc == AS_UDF_OK) rc = as_udf_list_push(out, entry);
+		/* The entry keeps the inner list and the outer list keeps the entry. */
+		as_udf_handle_close(inner);
+		as_udf_handle_close(entry);
+		if (rc != AS_UDF_OK) return as_udf_fail_str("churn: could not build an entry");
+	}
+
+	int64_t sum = 0;
+	if (as_udf_rec_bin("nested", &nested) != AS_UDF_OK || nested.kind != AS_UDF_LIST) {
+		return as_udf_fail_str("churn: no list bin nested");
+	}
+	for (int32_t i = 0; i < (int32_t)nested.len; i++) {
+		as_udf_value row = as_udf_list_at(&nested, i), w[32];
+		int32_t cur = as_udf_cursor_enter_at(as_udf_value_src(&row), as_udf_value_at(&row));
+		if (cur <= 0) return as_udf_fail_str("churn: could not walk a row");
+		for (int32_t got; (got = as_udf_cursor_values(cur, w, (int32_t)sizeof(w))) > 0;) {
+			for (int32_t k = 0; k < got; k++) sum += w[k].payload;
+			if (got < 32) break;
+		}
+		as_udf_handle_close(cur);
+	}
+
+	int32_t answer = as_udf_list_new(2);
+	int32_t rc = answer > 0 ? as_udf_list_push_int(answer, as_udf_coll_size(out)) : AS_UDF_REFUSED;
+	if (rc == AS_UDF_OK) rc = as_udf_list_push_int(answer, sum);
+	if (rc == AS_UDF_OK) rc = as_udf_result_handle(answer);
+	as_udf_handle_close(answer);
+	as_udf_handle_close(out);
+	return rc == AS_UDF_OK ? 0 : as_udf_fail_str("churn: could not answer");
+}
+AS_UDF_SIGNATURE(churn, "fn churn(count: int) -> value")

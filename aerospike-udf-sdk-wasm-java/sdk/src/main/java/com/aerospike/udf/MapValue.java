@@ -535,7 +535,9 @@ public final class MapValue implements Iterable<MapValue.Entry> {
      * The entries in the order the server keeps them, a fresh key and value each, so an entry can be kept
      * after the loop moves on. The loop may be left early. The entries come from the host 64 at a time, so a
      * loop costs a call per 64 entries, not one per entry. {@code next()} past the end throws
-     * {@code NoSuchElementException}.
+     * {@code NoSuchElementException}. The host's cursor is given back when the last window is read; a loop left
+     * early over a map longer than one window leaves it open until the call ends, which {@link #forEach} does
+     * not.
      */
     @Override
     public Iterator<Entry> iterator() {
@@ -562,6 +564,30 @@ public final class MapValue implements Iterable<MapValue.Entry> {
                 return new Entry(key, walk.next(new Value()));
             }
         };
+    }
+
+    /**
+     * Every entry in the server's order, as the iterator gives them, with the host's cursor given back however
+     * the walk ends, an exception from {@code action} included.
+     */
+    @Override
+    public void forEach(java.util.function.Consumer<? super Entry> action) {
+        Walk walk = new Walk(map.kind() == Value.MAP ? map : Maps.NOTHING);
+
+        try {
+            while (walk.more()) {
+                Value key = walk.next(new Value());
+
+                if (!walk.more()) {
+                    throw new UdfException(LowLevel.ERR, "the map ended on a key");
+                }
+
+                action.accept(new Entry(key, walk.next(new Value())));
+            }
+        }
+        finally {
+            walk.close();
+        }
     }
 
     /**

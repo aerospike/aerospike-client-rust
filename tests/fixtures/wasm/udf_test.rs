@@ -146,7 +146,7 @@ as_udf::export! {
 
         let out = as_udf::list(4)?;
 
-        out.push(1)?.push("two")?.push(inner)?.push(tail)?;
+        out.push(1)?.push("two")?.push(&inner)?.push(&tail)?;
 
         Ok(out.into_value())
     }
@@ -396,7 +396,7 @@ as_udf::export! {
         let one = as_udf::list(1)?;
 
         one.push(9i64)?;
-        rec.set("sl", one)?;
+        rec.set("sl", &one)?;
 
         let len = rec.list("sl")?.map_or(-1, |l| l.len() as i64);
 
@@ -502,7 +502,7 @@ as_udf::export! {
         inner.insert(1, "one")?.insert("first", first)?;
         out.push(picked)?
             .push(Value::GeoJson("{\"type\":\"Point\",\"coordinates\":[1.0,2.0]}".into()))?
-            .push(inner)?;
+            .push(&inner)?;
 
         Ok(out.into_value())
     }
@@ -574,7 +574,7 @@ as_udf::export! {
 
         let out = as_udf::list(3)?;
 
-        out.push(ints)?.push(strs)?.push(by_label)?;
+        out.push(&ints)?.push(&strs)?.push(&by_label)?;
 
         Ok(out.into_value())
     }
@@ -592,9 +592,78 @@ as_udf::export! {
 
         let out = as_udf::list(2)?;
 
-        out.push(list_copy)?.push(map_copy)?;
+        out.push(&list_copy)?.push(&map_copy)?;
 
         Ok(out.into_value())
+    }
+
+    /// Build `count` maps, each holding a list, nest each in one outer list by reference, then walk every
+    /// nested list with an iterator of its own. Answers `[elements, sum]`.
+    ///
+    /// Every map, list and iterator gives its handle back when it is dropped, so the call holds a few at a
+    /// time however large `count` is: what bounds it is the call's memory, not a number of handles.
+    fn churn(count: i64) -> Result<Value, Error> {
+        let out = as_udf::list(0)?;
+
+        for i in 0..count {
+            let inner = as_udf::list(2)?;
+            let entry = as_udf::map(1)?;
+
+            inner.push(i)?.push(1)?;
+            entry.insert("l", &inner)?;
+            out.push(&entry)?;
+        }
+
+        let mut sum = 0;
+
+        for item in out.as_value().list()?.iter() {
+            let Some(l) = item?.map()?.get("l")? else {
+                return Err(Error::Absent);
+            };
+
+            for v in l.list()?.iter() {
+                sum += v?.int()?;
+            }
+        }
+
+        let answer = as_udf::list(2)?;
+
+        answer.push(out.as_value().list()?.len() as i64)?.push(sum)?;
+
+        Ok(answer.into_value())
+    }
+
+    /// Build a list of `maps` small maps, `{"i": i}`, and walk every nested list of the bin `nested`, each
+    /// with an iterator of its own, in one call. Answers `[maps built, lists walked, sum of their integers]`.
+    ///
+    /// Thousands of handles in one call: the host's table grows past its inline slots as it needs to, and
+    /// what the SDK gives back on drop is reused.
+    fn many_handles(rec: &mut Record, maps: i64) -> Result<Value, Error> {
+        let out = as_udf::list(0)?;
+
+        for i in 0..maps {
+            let entry = as_udf::map(1)?;
+
+            entry.insert("i", i)?;
+            out.push(&entry)?;
+        }
+
+        let mut lists = 0i64;
+        let mut sum = 0i64;
+
+        for item in rec.bin("nested")?.list()?.iter() {
+            for v in item?.list()?.iter() {
+                sum += v?.int()?;
+            }
+
+            lists += 1;
+        }
+
+        let answer = as_udf::list(3)?;
+
+        answer.push(out.as_value().list()?.len() as i64)?.push(lists)?.push(sum)?;
+
+        Ok(answer.into_value())
     }
 
     /// Stage a bin, save, then fail the call. A test reads the record afterwards to see whether a save

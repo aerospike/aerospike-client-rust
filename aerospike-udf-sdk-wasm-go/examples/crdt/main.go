@@ -471,7 +471,9 @@ func storeRemoved(rec *udf.Record, drop string, add *marker, now *int64) error {
 	}
 
 	if add != nil {
-		markers.Put(add.id, udf.NewMap(2).Put("offAt", add.offAt).Put("version", add.version))
+		marker := udf.NewMap(2).Put("offAt", add.offAt).Put("version", add.version)
+		markers.Put(add.id, marker)
+		marker.Close() // markers keeps it
 		n++
 	}
 

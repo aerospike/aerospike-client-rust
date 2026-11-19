@@ -65,10 +65,11 @@ import org.teavm.interop.Address;
  * <p>A bin name is 1 to 15 bytes of UTF-8 with no zero byte in it. A read under any other name finds no bin;
  * a write under one throws.
  *
- * <p>Reading a string, blob, GeoJSON, HLL, list or map bin takes one of the call's 256 handles each time it
- * is read, and the handle is held until the call returns (in a stream, until the next record). Read such a
- * bin once and keep what came back, not once per turn of a loop: when the handles run out the read throws
- * {@link UdfException} saying the bin could not be read. An integer, double or boolean bin costs none.
+ * <p>Reading a string, blob, GeoJSON, HLL, list or map bin takes a handle on the host each time it is read,
+ * charged to the call's memory, and the handle is held until the call returns (in a stream, until the next
+ * record), since the value reads from it. Read such a bin once and keep what came back, not once per turn of
+ * a loop: when the call's memory is spent the read throws {@link UdfException} saying the bin could not be
+ * read. An integer, double or boolean bin costs none.
  *
  * <p>A {@link #save} or {@link #delete} that fails ends every list, map and blob value read from the record
  * before it: a read through one then throws. Read the bin again.
@@ -599,7 +600,10 @@ public final class Record implements RecordReader {
      * maps, and null for nil. Throws {@link UdfException} for an element of any other type.
      */
     public void set(String name, List<?> value) {
-        set(name, ListBuilder.create(value.size()).addAll(value));
+        // The bin takes its own reference, so the list built for it is given back at once.
+        try (ListBuilder built = ListBuilder.create(value.size())) {
+            set(name, built.addAll(value));
+        }
     }
 
     /**
@@ -608,7 +612,9 @@ public final class Record implements RecordReader {
      * {@link UdfException} for any other key or value type.
      */
     public void set(String name, Map<?, ?> value) {
-        set(name, MapBuilder.create(value.size()).putAll(value));
+        try (MapBuilder built = MapBuilder.create(value.size())) {
+            set(name, built.putAll(value));
+        }
     }
 
     /**

@@ -170,16 +170,17 @@ public final class Pair {
         for (int side = 0; side < 2; side++) {
             EventRecord rec = side == 0 ? current : incoming;
 
-            for (Value name : rec.binNames()) {
+            // forEach gives the walk's cursor back when a read or a put throws part way.
+            rec.binNames().forEach(name -> {
                 String bin = name.asString();
 
                 if (overrides.containsKey(bin)) {
-                    continue;
+                    return;
                 }
 
                 // The later side's delete stands, though the earlier side still has a value to offer.
                 if ((incomingIsNewer(bin) ? incoming : current).deleted(bin)) {
-                    continue;
+                    return;
                 }
 
                 Value newer = bin(bin).newer();
@@ -187,7 +188,7 @@ public final class Pair {
                 if (newer != null) {
                     overrides.put(bin, newer);
                 }
-            }
+            });
         }
 
         return overrides;

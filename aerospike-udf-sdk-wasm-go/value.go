@@ -203,7 +203,7 @@ func (v Value) Floats(dst []float32) (int, error) {
 // no error to hand back, and a walk that stopped short without a word would read as a shorter
 // collection.
 func walkFailed(what string, rc int32) {
-	Fail("could not walk the " + what + " (" + strconv.Itoa(int(rc)) + "): the call holds its 256 handles, or the host can no longer read the value")
+	Fail("could not walk the " + what + " (" + strconv.Itoa(int(rc)) + "): the call has spent the memory it may hold on the server, or the host can no longer read the value")
 }
 
 // List walks a stored list, one Value per element, in order; nothing when the value is not a list
@@ -212,8 +212,9 @@ func walkFailed(what string, rc int32) {
 // breaks.
 //
 // Lists nest: an element that is itself a list or map can be ranged over inside the loop, since the
-// inner cursor closes before the outer steps on. A cursor is one of the 256 handles a call may hold.
-// When none is left, or the host can no longer read the list, the walk cannot say so through a range
+// inner cursor closes before the outer steps on. A cursor is a handle on the host, given back when the
+// loop ends; it is charged to the call's memory on the server. When that has no room for one, or the
+// host can no longer read the list, the walk cannot say so through a range
 // loop, so it fails the call, as Fail does, and yields no more: a list is never walked short in
 // silence. v.Len is the number of elements, with no walk, and Index reads one element without
 // walking to it from the guest.

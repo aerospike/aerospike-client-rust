@@ -30,9 +30,10 @@ import org.teavm.interop.Address;
  * <li>A status is {@link #OK} or negative: {@link #NOT_FOUND}, {@link #TYPE_MISMATCH}, {@link #REFUSED},
  * {@link #ERR}, and at or below {@link #NEEDED_BASE} a buffer that was too small, {@code -(rc) - 16}
  * being the size needed.</li>
- * <li>A cursor from {@link #enter} holds one of the call's 256 handle slots until {@link #close}, and
- * the host gives a slot back only when it is the last one handed out: close cursors in the reverse of
- * the order they were opened, on every path out of the loop.</li>
+ * <li>A cursor from {@link #enter}, a collection from {@link #newList} or {@link #newMap}, and a value from
+ * the {@code *Handle} calls each hold a handle until {@link #close} gives it back, in any order, or the
+ * call ends: close each on every path out of the loop that made it. A call is bounded by its memory on
+ * the server, not by a count of handles.</li>
  * <li>A {@code Value} filled here is overwritten by the next call that fills it; {@link #copy} keeps
  * one.</li>
  * </ul>
@@ -204,8 +205,8 @@ public final class LowLevel {
      * Reads a bin of any kind into {@code out}, in one import. Returns {@link #OK} with {@code out} filled;
      * {@link #NOT_FOUND} for no such bin, or a name that is not 1 to 15 bytes, with {@code out} left as it
      * was; {@link #ERR} when the host could not hand the value out. Each read of a string, blob, list or map
-     * bin takes one of the call's 256 handles and nothing gives it back before the call ends, so read such a
-     * bin once per call (per record, in a stream).
+     * bin takes a handle that is kept until the call ends, since the value reads from it, so read such a bin
+     * once per call (per record, in a stream).
      */
     public static int bin(byte[] name, Value out) {
         int rc = Natives.binValue(Address.ofData(name), name.length, Address.ofData(Slots.ONE), Slots.SIZE);
@@ -333,9 +334,9 @@ public final class LowLevel {
 
     /**
      * Opens a cursor over the stored list or map {@code v}, placed before its first element. Returns the
-     * cursor, which is positive, or 0 when it could not: {@code v} is not a stored list or map, or the call
-     * has no handle left. Every cursor opened is closed with {@link #close}, in the reverse of the order they
-     * were opened.
+     * cursor, which is positive, or 0 when it could not: {@code v} is not a stored list or map, or the call's
+     * memory on the server has no room for it. Every cursor opened is closed with {@link #close}, on every
+     * path out of the walk, in any order.
      */
     public static int enter(Value v) {
         if (v.kind() != Value.LIST && v.kind() != Value.MAP) {
@@ -365,12 +366,14 @@ public final class LowLevel {
     }
 
     /**
-     * Gives a cursor's handle back. The host gives a handle back only when it is the last one handed out, and
-     * ignores the call otherwise: close an inner cursor before the outer one, and before building anything
-     * new. A cursor left open costs one of the 256 handles until the call ends, and nothing after.
+     * Gives a handle back to the host: a cursor, a built list or map once it has been set, put, pushed or
+     * returned (each of which takes its own reference), a {@code *Handle} value once it is in. The host reuses
+     * the slot, in whatever order handles are closed, and refuses a handle used after its close. Closing one
+     * the host still needs (a bin or argument values read from), one already closed, or 0, does nothing. What
+     * is left open is given back when the call ends.
      */
-    public static void close(int cursor) {
-        Natives.cursorClose(cursor);
+    public static void close(int handle) {
+        Natives.cursorClose(handle);
     }
 
     /**
@@ -586,7 +589,7 @@ public final class LowLevel {
     /**
      * Starts a list on the host and returns its handle, which is positive and is what the {@code listPush*}
      * calls, {@link #setHandle(byte[], int)} and {@link #resultHandle} take. 0 when it could not: the call
-     * has no handle left, or has built as much as it may. {@code capacity} is a hint, 0 meaning none; the
+     * has spent the memory it may hold on the server. {@link #close} gives it back. {@code capacity} is a hint, 0 meaning none; the
      * list grows past it.
      */
     public static int newList(int capacity) {
@@ -629,9 +632,10 @@ public final class LowLevel {
     }
 
     /**
-     * A nil value as a handle, for {@link #mapPut} and {@link #listPushHandle}. Each call takes one of the
-     * 256 handles for good, so this is not for a loop: {@link #listPushValues} and {@link #mapPutEntries}
-     * take the same value in a {@link Value}, with no handle. 0 when none is left.
+     * A nil value as a handle, for {@link #mapPut} and {@link #listPushHandle}. Each call takes a handle until
+     * {@link #close}: a loop closes each once it is in, or uses {@link #listPushValues} and
+     * {@link #mapPutEntries}, which take the same value in a {@link Value}, with no handle. 0 when the call's
+     * memory is spent.
      */
     public static int nilHandle() {
         return Natives.valNil();
@@ -639,17 +643,16 @@ public final class LowLevel {
 
     /**
      * A string as a handle, copied from the first {@code len} bytes of {@code s}: a key or value for
-     * {@link #mapPut}. Each call takes one of the 256 handles for good, so this is not for a loop; 0 when none
-     * is left.
+     * {@link #mapPut}. Each call takes a handle until {@link #close}; 0 when the call's memory is spent.
      */
     public static int strHandle(byte[] s, int len) {
         return Natives.valStr(Address.ofData(s), len);
     }
 
     /**
-     * An integer as a handle: a key or value for {@link #mapPut}. Each call takes one of the 256 handles for
-     * good, so a loop that puts under integer keys uses {@link #mapPutEntries} or
-     * {@link #mapPutValue(int, long, Value)}, which take none; 0 when none is left.
+     * An integer as a handle: a key or value for {@link #mapPut}. Each call takes a handle until
+     * {@link #close}, so a loop that puts under integer keys uses {@link #mapPutEntries} or
+     * {@link #mapPutValue(int, long, Value)}, which take none; 0 when the call's memory is spent.
      */
     public static int intHandle(long i) {
         return Natives.valInt(i);
@@ -771,8 +774,8 @@ public final class LowLevel {
 
     /**
      * Puts a built value under a built key, both by handle: for a key of any kind, such as one from
-     * {@link #intHandle}. Both handles stay good, and each took one of the 256, which is why the typed puts
-     * are the ones for a loop. Returns {@link #OK}, {@link #ERR} for a handle the host does not hold,
+     * {@link #intHandle}. Both handles stay good until closed, and each took a handle, which is why the typed
+     * puts are the ones for a loop. Returns {@link #OK}, {@link #ERR} for a handle the host does not hold,
      * {@link #REFUSED} when the map turns the entry down.
      */
     public static int mapPut(int m, int key, int value) {

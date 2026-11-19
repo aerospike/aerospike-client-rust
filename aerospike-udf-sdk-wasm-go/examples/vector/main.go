@@ -396,7 +396,10 @@ func (t *TopK) End(handle, argc int32) int32 {
 			udf.StringValue(keyKey), udf.StringBytesValue(h.key[:h.keyLen]),
 		}
 
-		if hits.Add(udf.NewMap(3).PutEntries(pairs[:])).Err() != nil {
+		hit := udf.NewMap(3).PutEntries(pairs[:])
+		hits.Add(hit)
+		hit.Close() // hits keeps it: one handle per hit, given back as it goes
+		if hits.Err() != nil {
 			return udf.Fail("topk: could not build a hit")
 		}
 	}

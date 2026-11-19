@@ -375,7 +375,9 @@ func mk(what string, n int64) (udf.Value, error) {
 		// From the inside out, stopping at the first list the host would not nest.
 		l := udf.NewList(1).Add(n)
 		for i := int64(1); i < n && l.Err() == nil; i++ {
-			l = udf.NewList(1).Add(l)
+			inner := l
+			l = udf.NewList(1).Add(inner)
+			inner.Close() // the outer list keeps it
 		}
 		built, err = l.Value(), l.Err()
 	case "string":

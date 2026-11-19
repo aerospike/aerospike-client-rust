@@ -186,8 +186,8 @@ func log(level int32, message unsafe.Pointer, messageLen int32)
 // Status codes a host call returns, and the Status of an *Error.
 //
 // OK is success. Err is a call the host could not carry out: a bin name that is empty, longer than 15
-// bytes or has a zero byte in it, a handle that is not what the call needs, or a call that has used up
-// the 256 handles it may hold. NotFound is a bin, map key, list index or argument that is not there.
+// bytes or has a zero byte in it, a handle that is not what the call needs (one already closed
+// included), or a call that has spent the memory it may hold on the server. NotFound is a bin, map key, list index or argument that is not there.
 // TypeMismatch is a value of another kind than the one asked for. Refused is a write the host would not
 // take: the record is read-only here (a stream's record, an event handler), the call has spent what it
 // may build on the host, or the server turned the write down.
@@ -497,7 +497,7 @@ func next(cursor int32, out []Value) int32 {
 	return cursorValues(cursor, unsafe.Pointer(&out[0]), int32(len(out)*16))
 }
 
-// closeCursor gives a cursor's slot back.
+// closeCursor gives a cursor back to the host, which reuses its slot.
 func closeCursor(cursor int32) { cursorClose(cursor) }
 
 // get looks a string key up in the map at a value's position, in one import.
@@ -854,7 +854,9 @@ func (r *EventRecord) BinSourceID(name string) int64 {
 //
 // A list that is absent or nil has no strings, and the answer is nil. The error is an *Error: Status
 // TypeMismatch when list is a value of another kind, and the host's status when the list could not be
-// walked - the call holds its 256 handles - or a string could not be read; the walk stops there.
+// walked - the call has spent the memory it may hold on the server - or a string could not be read;
+// the walk stops there. The walk's cursor is given back before EachString returns, fn panicking
+// included.
 func EachString(list Value, buf []byte, fn func(name []byte, v Value)) error {
 	if list.IsNull() {
 		return nil
@@ -864,13 +866,13 @@ func EachString(list Value, buf []byte, fn func(name []byte, v Value)) error {
 	}
 	cur := enter(list)
 	if cur <= 0 {
-		return errorf(Err, "could not walk the list: the call holds its 256 handles")
+		return errorf(Err, "could not walk the list: the call has spent the memory it may hold on the server")
 	}
+	defer closeCursor(cur)
 	var w [32]Value
 	for {
 		n := next(cur, w[:])
 		if n < 0 {
-			closeCursor(cur)
 			return statusError(n, "could not walk the list")
 		}
 		for i := int32(0); i < n; i++ {
@@ -883,17 +885,14 @@ func EachString(list Value, buf []byte, fn func(name []byte, v Value)) error {
 			}
 			k := Bytes(w[i], b)
 			if k < 0 {
-				closeCursor(cur)
 				return statusError(k, "could not read a string of the list")
 			}
 			fn(b[:k], w[i])
 		}
 		if n < 32 {
-			break
+			return nil
 		}
 	}
-	closeCursor(cur)
-	return nil
 }
 
 // resolveRecord returns the final record: bins (a built map; a bin absent or nil is deleted) and a TTL
@@ -903,6 +902,8 @@ func resolveRecord(bins int32, ttl int64) int32 {
 	if out.err != nil {
 		return Fail("resolve: could not build the resolution")
 	}
+	// The result is the host's own reference, so the map the guest never sees is given back at once.
+	defer out.Close()
 	rc := mapPutStr(out.handle, "verdict", "record")
 	if rc == OK {
 		rc = mapPutHandle(out.handle, "bins", bins)

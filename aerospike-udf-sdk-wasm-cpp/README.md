@@ -120,8 +120,13 @@ built. Keep the status, or copy the text, to hold an error longer than that.
   `for (udf::Entry e : v.map())`, 32 per import, the cursor released when the loop ends or breaks.
 - **`udf::Map` and `udf::List`**: collections built on the host, with chainable `put` / `add` overloads for
   every kind, string and integer keys of any length, `put_nil`, `put_geojson`, `put_all` / `add_all` by
-  position; no put or add takes one of the call's 256 handles, so a loop builds as many elements as the
-  call's memory allows; the first refusal is kept and answered by `error()` / `result()`. `size()` and `empty()` on both, and
+  position; no put or add takes a handle, so a loop builds as many elements as the call's memory allows;
+  the first refusal is kept and answered by `error()` / `result()`. Each owns its handle and gives it back
+  when it is destroyed (or at `close()`); they move and do not copy, and what one was put into, added to,
+  set as a bin or returned as keeps it, since the host holds its own reference. A call is bounded by its
+  memory on the server, not by a count of handles, so a loop that builds a collection per iteration holds
+  one at a time. `value()` names the handle while the collection lives; `udf::Value::handle(c.release())`
+  is a Value that outlives it. `size()` and `empty()` on both, and
   `Map::contains(key)` for a string or an integer key, answered by the host for the map being built.
   Written to a bin, returned as the result, nested, or handed back from a handler.
 - **Strings**: `udf::StrView` (a pointer and a length over bytes the caller keeps alive) and

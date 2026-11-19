@@ -50,6 +50,9 @@ declared capacity, or — with the `alloc` feature — a `String`. A nested list
 call; a missing key or an index past the end is `Ok(None)`. Typed readers do not convert: `int` is not
 `double`, `string` is not `geojson`, `blob` is not `string`, and `bytes` is the one reader of raw bytes
 whatever their kind. A list or map you build is a `List` (`push`, `extend`) or a `Map` (`insert`, `extend`, `contains_key`).
+Each owns its handle on the host and gives it back when dropped, as an iterator gives back its cursor; set or
+nest one by reference (`rec.set("x", &list)`, `outer.push(&inner)`), since the host keeps its own reference,
+and return one by value. A call is bounded by its memory on the server, not by a count of handles.
 
 **Every failure is an `Error`**, and a UDF is `fn name(params) -> Result<Value, Error>`: `Ok` is the result the
 client receives, `Err` fails the call with the error's message, `Error::Custom` carries your own, and

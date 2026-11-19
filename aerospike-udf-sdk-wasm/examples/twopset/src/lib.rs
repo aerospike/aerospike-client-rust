@@ -111,7 +111,7 @@ event! {
 
             tags.offer_all(current.list(bin)?)?;
             tags.offer_all(incoming.list(bin)?)?;
-            out.insert(bin, tags.into_list(None)?)?;
+            out.insert(bin, &tags.into_list(None)?)?;
         }
 
         Ok(Resolution::Record { bins: incoming.with_bins(out)?, ttl: None })
@@ -144,7 +144,7 @@ fn grow(rec: &mut Record, bin: &str, tag: Tag) -> Result<(), Error> {
     }
 
     tags.insert(tag)?;
-    rec.set(bin, tags.into_list(None)?)?;
+    rec.set(bin, &tags.into_list(None)?)?;
 
     rec.save()?;
 

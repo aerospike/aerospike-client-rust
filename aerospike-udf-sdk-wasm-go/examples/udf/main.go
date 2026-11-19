@@ -332,4 +332,45 @@ func indexProbe(rec *udf.Record, name string, index int64) (*udf.Map, error) {
 	return out, out.Err()
 }
 
+// Build count maps, each holding a list, nested in one outer list and closed as soon as they are in,
+// then walk every list of list bin nested with a range loop of its own. Answers [elements, sum].
+//
+// The call holds a few handles at a time however large count is: what bounds it is its memory, not a
+// number of handles.
+//
+//udf:function churn
+func churn(rec *udf.Record, count int64) (*udf.List, error) {
+	out := udf.NewList(0)
+	defer out.Close()
+
+	for i := int64(0); i < count; i++ {
+		inner := udf.NewList(2).Add(i).Add(1)
+		entry := udf.NewMap(1).Put("l", inner)
+		inner.Close() // entry keeps it
+		out.Add(entry)
+		entry.Close() // out keeps it
+	}
+	if err := out.Err(); err != nil {
+		return nil, err
+	}
+
+	nested, _, err := rec.List("nested")
+	if err != nil {
+		return nil, err
+	}
+	var sum int64
+	for row := range nested.List() {
+		for cell := range row.List() {
+			n, err := cell.Int()
+			if err != nil {
+				return nil, err
+			}
+			sum += n
+		}
+	}
+
+	answer := udf.NewList(2).Add(out.Len()).Add(sum)
+	return answer, answer.Err()
+}
+
 func main() {}

@@ -202,10 +202,11 @@ passed as a string literal is encoded once, not once per call, and a reader allo
 A bin name is 1 to 15 bytes of UTF-8 with no zero byte in it. A read under any other name finds no bin;
 a write under one throws.
 
-Reading a string, blob, GeoJSON, HLL, list or map bin takes one of the call's 256 handles each time it
-is read, and the handle is held until the call returns (in a stream, until the next record). Read such a
-bin once and keep what came back, not once per turn of a loop: when the handles run out the read throws
-`UdfException` saying the bin could not be read. An integer, double or boolean bin costs none.
+Reading a string, blob, GeoJSON, HLL, list or map bin takes a handle on the host each time it is read,
+charged to the call's memory, and the handle is held until the call returns (in a stream, until the next
+record), since the value reads from it. Read such a bin once and keep what came back, not once per turn of
+a loop: when the call's memory is spent the read throws `UdfException` saying the bin could not be
+read. An integer, double or boolean bin costs none.
 
 A `save` or `delete` that fails ends every list, map and blob value read from the record
 before it: a read through one then throws. Read the bin again.
@@ -1412,7 +1413,18 @@ public Iterator<Value> iterator()
 
 The elements in order, a fresh `Value` each, so one can be kept after the loop moves on. The loop
 may be left early. The elements come from the host 128 at a time, so a loop costs a call per 128
-elements, not one per element. `next()` past the end throws `NoSuchElementException`.
+elements, not one per element. `next()` past the end throws `NoSuchElementException`. The
+host's cursor is given back when the last window is read; a loop left early over a list longer than one
+window leaves it open until the call ends, which `forEach` does not.
+
+#### `ListValue.forEach`
+
+```java
+public void forEach(java.util.function.Consumer<? super Value> action)
+```
+
+Every element in order, as the iterator gives them, with the host's cursor given back however the walk
+ends, an exception from `action` included.
 
 #### `ListValue.toList`
 
@@ -1834,7 +1846,18 @@ public Iterator<Entry> iterator()
 The entries in the order the server keeps them, a fresh key and value each, so an entry can be kept
 after the loop moves on. The loop may be left early. The entries come from the host 64 at a time, so a
 loop costs a call per 64 entries, not one per entry. `next()` past the end throws
-`NoSuchElementException`.
+`NoSuchElementException`. The host's cursor is given back when the last window is read; a loop left
+early over a map longer than one window leaves it open until the call ends, which `forEach` does
+not.
+
+#### `MapValue.forEach`
+
+```java
+public void forEach(java.util.function.Consumer<? super Entry> action)
+```
+
+Every entry in the server's order, as the iterator gives them, with the host's cursor given back however
+the walk ends, an exception from `action` included.
 
 #### `MapValue.toMap`
 
@@ -1850,13 +1873,13 @@ without.
 #### `ListBuilder`
 
 ```java
-public final class ListBuilder
+public final class ListBuilder implements AutoCloseable
 ```
 
 A list being built on the server, to be written to a bin, returned as the result, nested in another
 collection or handed back from an event handler. `Udf.list()` starts one; every `add` is
 one call to the host, appends, and returns the builder, so they chain; one that the host refuses throws
-`UdfException`. The list lives until the call ends.
+`UdfException`. The list is given back by `close`, or when the call ends.
 
 ```java
 ListBuilder tags = Udf.list().add("a").add("b").addAll(rec.getList("more"));
@@ -1868,11 +1891,39 @@ It is a builder, not a collection: what went in is not read back from it. To rea
 stored one (`ListValue`); to build from plain Java data, `addAll(Iterable)` takes a
 `java.util.List`.
 
-A builder holds one of the call's 256 handles for as long as the call runs, and an `add` takes
-none, whatever is added: a loop may add as many elements as the server lets a call build. An `add`
+A builder holds a handle on the host until `close` gives it back (it is `AutoCloseable`, so
+try-with-resources does), or the call ends, and an `add` takes none, whatever is added: a loop may add
+as many elements as the server lets a call build. A call is bounded by its memory on the server, not by a
+count of handles, so a loop that builds a nested list per turn and closes it once it is added holds one
+at a time:
+
+```java
+for (String site : sites) {
+    try (MapBuilder entry = Udf.map(2).put("site", site).put("seen", now)) {
+        out.add(entry);   // out keeps the entry
+    }
+}
+```
+
+ An `add`
 throws, with the status `LowLevel.REFUSED`, when the call has built as much on the server as it is
 allowed, when the value would nest deeper than 64 levels, and when a collection would end up inside
 itself. What was added before the throw stays in the list.
+
+#### `ListBuilder.close`
+
+```java
+public void close()
+```
+
+Gives the list's handle back to the host. What the list was set into, added to, put into or
+returned as keeps it, since the host holds its own reference to what it is handed; so close a builder
+once it has been handed over, or use it in a try-with-resources block. One not closed is given back when
+the call ends. Closing twice does nothing. After a close an `add` throws `UdfException`, and
+`asValue` names nothing.
+
+Not before the call is done with it: a builder given to `Resolution.record` is read when the
+handler has returned, so it must not be closed in the handler.
 
 #### `ListBuilder.size`
 
@@ -1978,6 +2029,7 @@ public ListBuilder add(List<?> value)
 ```
 
 Appends a `java.util.List` as one nested list, its elements as `addAll(Iterable)` takes them.
+The nested list is built for the purpose and its handle given back once this list holds it.
 
 #### `ListBuilder.add`
 
@@ -1985,7 +2037,8 @@ Appends a `java.util.List` as one nested list, its elements as `addAll(Iterable)
 public ListBuilder add(Map<?, ?> value)
 ```
 
-Appends a `java.util.Map` as one nested map, its entries as `MapBuilder.putAll(Map)` takes them.
+Appends a `java.util.Map` as one nested map, its entries as `MapBuilder.putAll(Map)` takes
+them. The nested map's handle is given back once this list holds it.
 
 #### `ListBuilder.addNil`
 
@@ -2030,14 +2083,14 @@ ListBuilder flat = Udf.list().addAll(row).add(true);    // four elements
 #### `MapBuilder`
 
 ```java
-public final class MapBuilder
+public final class MapBuilder implements AutoCloseable
 ```
 
 A map being built on the server, to be written to a bin, returned as the result, nested in another
 collection or handed back from an event handler. `Udf.map()` starts one; every `put` is one
 call to the host and returns the builder, so they chain; one that the host refuses throws
 `UdfException`. A key is a string or an integer. The map is ordered by key, whatever order its
-entries are put in, and lives until the call ends.
+entries are put in, and is given back by `close`, or when the call ends.
 
 ```java
 MapBuilder out = Udf.map().put("visits", visits).put("tags", tags);
@@ -2055,11 +2108,28 @@ Putting under a key the map already has replaces that entry. A key is not a bin 
 any length; none is cut. The exception is the map of bins an event handler answers with
 (`Resolution.record`), whose keys are bin names.
 
-A builder holds one of the call's 256 handles for as long as the call runs, and a `put` takes
-none, whatever the key and the value are: a loop may put as many entries as the server lets a call build.
+A builder holds a handle on the host until `close` gives it back (try-with-resources does), or the
+call ends, and a `put` takes none, whatever the key and the value are: a loop may put as many entries
+as the server lets a call build. A call is bounded by its memory on the server, not by a count of handles,
+as `ListBuilder` says.
 A `put` throws, with the status `LowLevel.REFUSED`, when the call has built as much on the
 server as it is allowed, when the value would nest deeper than 64 levels, and when a collection would end
 up inside itself.
+
+#### `MapBuilder.close`
+
+```java
+public void close()
+```
+
+Gives the map's handle back to the host. What the map was set into, added to, put into or
+returned as keeps it, since the host holds its own reference to what it is handed; so close a builder
+once it has been handed over, or use it in a try-with-resources block. One not closed is given back when
+the call ends. Closing twice does nothing. After a close an `put` throws `UdfException`, and
+`asValue` names nothing.
+
+Not before the call is done with it: a builder given to `Resolution.record` is read when the
+handler has returned, so it must not be closed in the handler.
 
 #### `MapBuilder.size`
 
@@ -2426,7 +2496,7 @@ public static ListBuilder list()
 ```
 
 Starts an empty list on the server, to add to and then write to a bin, return, or nest. Throws
-`UdfException` when the call has no handle left for it, or has built as much as it is allowed.
+`UdfException` when the call has spent the memory it may hold on the server.
 
 ```java
 ListBuilder recent = Udf.list().add(page).addAll(rec.getList("recent"));
@@ -2451,7 +2521,7 @@ public static MapBuilder map()
 ```
 
 Starts an empty map on the server, to put into and then write to a bin, return, or nest. Throws
-`UdfException` when the call has no handle left for it, or has built as much as it is allowed.
+`UdfException` when the call has spent the memory it may hold on the server.
 
 ```java
 MapBuilder stats = Udf.map().put("visits", visits).put("last", page);
@@ -2584,9 +2654,10 @@ The rules the rest of the SDK keeps for its callers are the caller's own here:
 - A status is `OK` or negative: `NOT_FOUND`, `TYPE_MISMATCH`, `REFUSED`,
 `ERR`, and at or below `NEEDED_BASE` a buffer that was too small, `-(rc) - 16`
 being the size needed.
-- A cursor from `enter` holds one of the call's 256 handle slots until `close`, and
-the host gives a slot back only when it is the last one handed out: close cursors in the reverse of
-the order they were opened, on every path out of the loop.
+- A cursor from `enter`, a collection from `newList` or `newMap`, and a value from
+the `*Handle` calls each hold a handle until `close` gives it back, in any order, or the
+call ends: close each on every path out of the loop that made it. A call is bounded by its memory on
+the server, not by a count of handles.
 - A `Value` filled here is overwritten by the next call that fills it; `copy` keeps
 one.
 
@@ -2794,8 +2865,8 @@ public static int bin(byte[] name, Value out)
 Reads a bin of any kind into `out`, in one import. Returns `OK` with `out` filled;
 `NOT_FOUND` for no such bin, or a name that is not 1 to 15 bytes, with `out` left as it
 was; `ERR` when the host could not hand the value out. Each read of a string, blob, list or map
-bin takes one of the call's 256 handles and nothing gives it back before the call ends, so read such a
-bin once per call (per record, in a stream).
+bin takes a handle that is kept until the call ends, since the value reads from it, so read such a bin
+once per call (per record, in a stream).
 
 #### `LowLevel.eventBin`
 
@@ -2877,9 +2948,9 @@ public static int enter(Value v)
 ```
 
 Opens a cursor over the stored list or map `v`, placed before its first element. Returns the
-cursor, which is positive, or 0 when it could not: `v` is not a stored list or map, or the call
-has no handle left. Every cursor opened is closed with `close`, in the reverse of the order they
-were opened.
+cursor, which is positive, or 0 when it could not: `v` is not a stored list or map, or the call's
+memory on the server has no room for it. Every cursor opened is closed with `close`, on every
+path out of the walk, in any order.
 
 #### `LowLevel.next`
 
@@ -2897,12 +2968,14 @@ nested list or map comes as one value, to `enter` in turn.
 #### `LowLevel.close`
 
 ```java
-public static void close(int cursor)
+public static void close(int handle)
 ```
 
-Gives a cursor's handle back. The host gives a handle back only when it is the last one handed out, and
-ignores the call otherwise: close an inner cursor before the outer one, and before building anything
-new. A cursor left open costs one of the 256 handles until the call ends, and nothing after.
+Gives a handle back to the host: a cursor, a built list or map once it has been set, put, pushed or
+returned (each of which takes its own reference), a `*Handle` value once it is in. The host reuses
+the slot, in whatever order handles are closed, and refuses a handle used after its close. Closing one
+the host still needs (a bin or argument values read from), one already closed, or 0, does nothing. What
+is left open is given back when the call ends.
 
 #### `LowLevel.get`
 
@@ -3098,7 +3171,7 @@ public static int newList(int capacity)
 
 Starts a list on the host and returns its handle, which is positive and is what the `listPush*`
 calls, int) and `resultHandle` take. 0 when it could not: the call
-has no handle left, or has built as much as it may. `capacity` is a hint, 0 meaning none; the
+has spent the memory it may hold on the server. `close` gives it back. `capacity` is a hint, 0 meaning none; the
 list grows past it.
 
 #### `LowLevel.newMap`
@@ -3151,9 +3224,10 @@ event handler's answer: `Resolution.record(LowLevel.map(handle))`. It does not c
 public static int nilHandle()
 ```
 
-A nil value as a handle, for `mapPut` and `listPushHandle`. Each call takes one of the
-256 handles for good, so this is not for a loop: `listPushValues` and `mapPutEntries`
-take the same value in a `Value`, with no handle. 0 when none is left.
+A nil value as a handle, for `mapPut` and `listPushHandle`. Each call takes a handle until
+`close`: a loop closes each once it is in, or uses `listPushValues` and
+`mapPutEntries`, which take the same value in a `Value`, with no handle. 0 when the call's
+memory is spent.
 
 #### `LowLevel.strHandle`
 
@@ -3162,8 +3236,7 @@ public static int strHandle(byte[] s, int len)
 ```
 
 A string as a handle, copied from the first `len` bytes of `s`: a key or value for
-`mapPut`. Each call takes one of the 256 handles for good, so this is not for a loop; 0 when none
-is left.
+`mapPut`. Each call takes a handle until `close`; 0 when the call's memory is spent.
 
 #### `LowLevel.intHandle`
 
@@ -3171,9 +3244,9 @@ is left.
 public static int intHandle(long i)
 ```
 
-An integer as a handle: a key or value for `mapPut`. Each call takes one of the 256 handles for
-good, so a loop that puts under integer keys uses `mapPutEntries` or
-long, Value), which take none; 0 when none is left.
+An integer as a handle: a key or value for `mapPut`. Each call takes a handle until
+`close`, so a loop that puts under integer keys uses `mapPutEntries` or
+long, Value), which take none; 0 when the call's memory is spent.
 
 #### `LowLevel.size`
 
@@ -3306,8 +3379,8 @@ public static int mapPut(int m, int key, int value)
 ```
 
 Puts a built value under a built key, both by handle: for a key of any kind, such as one from
-`intHandle`. Both handles stay good, and each took one of the 256, which is why the typed puts
-are the ones for a loop. Returns `OK`, `ERR` for a handle the host does not hold,
+`intHandle`. Both handles stay good until closed, and each took a handle, which is why the typed
+puts are the ones for a loop. Returns `OK`, `ERR` for a handle the host does not hold,
 `REFUSED` when the map turns the entry down.
 
 #### `LowLevel.mapPutEntries`

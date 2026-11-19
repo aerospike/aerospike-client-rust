@@ -22,7 +22,7 @@ import org.teavm.interop.Address;
  * collection or handed back from an event handler. {@link Udf#map()} starts one; every {@code put} is one
  * call to the host and returns the builder, so they chain; one that the host refuses throws
  * {@link UdfException}. A key is a string or an integer. The map is ordered by key, whatever order its
- * entries are put in, and lives until the call ends.
+ * entries are put in, and is given back by {@link #close}, or when the call ends.
  *
  * <pre>
  * MapBuilder out = Udf.map().put("visits", visits).put("tags", tags);
@@ -40,14 +40,16 @@ import org.teavm.interop.Address;
  * any length; none is cut. The exception is the map of bins an event handler answers with
  * ({@link Resolution#record}), whose keys are bin names.
  *
- * <p>A builder holds one of the call's 256 handles for as long as the call runs, and a {@code put} takes
- * none, whatever the key and the value are: a loop may put as many entries as the server lets a call build.
+ * <p>A builder holds a handle on the host until {@link #close} gives it back (try-with-resources does), or the
+ * call ends, and a {@code put} takes none, whatever the key and the value are: a loop may put as many entries
+ * as the server lets a call build. A call is bounded by its memory on the server, not by a count of handles,
+ * as {@link ListBuilder} says.
  * A {@code put} throws, with the status {@link LowLevel#REFUSED}, when the call has built as much on the
  * server as it is allowed, when the value would nest deeper than 64 levels, and when a collection would end
  * up inside itself.
  */
-public final class MapBuilder {
-    private final int handle;
+public final class MapBuilder implements AutoCloseable {
+    private int handle;
 
     MapBuilder(int handle) {
         this.handle = handle;
@@ -58,17 +60,35 @@ public final class MapBuilder {
         int h = Natives.mapNew(Math.max(capacity, 1));
 
         if (h <= 0) {
-            // The host gives no reason; both it has are a refusal: no handle left, or too much built.
-            throw new UdfException(LowLevel.REFUSED, "could not build a map: the call has no handle left for"
-                    + " it, or has built as much as it may");
+            // The host gives no reason; the one it has is a refusal: the call's memory is spent.
+            throw new UdfException(LowLevel.REFUSED, "could not build a map: the call has spent the memory it"
+                    + " may hold on the server");
         }
 
         return new MapBuilder(h);
     }
 
-    /** The host's handle on the map. */
+    /** The host's handle on the map; 0 once closed. */
     int handle() {
         return handle;
+    }
+
+    /**
+     * Gives the map's handle back to the host. What the map was set into, added to, put into or
+     * returned as keeps it, since the host holds its own reference to what it is handed; so close a builder
+     * once it has been handed over, or use it in a try-with-resources block. One not closed is given back when
+     * the call ends. Closing twice does nothing. After a close an {@code put} throws {@link UdfException}, and
+     * {@link #asValue} names nothing.
+     *
+     * <p>Not before the call is done with it: a builder given to {@link Resolution#record} is read when the
+     * handler has returned, so it must not be closed in the handler.
+     */
+    @Override
+    public void close() {
+        if (handle > 0) {
+            Natives.cursorClose(handle);
+            handle = 0;
+        }
     }
 
     /** How many entries the map holds: keys, not puts. One call to the host. */
@@ -235,7 +255,9 @@ public final class MapBuilder {
      * {@link ListBuilder#addAll} takes them; an element of another type throws {@link UdfException}.
      */
     public MapBuilder put(String key, List<?> value) {
-        return put(key, ListBuilder.create(value.size()).addAll(value));
+        try (ListBuilder nested = ListBuilder.create(value.size())) {
+            return put(key, nested.addAll(value));
+        }
     }
 
     /**
@@ -243,7 +265,9 @@ public final class MapBuilder {
      * takes them; a key or value of another type throws {@link UdfException}.
      */
     public MapBuilder put(String key, Map<?, ?> value) {
-        return put(key, create(value.size()).putAll(value));
+        try (MapBuilder nested = create(value.size())) {
+            return put(key, nested.putAll(value));
+        }
     }
 
     /**
@@ -364,7 +388,9 @@ public final class MapBuilder {
      * {@link ListBuilder#addAll} takes them; an element of another type throws {@link UdfException}.
      */
     public MapBuilder put(long key, List<?> value) {
-        return put(key, ListBuilder.create(value.size()).addAll(value));
+        try (ListBuilder nested = ListBuilder.create(value.size())) {
+            return put(key, nested.addAll(value));
+        }
     }
 
     /**
@@ -372,7 +398,9 @@ public final class MapBuilder {
      * takes them; a key or value of another type throws {@link UdfException}.
      */
     public MapBuilder put(long key, Map<?, ?> value) {
-        return put(key, create(value.size()).putAll(value));
+        try (MapBuilder nested = create(value.size())) {
+            return put(key, nested.putAll(value));
+        }
     }
 
     /** Puts a nil entry under an integer key: the key is in the map and its value is nil. */
@@ -390,7 +418,8 @@ public final class MapBuilder {
      * has. Throws {@link UdfException} for a key that is neither a string nor an integer.
      */
     public MapBuilder putAll(MapValue stored) {
-        for (MapValue.Entry e : stored) {
+        // forEach gives the walk's cursor back when a put throws part way.
+        stored.forEach(e -> {
             Value key = e.getKey();
 
             if (key.isInt()) {
@@ -399,7 +428,7 @@ public final class MapBuilder {
             else {
                 put(key.asString(), e.getValue());
             }
-        }
+        });
 
         return this;
     }

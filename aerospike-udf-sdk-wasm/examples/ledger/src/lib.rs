@@ -63,13 +63,13 @@ export! {
         let posting = as_udf::map(2)?;
 
         posting.insert("amount", amount)?.insert("memo", &memo)?;
-        history.push(posting)?;
+        history.push(&posting)?;
 
-        let kept = history.into_value().list()?.len() as i64;
+        let kept = history.as_value().list()?.len() as i64;
 
         let balance = balance(rec)?;
 
-        rec.set("postings", history)?;
+        rec.set("postings", &history)?;
         rec.set("balance", balance + amount)?;
         rec.save()?;
 

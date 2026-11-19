@@ -24,8 +24,8 @@ import (
 //
 
 // Map is a map built on the host, to be written to a bin, returned as the result, nested in another
-// collection, or handed back from an event handler as the record. Make one with NewMap; it lives until
-// the call ends.
+// collection, or handed back from an event handler as the record. Make one with NewMap; its handle is
+// given back by Close, or when the call ends.
 //
 // Put and its relatives return the map, so they chain, and none of them returns an error: the first
 // refusal is kept and answered by Err, the way strings.Builder keeps its error. Record.Set,
@@ -51,8 +51,8 @@ type Map struct {
 }
 
 // List is a list built on the host, to be written to a bin, returned as the result or nested in
-// another collection. Make one with NewList; it lives until the call ends. Add and its relatives
-// chain, and the first refusal is kept and answered by Err, as with Map.
+// another collection. Make one with NewList; its handle is given back by Close, or when the call ends.
+// Add and its relatives chain, and the first refusal is kept and answered by Err, as with Map.
 //
 //	tags := udf.NewList(4).Add("new").Add(42).Add(1.5)
 //	if err := rec.Set("tags", tags); err != nil { // Set answers what the list kept, too
@@ -66,16 +66,18 @@ type List struct {
 // NewMap starts an empty map. capacity is a hint of how many entries are coming, not a limit: the map
 // grows past it, 0 is fine, and the host caps what it reserves at 1024.
 //
-// It never returns nil. When the host cannot make the map - the call holds its 256 handles, or has
-// spent what it may build on the host - the map returned has kept that error, an *Error with Status
-// Refused: Err answers it, every Put on it fails, and Len is -1.
+// It never returns nil. When the host cannot make the map - the call has spent the memory it may hold
+// on the server - the map returned has kept that error, an *Error with Status Refused: Err answers it,
+// every Put on it fails, and Len is -1.
 //
-// A built map or list holds one of the call's 256 handles until the call ends, whatever becomes of
-// it; its entries hold none, however many there are and whatever their kinds.
+// A built map or list holds a handle on the host until Close gives it back, or the call ends; its
+// entries hold none, however many there are and whatever their kinds. A call is bounded by its memory,
+// not by a count of handles, so a loop that builds a collection per iteration and closes each once it
+// is put, added, set or returned can run as long as the memory lasts.
 func NewMap(capacity int) *Map {
 	h := mapNew(int32(capacity))
 	if h <= 0 {
-		return &Map{err: errorf(Refused, "could not build a map: the call holds its 256 handles, or has spent what it may build")}
+		return &Map{err: errorf(Refused, "could not build a map: the call has spent the memory it may hold on the server")}
 	}
 	return &Map{handle: h}
 }
@@ -88,7 +90,7 @@ func NewMap(capacity int) *Map {
 func NewList(capacity int) *List {
 	h := listNew(int32(capacity))
 	if h <= 0 {
-		return &List{err: errorf(Refused, "could not build a list: the call holds its 256 handles, or has spent what it may build")}
+		return &List{err: errorf(Refused, "could not build a list: the call has spent the memory it may hold on the server")}
 	}
 	return &List{handle: h}
 }
@@ -116,12 +118,42 @@ func (m *Map) Value() Value { return handleValue(m.handle) }
 func (l *List) Value() Value { return handleValue(l.handle) }
 
 // Len is how many entries the map holds, asked of the host in one import; -1 when it could not be
-// built, as after a failed NewMap.
+// built, as after a failed NewMap, or after Close.
 func (m *Map) Len() int { return int(collSize(m.handle)) }
 
+// Close gives the map's handle back to the host. What the map was put into, added to, set as a bin or
+// returned as keeps it: the host holds its own reference to a value it is handed. So close a map once
+// it has been handed over, or once it is no longer needed; a map not closed is given back when the
+// call ends. After Close the map is empty to the guest: Len is -1 and a Put is a refusal kept for Err.
+// Closing twice, or a nil map, does nothing.
+//
+//	for _, site := range sites {
+//		entry := udf.NewMap(2).Put("site", site).Put("seen", now)
+//		out.Add(entry)
+//		entry.Close() // out keeps the entry
+//	}
+func (m *Map) Close() {
+	if m == nil || m.handle <= 0 {
+		return
+	}
+	cursorClose(m.handle)
+	m.handle = 0
+}
+
 // Len is how many elements the list holds, asked of the host in one import; -1 when it could not be
-// built, as after a failed NewList.
+// built, as after a failed NewList, or after Close.
 func (l *List) Len() int { return int(collSize(l.handle)) }
+
+// Close gives the list's handle back to the host, as Map.Close does: what the list was handed to
+// keeps it, a list not closed is given back when the call ends, and closing twice, or a nil list,
+// does nothing.
+func (l *List) Close() {
+	if l == nil || l.handle <= 0 {
+		return
+	}
+	cursorClose(l.handle)
+	l.handle = 0
+}
 
 // mapKey is a Go value as a map key: a string, or an integer. ok is false for any other type.
 func mapKey(key any) (text string, number int64, isInt bool, ok bool) {
@@ -216,8 +248,8 @@ func valueOf(v any) (Value, bool) {
 // stored bytes, without being decoded, and keeps its kind. The host refuses a collection that would
 // come to contain itself, or to nest more than 64 deep.
 //
-// Each put is one import and takes none of the 256 handles a call may hold, whatever the kinds of the
-// key and the value, so a loop may put as many entries as the call may build. A key is put whole,
+// Each put is one import and takes no handle, whatever the kinds of the key and the value, so a loop
+// may put as many entries as the call may build. A key is put whole,
 // whatever its length. PutEntries puts many entries in one import.
 func (m *Map) Put(key any, v any) *Map {
 	text, number, isInt, ok := mapKey(key)
@@ -342,8 +374,8 @@ func (m *Map) PutGeoJSON(key, doc string) *Map {
 // []byte (a blob), Value, *Map, *List, or nil for a nil element, as Map.Put takes them. A value of
 // any other Go type is a refusal, kept for Err.
 //
-// Each add is one import and takes none of the 256 handles a call may hold, whatever the kind, so a
-// loop may add as many elements as the call may build. AddValues adds many in one import. The
+// Each add is one import and takes no handle, whatever the kind, so a loop may add as many elements
+// as the call may build. AddValues adds many in one import. The
 // refusal Err keeps has Status Refused when the host would not take the element, TypeMismatch for a
 // Go type or a Value that cannot be added, NotFound for a Value of KindAbsent.
 func (l *List) Add(v any) *List {

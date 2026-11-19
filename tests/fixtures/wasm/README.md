@@ -31,6 +31,15 @@ pin down what the record's verbs do (a save with nothing staged, removing a bin,
 deleting the record) and the two host calls added with them (one element of a stored list by index, and a
 built map asked for a key). Each language's suite has the two tests that call them.
 
+`udf_test.wasm`, `udf_go.wasm`, `udf_cpp.wasm`, `udf_java.wasm` and (outside the conformance
+specification) `apitest_c.wasm` have `churn(count)`: it builds `count` maps each holding a list and gives
+each back as soon as it is nested (drop in Rust and C++, `Close` / `close` / `as_udf_handle_close` in Go,
+Java and C), then walks 2000 nested lists (the lists of bin `nested`; in Rust, the ones it built), one
+cursor each, closed as each walk ends. The tests
+call it with 2000, so a call takes about 6000 handles and holds a few at a time. The Go and C ones close
+the inner list before the map that holds it, which only a host that reuses any slot (not just the newest)
+gives back; the Rust, C++ and Java ones close in the reverse of the order they opened.
+
 The Rust fixture alone has `staged_read`, `stale_read` and the `poke` aggregation, which call host calls
 directly to do what the SDK's types do not allow: read a bin after staging a value over it, keep a value
 across a write to its bin, and write from a stream. They test the server, not the SDK.

@@ -738,10 +738,10 @@ class ListRange
 
 The elements of a stored list, for a range-for. Made by Value::list(), and handed out by Record::list() and
 EventRecord::list() when the bin is a list; empty when the value it was made from is not a list. The loop reads the list 32 elements a host call and holds
-one of the call's handles while it runs, given back when it ends or breaks unless the body took a handle of its
-own in the meantime. Each element is a Value: a scalar in itself, a string or nested collection by position.
-If the host cannot open or continue the walk (every handle in use, or the value ended by a failed save), the
-call is failed and stopped there: a loop is never handed a shorter list than the stored one.
+a cursor on the host while it runs, given back when it ends, breaks or returns. Each element is a Value: a
+scalar in itself, a string or nested collection by position. If the host cannot open or continue the walk (the
+call's memory on the server has no room for the cursor, or the value ended by a failed save), the call is
+failed and stopped there: a loop is never handed a shorter list than the stored one.
 
 ```cpp
 int64_t total = 0;
@@ -918,7 +918,10 @@ is enough. A put under a key that is already there replaces its value. The map i
 order the entries were put in. It is built once and not read back entry by entry: contains() and size() are
 what it answers.
 
-Copying a Map copies the handle, not the entries: both copies are the same map.
+A Map owns its handle and gives it back to the host when it is destroyed. It moves and does not copy; a
+moved-from Map is null and gives nothing back. What it was put into, added to, set as a bin or returned as keeps
+the map, since the host holds its own reference to what it is handed, so a loop that builds a map per iteration
+and nests it holds one at a time: a call is bounded by its memory on the server, not by a count of handles.
 
 ```cpp
 udf::Map profile(4);
@@ -944,7 +947,26 @@ static Map wrap(int32_t handle)
 ```
 
 wrap() adopts a handle the host already issued (one from the C header's as_udf_map_new), without building a
-new map. The handle is not checked: a put on one that is not a built map fails.
+new map, and owns it from then on: it is given back when the Map is destroyed. The handle is not checked: a
+put on one that is not a built map fails.
+
+#### `Map::close`
+
+```cpp
+void close()
+```
+
+Gives the handle back to the host now rather than at destruction, leaving a null map. What the map was
+handed to keeps it. Closing twice, or a null map, does nothing.
+
+#### `Map::release`
+
+```cpp
+int32_t release()
+```
+
+Gives up the handle without closing it, leaving a null map: for a caller that hands it to the C API and
+closes it there, or lets it go at the end of the call.
 
 #### `Map::handle`
 
@@ -985,7 +1007,8 @@ Value value() const
 ```
 
 The map as a Value of kind Handle, to nest it in a batch (List::add_values, Map::put_entries) or to
-pass it to udf::result().
+pass it to udf::result(). The Value names the map's handle, so it is good while the Map lives; a Value
+that has to outlive the Map, such as one a function returns, is `udf::Value::handle(m.release())`.
 
 #### `Map::empty`
 
@@ -1036,8 +1059,8 @@ Puts an int under a string key, widened to 64 bits.
 Map& put(StrView key, double v)
 ```
 
-Puts a double under a string key. Like every put, it takes none of the call's 256 handles, so a loop puts
-as many entries as the call's memory allows.
+Puts a double under a string key. Like every put, it takes no handle, so a loop puts as many entries as the
+call's memory allows.
 
 #### `Map::put`
 
@@ -1212,8 +1235,8 @@ class List
 A list being built on the host, held by handle: the way to make a list bin or a list result. `udf::List
 l(capacity)` starts one; the capacity is a hint and the list grows past it. The adds chain, and an add the host
 refuses does not stop the chain: the first failure is kept and reported by error() and result(), and
-Record::set and a returned List fail with it. It is built once and not read back element by element. Copying a
-List copies the handle: both copies are the same list.
+Record::set and a returned List fail with it. It is built once and not read back element by element. Like a
+Map, a List owns its handle, gives it back when destroyed, and moves rather than copies.
 
 ```cpp
 UDF_FUNCTION(evens, udf::Result<udf::List>, const udf::Record& rec)
@@ -1243,7 +1266,25 @@ static List wrap(int32_t handle)
 ```
 
 wrap() adopts a handle the host already issued (one from the C header's as_udf_list_new), without building
-a new list. The handle is not checked: an add to one that is not a built list fails.
+a new list, and owns it from then on. The handle is not checked: an add to one that is not a built list
+fails.
+
+#### `List::close`
+
+```cpp
+void close()
+```
+
+Gives the handle back to the host now, leaving a null list; what the list was handed to keeps it. Closing
+twice, or a null list, does nothing.
+
+#### `List::release`
+
+```cpp
+int32_t release()
+```
+
+Gives up the handle without closing it, leaving a null list.
 
 #### `List::handle`
 
@@ -1292,7 +1333,7 @@ Value value() const
 ```
 
 The list as a Value of kind Handle, to nest it in a batch (List::add_values, Map::put_entries) or to
-pass it to udf::result().
+pass it to udf::result(). Good while the List lives, as Map::value() says.
 
 #### `List::add`
 
@@ -1317,8 +1358,8 @@ Appends an int, widened to 64 bits.
 List& add(double v)
 ```
 
-Appends a double. Like every add, it takes none of the call's 256 handles, so a loop adds as many elements as
-the call's memory allows.
+Appends a double. Like every add, it takes no handle, so a loop adds as many elements as the call's memory
+allows.
 
 #### `List::add`
 

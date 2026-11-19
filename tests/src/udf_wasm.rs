@@ -1687,6 +1687,36 @@ async fn a_wasm_udf_copies_stored_collections_in_batches() {
     assert_eq!(by_key(&map_entries(&parts[1])), by_key(&want), "every entry, by position");
 }
 
+/// **A built collection gives its handle back when it is dropped.** `churn` builds 2000 maps each holding a
+/// list, nests them by reference, and walks every nested list with an iterator of its own: 6000 handles
+/// in one call, of which the SDK holds a few at a time. A call is bounded by its memory, not by a count of
+/// handles, and the SDK gives back what it is done with.
+#[aerospike_macro::test]
+async fn a_wasm_udf_gives_back_the_collections_it_drops() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("wasm_churn_{}", common::rand_str(6));
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+
+    client.put(&write, &key, &[as_bin!("n", 1)]).await.unwrap();
+
+    if let Err(reason) = register(&client, package, &key).await {
+        skipped("a_wasm_udf_gives_back_the_collections_it_drops", &reason);
+        return;
+    }
+
+    let count = 2000i64;
+    let result = client
+        .execute_udf(&write, &key, package, "churn", &[Value::Int(count)])
+        .await
+        .unwrap();
+    let sum = (0..count).sum::<i64>() + count;
+
+    assert_eq!(result, Some(Value::List(vec![Value::Int(count), Value::Int(sum)])));
+}
+
 /// **A WASM module describes its own exports.**
 ///
 /// Beside every UDF the SDK's macros export `__udf_sig_<name>`, and the host serves it as a string result
@@ -1890,4 +1920,40 @@ async fn a_wasm_udf_at_the_edges_the_reference_states() {
     }
 
     let _ = client.remove_udf(&admin, &format!("{package}.wasm")).await;
+}
+
+/// **A call holds as many handles as its memory pays for.** `many_handles` builds a list of 5000 small maps
+/// and walks a list of 2000 nested lists, each with an iterator of its own, in one call. The host's handle
+/// table used to hold 256; it now grows in blocks charged to the call's memory, and reuses the slots a guest
+/// gives back, so neither the SDK's habits nor the size of the work decide whether the call succeeds.
+#[aerospike_macro::test]
+async fn a_wasm_udf_holds_thousands_of_handles_in_one_call() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("wasm_handles_{}", common::rand_str(6));
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+    let lists = 2000i64;
+    let nested: Vec<Value> = (0..lists).map(|i| as_list!(i, 1)).collect();
+
+    client.put(&write, &key, &[as_bin!("nested", Value::List(nested))]).await.unwrap();
+
+    if let Err(reason) = register(&client, package, &key).await {
+        skipped("a_wasm_udf_holds_thousands_of_handles_in_one_call", &reason);
+        return;
+    }
+
+    let maps = 5000i64;
+    let result = client
+        .execute_udf(&write, &key, package, "many_handles", &[Value::Int(maps)])
+        .await
+        .unwrap();
+    let sum = (0..lists).sum::<i64>() + lists;
+
+    assert_eq!(
+        result,
+        Some(Value::List(vec![Value::Int(maps), Value::Int(lists), Value::Int(sum)])),
+        "5000 maps built and 2000 nested lists walked in one call"
+    );
 }

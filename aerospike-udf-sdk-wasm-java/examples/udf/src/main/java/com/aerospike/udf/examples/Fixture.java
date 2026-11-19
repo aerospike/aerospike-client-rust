@@ -294,4 +294,32 @@ public final class Fixture {
 
         return rec.getInt("i", 0);
     }
+
+    /**
+     * Builds {@code count} maps, each holding a list, nested in one outer list and closed by
+     * try-with-resources once they are in; then walks every list of list bin {@code nested} with a for-each
+     * of its own, whose cursor goes back when the loop ends. Answers {@code [elements, sum]}. The call holds a
+     * few handles at a time however large {@code count} is: what bounds it is its memory, not a number of
+     * handles.
+     */
+    @Function("churn")
+    static ListBuilder churn(Record rec, long count) {
+        try (ListBuilder out = Udf.list(0)) {
+            for (long i = 0; i < count; i++) {
+                try (ListBuilder inner = Udf.list(2).add(i).add(1); MapBuilder entry = Udf.map(1)) {
+                    out.add(entry.put("l", inner));
+                }
+            }
+
+            long sum = 0;
+
+            for (Value row : rec.bin("nested").asList()) {
+                for (Value cell : row.asList()) {
+                    sum += cell.asInt();
+                }
+            }
+
+            return Udf.list(2).add(out.size()).add(sum);
+        }
+    }
 }

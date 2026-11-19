@@ -104,7 +104,7 @@ event! {
 
             stamps.offer_all(current.map(bin)?)?;
             stamps.offer_all(incoming.map(bin)?)?;
-            out.insert(bin, stamps.into_map()?)?;
+            out.insert(bin, &stamps.into_map()?)?;
         }
 
         Ok(Resolution::Record { bins: incoming.with_bins(out)?, ttl: None })
@@ -176,7 +176,7 @@ fn stamp(rec: &mut Record, bin: &str, tag: Tag) -> Result<(), Error> {
     let mut stamps = stored(rec, bin)?;
 
     stamps.offer(tag, at)?;
-    rec.set(bin, stamps.into_map()?)?;
+    rec.set(bin, &stamps.into_map()?)?;
 
     rec.save()?;
 

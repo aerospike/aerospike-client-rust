@@ -75,7 +75,7 @@ event! {
             }
         }
 
-        out.insert("tags", tags)?;
+        out.insert("tags", &tags)?;
 
         // A document one side rewrote whole: last writer wins, by last update time, which both DCs
         // agree on.
@@ -110,7 +110,7 @@ event! {
 fn has_str(list: &as_udf::List, n: usize, text: &str) -> Result<bool, Error> {
     let mut buf = [0u8; 64];
 
-    for (i, item) in list.into_value().list()?.iter().enumerate() {
+    for (i, item) in list.as_value().list()?.iter().enumerate() {
         if i >= n {
             break;
         }

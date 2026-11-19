@@ -142,8 +142,13 @@ per export, and `main`. Name it as the TeaVM `mainClass`; the annotated class ne
   `addGeoJson` / `putGeoJson`, `addAll` / `putAll` from a stored collection (by position) or from a
   `java.util` one, `MapBuilder.containsKey`; written to a bin, returned as the result, nested, or handed
   back from a handler. They are builders, not collections: what went in is not read back. An `add` or a
-  `put` takes none of the call's 256 handles, so a loop of any length builds until the server refuses
-  (`LowLevel.REFUSED`).
+  `put` takes no handle, so a loop of any length builds until the server refuses (`LowLevel.REFUSED`).
+  Each builder holds a handle until `close()` gives it back (they are `AutoCloseable`, so
+  try-with-resources does), or the call ends: close one once it has been set, added, put or returned,
+  since the host keeps its own reference to what it is handed. The one exception is the map given to
+  `Resolution.record`, which is read after the handler returns. A call is bounded by its memory on the
+  server, not by a count of handles, so a loop that builds and closes a collection per turn runs as long
+  as that memory lasts.
 - **`Udf`**: what is not about the record: `now()`, `log`, the builder factories, and for a function in
   the raw form the `result*` calls and `fail`.
 - **Events**: `EventRecord` for each side of a merge (the same readers as `Record`, plus `binNames()`,
@@ -178,9 +183,11 @@ A for-each over a `ListValue` or a `MapValue` reads the collection from the serv
 collection that fits one window (128 elements, 64 entries) that is before the loop sees its first
 element, so `break` and `return` hold nothing. A longer collection keeps its cursor between windows; a
 loop over one that is left early leaves that cursor open until the call returns, when the server releases
-every handle the call held (per record, in a stream). It costs one of the call's 256 handle slots until
-then, so the one thing to avoid is leaving a loop over a long collection early hundreds of times in one
-call.
+every handle the call held (per record, in a stream). It costs a little of the call's memory until then,
+so the one thing to avoid is leaving a loop over a long collection early thousands of times in one call.
+`forEach` on a `ListValue` or `MapValue` gives the cursor back however it ends, an exception included, and
+every walk the SDK makes for itself (`contains`, `withBins`, `withNewer`, `putAll`, `addAll`, the
+`java.util` conversions) does too.
 
 ## Which TeaVM, and why
 

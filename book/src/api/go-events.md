@@ -128,7 +128,9 @@ the list, and is passed over.
 
 A list that is absent or nil has no strings, and the answer is nil. The error is an *Error: Status
 TypeMismatch when list is a value of another kind, and the host's status when the list could not be
-walked - the call holds its 256 handles - or a string could not be read; the walk stops there.
+walked - the call has spent the memory it may hold on the server - or a string could not be read;
+the walk stops there. The walk's cursor is given back before EachString returns, fn panicking
+included.
 
 #### `XdrMergeSignature`
 

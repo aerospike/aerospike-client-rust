@@ -231,19 +231,19 @@ event! {
             }
 
             if current.list("devices")?.is_some() || incoming.list("devices")?.is_some() {
-                out.insert("devices", live)?;
+                out.insert("devices", &live)?;
             }
 
             if n_markers > 0 || horizon > 0 {
                 let removed = as_udf::map(3)?;
 
-                removed.insert("markers", markers)?.insert("purgedBefore", horizon)?;
+                removed.insert("markers", &markers)?.insert("purgedBefore", horizon)?;
 
                 if floor > 0 {
                     removed.insert("versionFloor", floor)?;
                 }
 
-                out.insert("devicesRemoved", removed)?;
+                out.insert("devicesRemoved", &removed)?;
             }
             else {
                 // The merge has no removals left: the bin stays out, so with_bins below cannot bring a
@@ -361,7 +361,7 @@ fn store_devices(
         list.push(*value)?;
     }
 
-    rec.set("devices", list)
+    rec.set("devices", &list)
 }
 
 /// Rebuild `devicesRemoved` from the current one with one marker removed, one added or replaced, and a
@@ -410,7 +410,7 @@ fn store_removed(
         let marker = as_udf::map(2)?;
 
         marker.insert("offAt", off_at)?.insert("version", version)?;
-        markers.insert(id, marker)?;
+        markers.insert(id, &marker)?;
         n_markers += 1;
     }
 
@@ -423,13 +423,13 @@ fn store_removed(
 
     let removed = as_udf::map(3)?;
 
-    removed.insert("markers", markers)?.insert("purgedBefore", horizon)?;
+    removed.insert("markers", &markers)?.insert("purgedBefore", horizon)?;
 
     if floor > 0 {
         removed.insert("versionFloor", floor)?;
     }
 
-    rec.set("devicesRemoved", removed)
+    rec.set("devicesRemoved", &removed)
 }
 
 export! {

@@ -258,9 +258,17 @@ overloaded for every kind (`int64_t`, `double`, `bool`, `StrView`, a literal, `c
 `const List&`); `put` takes a `StrView` or an `int64_t` key; `put_nil`, `add_nil`, `put_blob`,
 `put_geojson`, `add_geojson`; `put_all(stored)` and `add_all(stored)` copy a stored collection by position;
 `put_entries` and `add_values` take an array of values in one import. They chain, each is one import, none
-takes one of the call's 256 handles (so a loop builds as many elements as the call's memory allows), a key
-is put whole whatever its length, and the first refusal is kept and answered by `error()` or `result()`,
-which a UDF returning the collection should check with `UDF_TRY(out.result())`.
+takes a handle (so a loop builds as many elements as the call's memory allows), a key is put whole whatever
+its length, and the first refusal is kept and answered by `error()` or `result()`, which a UDF returning the
+collection should check with `UDF_TRY(out.result())`.
+
+A `Map` or `List` owns its handle and gives it back when it is destroyed, or at `close()`. It moves and does
+not copy; what it was put into, added to, set as a bin or returned as keeps it, because the host holds its
+own reference. So a loop that builds a collection per turn holds one at a time, and a range-for gives its
+cursor back when the loop ends, breaks or returns: a call is bounded by its memory on the server, not by a
+count of handles. `value()` names the handle while the collection lives; a `Value` that has to outlive it
+is `udf::Value::handle(c.release())`. `udf::Resolution::record(out)` takes the map over, since it is read
+after the handler returns.
 
 Both have `size()` and `empty()`. `Map::contains(key)` says whether the map being built has a string or
 an integer key. The host answers for the map it holds, so the check is one import and fit for a loop.

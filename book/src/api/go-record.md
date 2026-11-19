@@ -16,8 +16,8 @@ const (
 Status codes a host call returns, and the Status of an *Error.
 
 OK is success. Err is a call the host could not carry out: a bin name that is empty, longer than 15
-bytes or has a zero byte in it, a handle that is not what the call needs, or a call that has used up
-the 256 handles it may hold. NotFound is a bin, map key, list index or argument that is not there.
+bytes or has a zero byte in it, a handle that is not what the call needs (one already closed
+included), or a call that has spent the memory it may hold on the server. NotFound is a bin, map key, list index or argument that is not there.
 TypeMismatch is a value of another kind than the one asked for. Refused is a write the host would not
 take: the record is read-only here (a stream's record, an event handler), the call has spent what it
 may build on the host, or the server turned the write down.
@@ -639,8 +639,9 @@ error names the bin when the record has none by that name, and its Status is Not
 absent too, since a bin cannot hold nil, and so is a name that is empty or longer than 15 bytes.
 
 The value is what the call has staged for the bin, if it has staged anything, and what is stored
-otherwise. Reading a string, blob, list or map bin takes one of the 256 handles a call may hold,
-each time it is read: read such a bin once and keep the Value.
+otherwise. Reading a string, blob, list or map bin takes a handle on the host, charged to the call's
+memory and kept until the call ends, since the Value reads from it: read such a bin once and keep
+the Value.
 
 ```go
 balance, err := rec.Bin("balance")
@@ -662,8 +663,8 @@ readers. It allocates nothing for an absent bin, where Bin builds an error, so i
 stream's per-record path.
 
 The error is the bin that could not be read at all, which is not the same as absent: Status Err
-for a name that is not a bin name - empty, longer than 15 bytes - or for a call that holds its 256
-handles.
+for a name that is not a bin name - empty, longer than 15 bytes - or for a call that has spent the
+memory it may hold on the server.
 
 #### `Record.Has`
 
@@ -1343,8 +1344,9 @@ range over. The elements come 32 per import, and the cursor is released when the
 breaks.
 
 Lists nest: an element that is itself a list or map can be ranged over inside the loop, since the
-inner cursor closes before the outer steps on. A cursor is one of the 256 handles a call may hold.
-When none is left, or the host can no longer read the list, the walk cannot say so through a range
+inner cursor closes before the outer steps on. A cursor is a handle on the host, given back when the
+loop ends; it is charged to the call's memory on the server. When that has no room for one, or the
+host can no longer read the list, the walk cannot say so through a range
 loop, so it fails the call, as Fail does, and yields no more: a list is never walked short in
 silence. v.Len is the number of elements, with no walk, and Index reads one element without
 walking to it from the guest.
@@ -1466,8 +1468,8 @@ type Map struct {
 ```
 
 Map is a map built on the host, to be written to a bin, returned as the result, nested in another
-collection, or handed back from an event handler as the record. Make one with NewMap; it lives until
-the call ends.
+collection, or handed back from an event handler as the record. Make one with NewMap; its handle is
+given back by Close, or when the call ends.
 
 Put and its relatives return the map, so they chain, and none of them returns an error: the first
 refusal is kept and answered by Err, the way strings.Builder keeps its error. Record.Set,
@@ -1499,8 +1501,8 @@ type List struct {
 ```
 
 List is a list built on the host, to be written to a bin, returned as the result or nested in
-another collection. Make one with NewList; it lives until the call ends. Add and its relatives
-chain, and the first refusal is kept and answered by Err, as with Map.
+another collection. Make one with NewList; its handle is given back by Close, or when the call ends.
+Add and its relatives chain, and the first refusal is kept and answered by Err, as with Map.
 
 ```go
 tags := udf.NewList(4).Add("new").Add(42).Add(1.5)
@@ -1518,12 +1520,14 @@ func NewMap(capacity int) *Map
 NewMap starts an empty map. capacity is a hint of how many entries are coming, not a limit: the map
 grows past it, 0 is fine, and the host caps what it reserves at 1024.
 
-It never returns nil. When the host cannot make the map - the call holds its 256 handles, or has
-spent what it may build on the host - the map returned has kept that error, an *Error with Status
-Refused: Err answers it, every Put on it fails, and Len is -1.
+It never returns nil. When the host cannot make the map - the call has spent the memory it may hold
+on the server - the map returned has kept that error, an *Error with Status Refused: Err answers it,
+every Put on it fails, and Len is -1.
 
-A built map or list holds one of the call's 256 handles until the call ends, whatever becomes of
-it; its entries hold none, however many there are and whatever their kinds.
+A built map or list holds a handle on the host until Close gives it back, or the call ends; its
+entries hold none, however many there are and whatever their kinds. A call is bounded by its memory,
+not by a count of handles, so a loop that builds a collection per iteration and closes each once it
+is put, added, set or returned can run as long as the memory lasts.
 
 #### `NewList`
 
@@ -1586,7 +1590,27 @@ func (m *Map) Len() int
 ```
 
 Len is how many entries the map holds, asked of the host in one import; -1 when it could not be
-built, as after a failed NewMap.
+built, as after a failed NewMap, or after Close.
+
+#### `Map.Close`
+
+```go
+func (m *Map) Close()
+```
+
+Close gives the map's handle back to the host. What the map was put into, added to, set as a bin or
+returned as keeps it: the host holds its own reference to a value it is handed. So close a map once
+it has been handed over, or once it is no longer needed; a map not closed is given back when the
+call ends. After Close the map is empty to the guest: Len is -1 and a Put is a refusal kept for Err.
+Closing twice, or a nil map, does nothing.
+
+```go
+for _, site := range sites {
+	entry := udf.NewMap(2).Put("site", site).Put("seen", now)
+	out.Add(entry)
+	entry.Close() // out keeps the entry
+}
+```
 
 #### `List.Len`
 
@@ -1595,7 +1619,17 @@ func (l *List) Len() int
 ```
 
 Len is how many elements the list holds, asked of the host in one import; -1 when it could not be
-built, as after a failed NewList.
+built, as after a failed NewList, or after Close.
+
+#### `List.Close`
+
+```go
+func (l *List) Close()
+```
+
+Close gives the list's handle back to the host, as Map.Close does: what the list was handed to
+keeps it, a list not closed is given back when the call ends, and closing twice, or a nil list,
+does nothing.
 
 #### `Map.Contains`
 
@@ -1622,8 +1656,8 @@ A string or blob is copied by the host during the call. A Value read from a reco
 stored bytes, without being decoded, and keeps its kind. The host refuses a collection that would
 come to contain itself, or to nest more than 64 deep.
 
-Each put is one import and takes none of the 256 handles a call may hold, whatever the kinds of the
-key and the value, so a loop may put as many entries as the call may build. A key is put whole,
+Each put is one import and takes no handle, whatever the kinds of the key and the value, so a loop
+may put as many entries as the call may build. A key is put whole,
 whatever its length. PutEntries puts many entries in one import.
 
 #### `Map.PutAll`
@@ -1700,8 +1734,8 @@ Add appends a value and returns the list: an int, int32, int64, float32, float64
 []byte (a blob), Value, *Map, *List, or nil for a nil element, as Map.Put takes them. A value of
 any other Go type is a refusal, kept for Err.
 
-Each add is one import and takes none of the 256 handles a call may hold, whatever the kind, so a
-loop may add as many elements as the call may build. AddValues adds many in one import. The
+Each add is one import and takes no handle, whatever the kind, so a loop may add as many elements
+as the call may build. AddValues adds many in one import. The
 refusal Err keeps has Status Refused when the host would not take the element, TypeMismatch for a
 Go type or a Value that cannot be added, NotFound for a Value of KindAbsent.
 

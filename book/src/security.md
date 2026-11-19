@@ -69,8 +69,10 @@ not match and is recompiled rather than loaded.
 takes a buffer declares it as a pointer paired with its length, and the runtime checks the pair against
 the guest's memory on the way in, so no host function bounds-checks a guest pointer itself.
 
-**Collections and cursors are reached by handle, not by address.** A call has a table of 256 handles;
-every use is checked against the table, and the table is destroyed with the call. A function takes at
+**Collections and cursors are reached by handle, not by address.** A call has a table of handles that
+grows as it needs, charged to the call's memory budget, so the budget is the only limit on how many it
+holds; every use is checked against the table, a handle given back and reused is refused if used again,
+and the table is destroyed with the call. A function takes at
 most 128 arguments, and a call with more fails rather than losing the rest.
 
 **Instantiating a module runs none of its code.** A module may name a start function, and the runtime
@@ -99,8 +101,8 @@ does not count references to booleans and a heap one could not be shared.
 **A collection cannot contain itself, or nest past 64 levels.** Packing a value and releasing it both
 recurse into it, so a list a guest pushed into itself ran the server's stack out. A collection going
 into another is walked first, and refused if the walk finds the destination or goes too deep. A chain
-built from the top down, one empty list at a time, is not seen by that walk; it is bounded by the 256
-handles and refused where it would leave the call, as a bin or as the result.
+built from the top down, one empty list at a time, is not seen by that walk; it is bounded by the call's
+memory budget and refused where it would leave the call, as a bin or as the result.
 
 **A module cannot buy memory with a number.** Every section of a module but two begins with a count,
 and the runtime's loader made room for that many entries before reading any. Thirty-nine bytes claiming
@@ -136,7 +138,7 @@ handle the call did not create. Found while making the account below balance.
 | Entries a module section may declare | as many as it has bytes | checked before the runtime loads it |
 | Reading a signature export | 1 s | fixed; it runs from an info command, with no transaction to borrow a deadline from |
 | Calls the watchdog can track at once | 1,024 | fixed |
-| Handles per call | 256 | fixed |
+| Handles per call | as many as the call's memory holds | `max-memory`; no separate ceiling |
 | Arguments per call | 128 | fixed; more fails the call |
 | Queued compiles | 256, deduplicated by module | fixed; never fewer than `max-modules`, so a registration cannot find it full |
 | Compiler processes at once | 1 to 8 | `aot-compile-threads`, when the tier reads it |

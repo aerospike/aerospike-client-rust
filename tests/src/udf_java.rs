@@ -572,3 +572,35 @@ async fn java_record_bench() {
 
     let _ = client.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
 }
+
+/// **What the SDK builds and walks it gives back.** `churn` builds 2000 maps each holding a list, closed by
+/// try-with-resources once nested, and walks the 2000 lists of bin `nested` with a for-each each: 6000
+/// handles in one call, of which it holds a few at a time.
+#[aerospike_macro::test]
+async fn a_java_udf_gives_back_what_it_builds_and_walks() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("java_churn_{}", common::rand_str(6));
+
+    let write = WritePolicy::default();
+    let key = as_key!(namespace, set_name, 1);
+    let count = 2000i64;
+    let nested: Vec<Value> = (0..count).map(|i| as_list!(i, 1)).collect();
+    client.put(&write, &key, &[as_bin!("nested", Value::List(nested))]).await.unwrap();
+
+    if let Err(reason) = register(&client, FIXTURE, package).await {
+        skipped("a_java_udf_gives_back_what_it_builds_and_walks", &reason);
+        return;
+    }
+
+    let result = client
+        .execute_udf(&write, &key, package, "churn", &[Value::Int(count)])
+        .await
+        .unwrap();
+    let sum = (0..count).sum::<i64>() + count;
+
+    assert_eq!(result, Some(Value::List(vec![Value::Int(count), Value::Int(sum)])));
+
+    let _ = client.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
+}

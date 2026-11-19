@@ -72,7 +72,8 @@ public final class Resolution {
      * the incoming write asked for. The map's keys are the bin names, so each is a string of 1 to 15 bytes.
      * At least one bin must be left: an empty map, or one whose values are all nil, is the handler's failure
      * and not a deletion, which is what {@link #delete} is for. The builder is not used up and may still be
-     * added to before the handler returns.
+     * added to before the handler returns; it is read after the handler returns, so it must not be closed
+     * (nor made in a try-with-resources block) in the handler.
      */
     public static Resolution record(MapBuilder bins) {
         return new Resolution("record", bins.handle(), -1);
@@ -105,15 +106,18 @@ public final class Resolution {
             return Udf.fail("resolve: could not build the resolution");
         }
 
-        MapBuilder answer = LowLevel.map(out).put("verdict", "record").put("bins", LowLevel.map(bins));
+        // The result is the host's own reference, so the answer the handler never sees is given back at once.
+        try (MapBuilder answer = LowLevel.map(out)) {
+            answer.put("verdict", "record").put("bins", LowLevel.map(bins));
 
-        // A TTL has a write's meaning; without one the server keeps what the incoming write asked for.
-        if (ttl >= 0) {
-            answer.put("ttl", ttl);
-        }
+            // A TTL has a write's meaning; without one the server keeps what the incoming write asked for.
+            if (ttl >= 0) {
+                answer.put("ttl", ttl);
+            }
 
-        if (LowLevel.resultHandle(out) != LowLevel.OK) {
-            return Udf.fail("resolve: could not return the record");
+            if (LowLevel.resultHandle(out) != LowLevel.OK) {
+                return Udf.fail("resolve: could not return the record");
+            }
         }
 
         return 0;

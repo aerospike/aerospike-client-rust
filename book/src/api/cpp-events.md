@@ -456,14 +456,23 @@ has to delete on both sides for the two to agree. (`delete` is a keyword, as for
 #### `Resolution::record`
 
 ```cpp
-static Resolution record(const Map& bins, int64_t ttl = -1)
+static Resolution record(Map& bins, int64_t ttl = -1)
 ```
 
 The final record: these bins, whole. The record is left with exactly the bins of the map; a bin absent from
 it or nil in it is deleted. At least one bin must be left: a record of no bins is the handler's failure,
 not a deletion, which is delete_record(). `ttl` is the record's time to live in seconds, 0 for the
 namespace default; -1, the default, keeps the incoming write's. A failure the map kept from one of its puts
-fails the call when the resolution is delivered.
+fails the call when the resolution is delivered. The resolution takes the map over, so it outlives the
+handler's own Map, which is left null: `record(pair.with_newer(out))` is the usual form.
+
+#### `Resolution::record`
+
+```cpp
+static Resolution record(Map&& bins, int64_t ttl = -1)
+```
+
+The same, for a map made in place.
 
 #### `Resolution::deliver`
 

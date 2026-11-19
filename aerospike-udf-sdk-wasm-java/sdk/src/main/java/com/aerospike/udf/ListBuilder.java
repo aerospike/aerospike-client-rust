@@ -21,7 +21,7 @@ import org.teavm.interop.Address;
  * A list being built on the server, to be written to a bin, returned as the result, nested in another
  * collection or handed back from an event handler. {@link Udf#list()} starts one; every {@code add} is
  * one call to the host, appends, and returns the builder, so they chain; one that the host refuses throws
- * {@link UdfException}. The list lives until the call ends.
+ * {@link UdfException}. The list is given back by {@link #close}, or when the call ends.
  *
  * <pre>
  * ListBuilder tags = Udf.list().add("a").add("b").addAll(rec.getList("more"));
@@ -33,14 +33,27 @@ import org.teavm.interop.Address;
  * stored one ({@link ListValue}); to build from plain Java data, {@link #addAll(Iterable)} takes a
  * {@code java.util.List}.
  *
- * <p>A builder holds one of the call's 256 handles for as long as the call runs, and an {@code add} takes
- * none, whatever is added: a loop may add as many elements as the server lets a call build. An {@code add}
+ * <p>A builder holds a handle on the host until {@link #close} gives it back (it is {@link AutoCloseable}, so
+ * try-with-resources does), or the call ends, and an {@code add} takes none, whatever is added: a loop may add
+ * as many elements as the server lets a call build. A call is bounded by its memory on the server, not by a
+ * count of handles, so a loop that builds a nested list per turn and closes it once it is added holds one
+ * at a time:
+ *
+ * <pre>
+ * for (String site : sites) {
+ *     try (MapBuilder entry = Udf.map(2).put("site", site).put("seen", now)) {
+ *         out.add(entry);   // out keeps the entry
+ *     }
+ * }
+ * </pre>
+ *
+ * <p> An {@code add}
  * throws, with the status {@link LowLevel#REFUSED}, when the call has built as much on the server as it is
  * allowed, when the value would nest deeper than 64 levels, and when a collection would end up inside
  * itself. What was added before the throw stays in the list.
  */
-public final class ListBuilder {
-    private final int handle;
+public final class ListBuilder implements AutoCloseable {
+    private int handle;
 
     ListBuilder(int handle) {
         this.handle = handle;
@@ -51,17 +64,35 @@ public final class ListBuilder {
         int h = Natives.listNew(Math.max(capacity, 1));
 
         if (h <= 0) {
-            // The host gives no reason; both it has are a refusal: no handle left, or too much built.
-            throw new UdfException(LowLevel.REFUSED, "could not build a list: the call has no handle left for"
-                    + " it, or has built as much as it may");
+            // The host gives no reason; the one it has is a refusal: the call's memory is spent.
+            throw new UdfException(LowLevel.REFUSED, "could not build a list: the call has spent the memory it"
+                    + " may hold on the server");
         }
 
         return new ListBuilder(h);
     }
 
-    /** The host's handle on the list. */
+    /** The host's handle on the list; 0 once closed. */
     int handle() {
         return handle;
+    }
+
+    /**
+     * Gives the list's handle back to the host. What the list was set into, added to, put into or
+     * returned as keeps it, since the host holds its own reference to what it is handed; so close a builder
+     * once it has been handed over, or use it in a try-with-resources block. One not closed is given back when
+     * the call ends. Closing twice does nothing. After a close an {@code add} throws {@link UdfException}, and
+     * {@link #asValue} names nothing.
+     *
+     * <p>Not before the call is done with it: a builder given to {@link Resolution#record} is read when the
+     * handler has returned, so it must not be closed in the handler.
+     */
+    @Override
+    public void close() {
+        if (handle > 0) {
+            Natives.cursorClose(handle);
+            handle = 0;
+        }
     }
 
     /** How many elements have been added. One call to the host. */
@@ -184,14 +215,24 @@ public final class ListBuilder {
         return check(Natives.listPush(handle, value.handle));
     }
 
-    /** Appends a {@code java.util.List} as one nested list, its elements as {@link #addAll(Iterable)} takes them. */
+    /**
+     * Appends a {@code java.util.List} as one nested list, its elements as {@link #addAll(Iterable)} takes them.
+     * The nested list is built for the purpose and its handle given back once this list holds it.
+     */
     public ListBuilder add(List<?> value) {
-        return add(create(value.size()).addAll(value));
+        try (ListBuilder nested = create(value.size())) {
+            return add(nested.addAll(value));
+        }
     }
 
-    /** Appends a {@code java.util.Map} as one nested map, its entries as {@link MapBuilder#putAll(Map)} takes them. */
+    /**
+     * Appends a {@code java.util.Map} as one nested map, its entries as {@link MapBuilder#putAll(Map)} takes
+     * them. The nested map's handle is given back once this list holds it.
+     */
     public ListBuilder add(Map<?, ?> value) {
-        return add(MapBuilder.create(value.size()).putAll(value));
+        try (MapBuilder nested = MapBuilder.create(value.size())) {
+            return add(nested.putAll(value));
+        }
     }
 
     /** Appends nil: an element that reads back with {@link Value#isNil} true. */
@@ -230,9 +271,9 @@ public final class ListBuilder {
      * </pre>
      */
     public ListBuilder addAll(Iterable<?> items) {
-        for (Object o : items) {
-            Convert.add(this, o);
-        }
+        // forEach rather than a for-each loop: a stored list's own forEach gives its cursor back when an add
+        // throws part way.
+        items.forEach(o -> Convert.add(this, o));
 
         return this;
     }

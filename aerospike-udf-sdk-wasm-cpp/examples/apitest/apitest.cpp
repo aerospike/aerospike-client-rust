@@ -471,7 +471,7 @@ UDF_FUNCTION(mk, udf::Result<udf::Value>, const Str& what, int64_t n)
 
 		if (out.error().failed()) return mk_error(out.error().status);
 
-		return out.value();
+		return udf::Value::handle(out.release());
 	}
 
 	if (what == "list_mixed") {
@@ -483,7 +483,7 @@ UDF_FUNCTION(mk, udf::Result<udf::Value>, const Str& what, int64_t n)
 
 		if (out.error().failed()) return mk_error(out.error().status);
 
-		return out.value();
+		return udf::Value::handle(out.release());
 	}
 
 	if (what == "map_str") {
@@ -495,7 +495,7 @@ UDF_FUNCTION(mk, udf::Result<udf::Value>, const Str& what, int64_t n)
 
 		if (out.error().failed()) return mk_error(out.error().status);
 
-		return out.value();
+		return udf::Value::handle(out.release());
 	}
 
 	if (what == "map_int") {
@@ -507,7 +507,7 @@ UDF_FUNCTION(mk, udf::Result<udf::Value>, const Str& what, int64_t n)
 
 		if (out.error().failed()) return mk_error(out.error().status);
 
-		return out.value();
+		return udf::Value::handle(out.release());
 	}
 
 	if (what == "map_mixed") {
@@ -519,7 +519,7 @@ UDF_FUNCTION(mk, udf::Result<udf::Value>, const Str& what, int64_t n)
 
 		if (out.error().failed()) return mk_error(out.error().status);
 
-		return out.value();
+		return udf::Value::handle(out.release());
 	}
 
 	if (what == "nested") {
@@ -531,12 +531,12 @@ UDF_FUNCTION(mk, udf::Result<udf::Value>, const Str& what, int64_t n)
 			udf::List outer(1);
 
 			outer.add(inner);
-			inner = outer;
+			inner = static_cast<udf::List&&>(outer); // gives the old inner back: outer keeps it
 		}
 
 		if (inner.error().failed()) return mk_error(inner.error().status);
 
-		return inner.value();
+		return udf::Value::handle(inner.release());
 	}
 
 	if (what == "string") {
@@ -733,7 +733,7 @@ UDF_FUNCTION(res, udf::Result<udf::Value>, const Str& kind)
 
 		UDF_TRY(out.result());
 
-		return out.value();
+		return udf::Value::handle(out.release());
 	}
 
 	if (kind == "map") {
@@ -741,7 +741,7 @@ UDF_FUNCTION(res, udf::Result<udf::Value>, const Str& kind)
 
 		UDF_TRY(out.result());
 
-		return out.value();
+		return udf::Value::handle(out.release());
 	}
 
 	if (kind == "fail_long") {

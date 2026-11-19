@@ -169,6 +169,7 @@ AS_UDF_EVENT_XDR_MERGE(merge_account)
 	t.second = true;
 	each_name(&newer_tags, push_tag, &t);
 	as_udf_map_put_string_handle(out, "tags", 4, t.list);
+	as_udf_handle_close(t.list); /* the record answer keeps the tags */
 	done_add(&d, "tags");
 
 	/* profile: last writer wins, by the bin's LUT. */

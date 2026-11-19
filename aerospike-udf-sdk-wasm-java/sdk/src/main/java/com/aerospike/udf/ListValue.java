@@ -238,16 +238,20 @@ public final class ListValue implements Iterable<Value> {
         byte[] have = new byte[want.length];
         Walk walk = new Walk(list);
 
-        while (walk.more()) {
-            Value v = walk.next(SCRATCH);
+        try {
+            while (walk.more()) {
+                Value v = walk.next(SCRATCH);
 
-            if (v.kind() == Value.STR && v.length() == want.length && Maps.sameBytes(v, want, have)) {
-                walk.close();
-                return true;
+                if (v.kind() == Value.STR && v.length() == want.length && Maps.sameBytes(v, want, have)) {
+                    return true;
+                }
             }
-        }
 
-        return false;
+            return false;
+        }
+        finally {
+            walk.close();
+        }
     }
 
     /**
@@ -261,22 +265,28 @@ public final class ListValue implements Iterable<Value> {
 
         Walk walk = new Walk(list);
 
-        while (walk.more()) {
-            Value v = walk.next(SCRATCH);
+        try {
+            while (walk.more()) {
+                Value v = walk.next(SCRATCH);
 
-            if (v.kind() == Value.INT && v.payload() == i) {
-                walk.close();
-                return true;
+                if (v.kind() == Value.INT && v.payload() == i) {
+                    return true;
+                }
             }
-        }
 
-        return false;
+            return false;
+        }
+        finally {
+            walk.close();
+        }
     }
 
     /**
      * The elements in order, a fresh {@link Value} each, so one can be kept after the loop moves on. The loop
      * may be left early. The elements come from the host 128 at a time, so a loop costs a call per 128
-     * elements, not one per element. {@code next()} past the end throws {@code NoSuchElementException}.
+     * elements, not one per element. {@code next()} past the end throws {@code NoSuchElementException}. The
+     * host's cursor is given back when the last window is read; a loop left early over a list longer than one
+     * window leaves it open until the call ends, which {@link #forEach} does not.
      */
     @Override
     public Iterator<Value> iterator() {
@@ -297,6 +307,24 @@ public final class ListValue implements Iterable<Value> {
                 return walk.next(new Value());
             }
         };
+    }
+
+    /**
+     * Every element in order, as the iterator gives them, with the host's cursor given back however the walk
+     * ends, an exception from {@code action} included.
+     */
+    @Override
+    public void forEach(java.util.function.Consumer<? super Value> action) {
+        Walk walk = new Walk(list.kind() == Value.LIST ? list : Maps.NOTHING);
+
+        try {
+            while (walk.more()) {
+                action.accept(walk.next(new Value()));
+            }
+        }
+        finally {
+            walk.close();
+        }
     }
 
     /**
