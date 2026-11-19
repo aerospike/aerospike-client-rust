@@ -136,19 +136,14 @@ public final class Params {
     }
 
     /**
-     * A double argument, or an integer argument widened to one, which is the one place the SDK widens: a
-     * client that passes 3 for a double parameter means 3.0. Throws {@link UdfException} when it is missing
-     * or of any other kind.
+     * A double argument. Throws {@link UdfException} when it is missing or of any other kind. An integer is
+     * not widened, as no reader widens one: a client that means 3.0 sends 3.0.
      */
     public static double argDouble(Value[] a, int n, int i, String fn, String p) {
         Value v = at(a, n, i, fn, p);
 
         if (v.kind() == Value.DOUBLE) {
             return v.doubleBits();
-        }
-
-        if (v.kind() == Value.INT) {
-            return (double) v.payload();
         }
 
         throw mismatch(fn, i, p, "a double");

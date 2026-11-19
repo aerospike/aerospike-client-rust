@@ -984,20 +984,37 @@ static inline int32_t as_udf_rec_set_value(const char* name, int32_t name_len, c
 	}
 }
 
+/* A bin read that failed for a reason other than "no such bin" (a name that cannot be a bin name reads as no
+ * such bin): the call's handles all in use. as_udf_rec_has, as_udf_rec_get and their event forms answer only
+ * yes or no, and a "no" here would be taken for an absent bin, so the call is failed with a message that says
+ * so and stopped. */
+static inline void as_udf_rec_unreadable(void)
+{
+	static const char msg[] = "could not read a bin: the call's 256 handles are all in use";
+	as_udf_fail(msg, (int32_t)(sizeof(msg) - 1));
+	__builtin_trap();
+}
+
 /* Whether the record of the call has the bin. A bin the call has staged counts, and one it has removed does not.
- * `name` is NUL-terminated. */
+ * `name` is NUL-terminated. A read that fails for any reason but "no such bin" stops the call
+ * (as_udf_rec_unreadable); as_udf_rec_bin is the read with the status, for a caller that wants to handle it. */
 static inline bool as_udf_rec_has(const char* name)
 {
 	as_udf_value v;
-	return as_udf_rec_bin(name, &v) == AS_UDF_OK;
+	int32_t rc = as_udf_rec_bin(name, &v);
+	if (rc != AS_UDF_OK && rc != AS_UDF_NOT_FOUND) as_udf_rec_unreadable();
+	return rc == AS_UDF_OK;
 }
 
 /* A bin as a value of any kind, for a caller that wants one test for "there is something to read". False, with
- * `out` of kind AS_UDF_ABSENT, when the record has no such bin; true with the value otherwise. `name` is
- * NUL-terminated. as_udf_rec_bin is the same read with the status. */
+ * `out` of kind AS_UDF_ABSENT, when the record has no such bin or it holds nil; true with the value otherwise.
+ * `name` is NUL-terminated. A read that fails for any other reason stops the call, as for as_udf_rec_has;
+ * as_udf_rec_bin is the same read with the status. */
 static inline bool as_udf_rec_get(const char* name, as_udf_value* out)
 {
-	if (as_udf_rec_bin(name, out) == AS_UDF_OK && out->kind != AS_UDF_NIL) return true;
+	int32_t rc = as_udf_rec_bin(name, out);
+	if (rc != AS_UDF_OK && rc != AS_UDF_NOT_FOUND) as_udf_rec_unreadable();
+	if (rc == AS_UDF_OK && out->kind != AS_UDF_NIL) return true;
 	out->kind = AS_UDF_ABSENT;
 	out->len = 0;
 	out->payload = 0;
@@ -1364,18 +1381,22 @@ static inline int32_t as_udf_event_bin(const as_udf_event_record* r, const char*
 }
 
 /* Whether one of the event's records has the bin. False for a bin that side deleted or that a partial incoming
- * write does not carry. */
+ * write does not carry. A read that fails for another reason stops the call (as_udf_rec_unreadable). */
 static inline bool as_udf_event_has(const as_udf_event_record* r, const char* name)
 {
 	as_udf_value v;
-	return as_udf_event_bin(r, name, &v) == AS_UDF_OK;
+	int32_t rc = as_udf_event_bin(r, name, &v);
+	if (rc != AS_UDF_OK && rc != AS_UDF_NOT_FOUND) as_udf_rec_unreadable();
+	return rc == AS_UDF_OK;
 }
 
 /* A bin of one of the event's records as a value of any kind. False, with `out` of kind AS_UDF_ABSENT, when that
- * record has no such bin; true with the value otherwise. */
+ * record has no such bin; true with the value otherwise. A read that fails for another reason stops the call. */
 static inline bool as_udf_event_get(const as_udf_event_record* r, const char* name, as_udf_value* out)
 {
-	if (as_udf_event_bin(r, name, out) == AS_UDF_OK && out->kind != AS_UDF_NIL) return true;
+	int32_t rc = as_udf_event_bin(r, name, out);
+	if (rc != AS_UDF_OK && rc != AS_UDF_NOT_FOUND) as_udf_rec_unreadable();
+	if (rc == AS_UDF_OK && out->kind != AS_UDF_NIL) return true;
 	out->kind = AS_UDF_ABSENT;
 	out->len = 0;
 	out->payload = 0;

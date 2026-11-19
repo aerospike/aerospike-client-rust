@@ -63,7 +63,7 @@ order. Their Go types decide both how an argument is decoded and what the signat
 | Go | Signature | Takes |
 | --- | --- | --- |
 | `int64`, `int`, `int32` | `int` | an integer (`int32` must fit) |
-| `float64` | `double` | a double, or an integer widened |
+| `float64` | `double` | a double; an integer is refused, not widened |
 | `bool` | `bool` | a boolean |
 | `string` | `str` | a string |
 | `[]byte` | `bytes` | a string or a blob, as its bytes |

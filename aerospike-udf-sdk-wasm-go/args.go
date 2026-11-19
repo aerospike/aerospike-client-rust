@@ -90,18 +90,15 @@ func ArgInt32(a []Value, n int32, i int, fn, p string) (int32, error) {
 	return int32(x), nil
 }
 
-// ArgDouble is argument i as a double, an integer argument being widened to one; an error when it is
-// missing or of any other kind. The parameters are ArgInt's.
+// ArgDouble is argument i as a double; an error when it is missing or of any other kind. An integer is
+// not widened, as no reader widens one: a client that means 3.0 sends 3.0. The parameters are ArgInt's.
 func ArgDouble(a []Value, n int32, i int, fn, p string) (float64, error) {
 	v, err := argAt(a, n, i, fn, p)
 	if err != nil {
 		return 0, err
 	}
-	switch v.Kind {
-	case KindDouble:
+	if v.Kind == KindDouble {
 		return v.double(), nil
-	case KindInt:
-		return float64(v.Payload), nil
 	}
 	return 0, mismatch(fn, i, p, "a double")
 }
@@ -189,7 +186,7 @@ func OptInt(a []Value, n int32, i int, fn, p string) (*int64, error) {
 	return &x, err
 }
 
-// OptDouble is argument i as a double, or an int widened to one; nil when it is absent or nil, an error
+// OptDouble is argument i as a double (an integer is not widened); nil when it is absent or nil, an error
 // when it is of another kind.
 func OptDouble(a []Value, n int32, i int, fn, p string) (*float64, error) {
 	if argNone(a, n, i) {

@@ -89,7 +89,7 @@ decide both how an argument is decoded and what the signature says:
 | C++ | Signature | Takes |
 | --- | --- | --- |
 | `int64_t`, `int32_t` | `int` | an integer (`int32_t` must fit) |
-| `double` | `double` | a double, or an integer widened |
+| `double` | `double` | a double; an integer is refused, not widened |
 | `bool` | `bool` | a boolean |
 | `udf::Text<N>` | `str[N]` | a string of at most N bytes, inline, rejected before the body when longer |
 | `udf::Bytes<N>` | `bytes[N]` | a string or a blob of at most N bytes, as its bytes |

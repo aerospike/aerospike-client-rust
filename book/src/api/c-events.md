@@ -160,7 +160,7 @@ bool as_udf_event_has(const as_udf_event_record* r, const char* name)
 ```
 
 Whether one of the event's records has the bin. False for a bin that side deleted or that a partial incoming
-write does not carry.
+write does not carry. A read that fails for another reason stops the call (as_udf_rec_unreadable).
 
 #### `as_udf_event_get`
 
@@ -169,7 +169,7 @@ bool as_udf_event_get(const as_udf_event_record* r, const char* name, as_udf_val
 ```
 
 A bin of one of the event's records as a value of any kind. False, with `out` of kind AS_UDF_ABSENT, when that
-record has no such bin; true with the value otherwise.
+record has no such bin; true with the value otherwise. A read that fails for another reason stops the call.
 
 #### `as_udf_event_int`
 

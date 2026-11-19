@@ -1577,6 +1577,17 @@ of them zero. Staged until as_udf_rec_save. Returns AS_UDF_OK; AS_UDF_NOT_FOUND 
 AS_UDF_ABSENT, which stages nothing; or the status of the setter of that kind (as_udf_rec_set_int and the
 rest, as_udf_rec_set_handle, as_udf_rec_set_at).
 
+#### `as_udf_rec_unreadable`
+
+```c
+void as_udf_rec_unreadable(void)
+```
+
+A bin read that failed for a reason other than "no such bin" (a name that cannot be a bin name reads as no
+such bin): the call's handles all in use. as_udf_rec_has, as_udf_rec_get and their event forms answer only
+yes or no, and a "no" here would be taken for an absent bin, so the call is failed with a message that says
+so and stopped.
+
 #### `as_udf_rec_has`
 
 ```c
@@ -1584,7 +1595,8 @@ bool as_udf_rec_has(const char* name)
 ```
 
 Whether the record of the call has the bin. A bin the call has staged counts, and one it has removed does not.
-`name` is NUL-terminated.
+`name` is NUL-terminated. A read that fails for any reason but "no such bin" stops the call
+(as_udf_rec_unreadable); as_udf_rec_bin is the read with the status, for a caller that wants to handle it.
 
 #### `as_udf_rec_get`
 
@@ -1593,8 +1605,9 @@ bool as_udf_rec_get(const char* name, as_udf_value* out)
 ```
 
 A bin as a value of any kind, for a caller that wants one test for "there is something to read". False, with
-`out` of kind AS_UDF_ABSENT, when the record has no such bin; true with the value otherwise. `name` is
-NUL-terminated. as_udf_rec_bin is the same read with the status.
+`out` of kind AS_UDF_ABSENT, when the record has no such bin or it holds nil; true with the value otherwise.
+`name` is NUL-terminated. A read that fails for any other reason stops the call, as for as_udf_rec_has;
+as_udf_rec_bin is the same read with the status.
 
 #### `as_udf_rec_int`
 

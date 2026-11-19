@@ -3450,9 +3450,8 @@ mismatch and throws `UdfException`, not a truncation.
 public static double argDouble(Value[] a, int n, int i, String fn, String p)
 ```
 
-A double argument, or an integer argument widened to one, which is the one place the SDK widens: a
-client that passes 3 for a double parameter means 3.0. Throws `UdfException` when it is missing
-or of any other kind.
+A double argument. Throws `UdfException` when it is missing or of any other kind. An integer is
+not widened, as no reader widens one: a client that means 3.0 sends 3.0.
 
 #### `Params.argBool`
 

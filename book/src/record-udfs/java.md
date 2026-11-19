@@ -69,7 +69,7 @@ Java types decide both how an argument is decoded and what the signature says:
 | Java | Signature | Takes |
 | --- | --- | --- |
 | `long`, `int` | `int` | an integer (`int` must fit 32 bits) |
-| `double` | `double` | a double, or an integer widened |
+| `double` | `double` | a double; an integer is refused, not widened |
 | `boolean` | `bool` | a boolean |
 | `String` | `str` | a string; bytes that are not UTF-8 are replaced with U+FFFD |
 | `byte[]` | `bytes` | a string or a blob, as its bytes, untouched: the way to take raw bytes |

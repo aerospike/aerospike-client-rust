@@ -1872,8 +1872,8 @@ ArgInt32 is argument i as a 32-bit integer; an error when it is missing, not an 
 func ArgDouble(a []Value, n int32, i int, fn, p string) (float64, error)
 ```
 
-ArgDouble is argument i as a double, an integer argument being widened to one; an error when it is
-missing or of any other kind. The parameters are ArgInt's.
+ArgDouble is argument i as a double; an error when it is missing or of any other kind. An integer is
+not widened, as no reader widens one: a client that means 3.0 sends 3.0. The parameters are ArgInt's.
 
 #### `ArgBool`
 
@@ -1952,7 +1952,7 @@ if k != nil {
 func OptDouble(a []Value, n int32, i int, fn, p string) (*float64, error)
 ```
 
-OptDouble is argument i as a double, or an int widened to one; nil when it is absent or nil, an error
+OptDouble is argument i as a double (an integer is not widened); nil when it is absent or nil, an error
 when it is of another kind.
 
 #### `OptBool`

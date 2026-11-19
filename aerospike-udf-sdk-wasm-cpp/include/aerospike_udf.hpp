@@ -100,20 +100,39 @@ constexpr bool is_ident(char c)
 // into the buffer it was built in and the next one is built in the next buffer, so one error's message is not
 // overwritten by the next: it stays readable until MESSAGE_SLOTS further messages have been built.
 struct Message {
-	char buf[256];
+	// What the host keeps of a call's failure, 511 bytes, and the terminator. A message longer than that
+	// ends in "...", so a reader can see it was cut; a cut never splits a UTF-8 character.
+	char buf[512];
 	int32_t len = 0;
+	bool cut = false;
+
+	void put(char c)
+	{
+		if (cut) return;
+		if (len < (int32_t)sizeof(buf) - 1) {
+			buf[len++] = c;
+			buf[len] = '\0';
+			return;
+		}
+		// Full: the last three bytes become the mark, backed off to the start of a character.
+		len = (int32_t)sizeof(buf) - 4;
+		while (len > 0 && ((unsigned char)buf[len] & 0xC0) == 0x80) len--;
+		buf[len++] = '.';
+		buf[len++] = '.';
+		buf[len++] = '.';
+		buf[len] = '\0';
+		cut = true;
+	}
 
 	Message& add(const char* s)
 	{
-		for (int32_t i = 0; s[i] != '\0' && len < (int32_t)sizeof(buf) - 1; i++) buf[len++] = s[i];
-		buf[len] = '\0';
+		for (int32_t i = 0; s[i] != '\0' && !cut; i++) put(s[i]);
 		return *this;
 	}
 
 	Message& add(const char* s, int32_t n)
 	{
-		for (int32_t i = 0; i < n && len < (int32_t)sizeof(buf) - 1; i++) buf[len++] = s[i];
-		buf[len] = '\0';
+		for (int32_t i = 0; i < n && !cut; i++) put(s[i]);
 		return *this;
 	}
 
@@ -128,9 +147,8 @@ struct Message {
 			tmp[i++] = (char)('0' + (d < 0 ? -d : d));
 			n /= 10;
 		}
-		if (negative && len < (int32_t)sizeof(buf) - 1) buf[len++] = '-';
-		while (i > 0 && len < (int32_t)sizeof(buf) - 1) buf[len++] = tmp[--i];
-		buf[len] = '\0';
+		if (negative) put('-');
+		while (i > 0) put(tmp[--i]);
 		return *this;
 	}
 };
@@ -145,6 +163,7 @@ inline Message& message()
 	Message& m = ring[next];
 	next = (next + 1) % MESSAGE_SLOTS;
 	m.len = 0;
+	m.cut = false;
 	m.buf[0] = '\0';
 	return m;
 }
@@ -175,7 +194,7 @@ using Status = int32_t;
 // eight static buffers that it uses in turn: such a message is not overwritten by the next error, and stays
 // readable until eight more messages have been built. So an error may be kept across further SDK calls, and
 // across a few that fail, and still be returned or passed to fail() with its own text; a module that collects
-// errors over a long loop should copy the text of the one it keeps (`udf::Text<255>` holds any of them) or
+// errors over a long loop should copy the text of the one it keeps (`udf::Text<511>` holds any of them) or
 // report by status.
 struct Error {
 	Status status = AS_UDF_OK;
@@ -448,6 +467,21 @@ enum class Kind : int32_t {
 class ListRange;
 class MapRange;
 
+namespace detail {
+
+// A stored value the host could not read where an answer of "nothing" would be taken for "not there": a
+// lookup or a walk in a value a failed save has ended, or a walk with every handle in use. There is no
+// error to return from those, and a wrong "nothing" is worse than none, so the call is failed with a
+// message that says why and stopped.
+[[noreturn]] inline void unreadable()
+{
+	as_udf_fail_str("could not read a stored list or map: the call's 256 handles are all in use, or the value "
+	                "is no longer readable after a failed save");
+	__builtin_trap();
+}
+
+} // namespace detail
+
 // The 16-byte value every read is: the C struct with accessors. It is what a bin, an argument, a list element and
 // a map key or entry come back as. A scalar is in the value itself. A stored string, blob, list or map is held by
 // position: the bytes stay on the host until asked for, so copying a Value copies a reference, not the data, and
@@ -682,7 +716,12 @@ struct Value : as_udf_value {
 	Optional<Value> get(StrView key) const
 	{
 		Value out;
-		if (!is_map() || as_udf_coll_get(src(), offset(), key.data, key.len, &out, (int32_t)sizeof(out)) != AS_UDF_OK) return {};
+		if (!is_map()) return {};
+
+		int32_t rc = as_udf_coll_get(src(), offset(), key.data, key.len, &out, (int32_t)sizeof(out));
+
+		if (rc == AS_UDF_NOT_FOUND) return {};
+		if (rc != AS_UDF_OK) detail::unreadable();
 		return out;
 	}
 
@@ -690,7 +729,12 @@ struct Value : as_udf_value {
 	Optional<Value> get(int64_t key) const
 	{
 		Value out;
-		if (!is_map() || as_udf_coll_get_int(src(), offset(), key, &out, (int32_t)sizeof(out)) != AS_UDF_OK) return {};
+		if (!is_map()) return {};
+
+		int32_t rc = as_udf_coll_get_int(src(), offset(), key, &out, (int32_t)sizeof(out));
+
+		if (rc == AS_UDF_NOT_FOUND) return {};
+		if (rc != AS_UDF_OK) detail::unreadable();
 		return out;
 	}
 
@@ -800,11 +844,33 @@ struct CursorIter {
 
 	bool done() const { return cursor <= 0; }
 
+	// A walk the host could not open or continue. A range-for has no way to answer an error, and ending
+	// the loop early would hand the body a list shorter than the stored one as if it were the whole of it,
+	// so the call is stopped instead: failed with a message that says why, then trapped.
+	[[noreturn]] static void broken() { unreadable(); }
+
+	// Enters a stored collection of the expected kind. Of another kind, it is an empty walk; of that kind
+	// and not enterable, the call stops.
+	void open(const Value& coll, bool want_map)
+	{
+		map = want_map;
+		cursor = 0;
+
+		if (want_map ? coll.is_map() : coll.is_list()) {
+			cursor = as_udf_cursor_enter_at(coll.src(), coll.offset());
+
+			if (cursor <= 0) broken();
+		}
+
+		prime();
+	}
+
 	// Fills the window and positions on its first element; closes when it is empty.
 	void prime()
 	{
 		if (cursor <= 0) return;
 		got = as_udf_cursor_values(cursor, window, (int32_t)sizeof(window));
+		if (got < 0) broken();
 		at = 0;
 		last = got < 32;
 		if (got < (map ? 2 : 1)) close();
@@ -820,6 +886,8 @@ struct RangeEnd {};
 // EventRecord::list() when the bin is a list; empty when the value it was made from is not a list. The loop reads the list 32 elements a host call and holds
 // one of the call's handles while it runs, given back when it ends or breaks unless the body took a handle of its
 // own in the meantime. Each element is a Value: a scalar in itself, a string or nested collection by position.
+// If the host cannot open or continue the walk (every handle in use, or the value ended by a failed save), the
+// call is failed and stopped there: a loop is never handed a shorter list than the stored one.
 //
 // ```cpp
 // int64_t total = 0;
@@ -833,12 +901,7 @@ public:
 	ListRange() = default;
 	class Iterator : detail::CursorIter {
 	public:
-		Iterator(const Value& coll)
-		{
-			map = false;
-			cursor = coll.is_list() ? as_udf_cursor_enter_at(coll.src(), coll.offset()) : 0;
-			prime();
-		}
+		Iterator(const Value& coll) { open(coll, false); }
 		Iterator(Iterator&&) = default;
 		Value operator*() const { return window[at]; }
 		Iterator& operator++()
@@ -881,6 +944,7 @@ private:
 // The entries of a stored map, for a range-for. Made by Value::map(), and handed out by Record::map() and
 // EventRecord::map() when the bin is a map; empty when the value it was made from is not a map. Each step yields an Entry, which a structured binding takes
 // apart. The loop reads 16 entries a host call and holds one of the call's handles while it runs.
+// A walk the host cannot open or continue stops the call, as for ListRange.
 //
 // ```cpp
 // udf::Map out(8);
@@ -895,12 +959,7 @@ public:
 	MapRange() = default;
 	class Iterator : detail::CursorIter {
 	public:
-		Iterator(const Value& coll)
-		{
-			map = true;
-			cursor = coll.is_map() ? as_udf_cursor_enter_at(coll.src(), coll.offset()) : 0;
-			prime();
-		}
+		Iterator(const Value& coll) { open(coll, true); }
 		Iterator(Iterator&&) = default;
 		Entry operator*() const { return Entry{window[at], window[at + 1]}; }
 		Iterator& operator++()
@@ -2107,8 +2166,8 @@ template <> struct Param<double> {
 	static Result<double> decode(const Value* a, int32_t n, int32_t i, const char* fn, const char* p)
 	{
 		if (i >= n || a[i].is_absent()) return missing(fn, i, p);
+		// An integer is not widened, as no reader widens one: a client that means 3.0 sends 3.0.
 		if (a[i].is_double()) return a[i].as_double_bits();
-		if (a[i].is_int()) return (double)a[i].payload;
 		return mismatch(fn, i, p, "a double");
 	}
 };
@@ -2497,7 +2556,7 @@ int32_t invoke(const char* fn, const ParamNames& names, int32_t args, int32_t ar
 // through a Result fails the call with its message.
 //
 // The parameters are the call's arguments, decoded and checked before the body runs: int64_t, int32_t
-// (range-checked), double (an integer argument is widened), bool, `Text<N>` (a string of at most N bytes),
+// (range-checked), double (an integer argument is not widened), bool, `Text<N>` (a string of at most N bytes),
 // `Bytes<N>` (a string or blob of at most N bytes), Value (anything), `Optional<T>` of those for an argument that
 // may be left out or nil, and Args last for the rest. A missing argument, one of the wrong kind, one too long, or
 // more arguments than parameters fails the call with a message naming the argument, and the body does not run.

@@ -19,7 +19,7 @@ The message is not owned. It is a string literal, which lasts for ever, or text 
 eight static buffers that it uses in turn: such a message is not overwritten by the next error, and stays
 readable until eight more messages have been built. So an error may be kept across further SDK calls, and
 across a few that fail, and still be returned or passed to fail() with its own text; a module that collects
-errors over a long loop should copy the text of the one it keeps (`udf::Text<255>` holds any of them) or
+errors over a long loop should copy the text of the one it keeps (`udf::Text<511>` holds any of them) or
 report by status.
 
 #### `Error::failed`
@@ -740,6 +740,8 @@ The elements of a stored list, for a range-for. Made by Value::list(), and hande
 EventRecord::list() when the bin is a list; empty when the value it was made from is not a list. The loop reads the list 32 elements a host call and holds
 one of the call's handles while it runs, given back when it ends or breaks unless the body took a handle of its
 own in the meantime. Each element is a Value: a scalar in itself, a string or nested collection by position.
+If the host cannot open or continue the walk (every handle in use, or the value ended by a failed save), the
+call is failed and stopped there: a loop is never handed a shorter list than the stored one.
 
 ```cpp
 int64_t total = 0;
@@ -816,6 +818,7 @@ class MapRange
 The entries of a stored map, for a range-for. Made by Value::map(), and handed out by Record::map() and
 EventRecord::map() when the bin is a map; empty when the value it was made from is not a map. Each step yields an Entry, which a structured binding takes
 apart. The loop reads 16 entries a host call and holds one of the call's handles while it runs.
+A walk the host cannot open or continue stops the call, as for ListRange.
 
 ```cpp
 udf::Map out(8);
@@ -2058,7 +2061,7 @@ signature a client can read. The return is a `Result<T>` or a plain T (int64_t, 
 through a Result fails the call with its message.
 
 The parameters are the call's arguments, decoded and checked before the body runs: int64_t, int32_t
-(range-checked), double (an integer argument is widened), bool, `Text<N>` (a string of at most N bytes),
+(range-checked), double (an integer argument is not widened), bool, `Text<N>` (a string of at most N bytes),
 `Bytes<N>` (a string or blob of at most N bytes), Value (anything), `Optional<T>` of those for an argument that
 may be left out or nil, and Args last for the rest. A missing argument, one of the wrong kind, one too long, or
 more arguments than parameters fails the call with a message naming the argument, and the body does not run.

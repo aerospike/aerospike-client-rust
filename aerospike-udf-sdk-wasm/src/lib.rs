@@ -3084,11 +3084,18 @@ impl<'a> FromArg<'a> for Args {
     }
 }
 
-/// A fixed-size message buffer, so an error can name what went wrong without an allocator.
+/// The most a failure message can carry: the host keeps 511 bytes of a call's failure, and anything longer
+/// would be cut there.
+const MESSAGE_CAP: usize = 511;
+
+/// A fixed-size message buffer, so an error can name what went wrong without an allocator. It holds what the
+/// host keeps of a failure, 511 bytes; a message longer than that ends in `...`, so a reader can see it was
+/// cut. A cut never splits a character.
 #[doc(hidden)]
 pub struct Message {
-    buf: [u8; 256],
+    buf: [u8; MESSAGE_CAP],
     len: usize,
+    cut: bool,
 }
 
 impl Message {
@@ -3096,12 +3103,13 @@ impl Message {
     #[must_use]
     pub fn new() -> Message {
         Message {
-            buf: [0; 256],
+            buf: [0; MESSAGE_CAP],
             len: 0,
+            cut: false,
         }
     }
 
-    /// The text written so far: 256 bytes at most, anything written past that having been dropped.
+    /// The text written so far: 511 bytes at most, ending in `...` when more was written than fits.
     #[must_use]
     pub fn as_str(&self) -> &str {
         core::str::from_utf8(&self.buf[..self.len]).unwrap_or("")
@@ -3115,15 +3123,44 @@ impl Default for Message {
     }
 }
 
-/// Appends text, so `write!` works on a message. Never fails: what does not fit in the 256 bytes is
-/// dropped.
+/// Appends text, so `write!` works on a message. Never fails: what does not fit is replaced by `...`.
 impl core::fmt::Write for Message {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        let room = self.buf.len() - self.len;
-        let n = s.len().min(room);
+        if self.cut {
+            return Ok(());
+        }
+
+        if s.len() <= self.buf.len() - self.len {
+            self.buf[self.len..self.len + s.len()].copy_from_slice(s.as_bytes());
+            self.len += s.len();
+
+            return Ok(());
+        }
+
+        // Room for what fits, less three bytes for the mark, at a character boundary of `s`.
+        let mut n = (self.buf.len() - self.len).saturating_sub(3);
+
+        while n > 0 && !s.is_char_boundary(n) {
+            n -= 1;
+        }
+
+        // When even the mark does not fit after what is there, it takes the last bytes, at a boundary.
+        if self.len + n + 3 > self.buf.len() {
+            let mut back = self.buf.len() - 3;
+
+            while back > 0 && (self.buf[back] & 0xC0) == 0x80 {
+                back -= 1;
+            }
+
+            self.len = back;
+            n = 0;
+        }
 
         self.buf[self.len..self.len + n].copy_from_slice(&s.as_bytes()[..n]);
         self.len += n;
+        self.buf[self.len..self.len + 3].copy_from_slice(b"...");
+        self.len += 3;
+        self.cut = true;
 
         Ok(())
     }
@@ -3154,18 +3191,30 @@ pub const fn param<'a, T: FromArg<'a>>(name: &'static str) -> Param {
 
 /// The text behind a `__udf_sig_<name>` export: written on the first call into a buffer of the module's own,
 /// NUL-terminated, and handed to the host by address. Used by [`export!`] and [`stream!`].
+///
+/// 8 KiB: room for the 128 parameters a call can have, each with a long name and a capacity. A text that
+/// still does not fit is not served cut, which would describe a function other than the one exported: the
+/// export answers an empty signature, which the server reads as "this function declares nothing", and checks
+/// nothing against it.
 #[doc(hidden)]
 pub struct Signature {
-    buf: [u8; 512],
+    buf: [u8; SIGNATURE_CAP],
     len: usize,
+    overflow: bool,
 }
+
+const SIGNATURE_CAP: usize = 8192;
 
 impl Signature {
     /// An empty signature, `const` so that it can initialise a `static`. The text is written by the first
     /// call that asks for it.
     #[must_use]
     pub const fn new() -> Signature {
-        Signature { buf: [0; 512], len: 0 }
+        Signature {
+            buf: [0; SIGNATURE_CAP],
+            len: 0,
+            overflow: false,
+        }
     }
 
     /// `fn name(a: int, b: str[256], c?: bool, rest: any...) -> value`
@@ -3228,7 +3277,7 @@ impl Signature {
 
     // NUL-terminated, so the host reads it as a C string; the buffer keeps one byte of room for it.
     fn address(&mut self) -> i32 {
-        let end = self.len.min(self.buf.len() - 1);
+        let end = if self.overflow { 0 } else { self.len.min(self.buf.len() - 1) };
 
         self.buf[end] = 0;
 
@@ -3248,10 +3297,15 @@ impl Default for Signature {
 impl core::fmt::Write for Signature {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         let room = self.buf.len() - 1 - self.len;
-        let n = s.len().min(room);
 
-        self.buf[self.len..self.len + n].copy_from_slice(&s.as_bytes()[..n]);
-        self.len += n;
+        if self.overflow || s.len() > room {
+            self.overflow = true;
+
+            return Err(core::fmt::Error);
+        }
+
+        self.buf[self.len..self.len + s.len()].copy_from_slice(s.as_bytes());
+        self.len += s.len();
 
         Ok(())
     }
@@ -4425,6 +4479,54 @@ macro_rules! udf_outcome {
 mod tests {
     use super::*;
 
+    /// A message that fits is kept whole; one that does not ends in `...`, at most 511 bytes, and is still
+    /// UTF-8 when the cut falls inside a character.
+    #[test]
+    fn a_long_message_is_marked_where_it_is_cut() {
+        let mut m = Message::new();
+        let _ = write!(m, "short");
+        assert_eq!(m.as_str(), "short");
+
+        let mut m = Message::new();
+        let long = "x".repeat(600);
+        let _ = write!(m, "{long}");
+        assert_eq!(m.as_str().len(), 511);
+        assert!(m.as_str().ends_with("..."));
+
+        let mut m = Message::new();
+        let _ = write!(m, "{}", "y".repeat(507));
+        let _ = write!(m, "\u{e9}\u{e9}\u{e9}");
+        assert!(m.as_str().ends_with("..."), "{}", m.as_str().len());
+        assert!(m.as_str().len() <= 511);
+
+        let mut m = Message::new();
+        let _ = write!(m, "{}", "\u{e9}".repeat(300));
+        assert!(m.as_str().ends_with("...") && m.as_str().len() <= 511, "{}", m.as_str().len());
+    }
+
+    /// A signature that fits is served; one that does not is served empty, never cut.
+    #[test]
+    fn a_signature_too_long_is_served_empty() {
+        let params: [Param; 4] =
+            core::array::from_fn(|_| Param { name: "a", ty: "int", capacity: 0, optional: false, rest: false });
+        let mut sig = Signature::new();
+        sig.function("f", &params);
+        assert_eq!(&sig.buf[..sig.len], b"fn f(a: int, a: int, a: int, a: int) -> value");
+        assert_eq!(sig.buf[sig.len], 0);
+
+        let many: [Param; 200] = core::array::from_fn(|_| Param {
+            name: "a_parameter_name_that_is_long",
+            ty: "str",
+            capacity: 65536,
+            optional: true,
+            rest: false,
+        });
+        let mut sig = Signature::new();
+        sig.function("f", &many);
+        assert!(sig.overflow);
+        assert_eq!(sig.buf[0], 0, "an empty text, not a cut one");
+    }
+
     /// The type codes are the ABI, so their values are the contract - the host sends them as integers.
     #[test]
     fn value_codes_match_the_host() {
@@ -4547,6 +4649,7 @@ mod tests {
         for _ in 0..100 {
             let _ = write!(m, "0123456789");
         }
-        assert_eq!(m.as_str().len(), 256);
+        assert_eq!(m.as_str().len(), MESSAGE_CAP);
+        assert!(m.as_str().ends_with("..."), "and the cut is marked");
     }
 }
