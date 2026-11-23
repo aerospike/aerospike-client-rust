@@ -12,5 +12,5 @@ _temp/
 .claude/
 .DS_Store
 *.log
-book/build
-book/target
+aerospike-udf-sdk/book/build
+aerospike-udf-sdk/book/target

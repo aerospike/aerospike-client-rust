@@ -115,7 +115,7 @@ The numbers are the items above.
    background UDF tests (15); the rest (13, 16, 17, 18, 19, 24, 27, 30).
 
 Everything built so far is recorded in `WASM_UDF_DESIGN.md` (§7 for the events), `SERVER_EVENTS_CATALOG.md`
-and the book under `book/`.
+and the book under `aerospike-udf-sdk/book/`.
 
 ---
 
