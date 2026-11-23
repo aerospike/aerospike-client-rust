@@ -58,7 +58,7 @@ A collection bin is ranged over as in a record UDF.
 `examples/vector/vector.cpp` is the full-size example, in the raw form. Its stream half:
 
 ```cpp
-{{#include ../../../aerospike-udf-sdk-wasm-cpp/examples/vector/vector.cpp:335:386}}
+{{#include ../../../aerospike-udf-sdk/wasm-cpp/examples/vector/vector.cpp:335:386}}
 ```
 
 The record half configures itself from the arguments on the first call, reads the vector straight into

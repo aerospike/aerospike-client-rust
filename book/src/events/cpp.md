@@ -118,7 +118,7 @@ result and returns the status to return. The C chapter is the reference for that
 `examples/resolver`, the account merge over `Pair` and `Both`, line for line the Rust one:
 
 ```cpp
-{{#include ../../../aerospike-udf-sdk-wasm-cpp/examples/resolver/resolver.cpp}}
+{{#include ../../../aerospike-udf-sdk/wasm-cpp/examples/resolver/resolver.cpp}}
 ```
 
 The data-only merges, `examples/counter` through `examples/crdt`, are the

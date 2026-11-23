@@ -113,7 +113,7 @@ gives the status to return, and a map built over a raw handle goes in as
 `examples/resolver`, the account merge over `Pair` and `Both`, line for line the Rust one:
 
 ```java
-{{#include ../../../aerospike-udf-sdk-wasm-java/examples/resolver/src/main/java/com/aerospike/udf/examples/Resolver.java}}
+{{#include ../../../aerospike-udf-sdk/wasm-java/examples/resolver/src/main/java/com/aerospike/udf/examples/Resolver.java}}
 ```
 
 The data-only merges, `examples/counter` through `examples/crdt`, are the

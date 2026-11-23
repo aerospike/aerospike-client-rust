@@ -436,7 +436,7 @@ order is the one the others use). Its state is the instance's fields. It keeps t
 through `params`. The record half:
 
 ```java
-{{#include ../../../aerospike-udf-sdk-wasm-java/examples/vector/src/main/java/com/aerospike/udf/examples/Vector.java:record}}
+{{#include ../../../aerospike-udf-sdk/wasm-java/examples/vector/src/main/java/com/aerospike/udf/examples/Vector.java:record}}
 ```
 
 > **A GeoJSON bin is saved only if it is GeoJSON.** Staging takes any text; the save builds the

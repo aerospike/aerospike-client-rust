@@ -20,7 +20,7 @@
 //! record, both ways round with that one. So it reaches the server's handling of a hostile answer
 //! without XDR - which is what makes it the test to run under a sanitizer build of the server.
 //!
-//! The handler is `merge_probe` (`aerospike-udf-sdk-wasm/examples/merge_probe`), which answers whatever
+//! The handler is `merge_probe` (`aerospike-udf-sdk/wasm-rust/examples/merge_probe`), which answers whatever
 //! the incoming record's `do` bin names, using its `n` bin as a number. Every name it knows is given, on
 //! `test` and on the bin-convergence namespace `testbc`, with and without a third record. The test holds
 //! the server to an outcome for each, and to answering at all after each.

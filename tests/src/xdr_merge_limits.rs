@@ -15,7 +15,7 @@
 //! `tests/src/xdr_merge.rs` shows well-behaved merges converging. This is the other half: the handler is
 //! code the server did not write, and its answer decides what is stored, so every answer a module can give
 //! is input the server has to survive and act on predictably. The module is `merge_probe`
-//! (`aerospike-udf-sdk-wasm/examples/merge_probe`), which answers whatever the incoming record's `do` bin
+//! (`aerospike-udf-sdk/wasm-rust/examples/merge_probe`), which answers whatever the incoming record's `do` bin
 //! names: a trap, a loop, a failure, a verdict that does not exist, a record whose bins are not bins, bin
 //! names no bin can have, more bins than a record holds, a time to live out of range.
 //!

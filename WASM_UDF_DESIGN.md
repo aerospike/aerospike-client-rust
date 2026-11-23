@@ -141,7 +141,7 @@ where they are held to agree and timed; `WAMR_EVALUATION.md` §8 has the numbers
   what the signature export describes (§2).
 
 A UDF therefore reads as ordinary Rust, and the one thing it has to know is that strings and collections are
-borrowed from the record. `aerospike-udf-sdk-wasm/examples/ledger` is the module to read first - a guarded
+borrowed from the record. `aerospike-udf-sdk/wasm-rust/examples/ledger` is the module to read first - a guarded
 withdrawal, a history trimmed on the host by position, a summary, an aggregation; `examples/udf` (checked in
 as `tests/fixtures/wasm/udf_test.rs`) is the one the test suite asserts against.
 

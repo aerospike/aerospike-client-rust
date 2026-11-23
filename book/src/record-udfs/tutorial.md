@@ -48,7 +48,7 @@ use aerospike_udf_sdk_wasm::{self as as_udf, export, Error, Map, Record, Value};
 import (
     "errors"
 
-    udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk-wasm-go"
+    udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk/wasm-go"
 )
 ```
 

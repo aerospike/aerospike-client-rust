@@ -11,11 +11,11 @@
 // the License.
 
 //! WASM UDFs written in Java, compiled by TeaVM's linear-memory backend. `hello_java.wasm` is the bare
-//! contract without the SDK (`aerospike-udf-sdk-wasm-java/examples/hello`); `counter_java.wasm` is built
+//! contract without the SDK (`aerospike-udf-sdk/wasm-java/examples/hello`); `counter_java.wasm` is built
 //! from annotated methods, so its exports are the SDK's annotation processor's work, and the second test
 //! drives that generated code through every rejection. The SDK's other examples are held to the other
 //! languages' behaviour in `udf_vector.rs` and `events.rs`. The fixtures under
-//! `tests/fixtures/wasm/*_java.wasm` are built as `aerospike-udf-sdk-wasm-java/README.md` says.
+//! `tests/fixtures/wasm/*_java.wasm` are built as `aerospike-udf-sdk/wasm-java/README.md` says.
 
 use crate::common;
 use aerospike::Task;
@@ -184,7 +184,7 @@ async fn generated_exports_decode_arguments() {
 }
 
 /// The record API of the Java SDK, driven through its fixture module
-/// (`aerospike-udf-sdk-wasm-java/examples/udf`): lists and maps walked, the typed bin readers, the
+/// (`aerospike-udf-sdk/wasm-java/examples/udf`): lists and maps walked, the typed bin readers, the
 /// bool, nil, GeoJSON and packed-list writes, integer map keys, a GeoJSON result, the record's metadata,
 /// its TTL and its deletion. The expectations are those of the Rust fixture's tests in `udf_wasm.rs`.
 #[aerospike_macro::test]

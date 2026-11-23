@@ -148,7 +148,7 @@ return: `return udf.KeepLocal().Deliver()`. It takes no `*udf.Record`: an event 
 `examples/resolver`, the account merge over `Pair` and `Both`, line for line the Rust one:
 
 ```go
-{{#include ../../../aerospike-udf-sdk-wasm-go/examples/resolver/main.go}}
+{{#include ../../../aerospike-udf-sdk/wasm-go/examples/resolver/main.go}}
 ```
 
 The data-only merges, `examples/counter` through `examples/crdt`, are the

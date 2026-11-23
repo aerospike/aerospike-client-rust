@@ -17,7 +17,7 @@
 //! everything around it: that a binding registers only when the module declares the right contract, that
 //! the dry run hands the bound function the real local record and a remote one described by the caller and
 //! returns its answer, that the answer is what the resolver was written to give, and that the server's
-//! symmetry check agrees. The resolver is `aerospike-udf-sdk-wasm/examples/resolver`, checked in as a
+//! symmetry check agrees. The resolver is `aerospike-udf-sdk/wasm-rust/examples/resolver`, checked in as a
 //! fixture beside the others.
 //!
 //! # They self-skip
@@ -44,7 +44,7 @@ const RESOLVER_CPP: &[u8] = include_bytes!("../fixtures/wasm/resolver_cpp.wasm")
 /// refused.
 const PLAIN: &[u8] = include_bytes!("../fixtures/wasm/udf_test.wasm");
 
-/// The smallest CRDT, a grow-only counter: `aerospike-udf-sdk-wasm/examples/counter`, and the same in Java
+/// The smallest CRDT, a grow-only counter: `aerospike-udf-sdk/wasm-rust/examples/counter`, and the same in Java
 /// and Go.
 const COUNTER: &[u8] = include_bytes!("../fixtures/wasm/counter.wasm");
 const COUNTER_JAVA: &[u8] = include_bytes!("../fixtures/wasm/counter_java.wasm");
@@ -52,26 +52,26 @@ const COUNTER_GO: &[u8] = include_bytes!("../fixtures/wasm/counter_go.wasm");
 const COUNTER_CPP: &[u8] = include_bytes!("../fixtures/wasm/counter_cpp.wasm");
 
 /// The counter that can go down, two grow-only counters glued together:
-/// `aerospike-udf-sdk-wasm/examples/pncounter`, and the same in Java, Go and C++.
+/// `aerospike-udf-sdk/wasm-rust/examples/pncounter`, and the same in Java, Go and C++.
 const PNCOUNTER: &[u8] = include_bytes!("../fixtures/wasm/pncounter.wasm");
 const PNCOUNTER_JAVA: &[u8] = include_bytes!("../fixtures/wasm/pncounter_java.wasm");
 const PNCOUNTER_GO: &[u8] = include_bytes!("../fixtures/wasm/pncounter_go.wasm");
 const PNCOUNTER_CPP: &[u8] = include_bytes!("../fixtures/wasm/pncounter_cpp.wasm");
 
-/// The 2P-Set, a set with removals: `aerospike-udf-sdk-wasm/examples/twopset`, and the same in Java, Go and C++.
+/// The 2P-Set, a set with removals: `aerospike-udf-sdk/wasm-rust/examples/twopset`, and the same in Java, Go and C++.
 const TWOPSET: &[u8] = include_bytes!("../fixtures/wasm/twopset.wasm");
 const TWOPSET_JAVA: &[u8] = include_bytes!("../fixtures/wasm/twopset_java.wasm");
 const TWOPSET_GO: &[u8] = include_bytes!("../fixtures/wasm/twopset_go.wasm");
 const TWOPSET_CPP: &[u8] = include_bytes!("../fixtures/wasm/twopset_cpp.wasm");
 
-/// The LWW-Element-Set, a set with re-adds on a clock: `aerospike-udf-sdk-wasm/examples/lwwset`, and the
+/// The LWW-Element-Set, a set with re-adds on a clock: `aerospike-udf-sdk/wasm-rust/examples/lwwset`, and the
 /// same in Java, Go and C++.
 const LWWSET: &[u8] = include_bytes!("../fixtures/wasm/lwwset.wasm");
 const LWWSET_JAVA: &[u8] = include_bytes!("../fixtures/wasm/lwwset_java.wasm");
 const LWWSET_GO: &[u8] = include_bytes!("../fixtures/wasm/lwwset_go.wasm");
 const LWWSET_CPP: &[u8] = include_bytes!("../fixtures/wasm/lwwset_cpp.wasm");
 
-// The record of registers: `aerospike-udf-sdk-wasm/examples/registers`, which reads the per-bin last-update
+// The record of registers: `aerospike-udf-sdk/wasm-rust/examples/registers`, which reads the per-bin last-update
 // times a namespace with bin convergence keeps.
 const REGISTERS: &[u8] = include_bytes!("../fixtures/wasm/registers.wasm");
 const REGISTERS_JAVA: &[u8] = include_bytes!("../fixtures/wasm/registers_java.wasm");
@@ -81,7 +81,7 @@ const REGISTERS_CPP: &[u8] = include_bytes!("../fixtures/wasm/registers_cpp.wasm
 /// The namespace the node keeps with bin convergence on.
 const BIN_CONVERGENCE_NS: &str = "testbc";
 
-/// The active-active CRDT of the design note: `aerospike-udf-sdk-wasm/examples/crdt`, and the same in Java
+/// The active-active CRDT of the design note: `aerospike-udf-sdk/wasm-rust/examples/crdt`, and the same in Java
 /// and Go.
 const CRDT: &[u8] = include_bytes!("../fixtures/wasm/crdt.wasm");
 const CRDT_JAVA: &[u8] = include_bytes!("../fixtures/wasm/crdt_java.wasm");

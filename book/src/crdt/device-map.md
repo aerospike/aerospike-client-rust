@@ -321,26 +321,26 @@ clock again, and reads the per-bin stamps the server keeps on a namespace with b
 
 ## The sources
 
-Rust, `aerospike-udf-sdk-wasm/examples/crdt`:
+Rust, `aerospike-udf-sdk/wasm-rust/examples/crdt`:
 
 ```rust
-{{#include ../../../aerospike-udf-sdk-wasm/examples/crdt/src/lib.rs}}
+{{#include ../../../aerospike-udf-sdk/wasm-rust/examples/crdt/src/lib.rs}}
 ```
 
-Java, `aerospike-udf-sdk-wasm-java/examples/crdt`:
+Java, `aerospike-udf-sdk/wasm-java/examples/crdt`:
 
 ```java
-{{#include ../../../aerospike-udf-sdk-wasm-java/examples/crdt/src/main/java/com/aerospike/udf/examples/Crdt.java}}
+{{#include ../../../aerospike-udf-sdk/wasm-java/examples/crdt/src/main/java/com/aerospike/udf/examples/Crdt.java}}
 ```
 
-Go, `aerospike-udf-sdk-wasm-go/examples/crdt`:
+Go, `aerospike-udf-sdk/wasm-go/examples/crdt`:
 
 ```go
-{{#include ../../../aerospike-udf-sdk-wasm-go/examples/crdt/main.go}}
+{{#include ../../../aerospike-udf-sdk/wasm-go/examples/crdt/main.go}}
 ```
 
-C++, `aerospike-udf-sdk-wasm-cpp/examples/crdt`:
+C++, `aerospike-udf-sdk/wasm-cpp/examples/crdt`:
 
 ```cpp
-{{#include ../../../aerospike-udf-sdk-wasm-cpp/examples/crdt/crdt.cpp}}
+{{#include ../../../aerospike-udf-sdk/wasm-cpp/examples/crdt/crdt.cpp}}
 ```

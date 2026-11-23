@@ -12,8 +12,8 @@ python3 gen-diagrams.py    # regenerate src/diagrams/*.svg and src/crdt/diagrams
 mdbook serve               # http://localhost:3000
 ```
 
-The API reference chapters under `src/api/` are generated from `aerospike-udf-sdk-wasm/src/lib.rs`,
-`aerospike-udf-sdk-wasm-go/udf.go` and `aerospike-udf-sdk-wasm-c/include/aerospike_udf.h`, every public
+The API reference chapters under `src/api/` are generated from `aerospike-udf-sdk/wasm-rust/src/lib.rs`,
+`aerospike-udf-sdk/wasm-go/udf.go` and `aerospike-udf-sdk/wasm-c/include/aerospike_udf.h`, every public
 item with the comment above it, so they are complete by construction; the guide chapters include them. The
 examples are the real ones under each SDK's `examples/`, included from their files.
 

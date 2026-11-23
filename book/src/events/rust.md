@@ -81,14 +81,14 @@ handler, so a merge cannot read the clock by accident.
 `examples/resolver`, the time-based account merge:
 
 ```rust
-{{#include ../../../aerospike-udf-sdk-wasm/examples/resolver/src/lib.rs}}
+{{#include ../../../aerospike-udf-sdk/wasm-rust/examples/resolver/src/lib.rs}}
 ```
 
 The data-only merges, `examples/counter` through `examples/crdt`, are the [CRDT tutorial](../crdt/README.md).
 
 ## API reference
 
-Generated from `aerospike-udf-sdk-wasm/src/lib.rs`: the event surface. The macro's own plumbing
+Generated from `aerospike-udf-sdk/wasm-rust/src/lib.rs`: the event surface. The macro's own plumbing
 (`xdr_merge_inputs`, `deliver_resolution`) is hidden in the source and left out here.
 
 {{#include ../api/rust-events.md}}

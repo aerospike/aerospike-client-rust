@@ -13,8 +13,8 @@
 //! The vector top-k as a WASM UDF in three languages, against each other, Lua and (when configured) the
 //! native module.
 //!
-//! The three modules - Rust (`aerospike-udf-sdk-wasm/examples/vector`), C
-//! (`aerospike-udf-sdk-wasm-c/examples/vector`) and Go (`aerospike-udf-sdk-wasm-go/examples/vector`) - are
+//! The three modules - Rust (`aerospike-udf-sdk/wasm-rust/examples/vector`), C
+//! (`aerospike-udf-sdk/wasm-c/examples/vector`) and Go (`aerospike-udf-sdk/wasm-go/examples/vector`) - are
 //! written to one algorithm, step for step, so that a difference between their rows is the language and its
 //! toolchain and nothing else. The checked-in binaries under `tests/fixtures/wasm/` are built from them; the
 //! READMEs beside each say how.

@@ -160,26 +160,26 @@ lifts that without touching the merge: it adds a second map.
 
 ## The sources
 
-Rust, `aerospike-udf-sdk-wasm/examples/counter`:
+Rust, `aerospike-udf-sdk/wasm-rust/examples/counter`:
 
 ```rust
-{{#include ../../../aerospike-udf-sdk-wasm/examples/counter/src/lib.rs}}
+{{#include ../../../aerospike-udf-sdk/wasm-rust/examples/counter/src/lib.rs}}
 ```
 
-Java, `aerospike-udf-sdk-wasm-java/examples/counter`:
+Java, `aerospike-udf-sdk/wasm-java/examples/counter`:
 
 ```java
-{{#include ../../../aerospike-udf-sdk-wasm-java/examples/counter/src/main/java/com/aerospike/udf/examples/Counter.java}}
+{{#include ../../../aerospike-udf-sdk/wasm-java/examples/counter/src/main/java/com/aerospike/udf/examples/Counter.java}}
 ```
 
-Go, `aerospike-udf-sdk-wasm-go/examples/counter`:
+Go, `aerospike-udf-sdk/wasm-go/examples/counter`:
 
 ```go
-{{#include ../../../aerospike-udf-sdk-wasm-go/examples/counter/main.go}}
+{{#include ../../../aerospike-udf-sdk/wasm-go/examples/counter/main.go}}
 ```
 
-C++, `aerospike-udf-sdk-wasm-cpp/examples/counter`:
+C++, `aerospike-udf-sdk/wasm-cpp/examples/counter`:
 
 ```cpp
-{{#include ../../../aerospike-udf-sdk-wasm-cpp/examples/counter/counter.cpp}}
+{{#include ../../../aerospike-udf-sdk/wasm-cpp/examples/counter/counter.cpp}}
 ```

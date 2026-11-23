@@ -14,13 +14,13 @@
 // ANCHOR comments, so what the book shows is what compiles here.
 package main
 
-//go:generate go run github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk-wasm-go/cmd/udfgen
+//go:generate go run github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk/wasm-go/cmd/udfgen
 
 // ANCHOR: setup
 import (
 	"errors"
 
-	udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk-wasm-go"
+	udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk/wasm-go"
 )
 
 // ANCHOR_END: setup

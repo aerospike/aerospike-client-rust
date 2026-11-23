@@ -2,7 +2,7 @@
 
 package main
 
-import udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk-wasm-go"
+import udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk/wasm-go"
 
 //export visit
 func udfExport_visit(args, argc int32) int32 {

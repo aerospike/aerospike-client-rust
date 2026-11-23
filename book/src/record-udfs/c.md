@@ -224,7 +224,7 @@ is building has a key. The host answers for the map it holds, so nothing is pack
 Go modules, with SIMD lane kernels. Its record UDF and signatures:
 
 ```c
-{{#include ../../../aerospike-udf-sdk-wasm-c/examples/vector/vector.c:386:409}}
+{{#include ../../../aerospike-udf-sdk/wasm-c/examples/vector/vector.c:386:409}}
 ```
 
 > **A GeoJSON bin is saved only if it is GeoJSON.** Staging takes any text; the save builds the
@@ -234,7 +234,7 @@ Go modules, with SIMD lane kernels. Its record UDF and signatures:
 
 ## API reference
 
-Generated from `aerospike-udf-sdk-wasm-c/include/aerospike_udf.h`: every import, function, macro, constant
+Generated from `aerospike-udf-sdk/wasm-c/include/aerospike_udf.h`: every import, function, macro, constant
 and type of the record UDF surface, with its comment.
 
 {{#include ../api/c-record.md}}

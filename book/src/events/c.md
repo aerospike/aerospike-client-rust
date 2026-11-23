@@ -88,11 +88,11 @@ failure, not a delete.
 the way the server's bin convergence does:
 
 ```c
-{{#include ../../../aerospike-udf-sdk-wasm-c/examples/resolver/resolver.c}}
+{{#include ../../../aerospike-udf-sdk/wasm-c/examples/resolver/resolver.c}}
 ```
 
 ## API reference
 
-Generated from `aerospike-udf-sdk-wasm-c/include/aerospike_udf.h`: the event surface.
+Generated from `aerospike-udf-sdk/wasm-c/include/aerospike_udf.h`: the event surface.
 
 {{#include ../api/c-events.md}}

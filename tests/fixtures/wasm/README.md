@@ -10,14 +10,14 @@ is a `cdylib` for a foreign target, so it cannot be a workspace member that `car
 in the artifact keeps `cargo test` working on a plain toolchain.
 
 Unlike before, though, **the source is in this repository**: it is
-`aerospike-udf-sdk-wasm/examples/udf`, built against the SDK crate beside it. There is no longer a
+`aerospike-udf-sdk/wasm-rust/examples/udf`, built against the SDK crate beside it. There is no longer a
 cross-repository build dependency — the guest SDK moved here, because writing a UDF is a client-side activity;
 only the host half of the ABI belongs with the server.
 
 ## Rebuilding
 
 ```sh
-cd aerospike-udf-sdk-wasm/examples/udf
+cd aerospike-udf-sdk/wasm-rust/examples/udf
 cargo build --release --target wasm32-unknown-unknown
 cp target/wasm32-unknown-unknown/release/aerospike_udf_example.wasm ../../../tests/fixtures/wasm/udf_test.wasm
 cp src/lib.rs ../../../tests/fixtures/wasm/udf_test.rs
@@ -44,7 +44,7 @@ The Rust fixture alone has `staged_read`, `stale_read` and the `poke` aggregatio
 directly to do what the SDK's types do not allow: read a bin after staging a value over it, keep a value
 across a write to its bin, and write from a stream. They test the server, not the SDK.
 
-`merge_probe.wasm` is `aerospike-udf-sdk-wasm/examples/merge_probe`: an `xdr-merge` handler that gives
+`merge_probe.wasm` is `aerospike-udf-sdk/wasm-rust/examples/merge_probe`: an `xdr-merge` handler that gives
 whatever answer the incoming record's `do` bin names, well-formed or not, and signature exports that are
 not signatures. `tests/src/xdr_merge_limits.rs` uses it between two clusters; it is a test instrument, not
 an example of a merge.
@@ -66,9 +66,9 @@ afterwards.
 ## The vector modules
 
 `vector_rust.wasm`, `vector_c.wasm`, `vector_cpp.wasm` and `vector_go.wasm` are the exact top-k over packed
-`f32` vectors written to one algorithm in four languages, built from `aerospike-udf-sdk-wasm/examples/vector`,
-`aerospike-udf-sdk-wasm-c/examples/vector`, `aerospike-udf-sdk-wasm-cpp/examples/vector` and
-`aerospike-udf-sdk-wasm-go/examples/vector`. `tests/src/udf_vector.rs` asserts they agree with each other,
+`f32` vectors written to one algorithm in four languages, built from `aerospike-udf-sdk/wasm-rust/examples/vector`,
+`aerospike-udf-sdk/wasm-c/examples/vector`, `aerospike-udf-sdk/wasm-cpp/examples/vector` and
+`aerospike-udf-sdk/wasm-go/examples/vector`. `tests/src/udf_vector.rs` asserts they agree with each other,
 with Lua and with a local computation, and times them. Rebuild the Rust one as above (crate
 `aerospike-udf-vector-wasm`), the C and C++ ones with `make` in their SDK directories (clang + wasm-ld), the
 Go one with `make` in its SDK directory (TinyGo). The fixtures here are the scalar builds, so they register
@@ -78,7 +78,7 @@ the vectorised variants, which a Fast JIT server refuses.
 ## The Java modules
 
 `hello_java.wasm`, `vector_java.wasm`, `resolver_java.wasm` and `crdt_java.wasm` are the
-Java SDK's examples (`aerospike-udf-sdk-wasm-java/examples/*`), compiled by TeaVM 0.13.1's linear-memory backend;
+Java SDK's examples (`aerospike-udf-sdk/wasm-java/examples/*`), compiled by TeaVM 0.13.1's linear-memory backend;
 the SDK's README says why that version and how to build them (Maven, in the `asd-build-wasm` container
 here). `hello` is the bare contract without the SDK, run by `tests/src/udf_java.rs`; the other three sit
 in the same agreement tests as their Rust, C and Go twins, and the Java CRDT runs through the same nine
@@ -91,7 +91,7 @@ write kind, integer map keys, GeoJSON, metadata, TTL and deletion through it.
 
 ## The resolver
 
-`resolver.wasm` is an event handler, not a UDF: `aerospike-udf-sdk-wasm/examples/resolver` binds to the
+`resolver.wasm` is an event handler, not a UDF: `aerospike-udf-sdk/wasm-rust/examples/resolver` binds to the
 server's `xdr-merge` event through `event!` and merges an account record (visits: the larger count; tags:
 the union in LUT order; profile: the newer side; everything else: the newer side, which is the policy's own
 answer). `tests/src/events.rs` registers it, binds it with `event-set`, runs it through the server's dry run
@@ -133,7 +133,7 @@ the two-cluster test run one compiled module of your choice instead of the four.
 
 ## The CRDT
 
-`crdt.wasm` is `aerospike-udf-sdk-wasm/examples/crdt`: the design note's last-writer-wins map of devices
+`crdt.wasm` is `aerospike-udf-sdk/wasm-rust/examples/crdt`: the design note's last-writer-wins map of devices
 with removal markers, a purge horizon and a version floor, merged by an `xdr-merge` handler that decides
 on versions, removals and stored bytes alone, plus the three write UDFs that keep it well-formed.
 `crdt_merge_converges_in_the_eight_scenarios` drives the note's scenarios through the server's dry run,
@@ -143,8 +143,10 @@ which checks the three CRDT laws on real bytes, for it and for `crdt_java.wasm`,
 ## The C++ modules
 
 `resolver_cpp.wasm`, `vector_cpp.wasm`, `counter_cpp.wasm`, `crdt_cpp.wasm` and
-`udf_cpp.wasm` are the C++ SDK's examples (`aerospike-udf-sdk-wasm-cpp/examples/*`), compiled freestanding
-by clang over the C++ header (`make` in the SDK directory; `make fixtures` copies them here). Every
+`udf_cpp.wasm` are the C++ SDK's examples (`aerospike-udf-sdk/wasm-cpp/examples/*`), compiled freestanding
+by clang over the C++ header (`make` in the SDK directory;
+`make -C aerospike-udf-sdk/wasm-cpp fixtures FIXTURES=$PWD/tests/fixtures/wasm` from the repository root copies
+them here). Every
 module's exports and signatures come from the header's `UDF_*` macros at compile time. `udf_cpp.wasm` is
 the C++ SDK's own fixture, the counterpart of `udf_test.wasm`: `cpp_sdk_covers_the_rust_surface` in
 `tests/src/udf_cpp.rs` drives range-for iteration, the typed bin readers, every write kind, integer map
@@ -158,8 +160,9 @@ does a read that cannot answer; `cpp_unreadable_collections_stop_the_call` and
 ## The Go modules
 
 `resolver_go.wasm`, `vector_go.wasm`, `counter_go.wasm`, `crdt_go.wasm` and `udf_go.wasm`
-are the Go SDK's examples (`aerospike-udf-sdk-wasm-go/examples/*`), built with TinyGo by `make` in the SDK
-directory (`make fixtures` copies them here). Every module's exports are generated by the SDK's `udfgen`
+are the Go SDK's examples (`aerospike-udf-sdk/wasm-go/examples/*`), built with TinyGo by `make` in the SDK
+directory (`make -C aerospike-udf-sdk/wasm-go fixtures FIXTURES=$PWD/tests/fixtures/wasm` from the repository
+root copies them here). Every module's exports are generated by the SDK's `udfgen`
 from `udf:` directives (`udf_exports.go` beside each `main.go`, checked in). `udf_go.wasm` is the Go SDK's
 own fixture, the counterpart of `udf_test.wasm` and `udf_java.wasm`: `go_sdk_covers_the_rust_surface` in
 `tests/src/udf_go.rs` drives range-over-func iteration, the typed bin readers, every write kind, integer

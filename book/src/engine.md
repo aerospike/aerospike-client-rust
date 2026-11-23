@@ -86,7 +86,7 @@ Measured in this project; the files that print each number are named so it can b
   plugin and fourteen to nineteen times faster than Lua
   (`aerospike-udf-sdk-native/examples/vector/tests/lua_vs_native.rs`, against the Lua in
   `aerospike-udf-sdk-native/examples/vector/lua/vector.lua` and the WASM module in
-  `aerospike-udf-sdk-wasm/examples/vector`).
+  `aerospike-udf-sdk/wasm-rust/examples/vector`).
 - **A record UDF's per-call engine cost is below the round-trip noise floor.** The native bench's per-call
   section subtracts a plain-write baseline and still reports noise as large as the difference it is
   after; what it bounds is that the difference between engines on one small call is a handful of

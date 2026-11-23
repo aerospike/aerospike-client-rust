@@ -19,7 +19,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-aerospike-udf-sdk-wasm = { path = "../aerospike-udf-sdk-wasm" }
+aerospike-udf-sdk-wasm = { path = "../aerospike-udf-sdk/wasm-rust" }
 
 [profile.release]
 opt-level = 3
@@ -211,7 +211,7 @@ trimmed on the host by position, a summary, and an aggregation. It uses no alloc
 22 KB.
 
 ```rust
-{{#include ../../../aerospike-udf-sdk-wasm/examples/ledger/src/lib.rs}}
+{{#include ../../../aerospike-udf-sdk/wasm-rust/examples/ledger/src/lib.rs}}
 ```
 
 `examples/udf` exercises the whole surface and is the fixture `tests/src/udf_wasm.rs` asserts against;
@@ -232,7 +232,7 @@ let withdrawn = client
 
 ## API reference
 
-Generated from `aerospike-udf-sdk-wasm/src/lib.rs`: every public item of the record UDF surface, with its
+Generated from `aerospike-udf-sdk/wasm-rust/src/lib.rs`: every public item of the record UDF surface, with its
 documentation. Items marked `#[doc(hidden)]` in the source, the macro plumbing, are left out.
 
 {{#include ../api/rust-record.md}}

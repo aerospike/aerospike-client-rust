@@ -10,9 +10,9 @@ which the server runs once per instance before any UDF.
 ```go
 package main
 
-//go:generate go run github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk-wasm-go/cmd/udfgen
+//go:generate go run github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk/wasm-go/cmd/udfgen
 
-import udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk-wasm-go"
+import udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk/wasm-go"
 
 //udf:function increment
 func increment(rec *udf.Record, by int64) (int64, error) {
@@ -453,7 +453,7 @@ Its state is the struct's fields. It keeps the raw form, since it reads its argu
 and keeps them, and gives the signatures through `params`. The record half, with the record first:
 
 ```go
-{{#include ../../../aerospike-udf-sdk-wasm-go/examples/vector/main.go:412:429}}
+{{#include ../../../aerospike-udf-sdk/wasm-go/examples/vector/main.go:412:429}}
 ```
 
 > **A GeoJSON bin is saved only if it is GeoJSON.** Staging takes any text; the save builds the

@@ -56,7 +56,7 @@ statics.
 `examples/ledger` ends with a stream over accounts:
 
 ```rust
-{{#include ../../../aerospike-udf-sdk-wasm/examples/ledger/src/lib.rs:118:145}}
+{{#include ../../../aerospike-udf-sdk/wasm-rust/examples/ledger/src/lib.rs:118:145}}
 ```
 
 ## The vector top-k

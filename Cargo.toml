@@ -113,7 +113,7 @@ name = "tls_matching"
 required-features = ["async", "rt-tokio", "tls"]
 
 [workspace]
-members = ["tools/benchmark", "aerospike-core", "aerospike-rt", "aerospike-sync", "aerospike-macro", "aerospike-udf-sdk-wasm", "aerospike-udf-sdk-native"]
+members = ["tools/benchmark", "aerospike-core", "aerospike-rt", "aerospike-sync", "aerospike-macro", "aerospike-udf-sdk-native"]
 
 # The in-tree crates depend on each other by path for development and by exact
 # version once published; both are spelled here once. The version must match

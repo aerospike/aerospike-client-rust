@@ -182,26 +182,26 @@ becomes data of its own.
 
 ## The sources
 
-Rust, `aerospike-udf-sdk-wasm/examples/pncounter`:
+Rust, `aerospike-udf-sdk/wasm-rust/examples/pncounter`:
 
 ```rust
-{{#include ../../../aerospike-udf-sdk-wasm/examples/pncounter/src/lib.rs}}
+{{#include ../../../aerospike-udf-sdk/wasm-rust/examples/pncounter/src/lib.rs}}
 ```
 
-Java, `aerospike-udf-sdk-wasm-java/examples/pncounter`:
+Java, `aerospike-udf-sdk/wasm-java/examples/pncounter`:
 
 ```java
-{{#include ../../../aerospike-udf-sdk-wasm-java/examples/pncounter/src/main/java/com/aerospike/udf/examples/PnCounter.java}}
+{{#include ../../../aerospike-udf-sdk/wasm-java/examples/pncounter/src/main/java/com/aerospike/udf/examples/PnCounter.java}}
 ```
 
-Go, `aerospike-udf-sdk-wasm-go/examples/pncounter`:
+Go, `aerospike-udf-sdk/wasm-go/examples/pncounter`:
 
 ```go
-{{#include ../../../aerospike-udf-sdk-wasm-go/examples/pncounter/main.go}}
+{{#include ../../../aerospike-udf-sdk/wasm-go/examples/pncounter/main.go}}
 ```
 
-C++, `aerospike-udf-sdk-wasm-cpp/examples/pncounter`:
+C++, `aerospike-udf-sdk/wasm-cpp/examples/pncounter`:
 
 ```cpp
-{{#include ../../../aerospike-udf-sdk-wasm-cpp/examples/pncounter/pncounter.cpp}}
+{{#include ../../../aerospike-udf-sdk/wasm-cpp/examples/pncounter/pncounter.cpp}}
 ```

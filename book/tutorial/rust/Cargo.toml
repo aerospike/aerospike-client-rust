@@ -8,7 +8,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-aerospike-udf-sdk-wasm = { path = "../../../aerospike-udf-sdk-wasm" }
+aerospike-udf-sdk-wasm = { path = "../../../aerospike-udf-sdk/wasm-rust" }
 
 [profile.release]
 opt-level = 3

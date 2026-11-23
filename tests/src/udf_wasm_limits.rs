@@ -27,6 +27,8 @@
 //! | `stale`                   | traps if it finds that mark                       |
 //! | `taintspin_record`        | writes the mark, then never returns               |
 //! | `trap`                    | executes `unreachable`                            |
+//! | `spinif`, `spinif_record` | `loop { br_if 0 (1) }`: a loop closed by a conditional branch, as a compiler |
+//! |                           | writes `while`; a record UDF, and a stream UDF with `spinif_end` that returns |
 //!
 //! `taint` and `stale` are also exported as stream UDFs (`taint_record`, `stale_record`, each with an
 //! `_end` that returns), so the same pair checks memory between record calls and between queries.
@@ -85,7 +87,7 @@ fn section(id: u8, body: &[u8]) -> Vec<u8> {
 /// The module, with a memory of `initial_pages` 64 KiB pages and no declared maximum.
 #[rustfmt::skip]
 fn module(initial_pages: u32) -> Vec<u8> {
-    // Function 0 is the import; the eight bodies below are functions 1 to 8.
+    // Function 0 is the import; the nine bodies below are functions 1 to 9.
     const OK: u8 = 1;
     const SPIN: u8 = 2;
     const GROW: u8 = 3;
@@ -94,8 +96,9 @@ fn module(initial_pages: u32) -> Vec<u8> {
     const STALE: u8 = 6;
     const TAINTSPIN: u8 = 7;
     const TRAP: u8 = 8;
+    const SPINIF: u8 = 9;
 
-    let bodies: [&[u8]; 8] = [
+    let bodies: [&[u8]; 9] = [
         // ok: 0
         &[0x00, 0x41, 0x00, 0x0b],
         // spin: loop { }
@@ -128,9 +131,12 @@ fn module(initial_pages: u32) -> Vec<u8> {
           0x41, 0x00, 0x0b],
         // trap: unreachable
         &[0x00, 0x00, 0x0b],
+        // spinif: loop { br_if 0 (i32.const 1) }. The back edge is conditional, which an engine may compile
+        // differently from `br`: WAMR's Fast JIT checked for a stop on `br` and not on a taken `br_if`.
+        &[0x00, 0x03, 0x40, 0x41, 0x01, 0x0d, 0x00, 0x0b, 0x41, 0x00, 0x0b],
     ];
 
-    let exports: [(&str, u8); 16] = [
+    let exports: [(&str, u8); 19] = [
         ("ok", OK),
         ("spin_record", SPIN), ("spin_end", OK),
         ("fin_record", OK), ("fin_end", SPIN),
@@ -140,6 +146,7 @@ fn module(initial_pages: u32) -> Vec<u8> {
         ("stale", STALE), ("stale_record", STALE), ("stale_end", OK),
         ("taintspin_record", TAINTSPIN), ("taintspin_end", OK),
         ("trap", TRAP),
+        ("spinif", SPINIF), ("spinif_record", SPINIF), ("spinif_end", OK),
     ];
 
     assert!(FLOOD_MESSAGE.len() < 0x40, "the length is written as a one-byte constant");
@@ -156,8 +163,8 @@ fn module(initial_pages: u32) -> Vec<u8> {
     import.extend([0x00, 0x01]);
     out.extend(section(2, &import));
 
-    // function: eight functions of type 0
-    out.extend(section(3, &[0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]));
+    // function: nine functions of type 0
+    out.extend(section(3, &[0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]));
 
     // memory: one memory, a minimum and no maximum
     let mut memory = vec![0x01, 0x00];
@@ -532,7 +539,7 @@ async fn a_wasm_stream_udf_that_loops_is_stopped() {
 
     // `spin` never returns from a record; `fin` never returns from its final call. Each must be ended by
     // the server, on the stream's own clock: an aggregation query has no deadline to borrow.
-    for function in ["spin", "fin"] {
+    for function in ["spin", "fin", "spinif"] {
         let start = Instant::now();
         let (failed, said) = aggregate(&client, namespace, set_name, package, function).await;
         let took = start.elapsed();
@@ -551,6 +558,104 @@ async fn a_wasm_stream_udf_that_loops_is_stopped() {
             .await
             .unwrap_or_else(|e| panic!("the server did not recover from stream {function}: {e}"));
     }
+
+    unregister(&client, package).await;
+}
+
+/// A record UDF that never returns is ended by the transaction's deadline, whichever branch closes its
+/// loop. `loop { br_if 0 (1) }` held its thread for good on the Fast JIT (x86-64), where only `br` was
+/// checked.
+#[aerospike_macro::test]
+async fn a_wasm_record_udf_that_loops_is_stopped() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("wasm_limits_{}", common::rand_str(6));
+    let key = as_key!(namespace, set_name, 1);
+
+    if let Err(reason) = register(&client, package, &module(1)).await {
+        skipped("a_wasm_record_udf_that_loops_is_stopped", &reason);
+        return;
+    }
+
+    client.put(&WritePolicy::default(), &key, &[as_bin!("n", 1)]).await.unwrap();
+
+    // The server ends the call at the transaction's deadline, the one this sends. The client stops waiting
+    // at the same moment, so the server's end of it is seen in its count of calls it stopped at their
+    // deadline.
+    let mut policy = WritePolicy::default();
+
+    policy.base_policy.total_timeout = 1_000;
+    policy.base_policy.max_retries = 0;
+
+    let timeouts_before = statistic(&client, "udf_wasm_timeouts").await;
+    let answer = client.execute_udf(&policy, &key, package, "spinif", &[]).await;
+
+    assert!(answer.is_err(), "a record UDF that never returns came back as if it had worked: {answer:?}");
+
+    if let Some(before) = timeouts_before {
+        let start = Instant::now();
+
+        loop {
+            let timeouts = statistic(&client, "udf_wasm_timeouts").await.unwrap_or(before);
+
+            if timeouts > before {
+                eprintln!("wasm_limits: record spinif stopped by the server after {:?}", start.elapsed());
+                break;
+            }
+
+            assert!(start.elapsed() < Duration::from_secs(10), "the server did not stop spinif in 10 s");
+            aerospike_rt::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    // The node carries on, and the module still runs. (One thread held for good would not show here, as
+    // the others serve these; it shows above, as a count of timeouts that never moves.)
+    for _ in 0..8 {
+        client
+            .execute_udf(&WritePolicy::default(), &key, package, "ok", &[])
+            .await
+            .unwrap_or_else(|e| panic!("the server did not recover from spinif: {e}"));
+    }
+
+    unregister(&client, package).await;
+}
+
+/// `max-memory` holds for the memory a module starts with, not only for what it grows to. WAMR takes the
+/// cap it is given as a limit on growth, and gives a module whose declared initial memory is above it all
+/// of that memory, with a warning: one call could take the node's whole `max-total-memory`. The server
+/// refuses such a module before loading it.
+#[aerospike_macro::test]
+async fn a_module_that_starts_above_max_memory_does_not_run() {
+    let client = common::client().await;
+    let namespace = common::namespace();
+    let set_name = &common::rand_str(10);
+    let package = &format!("wasm_limits_{}", common::rand_str(6));
+    let key = as_key!(namespace, set_name, 1);
+
+    // 128 MiB, twice the default `max-memory` of 64 MiB (1024 pages), which the nodes under test run with.
+    // A server that checks refuses it at registration, and says why; one that skips that check must still
+    // not run it.
+    if let Err(refusal) = register(&client, package, &module(2048)).await {
+        // The server sends a registration error's text in base64, after `message=`.
+        let reason = refusal
+            .split("message=")
+            .nth(1)
+            .map(|rest| rest.split(|c: char| !(c.is_ascii_alphanumeric() || "+/=".contains(c))).next().unwrap_or(""))
+            .map(unbase64)
+            .unwrap_or_default();
+
+        eprintln!("wasm_limits: a module of 2048 initial pages was refused at registration: {reason}");
+        assert!(reason.contains("max-memory"), "refused, but not for its memory: {reason} ({refusal})");
+        return;
+    }
+
+    client.put(&WritePolicy::default(), &key, &[as_bin!("n", 1)]).await.unwrap();
+
+    let answer = client.execute_udf(&WritePolicy::default(), &key, package, "ok", &[]).await;
+
+    eprintln!("wasm_limits: a module of 2048 initial pages, called: {answer:?}");
+    assert!(answer.is_err(), "a module that starts at twice max-memory ran: {answer:?}");
 
     unregister(&client, package).await;
 }

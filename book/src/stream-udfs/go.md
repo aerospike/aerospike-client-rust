@@ -13,9 +13,9 @@ is not an argument and is not in the signature.
 ```go
 package main
 
-//go:generate go run github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk-wasm-go/cmd/udfgen
+//go:generate go run github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk/wasm-go/cmd/udfgen
 
-import udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk-wasm-go"
+import udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk/wasm-go"
 
 type SumN struct {
 	total, count int64
@@ -72,7 +72,7 @@ would cost an import and, for a `string`, an allocation per record.
 `examples/vector/main.go` is the full-size example, in the raw form. Its stream half:
 
 ```go
-{{#include ../../../aerospike-udf-sdk-wasm-go/examples/vector/main.go:354:410}}
+{{#include ../../../aerospike-udf-sdk/wasm-go/examples/vector/main.go:354:410}}
 ```
 
 The record method configures itself from the arguments on the first call, reads the vector straight into

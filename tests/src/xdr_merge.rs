@@ -19,7 +19,7 @@
 //! other with its own `src-id` and `ship-src-id true`, named by `AEROSPIKE_XDR_DC1` and `AEROSPIKE_XDR_DC2`
 //! (`host:port` each); without them it skips. `_temp/asd-image-wasm/xdr/` has the two configurations.
 //!
-//! The module is the CRDT example (`aerospike-udf-sdk-wasm/examples/crdt`): a merge that decides on the
+//! The module is the CRDT example (`aerospike-udf-sdk/wasm-rust/examples/crdt`): a merge that decides on the
 //! data alone, so the two sides must converge whatever the order their writes arrive in.
 
 use std::collections::HashMap;

@@ -13,11 +13,11 @@
 //! WASM UDFs written in C++, compiled freestanding by clang over the C++ header, whose UDF_* macros
 //! derive the exports and signatures from a function's parameter types. `counter_cpp.wasm` drives the
 //! generated argument decoding through every rejection, and `udf_cpp.wasm`
-//! (`aerospike-udf-sdk-wasm-cpp/examples/udf`) is the SDK's fixture, one function per corner of the record
+//! (`aerospike-udf-sdk/wasm-cpp/examples/udf`) is the SDK's fixture, one function per corner of the record
 //! API, held here to the Rust fixture tests' expectations. The resolver, counter and CRDT modules
 //! sit in the agreement tests of `events.rs` and `xdr_merge.rs`. `apitest_c.wasm` is here for one export
 //! outside the conformance specification, `stop_probe`, which tests the C SDK's reads that stop the call.
-//! The fixtures are built as `aerospike-udf-sdk-wasm-cpp/README.md` says.
+//! The fixtures are built as `aerospike-udf-sdk/wasm-cpp/README.md` says.
 
 use crate::common;
 use aerospike::Task;
@@ -148,7 +148,7 @@ async fn cpp_generated_exports_decode_arguments() {
     let _ = client.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
 }
 
-/// The record API of the C++ SDK, driven through its fixture module (`aerospike-udf-sdk-wasm-cpp/examples/udf`):
+/// The record API of the C++ SDK, driven through its fixture module (`aerospike-udf-sdk/wasm-cpp/examples/udf`):
 /// range-for over lists and maps, the typed bin readers, the bool, nil, GeoJSON and packed-list writes,
 /// integer map keys, a GeoJSON result, the record's metadata, its TTL and its deletion. The expectations
 /// are those of the Rust fixture's tests in `udf_wasm.rs`.

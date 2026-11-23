@@ -51,7 +51,7 @@ typed parameters on every record would cost an import and, for a `String`, an al
 that it allocates nothing per record. Its stream half:
 
 ```java
-{{#include ../../../aerospike-udf-sdk-wasm-java/examples/vector/src/main/java/com/aerospike/udf/examples/Vector.java:stream}}
+{{#include ../../../aerospike-udf-sdk/wasm-java/examples/vector/src/main/java/com/aerospike/udf/examples/Vector.java:stream}}
 ```
 
 The record method configures itself from the arguments on the first call, reads the vector straight into

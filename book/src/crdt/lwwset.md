@@ -211,26 +211,26 @@ on both sides, in place of this step's bias.
 
 ## The sources
 
-Rust, `aerospike-udf-sdk-wasm/examples/lwwset`:
+Rust, `aerospike-udf-sdk/wasm-rust/examples/lwwset`:
 
 ```rust
-{{#include ../../../aerospike-udf-sdk-wasm/examples/lwwset/src/lib.rs}}
+{{#include ../../../aerospike-udf-sdk/wasm-rust/examples/lwwset/src/lib.rs}}
 ```
 
-Java, `aerospike-udf-sdk-wasm-java/examples/lwwset`:
+Java, `aerospike-udf-sdk/wasm-java/examples/lwwset`:
 
 ```java
-{{#include ../../../aerospike-udf-sdk-wasm-java/examples/lwwset/src/main/java/com/aerospike/udf/examples/LwwSet.java}}
+{{#include ../../../aerospike-udf-sdk/wasm-java/examples/lwwset/src/main/java/com/aerospike/udf/examples/LwwSet.java}}
 ```
 
-Go, `aerospike-udf-sdk-wasm-go/examples/lwwset`:
+Go, `aerospike-udf-sdk/wasm-go/examples/lwwset`:
 
 ```go
-{{#include ../../../aerospike-udf-sdk-wasm-go/examples/lwwset/main.go}}
+{{#include ../../../aerospike-udf-sdk/wasm-go/examples/lwwset/main.go}}
 ```
 
-C++, `aerospike-udf-sdk-wasm-cpp/examples/lwwset`:
+C++, `aerospike-udf-sdk/wasm-cpp/examples/lwwset`:
 
 ```cpp
-{{#include ../../../aerospike-udf-sdk-wasm-cpp/examples/lwwset/lwwset.cpp}}
+{{#include ../../../aerospike-udf-sdk/wasm-cpp/examples/lwwset/lwwset.cpp}}
 ```

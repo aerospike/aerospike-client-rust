@@ -411,26 +411,26 @@ needs its own merge, as `seen` has here and as the elements of [step 5](device-m
 
 ## The sources
 
-Rust, `aerospike-udf-sdk-wasm/examples/registers`:
+Rust, `aerospike-udf-sdk/wasm-rust/examples/registers`:
 
 ```rust
-{{#include ../../../aerospike-udf-sdk-wasm/examples/registers/src/lib.rs}}
+{{#include ../../../aerospike-udf-sdk/wasm-rust/examples/registers/src/lib.rs}}
 ```
 
-Java, `aerospike-udf-sdk-wasm-java/examples/registers`:
+Java, `aerospike-udf-sdk/wasm-java/examples/registers`:
 
 ```java
-{{#include ../../../aerospike-udf-sdk-wasm-java/examples/registers/src/main/java/com/aerospike/udf/examples/Registers.java}}
+{{#include ../../../aerospike-udf-sdk/wasm-java/examples/registers/src/main/java/com/aerospike/udf/examples/Registers.java}}
 ```
 
-Go, `aerospike-udf-sdk-wasm-go/examples/registers`:
+Go, `aerospike-udf-sdk/wasm-go/examples/registers`:
 
 ```go
-{{#include ../../../aerospike-udf-sdk-wasm-go/examples/registers/main.go}}
+{{#include ../../../aerospike-udf-sdk/wasm-go/examples/registers/main.go}}
 ```
 
-C++, `aerospike-udf-sdk-wasm-cpp/examples/registers`:
+C++, `aerospike-udf-sdk/wasm-cpp/examples/registers`:
 
 ```cpp
-{{#include ../../../aerospike-udf-sdk-wasm-cpp/examples/registers/registers.cpp}}
+{{#include ../../../aerospike-udf-sdk/wasm-cpp/examples/registers/registers.cpp}}
 ```

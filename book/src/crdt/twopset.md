@@ -186,26 +186,26 @@ puts a timestamp on every add and every removal, and the merge becomes step 2's 
 
 ## The sources
 
-Rust, `aerospike-udf-sdk-wasm/examples/twopset`:
+Rust, `aerospike-udf-sdk/wasm-rust/examples/twopset`:
 
 ```rust
-{{#include ../../../aerospike-udf-sdk-wasm/examples/twopset/src/lib.rs}}
+{{#include ../../../aerospike-udf-sdk/wasm-rust/examples/twopset/src/lib.rs}}
 ```
 
-Java, `aerospike-udf-sdk-wasm-java/examples/twopset`:
+Java, `aerospike-udf-sdk/wasm-java/examples/twopset`:
 
 ```java
-{{#include ../../../aerospike-udf-sdk-wasm-java/examples/twopset/src/main/java/com/aerospike/udf/examples/TwoPSet.java}}
+{{#include ../../../aerospike-udf-sdk/wasm-java/examples/twopset/src/main/java/com/aerospike/udf/examples/TwoPSet.java}}
 ```
 
-Go, `aerospike-udf-sdk-wasm-go/examples/twopset`:
+Go, `aerospike-udf-sdk/wasm-go/examples/twopset`:
 
 ```go
-{{#include ../../../aerospike-udf-sdk-wasm-go/examples/twopset/main.go}}
+{{#include ../../../aerospike-udf-sdk/wasm-go/examples/twopset/main.go}}
 ```
 
-C++, `aerospike-udf-sdk-wasm-cpp/examples/twopset`:
+C++, `aerospike-udf-sdk/wasm-cpp/examples/twopset`:
 
 ```cpp
-{{#include ../../../aerospike-udf-sdk-wasm-cpp/examples/twopset/twopset.cpp}}
+{{#include ../../../aerospike-udf-sdk/wasm-cpp/examples/twopset/twopset.cpp}}
 ```
