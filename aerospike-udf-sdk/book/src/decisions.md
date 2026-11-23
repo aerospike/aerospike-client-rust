@@ -67,6 +67,7 @@ Decided 2026-11-17 and 2026-11-18. Described in [Security](security.md) and
 | **What a guest gets the host to build is charged to the call**, against the per-instance `max-memory`, and reserved against `max-total-memory`. A value is charged in full when made and refunded in full when its last reference goes. | A guest's own memory has a ceiling; strings, lists and maps built through host calls live on the server's heap and had none. |
 | **Packed copies of collections are charged too.** | Reading back a collection the call built makes a copy on the server's heap, one a handle. Uncharged, that was 255 times the budget. |
 | **`max-memory` is capped at 2 GiB.** | A length of 4 GiB minus one wrapped in 32-bit arithmetic. |
+| **`max-memory` covers the memory a module starts with**, checked by the server at registration and at every load. (2026-11-23) | The runtime caps growth only, and gave a module all the initial memory it declared: 128 MiB ran under a cap of 64. |
 | **The limits are read once, at start.** | There is no code path that changes them under running calls, and so none to get wrong. |
 
 ## One vocabulary across the languages
@@ -143,6 +144,6 @@ Decided 2026-11-17 and 2026-11-18. Described in [Security](security.md#fuzzing).
 | **Host calls are tested on a record that behaves as the server's does.** It frees a value when another replaces it and takes back what a failed write takes back. | The first test record kept everything it was handed. It hid a read of freed memory, a read through a buffer a failed save had freed, and two leaks, through millions of fuzz executions. |
 | **The host-call test fails if a host call exists that it does not call.** | A call added later should not be able to go untested by being forgotten. |
 | **Every input a fuzzer has broken a target with is kept and replayed by `make check`.** There is no scheduled fuzzing job. | Replay is cheap and needs no special compiler. A scheduled job was not asked for. |
-| **The tier production runs is fuzzed too**, under emulation where there is no x86-64 machine. | The interpreter was the only tier that had been. Emulation rules out AddressSanitizer there, which is recorded as a limit. |
+| **The tier production runs is tested too**, on a real x86-64 machine: the module's tests, the sanitizers, the conformance targets and the fuzzers. (Emulation was used first, where AddressSanitizer does not run.) | The interpreter was the only tier that had been. The real machine found a loop the Fast JIT could not stop, which no emulated run had reached. |
 | **The whole module runs under AddressSanitizer and ThreadSanitizer, with real SDK-built modules.** | The unit test and the fuzz targets leave out the part several threads are in together. |
-| **Findings in the runtime are written up for upstream, not patched around silently.** | The server pins a runtime version; a private fix is a fix that is lost at the next update. |
+| **Findings in the runtime are written up for upstream.** One that breaks a guarantee the server makes is also patched, in a copy of the runtime built from `patches/runtime/`, never in the pinned submodule. (2026-11-22) | The server pins a runtime version; a private fix is lost at the next update unless it is written down and sent. A loop that outlives its deadline could not wait for an upstream release. |

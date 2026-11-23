@@ -126,7 +126,7 @@ handle the call did not create. Found while making the account below balance.
 
 | What | Limit | Where it comes from |
 | --- | --- | --- |
-| Linear memory per instance | 64 MB by default, 2 GiB at most | `max-memory` in the `mod-wamr` stanza, rounded up to 64 KiB pages |
+| Linear memory per instance | 64 MB by default, 2 GiB at most | `max-memory` in the `mod-wamr` stanza, rounded up to 64 KiB pages; a module whose memory starts above it is refused at registration |
 | Linear memory, all instances | 4 GiB by default | `max-total-memory`; counted exactly, growth included |
 | Values built on the server's side, per call | the same as `max-memory` | counted as each is made and given back as each is freed; see below |
 | Operand stack per call | 64 KiB | fixed |
@@ -144,6 +144,12 @@ handle the call did not create. Found while making the account below balance.
 | Arguments per call | 128 | fixed; more fails the call |
 | Queued compiles | 256, deduplicated by module | fixed; never fewer than `max-modules`, so a registration cannot find it full |
 | Compiler processes at once | 1 to 8 | `aot-compile-threads`, when the tier reads it |
+
+`max-memory` is checked by the server against what a module declares, before it is loaded. The runtime
+is given the same figure as its cap, but takes it as a cap on growth only: a module that declared more
+initial memory than the cap was given all of it, so one call could take memory up to `max-total-memory`
+and leave every other call refused. The server reads the module's memory and import sections with the
+parser that rewrites start functions, and refuses a module it cannot read that way.
 
 The deadline is the transaction's own, captured on the transaction thread, not a limit invented by the
 engine. The thread manager is built into the runtime specifically so that a compute-bound guest notices
@@ -322,12 +328,31 @@ written for hostile files; in the server that loader is only ever given a file w
 
 ### The Fast JIT
 
-`make fuzz FUZZ_TIER=fastjit` builds the same targets on the tier an x86-64 node runs. On an x86-64
-container emulated on aarch64, `call` and `load` ran 1.6 million executions between them with no
-finding in the module. The run found one piece of undefined behaviour in the runtime's JIT, a float
-constant converted to an integer without a range check, which produces correct code on x86-64 and is
-on the list to send upstream. AddressSanitizer does not run under that emulation, so this was with the
-undefined-behaviour sanitizer alone.
+`make fuzz FUZZ_TIER=fastjit` builds the same targets on the tier an x86-64 node runs. The first runs
+were on an x86-64 container emulated on aarch64, where AddressSanitizer does not run: 1.6 million
+executions of `call` and `load` with the undefined-behaviour sanitizer alone, and one finding in the
+runtime, a float constant converted to an integer without a range check (correct code on x86-64, on
+the list to send upstream, and no longer checked in WAMR's code by the fuzz builds, since it stopped
+nearly every input).
+
+In November 2026 the tier was tested on a real x86-64 machine (Ryzen 9 3950X), in full: the unit and
+host-call tests built for the Fast JIT, AddressSanitizer, MemorySanitizer and ThreadSanitizer, the
+conformance targets, and ten minutes of each fuzz target with eight processes. It found four things:
+
+- **A `br_if` loop could not be stopped** (the timeouts of the `call` target). See *Limitations* below;
+  fixed by a runtime patch.
+- **Values in many collections stayed charged after they were freed.** The walk that refunds a freed
+  collection counted a shared child for 32 values only; past that a loop that put lists into several
+  parents ran out of a budget it had not used. Fixed in the module; the walk keeps count on the heap.
+- **A rotate by zero was folded with a shift by the full width** in the JIT, undefined in C and right by
+  luck on x86-64. Fixed by a runtime patch.
+- **A module's initial memory was not capped by `max-memory`** (out-of-memory reports from the fuzzer's
+  allocation limit). See *Limits* above; the `call` and `load` targets now refuse such modules as the
+  server does, and stop if the runtime ever gives a guest more memory than that allows.
+
+With those fixed, the last round ran 21 million executions of `call`, 173 million of `load` and 476
+million of `defer`, and the `sdk` target a million cases on the five SDKs' modules, with no finding.
+Every client suite passed against an x86-64 node on the patched Fast JIT.
 
 ### Keeping what was found
 
@@ -361,7 +386,10 @@ do, and each must end in an error with the server still serving and the record i
 | `bad_indirect` | calls through a table slot that is not there | trapped | trapped, "undefined element" |
 | `spin` | loops without end | stopped by the deadline | stopped by the deadline, "terminated by user" |
 
-Measured on 2026-11-16 on aarch64, the compiled column with the patched compiler described below. The Fast JIT tier, which is x86-64 only, has not been run through it.
+Measured on 2026-11-16 on aarch64, the compiled column with the patched compiler described below. On
+the Fast JIT, on x86-64, every row is the same as the compiled column (2026-11-22). The limits suite
+adds a loop closed by a conditional branch, `loop { br_if 0 (1) }`, as a record and as a stream UDF,
+which the unpatched Fast JIT could not stop (see below).
 Every case runs twice, before and after the background compile, so a server that compiles is tested on
 compiled code.
 
@@ -370,17 +398,25 @@ compiled code.
 These are the places the design is weaker than the sections above might suggest. Each has an entry in
 `WASM_SECURITY_TODO.md`.
 
-**The deadline on compiled code depends on a patched compiler.** Terminating an instance only sets a
+**The deadline depends on patched code, in the compiler and in the runtime.** Terminating an instance only sets a
 flag. The interpreter and the Fast JIT poll it. Stock `wamrc` emits the poll only for a module that
 declares a shared memory, which no UDF does, so a looping guest compiled by it holds its transaction
 thread past the timeout: the suite's `spin` row failed exactly that way. The server tree carries one
 compiler patch, `modules/mod-wamr/patches/0001-wamrc-terminate-check.patch`, which adds
 `--enable-terminate-check`: the poll at every loop back-edge and call, whatever the memory is.
 `make wamrc` applies it to a copy of the sources, so the WAMR submodule stays at its pinned upstream
-commit, and only the compiler is patched, never the runtime. The server always passes the option, and it
-is part of the cache tag, so a file compiled without it is never loaded. A stock `wamrc` rejects the
-option and exits with an error, so nothing is compiled and every module runs interpreted: slower, and
-still stoppable. The patch should go upstream; until it does, a WAMR upgrade means re-applying it.
+commit. The server always passes the option, and it is part of the cache tag, so a file compiled
+without it is never loaded. A stock `wamrc` rejects the option and exits with an error, so nothing is
+compiled and every module runs interpreted: slower, and still stoppable.
+
+The Fast JIT polled the flag at `br`, `br_table`, calls and `memory.grow`, but at `br_if` only on the
+fall-through: a taken conditional branch back to a loop went straight to it. A loop closed by `br_if`,
+which is how compilers write `while`, ran past its deadline for good; on an x86-64 node a record UDF
+held a service thread at a full core until the node restarted, and enough of them would take every
+thread. `modules/mod-wamr/patches/runtime/0001-fast-jit-br-if-terminate-check.patch` puts the poll on
+the taken edge. The runtime is built from a copy of the submodule with `patches/runtime/` applied, as
+the compiler is. The aarch64 interpreter was never affected. These patches should go upstream; until
+they do, a WAMR upgrade means re-applying them.
 
 **Ahead-of-time compilation is still switched off.** On this branch the tier is fixed per architecture,
 the Fast JIT on x86-64 and the interpreter elsewhere, and the configuration keys for the compiler are

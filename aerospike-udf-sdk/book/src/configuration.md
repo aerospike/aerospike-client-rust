@@ -17,7 +17,7 @@ mod-wamr {
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `max-memory` | 64 MiB | The ceiling on one instance's linear memory, rounded up to wasm pages, at most 2 GiB. A module that grows past it is refused the growth and traps or reports. It is also the ceiling on what one call may build on the server's side through the host calls: strings, blobs, lists and maps. |
+| `max-memory` | 64 MiB | The ceiling on one instance's linear memory, rounded up to wasm pages, at most 2 GiB. A module that grows past it is refused the growth and traps or reports. It holds from the first page: a module whose declared initial memory is larger is refused at registration ("the module's memory starts at 2048 pages of 64 KiB, more than max-memory allows (1024)"), and at load if `max-memory` has been lowered since. It is also the ceiling on what one call may build on the server's side through the host calls: strings, blobs, lists and maps. |
 | `max-total-memory` | 4 GiB | The ceiling on the linear memory of every instance on the node together, and on what their calls have built on the server's side. At the ceiling a new instance is refused, and its call fails with an error naming this setting; a `memory.grow` is refused, which the guest sees as an ordinary out-of-memory. |
 | `stream-timeout-ms` | `10000` | How long one batch of a stream UDF, or its final call, may run, 1 ms to 1 hour. An aggregation query has no deadline of its own, so this is the only clock a stream UDF is on. Past it the guest is stopped and the query fails. The time covers reading the batch's records as well as the guest's work on them. |
 | `max-modules` | `256` | How many WASM modules may be registered, 1 to 256. A registration past it is refused with an error naming this setting. Registering a name that exists replaces it and is always allowed. |
@@ -46,6 +46,9 @@ in the server's memory for as long as the module is loaded.
   registration.
 - **One code cache, 256 MB.** Every function the Fast JIT compiles goes into one cache of that size,
   fixed when the server is built. A module that is removed gives its share back.
+- **Patched.** The server builds WAMR from a copy with `modules/mod-wamr/patches/runtime/` applied. A
+  Fast JIT from stock WAMR cannot stop a loop closed by a conditional branch at its deadline
+  ([Security](security.md#limitations-and-open-concerns)).
 
 **Nothing in the stanza selects it.** Which tier a server runs is decided when the server is built, by
 its architecture, and is not a setting: there is no `running-mode` to write, and the stanza does not
