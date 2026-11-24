@@ -118,6 +118,6 @@ Two settings elsewhere matter to it:
   `user-admin`; grant it `data-admin` (and `read-write-udf`, to register modules) and log in again, since
   a session's permissions refresh every few minutes. The listing commands need nothing.
 - **XDR.** The event needs to know which cluster wrote what. This cluster's `xdr` stanza must have a
-  `src-id`, or `event-set` refuses the binding, and the cluster that ships to it must send its own:
-  under bin convergence the id travels with the bin LUTs; otherwise `ship-src-id true` in the source's
-  `dc` / `namespace` stanza (dynamic) sends it with every record.
+  `src-id`, or `event-set` refuses the binding, and the cluster that ships to it must have one too:
+  every source with an `src-id` sends it with every record and every delete, with nothing more to
+  configure.

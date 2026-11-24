@@ -139,9 +139,8 @@ event-set:event=xdr-merge;namespace=test;set=subscribers;module=crdt;function=xd
 
 ```text
 xdr {
-    src-id 1          # 2 on the other cluster; event-set refuses the binding while it is 0
-    ship-src-id true  # unless bin convergence already ships bin LUTs
-    ...
+    src-id 1          # 2 on the other cluster; event-set refuses the binding while it is 0,
+    ...               # and every source with an src-id sends it with every record
 }
 ```
 

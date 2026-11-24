@@ -269,8 +269,14 @@ async fn xdr_merge_converges_two_clusters() {
 
     assert!(fired_after.0 > fired_before.0, "dc1 merge should have fired: {fired_before:?} -> {fired_after:?}");
     assert!(fired_after.1 > fired_before.1, "dc2 merge should have fired: {fired_before:?} -> {fired_after:?}");
-    assert!(counter(&c1, set_name, "record").await >= 1, "dc1 should have written a merged record");
-    assert!(counter(&c2, set_name, "record").await >= 1, "dc2 should have written a merged record");
+    // A merged record is either the incoming write applied, or the two combined; the collision was
+    // combined on at least one side.
+    let combined = (counter(&c1, set_name, "combined").await, counter(&c2, set_name, "combined").await);
+    let took = (counter(&c1, set_name, "took-incoming").await, counter(&c2, set_name, "took-incoming").await);
+
+    assert!(combined.0 + took.0 >= 1, "dc1 should have written a merged record");
+    assert!(combined.1 + took.1 >= 1, "dc2 should have written a merged record");
+    assert!(combined.0 + combined.1 >= 1, "the collision should have been combined");
     assert_eq!(counter(&c1, set_name, "fallback").await, 0);
     assert_eq!(counter(&c2, set_name, "fallback").await, 0);
 
@@ -786,7 +792,9 @@ async fn registers_converge_two_clusters() {
         for c in [&c1, &c2] {
             assert_eq!(
                 counter(c, set_name, "fired").await,
-                counter(c, set_name, "record").await + counter(c, set_name, "keep-local").await,
+                counter(c, set_name, "took-incoming").await
+                    + counter(c, set_name, "combined").await
+                    + counter(c, set_name, "keep-local").await,
                 "{lang}"
             );
         }
