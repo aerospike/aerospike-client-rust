@@ -154,8 +154,8 @@ per export, and `main`. Name it as the TeaVM `mainClass`; the annotated class ne
   the raw form the `result*` calls and `fail`.
 - **Events**: `EventRecord` for each side of a merge (the same readers as `Record`, plus `binNames()`,
   `deletedBins()`, `binLastUpdateTime` / `binSourceId`, and `withBins(out)` to keep the rest of a record
-  under a few decided bins; and what the merge says of one side: `isDelete()`, `isPartial()` and
-  `lostBins()` of the incoming write, `isTombstone()` of the current record, `usesBinConvergence()` of
+  under a few decided bins; and what the merge says of one side: `isDelete()` and `isPartial()` of
+  the incoming write, `isTombstone()` of the current record, `usesBinConvergence()` of
   either), `Resolution` for the answer, and the merge itself through `Pair.of(current, incoming)` (`Pair`
   and `Both` with `current`, `incoming`, `newer`, `older`, `ordered`, `max`, `min`, `merge`, `sumInt`
   (null when neither side has the bin, as `max` and `min`), `withNewer`, which leaves out a bin the later side deleted). A handler in the raw form reads the two records with `Pair.decode(args, argc)` and

@@ -57,7 +57,6 @@ write that arrived over XDR). What the server knows about the merge is asked of 
 | --- | --- | --- |
 | `incoming.is_delete()` | incoming | the write is a record delete, so `incoming` has no bins |
 | `incoming.is_partial()` | incoming | the write carries only the bins that changed, so a bin it lacks may exist on the other cluster |
-| `incoming.lost_bins()` | incoming | the names of the incoming bins that would lose under bin convergence |
 | `current.is_tombstone()` | current | the record exists but has no bins |
 | `uses_bin_convergence()` | both, the same answer | per-bin timestamps are meaningful: check before trusting `bin_last_update_time` |
 

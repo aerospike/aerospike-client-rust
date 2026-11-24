@@ -328,10 +328,6 @@ func (r *EventRecord) IsDelete() bool { return r.isDelete }
 // well exist on the other cluster. Always false of the current record.
 func (r *EventRecord) IsPartial() bool { return r.partial }
 
-// LostBins walks the names of the incoming bins that would lose under bin convergence: the bins the
-// namespace's policy would not have applied. Nothing of the current record.
-func (r *EventRecord) LostBins() iter.Seq[string] { return names(r.lost) }
-
 // IsTombstone reports whether the current record is a tombstone: it exists and has no bins. Always false
 // of the incoming record, whose delete is IsDelete.
 func (r *EventRecord) IsTombstone() bool { return r.tombstone }

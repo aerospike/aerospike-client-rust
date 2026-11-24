@@ -46,7 +46,6 @@ What the server says of the merge itself is on the record it is true of:
 | --- | --- | --- |
 | `IsDelete()` | `incoming` | the incoming write is a record delete, so `incoming` has no bins |
 | `IsPartial()` | `incoming` | the incoming write carries only the bins that changed, so a bin it lacks may well exist on the other cluster |
-| `LostBins()` | `incoming` | the names of the incoming bins that would lose under bin convergence, to range over |
 | `IsTombstone()` | `current` | the current record exists but has no bins |
 | `UsesBinConvergence()` | either | per-bin timestamps are meaningful: a time-based merge checks it before trusting `BinLastUpdateTime` |
 

@@ -80,10 +80,10 @@ SSE ahead of time. Off by default: a module built with it is refused by a server
 `as_udf_event_decode(args, argc, &current, &incoming)` fills the two `as_udf_event_record`s, the record as
 it is on this cluster and the one that arrived over XDR, each with its metadata (`generation`,
 `last_update_time`, `ttl`, `source_id`), its `bin_names` and `deleted_bins`, its per-bin last-update times
-and the facts that are about it (`incoming.is_delete`, `incoming.is_partial`, `incoming.lost_bins`,
-`current.is_tombstone`, and `uses_bin_convergence` on either). `deleted_bins` and `lost_bins` are a list of names when
-there are some and of kind `AS_UDF_ABSENT` (not an empty list) when there are none;
-`as_udf_list_count(&incoming.lost_bins)` answers the count for either shape. `as_udf_event_bin(&current, "visits", &v)`
+and the facts that are about it (`incoming.is_delete`, `incoming.is_partial`, `current.is_tombstone`, and
+`uses_bin_convergence` on either). `deleted_bins` is a list of names when there are some and of kind
+`AS_UDF_ABSENT` (not an empty list) when there are none; `as_udf_list_count(&incoming.deleted_bins)` answers
+the count for either shape. `as_udf_event_bin(&current, "visits", &v)`
 reads a bin of one record,
 `as_udf_event_incoming_is_newer(&current, &incoming, "visits")` orders the two the way the server's bin
 convergence does,

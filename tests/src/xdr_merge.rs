@@ -1038,3 +1038,136 @@ async fn the_dry_run_answers_what_the_live_merge_does() {
 
     assert_eq!(compared, if with_bc { 26 + 16 } else { 26 });
 }
+
+/// How long a rewound namespace may take to catch up: recovery scans the namespace before it ships.
+const RECOVERY_LAG: Duration = Duration::from_secs(60);
+
+/// Waits until both clusters count `total` and hold the same bins, or fails naming the sides. The bins are
+/// compared as the client reads them, so maps compare by content: a merge may store its entries in a
+/// different order on each side.
+async fn converge_counter(c1: &Client, c2: &Client, key: &Key, package: &str, total: i64, lag: Duration, what: &str) {
+    let deadline = std::time::Instant::now() + lag;
+
+    loop {
+        let (v1, v2) = (counter_value(c1, key, package).await, counter_value(c2, key, package).await);
+        let (b1, b2) = (bins_of(c1, key).await, bins_of(c2, key).await);
+
+        if v1 == Some(total) && v2 == Some(total) && b1 == b2 {
+            return;
+        }
+
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{what}: both sides should count {total}: dc1 {v1:?} {b1:?}, dc2 {v2:?} {b2:?}"
+        );
+        aerospike_rt::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+/// An info command that may be refused for a while (a namespace still leaving its DC), retried until "ok".
+async fn info_ok(client: &Client, command: &str) {
+    let deadline = std::time::Instant::now() + SHIP_LAG;
+
+    loop {
+        let answer = info(client, command).await;
+
+        if answer == "ok" {
+            return;
+        }
+
+        assert!(std::time::Instant::now() < deadline, "{command}: {answer}");
+        aerospike_rt::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+/// The races a merge has to survive, on one namespace. dc1 holds its ships for three seconds (`delay-ms`
+/// in `_temp/asd-image-wasm/xdr/aerospike-dc1.conf`); dc2 ships at once.
+///
+/// - **The hold.** dc1 writes, and before that write leaves, dc2's write arrives on dc1 and is merged
+///   there. The merged record holds dc1's change, which dc2 does not have yet, so dc1 must still ship it.
+/// - **The outage.** dc1's link for the namespace goes. Both sides write; dc2's write is merged on dc1.
+///   When the namespace comes back with a rewind, recovery reads every record and must ship the merged one.
+///
+/// Both end with the same bins on both sides.
+async fn counter_survives_the_races(namespace: &str) {
+    let Some((dc1, dc2)) = dcs() else {
+        eprintln!("skipped the {namespace} races: set AEROSPIKE_XDR_DC1 and AEROSPIKE_XDR_DC2");
+        return;
+    };
+
+    let c1 = Client::new(&ClientPolicy::default(), &dc1).await.expect("dc1");
+    let c2 = Client::new(&ClientPolicy::default(), &dc2).await.expect("dc2");
+    let write = WritePolicy::default();
+    let set_name = &format!("race_{}", crate::common::rand_str(6));
+    let package = &format!("counter_race_{}", crate::common::rand_str(6));
+    let key = as_key!(namespace, set_name, "page");
+    let increment = |site: &str, n: i64| [Value::from(site), Value::from(n)];
+
+    for c in [&c1, &c2] {
+        register_module(c, COUNTER, package).await;
+        assert_eq!(
+            info(c, &format!("event-set:event=xdr-merge;namespace={namespace};set={set_name};module={package};function=merge_counter;on-failure=abandon")).await,
+            "ok"
+        );
+    }
+
+    // Born on dc1, reaches dc2 as a create once the hold is over.
+    c1.execute_udf(&write, &key, package, "increment", &increment("dc1", 3)).await.unwrap();
+    converge_counter(&c1, &c2, &key, package, 3, SHIP_LAG, &format!("{namespace} create")).await;
+
+    // The hold: dc1's write waits; dc2's is merged on dc1 first.
+    c1.execute_udf(&write, &key, package, "increment", &increment("dc1", 2)).await.unwrap();
+    c2.execute_udf(&write, &key, package, "increment", &increment("dc2", 5)).await.unwrap();
+    converge_counter(&c1, &c2, &key, package, 10, SHIP_LAG, &format!("{namespace} hold")).await;
+
+    let shipped_back = counter(&c1, set_name, "shipped-back").await;
+
+    assert!(shipped_back >= 1, "{namespace}: the merge on dc1 held dc1's change, so it ships back");
+
+    // The outage: dc1 stops shipping the namespace; both write; dc2's write is merged on dc1.
+    let dc_ns = format!("set-config:context=xdr;dc=dc2;namespace={namespace}");
+
+    info_ok(&c1, &format!("{dc_ns};action=remove")).await;
+    c1.execute_udf(&write, &key, package, "increment", &increment("dc1", 1)).await.unwrap();
+    c2.execute_udf(&write, &key, package, "increment", &increment("dc2", 1)).await.unwrap();
+
+    let deadline = std::time::Instant::now() + SHIP_LAG;
+
+    while counter_value(&c1, &key, package).await != Some(12) {
+        assert!(std::time::Instant::now() < deadline, "{namespace}: dc2's write should be merged on dc1");
+        aerospike_rt::sleep(Duration::from_millis(250)).await;
+    }
+
+    assert_eq!(counter_value(&c2, &key, package).await, Some(11), "{namespace}: dc2 lacks dc1's write until dc1 ships again");
+
+    // Back, with a rewind: recovery reads the merged record and ships it.
+    info_ok(&c1, &format!("{dc_ns};action=add;rewind=all")).await;
+    converge_counter(&c1, &c2, &key, package, 12, RECOVERY_LAG, &format!("{namespace} outage")).await;
+
+    for c in [&c1, &c2] {
+        assert_eq!(info(c, &format!("event-remove:event=xdr-merge;namespace={namespace};set={set_name}")).await, "ok");
+        let _ = c.delete(&write, &key).await;
+        let _ = c.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
+    }
+}
+
+/// The races with whole records shipped and no bin convergence: the record's own flag is all XDR reads, so
+/// a merge that holds anything dc2 lacks must not be marked an XDR write.
+#[aerospike_macro::test]
+async fn xdr_merge_survives_the_races_whole_records() {
+    counter_survives_the_races("holdrec").await;
+}
+
+/// The races with only the changed bins shipped and no bin convergence: each bin's stamp decides whether
+/// it ships, so a bin the merge computed must be stamped as a local write.
+#[aerospike_macro::test]
+async fn xdr_merge_survives_the_races_changed_bins() {
+    counter_survives_the_races("holdch").await;
+}
+
+/// The races under bin convergence, which stamped bins correctly before; here so the three modes are held
+/// to the same outcome.
+#[aerospike_macro::test]
+async fn xdr_merge_survives_the_races_bin_convergence() {
+    counter_survives_the_races("holdbc").await;
+}

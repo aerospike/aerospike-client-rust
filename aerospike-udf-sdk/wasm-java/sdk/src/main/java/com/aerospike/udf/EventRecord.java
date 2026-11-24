@@ -19,9 +19,8 @@ import org.teavm.interop.Address;
  * read-only, and it reads like the record of a call - the same readers, through
  * {@link RecordReader} - with what an event adds: the names of its bins, the bins this side deleted,
  * where the server keeps them, when and by whom each bin was last written, and the few facts about the
- * merge that are facts about one side ({@link #isDelete}, {@link #isPartial} and {@link #lostBins} of the
- * incoming write, {@link #isTombstone} of the current record). One asked of the side it is not about
- * answers false, or an empty list.
+ * merge that are facts about one side ({@link #isDelete} and {@link #isPartial} of the incoming write,
+ * {@link #isTombstone} of the current record). One asked of the side it is not about answers false.
  *
  * <p>A handler must be pure and convergent: both data centres merge the same two records with the sides
  * swapped and must land on the same record. {@link Pair} orders a bin's two sides by its own LUT and then
@@ -60,7 +59,6 @@ public final class EventRecord implements RecordReader {
     private Value deleted = Maps.NOTHING;
     private Value binLastUpdateTimes = Maps.NOTHING;
     private Value binSourceIds = Maps.NOTHING;
-    private Value lost = Maps.NOTHING;
     private boolean delete;
     private boolean partial;
     private boolean tombstone;
@@ -172,14 +170,6 @@ public final class EventRecord implements RecordReader {
      */
     public boolean isPartial() {
         return partial;
-    }
-
-    /**
-     * The names of the incoming bins that would lose under bin convergence, as a list of strings. Empty
-     * for the current record, and when the server sent no such list.
-     */
-    public ListValue lostBins() {
-        return new ListValue(lost);
     }
 
     /** Whether this is a current record that exists but has no bins. False of the incoming write. */
@@ -591,7 +581,6 @@ public final class EventRecord implements RecordReader {
         incoming.binConvergence = binConvergence;
         incoming.partial = Maps.getBool(inc, "partial");
         incoming.delete = Maps.getBool(inc, "deleted-record");
-        incoming.lost = Maps.get(desc, "lost");
 
         return true;
     }

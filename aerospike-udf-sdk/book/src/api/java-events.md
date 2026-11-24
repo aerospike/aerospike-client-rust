@@ -147,9 +147,8 @@ One record an event hands over: each side of a merge, the current record and the
 read-only, and it reads like the record of a call - the same readers, through
 `RecordReader` - with what an event adds: the names of its bins, the bins this side deleted,
 where the server keeps them, when and by whom each bin was last written, and the few facts about the
-merge that are facts about one side (`isDelete`, `isPartial` and `lostBins` of the
-incoming write, `isTombstone` of the current record). One asked of the side it is not about
-answers false, or an empty list.
+merge that are facts about one side (`isDelete` and `isPartial` of the incoming write,
+`isTombstone` of the current record). One asked of the side it is not about answers false.
 
 A handler must be pure and convergent: both data centres merge the same two records with the sides
 swapped and must land on the same record. `Pair` orders a bin's two sides by its own LUT and then
@@ -287,15 +286,6 @@ public boolean isPartial()
 
 Whether this is an incoming write that carries only the bins that changed, so that a bin it lacks may
 well exist on the other cluster. False of the current record.
-
-#### `EventRecord.lostBins`
-
-```java
-public ListValue lostBins()
-```
-
-The names of the incoming bins that would lose under bin convergence, as a list of strings. Empty
-for the current record, and when the server sent no such list.
 
 #### `EventRecord.isTombstone`
 

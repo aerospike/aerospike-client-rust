@@ -668,7 +668,7 @@ func eventBinValue(which int32, name unsafe.Pointer, nameLen int32, out unsafe.P
 // Int, Double, Bool, String, Blob and Bytes, List and Map. Beyond those it names its bins (BinNames) and the
 // bins its side deleted (DeletedBins), says when and by which cluster a bin was last written
 // (BinLastUpdateTime, BinSourceID), and carries what the server says of the merge: IsDelete,
-// IsPartial and LostBins of the incoming record, IsTombstone of the current one.
+// IsPartial of the incoming record, IsTombstone of the current one.
 //
 // It has no writing methods. A handler changes the record through the Resolution it returns, and it
 // cannot read the clock (Now answers -1) or write to the log: a Log line is dropped. Generation and
@@ -703,7 +703,6 @@ type EventRecord struct {
 	// What the server says of the merge, each kept on the record it is true of and read through the
 	// method of the same name. On the other record they are the zero value, so the method answers false
 	// or walks nothing.
-	lost           Value // the incoming bins that would lose under bin convergence
 	isDelete       bool
 	partial        bool
 	tombstone      bool
@@ -765,7 +764,7 @@ func eventSide(description Value, key string, which int32, out *EventRecord) boo
 	if m.Kind != KindMap {
 		return false
 	}
-	*out = EventRecord{lost: Value{Kind: KindAbsent}}
+	*out = EventRecord{}
 	out.which = which
 	out.generation = mapInt(m, "gen", 0)
 	out.lastUpdateTime = mapInt(m, "lut", 0)
@@ -819,7 +818,6 @@ func DecodeMerge(args, argc int32, current, incoming *EventRecord) bool {
 	side := mapGet(a[0], "incoming")
 	incoming.partial = mapBool(side, "partial")
 	incoming.isDelete = mapBool(side, "deleted-record")
-	incoming.lost = mapGet(a[0], "lost")
 	return true
 }
 

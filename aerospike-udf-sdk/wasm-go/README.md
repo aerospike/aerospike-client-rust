@@ -129,7 +129,7 @@ The three directives are the Go face of the Rust SDK's `export!`, `stream!` and 
 - **The merge**: `*udf.EventRecord` for each of the two records the event hands over, read-only (the
   `RecordReader` methods, `SourceID`, `BinLastUpdateTime(name)` and `BinSourceID(name)`, the `BinNames`
   and `DeletedBins` iterators, `Deleted(name)`, `WithBins(out)` to keep the rest of a record under a few decided bins). What the server says of the merge is on the record it is true of: `incoming.IsDelete()`,
-  `incoming.IsPartial()`, `incoming.LostBins()`, `current.IsTombstone()`, and `UsesBinConvergence()` on
+  `incoming.IsPartial()`, `current.IsTombstone()`, and `UsesBinConvergence()` on
   either. `udf.PairOf(current, incoming)` is the two side by side, a `udf.Pair`, read into
   `udf.Both[T]` (its sides are `Current` and `Incoming`) with `IncomingIsNewer`, `Newer`, `Older`,
   `Ordered`, `CurrentOrIncoming`, `IncomingOrCurrent`, `Merge`, and `udf.Max` / `Min` / `Sum` over a

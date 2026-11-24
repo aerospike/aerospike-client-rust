@@ -50,13 +50,12 @@ it, answering 0 (which `as_udf_resolve_record` fails on) when a bin could not be
 family, never with `as_udf_rec_`, which is for the record of a call and has none in a handler.
 
 What the server says of the merge is a field of the record it is about. On the other record the field is
-false, and `lost_bins` is `AS_UDF_ABSENT`:
+false:
 
 | Field | What it says |
 | --- | --- |
 | `incoming.is_delete` | the incoming write is a record delete, so `incoming` has no bins |
 | `incoming.is_partial` | the incoming write carries only the bins that changed, so a bin it lacks may well exist on the other cluster |
-| `incoming.lost_bins` | a stored list: the names of the incoming bins that would lose under bin convergence; `AS_UDF_ABSENT` when there are none (`as_udf_list_count` answers either shape) |
 | `current.is_tombstone` | the current record exists but has no bins |
 | `uses_bin_convergence` | on either record, the same answer: per-bin LUTs are meaningful, for a time-based merge to check before it trusts `as_udf_event_bin_last_update_time` |
 

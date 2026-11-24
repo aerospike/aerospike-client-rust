@@ -276,16 +276,6 @@ pub fn is_partial(&self) -> bool
 Whether this is the incoming write and it carries only the bins that changed (`bin-policy`), so a
 bin it lacks may well exist on the other DC. Always false of the current record.
 
-#### `EventRecord::lost_bins`
-
-```rust
-pub fn lost_bins(&self) -> Coll
-```
-
-The names of the incoming bins that would lose under bin convergence, as a stored list of strings: the
-bins the policy would have kept the current value of. Empty for the current record, whose bins are not
-the ones being applied, and when no incoming bin would lose.
-
 #### `EventRecord::is_tombstone`
 
 ```rust

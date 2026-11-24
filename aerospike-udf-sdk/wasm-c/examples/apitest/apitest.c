@@ -1070,7 +1070,6 @@ AS_UDF_EVENT_XDR_MERGE(merge_api)
 	if (rc == AS_UDF_OK) rc = put_names(out, "i_names", &incoming.bin_names);
 	if (rc == AS_UDF_OK) rc = put_names(out, "c_del", &current.deleted_bins);
 	if (rc == AS_UDF_OK) rc = put_names(out, "i_del", &incoming.deleted_bins);
-	if (rc == AS_UDF_OK) rc = put_names(out, "lost", &incoming.lost_bins);
 	if (rc == AS_UDF_OK) rc = put_meta(out, "c_meta", &current, current.is_tombstone, current.uses_bin_convergence);
 	if (rc == AS_UDF_OK) rc = put_meta(out, "i_meta", &incoming, incoming.is_delete, incoming.is_partial);
 	if (rc == AS_UDF_OK) {

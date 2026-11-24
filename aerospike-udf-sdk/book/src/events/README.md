@@ -39,13 +39,13 @@ event-set:event=xdr-merge;namespace=test;set=subscribers;module=crdt;function=xd
 | `module`, `function` | a registered WASM module and an export of it whose signature declares this event |
 | `name` | the binding's name; defaults to the function name. A scope takes one binding: a second name is refused. |
 | `on-failure` | `policy` (default): a handler that fails is counted and the write proceeds as it would have; `abandon`: the write is dropped as a lost conflict. `fail` is not offered, see below. |
-| `trigger` | `always` (default), every incoming XDR write to an existing record; `conflict`, only those in which a bin would lose under bin convergence |
 | `timeout` | the handler's own budget in milliseconds, within the write's deadline; 0 (default) means the deadline alone |
 
 `event-set` refuses a module that is not WASM, a function the module does not export, and a function
 whose signature is not `event xdr-merge/<version>` at the version the server serves. The signature is what
 the SDK writes beside the handler; a module built against an older contract is refused rather than handed
-a payload it would misread. It also refuses the binding while this cluster's XDR `src-id` is unset.
+a payload it would misread. It also refuses the binding while this cluster's XDR `src-id` is unset, and
+a `trigger` parameter: every incoming write to a bound record is offered (see below).
 
 ```text
 event-remove:event=xdr-merge;namespace=test;set=subscribers
@@ -59,7 +59,7 @@ with its contract version. `udf-remove` refuses a module a binding refers to.
 A row of `event-list`:
 
 ```text
-event=xdr-merge:namespace=test:set=subscribers:name=xdr_merge:order=0:module=crdt:function=xdr_merge:version=1:on-failure=abandon:trigger=always:timeout=0:fired=12:rejected=0:keep-local=2:take-remote=0:delete=0:record=10:policy=0:fallback=0
+event=xdr-merge:namespace=test:set=subscribers:name=xdr_merge:order=0:module=crdt:function=xdr_merge:version=1:on-failure=abandon:timeout=0:fired=12:rejected=0:keep-local=2:take-remote=0:delete=0:record=10:policy=0:fallback=0:shipped-back=3
 ```
 
 | Counter | Counts |
@@ -70,6 +70,7 @@ event=xdr-merge:namespace=test:set=subscribers:name=xdr_merge:order=0:module=crd
 | `keep-local`, `take-remote`, `delete` | those verdicts; a `record` answer equal to the current record counts as `keep-local` |
 | `policy` | answers that let the write proceed as it would have |
 | `fallback` | handler failures and unrecognised answers |
+| `shipped-back` | merges whose result holds something the incoming write did not bring, so the record goes back to the other cluster. A merge that converges finds nothing to change there and stops; one that does not makes this climb with every round |
 
 A dry run does not count. Counters are per node and reset at restart.
 
@@ -86,9 +87,11 @@ a removed key or a new answer vocabulary does, and a module built against the ol
 Fires on every incoming XDR write to a record that exists on this node, live or tombstone, before any of
 the write's ops are applied and regardless of bin convergence, with both records in hand; a create (no
 record here) bypasses it, and an incoming XDR delete reaches it from the delete path with
-`deleted-record` set. With `trigger=conflict` on the binding it fires only when, under bin convergence
-(`conflict-resolve-writes`), some incoming bin would lose, which is what the `lost` list names. Enterprise
-only, since XDR is.
+`deleted-record` set. Enterprise only, since XDR is.
+
+There is no binding that fires only when bin convergence would refuse some incoming bin. One was tried,
+and it lost updates: when one cluster was behind, the other's write won every bin, the handler was never
+offered it, and the cluster that was behind took the bins whole, unmerged.
 
 Before the handler runs, a write whose source id is 0 or this cluster's own is refused (`forbidden`) and
 counted, and `event-set` refuses the binding while this cluster's `src-id` is unset. The source must ship
@@ -98,24 +101,36 @@ its id: under bin convergence it travels with the bin LUTs; otherwise `ship-src-
 | | |
 | --- | --- |
 | Records | `current` (this node's), `incoming` (as shipped) |
-| Description | `trigger` (`always`, `conflict`), `policy` (`bin-lut` under bin convergence, else `replace`), `mode` (`live`, `dry-run`), `lost` (the incoming bin names that would lose under bin convergence); each side with `ttl`, `src-id`, `bins`, `deleted` (bin deletes or tombstones) and, where kept, `bin-luts` and `bin-srcs`; `current` adds `tombstone`, `incoming` adds `partial` (the write carries only changed bins) and `deleted-record` |
+| Description | `policy` (`bin-lut` under bin convergence, else `replace`), `mode` (`live`, `dry-run`); each side with `ttl`, `src-id`, `bins`, `deleted` (bin deletes or tombstones) and, where kept, `bin-luts` and `bin-srcs`; `current` adds `tombstone`, `incoming` adds `partial` (the write carries only changed bins) and `deleted-record` |
 | Answers | `record {bins, ttl}`; `keep-local`; `take-remote` (the incoming bins over the current record); `delete` (the record is removed on this cluster); `policy` (what would have happened without the event) |
 | On failure | `policy`, and for this kind only `abandon`: the write is dropped and the source told `lost-conflict`, which it counts as success. `fail` is refused for this kind: the source does not send a failed write again, so it would drop the write as `abandon` does and report it as lost |
 | One binding per scope | yes |
 
 The SDKs hand a handler the two records and nothing else. What it may need of the description is asked
-of the record it is about: `incoming` says whether it is a delete, whether it is partial and which of its
-bins would lose; `current` says whether it is a tombstone; either says whether bin convergence is on, and
-its source id, deleted bins and per-bin LUTs and sources. The `trigger` and `mode` entries are not shown
+of the record it is about: `incoming` says whether it is a delete and whether it is partial; `current` says whether it is a tombstone; either says whether bin convergence is on, and
+its source id, deleted bins and per-bin LUTs and sources. The `mode` entry is not shown
 to a handler: a merge is a function of the two records, and should answer the same in a dry run.
 
 A `record` answer equal to the current record writes nothing and answers the source `lost-conflict`,
-which it counts as success; so does `keep-local`. One that differs is committed whole as an XDR write, so
-it is not shipped back. Under bin convergence, where bins ship one by one, that is decided per bin: a bin
-whose value is the incoming one takes the incoming stamp and is not shipped back; a bin whose value is
-this cluster's own is left as it was, so a local write that had not been shipped yet still is; and a
-value the handler computed, which is neither side's, is stamped as a write made here and shipped once.
-The other DC, merging the mirror pair, lands on the same record with the same stamps. The record-level `gen` and `lut` are 0 on both sides and `now` fails in the handler:
+which it counts as success; so does `keep-local`. One that differs replaces the record, and what XDR does
+with it depends on where each value came from, whatever the namespace ships and whether it converges
+bins; `take-remote` is written the same way.
+
+- **The record.** It is marked an XDR write, and so not shipped back, only when everything in it came
+  with the incoming write. Anything else - a value of this cluster's that the other did not send, a value
+  the handler computed, an incoming bin the handler dropped, a bin the handler deleted that the other
+  cluster still has - means the other cluster lacks part of it, and it ships back. Under whole-record
+  shipping that is the only flag XDR reads, on the first attempt, on a retry and in a recovery.
+- **Each bin**, where the namespace keeps metadata per bin (bin convergence, or `bin-policy` shipping
+  only changed bins): a bin whose value is the incoming one is stamped as the other cluster's and not
+  shipped back; a bin whose value is this cluster's own is left as it was, so a local write that had not
+  been shipped yet still is; a value the handler computed, which is neither side's, is stamped as a write
+  made here and shipped once.
+
+The other DC, merging the mirror pair, lands on the same record and answers "unchanged", which ends the
+exchange. Before this, a merged record was always marked an XDR write: a local change that had not left
+when the merge landed was kept but never shipped, and the two clusters differed until that bin was
+written again. The record-level `gen` and `lut` are 0 on both sides and `now` fails in the handler:
 each cluster sets its own, and a merge that reads them cannot converge.
 
 **What makes an answer a failure.** The answer is checked before it is taken, and what is wrong with it
@@ -137,10 +152,10 @@ A merge must be **pure** (no clock, no other records) and **convergent**: DC A m
 write) while DC B merges (B's record, A's write), in any order and any number of times, and both must land
 on the same record or the DCs diverge for good. Two ways keep it. The time-based way orders the two sides
 of a bin by its own LUT and then by source id, which is symmetric and is what the SDKs' `newer`/`older`
-helpers do; it needs bin convergence shipping bin LUTs, and `trigger=conflict` is its natural binding.
+helpers do; it needs bin convergence shipping bin LUTs.
 The data-only way keeps versions and removal markers in the record and breaks ties on the stored bytes
 (`cmp_stored` in the SDKs), so the merge is a function of the data alone; `examples/crdt` is this, and
-`trigger=always` without bin convergence is its binding.
+it needs no bin convergence.
 
 **The dry run.** `execute_udf(key, "__event__", "xdr-merge", [incoming bins, incoming metadata, other
 bins, other metadata])`, the last two optional, runs the binding of the record's set against the real current record and an incoming record

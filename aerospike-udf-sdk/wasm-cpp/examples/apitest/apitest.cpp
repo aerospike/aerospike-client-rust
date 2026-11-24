@@ -867,7 +867,6 @@ UDF_ON_XDR_MERGE(merge_api)
 	out.put("i_names", names(incoming.bin_names()));
 	out.put("c_del", names(current.deleted_bins()));
 	out.put("i_del", names(incoming.deleted_bins()));
-	out.put("lost", names(incoming.lost_bins()));
 
 	udf::List c_meta(6);
 

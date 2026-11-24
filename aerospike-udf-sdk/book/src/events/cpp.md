@@ -38,18 +38,17 @@ serves a handler and a UDF alike, as `load` does in `examples/counter`. An `Even
 writing methods, and a handler is not handed a `udf::Record`. Everything else about the record is a
 method too: `bin_names()` ranges over the record's bin names and `deleted_bins()` over the names of the
 bins this side deleted (the server sends no list at all when there are none, and the range is then empty, so
-`size()` is the count either way; `lost_bins()` is the same), `bin_last_update_time(name)` and `bin_source_id(name)` answer for one bin and fall
+`size()` is the count either way), `bin_last_update_time(name)` and `bin_source_id(name)` answer for one bin and fall
 back to the record's values where the server keeps none per bin, `generation()`, `last_update_time()`,
 `ttl()` and `source_id()` are its metadata, and `is_incoming()` says which of the two records it is.
 
 What the server says of the merge is asked of the record it is about. A method asked of the other record
-answers false, or an empty list:
+answers false:
 
 | Method | What it says |
 | --- | --- |
 | `incoming.is_delete()` | the incoming write is a record delete, so `incoming` has no bins |
 | `incoming.is_partial()` | the incoming write carries only the bins that changed, so a bin it lacks may well exist on the other cluster |
-| `incoming.lost_bins()` | a range over the names of the incoming bins that would lose under bin convergence |
 | `current.is_tombstone()` | the current record exists but has no bins |
 | `uses_bin_convergence()` | on either record, the same answer: per-bin timestamps are meaningful, for a time-based merge to check before it trusts `bin_last_update_time` |
 

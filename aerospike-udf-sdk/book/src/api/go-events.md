@@ -15,7 +15,7 @@ It is read like the record of a UDF, with the methods of RecordReader: Bin, Get,
 Int, Double, Bool, String, Blob and Bytes, List and Map. Beyond those it names its bins (BinNames) and the
 bins its side deleted (DeletedBins), says when and by which cluster a bin was last written
 (BinLastUpdateTime, BinSourceID), and carries what the server says of the merge: IsDelete,
-IsPartial and LostBins of the incoming record, IsTombstone of the current one.
+IsPartial of the incoming record, IsTombstone of the current one.
 
 It has no writing methods. A handler changes the record through the Resolution it returns, and it
 cannot read the clock (Now answers -1) or write to the log: a Log line is dropped. Generation and
@@ -546,15 +546,6 @@ func (r *EventRecord) IsPartial() bool
 
 IsPartial reports whether the incoming write carries only the bins that changed, so a bin it lacks may
 well exist on the other cluster. Always false of the current record.
-
-#### `EventRecord.LostBins`
-
-```go
-func (r *EventRecord) LostBins() iter.Seq[string]
-```
-
-LostBins walks the names of the incoming bins that would lose under bin convergence: the bins the
-namespace's policy would not have applied. Nothing of the current record.
 
 #### `EventRecord.IsTombstone`
 

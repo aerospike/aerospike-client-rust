@@ -139,7 +139,7 @@ built. Keep the status, or copy the text, to hold an error longer than that.
   `bin_names()`, `deleted_bins()`, `deleted_any()`; `bin_last_update_time(name)` and `bin_source_id(name)`;
   `with_bins(out)` to keep the rest of a record under a few decided bins) and `udf::Resolution` for the
   answer. What the server says of the merge is asked of the
-  record it is about: `incoming.is_delete()`, `incoming.is_partial()`, `incoming.lost_bins()`,
+  record it is about: `incoming.is_delete()`, `incoming.is_partial()`,
   `current.is_tombstone()`, and `uses_bin_convergence()` on either. The merge bin by bin goes through
   `udf::Pair pair = udf::Pair::of(current, incoming);`: its typed readers (`as_int`, `as_double`,
   `as_bool`, `as_string<N>`, `as_blob<N>`, `list`, `map`) each give a `Result<Both<T>>`, an error when a

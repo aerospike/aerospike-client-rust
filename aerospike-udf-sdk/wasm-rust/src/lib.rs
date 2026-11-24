@@ -3555,7 +3555,6 @@ pub struct EventRecord {
     partial: bool,
     tombstone: bool,
     bin_convergence: bool,
-    lost: Coll,
 }
 
 impl EventRecord {
@@ -3757,14 +3756,6 @@ impl EventRecord {
     #[must_use]
     pub fn is_partial(&self) -> bool {
         self.partial
-    }
-
-    /// The names of the incoming bins that would lose under bin convergence, as a stored list of strings: the
-    /// bins the policy would have kept the current value of. Empty for the current record, whose bins are not
-    /// the ones being applied, and when no incoming bin would lose.
-    #[must_use]
-    pub fn lost_bins(&self) -> Coll {
-        self.lost
     }
 
     /// Whether this is the current record and it is a tombstone: it exists, with no bins. Always false
@@ -4168,8 +4159,8 @@ impl From<Map> for Resolution {
 /// Decode an event call's inputs into the two records. Used by [`event!`].
 ///
 /// The server sends one argument, a map describing the merge. Each fact in it is true of one record or
-/// the other, and is attached to that one here; the binding's trigger and whether the call is a dry run
-/// are not passed on, because a merge that read them would answer differently for the same two records.
+/// the other, and is attached to that one here; whether the call is a dry run is not passed on, because a
+/// merge that read it would answer differently for the same two records.
 #[doc(hidden)]
 pub fn xdr_merge_inputs(args_handle: i32, argc: i32) -> Result<(EventRecord, EventRecord), Error> {
     let args = Args::from_handle(args_handle, argc)?;
@@ -4209,7 +4200,6 @@ pub fn xdr_merge_inputs(args_handle: i32, argc: i32) -> Result<(EventRecord, Eve
             partial: incoming && flag("partial"),
             tombstone: !incoming && flag("tombstone"),
             bin_convergence,
-            lost: if incoming { need(&merge, "lost")?.list()? } else { empty },
         })
     };
 

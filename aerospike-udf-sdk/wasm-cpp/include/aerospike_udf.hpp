@@ -1823,8 +1823,8 @@ inline Result<void> result(const Value& v)
 // ReadRecord's methods, the ones udf::Record has: get(), has(), bin(), the typed readers with and without a
 // default, list() and map(). It has none of the writing methods: what a handler returns is what changes the
 // record. An xdr-merge hands over two, `current` and `incoming`, and what the server says of the merge is asked
-// of the record it is about: is_delete(), is_partial() and lost_bins() of the incoming one, is_tombstone() of the
-// current one, uses_bin_convergence() of either. Everything is asked through a method. The C struct underneath is
+// of the record it is about: is_delete() and is_partial() of the incoming one, is_tombstone() of the current
+// one, uses_bin_convergence() of either. Everything is asked through a method. The C struct underneath is
 // a private base: its fields are not reachable, so a handler cannot read a raw field where a method says what it
 // means (bin_last_update_time(name) rather than the map of times), nor change one the SDK relies on.
 //
@@ -1889,9 +1889,6 @@ struct EventRecord : private as_udf_event_record, public ReadRecord<EventRecord>
 	// Whether the incoming write carries only the bins that changed, so that a bin this record lacks may
 	// well exist on the other cluster. False on the current record.
 	bool is_partial() const { return as_udf_event_record::is_partial; }
-	// The names of the incoming bins that would lose under bin convergence. Empty on the current record.
-	// (Like deleted_bins(), empty when the server sent no list, which is how it says "none".)
-	ListRange lost_bins() const { return ListRange(Value(as_udf_event_record::lost_bins)); }
 	// Whether the current record is a tombstone: it exists but has no bins. False on the incoming record.
 	bool is_tombstone() const { return as_udf_event_record::is_tombstone; }
 	// Whether per-bin timestamps are meaningful, for a time-based merge to check before it trusts

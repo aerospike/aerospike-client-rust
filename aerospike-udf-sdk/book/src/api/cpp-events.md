@@ -124,15 +124,6 @@ bool is_partial() const
 Whether the incoming write carries only the bins that changed, so that a bin this record lacks may
 well exist on the other cluster. False on the current record.
 
-#### `EventRecord::lost_bins`
-
-```cpp
-ListRange lost_bins() const
-```
-
-The names of the incoming bins that would lose under bin convergence. Empty on the current record.
-(Like deleted_bins(), empty when the server sent no list, which is how it says "none".)
-
 #### `EventRecord::is_tombstone`
 
 ```cpp

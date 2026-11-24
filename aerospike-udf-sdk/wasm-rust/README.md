@@ -126,8 +126,8 @@ event! {
 `EventRecord` is a read-only record with its metadata (`ttl`, `source_id`, and per bin `bin_last_update_time`
 and `bin_source_id` where the server keeps them) and bins read as `Option`s, since on either side a bin may
 not exist. What the server knows about the merge is asked of the record it is true of:
-`incoming.is_delete()`, `incoming.is_partial()`, `incoming.lost_bins()` (the bins that would lose under
-bin convergence), `current.is_tombstone()`, and on either `uses_bin_convergence()`.
+`incoming.is_delete()`, `incoming.is_partial()`, `current.is_tombstone()`, and on either
+`uses_bin_convergence()`.
 `Pair::of(current, incoming)` reads a bin from both
 sides into a `Both<T>` with the merges a resolver reaches for: `max`, `min`, `sum`, `merge(f)`, `newer`,
 `older`, `ordered()` (`sum` answers nothing when neither side has the bin, as `max` and `min` do, and

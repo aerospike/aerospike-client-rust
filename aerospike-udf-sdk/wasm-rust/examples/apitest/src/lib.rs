@@ -742,7 +742,6 @@ as_udf::event! {
             .insert("i_names", names(incoming.bin_names()))?
             .insert("c_del", names(current.deleted_bins()))?
             .insert("i_del", names(incoming.deleted_bins()))?
-            .insert("lost", names(incoming.lost_bins()))?
             .insert(
                 "c_meta",
                 &side_meta(&current, current.is_tombstone(), current.uses_bin_convergence())?,

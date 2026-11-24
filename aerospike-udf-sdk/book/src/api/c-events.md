@@ -25,7 +25,6 @@ typedef struct as_udf_event_record_s {
 	as_udf_value deleted_bins; /* list of bin names this side deleted; AS_UDF_ABSENT, not an empty list, when none */
 	as_udf_value bin_last_update_times; /* map name -> last-update time, per bin, when the server keeps one (else AS_UDF_ABSENT) */
 	as_udf_value bin_source_ids; /* map name -> source id, likewise */
-	as_udf_value lost_bins;   /* incoming: list of the names of its bins that would lose under bin convergence; AS_UDF_ABSENT when none */
 	bool is_delete;           /* incoming: the write is a record delete, so this record has no bins */
 	bool is_partial;          /* incoming: the write carries only the bins that changed */
 	bool is_tombstone;        /* current: the record exists but has no bins */
@@ -41,9 +40,9 @@ of an xdr-merge: each cluster has its own, so a merge that read them could not c
 times that order the two sides. A metadata field the server did not send is 0. The list and map fields are
 values to read by position, of kind AS_UDF_ABSENT when the server sent none; read the per-bin maps through
 as_udf_event_bin_last_update_time and as_udf_event_bin_source_id, which fall back to the record's. A fact that
-is about the other record is false here, and `lost_bins` is AS_UDF_ABSENT on the current record.
+is about the other record is false here.
 
-`deleted_bins` and `lost_bins` have one of two shapes, and never a third: a list of names (kind AS_UDF_LIST)
+`deleted_bins` has one of two shapes, and never a third: a list of names (kind AS_UDF_LIST)
 when there are some, and no value at all (kind AS_UDF_ABSENT) when there are none. The server does not send an
 empty list for "none". So do not read `.len` without testing the kind: as_udf_list_count answers the count for
 either shape, as_udf_list_has_string answers false for the absent one, and as_udf_event_deleted_any is the
@@ -292,10 +291,9 @@ int32_t as_udf_list_count(const as_udf_value* list)
 ```
 
 How many elements a list value has, and 0 for a value that is not a list. The count for the fields of an event
-record that are a list or nothing at all: `deleted_bins` and `lost_bins` are of kind AS_UDF_LIST when the
-server sent the names and of kind AS_UDF_ABSENT when it sent none, and never an empty list for "none". This
-answers the count either way, so a handler need not test the kind first:
-`as_udf_list_count(&incoming.lost_bins)`.
+record that are a list or nothing at all: `deleted_bins` is of kind AS_UDF_LIST when the server sent the
+names and of kind AS_UDF_ABSENT when it sent none, and never an empty list for "none". This answers the
+count either way, so a handler need not test the kind first: `as_udf_list_count(&incoming.deleted_bins)`.
 
 #### `as_udf_event_deleted_any`
 
@@ -349,11 +347,11 @@ bool as_udf_list_has_string(const as_udf_value* list, const char* text)
 
 Whether a stored list holds the string `text` (NUL-terminated, of any length) among its elements; elements
 that are not strings are not it. False when `list` is not of kind AS_UDF_LIST, which includes the
-AS_UDF_ABSENT of an event record's `deleted_bins` or `lost_bins` when there are none. Linear in the list. Only
+AS_UDF_ABSENT of an event record's `deleted_bins` when there are none. Linear in the list. Only
 elements as long as `text` are copied out, into as many bytes of stack as `text` is long (see
 as_udf_string_is). The walk takes one handle for its cursor and gives it back before it returns; when the
 call's memory has no room for one it cannot be made, and the answer is found the slow way, an element at a time, rather than given as false. For an
-event record's `bin_names`, `deleted_bins` and `lost_bins`, and any list of strings.
+event record's `bin_names` and `deleted_bins`, and any list of strings.
 
 #### `as_udf_event_with_bins`
 

@@ -912,7 +912,6 @@ public final class ApiTest {
         out.put("i_names", incoming.binNames().asValue());
         out.put("c_del", current.deletedBins().asValue());
         out.put("i_del", incoming.deletedBins().asValue());
-        out.put("lost", incoming.lostBins().asValue());
 
         out.put("c_meta", Udf.list(6).add(current.generation()).add(current.lastUpdateTime()).add(current.ttl())
                 .add(current.sourceId()).add(current.isTombstone()).add(current.usesBinConvergence()));

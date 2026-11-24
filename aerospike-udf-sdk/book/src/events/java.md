@@ -40,8 +40,7 @@ and `sourceId()` are its metadata.
 
 What the merge says of one side is on that record too. `incoming.isDelete()` says the incoming write is a
 record delete, so it has no bins; `incoming.isPartial()` that it carries only the bins that changed, so a
-bin it lacks may well exist on the other cluster; `incoming.lostBins()` names the incoming bins that
-would lose under bin convergence. `current.isTombstone()` says the current record exists but has no bins.
+bin it lacks may well exist on the other cluster. `current.isTombstone()` says the current record exists but has no bins.
 `usesBinConvergence()`, the same on both, says whether per-bin timestamps are meaningful, for a
 time-based merge that wants to check before trusting `binLastUpdateTime`. One asked of the side it is not
 about answers false, or an empty list.

@@ -716,7 +716,6 @@ func mergeAPI(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 	out.Put("i_names", nameList(incoming.BinNames()))
 	out.Put("c_del", nameList(current.DeletedBins()))
 	out.Put("i_del", nameList(incoming.DeletedBins()))
-	out.Put("lost", nameList(incoming.LostBins()))
 
 	out.Put("c_meta", udf.NewList(6).
 		Add(current.Generation()).

@@ -146,8 +146,7 @@ xdr {
 ```
 
 Bin convergence (`conflict-resolve-writes`) is not needed and not wanted: the merge decides every bin
-itself. `trigger` stays at its default, `always`, so every incoming XDR write to an existing subscriber
-runs the merge; a create bypasses it.
+itself. Every incoming XDR write to an existing subscriber runs the merge; a create bypasses it.
 
 ## Checking it with the dry run
 

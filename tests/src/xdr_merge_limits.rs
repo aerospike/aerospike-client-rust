@@ -104,7 +104,14 @@ async fn xdr_stat(client: &Client, name: &str) -> u64 {
 }
 
 async fn bins(client: &Client, key: &Key) -> Option<HashMap<String, Value>> {
-    match client.get(&ReadPolicy::default(), key, Bins::All).await {
+    // The suite's handlers spin to their deadline on purpose, and a merged record that goes back to the
+    // other side runs its handler there too: a read can wait behind them longer than the default second.
+    let mut policy = ReadPolicy::default();
+
+    policy.base_policy.total_timeout = 5000;
+    policy.base_policy.socket_timeout = 5000;
+
+    match client.get(&policy, key, Bins::All).await {
         Ok(r) => Some(r.bins.into_iter().collect()),
         Err(e) if e.matches(&[ResultCode::KeyNotFoundError]) => None,
         Err(e) => panic!("{e:?}"),
@@ -463,12 +470,12 @@ async fn a_signature_that_is_not_one_is_refused() {
 //
 
 /// The handler runs for an incoming XDR write to a record that exists, and for an incoming XDR delete:
-/// not for a local write, and not for an XDR write that creates the record. And what it merges stays
-/// where it was merged: with handlers on both sides, a merged record is not shipped back, so one write
-/// is one merge and the two clusters do not hand a record to and fro.
+/// not for a local write, and not for an XDR write that creates the record. And a merged record goes
+/// back only when it holds something the other cluster lacks: with handlers on both sides, it goes back
+/// once, the other side lands on the same record, and the exchange stops there.
 #[aerospike_macro::test]
-async fn a_merge_fires_once_and_is_not_shipped_back() {
-    let Some((c1, c2)) = clients("a_merge_fires_once_and_is_not_shipped_back").await else { return };
+async fn a_merge_fires_once_and_settles() {
+    let Some((c1, c2)) = clients("a_merge_fires_once_and_settles").await else { return };
     let set_name = &format!("once_{}", common::rand_str(6));
     let package = &format!("merge_probe_{}", common::rand_str(6));
     let write = WritePolicy::default();
@@ -499,8 +506,15 @@ async fn a_merge_fires_once_and_is_not_shipped_back() {
 
     assert_eq!(outcome(&merged), "record", "dc2 merged to {}", describe(&merged));
 
-    // Left alone, nothing more happens: dc2's merged record does not go back to dc1, where the handler
-    // would merge it again and send its own.
+    // dc2's record is not dc1's write, so it goes back to dc1 once. dc1's handler, given it, answers the
+    // same record, which is then the incoming one: nothing is sent again, and both clusters hold it.
+    let settled = wait_for(&c1, &key, SHIP_LAG, |b| outcome(b) == "record").await;
+
+    assert_eq!(outcome(&settled), "record", "dc1 holds {}", describe(&settled));
+    assert_eq!(bins(&c1, &key).await, bins(&c2, &key).await, "both clusters hold the merged record");
+    assert_eq!(counter(&c2, set_name, "shipped-back").await, 1, "dc2's merge went back once");
+
+    // Left alone, nothing more happens.
     let (f1, f2) = (counter(&c1, set_name, "fired").await, counter(&c2, set_name, "fired").await);
 
     aerospike_rt::sleep(Duration::from_secs(4)).await;
@@ -511,7 +525,7 @@ async fn a_merge_fires_once_and_is_not_shipped_back() {
         "merges went on with nothing being written"
     );
     assert_eq!(f2, 1, "one incoming write on dc2 is one merge");
-    assert_eq!(outcome(&bins(&c1, &key).await), "taken", "dc1 still holds its own write");
+    assert_eq!(counter(&c1, set_name, "shipped-back").await, 0, "dc1's merge brought nothing dc2 lacks");
 
     // A delete that arrives over XDR is offered to the handler too, and with `policy` it deletes.
     c1.delete(&write, &key).await.unwrap();
@@ -948,7 +962,7 @@ async fn a_binding_survives_a_restart() {
 
     assert!(
         listed.contains(&format!(":set={set_name}:name=probe:order=0:module={package}:function=probe:"))
-            && listed.contains(":on-failure=abandon:trigger=always:timeout=250:"),
+            && listed.contains(":on-failure=abandon:timeout=250:"),
         "the binding did not come back as it was: {listed}"
     );
 
