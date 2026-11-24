@@ -2,7 +2,7 @@
 
 The Java SDK, `aerospike-udf-sdk-wasm-java`, is a Maven library compiled by [TeaVM](https://teavm.org)
 into a plain linear-memory WebAssembly module: one exported memory, a start function that runs the
-runtime's initialisation, and functions that compile ahead of time like every other guest's. The module
+runtime's initialisation, and functions the server runs like every other guest's. The module
 imports the server's natives and four `teavm` functions (the runtime's own logging and clock) plus, when
 `Math` is used, some `teavmMath` functions; the server provides all of them.
 

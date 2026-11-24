@@ -25,7 +25,7 @@ AS_UDF_EVENT_XDR_MERGE(merge_account)
 
 	/* ... the other bins: the whole module is below ... */
 
-	return as_udf_resolve_record(out, -1);
+	return as_udf_resolve_record(out);
 }
 ```
 
@@ -35,11 +35,11 @@ AS_UDF_EVENT_XDR_MERGE(merge_account)
 is on this cluster and the one that arrived over XDR, and returns `AS_UDF_ERR` when the arguments are not
 those of an `xdr-merge`.
 
-An `as_udf_event_record` carries one side's `generation`, `last_update_time`, `ttl` and `source_id`, and
+An `as_udf_event_record` carries one side's `generation`, `last_update_time` and `source_id`, and
 four stored values: `bin_names` (the list of bin names), `deleted_bins` (the names this side deleted: a list
 when there are some, and of kind `AS_UDF_ABSENT`, not an empty list, when there are none), and
-`bin_last_update_times` and `bin_source_ids` (per-bin last-update times and source ids, where the server
-keeps them). `as_udf_event_bin(&rec, name, &v)` reads a bin
+`bin_last_update_times` and `bin_source_ids` (per-bin last-update times and source ids, which the server
+gives for every bin of both sides). `as_udf_event_bin(&rec, name, &v)` reads a bin
 through the event's own import, and the readers a record UDF has are there for a side too, taking the
 record first: `as_udf_event_has`, `as_udf_event_get`, `as_udf_event_int` and the other typed readers, which
 answer `AS_UDF_OK`, `AS_UDF_NOT_FOUND` or `AS_UDF_TYPE_MISMATCH` as a record UDF's do, and
@@ -57,11 +57,11 @@ false:
 | `incoming.is_delete` | the incoming write is a record delete, so `incoming` has no bins |
 | `incoming.is_partial` | the incoming write carries only the bins that changed, so a bin it lacks may well exist on the other cluster |
 | `current.is_tombstone` | the current record exists but has no bins |
-| `uses_bin_convergence` | on either record, the same answer: per-bin LUTs are meaningful, for a time-based merge to check before it trusts `as_udf_event_bin_last_update_time` |
 
-`as_udf_event_bin_last_update_time` and `as_udf_event_bin_source_id` answer per bin and fall back to the record's values.
+`as_udf_event_bin_last_update_time` and `as_udf_event_bin_source_id` answer per bin, and fall back to the
+record's values for a bin the side neither has nor deleted.
 `as_udf_event_incoming_is_newer(&current, &incoming, name)` orders the two records on one bin by LUT, then
-source id: the order the server's bin convergence uses, so both clusters answer the same. When nothing but the data tells two
+source id, so both clusters answer the same. When nothing but the data tells two
 values apart, `as_udf_cmp_stored(&a, &b, &order)` compares their stored bytes without copying either: the
 status is `AS_UDF_TYPE_MISMATCH` for a value that is not stored, and `order` is exactly -1, 0 or 1, and
 `as_udf_stored_bytes` copies them out. `as_udf_list_has_string` searches a stored list of strings, and
@@ -74,17 +74,19 @@ position.
 | --- | --- |
 | `as_udf_resolve_keep_local()` | keeps the local record and drops the incoming write |
 | `as_udf_resolve_take_remote()` | applies the incoming write whole |
-| `as_udf_resolve_policy()` | lets the namespace's policy decide, as it would have without the handler |
-| `as_udf_resolve_delete()` | removes the record on this cluster; a merge that deletes has to delete on both sides for the two to agree |
-| `as_udf_resolve_record(bins, ttl)` | writes the final record: `bins` is a built map in which a bin absent or nil is deleted, `ttl` a TTL with a write's meaning, or -1 to keep the one the incoming write asked for |
+| `as_udf_resolve_policy()` | what it would have done without the handler: a set bound to a handler never uses bin convergence, so it applies the incoming write |
+| `as_udf_resolve_delete()` | removes the record on this cluster and leaves a durable tombstone, so a late write cannot bring it back; a merge that deletes has to delete on both sides for the two to agree |
+| `as_udf_resolve_expunge()` | removes the record on this cluster outright, with no tombstone |
+| `as_udf_resolve_record(bins)` | writes the final record: `bins` is a built map in which a bin absent or nil is deleted |
 
 Each returns the status the handler returns. A record answer with no bins left in it is the handler's
-failure, not a delete.
+failure, not a delete. Neither removal is shipped to the other cluster. No answer carries a TTL: the
+merged record takes the later of the two records' expirations, and a record that never expires wins.
 
 ## The module
 
 `examples/resolver/resolver.c`, the account merge with `as_udf_event_incoming_is_newer` ordering the two sides
-the way the server's bin convergence does:
+bin by bin:
 
 ```c
 {{#include ../../../wasm-c/examples/resolver/resolver.c}}

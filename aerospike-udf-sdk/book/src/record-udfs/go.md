@@ -453,7 +453,7 @@ Its state is the struct's fields. It keeps the raw form, since it reads its argu
 and keeps them, and gives the signatures through `params`. The record half, with the record first:
 
 ```go
-{{#include ../../../wasm-go/examples/vector/main.go:412:429}}
+{{#include ../../../wasm-go/examples/vector/main.go:record}}
 ```
 
 > **A GeoJSON bin is saved only if it is GeoJSON.** Staging takes any text; the save builds the

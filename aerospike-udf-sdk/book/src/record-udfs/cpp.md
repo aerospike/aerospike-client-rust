@@ -332,7 +332,7 @@ declares the two halves in the raw form, since the arguments are read once per s
 bit-identical with the Rust, C, Go and Java modules. The record half:
 
 ```cpp
-{{#include ../../../wasm-cpp/examples/vector/vector.cpp:388:407}}
+{{#include ../../../wasm-cpp/examples/vector/vector.cpp:record}}
 ```
 
 > **A GeoJSON bin is saved only if it is GeoJSON.** Staging takes any text; the save builds the

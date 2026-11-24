@@ -844,22 +844,20 @@ as_udf::event! {
     /// read the numbers: what the per-bin times are counted in, and what the record-level ones hold.
     on xdr_merge
     fn meta_merge(current: EventRecord, incoming: EventRecord) -> Result<Resolution, Error> {
-        let out = as_udf::map(12)?;
+        let out = as_udf::map(10)?;
 
         out.insert("c_blut", current.bin_last_update_time("a"))?;
         out.insert("c_bsrc", current.bin_source_id("a"))?;
         out.insert("c_lut", current.last_update_time())?;
         out.insert("c_gen", current.generation())?;
-        out.insert("c_ttl", current.ttl())?;
         out.insert("i_blut", incoming.bin_last_update_time("a"))?;
         out.insert("i_bsrc", incoming.bin_source_id("a"))?;
         out.insert("i_lut", incoming.last_update_time())?;
         out.insert("i_gen", incoming.generation())?;
-        out.insert("i_ttl", incoming.ttl())?;
         out.insert("now", as_udf::now().unwrap_or(-1))?;
         as_udf::log(Level::Info, "meta_merge ran");
 
-        Ok(Resolution::Record { bins: out, ttl: None })
+        Ok(Resolution::Record { bins: out })
     }
 }
 

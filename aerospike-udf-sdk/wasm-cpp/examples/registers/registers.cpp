@@ -15,9 +15,9 @@
 // A record of registers, in C++: every bin is a last-writer-wins register, stamped by the server. The same
 // module as aerospike-udf-sdk/wasm-rust/examples/registers.
 //
-// examples/lwwset keeps a timestamp per element inside the record, written by its own UDFs. A namespace
-// with bin convergence (conflict-resolve-writes true) already keeps one per bin: when the bin was last
-// written, and by which cluster. An xdr-merge handler reads both from either side, with
+// examples/lwwset keeps a timestamp per element inside the record, written by its own UDFs. The server
+// already keeps one per bin: when the bin was last written, and by which cluster. An xdr-merge handler
+// reads both from either side, with
 // bin_last_update_time(name) and bin_source_id(name), and that pair is a register's stamp: the later
 // write wins, and of two writes in the same millisecond, the one from the cluster with the larger id.
 //
@@ -26,13 +26,13 @@
 // deleted bin keeps its stamp and is listed in deleted_bins(), so a delete that is the later write stays
 // a delete, and one that is the earlier write does not undo what came after it.
 //
-// The server does that much by itself under bin convergence. The handler is here for the one bin that is
-// not a register: seen, the highest message number this user has read, on any device. Its merge is the
-// larger number, whichever side wrote last, which no policy that picks a side can express. It has the
-// module's one write UDF, saw(n), which never lowers it: a merge can only keep a maximum that the writes
-// kept too.
+// A set bound to a handler never uses the server's bin convergence, so the handler does that part itself.
+// It is here for the one bin that is not a register: seen, the highest message number this user has read,
+// on any device. Its merge is the larger number, whichever side wrote last, which no policy that picks a
+// side can express. It has the module's one write UDF, saw(n), which never lowers it: a merge can only keep
+// a maximum that the writes kept too.
 //
-//   event-set:event=xdr-merge;namespace=testbc;set=settings;module=registers;function=merge_settings;on-failure=abandon
+//   event-set:event=xdr-merge;namespace=test;set=settings;module=registers;function=merge_settings;on-failure=abandon
 
 #include "aerospike_udf.hpp"
 
@@ -79,12 +79,6 @@ static udf::Result<Stamp> stamp(const udf::EventRecord& side, udf::StrView name)
 // The merge: seen is the larger number; every other bin is the side that wrote it last.
 UDF_ON_XDR_MERGE(merge_settings)
 {
-	// Without bin convergence there is no stamp per bin, and a merge that pretended otherwise would
-	// decide every bin by the record's time. Failing hands the write to the binding's on-failure.
-	if (!current.uses_bin_convergence()) {
-		return udf::error(AS_UDF_ERR, "registers need a namespace with conflict-resolve-writes");
-	}
-
 	udf::Map out(16);
 	udf::Optional<int64_t> mine = UDF_TRY(current.as_int(SEEN));
 	udf::Optional<int64_t> theirs = UDF_TRY(incoming.as_int(SEEN));

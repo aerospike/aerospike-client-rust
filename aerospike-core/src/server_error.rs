@@ -190,6 +190,21 @@ pub mod sub_code {
     /// Op belongs to a different MRT than the one holding the lock.
     pub const MRT_BLOCKED_ID_MISMATCH: u32 = 2;
 
+    // -------------------------------------------------------
+    // Pairs with ResultCode::XdrMergeAbandoned (33)
+    // -------------------------------------------------------
+
+    /// The `xdr-merge` handler trapped, failed, or could not be run.
+    pub const XDR_MERGE_MODULE_FAULT: u32 = 1;
+    /// The handler was stopped at its time limit.
+    pub const XDR_MERGE_TIME_LIMIT: u32 = 2;
+    /// The handler ran out of memory.
+    pub const XDR_MERGE_MEMORY_LIMIT: u32 = 3;
+    /// The handler answered something that cannot be applied.
+    pub const XDR_MERGE_INVALID_ANSWER: u32 = 4;
+    /// The write's source id was refused, or the receiving cluster's own is 0.
+    pub const XDR_MERGE_SOURCE_REFUSED: u32 = 5;
+
     /// The constant's name for a `(result code, subcode)` pair.
     ///
     /// `None` when the pair is not one this client knows. Scoped by the pair
@@ -268,6 +283,11 @@ pub mod sub_code {
             (R::OpNotApplicable, OPNOT_STRING_B64_INVALID) => "OPNOT_STRING_B64_INVALID",
             (R::MrtBlocked, MRT_BLOCKED_RECORD_LOCKED) => "MRT_BLOCKED_RECORD_LOCKED",
             (R::MrtBlocked, MRT_BLOCKED_ID_MISMATCH) => "MRT_BLOCKED_ID_MISMATCH",
+            (R::XdrMergeAbandoned, XDR_MERGE_MODULE_FAULT) => "XDR_MERGE_MODULE_FAULT",
+            (R::XdrMergeAbandoned, XDR_MERGE_TIME_LIMIT) => "XDR_MERGE_TIME_LIMIT",
+            (R::XdrMergeAbandoned, XDR_MERGE_MEMORY_LIMIT) => "XDR_MERGE_MEMORY_LIMIT",
+            (R::XdrMergeAbandoned, XDR_MERGE_INVALID_ANSWER) => "XDR_MERGE_INVALID_ANSWER",
+            (R::XdrMergeAbandoned, XDR_MERGE_SOURCE_REFUSED) => "XDR_MERGE_SOURCE_REFUSED",
             _ => return None,
         })
     }
@@ -873,6 +893,16 @@ mod tests {
         );
         // The server defines no subcodes under FilteredOut.
         assert_eq!(sub_code::name(ResultCode::FilteredOut, 1), None);
+        // One per cause under XdrMergeAbandoned, the server's as_sub_xdr_merge_t.
+        assert_eq!(
+            sub_code::name(ResultCode::XdrMergeAbandoned, 3),
+            Some("XDR_MERGE_MEMORY_LIMIT")
+        );
+        assert_eq!(
+            sub_code::name(ResultCode::XdrMergeAbandoned, 5),
+            Some("XDR_MERGE_SOURCE_REFUSED")
+        );
+        assert_eq!(sub_code::name(ResultCode::XdrMergeAbandoned, 6), None);
         assert_eq!(
             sub_code::name(ResultCode::OpNotApplicable, 12),
             Some("OPNOT_STRING_REGEX_LIMIT_EXCEEDED")

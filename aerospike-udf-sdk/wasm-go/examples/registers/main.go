@@ -13,9 +13,9 @@
 // A record of registers, in Go: every bin is a last-writer-wins register, and the stamps are the
 // server's. The same module as aerospike-udf-sdk/wasm-rust/examples/registers.
 //
-// examples/lwwset keeps a timestamp per element inside the record, and its own UDFs write them. A
-// namespace with bin convergence (conflict-resolve-writes true) already keeps one for every bin: when the
-// bin was last written, and which cluster wrote it. A side of the xdr-merge event gives both,
+// examples/lwwset keeps a timestamp per element inside the record, and its own UDFs write them. The
+// server already keeps one for every bin: when the bin was last written, and which cluster wrote it. A
+// side of the xdr-merge event gives both,
 // BinLastUpdateTime(name) and BinSourceID(name), and the pair is a register's stamp: the later write wins,
 // and of two writes in the same millisecond, the one from the cluster with the larger id.
 //
@@ -24,19 +24,18 @@
 // one bin at a time. A deleted bin is still listed, by DeletedBins(), and keeps its stamp: a delete that
 // is the later write stays a delete, and one that is the earlier write does not undo what followed it.
 //
-// The server does all of that by itself under bin convergence. The handler exists for the one bin that is
-// not a register: seen, the highest message number this user has read on any device. Its merge is the
-// larger number, whichever side wrote last, which no policy that picks a side can express. It has the
-// module's only write UDF, saw(n), which never lowers it: a merge can keep a maximum only when the writes
-// kept one too.
+// A set bound to a handler never uses the server's bin convergence, so the handler does that part
+// itself. It is here for the one bin that is not a register: seen, the highest message number this user
+// has read on any device. Its merge is the larger number, whichever side wrote last, which no policy
+// that picks a side can express. It has the module's only write UDF, saw(n), which never lowers it: a
+// merge can keep a maximum only when the writes kept one too.
 //
-//	event-set:event=xdr-merge;namespace=testbc;set=settings;module=registers;function=merge_settings;on-failure=abandon
+//	event-set:event=xdr-merge;namespace=test;set=settings;module=registers;function=merge_settings;on-failure=abandon
 package main
 
 //go:generate go run github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk/wasm-go/cmd/udfgen
 
 import (
-	"errors"
 	"iter"
 
 	udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk/wasm-go"
@@ -76,12 +75,6 @@ func stampOf(side *udf.EventRecord, name string) stamp {
 //
 //udf:on xdr-merge merge_settings
 func mergeSettings(current, incoming *udf.EventRecord) (udf.Resolution, error) {
-	// Without bin convergence there is no stamp per bin, and a merge that pretended otherwise would
-	// decide every bin by the record's time. Failing hands the write to the binding's on-failure.
-	if !current.UsesBinConvergence() {
-		return udf.Resolution{}, errors.New("registers need a namespace with conflict-resolve-writes")
-	}
-
 	out := udf.NewMap(16)
 
 	a, hasA, err := current.Int("seen")

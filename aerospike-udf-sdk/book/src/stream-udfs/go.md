@@ -72,7 +72,7 @@ would cost an import and, for a `string`, an allocation per record.
 `examples/vector/main.go` is the full-size example, in the raw form. Its stream half:
 
 ```go
-{{#include ../../../wasm-go/examples/vector/main.go:354:410}}
+{{#include ../../../wasm-go/examples/vector/main.go:stream}}
 ```
 
 The record method configures itself from the arguments on the first call, reads the vector straight into

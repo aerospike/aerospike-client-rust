@@ -3,7 +3,7 @@
 A record UDF is a function a client runs on one record, by key, inside the transaction that holds the
 record's lock. It reads the record's bins, may stage writes to them, and returns one value to the client.
 It is the kind of function Lua users have written for years; the WASM version does the same job with a
-typed signature, no serialisation, and native speed.
+typed signature, no serialisation, and, on an x86-64 node, machine code the Fast JIT compiled.
 
 To learn the API by doing, start with the [tutorial](tutorial.md): eleven tasks on one record, each in
 all five languages side by side. This chapter is the model behind it, and the language chapters are the
@@ -27,8 +27,9 @@ module](../engine.md)). The function:
 
 {{#include ../diagrams/record-call.svg}}
 
-Everything the function read is borrowed from the record and valid until the call ends or the bin it
-came from is written. A value handed to a `set_*`, a `result_*` or a collection builder moves to the host.
+Everything the function read is borrowed from the record and valid until the call ends, even after the
+bin it came from is written again, the record is deleted, or a save fails: the host keeps the value for
+the call. A value handed to a `set_*`, a `result_*` or a collection builder moves to the host.
 
 ## Values
 

@@ -144,10 +144,8 @@ public final class Pair {
     }
 
     /**
-     * Whether the incoming side wrote {@code name} later: by the bin's time where the server keeps one, and
-     * on a tie (which is every bin when it keeps none) by the larger source id. It is the order the server's
-     * own bin convergence uses, and both clusters compute it alike. It reads no bin, so it also answers for a
-     * bin neither side has.
+     * Whether the incoming side wrote {@code name} later: by the bin's time, and on a tie by the larger source
+     * id. Both clusters compute it alike. It reads no bin, so it also answers for a bin neither side has.
      */
     public boolean incomingIsNewer(String name) {
         long cl = current.binLastUpdateTime(name);
@@ -158,8 +156,8 @@ public final class Pair {
 
     /**
      * Puts into {@code overrides} every bin either side has that it lacks, from the side that wrote the bin
-     * later - which is what the policy would have kept - so a handler merges the bins it knows about and
-     * leaves the rest as they would have been. Symmetric: both DCs order the two sides the same way.
+     * later, so a handler merges the bins it knows about and leaves the rest to the last writer of each.
+     * Symmetric: both DCs order the two sides the same way.
      *
      * <p>A delete is a write like any other. When the side that wrote a bin later deleted it (the bin is in
      * that side's {@link EventRecord#deletedBins}), the bin is left out of the answer, which is how a

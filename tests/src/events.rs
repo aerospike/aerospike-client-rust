@@ -200,11 +200,12 @@ fn bins_of(answer: &HashMap<Value, Value>) -> HashMap<Value, Value> {
     }
 }
 
-fn meta(generation: i64, lut: i64, ttl: i64, src_id: i64) -> HashMap<Value, Value> {
+/// A described record's metadata. Its `lut` is the time of every bin the caller gives no time of its own,
+/// as a live write's record time is. There is no `ttl`: a merge never sees or sets one (R84).
+fn meta(generation: i64, lut: i64, src_id: i64) -> HashMap<Value, Value> {
     HashMap::from([
         (Value::from("gen"), Value::from(generation)),
         (Value::from("lut"), Value::from(lut)),
-        (Value::from("ttl"), Value::from(ttl)),
         (Value::from("src-id"), Value::from(src_id)),
     ])
 }
@@ -301,7 +302,7 @@ async fn an_xdr_merge_resolver_is_bound_and_dry_run() {
         ),
         (Value::from("balance"), Value::from(50)),
     ]);
-    let answer = dry_run(&client, &key, remote_bins, meta(3, 1_900_000_000_000, 0, 2)).await;
+    let answer = dry_run(&client, &key, remote_bins, meta(3, 1_900_000_000_000, 2)).await;
 
     assert_eq!(
         answer.get(&Value::from("verdict")),
@@ -394,7 +395,7 @@ async fn per_bin_luts_and_deletes_decide_bins() {
         ("tags", strings(&["c"])),
         ("balance", Value::from(50)),
     ]);
-    let mut remote_meta = meta(3, 1_900_000_000_000, 0, 2);
+    let mut remote_meta = meta(3, 1_900_000_000_000, 2);
     remote_meta.insert(
         Value::from("bin-luts"),
         Value::from(bins_map(&[("balance", Value::from(1_000))])),
@@ -406,10 +407,9 @@ async fn per_bin_luts_and_deletes_decide_bins() {
 
     assert_eq!(bins.get(&Value::from("visits")), Some(&Value::from(7)));
     assert_eq!(bins.get(&Value::from("tags")), Some(&strings(&["a", "b", "c"])));
-    // Without bin convergence the current side has no per-bin LUTs and, by design, no record LUT either,
-    // so the sides tie on time and the source id decides: the incoming write (source 2) over this cluster
-    // (source 1). A resolver that must decide on data compares versions or bytes instead of LUTs.
-    assert_eq!(bins.get(&Value::from("balance")), Some(&Value::from(50)), "{bins:?}");
+    // A bound set keeps each bin's time whatever the namespace's settings (R31): the current `balance`
+    // was written just now, the incoming one in 1970, so the current one is the newer and stays.
+    assert_eq!(bins.get(&Value::from("balance")), Some(&Value::from(100)), "{bins:?}");
     assert_eq!(
         bins.get(&Value::from("profile")),
         Some(&Value::Nil),
@@ -469,7 +469,7 @@ async fn resolvers_in_three_languages_agree() {
             ("balance", Value::from(50)),
             ("city", Value::from("Oslo")),
         ]);
-        let mut remote_meta = meta(3, 1_900_000_000_000, 0, 2);
+        let mut remote_meta = meta(3, 1_900_000_000_000, 2);
         remote_meta.insert(
             Value::from("bin-luts"),
             Value::from(bins_map(&[("balance", Value::from(1_000))])),
@@ -486,9 +486,8 @@ async fn resolvers_in_three_languages_agree() {
     let (_, expected) = &answers[0];
     assert_eq!(expected.get(&Value::from("visits")), Some(&Value::from(7)));
     assert_eq!(expected.get(&Value::from("tags")), Some(&strings(&["a", "b", "c"])));
-    // No current-side bin LUTs and no record LUT on either side: the sides tie on time, and the source id
-    // decides for the incoming write (source 2 over this cluster's 1).
-    assert_eq!(expected.get(&Value::from("balance")), Some(&Value::from(50)));
+    // Every bin has a time (R31): the current `balance` was written just now, the incoming one in 1970.
+    assert_eq!(expected.get(&Value::from("balance")), Some(&Value::from(100)));
     assert_eq!(expected.get(&Value::from("profile")), Some(&Value::Nil));
     assert_eq!(expected.get(&Value::from("city")), Some(&Value::from("Oslo")), "a bin only the remote has");
 
@@ -724,7 +723,7 @@ async fn seed_subscriber(client: &Client, key: &Key, package: &str) {
 
 /// The dry run of the CRDT merge, with `other` for the associativity check; asserts the three laws.
 async fn crdt_merge(client: &Client, key: &Key, incoming: HashMap<Value, Value>, other: Option<HashMap<Value, Value>>, scenario: &str) -> HashMap<Value, Value> {
-    let mut args = vec![Value::from(incoming), Value::from(meta(1, 0, 0, 2))];
+    let mut args = vec![Value::from(incoming), Value::from(meta(1, 0, 2))];
 
     if let Some(o) = other {
         args.push(Value::from(o));
@@ -1080,7 +1079,7 @@ async fn lwwset_merge_converges() {
 /// each register is the side with the later stamp for that bin, whatever the records' own times say; a
 /// delete with the later stamp is kept as a nil; a bin only one side has is that side's; `seen` is the
 /// larger number although its stamp is the older; and the server finds the merge symmetric. On a
-/// namespace without bin convergence the handler refuses to answer.
+/// namespace without bin convergence the bound set keeps bin times too, and they decide the same way.
 #[aerospike_macro::test]
 async fn registers_merge_converges() {
     let client = common::client().await;
@@ -1134,7 +1133,7 @@ async fn registers_merge_converges() {
             ("seen", Value::from(7)),
             ("tz", Value::from("utc")),
         ]);
-        let mut incoming_meta = meta(4, THEN, 0, 2);
+        let mut incoming_meta = meta(4, THEN, 2);
 
         incoming_meta.insert(
             Value::from("bin-luts"),
@@ -1165,7 +1164,7 @@ async fn registers_merge_converges() {
         // Associative with a third record that has per-bin times of its own (the dry run's fourth
         // argument): its `theme` is the latest of the three, its `lang` the oldest, its `seen` the largest.
         let third = bins_map(&[("theme", Value::from("mono")), ("lang", Value::from("de")), ("seen", Value::from(12))]);
-        let mut third_meta = meta(1, THEN, 0, 3);
+        let mut third_meta = meta(1, THEN, 3);
 
         third_meta.insert(
             Value::from("bin-luts"),
@@ -1182,7 +1181,7 @@ async fn registers_merge_converges() {
             ("seen", Value::from(7)),
             ("tz", Value::from("utc")),
         ]);
-        let mut incoming_meta = meta(4, THEN, 0, 2);
+        let mut incoming_meta = meta(4, THEN, 2);
 
         incoming_meta.insert(
             Value::from("bin-luts"),
@@ -1213,27 +1212,20 @@ async fn registers_merge_converges() {
         assert_eq!(info(&client, &unbind_command(BIN_CONVERGENCE_NS, set_name)).await, "ok");
         let _ = client.delete(&write, &key).await;
 
-        // The same module where no bin has a stamp of its own: it says so instead of deciding by the
-        // record's time.
+        // The same module on a namespace without bin convergence: a bound set keeps each bin's time there
+        // too (R31), so the merge decides by bin times all the same. The incoming `theme` is from 2030.
         let namespace = common::namespace();
         let plain = as_key!(namespace, set_name, "ada");
 
         client.put(&write, &plain, &[as_bin!("theme", "dark")]).await.unwrap();
         assert_eq!(info(&client, &bind_command(namespace, set_name, package, "merge_settings")).await, "ok", "{lang}");
 
-        let refused = client
-            .execute_udf(
-                &write,
-                &plain,
-                "__event__",
-                "xdr-merge",
-                &[Value::from(bins_map(&[("theme", Value::from("solar"))])), Value::from(meta(4, LATER, 0, 2))],
-            )
-            .await;
+        let answer = dry_run(&client, &plain, bins_map(&[("theme", Value::from("solar"))]), meta(4, LATER, 2)).await;
 
-        assert!(
-            format!("{refused:?}").contains("conflict-resolve-writes"),
-            "{lang}: without bin convergence the merge fails and says why: {refused:?}"
+        assert_eq!(
+            bins_of(&answer).get(&Value::from("theme")),
+            Some(&Value::from("solar")),
+            "{lang}: without bin convergence the bin times still decide: {answer:?}"
         );
 
         assert_eq!(info(&client, &unbind_command(namespace, set_name)).await, "ok");

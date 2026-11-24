@@ -195,5 +195,5 @@ AS_UDF_EVENT_XDR_MERGE(merge_account)
 	each_name(&current.bin_names, put_newer, &r);
 	each_name(&incoming.bin_names, put_newer, &r);
 
-	return as_udf_resolve_record(out, -1);
+	return as_udf_resolve_record(out);
 }

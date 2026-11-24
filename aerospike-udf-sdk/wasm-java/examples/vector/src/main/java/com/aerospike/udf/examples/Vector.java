@@ -480,7 +480,6 @@ public final class Vector {
 
         return 0;
     }
-
     // ANCHOR_END: stream
 
     // ANCHOR: record
@@ -506,7 +505,6 @@ public final class Vector {
 
         return 0;
     }
-
     // ANCHOR_END: record
 
 }

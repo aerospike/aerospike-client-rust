@@ -79,17 +79,20 @@ SSE ahead of time. Off by default: a module built with it is refused by a server
 `AS_UDF_EVENT_XDR_MERGE(name) { ... }` declares an `xdr-merge` handler and its signature export. Inside,
 `as_udf_event_decode(args, argc, &current, &incoming)` fills the two `as_udf_event_record`s, the record as
 it is on this cluster and the one that arrived over XDR, each with its metadata (`generation`,
-`last_update_time`, `ttl`, `source_id`), its `bin_names` and `deleted_bins`, its per-bin last-update times
-and the facts that are about it (`incoming.is_delete`, `incoming.is_partial`, `current.is_tombstone`, and
-`uses_bin_convergence` on either). `deleted_bins` is a list of names when there are some and of kind
+`last_update_time`, `source_id`), its `bin_names` and `deleted_bins`, its per-bin last-update times and
+source ids (the server gives them for every bin of both sides) and the facts that are about it
+(`incoming.is_delete`, `incoming.is_partial` and `current.is_tombstone`). `deleted_bins` is a list of names when there are some and of kind
 `AS_UDF_ABSENT` (not an empty list) when there are none; `as_udf_list_count(&incoming.deleted_bins)` answers
 the count for either shape. `as_udf_event_bin(&current, "visits", &v)`
 reads a bin of one record,
-`as_udf_event_incoming_is_newer(&current, &incoming, "visits")` orders the two the way the server's bin
-convergence does,
+`as_udf_event_incoming_is_newer(&current, &incoming, "visits")` orders the two by the bin's time, then
+source id,
 `as_udf_cmp_stored(&a, &b, &order)` compares two values' stored bytes for a data-only tie-break (a status,
 and the order apart from it), and
-`as_udf_resolve_record(map, -1)` (or `_keep_local`, `_take_remote`, `_policy`, `_delete`) answers.
+`as_udf_resolve_record(map)` (or `_keep_local`, `_take_remote`, `_policy`, `_delete`, `_expunge`) answers.
+`_delete` leaves a durable tombstone, so a late write cannot bring the record back; `_expunge` removes it
+outright. Neither is shipped to the other cluster. No answer carries a TTL: the merged record takes the
+later of the two records' expirations.
 `examples/resolver/resolver.c` is the account merge the Rust and Go SDKs also carry; the client test holds
 the three to the same answer. `xdr-merge` is the one event there is. The contract and the rules a handler
 must keep (pure, convergent) are in the Rust SDK's README under "Events".

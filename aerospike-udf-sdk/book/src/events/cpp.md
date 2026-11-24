@@ -38,9 +38,10 @@ serves a handler and a UDF alike, as `load` does in `examples/counter`. An `Even
 writing methods, and a handler is not handed a `udf::Record`. Everything else about the record is a
 method too: `bin_names()` ranges over the record's bin names and `deleted_bins()` over the names of the
 bins this side deleted (the server sends no list at all when there are none, and the range is then empty, so
-`size()` is the count either way), `bin_last_update_time(name)` and `bin_source_id(name)` answer for one bin and fall
-back to the record's values where the server keeps none per bin, `generation()`, `last_update_time()`,
-`ttl()` and `source_id()` are its metadata, and `is_incoming()` says which of the two records it is.
+`size()` is the count either way), `bin_last_update_time(name)` and `bin_source_id(name)` answer for one bin
+(the server gives them for every bin of both sides, and a bin the side neither has nor deleted falls back to
+the record's values), `generation()`, `last_update_time()` and `source_id()` are its metadata, and
+`is_incoming()` says which of the two records it is.
 
 What the server says of the merge is asked of the record it is about. A method asked of the other record
 answers false:
@@ -50,7 +51,6 @@ answers false:
 | `incoming.is_delete()` | the incoming write is a record delete, so `incoming` has no bins |
 | `incoming.is_partial()` | the incoming write carries only the bins that changed, so a bin it lacks may well exist on the other cluster |
 | `current.is_tombstone()` | the current record exists but has no bins |
-| `uses_bin_convergence()` | on either record, the same answer: per-bin timestamps are meaningful, for a time-based merge to check before it trusts `bin_last_update_time` |
 
 `rec.with_bins(out)` is the Rust SDK's `with_bins`: every bin of the record that the `udf::Map` `out` lacks
 goes in by position, so a handler that decides two bins and keeps the rest of one record writes those two
@@ -62,15 +62,17 @@ the other bins uses `Pair::with_newer` instead, which takes each from the side t
 
 | Macro | Parameters | Returns `udf::Result` of |
 | --- | --- | --- |
-| `UDF_ON_XDR_MERGE` | `current`, `incoming` (`const EventRecord&`) | `Resolution`: `keep_local()`, `take_remote()`, `policy()`, `delete_record()`, `record(bins[, ttl])` |
+| `UDF_ON_XDR_MERGE` | `current`, `incoming` (`const EventRecord&`) | `Resolution`: `keep_local()`, `take_remote()`, `policy()`, `delete_record()`, `expunge()`, `record(bins)` |
 
-`keep_local()` keeps the current record, `take_remote()` takes the incoming write, and `policy()` leaves
-the outcome to the namespace's policy, as if there were no handler. `delete_record()` removes the record
-on this cluster; the other cluster decides for itself, so a merge that deletes has to delete on both
-sides for the two to agree. A `record` answer takes a `udf::Map` of the final bins; a bin absent from it,
-or nil, is deleted, at least one bin must be left, and the map's own error, if a put was refused, fails
-the call. Its TTL is in seconds, 0 for the namespace default, and when left out the incoming write's is
-kept. `Value::cmp_stored` / `stored_bytes_into` compare stored bytes for a data-only tie-break;
+`keep_local()` keeps the current record, `take_remote()` takes the incoming write, and `policy()` does
+what the server would have done without the handler, which on a set bound to one (never under bin
+convergence) is to apply the incoming write. `delete_record()` removes the record on this cluster and
+leaves a durable tombstone, so a late write cannot bring it back; `expunge()` removes it outright, with
+no tombstone. Neither is shipped: the other cluster decides for itself, so a merge that deletes has to
+delete on both sides for the two to agree. A `record` answer takes a `udf::Map` of the final bins; a bin
+absent from it, or nil, is deleted, at least one bin must be left, and the map's own error, if a put was
+refused, fails the call. No answer carries a TTL: the merged record takes the later of the two records'
+expirations, and a record that never expires wins. `Value::cmp_stored` / `stored_bytes_into` compare stored bytes for a data-only tie-break;
 `cmp_stored` is a `Result<int32_t>`, an error for a value that is not stored and exactly -1, 0 or 1
 otherwise.
 
@@ -82,7 +84,7 @@ two may be given in either order. `pair.as_int(name)`, `as_double`, `as_bool`, `
 `as_blob<N>`, `list` and `map` give the bin on each side as a `Result<Both<T>>` (`current`, `incoming`, each
 an `Optional`, empty for absent or nil; the error when either side holds another kind), `bin` as a plain
 `Both<Value>`, and `Both` carries the merges a resolver reaches for: `incoming_is_newer()`, by the bin's
-last-update time and then source id, the order the server's own bin convergence uses; `newer()` and
+last-update time and then source id; `newer()` and
 `older()`, and `ordered()` for both at once (`auto [older, newer] = both.ordered();`); `max()`, `min()`,
 `sum()` (the one value when only one side has the bin, nothing when neither has it, as for `max()` and
 `min()`, and an integer sum wraps rather than overflowing), `merge(f)`;
@@ -100,7 +102,7 @@ if (udf::Optional<int64_t> visits = UDF_TRY(pair.as_int("visits")).max()) {   //
 if (udf::Optional<udf::Value> profile = pair.bin("profile").newer()) {   // last writer wins, by LUT
 	out.put("profile", *profile);
 }
-return udf::Resolution::record(pair.with_newer(out));   // the rest as the policy would have kept it
+return udf::Resolution::record(pair.with_newer(out));   // the rest to the last writer of each
 ```
 
 ## The raw form

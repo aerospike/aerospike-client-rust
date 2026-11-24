@@ -211,7 +211,7 @@ trimmed on the host by position, a summary, and an aggregation. It uses no alloc
 22 KB.
 
 ```rust
-{{#include ../../../wasm-rust/examples/ledger/src/lib.rs}}
+{{#include ../../../wasm-rust/examples/ledger/src/lib.rs:module}}
 ```
 
 `examples/udf` exercises the whole surface and is the fixture `tests/src/udf_wasm.rs` asserts against;

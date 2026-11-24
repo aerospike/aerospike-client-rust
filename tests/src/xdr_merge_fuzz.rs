@@ -25,6 +25,14 @@
 //! the exports of bound modules (18). Each prints its seed; `XDR_FUZZ_SEED` runs one again and
 //! `XDR_FUZZ_ROUNDS` scales them.
 //!
+//! The second review's items follow, each named by the PRD requirement it pins so that it cannot slip: a
+//! merged record's expiration (20, R84), a merge that ships nothing (21, R38), bound sets without bin
+//! convergence beside sets with it (22 and 23, R28, R31, R33), the result code and its sub-codes (24, R40,
+//! R42), writes without times and `ship-record-lut` (25 and 26, R44, R32), `delete` and `expunge` (26,
+//! R34), the settings a binding does not allow (27, R83) and writes that cannot conflict (30, R86); the
+//! other cluster going down under a merge (7) and the device map through a five-second hold (28). Then expirations, and registers
+//! under changing settings, fuzzed.
+//!
 //! Every test here binds in the `fuzz` namespace, which nothing else binds, and takes one lock, so that the
 //! counters a test reads are its own.
 
@@ -408,14 +416,8 @@ async fn the_counters_tell_the_outcomes_apart() {
         c1.put(&write, &key, &[as_bin!("do", *answer), as_bin!("n", i as i64 + 10)]).await.unwrap();
         assert_eq!(wait_counter(&c2, set_name, counted, before + 1).await, before + 1, "{answer} counts as {counted}");
 
-        // A merged record ships back to dc1, which has no binding and takes it whole. Landing after dc1's
-        // next write, it would replace that write before it left, and the next step would never reach dc2.
-        // A failure under abandon keeps dc2's record, so the two differ from then on, as they should.
-        if ["take-remote", "combined"].contains(counted) {
-            settled(&c1, &c2, &key).await;
-        } else {
-            shipped(&c1, NS).await;
-        }
+        // A merge ships nothing (R38), so nothing comes back to dc1 to land on its next write.
+        shipped(&c1, NS).await;
     }
 
     let c = counters(&c2, set_name).await;
@@ -423,6 +425,8 @@ async fn the_counters_tell_the_outcomes_apart() {
     assert_eq!(c["fallback"], 3, "{c:?}");
     assert_eq!(c["abandoned"], 3, "{c:?}");
     assert!(!c.contains_key("record"), "the old record counter is gone: {c:?}");
+    assert!(!c.contains_key("shipped-back"), "a merge ships nothing, so nothing is counted as shipped back: {c:?}");
+    assert!(!c.contains_key("rejected"), "a refused source is a failure cause now: {c:?}");
     assert!(c["max-us"] >= c["avg-us"] && c["max-us"] >= 90_000, "a spin to 100 ms is the longest run: {c:?}");
 
     // A record answer that is the incoming write applied: the counter, written only on dc1, so that the
@@ -776,10 +780,13 @@ async fn fuzz_binding_commands() {
 const ANSWERS: &[&str] = &[
     "trap", "fail", "nonzero", "silent", "int", "nil", "list", "m-empty", "m-verdict-int", "m-verdict-nul",
     "banana", "KEEP-LOCAL", "record", "r-nobins", "r-bins-int", "r-bins-list", "r-bins-nil", "policy",
-    "keep-local", "take-remote", "m-keep", "m-take", "m-take-ttl", "delete", "m-delete", "r-ok", "r-kinds",
-    "r-15", "r-ttl", "r-deep", "r-big", "r-many", "r-ttl-str", "r-long", "r-nul", "r-noname", "r-intkey",
-    "r-geo-bad", "r-empty", "r-nil", "spin",
+    "keep-local", "take-remote", "m-keep", "m-take", "m-take-ttl", "delete", "m-delete", "expunge", "m-expunge",
+    "r-ok", "r-kinds", "r-15", "r-ttl", "r-deep", "r-big", "r-many", "r-ttl-str", "r-long", "r-nul", "r-noname",
+    "r-intkey", "r-geo-bad", "r-empty", "r-nil", "spin", "oom",
 ];
+
+/// The failure counters, which add up to `fallback`.
+const CAUSES: &[&str] = &["fail-timeout", "fail-error", "fail-memory", "fail-answer", "fail-source"];
 
 /// Random answers to random writes and deletes, under each on-failure. Whatever the answers, the counters
 /// must add up - every run is one outcome or one failure, and every failure one cause - and what the
@@ -852,8 +859,9 @@ async fn fuzz_answers_against_the_counters() {
         let sum: u64 = outcomes.iter().map(|o| c[*o]).sum();
 
         eprintln!("  {on_failure}: {c:?}");
-        assert_eq!(c["fired"], sum, "{on_failure}: every run is one outcome: {c:?}");
-        assert_eq!(c["fallback"], c["fail-timeout"] + c["fail-error"] + c["fail-answer"], "{on_failure}: {c:?}");
+        // A refused source is a failure without a run, so it is counted in fallback and not in fired.
+        assert_eq!(c["fired"] + c["fail-source"], sum, "{on_failure}: every run is one outcome: {c:?}");
+        assert_eq!(c["fallback"], CAUSES.iter().map(|k| c[*k]).sum::<u64>(), "{on_failure}: {c:?}");
         assert!(c["fallback"] > 0 && c["combined"] > 0, "{on_failure}: the fuzz reached failures and merges: {c:?}");
         assert!(spins == 0 || c["fail-timeout"] > 0, "{on_failure}: {spins} spins, and no timeout counted: {c:?}");
 
@@ -1058,4 +1066,791 @@ async fn fuzz_client_calls_to_handlers() {
     let _ = unbind(&c1, set_name).await;
     let _ = c1.delete(&write, &key).await;
     let _ = c1.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
+}
+
+//==========================================================
+// The second review's items (20-30), each pinned to the PRD requirement it implements, then fuzzed.
+//
+
+const REGISTERS: &[u8] = include_bytes!("../fixtures/wasm/registers.wasm");
+const CRDT: &[u8] = include_bytes!("../fixtures/wasm/crdt.wasm");
+
+const DAY: u32 = 86_400;
+
+/// One of `client`'s counters for what it ships to `dc` in `namespace`.
+async fn xdr_stat_to(client: &Client, dc: &str, namespace: &str, name: &str) -> u64 {
+    let stats = info(client, &format!("get-stats:context=xdr;dc={dc};namespace={namespace}")).await;
+
+    stats
+        .split(';')
+        .find_map(|f| f.strip_prefix(&format!("{name}=")))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| panic!("no {name} in {stats}"))
+}
+
+/// A record's time to live in seconds; None when it never expires or is not there.
+async fn ttl_of(client: &Client, key: &Key) -> Option<u64> {
+    let mut policy = ReadPolicy::default();
+
+    policy.base_policy.total_timeout = 5000;
+    client.get(&policy, key, Bins::All).await.ok().and_then(|r| r.time_to_live()).map(|d| d.as_secs())
+}
+
+fn with_ttl(expiration: Expiration) -> WritePolicy {
+    let mut policy = write_policy();
+
+    policy.expiration = expiration;
+    policy
+}
+
+/// The expiration a merge of `current` and `incoming` must keep (R84): the later of the two, never-expire
+/// winning. None for never.
+fn later(current: Expiration, incoming: Expiration) -> Option<u64> {
+    match (current, incoming) {
+        (Expiration::Seconds(a), Expiration::Seconds(b)) => Some(u64::from(a.max(b))),
+        _ => None,
+    }
+}
+
+/// Whether a time to live read back is the one wanted, allowing for the seconds the test took.
+fn ttl_is(got: Option<u64>, want: Option<u64>) -> bool {
+    match (got, want) {
+        (None, None) => true,
+        (Some(g), Some(w)) => g <= w && g + 300 >= w,
+        _ => false,
+    }
+}
+
+/// A namespace's setting on one cluster's DC, set and checked.
+async fn dc_ns_set(client: &Client, dc: &str, namespace: &str, setting: &str) {
+    info_ok(client, &format!("set-config:context=xdr;dc={dc};namespace={namespace};{setting}")).await;
+}
+
+/// Item 20 (R84): a merged record expires at the later of the two records' expirations, and never-expire
+/// wins; the handler neither sees nor sets it. Each case writes the record on dc1 with one expiration, which
+/// both clusters then hold, and writes it again on dc1 with another, which dc2 merges by `answer`. Before,
+/// the write took the incoming expiration, so the two clusters swapped theirs on every exchange.
+#[aerospike_macro::test]
+async fn a_merged_record_expires_at_the_later_of_the_two() {
+    let Some((c1, c2)) = clients("a_merged_record_expires_at_the_later_of_the_two").await else { return };
+    let _guard = ns_lock().lock().await;
+    let package = &format!("probe_{}", common::rand_str(6));
+    let set_name = &format!("ttl_{}", common::rand_str(6));
+    let cases = [
+        (Expiration::Seconds(DAY), Expiration::Seconds(2 * DAY)),
+        (Expiration::Seconds(2 * DAY), Expiration::Seconds(DAY)),
+        (Expiration::Never, Expiration::Seconds(DAY)),
+        (Expiration::Seconds(DAY), Expiration::Never),
+    ];
+    let mut keys = Vec::new();
+    let mut wrong = Vec::new();
+
+    register(&c2, PROBE, package).await;
+    bind(&c2, set_name, package, "probe", ";on-failure=abandon").await;
+
+    for answer in ["r-ok", "take-remote", "policy", "m-take"] {
+        for (current, incoming) in cases {
+            let key = as_key!(NS, set_name.as_str(), keys.len() as i64);
+
+            keys.push(key.clone());
+
+            // Made on dc1, it reaches dc2 as a create: not a merge.
+            c1.put(&with_ttl(current), &key, &[as_bin!("base", 1)]).await.unwrap();
+            assert!(wait_for(&c2, &key, SHIP_LAG, |b| b.is_some()).await.is_some(), "{key:?} never reached dc2");
+
+            let fired = counter(&c2, set_name, "fired").await;
+
+            c1.put(&with_ttl(incoming), &key, &[as_bin!("do", answer), as_bin!("n", 1)]).await.unwrap();
+            wait_counter(&c2, set_name, "fired", fired + 1).await;
+            shipped(&c1, NS).await;
+
+            let got = ttl_of(&c2, &key).await;
+            let want = later(current, incoming);
+
+            if !ttl_is(got, want) {
+                wrong.push(format!("{answer}: current {current:?}, incoming {incoming:?}: dc2 holds {got:?}, wanted {want:?}"));
+            }
+        }
+    }
+
+    cleanup(&c1, &c2, set_name, &keys, &[package]).await;
+    assert!(wrong.is_empty(), "\n  {}", wrong.join("\n  "));
+}
+
+/// Item 21 (R38): a merge ships nothing with forward off, even when its record holds something the other
+/// cluster lacks. The local change a merge folded in reaches the other cluster with a local write's own
+/// ship: here a later write on dc2 carries the merged record to dc1.
+#[aerospike_macro::test]
+async fn a_merge_ships_nothing() {
+    let Some((c1, c2)) = clients("a_merge_ships_nothing").await else { return };
+    let _guard = ns_lock().lock().await;
+    let package = &format!("probe_{}", common::rand_str(6));
+    let set_name = &format!("noship_{}", common::rand_str(6));
+    let key = as_key!(NS, set_name.as_str(), 1);
+
+    register(&c2, PROBE, package).await;
+    seed_record(&c1, &c2, &key, &[as_bin!("base", 1)]).await;
+    bind(&c2, set_name, package, "probe", "").await;
+
+    let sent = xdr_stat_to(&c2, "dc1", NS, "success").await;
+
+    // dc2 merges dc1's write into a record of its own, unlike either side.
+    c1.put(&write_policy(), &key, &[as_bin!("do", "r-ok"), as_bin!("n", 3)]).await.unwrap();
+    assert_eq!(wait_counter(&c2, set_name, "combined", 1).await, 1);
+    aerospike_rt::sleep(Duration::from_secs(4)).await;
+
+    assert_eq!(xdr_stat_to(&c2, "dc1", NS, "success").await, sent, "dc2 shipped its merge");
+    assert!(!bins(&c1, &key).await.unwrap().contains_key("merged"), "dc1 received dc2's merge");
+    assert!(!counters(&c2, set_name).await.contains_key("shipped-back"));
+
+    // A local write on dc2 ships, and carries the record the merge left.
+    c2.put(&write_policy(), &key, &[as_bin!("later", 1)]).await.unwrap();
+
+    let there = wait_for(&c1, &key, SHIP_LAG, |b| b.as_ref().is_some_and(|b| b.contains_key("later"))).await;
+
+    assert!(there.as_ref().is_some_and(|b| b.contains_key("merged")), "dc1 holds {there:?}");
+    settled(&c1, &c2, &key).await;
+
+    cleanup(&c1, &c2, set_name, &[key], &[package]).await;
+}
+
+/// Items 22 and 23 (R28, R31, R33): a set bound to a handler gets no bin convergence, whatever
+/// `conflict-resolve-writes` says, beside a set that keeps it in the same namespace. For the test, dc2's
+/// `fuzz` converges bins and dc1 ships it changed bins with no times, so an incoming write carries no
+/// source time: bin convergence refuses it for the unbound set, as it always has, while the bound set
+/// offers it to the handler, which merges it, and counts it as a write without times. A local write to the
+/// bound record right after its merge is not refused.
+#[aerospike_macro::test]
+async fn a_bound_set_gets_no_bin_convergence() {
+    let Some((c1, c2)) = clients("a_bound_set_gets_no_bin_convergence").await else { return };
+    let _guard = ns_lock().lock().await;
+    let package = &format!("probe_{}", common::rand_str(6));
+    let tag = common::rand_str(6);
+    let (bound, plain) = (format!("bnd_{tag}"), format!("unb_{tag}"));
+    let ns = NS;
+    let (bkey, pkey) = (as_key!(ns, bound.as_str(), 1), as_key!(ns, plain.as_str(), 1));
+    let write = write_policy();
+
+    register(&c2, PROBE, package).await;
+
+    for key in [&bkey, &pkey] {
+        seed_record(&c1, &c2, key, &[as_bin!("base", 1)]).await;
+    }
+
+    bind(&c2, &bound, package, "probe", "").await;
+    dc_ns_set(&c1, "dc2", ns, "bin-policy=only-changed").await;
+    info_ok(&c2, &format!("set-config:context=namespace;id={ns};conflict-resolve-writes=true")).await;
+
+    let result = async {
+        for (i, key) in [&bkey, &pkey].into_iter().enumerate() {
+            c1.put(&write, key, &[as_bin!("do", "r-ok"), as_bin!("n", i as i64 + 1)]).await.unwrap();
+        }
+
+        let merged = wait_for(&c2, &bkey, SHIP_LAG, |b| b.as_ref().is_some_and(|b| b.contains_key("merged"))).await;
+
+        aerospike_rt::sleep(Duration::from_secs(2)).await;
+
+        let plain_now = bins(&c2, &pkey).await;
+        let listed = info(&c2, &format!("event-list:namespace={ns}")).await;
+        let row: HashMap<String, String> = listed
+            .split(';')
+            .find(|r| r.contains(&format!(":set={bound}:")))
+            .unwrap_or("")
+            .split(':')
+            .filter_map(|f| f.split_once('='))
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+
+        // A local write to the bound record, right after its merge.
+        let local = c2.put(&write, &bkey, &[as_bin!("local", 1)]).await;
+
+        (merged, plain_now, row, local)
+    }
+    .await;
+
+    info_ok(&c2, &format!("set-config:context=namespace;id={ns};conflict-resolve-writes=false")).await;
+    dc_ns_set(&c1, "dc2", ns, "bin-policy=all").await;
+
+    let (merged, plain_now, row, local) = result;
+
+    assert!(merged.as_ref().is_some_and(|b| b.contains_key("merged")), "the bound set merged a write with no source time: {merged:?}");
+    assert!(
+        plain_now.as_ref().is_some_and(|b| !b.contains_key("do")),
+        "the unbound set converges bins, so a write with no source time is refused there: {plain_now:?}"
+    );
+    assert_eq!(row.get("no-times").map(String::as_str), Some("1"), "{row:?}");
+    assert!(local.is_ok(), "a local write right after a merge was refused: {local:?}");
+
+    let _ = info(&c2, &format!("event-remove:event=xdr-merge;namespace={ns};set={bound}")).await;
+
+    for c in [&c1, &c2] {
+        let _ = c.delete(&write, &bkey).await;
+        let _ = c.delete(&write, &pkey).await;
+    }
+
+    let _ = c2.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
+}
+
+/// Item 24 (R40, R42): a merge that fails under `abandon` answers a result code of its own, with a
+/// sub-code for each cause, which the source counts as `merge_abandoned` and the destination by cause: a
+/// trap, a time limit, the memory limit, an answer that cannot be applied, and a refused source id (dc1
+/// is made to send dc2's own id for the last).
+#[aerospike_macro::test]
+async fn each_failure_cause_is_abandoned_and_counted() {
+    let Some((c1, c2)) = clients("each_failure_cause_is_abandoned_and_counted").await else { return };
+    let _guard = ns_lock().lock().await;
+    let package = &format!("probe_{}", common::rand_str(6));
+    let set_name = &format!("cause_{}", common::rand_str(6));
+    let key = as_key!(NS, set_name.as_str(), 1);
+    let write = write_policy();
+
+    register(&c2, PROBE, package).await;
+    seed_record(&c1, &c2, &key, &[as_bin!("base", 1)]).await;
+    bind(&c2, set_name, package, "probe", ";timeout=150").await;
+    shipped(&c1, NS).await;
+
+    for (answer, cause, src_id) in [
+        ("trap", "fail-error", 1),
+        ("spin", "fail-timeout", 1),
+        ("oom", "fail-memory", 1),
+        ("banana", "fail-answer", 1),
+        ("r-ok", "fail-source", 2),
+    ] {
+        let (abandoned, counted) = (xdr_stat(&c1, NS, "merge_abandoned").await, counter(&c2, set_name, cause).await);
+
+        if src_id != 1 {
+            info_ok(&c1, &format!("set-config:context=xdr;src-id={src_id}")).await;
+        }
+
+        c1.put(&write, &key, &[as_bin!("do", answer), as_bin!("n", 1)]).await.unwrap();
+
+        let got = wait_counter(&c2, set_name, cause, counted + 1).await;
+
+        shipped(&c1, NS).await;
+
+        if src_id != 1 {
+            info_ok(&c1, "set-config:context=xdr;src-id=1").await;
+        }
+
+        assert_eq!(got, counted + 1, "{answer} counts as {cause}: {:?}", counters(&c2, set_name).await);
+        assert_eq!(xdr_stat(&c1, NS, "merge_abandoned").await, abandoned + 1, "{answer}: dc1 counts it abandoned");
+        assert!(!bins(&c2, &key).await.unwrap().contains_key("do"), "{answer}: dc2 kept its record");
+    }
+
+    let c = counters(&c2, set_name).await;
+
+    assert_eq!(c["abandoned"], 5, "{c:?}");
+    assert_eq!(c["fallback"], CAUSES.iter().map(|k| c[*k]).sum::<u64>(), "{c:?}");
+    assert_eq!(c["fired"], 4, "a refused source is not run: {c:?}");
+
+    cleanup(&c1, &c2, set_name, &[key], &[package]).await;
+}
+
+/// Items 25 and 26 (R44, R32): a write that carries no time is counted as one, and `ship-record-lut`
+/// sends the record's time with every write, so that no write is.
+#[aerospike_macro::test]
+async fn ship_record_lut_gives_every_write_a_time() {
+    let Some((c1, c2)) = clients("ship_record_lut_gives_every_write_a_time").await else { return };
+    let _guard = ns_lock().lock().await;
+    let package = &format!("probe_{}", common::rand_str(6));
+    let set_name = &format!("times_{}", common::rand_str(6));
+    let key = as_key!(NS, set_name.as_str(), 1);
+    let write = write_policy();
+
+    register(&c2, PROBE, package).await;
+    seed_record(&c1, &c2, &key, &[as_bin!("base", 1)]).await;
+    bind(&c2, set_name, package, "probe", "").await;
+
+    c1.put(&write, &key, &[as_bin!("do", "r-ok"), as_bin!("n", 1)]).await.unwrap();
+    assert_eq!(wait_counter(&c2, set_name, "no-times", 1).await, 1, "a write without a time is counted");
+
+    let config = info(&c1, &format!("get-config:context=xdr;dc=dc2;namespace={NS}")).await;
+
+    assert!(config.contains("ship-record-lut=false"), "{config}");
+    dc_ns_set(&c1, "dc2", NS, "ship-record-lut=true").await;
+
+    let result = async {
+        let fired = counter(&c2, set_name, "fired").await;
+
+        c1.put(&write, &key, &[as_bin!("do", "r-ok"), as_bin!("n", 2)]).await.unwrap();
+        wait_counter(&c2, set_name, "fired", fired + 1).await;
+
+        (info(&c1, &format!("get-config:context=xdr;dc=dc2;namespace={NS}")).await, counter(&c2, set_name, "no-times").await)
+    }
+    .await;
+
+    dc_ns_set(&c1, "dc2", NS, "ship-record-lut=false").await;
+
+    assert!(result.0.contains("ship-record-lut=true"), "{}", result.0);
+    assert_eq!(result.1, 1, "with ship-record-lut every write carries a time");
+
+    cleanup(&c1, &c2, set_name, &[key], &[package]).await;
+}
+
+/// Item 26 (R34): a `delete` answer leaves a durable tombstone, so a write that arrives late cannot bring
+/// the record back; an `expunge` answer leaves none. Neither is shipped.
+#[aerospike_macro::test]
+async fn delete_leaves_a_tombstone_and_expunge_does_not() {
+    let Some((c1, c2)) = clients("delete_leaves_a_tombstone_and_expunge_does_not").await else { return };
+    let _guard = ns_lock().lock().await;
+    let package = &format!("probe_{}", common::rand_str(6));
+    let tag = common::rand_str(5);
+    let write = write_policy();
+
+    register(&c2, PROBE, package).await;
+
+    for (answer, tombstones) in [("delete", 1), ("m-delete", 1), ("expunge", 0), ("m-expunge", 0)] {
+        let set_name = &format!("del{}_{tag}", answer.len());
+        let key = as_key!(NS, set_name.as_str(), answer);
+
+        seed_record(&c1, &c2, &key, &[as_bin!("base", 1)]).await;
+        bind(&c2, set_name, package, "probe", "").await;
+
+        c1.put(&write, &key, &[as_bin!("do", answer)]).await.unwrap();
+        assert!(wait_for(&c2, &key, SHIP_LAG, |b| b.is_none()).await.is_none(), "{answer}: the record is gone on dc2");
+        shipped(&c1, NS).await;
+
+        let stats = info(&c2, &format!("sets/{NS}/{set_name}")).await;
+        let found = stats
+            .split(':')
+            .find_map(|f| f.strip_prefix("tombstones="))
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        assert_eq!(found, tombstones, "{answer}: {stats}");
+        assert!(bins(&c1, &key).await.is_some(), "{answer}: the delete was shipped to dc1");
+
+        cleanup(&c1, &c2, set_name, &[key], &[]).await;
+    }
+
+    let _ = c2.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
+}
+
+/// Item 27 (R83): for a namespace with a binding, each cluster warns about its own outbound XDR settings
+/// that are not allowed, and about a bound set without `disable-eviction`, refusing nothing. `event-list`
+/// counts what the log warns of, so each setting is put on and taken off again here.
+#[aerospike_macro::test]
+async fn settings_a_binding_does_not_allow_are_warned_of() {
+    let Some((c1, c2)) = clients("settings_a_binding_does_not_allow_are_warned_of").await else { return };
+    let _guard = ns_lock().lock().await;
+    let package = &format!("probe_{}", common::rand_str(6));
+    let set_name = &format!("warn_{}", common::rand_str(6));
+    let key = as_key!(NS, set_name.as_str(), 1);
+    let warnings = |c: BTreeMap<(String, String), HashMap<String, String>>| -> u64 {
+        c.into_iter()
+            .find(|((set, _), _)| set == set_name)
+            .and_then(|(_, f)| f.get("settings-warnings").and_then(|v| v.parse().ok()))
+            .unwrap_or(u64::MAX)
+    };
+
+    register(&c2, PROBE, package).await;
+    seed_record(&c1, &c2, &key, &[as_bin!("base", 1)]).await;
+    bind(&c2, set_name, package, "probe", "").await;
+
+    // The count is the namespace's, so it is read against what it is once this set is settled.
+    let evicting = warnings(rows(&c2).await);
+
+    info_ok(&c2, &format!("set-config:context=namespace;id={NS};set={set_name};disable-eviction=true")).await;
+
+    let base = warnings(rows(&c2).await);
+
+    assert_eq!(evicting, base + 1, "a bound set that may be evicted is warned of");
+
+    let dc_ns = |setting: &str| format!("set-config:context=xdr;dc=dc1;namespace={NS};{setting}");
+
+    // `no-bins` is warned of too, but only a connector may ship it, so it cannot be set here.
+    for (on, off) in [
+        ("forward=true", "forward=false"),
+        ("bin-policy=changed-and-specified", "bin-policy=all"),
+        ("ignore-bin=secret", "reset-bin=secret"),
+    ] {
+        info_ok(&c2, &dc_ns(on)).await;
+
+        let warned = warnings(rows(&c2).await);
+
+        info_ok(&c2, &dc_ns(off)).await;
+
+        assert_eq!(warned, base + 1, "{on} is warned of");
+        assert_eq!(warnings(rows(&c2).await), base, "{off} takes the warning away");
+    }
+
+    // Whole-record replace while conflict-resolve-writes is on.
+    info_ok(&c2, &format!("set-config:context=namespace;id={NS};conflict-resolve-writes=true")).await;
+
+    let warned = warnings(rows(&c2).await);
+
+    info_ok(&c2, &format!("set-config:context=namespace;id={NS};conflict-resolve-writes=false")).await;
+    assert_eq!(warned, base + 1, "bin-policy all with write-policy auto while conflict-resolve-writes is on");
+    assert_eq!(warnings(rows(&c2).await), base);
+
+    // Warned of, not refused: the binding is still there and still merges.
+    c1.put(&write_policy(), &key, &[as_bin!("do", "r-ok"), as_bin!("n", 1)]).await.unwrap();
+    assert_eq!(wait_counter(&c2, set_name, "combined", 1).await, 1);
+
+    info_ok(&c2, &format!("set-config:context=namespace;id={NS};set={set_name};disable-eviction=false")).await;
+    cleanup(&c1, &c2, set_name, &[key], &[package]).await;
+}
+
+/// Item 30 (R86): a write that cannot conflict - the current record holds nothing but what the same source
+/// sent earlier, at or before the incoming write's time - is applied without calling the handler. A local
+/// write here makes the next one a merge again. Without a time no write is taken for one.
+#[aerospike_macro::test]
+async fn a_write_that_cannot_conflict_skips_the_handler() {
+    let Some((c1, c2)) = clients("a_write_that_cannot_conflict_skips_the_handler").await else { return };
+    let _guard = ns_lock().lock().await;
+    let package = &format!("probe_{}", common::rand_str(6));
+    let set_name = &format!("skip_{}", common::rand_str(6));
+    let key = as_key!(NS, set_name.as_str(), 1);
+    let write = write_policy();
+
+    register(&c2, PROBE, package).await;
+    bind(&c2, set_name, package, "probe", "").await;
+
+    // Without times: every write to the record is offered.
+    seed_record(&c1, &c2, &key, &[as_bin!("base", 1)]).await;
+    c1.put(&write, &key, &[as_bin!("do", "take-remote"), as_bin!("n", 1)]).await.unwrap();
+    assert_eq!(wait_counter(&c2, set_name, "fired", 1).await, 1);
+    assert_eq!(counter(&c2, set_name, "skipped").await, 0);
+
+    dc_ns_set(&c1, "dc2", NS, "ship-record-lut=true").await;
+
+    let result = async {
+        // dc2's record is now all dc1's: the next write from dc1 cannot conflict.
+        c1.put(&write, &key, &[as_bin!("do", "r-ok"), as_bin!("n", 2)]).await.unwrap();
+
+        let skipped = wait_counter(&c2, set_name, "skipped", 1).await;
+        let taken = wait_for(&c2, &key, SHIP_LAG, |b| b.as_ref().is_some_and(|b| b.get("n") == Some(&Value::from(2)))).await;
+        let fired = counter(&c2, set_name, "fired").await;
+
+        // A local write on dc2: dc1's next write is a merge again.
+        c2.put(&write, &key, &[as_bin!("mine", 1)]).await.unwrap();
+        shipped(&c1, NS).await;
+        aerospike_rt::sleep(Duration::from_secs(1)).await;
+        c1.put(&write, &key, &[as_bin!("do", "r-ok"), as_bin!("n", 3)]).await.unwrap();
+
+        let fired_after = wait_counter(&c2, set_name, "fired", fired + 1).await;
+
+        (skipped, taken, fired, fired_after)
+    }
+    .await;
+
+    dc_ns_set(&c1, "dc2", NS, "ship-record-lut=false").await;
+
+    let (skipped, taken, fired, fired_after) = result;
+
+    assert_eq!(skipped, 1, "a write that cannot conflict was offered");
+    assert!(taken.as_ref().is_some_and(|b| !b.contains_key("merged")), "the skipped write is the record: {taken:?}");
+    assert_eq!(fired, 1, "the skipped write was counted as fired");
+    assert_eq!(fired_after, fired + 1, "after a local write the next write is a merge");
+
+    cleanup(&c1, &c2, set_name, &[key], &[package]).await;
+}
+
+/// Item 7: the other cluster goes down under a merge. dc1's write to a record is held for five seconds;
+/// dc2's write lands on dc1 and is merged there first; dc2 is then killed, losing whatever it had not
+/// flushed, and comes back. dc1's ship of the merged record waits for it, reads the record when it goes, and
+/// carries dc1's change: both end on the same count.
+///
+/// This is not a retry. XDR does not retry against a cluster that has gone: it waits, and ships when the
+/// cluster is back. A retry needs the destination to answer a timeout, a busy key or an overloaded device,
+/// which a client cannot make it do; the retry reads the record's flag through the same
+/// `as_dc_should_submit` that recovery does, which the outage tests cover.
+///
+/// Stopping a cluster is not something a client can do, so this needs to be told how:
+/// `AEROSPIKE_XDR_DC2_KILL` and `AEROSPIKE_XDR_DC2_START` are shell commands (`podman kill asd-dc2`,
+/// `podman start asd-dc2`). Without them the test skips. Set them only to run this test on its own: it
+/// takes dc2 away from every other two-cluster test running at the same time.
+#[aerospike_macro::test]
+async fn a_merge_survives_the_other_cluster_going_down() {
+    let (Ok(kill), Ok(start)) = (env::var("AEROSPIKE_XDR_DC2_KILL"), env::var("AEROSPIKE_XDR_DC2_START")) else {
+        eprintln!("skipped a_merge_survives_the_other_cluster_going_down: AEROSPIKE_XDR_DC2_KILL and _START name no way to stop dc2");
+        return;
+    };
+    let Some((c1, c2)) = clients("a_merge_survives_the_other_cluster_going_down").await else { return };
+    let _guard = ns_lock().lock().await;
+    let package = &format!("counter_{}", common::rand_str(6));
+    let set_name = &format!("retry_{}", common::rand_str(6));
+    let key = as_key!("holdrec", set_name.as_str(), 1);
+    let write = write_policy();
+    let run = |command: &str| {
+        let status = std::process::Command::new("sh").arg("-c").arg(command).status().expect("the command");
+
+        assert!(status.success(), "{command} failed: {status:?}");
+    };
+
+    for c in [&c1, &c2] {
+        register(c, COUNTER, package).await;
+        assert_eq!(
+            info(c, &format!("event-set:event=xdr-merge;namespace=holdrec;set={set_name};module={package};function=merge_counter")).await,
+            "ok"
+        );
+    }
+
+    c1.execute_udf(&write, &key, package, "increment", &[Value::from("dc1"), Value::from(1)]).await.unwrap();
+    assert!(wait_for(&c2, &key, SHIP_LAG, |b| b.is_some()).await.is_some());
+
+    // The longest hold there is, so that dc2 is down before dc1's ship leaves.
+    dc_ns_set(&c1, "dc2", "holdrec", "hot-key-ms=5000").await;
+    dc_ns_set(&c1, "dc2", "holdrec", "delay-ms=5000").await;
+
+    // dc1's write is held; dc2's lands on dc1 and is merged; then dc2 goes down before dc1's ship leaves.
+    c1.execute_udf(&write, &key, package, "increment", &[Value::from("dc1"), Value::from(2)]).await.unwrap();
+    c2.execute_udf(&write, &key, package, "increment", &[Value::from("dc2"), Value::from(5)]).await.unwrap();
+
+    let deadline = Instant::now() + SHIP_LAG;
+
+    while counter_value(&c1, &key, package).await != Some(8) {
+        assert!(Instant::now() < deadline, "dc2's write was not merged on dc1");
+        aerospike_rt::sleep(Duration::from_millis(100)).await;
+    }
+
+    run(&kill);
+    aerospike_rt::sleep(Duration::from_secs(10)).await;
+    run(&start);
+    dc_ns_set(&c1, "dc2", "holdrec", "delay-ms=3000").await;
+    dc_ns_set(&c1, "dc2", "holdrec", "hot-key-ms=3000").await;
+
+    let deadline = Instant::now() + RECOVERY_LAG;
+
+    loop {
+        let (v1, v2) = (counter_value(&c1, &key, package).await, counter_value(&c2, &key, package).await);
+
+        if v1 == Some(8) && v2 == Some(8) && bins(&c1, &key).await == bins(&c2, &key).await {
+            break;
+        }
+
+        assert!(Instant::now() < deadline, "dc1 {v1:?}, dc2 {v2:?}");
+        aerospike_rt::sleep(Duration::from_millis(250)).await;
+    }
+
+    for c in [&c1, &c2] {
+        let _ = info(c, &format!("event-remove:event=xdr-merge;namespace=holdrec;set={set_name}")).await;
+        let _ = c.delete(&write, &key).await;
+        let _ = c.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
+    }
+}
+
+/// Item 28: the published example, the device map, through a five-second hold. dc1 holds its ships of
+/// `holdrec` for five seconds while both clusters change the same subscriber's devices; both end with the
+/// same devices, by value.
+#[aerospike_macro::test]
+async fn the_device_map_converges_through_a_five_second_hold() {
+    let Some((c1, c2)) = clients("the_device_map_converges_through_a_five_second_hold").await else { return };
+    let _guard = ns_lock().lock().await;
+    let mut rng = Rng(seed_for("the_device_map_converges_through_a_five_second_hold"));
+    let package = &format!("crdt_{}", common::rand_str(6));
+    let set_name = &format!("devs_{}", common::rand_str(6));
+    let keys: Vec<Key> = (0..3).map(|i| as_key!("holdrec", set_name.as_str(), i)).collect();
+    let write = write_policy();
+    let change = |state: &str| Value::from(HashMap::from([(Value::from("state"), Value::from(state))]));
+
+    for c in [&c1, &c2] {
+        register(c, CRDT, package).await;
+        assert_eq!(
+            info(c, &format!("event-set:event=xdr-merge;namespace=holdrec;set={set_name};module={package};function=xdr_merge")).await,
+            "ok"
+        );
+    }
+
+    dc_ns_set(&c1, "dc2", "holdrec", "hot-key-ms=5000").await;
+    dc_ns_set(&c1, "dc2", "holdrec", "delay-ms=5000").await;
+
+    for round in 0..rounds(20) {
+        let key = rng.pick(&keys);
+        let device = format!("device-{}", rng.below(4));
+        let state = *rng.pick(&["ACTIVE", "SUSPENDED", "LOST"]);
+        let c = if rng.below(2) == 0 { &c1 } else { &c2 };
+        let args = [Value::from(device.as_str()), change(state)];
+
+        c.execute_udf(&write, key, package, "update_device", &args)
+            .await
+            .unwrap_or_else(|e| panic!("round {round}: {e:?}"));
+
+        if rng.below(4) == 0 {
+            aerospike_rt::sleep(Duration::from_millis(rng.below(6000))).await;
+        }
+    }
+
+    for key in &keys {
+        let deadline = Instant::now() + RECOVERY_LAG;
+
+        loop {
+            let (b1, b2) = (bins(&c1, key).await, bins(&c2, key).await);
+
+            if b1 == b2 {
+                break;
+            }
+
+            assert!(Instant::now() < deadline, "{key:?}: dc1 {b1:?}, dc2 {b2:?}");
+            aerospike_rt::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    dc_ns_set(&c1, "dc2", "holdrec", "delay-ms=3000").await;
+    dc_ns_set(&c1, "dc2", "holdrec", "hot-key-ms=3000").await;
+
+    for c in [&c1, &c2] {
+        let _ = info(c, &format!("event-remove:event=xdr-merge;namespace=holdrec;set={set_name}")).await;
+
+        for key in &keys {
+            let _ = c.delete(&write, key).await;
+        }
+
+        let _ = c.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
+    }
+}
+
+/// Fuzz of items 20 and 26: random expirations on both clusters under random answers, records deleted and
+/// expunged by the handler. Whatever the order, a merged record expires at the later of the two
+/// expirations, never-expire winning.
+#[aerospike_macro::test]
+async fn fuzz_expirations_through_merges() {
+    let Some((c1, c2)) = clients("fuzz_expirations_through_merges").await else { return };
+    let _guard = ns_lock().lock().await;
+    let mut rng = Rng(seed_for("fuzz_expirations_through_merges"));
+    let package = &format!("probe_{}", common::rand_str(6));
+    let set_name = &format!("fttl_{}", common::rand_str(6));
+    let choices = [
+        Expiration::Seconds(DAY),
+        Expiration::Seconds(2 * DAY),
+        Expiration::Seconds(3 * DAY + 7),
+        Expiration::Never,
+    ];
+    let mut keys = Vec::new();
+    let mut wrong = Vec::new();
+
+    register(&c2, PROBE, package).await;
+    bind(&c2, set_name, package, "probe", "").await;
+
+    for round in 0..rounds(40) {
+        let key = as_key!(NS, set_name.as_str(), round as i64);
+        let (current, incoming) = (*rng.pick(&choices), *rng.pick(&choices));
+        let answer = *rng.pick(&["r-ok", "take-remote", "policy", "m-take", "r-kinds", "keep-local", "trap"]);
+
+        keys.push(key.clone());
+        c1.put(&with_ttl(current), &key, &[as_bin!("base", 1)]).await.unwrap();
+        assert!(wait_for(&c2, &key, SHIP_LAG, |b| b.is_some()).await.is_some());
+
+        let fired = counter(&c2, set_name, "fired").await;
+
+        c1.put(&with_ttl(incoming), &key, &[as_bin!("do", answer), as_bin!("n", round as i64)]).await.unwrap();
+        wait_counter(&c2, set_name, "fired", fired + 1).await;
+        shipped(&c1, NS).await;
+
+        // A record kept as it was keeps its own expiration; any other keeps the later of the two.
+        let want = if ["keep-local", "trap"].contains(&answer) {
+            later(current, current)
+        } else {
+            later(current, incoming)
+        };
+        let got = ttl_of(&c2, &key).await;
+
+        if !ttl_is(got, want) {
+            wrong.push(format!("round {round} {answer}: {current:?} then {incoming:?}: dc2 holds {got:?}, wanted {want:?}"));
+        }
+    }
+
+    cleanup(&c1, &c2, set_name, &keys, &[package]).await;
+    assert!(wrong.is_empty(), "\n  {}", wrong.join("\n  "));
+}
+
+/// Fuzz of items 22, 23, 26 and 30: registers - each bin decided by its own time and source - written at
+/// random on both clusters, on `holdbc`, where dc1 holds its ships for three seconds and the namespace
+/// converges bins for every set but this one. Under the writes, `conflict-resolve-writes` is turned off
+/// and on (R28), `ship-record-lut` comes and goes (R32, and with it writes that cannot conflict, R86), and
+/// the binding is set again. A handler that decides by time converges only when both clusters hold the
+/// same time for the same value (R31, R33): every record must end the same on both.
+#[aerospike_macro::test]
+async fn fuzz_registers_through_holds_and_settings() {
+    let Some((c1, c2)) = clients("fuzz_registers_through_holds_and_settings").await else { return };
+    let _guard = ns_lock().lock().await;
+    let seed = seed_for("fuzz_registers_through_holds_and_settings");
+    let mut rng = Rng(seed);
+    let package = &format!("registers_{}", common::rand_str(6));
+    let set_name = &format!("regs_{}", common::rand_str(6));
+    let ns = "holdbc";
+    let keys: Vec<Key> = (0..4).map(|i| as_key!(ns, set_name.as_str(), i)).collect();
+    let write = write_policy();
+    let bind_regs = format!("event-set:event=xdr-merge;namespace={ns};set={set_name};module={package};function=merge_settings");
+    let mut crw = [true, true];
+    let mut record_lut = false;
+
+    for c in [&c1, &c2] {
+        register(c, REGISTERS, package).await;
+        assert_eq!(info(c, &bind_regs).await, "ok");
+    }
+
+    for round in 0..rounds(80) {
+        match rng.below(14) {
+            0 => {
+                let side = rng.below(2) as usize;
+
+                crw[side] = !crw[side];
+                info_ok(if side == 0 { &c1 } else { &c2 }, &format!("set-config:context=namespace;id={ns};conflict-resolve-writes={}", crw[side])).await;
+            }
+            1 => {
+                record_lut = !record_lut;
+
+                for (c, dc) in [(&c1, "dc2"), (&c2, "dc1")] {
+                    dc_ns_set(c, dc, ns, &format!("ship-record-lut={record_lut}")).await;
+                }
+            }
+            2 => {
+                assert_eq!(info(if rng.below(2) == 0 { &c1 } else { &c2 }, &bind_regs).await, "ok", "round {round}");
+            }
+            _ => {
+                let key = rng.pick(&keys);
+                let c = if rng.below(2) == 0 { &c1 } else { &c2 };
+                let bin = *rng.pick(&["theme", "lang", "email"]);
+                let value = if rng.below(8) == 0 { Value::Nil } else { Value::from(format!("v{round}")) };
+                let deletes = value == Value::Nil;
+                let answer = c.put(&write, key, &[Bin::new(bin, value)]).await;
+
+                // A local write to a bound record is never refused as a lost conflict (R28). Deleting the
+                // only bin of a record that is not there answers "not found", as it always has.
+                let not_there = deletes && matches!(&answer, Err(e) if e.matches(&[ResultCode::KeyNotFoundError]));
+
+                assert!(answer.is_ok() || not_there, "seed {seed} round {round}: {answer:?}");
+            }
+        }
+
+        if rng.below(5) == 0 {
+            aerospike_rt::sleep(Duration::from_millis(rng.below(4000))).await;
+        }
+    }
+
+    for key in &keys {
+        let deadline = Instant::now() + RECOVERY_LAG;
+
+        loop {
+            let (b1, b2) = (bins(&c1, key).await, bins(&c2, key).await);
+
+            if b1 == b2 {
+                break;
+            }
+
+            assert!(Instant::now() < deadline, "seed {seed}: {key:?}: dc1 {b1:?}, dc2 {b2:?}");
+            aerospike_rt::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    for (i, c) in [&c1, &c2].into_iter().enumerate() {
+        if !crw[i] {
+            info_ok(c, &format!("set-config:context=namespace;id={ns};conflict-resolve-writes=true")).await;
+        }
+
+        let _ = info(c, &format!("event-remove:event=xdr-merge;namespace={ns};set={set_name}")).await;
+
+        for key in &keys {
+            let _ = c.delete(&write, key).await;
+        }
+
+        let _ = c.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
+    }
+
+    if record_lut {
+        for (c, dc) in [(&c1, "dc2"), (&c2, "dc1")] {
+            dc_ns_set(c, dc, ns, "ship-record-lut=false").await;
+        }
+    }
 }

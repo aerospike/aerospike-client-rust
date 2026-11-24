@@ -224,7 +224,7 @@ is building has a key. The host answers for the map it holds, so nothing is pack
 Go modules, with SIMD lane kernels. Its record UDF and signatures:
 
 ```c
-{{#include ../../../wasm-c/examples/vector/vector.c:386:409}}
+{{#include ../../../wasm-c/examples/vector/vector.c:record}}
 ```
 
 > **A GeoJSON bin is saved only if it is GeoJSON.** Staging takes any text; the save builds the

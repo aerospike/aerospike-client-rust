@@ -56,7 +56,7 @@ statics.
 `examples/ledger` ends with a stream over accounts:
 
 ```rust
-{{#include ../../../wasm-rust/examples/ledger/src/lib.rs:118:145}}
+{{#include ../../../wasm-rust/examples/ledger/src/lib.rs:stream}}
 ```
 
 ## The vector top-k

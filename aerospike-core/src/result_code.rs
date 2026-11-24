@@ -119,6 +119,11 @@ pub enum ResultCode {
     /// Write can't complete until XDR finishes shipping.
     XdrKeyBusy,
 
+    /// An incoming XDR write to a record bound to an `xdr-merge` handler was not merged: the handler
+    /// failed, or the write could not be offered to it, and the binding's on-failure is `abandon`. The
+    /// record is unchanged; the sub-code says why. An XDR source counts these as `merge_abandoned`.
+    XdrMergeAbandoned,
+
     /// Transaction record blocked by another transaction.
     MrtBlocked,
 
@@ -309,6 +314,7 @@ impl ResultCode {
             28 => ResultCode::LostConflict,
             29 => ResultCode::InvalidEncoding,
             32 => ResultCode::XdrKeyBusy,
+            33 => ResultCode::XdrMergeAbandoned,
             120 => ResultCode::MrtBlocked,
             121 => ResultCode::MrtVersionMismatch,
             122 => ResultCode::MrtExpired,
@@ -400,6 +406,9 @@ impl ResultCode {
             ResultCode::InvalidEncoding => String::from("Invalid UTF-8 encoding"),
             ResultCode::XdrKeyBusy => {
                 String::from("Write can't complete until XDR finishes shipping")
+            }
+            ResultCode::XdrMergeAbandoned => {
+                String::from("XDR write abandoned: its xdr-merge handler failed")
             }
             ResultCode::MrtBlocked => {
                 String::from("Transaction record blocked by another transaction")
@@ -503,6 +512,7 @@ impl From<ResultCode> for u8 {
             ResultCode::LostConflict => 28,
             ResultCode::InvalidEncoding => 29,
             ResultCode::XdrKeyBusy => 32,
+            ResultCode::XdrMergeAbandoned => 33,
             ResultCode::MrtBlocked => 120,
             ResultCode::MrtVersionMismatch => 121,
             ResultCode::MrtExpired => 122,

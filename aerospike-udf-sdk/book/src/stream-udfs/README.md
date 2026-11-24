@@ -50,19 +50,21 @@ while let Some(record) = stream.next().await {
 }
 ```
 
-## No deadline
+## A deadline per batch
 
-A record UDF is stopped by its transaction's timeout. A stream UDF has no deadline from the query, so a
-stream that loops holds a query thread. Write the end function to be bounded by what it saw.
+A record UDF is stopped by its transaction's timeout. A query gives an aggregation no deadline, so a
+stream UDF is on a clock of its own: each batch of records, and the final call, may run for
+`stream-timeout-ms` (10 seconds by default; see [Configuration](../configuration.md)). Past it the guest
+is stopped and the query fails. The time covers reading the batch's records as well as the guest's work
+on them. A stream is also stopped the moment its query is aborted. Write the end function to be bounded
+by what it saw.
 
 ## SIMD
 
-A stream UDF is where the server's SIMD support pays: the three vector kernels, written as four-lane sums
-with a fixed fold order, measure level with a native plugin in C and within 1.3x in Rust and Go. A module
-that uses `simd128` cannot run in the interpreter, so its first call waits for its ahead-of-time build
-rather than running slow; `aot-compile-threads` is what bounds that wait.
-
-SIMD is opt-in in every SDK build: `make SIMD=1` for C, C++ and Go, `RUSTFLAGS="-C target-feature=+simd128"`
-for Rust. Off, the same source runs scalar on every server; on, the module is refused at registration by a
-server whose tier has no SIMD at all, which is Fast JIT, the x86-64 default. Build with it for aarch64 and
-aot nodes. The modules checked in under `tests/fixtures/wasm` are the scalar builds.
+SIMD is opt-in in every SDK build, and off by default: `make SIMD=1` for C, C++ and Go,
+`RUSTFLAGS="-C target-feature=+simd128"` for Rust. A module built with it is refused at registration on
+an x86-64 node, whose Fast JIT has no SIMD, and on an aarch64 node the interpreter traps on the SIMD
+instructions it does not implement. So build without it: the same source runs scalar on every server.
+The vector kernels were written as four-lane sums with a fixed fold order for the ahead-of-time tier,
+where they measured level with a native plugin in C and within 1.3x in Rust and Go; no default build
+runs that tier now. The modules checked in under `tests/fixtures/wasm` are the scalar builds.

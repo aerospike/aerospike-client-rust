@@ -115,9 +115,13 @@ Two settings elsewhere matter to it:
 
 - **Security.** On an Enterprise server with security enabled, `event-set` and `event-remove` need the
   `event-admin` privilege, which is part of `data-admin`. A fresh node's bootstrap `admin` user has only
-  `user-admin`; grant it `data-admin` (and `read-write-udf`, to register modules) and log in again, since
-  a session's permissions refresh every few minutes. The listing commands need nothing.
+  `user-admin`; grant it `data-admin`, which also carries `udf-admin`, the permission registering a module
+  needs (and `read-write-udf` to call one), and log in again, since a session's permissions refresh every
+  few minutes. The listing commands need nothing.
 - **XDR.** The event needs to know which cluster wrote what. This cluster's `xdr` stanza must have a
   `src-id`, or `event-set` refuses the binding, and the cluster that ships to it must have one too:
   every source with an `src-id` sends it with every record and every delete, with nothing more to
-  configure.
+  configure. A handler that decides by time also needs times: `ship-bin-luts` with changed-bins shipping,
+  or `ship-record-lut true`, which sends the record's time with every write and delete. The settings a
+  binding requires and the ones it does not allow are in
+  [Deployment](events/README.md#deployment); each cluster warns about its own.

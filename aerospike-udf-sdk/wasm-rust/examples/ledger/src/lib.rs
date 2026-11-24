@@ -1,3 +1,4 @@
+// ANCHOR: module
 //! A ledger: the UDFs a payments service might ship, written to be read.
 //!
 //! The fixture beside this (`examples/udf`) exists to be asserted against by the test suite, which makes it
@@ -101,6 +102,7 @@ export! {
     }
 }
 
+// ANCHOR: stream
 // An aggregation shares one instance across the records a node streams through it, so its running totals
 // are plain statics. `end` returns the node's partial; a client sums the partials.
 static mut TOTAL: i64 = 0;
@@ -129,6 +131,7 @@ stream! {
         }
     }
 }
+// ANCHOR_END: stream
 
 /// A `no_std` cdylib needs a panic handler. A trap, which the host reports with the function's name, is
 /// more useful than anything a guest could say for itself.
@@ -136,3 +139,4 @@ stream! {
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     core::arch::wasm32::unreachable()
 }
+// ANCHOR_END: module

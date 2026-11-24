@@ -118,36 +118,37 @@ event! {
         let pair = Pair::of(current, incoming);
         let out = as_udf::map(4)?;
         if let Some(visits) = pair.int("visits")?.max() { out.insert("visits", visits)?; }
-        Ok(Resolution::Record { bins: pair.with_newer(out)?, ttl: None })
+        Ok(Resolution::Record { bins: pair.with_newer(out)? })
     }
 }
 ```
 
-`EventRecord` is a read-only record with its metadata (`ttl`, `source_id`, and per bin `bin_last_update_time`
-and `bin_source_id` where the server keeps them) and bins read as `Option`s, since on either side a bin may
-not exist. What the server knows about the merge is asked of the record it is true of:
-`incoming.is_delete()`, `incoming.is_partial()`, `current.is_tombstone()`, and on either
-`uses_bin_convergence()`.
+`EventRecord` is a read-only record with its metadata (`source_id`, and per bin `bin_last_update_time`
+and `bin_source_id`, which the server gives for every bin of both sides) and bins read as `Option`s, since on
+either side a bin may not exist. What the server knows about the merge is asked of the record it is true of:
+`incoming.is_delete()`, `incoming.is_partial()` and `current.is_tombstone()`.
 `Pair::of(current, incoming)` reads a bin from both
 sides into a `Both<T>` with the merges a resolver reaches for: `max`, `min`, `sum`, `merge(f)`, `newer`,
 `older`, `ordered()` (`sum` answers nothing when neither side has the bin, as `max` and `min` do, and
 wraps), and its two members are
-`current` and `incoming`. `Resolution` is `KeepLocal`, `TakeRemote`, `Policy`, `Delete` or
-`Record { bins, ttl }`, where the bins are the whole record; a record equal to the current one writes
-nothing.
+`current` and `incoming`. `Resolution` is `KeepLocal`, `TakeRemote`, `Policy`, `Delete`, `Expunge` or
+`Record { bins }`, where the bins are the whole record; a record equal to the current one writes
+nothing. `Delete` removes the record and leaves a durable tombstone, so a late write cannot bring it back;
+`Expunge` removes it outright, with no tombstone. Neither is shipped to the other cluster. A handler
+answers no TTL: the merged record takes the later of the two records' expirations.
 
 Two rules, enforced by nothing but the two DCs disagreeing forever if they are broken. **Pure**: no clock
 (`now()` fails in a handler), no other records, no record-level last update time or generation (the payload carries
 none). **Convergent**: DC A merges (A's record, B's write) while DC B merges (B's record, A's write), and
 the answers must match, in any delivery order and however many times a write is delivered. There are two
 ways to keep it. The time-based way: `newer`/`older`/`ordered` order the sides by a bin's own last update time and then
-source id, the way the server's bin convergence does, which is symmetric where "mine first" is not, and
+source id, which is symmetric where "mine first" is not, and
 is why `EventRecord::with_bins` carries a warning and `Pair::with_newer` is the one to use; `examples/resolver`
 is this. The data-only way: versions and removal markers in the record itself, with
 `Value::cmp_stored` (the stored bytes of two values compared) as the tie-break, so the merge is a function
 of the data alone; `examples/counter` (a grow-only counter, the smallest possible), `examples/pncounter` (the same with a second
 map, so it can go down), `examples/twopset` (a set with removals), `examples/lwwset` (a set with re-adds, on
-a clock) and `examples/crdt` are this, and the book's CRDT tutorial walks them in that order. Its last step, `examples/registers`, is the first way done explicitly: a merge that reads `bin_last_update_time` and `bin_source_id` bin by bin, on a namespace with bin convergence, beside one bin it merges on the data. The server's dry run (`execute_udf` on package `__event__`,
+a clock) and `examples/crdt` are this, and the book's CRDT tutorial walks them in that order. Its last step, `examples/registers`, is the first way done explicitly: a merge that reads `bin_last_update_time` and `bin_source_id` bin by bin, beside one bin it merges on the data. The server's dry run (`execute_udf` on package `__event__`,
 function `xdr-merge`, arguments `[incoming bins, incoming metadata, other bins?, other metadata?]`) runs a handler against
 a real record and reports `symmetric`, `idempotent` and, given the third record, `associative`.
 

@@ -913,9 +913,9 @@ public final class ApiTest {
         out.put("c_del", current.deletedBins().asValue());
         out.put("i_del", incoming.deletedBins().asValue());
 
-        out.put("c_meta", Udf.list(6).add(current.generation()).add(current.lastUpdateTime()).add(current.ttl())
-                .add(current.sourceId()).add(current.isTombstone()).add(current.usesBinConvergence()));
-        out.put("i_meta", Udf.list(6).add(incoming.generation()).add(incoming.lastUpdateTime()).add(incoming.ttl())
+        out.put("c_meta", Udf.list(5).add(current.generation()).add(current.lastUpdateTime())
+                .add(current.sourceId()).add(current.isTombstone()).add(current.isPartial()));
+        out.put("i_meta", Udf.list(5).add(incoming.generation()).add(incoming.lastUpdateTime())
                 .add(incoming.sourceId()).add(incoming.isDelete()).add(incoming.isPartial()));
         out.put("blut", Udf.list(2).add(current.binLastUpdateTime("s")).add(incoming.binLastUpdateTime("s")));
         out.put("bsrc", Udf.list(2).add(current.binSourceId("s")).add(incoming.binSourceId("s")));

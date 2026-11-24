@@ -37,8 +37,9 @@ has none. `Get(name)` and the typed readers `Int(name)`, `Double`, `Bool`, `Stri
 an error with `Status` `udf.TypeMismatch` for a bin of another kind; `IntOr(name, dflt)`, `DoubleOr` and
 `BoolOr` answer the default for an absent bin only. `BinNames()` ranges over the record's bin names and
 `DeletedBins()` over the names of the bins that side deleted; `Deleted(name)` asks after one. `rec.BinLastUpdateTime(name)` and `rec.BinSourceID(name)` are when the bin was last written and
-by which cluster, and fall back to the record's values where the server keeps none per bin.
-`rec.Generation()`, `LastUpdateTime()`, `TTL()` and `SourceID()` are its metadata.
+by which cluster. The server gives them for every bin of both sides; a bin a side neither has nor deleted
+falls back to the record's values. `rec.Generation()`, `LastUpdateTime()` and `SourceID()` are its
+metadata.
 
 What the server says of the merge itself is on the record it is true of:
 
@@ -47,9 +48,8 @@ What the server says of the merge itself is on the record it is true of:
 | `IsDelete()` | `incoming` | the incoming write is a record delete, so `incoming` has no bins |
 | `IsPartial()` | `incoming` | the incoming write carries only the bins that changed, so a bin it lacks may well exist on the other cluster |
 | `IsTombstone()` | `current` | the current record exists but has no bins |
-| `UsesBinConvergence()` | either | per-bin timestamps are meaningful: a time-based merge checks it before trusting `BinLastUpdateTime` |
 
-Asked of the other record, the first four answer false, or range over nothing.
+Asked of the other record, they answer false.
 
 Those reading methods are the `udf.RecordReader` interface, which the `*udf.Record` of a record UDF
 implements too. A helper written over it serves both:
@@ -90,12 +90,14 @@ uses `Pair.WithNewer` instead.
 
 | Directive | Parameters | Returns |
 | --- | --- | --- |
-| `//udf:on xdr-merge` | `current, incoming *udf.EventRecord` | `udf.Resolution`: `KeepLocal()`, `TakeRemote()`, `Policy()`, `DeleteRecord()`, `Resolve(bins)`, `ResolveTTL(bins, ttl)` |
+| `//udf:on xdr-merge` | `current, incoming *udf.EventRecord` | `udf.Resolution`: `KeepLocal()`, `TakeRemote()`, `Policy()`, `DeleteRecord()`, `Expunge()`, `Resolve(bins)` |
 
 The handler returns `(udf.Resolution, error)`. `Resolve` takes a `*udf.Map`; a bin absent from it, or nil,
-is deleted. A TTL is in seconds, 0 for the namespace default; `Resolve` keeps the one the incoming write
-asked for. `DeleteRecord()` removes the record on this cluster, and a record resolution with no bins left
-in it is not that: it is the handler's failure. `udf.CmpStored` / `StoredBytes` compare stored bytes for a data-only
+is deleted. No answer carries a TTL: the merged record takes the later of the two records' expirations,
+and a record that never expires wins. `DeleteRecord()` removes the record on this cluster and leaves a
+durable tombstone, so a late write cannot bring it back; `Expunge()` removes it outright, with no
+tombstone. Neither is shipped to the other cluster. A record resolution with no bins left in it is not a
+delete: it is the handler's failure. `udf.CmpStored` / `StoredBytes` compare stored bytes for a data-only
 tie-break: `CmpStored` answers exactly -1, 0 or 1, or an error with `Status` `udf.TypeMismatch` for a
 value that is not stored (a scalar, a value the guest built).
 
@@ -104,7 +106,7 @@ value that is not stored (a scalar, a value the guest built).
 `udf.PairOf(current, incoming)` is the two records side by side, a `udf.Pair`, which reads them bin by bin
 into a `udf.Both[T]`, the Rust SDK's `Pair` and `Both`: `pair.Int(name)`, `Double`, `Bool`, `String`, `Blob`, `Bytes`, `List`, `Map` and `Bin` give the bin on each side (`Current`,
 `Incoming`, with `HasCurrent` and `HasIncoming`), or an error when a side holds another kind, and `Both` carries the merges a resolver reaches for:
-`IncomingIsNewer()`, by the bin's last update time and then source id, the order the server's own bin convergence uses;
+`IncomingIsNewer()`, by the bin's last update time and then source id;
 `Newer()` and `Older()`; `Ordered()` as (older, newer); `Merge(f)`; `CurrentOrIncoming()`, `IncomingOrCurrent()`.
 `udf.Max`, `udf.Min` and `udf.Sum` are functions over a `Both`, since a method cannot add the ordering
 constraint; `Sum`, like `Max` and `Min`, answers false when neither side has the bin, and an integer sum
@@ -131,7 +133,7 @@ if err != nil {
 if latest, ok := profile.Newer(); ok { // last writer wins, by last update time
 	out.Put("profile", latest)
 }
-return udf.Resolve(pair.WithNewer(out)), out.Err() // the rest as the policy would have kept it
+return udf.Resolve(pair.WithNewer(out)), out.Err() // the rest to the last writer of each
 ```
 
 ## The raw form

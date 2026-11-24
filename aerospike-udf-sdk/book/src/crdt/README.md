@@ -7,7 +7,7 @@ merge is a function of the two copies alone, so that both clusters compute the s
 the writes arrive in and however many times a write is delivered. Those structures are **CRDTs**,
 conflict-free replicated data types, and the `xdr-merge` event is where their merge runs.
 
-The tutorial is five steps. Each step is one record layout, one merge handler, the write UDFs that keep
+The tutorial is six steps. Each step is one record layout, one merge handler, the write UDFs that keep
 the record in the shape the merge expects, and the test that proves the laws on real bytes. Each step
 lifts exactly one limit of the step before, and each is written in Rust, Java, Go and C++ on the same
 page, so the shape of the idea stays in view while the language changes.
@@ -56,8 +56,8 @@ bound handler is given the local record and the incoming one, and answers a `Res
 keep the local record, take the remote one, defer to the policy, or write a record of its own. Every
 step here answers with a record of its own, built from the two.
 
-Every merge runs on both sides, because the merged record ships back. The loop ends because a merge that
-reproduces the stored bytes is not written and is reported to the source as a success:
+Every merge runs on both sides, each on the other's write, and the merge itself ships nothing. That is
+why it has to be convergent: the two clusters reach the same record only by computing it the same way:
 
 {{#include diagrams/intro-merge-loop.svg}}
 
@@ -78,7 +78,7 @@ it show the handler form each SDK gives it.
 | [3](twopset.md) | 2P-Set, two lists | union, twice | tombstones: a removal is data that beats an add | add a removed tag back; the tombstones grow forever |
 | [4](lwwset.md) | LWW-Element-Set, two maps of stamps | per-tag maximum, twice | a stamp per element, so the later write wins and a tag can return; the tie bias | trust the clock; purge the tombstones |
 | [5](device-map.md) | the device map | per-device versions, removal markers, a horizon, a byte tie-break | application-raised versions instead of a clock, a purge horizon, a version floor | |
-| [6](registers.md) | a record of LWW-Registers, one per bin | the later stamp per bin, read from the server; a maximum for one bin | the per-bin last-update times and source ids a bin-convergence namespace keeps, so a register needs no stamps of its own and no write UDF | merge inside a bin; do without the clock |
+| [6](registers.md) | a record of LWW-Registers, one per bin | the later stamp per bin, read from the server; a maximum for one bin | the per-bin last-update times and source ids the server keeps for every bin, so a register needs no stamps of its own and no write UDF | merge inside a bin; do without the clock |
 
 Steps 1 and 2 are about ten lines of logic each and establish the shape: a table gathered from both
 sides, a merge that keeps the larger entry, write UDFs that only ever add. Step 3 changes the merge from

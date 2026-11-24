@@ -102,7 +102,7 @@ event! {
         // Everything else is the newer side's - the policy's answer for a bin this handler has no opinion
         // on. `current.with_bins(out)` would read more naturally and be wrong: it prefers a side, and the
         // other DC prefers the other side.
-        Ok(Resolution::Record { bins: pair.with_newer(out)?, ttl: None })
+        Ok(Resolution::Record { bins: pair.with_newer(out)? })
     }
 }
 

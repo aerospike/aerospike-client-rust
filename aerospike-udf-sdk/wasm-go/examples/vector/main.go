@@ -351,6 +351,7 @@ func offer(rec *udf.Record, score float64) bool {
 	return true
 }
 
+// ANCHOR: stream
 // Record is the per-record half, in the raw form, with the record first.
 func (t *TopK) Record(rec *udf.Record, handle, argc int32) int32 {
 	if !topk.configured {
@@ -411,7 +412,9 @@ func (t *TopK) End(handle, argc int32) int32 {
 	}
 	return 0
 }
+// ANCHOR_END: stream
 
+// ANCHOR: record
 // The distance from this record's vector to the query: one record, one number, nil for no such vector.
 //
 //udf:function vec_distance params="(bin: str, query: bytes, metric: str)"
@@ -430,5 +433,6 @@ func vecDistance(rec *udf.Record, handle, argc int32) int32 {
 	}
 	return 0
 }
+// ANCHOR_END: record
 
 func main() {}

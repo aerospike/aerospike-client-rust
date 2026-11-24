@@ -15,15 +15,16 @@ licence to register modules from people the cluster does not trust.
 - **Registering a module** needs the UDF admin permission, the same one Lua registration needs.
 - **Binding a module to an event** needs a separate event admin permission, for `event-set` and
   `event-remove`. Listing bindings needs none.
-- **Calling a record UDF** needs what calling a Lua UDF needs: the caller's write permission on the
-  record.
+- **Calling a record UDF** needs what calling a Lua UDF needs: the UDF-apply permission, which the
+  `read-write-udf` role has, on the record's namespace or set. A UDF call is checked for that permission,
+  not for the write permission.
 - The `xdr-merge` event is an Enterprise feature gated by a feature key, and **that check is commented out
   for now**, because no issued key carries it yet. Until it is restored, an Enterprise server with any
   key accepts event bindings.
 
 The machine is inside the trust boundary. Anyone who can write to the server's directories can replace
-the server itself, so files on disk are trusted, with one consequence spelled out under *The compiled
-cache* below.
+the server itself, so files on disk are trusted, with one consequence, for a server built with the
+ahead-of-time tier, spelled out under *The compiled cache* below.
 
 ## What a guest can reach
 
@@ -57,8 +58,8 @@ The hardware variant, guard pages and a signal handler, is disabled in this runt
 relies on signal handlers and a memory layout, and the server installs its own handlers for crash
 reporting. The software check cannot interfere with that.
 
-For a module compiled ahead of time, the checks are emitted by the compiler, so what the compiler is
-told is part of the sandbox. On a 64-bit target the compiler's own default is to emit **no** software
+On the ahead-of-time tier, which no default build runs (see *The ahead-of-time tier* below), the checks
+are emitted by the compiler, so what the compiler is told is part of the sandbox. On a 64-bit target the compiler's own default is to emit **no** software
 bounds checks and rely on the hardware trap this runtime does not have. The engine therefore always
 passes `--bounds-checks=1` and `--stack-bounds-checks=1`, and never leaves it to the default. The same
 option text is covered by the keyed tag that ties a compiled file to its bytecode (see *The compiled
@@ -142,8 +143,8 @@ handle the call did not create. Found while making the account below balance.
 | Calls the watchdog can track at once | 1,024 | fixed |
 | Handles per call | as many as the call's memory holds | `max-memory`; no separate ceiling |
 | Arguments per call | 128 | fixed; more fails the call |
-| Queued compiles | 256, deduplicated by module | fixed; never fewer than `max-modules`, so a registration cannot find it full |
-| Compiler processes at once | 1 to 8 | `aot-compile-threads`, when the tier reads it |
+| Queued compiles, ahead-of-time tier only | 256, deduplicated by module | fixed; never fewer than `max-modules`, so a registration cannot find it full |
+| Compiler processes at once, ahead-of-time tier only | 1 to 8 | fixed at 1: `aot-compile-threads` is not read |
 
 `max-memory` is checked by the server against what a module declares, before it is loaded. The runtime
 is given the same figure as its cap, but takes it as a cap on growth only: a module that declared more
@@ -210,7 +211,15 @@ Registration does **not** check that the module's imports resolve or that it exp
 function; a function name is not part of a registration. A module the server cannot run registers
 successfully and fails at its first call, with the reason.
 
-## The compiler
+## The ahead-of-time tier
+
+No default build compiles a module ahead of time, and the configuration cannot switch it on: the
+`aot-compiler`, `aot-cache-dir` and `aot-compile-threads` keys are not read (see
+[How the engine runs a module](engine.md#the-tiers)). The two sections below describe the compiler and
+its cache as they are in the engine's source, for a server built with `make WAMR_TIER=aot`; on the Fast
+JIT and the interpreter none of it runs, and nothing compiled is written to disk.
+
+### The compiler
 
 Ahead-of-time compilation runs `wamrc` as a separate process, forked and executed directly rather than
 through a shell. Module names come from clients, and a shell would turn a metacharacter in a name into
@@ -236,7 +245,7 @@ If any of that cannot be set up, the compiler is not run and the module stays in
 is a list of refusals, not of permissions: LLVM's legitimate calls are many and vary by version, and a
 permission list that missed one would fail every build.
 
-## The compiled cache
+### The compiled cache
 
 A compiled file is machine code, so the cache directory is treated like a directory of shared
 libraries.
@@ -386,20 +395,21 @@ do, and each must end in an error with the server still serving and the record i
 | `bad_indirect` | calls through a table slot that is not there | trapped | trapped, "undefined element" |
 | `spin` | loops without end | stopped by the deadline | stopped by the deadline, "terminated by user" |
 
-Measured on 2026-11-16 on aarch64, the compiled column with the patched compiler described below. On
-the Fast JIT, on x86-64, every row is the same as the compiled column (2026-11-22). The limits suite
-adds a loop closed by a conditional branch, `loop { br_if 0 (1) }`, as a record and as a stream UDF,
-which the unpatched Fast JIT could not stop (see below).
-Every case runs twice, before and after the background compile, so a server that compiles is tested on
-compiled code.
+Measured on 2026-11-16 on aarch64, the compiled column on the ahead-of-time tier with the patched
+compiler described below. On the Fast JIT, on x86-64, the tier a default server runs compiled, every row
+is the same as the compiled column (2026-11-22). The limits suite adds a loop closed by a conditional
+branch, `loop { br_if 0 (1) }`, as a record and as a stream UDF, which the unpatched Fast JIT could not
+stop (see below). Every case runs twice, so that a server that compiles in the background, as the
+ahead-of-time tier does, is tested on compiled code too.
 
 ## Limitations and open concerns
 
 These are the places the design is weaker than the sections above might suggest. Each has an entry in
 `WASM_SECURITY_TODO.md`.
 
-**The deadline depends on patched code, in the compiler and in the runtime.** Terminating an instance only sets a
-flag. The interpreter and the Fast JIT poll it. Stock `wamrc` emits the poll only for a module that
+**The deadline depends on patched code, in the runtime, and in the compiler of the ahead-of-time tier.**
+Terminating an instance only sets a flag. The interpreter and the Fast JIT poll it. On the ahead-of-time
+tier, which no default build runs, stock `wamrc` emits the poll only for a module that
 declares a shared memory, which no UDF does, so a looping guest compiled by it holds its transaction
 thread past the timeout: the suite's `spin` row failed exactly that way. The server tree carries one
 compiler patch, `modules/mod-wamr/patches/0001-wamrc-terminate-check.patch`, which adds

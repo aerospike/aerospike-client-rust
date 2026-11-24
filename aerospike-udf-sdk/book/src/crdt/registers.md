@@ -2,9 +2,9 @@
 
 [Step 4](lwwset.md) kept a timestamp for every element inside the record, written by its own UDFs, and
 [step 5](device-map.md) replaced the clock with versions the application raises. This step goes the
-other way and lets the server keep the stamps. On a namespace with bin convergence the server already
-records, for every bin, when it was last written and by which cluster. An `xdr-merge` handler can read
-both, and that pair is all a last-writer-wins register needs.
+other way and lets the server keep the stamps. The server already records, for every bin, when it was
+last written and by which cluster, and gives both to an `xdr-merge` handler for every bin of both sides.
+That pair is all a last-writer-wins register needs.
 
 The module is the smallest in the tutorial that reads `bin_last_update_time` and `bin_source_id`, and it
 is the one to read before writing a merge that mixes the server's stamps with data of your own.
@@ -24,8 +24,7 @@ pair (last-update time, source id), compared by time first and then by id, so tw
 millisecond on two clusters still have an order, and both clusters agree on it. The merge of two
 registers is the one with the later stamp.
 
-A deleted bin keeps its stamp. Under bin convergence the server remembers a deleted bin as a bin
-tombstone, with the time and the cluster of the delete, so a delete is a write like any other: it wins
+A deleted bin keeps its stamp. The server remembers a deleted bin as a bin tombstone, with the time and the cluster of the delete, so a delete is a write like any other: it wins
 when it is the later one, and loses to a write that came after it. Nothing in the record has to say
 "removed", and nothing accumulates as step 3's and step 4's removal structures did. The server drops a
 bin tombstone once it is older than the namespace's `xdr-bin-tombstone-ttl`.
@@ -37,7 +36,8 @@ it lacks is not a bin it deleted.
 ## What the server does alone, and what it cannot
 
 Picking the later stamp per bin is what bin convergence does without any handler. If every bin of your
-record is a register, you do not need this module: turn bin convergence on and stop.
+record is a register, you do not need this module: leave the set unbound, turn bin convergence on and
+stop. A set bound to a handler never uses bin convergence.
 
 The handler is for the bin that is not a register. Here it is `seen`, the highest message number this
 user has read on any device. If one cluster holds `seen = 9` and the other writes `seen = 5` a moment
@@ -80,12 +80,6 @@ event! {
     /// The merge: `seen` is the larger number; every other bin is the side that wrote it last.
     on xdr_merge
     fn merge_settings(current: EventRecord, incoming: EventRecord) -> Result<Resolution, Error> {
-        // Without bin convergence there is no stamp per bin, and a merge that pretended otherwise would
-        // decide every bin by the record's time. Failing hands the write to the binding's `on-failure`.
-        if !current.uses_bin_convergence() {
-            return Err(Error::Custom("registers need a namespace with conflict-resolve-writes"));
-        }
-
         let out = as_udf::map(16)?;
 
         if let Some(seen) = current.int("seen")?.max(incoming.int("seen")?) {
@@ -113,7 +107,7 @@ event! {
             }
         }
 
-        Ok(Resolution::Record { bins: out, ttl: None })
+        Ok(Resolution::Record { bins: out })
     }
 }
 ```
@@ -154,10 +148,6 @@ private static boolean incomingWins(EventRecord current, EventRecord incoming, S
 
 @On.XdrMerge("merge_settings")
 static Resolution mergeSettings(EventRecord current, EventRecord incoming) {
-    if (!current.usesBinConvergence()) {
-        throw new UdfException("registers need a namespace with conflict-resolve-writes");
-    }
-
     MapBuilder out = Udf.map(16);
 
     if (current.has(SEEN) || incoming.has(SEEN)) {
@@ -187,10 +177,6 @@ func stampOf(side *udf.EventRecord, name string) stamp {
 
 //udf:on xdr-merge merge_settings
 func mergeSettings(current, incoming *udf.EventRecord) (udf.Resolution, error) {
-	if !current.UsesBinConvergence() {
-		return udf.Resolution{}, errors.New("registers need a namespace with conflict-resolve-writes")
-	}
-
 	out := udf.NewMap(16)
 
 	a, hasA, err := current.Int("seen")
@@ -257,10 +243,6 @@ static udf::Result<Stamp> stamp(const udf::EventRecord& side, udf::StrView name)
 
 UDF_ON_XDR_MERGE(merge_settings)
 {
-	if (!current.uses_bin_convergence()) {
-		return udf::error(AS_UDF_ERR, "registers need a namespace with conflict-resolve-writes");
-	}
-
 	udf::Map out(16);
 	udf::Optional<int64_t> mine = UDF_TRY(current.as_int(SEEN));
 	udf::Optional<int64_t> theirs = UDF_TRY(incoming.as_int(SEEN));
@@ -331,14 +313,10 @@ exactly that, with a plain put, before `saw` existed.
 
 ## What the cluster needs
 
-The stamps exist only where the server keeps them:
+The server gives the handler a time and a source for every bin of both sides, whatever the namespace's
+settings. What makes the incoming times worth ordering by is the other cluster shipping them:
 
 ```text
-namespace settings {
-    conflict-resolve-writes true
-    ...
-}
-
 xdr {
     src-id 1
     dc dc2 {
@@ -350,25 +328,24 @@ xdr {
 }
 ```
 
-`conflict-resolve-writes` makes the namespace keep a last-update time and a source id per bin, and keep
-deleted bins as tombstones. `ship-bin-luts` sends each bin's time with it, and a `bin-policy` of the
-changed-bins family sends only the bins that changed. Each cluster needs its own `src-id`.
+`ship-bin-luts` sends each bin's time with it, and a `bin-policy` of the changed-bins family sends only
+the bins that changed. Each cluster needs its own `src-id`. A set bound to a handler never uses bin
+convergence, so `conflict-resolve-writes` plays no part.
 
-On any other namespace `uses_bin_convergence()` answers false, `bin_last_update_time` falls back to the
-record's time, and this merge would decide every bin by which record was written last. It fails
-instead, with a message that says what is missing, and the binding's `on-failure` decides the write.
+Without `ship-bin-luts` the merge still runs, but an incoming bin's time is then the time the write
+arrived here: the later arrival wins, rather than the later write.
 
 ## What is shipped after a merge
 
-With only changed bins travelling, what a cluster ships after a merge matters. The server decides it bin
-by bin, from what the handler answered:
+The merge itself ships nothing. What it decides is how each bin is stamped, and so what this cluster's
+own local writes carry when they ship:
 
-- **The incoming value** is the other cluster's. It keeps the incoming stamp and is not shipped back.
+- **The incoming value** is the other cluster's. It keeps the incoming stamp, the same one the other
+  cluster holds, and no local write ships it.
 - **This cluster's value, kept** is left exactly as it was. If it had not been shipped yet, because the
-  merge landed first, it still ships.
-- **A value the handler computed**, which is neither side's, is a write made here. It ships, the other
-  cluster's handler computes the same value from the same two inputs, finds it is the incoming one, and
-  the exchange ends.
+  merge landed first, it still ships with its own write.
+- **A value the handler computed**, which is neither side's, is stamped as a write made here. The other
+  cluster's handler, given the same two inputs, computes the same value without it.
 
 The second case is what the two-cluster test of this step exposed: a merge used to mark every bin as
 arrived from the other cluster, so a local write that was still waiting to ship when a merge landed was
@@ -382,15 +359,13 @@ Bind the handler on both clusters:
 event-set:event=xdr-merge;namespace=settings;set=users;module=registers;function=merge_settings;on-failure=abandon
 ```
 
-`registers_merge_converges` in `tests/src/events.rs` runs the four modules through the dry run on a
-namespace with bin convergence. The dry run tells the handler what a live merge on that namespace would,
-bin convergence included. The incoming record it describes is, as a whole, from 1970, but its `theme`
-and its delete of `email` are stamped 2030: the merge takes those two and keeps this side's `lang`,
-takes a bin only the incoming side has, and keeps the larger `seen` though its stamp is the older. The
-server reports the merge `symmetric` and `idempotent`; for the second it stamps the merged record as a
-live merge would, since a merge that reads stamps cannot be repeated on a record that has none. Then the
-same module is bound on a namespace without bin convergence, and the dry run fails with the handler's
-message.
+`registers_merge_converges` in `tests/src/events.rs` runs the four modules through the dry run, which
+tells the handler what a live merge would. The incoming record it describes is, as a whole, from 1970,
+but its `theme` and its delete of `email` are stamped 2030: the merge takes those two and keeps this
+side's `lang`, takes a bin only the incoming side has, and keeps the larger `seen` though its stamp is
+the older. The server reports the merge `symmetric` and `idempotent`; for the second it stamps the
+merged record as a live merge would, since a merge that reads stamps cannot be repeated on a record that
+has none.
 
 `registers_converge_two_clusters` in `tests/src/xdr_merge.rs` runs the four between two live clusters:
 writes to different bins at the same time both survive; of two writes to one bin the later wins on both

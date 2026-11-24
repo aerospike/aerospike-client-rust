@@ -9,7 +9,7 @@ prediction.
 
 | | WASM (`mod-wamr`) | Lua (`mod-lua`) |
 | --- | --- | --- |
-| **Code** | The loaded module, bytecode or its ahead-of-time build, in a reference-counted cache keyed by module name. The AoT build is also kept on disk beside a keyed tag over the module's bytes and its own (see [Security](security.md)), so a restart loads it compiled and compiles nothing. | The script's source, re-read whenever a state is created. |
+| **Code** | The loaded module, in a reference-counted cache keyed by module name; on the Fast JIT, its functions compiled to machine code in the JIT's code cache, for as long as the module is loaded. Nothing compiled is kept on disk, so a restart compiles again. | The script's source, re-read whenever a state is created. |
 | **Execution state, record UDF** | None. Every call instantiates the module afresh, linear memory and globals included, creates an execution environment, runs the module's initializer if it exports one, calls, and tears all of it down. | A `lua_State` per module, checked out of a queue for the call and returned afterwards, up to 128 per module; a new state is created only on a miss. The sandbox is what makes a reused state safe. |
 | **Execution state, stream UDF** | One instance per query thread, held in a thread-local slot across every partition slice that thread runs, and finalised once, with one call of `_end`, when the thread's last slice is done. | A checked-out state per slice, as above. |
 
@@ -47,46 +47,42 @@ per-thread slot removed it, and took the vector top-k from six times slower than
 level with it.
 
 The module cache is reference counted because it has to be: a call looks its module up, releases the
-cache's lock, and then spends microseconds to milliseconds in the guest. A re-registration, or the
-background compiler swapping in an AoT build, would otherwise unload the module and free its bytes under
-that call. The cache holds one reference and every running call holds one; whoever drops the last frees
+cache's lock, and then spends microseconds to milliseconds in the guest. A re-registration would
+otherwise unload the module and free its bytes under that call. The cache holds one reference and every running call holds one; whoever drops the last frees
 the module, so an eviction never waits for a slow UDF and a slow UDF never reads freed memory.
 
 ## The tiers
 
-Which tier a server runs is decided when it is built, and for now it is fixed per architecture rather
-than read from the configuration: WAMR's own Fast JIT on x86-64, the fast interpreter on aarch64, and
-`make WAMR_TIER=aot|jit|fastjit|interp` to override. Ahead-of-time compilation, through `wamrc` on a
-background thread, is built into an `aot` server but **cannot be switched on from the configuration on
-this branch**: the `aot-compiler` and `running-mode` keys are not read. A compiled guest honours its
-deadline only when `wamrc` is built with the patch the server tree carries (see
-[Security](security.md)). The LLVM JIT is a build option that
-puts LLVM into the server binary, which `aot` keeps out.
+Which tier a server runs is fixed by its architecture, when it is built, and is not read from the
+configuration: WAMR's own **Fast JIT** on x86-64, the only architecture it has a code generator for, and
+WAMR's fast interpreter on aarch64, which is for development. The stanza has no `running-mode`, and the
+ahead-of-time compiler's keys (`aot-compiler`, `aot-cache-dir`, `aot-compile-threads`) are not read
+either: no default build compiles a module ahead of time. (`make WAMR_TIER=aot|jit` still builds those
+tiers for experiments; neither is a supported server, and the LLVM JIT puts LLVM into the server binary.)
 
-Every compiled tier falls back to the interpreter when its compiled form is missing, and a fallback is
-invisible from outside, so the engine logs the tier that is executing, once, the first time a module
-runs: `wamr: executing in interpreter mode (<module> was loaded as bytecode)`. A benchmark of an
-interpreter mistaken for a JIT is a mistake that line makes impossible to sustain; read it before reading
-any number.
+A node says which tier it runs: the startup log has `wamr: runtime ready, mode fast-jit, ...` (or
+`interp`), and `udf-stats` prints `tier=` for every module it has loaded. A benchmark of an interpreter
+mistaken for a JIT is a mistake those make impossible to sustain; read them before reading any number.
 
 The Fast JIT compiles every function into one code cache, 256 MB on this server where WAMR's own default
 is 10 MB, which a handful of Java modules fill, after which every compile fails until a restart. It has
-no SIMD code generator, so a `simd128` module is refused on an x86-64 node; on a tier that can run it,
-such a module waits for its AoT build instead of trapping in the interpreter, which implements only a
-subset of SIMD.
+no SIMD code generator, so a module built with `simd128` is refused at registration on an x86-64 node.
+The interpreter takes such a module, and runs it until it reaches a SIMD instruction the fast interpreter
+does not implement, which traps; the SDKs build without SIMD by default for both reasons.
 
 ## What it costs
 
 Measured in this project; the files that print each number are named so it can be reproduced.
 
-- **The interpreter is Lua speed**, and the compiled tiers run compute at native speed. On the vector
-  top-k the LLVM JIT equals AoT; the AoT numbers were unchanged across the 2.4.3 snapshot, the 2.4.5
-  release and upstream `main` of WAMR.
-- **A SIMD stream UDF** on the vector top-k, compiled to NEON or SSE, measured level with the native
-  plugin and fourteen to nineteen times faster than Lua
-  (`aerospike-udf-sdk-native/examples/vector/tests/lua_vs_native.rs`, against the Lua in
-  `aerospike-udf-sdk-native/examples/vector/lua/vector.lua` and the WASM module in
-  `aerospike-udf-sdk/wasm-rust/examples/vector`).
+- **The interpreter is within a factor of two of Lua on compute.** It is the aarch64 tier, for
+  development. No bench in this project yet compares the Fast JIT with Lua; the client suites run on it
+  (see [Security](security.md#the-fast-jit)), and the numbers below say which tier printed them.
+- **A SIMD stream UDF** on the vector top-k measured level with the native plugin and fourteen to
+  nineteen times faster than Lua (`aerospike-udf-sdk-native/examples/vector/tests/lua_vs_native.rs`,
+  against the Lua in `aerospike-udf-sdk-native/examples/vector/lua/vector.lua` and the WASM module in
+  `aerospike-udf-sdk/wasm-rust/examples/vector`). That was the ahead-of-time tier, compiling SIMD to NEON,
+  which no default build runs now: the Fast JIT refuses a SIMD module, and the interpreter cannot be
+  relied on to run one.
 - **A record UDF's per-call engine cost is below the round-trip noise floor.** The native bench's per-call
   section subtracts a plain-write baseline and still reports noise as large as the difference it is
   after; what it bounds is that the difference between engines on one small call is a handful of

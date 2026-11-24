@@ -252,7 +252,7 @@ event! {
             }
         }
 
-        Ok(Resolution::Record { bins: current.with_bins(out)?, ttl: None })
+        Ok(Resolution::Record { bins: current.with_bins(out)? })
     }
 }
 

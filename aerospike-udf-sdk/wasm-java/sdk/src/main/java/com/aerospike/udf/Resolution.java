@@ -14,14 +14,16 @@ package com.aerospike.udf;
 
 /**
  * What an {@code xdr-merge} handler returns: the Java face of the Rust SDK's {@code Resolution}. Keep the
- * current record, apply the incoming write whole, let the namespace's policy decide, remove the record, or
- * the final record.
+ * current record, apply the incoming write whole, do what the server would have done without the handler,
+ * remove the record, or the final record.
  *
  * <pre>
  * return Resolution.keepLocal();                               // drop the incoming write
- * return Resolution.record(pair.withNewer(out));               // these bins, the incoming TTL
- * return Resolution.record(out, 3600);                         // these bins, expiring in an hour
+ * return Resolution.record(pair.withNewer(out));               // these bins
  * </pre>
+ *
+ * <p>No answer carries a TTL. The server gives the merged record the later of the two records' expirations,
+ * and a record that never expires wins.
  *
  * <p>A resolution is checked by the server before it is taken, and one it does not accept is the handler's
  * failure, which the binding's {@code on-failure} setting decides.
@@ -29,12 +31,10 @@ package com.aerospike.udf;
 public final class Resolution {
     private final String verdict;
     private final int bins;
-    private final long ttl;
 
-    private Resolution(String verdict, int bins, long ttl) {
+    private Resolution(String verdict, int bins) {
         this.verdict = verdict;
         this.bins = bins;
-        this.ttl = ttl;
     }
 
     /**
@@ -42,7 +42,7 @@ public final class Resolution {
      * counts as success.
      */
     public static Resolution keepLocal() {
-        return new Resolution("keep-local", 0, -1);
+        return new Resolution("keep-local", 0);
     }
 
     /**
@@ -50,42 +50,45 @@ public final class Resolution {
      * record.
      */
     public static Resolution takeRemote() {
-        return new Resolution("take-remote", 0, -1);
-    }
-
-    /** Let the namespace's policy decide, as it would have without the event. */
-    public static Resolution policy() {
-        return new Resolution("policy", 0, -1);
+        return new Resolution("take-remote", 0);
     }
 
     /**
-     * Remove the record on this cluster. The other cluster decides for itself, so a merge that deletes has
-     * to delete on both sides for the two to agree. A record resolution with no bins left in it is not
-     * this: it is the handler's failure.
+     * Do what the server would have done without the handler. A set bound to a handler never uses bin
+     * convergence, so this applies the incoming write, as {@link #takeRemote} does.
+     */
+    public static Resolution policy() {
+        return new Resolution("policy", 0);
+    }
+
+    /**
+     * Remove the record on this cluster and leave a durable tombstone, so a late write cannot bring it back.
+     * The delete is not shipped: the other cluster decides for itself, so a merge that deletes has to delete
+     * on both sides for the two to agree. A record resolution with no bins left in it is not this: it is the
+     * handler's failure.
      */
     public static Resolution delete() {
-        return new Resolution("delete", 0, -1);
+        return new Resolution("delete", 0);
     }
 
     /**
-     * The final record: these bins, whole - a bin not in the map, or set to nil, is deleted - keeping the TTL
-     * the incoming write asked for. The map's keys are the bin names, so each is a string of 1 to 15 bytes.
-     * At least one bin must be left: an empty map, or one whose values are all nil, is the handler's failure
-     * and not a deletion, which is what {@link #delete} is for. The builder is not used up and may still be
-     * added to before the handler returns; it is read after the handler returns, so it must not be closed
-     * (nor made in a try-with-resources block) in the handler.
+     * Remove the record on this cluster outright, with no tombstone, so a later write creates it again. Like
+     * {@link #delete}, it is not shipped to the other cluster.
+     */
+    public static Resolution expunge() {
+        return new Resolution("expunge", 0);
+    }
+
+    /**
+     * The final record: these bins, whole - a bin not in the map, or set to nil, is deleted. The map's keys
+     * are the bin names, so each is a string of 1 to 15 bytes. At least one bin must be left: an empty map,
+     * or one whose values are all nil, is the handler's failure and not a deletion, which is what
+     * {@link #delete} is for. The builder is not used up and may still be added to before the handler
+     * returns; it is read after the handler returns, so it must not be closed (nor made in a
+     * try-with-resources block) in the handler.
      */
     public static Resolution record(MapBuilder bins) {
-        return new Resolution("record", bins.handle(), -1);
-    }
-
-    /**
-     * As {@link #record(MapBuilder)}, with the record's TTL in seconds, which has a write's meaning: 0 for
-     * the namespace default. A negative {@code ttl} is the same as giving none: the TTL the incoming write
-     * asked for is kept.
-     */
-    public static Resolution record(MapBuilder bins, long ttl) {
-        return new Resolution("record", bins.handle(), ttl);
+        return new Resolution("record", bins.handle());
     }
 
     /**
@@ -100,7 +103,7 @@ public final class Resolution {
             return 0;
         }
 
-        int out = LowLevel.newMap(3);
+        int out = LowLevel.newMap(2);
 
         if (out <= 0) {
             return Udf.fail("resolve: could not build the resolution");
@@ -109,11 +112,6 @@ public final class Resolution {
         // The result is the host's own reference, so the answer the handler never sees is given back at once.
         try (MapBuilder answer = LowLevel.map(out)) {
             answer.put("verdict", "record").put("bins", LowLevel.map(bins));
-
-            // A TTL has a write's meaning; without one the server keeps what the incoming write asked for.
-            if (ttl >= 0) {
-                answer.put("ttl", ttl);
-            }
 
             if (LowLevel.resultHandle(out) != LowLevel.OK) {
                 return Udf.fail("resolve: could not return the record");
@@ -125,7 +123,7 @@ public final class Resolution {
 
     /**
      * The verdict word as the server reads it: {@code keep-local}, {@code take-remote}, {@code policy},
-     * {@code delete} or {@code record}.
+     * {@code delete}, {@code expunge} or {@code record}.
      */
     public String verdict() {
         return verdict;

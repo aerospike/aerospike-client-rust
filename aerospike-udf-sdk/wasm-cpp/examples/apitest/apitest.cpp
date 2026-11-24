@@ -868,21 +868,19 @@ UDF_ON_XDR_MERGE(merge_api)
 	out.put("c_del", names(current.deleted_bins()));
 	out.put("i_del", names(incoming.deleted_bins()));
 
-	udf::List c_meta(6);
+	udf::List c_meta(5);
 
 	c_meta.add(current.generation())
 	    .add(current.last_update_time())
-	    .add(current.ttl())
 	    .add(current.source_id())
 	    .add(current.is_tombstone())
-	    .add(current.uses_bin_convergence());
+	    .add(current.is_partial());
 	out.put("c_meta", c_meta);
 
-	udf::List i_meta(6);
+	udf::List i_meta(5);
 
 	i_meta.add(incoming.generation())
 	    .add(incoming.last_update_time())
-	    .add(incoming.ttl())
 	    .add(incoming.source_id())
 	    .add(incoming.is_delete())
 	    .add(incoming.is_partial());

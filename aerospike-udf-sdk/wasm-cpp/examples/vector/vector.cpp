@@ -332,6 +332,7 @@ offer(double score)
 	return true;
 }
 
+// ANCHOR: stream
 UDF_STREAM_RAW(topk, "(bin: str, query: bytes, metric: str, k?: int)", "()")
 
 static int32_t
@@ -384,7 +385,9 @@ topk_end_udf_impl(int32_t args, int32_t argc)
 
 	return as_udf_result_handle(out) == AS_UDF_OK ? 0 : as_udf_fail_str("topk: could not return the partial");
 }
+// ANCHOR_END: stream
 
+// ANCHOR: record
 /* The distance from this record's vector to the query: one record, one number, nil for no such vector. */
 UDF_FUNCTION_RAW(vec_distance, "(bin: str, query: bytes, metric: str)")
 {
@@ -405,3 +408,4 @@ UDF_FUNCTION_RAW(vec_distance, "(bin: str, query: bytes, metric: str)")
 
 	return 0;
 }
+// ANCHOR_END: record

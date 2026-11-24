@@ -717,17 +717,15 @@ func mergeAPI(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 	out.Put("c_del", nameList(current.DeletedBins()))
 	out.Put("i_del", nameList(incoming.DeletedBins()))
 
-	out.Put("c_meta", udf.NewList(6).
+	out.Put("c_meta", udf.NewList(5).
 		Add(current.Generation()).
 		Add(current.LastUpdateTime()).
-		Add(current.TTL()).
 		Add(current.SourceID()).
 		Add(current.IsTombstone()).
-		Add(current.UsesBinConvergence()))
-	out.Put("i_meta", udf.NewList(6).
+		Add(current.IsPartial()))
+	out.Put("i_meta", udf.NewList(5).
 		Add(incoming.Generation()).
 		Add(incoming.LastUpdateTime()).
-		Add(incoming.TTL()).
 		Add(incoming.SourceID()).
 		Add(incoming.IsDelete()).
 		Add(incoming.IsPartial()))

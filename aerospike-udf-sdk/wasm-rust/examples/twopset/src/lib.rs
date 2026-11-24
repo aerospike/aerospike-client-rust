@@ -114,7 +114,7 @@ event! {
             out.insert(bin, &tags.into_list(None)?)?;
         }
 
-        Ok(Resolution::Record { bins: incoming.with_bins(out)?, ttl: None })
+        Ok(Resolution::Record { bins: incoming.with_bins(out)? })
     }
 }
 

@@ -1006,7 +1006,17 @@ async fn the_dry_run_answers_what_the_live_merge_does() {
 
             aerospike_rt::sleep(Duration::from_millis(300)).await;
 
-            let merged = canonical(&bins_value(c1.get(&read, &live, Bins::All).await.unwrap().bins));
+            // `apitest` echoes the bins' times, which are when each write happened: the live merge's and the
+            // dry run's are different moments, so those are left out of the comparison.
+            let untimed = |v: &Value| -> Value {
+                match v {
+                    Value::HashMap(_) | Value::OrderedMap(_) | Value::SortedMap(_) if case.name == "apitest" => {
+                        Value::HashMap(map_of(v).into_iter().filter(|(k, _)| *k != Value::from("blut")).collect())
+                    }
+                    other => other.clone(),
+                }
+            };
+            let merged = canonical(&untimed(&bins_value(c1.get(&read, &live, Bins::All).await.unwrap().bins)));
 
             // The dry run: the same incoming record against a record holding what the first one held.
             c1.put(&write, &dry, &current).await.unwrap();
@@ -1017,7 +1027,12 @@ async fn the_dry_run_answers_what_the_live_merge_does() {
                 .filter(|(k, _)| ns == "test" || case.written.iter().any(|(n, _)| n == k))
                 .map(|(k, v)| (Value::from(k), v))
                 .collect();
-            let incoming_meta = HashMap::from([(Value::from("src-id"), Value::from(2))]);
+            // Whole records travel on `test`, changed bins on the other namespace; and no time, so the
+            // dry run gives the incoming bins the time now, as a live merge gives them their arrival.
+            let incoming_meta = HashMap::from([
+                (Value::from("src-id"), Value::from(2)),
+                (Value::from("partial"), Value::from(ns != "test")),
+            ]);
             let answer = c1
                 .execute_udf(&write, &dry, "__event__", "xdr-merge", &[Value::from(incoming_bins), Value::from(incoming_meta)])
                 .await
@@ -1028,7 +1043,8 @@ async fn the_dry_run_answers_what_the_live_merge_does() {
                 Some(Value::SortedMap(m)) => m.into_iter().collect(),
                 other => panic!("{what}: {other:?}"),
             };
-            let predicted = canonical(answer.get(&Value::from("bins")).unwrap_or_else(|| panic!("{what}: no bins in {answer:?}")));
+            let predicted =
+                canonical(&untimed(answer.get(&Value::from("bins")).unwrap_or_else(|| panic!("{what}: no bins in {answer:?}"))));
 
             assert_eq!(predicted, merged, "{what}: the dry run predicted one record, the live merge made another");
             compared += 1;
@@ -1126,11 +1142,9 @@ async fn counter_survives_the_races(namespace: &str) {
     // The hold: dc1's write waits; dc2's is merged on dc1 first.
     c1.execute_udf(&write, &key, package, "increment", &increment("dc1", 2)).await.unwrap();
     c2.execute_udf(&write, &key, package, "increment", &increment("dc2", 5)).await.unwrap();
+    // The merge on dc1 is submitted as an XDR write and ships nothing (R38): dc2 has dc1's change from
+    // dc1's own held write, which carries the merged record once the hold is over.
     converge_counter(&c1, &c2, &key, package, 10, SHIP_LAG, &format!("{namespace} hold")).await;
-
-    let shipped_back = counter(&c1, set_name, "shipped-back").await;
-
-    assert!(shipped_back >= 1, "{namespace}: the merge on dc1 held dc1's change, so it ships back");
 
     // The outage: dc1 stops shipping the namespace; both write; dc2's write is merged on dc1.
     let dc_ns = format!("set-config:context=xdr;dc=dc2;namespace={namespace}");
@@ -1173,8 +1187,8 @@ async fn xdr_merge_survives_the_races_changed_bins() {
     counter_survives_the_races("holdch").await;
 }
 
-/// The races under bin convergence, which stamped bins correctly before; here so the three modes are held
-/// to the same outcome.
+/// The races on a namespace with conflict-resolve-writes on: the bound set gets no bin convergence (R28),
+/// so it behaves as the other two do, and a local write right after a merge is never refused.
 #[aerospike_macro::test]
 async fn xdr_merge_survives_the_races_bin_convergence() {
     counter_survives_the_races("holdbc").await;

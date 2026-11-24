@@ -25,10 +25,13 @@ import (
 //
 
 // Resolution is what an xdr-merge handler returns: keep the current record (KeepLocal), apply the
-// incoming write whole (TakeRemote), let the namespace's policy decide (Policy), remove the record
-// (DeleteRecord), or the final record, bin by bin (Resolve, ResolveTTL). Make one with those
-// functions. The zero Resolution is not an answer: return it only beside a non-nil error, which fails
-// the handler.
+// incoming write whole (TakeRemote), do what the server would have done without the handler (Policy),
+// remove the record (DeleteRecord, Expunge), or the final record, bin by bin (Resolve). Make one with
+// those functions. The zero Resolution is not an answer: return it only beside a non-nil error, which
+// fails the handler.
+//
+// No answer carries a TTL. The server gives the merged record the later of the two records'
+// expirations, and a record that never expires wins.
 //
 //	//udf:on xdr-merge keep_richer
 //	func keepRicher(current, incoming *udf.EventRecord) (udf.Resolution, error) {
@@ -51,38 +54,38 @@ import (
 type Resolution struct {
 	verdict string
 	bins    int32
-	ttl     int64
 	err     error
 }
 
 // Verdict is the resolution's verdict word, as the server reads it: "keep-local", "take-remote",
-// "policy", "delete", or "record" for one made by Resolve or ResolveTTL.
+// "policy", "delete", "expunge", or "record" for one made by Resolve.
 func (r Resolution) Verdict() string { return r.verdict }
-
-func recordOf(m *Map, ttl int64) Resolution {
-	return Resolution{verdict: "record", bins: m.handle, ttl: ttl, err: m.err}
-}
 
 // KeepLocal keeps the current record as it is. The incoming write is dropped, which its source counts
 // as a success.
-func KeepLocal() Resolution { return Resolution{verdict: "keep-local", ttl: -1} }
+func KeepLocal() Resolution { return Resolution{verdict: "keep-local"} }
 
 // TakeRemote applies the incoming write whole, its bins over the current record, as if it had won
 // every bin.
-func TakeRemote() Resolution { return Resolution{verdict: "take-remote", ttl: -1} }
+func TakeRemote() Resolution { return Resolution{verdict: "take-remote"} }
 
-// Policy lets the namespace's policy decide, as it would have without the event: the answer of a
-// handler that has no opinion on this pair.
-func Policy() Resolution { return Resolution{verdict: "policy", ttl: -1} }
+// Policy does what the server would have done without the handler: the answer of a handler that has
+// no opinion on this pair. A set bound to a handler never uses bin convergence, so this applies the
+// incoming write, as TakeRemote does.
+func Policy() Resolution { return Resolution{verdict: "policy"} }
 
-// DeleteRecord removes the record on this cluster. The other cluster decides for itself, so a merge that
-// deletes has to delete on both sides for the two to agree. A record resolution with no bins left in it
-// is not this: it is the handler's failure.
-func DeleteRecord() Resolution { return Resolution{verdict: "delete", ttl: -1} }
+// DeleteRecord removes the record on this cluster and leaves a durable tombstone, so a late write
+// cannot bring it back. The delete is not shipped: the other cluster decides for itself, so a merge
+// that deletes has to delete on both sides for the two to agree. A record resolution with no bins
+// left in it is not this: it is the handler's failure.
+func DeleteRecord() Resolution { return Resolution{verdict: "delete"} }
+
+// Expunge removes the record on this cluster outright, with no tombstone, so a later write creates
+// it again. Like DeleteRecord, it is not shipped to the other cluster.
+func Expunge() Resolution { return Resolution{verdict: "expunge"} }
 
 // Resolve is the final record: these bins and no others. A bin that is not in the map, or is nil in
 // it, is deleted, so a handler that decides a few bins fills in the rest first, with Pair.WithNewer.
-// The record keeps the TTL the incoming write asked for.
 //
 // The server checks the answer before taking it, and what is wrong with it is the handler's failure:
 // a key that is not a bin name (a string of 1 to 15 bytes), text in a GeoJSON bin that is not GeoJSON,
@@ -99,12 +102,9 @@ func DeleteRecord() Resolution { return Resolution{verdict: "delete", ttl: -1} }
 //		out.Put("visits", most)
 //	}
 //	return udf.Resolve(pair.WithNewer(out)), out.Err()
-func Resolve(bins *Map) Resolution { return recordOf(bins, -1) }
-
-// ResolveTTL is Resolve with the record's TTL, in seconds: 0 for the namespace default. A negative
-// ttl is not sent, and the record keeps the TTL the incoming write asked for, as with Resolve. Both
-// clusters have to arrive at the same TTL, like everything else in the answer.
-func ResolveTTL(bins *Map, ttl int64) Resolution { return recordOf(bins, ttl) }
+func Resolve(bins *Map) Resolution {
+	return Resolution{verdict: "record", bins: bins.handle, err: bins.err}
+}
 
 // Deliver sets the resolution as the call's result and returns the status the export returns: 0, or
 // non-zero after failing the call when the bins map had kept a refusal or the answer could not be
@@ -119,7 +119,7 @@ func (r Resolution) Deliver() int32 {
 		ResultString(r.verdict)
 		return 0
 	}
-	return resolveRecord(r.bins, r.ttl)
+	return resolveRecord(r.bins)
 }
 
 //==========================================================
@@ -211,10 +211,6 @@ func (r *EventRecord) Generation() int64 { return r.generation }
 // xdr-merge is 0 on both sides, for the same reason as Generation. To order the two sides, use
 // BinLastUpdateTime, bin by bin.
 func (r *EventRecord) LastUpdateTime() int64 { return r.lastUpdateTime }
-
-// TTL is this side's time to live, in seconds: what the current record has left, and what the incoming
-// write asks for. 0 is a record that does not expire.
-func (r *EventRecord) TTL() int64 { return r.ttl }
 
 // SourceID is the XDR source id of the cluster that wrote this side, the tie-break when two last
 // update times are equal. It is never 0 on the incoming side: the server refuses an incoming write
@@ -332,12 +328,6 @@ func (r *EventRecord) IsPartial() bool { return r.partial }
 // of the incoming record, whose delete is IsDelete.
 func (r *EventRecord) IsTombstone() bool { return r.tombstone }
 
-// UsesBinConvergence reports whether the namespace converges bin by bin, which is when the per-bin
-// timestamps behind BinLastUpdateTime mean something; without it that is the record's for every bin. A
-// fact about the merge, so both records answer the same. A merge that orders the sides by time asks
-// it first.
-func (r *EventRecord) UsesBinConvergence() bool { return r.binConvergence }
-
 //==========================================================
 // The two records, side by side.
 //
@@ -367,7 +357,7 @@ func (r *EventRecord) UsesBinConvergence() bool { return r.binConvergence }
 //			out.Put("profile", latest)
 //		}
 //
-//		return udf.Resolve(pair.WithNewer(out)), out.Err() // the rest as the policy would keep it
+//		return udf.Resolve(pair.WithNewer(out)), out.Err() // the rest to the last writer of each
 //	}
 type Pair struct {
 	Current  *EventRecord
@@ -500,18 +490,17 @@ func (p Pair) Map(name string) (Both[Value], error) {
 }
 
 // IncomingIsNewer reports whether the incoming side wrote the bin name later: by the bin's last
-// update time, and on a tie by source id, the larger winning. It is the order the server's own bin
-// convergence uses, and it is symmetric: the other cluster, with the sides swapped, names the same
-// winner. Without bin convergence there are no per-bin times and the source id alone decides.
+// update time, and on a tie by source id, the larger winning. It is symmetric: the other cluster,
+// with the sides swapped, names the same winner.
 func (p Pair) IncomingIsNewer(name string) bool {
 	ll, rl := p.Current.BinLastUpdateTime(name), p.Incoming.BinLastUpdateTime(name)
 	return rl > ll || (rl == ll && p.Incoming.BinSourceID(name) > p.Current.BinSourceID(name))
 }
 
 // WithNewer fills overrides in from both records: every bin either side has that the map does not
-// hold yet is put in from the side that wrote it later - which is what the policy would have kept -
-// and the same map is returned. So a handler merges the bins it knows about and leaves the rest as
-// they would have been. It is symmetric: both clusters order the two sides the same way.
+// hold yet is put in from the side that wrote it later, and the same map is returned. So a handler
+// merges the bins it knows about and leaves the rest to the last writer of each. It is symmetric:
+// both clusters order the two sides the same way.
 //
 // A bin only one side has comes from that side, whichever is newer, unless the newer side deleted
 // it. A deleted bin is not brought back: when the side that wrote the bin later is the one that
@@ -552,9 +541,8 @@ func (p Pair) WithNewer(overrides *Map) *Map {
 	return overrides
 }
 
-// IncomingIsNewer reports whether the incoming side wrote this bin later: by the bin's last update time
-// where the server keeps one, the record's otherwise, and on a tie by source id - the order the server's
-// own bin convergence uses, so "newer" means the same on both DCs even when the clocks agreed to the
+// IncomingIsNewer reports whether the incoming side wrote this bin later: by the bin's last update time,
+// and on a tie by source id, so "newer" means the same on both DCs even when the clocks agreed to the
 // millisecond. It goes by when each side wrote, not by whether a side has the bin.
 func (b Both[T]) IncomingIsNewer() bool {
 	return b.incomingTime > b.currentTime || (b.incomingTime == b.currentTime && b.incomingSource > b.currentSource)

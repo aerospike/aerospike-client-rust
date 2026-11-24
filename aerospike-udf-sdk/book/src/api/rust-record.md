@@ -1267,7 +1267,7 @@ that returns without saving has written nothing.
 ```rust
 rec.set("visits", visits + 1)?;                 // an i64
 rec.set("name", "alice")?;                      // a &str
-rec.set("tags", list)?;                         // a built List or Map
+rec.set("tags", &list)?;                        // a built List or Map, by reference
 rec.set("backup", rec.bin("profile")?)?;        // a value read from the record
 rec.save()?;
 ```
@@ -2378,7 +2378,7 @@ event! {
             out.insert("visits", visits)?;
         }
 
-        Ok(Resolution::Record { bins: pair.with_newer(out)?, ttl: None })
+        Ok(Resolution::Record { bins: pair.with_newer(out)? })
     }
 }
 ```

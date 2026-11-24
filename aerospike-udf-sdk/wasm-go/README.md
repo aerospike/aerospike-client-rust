@@ -73,7 +73,10 @@ The three directives are the Go face of the Rust SDK's `export!`, `stream!` and 
 - **`//udf:on xdr-merge <name>`** on a function: the handler of the one event, the merge of an incoming
   XDR write with the record it meets. It is `func(current, incoming *udf.EventRecord)
   (udf.Resolution, error)`, and the resolution is `KeepLocal()`, `TakeRemote()`, `Policy()`,
-  `DeleteRecord()`, or the final record: `Resolve(bins)`, `ResolveTTL(bins, ttl)`. A handler with other
+  `DeleteRecord()`, `Expunge()`, or the final record: `Resolve(bins)`. `DeleteRecord` leaves a durable
+  tombstone, so a late write cannot bring the record back; `Expunge` removes it outright. Neither is
+  shipped to the other cluster. No answer carries a TTL: the merged record takes the later of the two
+  records' expirations. A handler with other
   parameters or another return, or another kind after `on`, is a generation error naming the file and
   line.
 - **The raw form.** A function declared `(args, argc int32) int32` is exported as it is under any of the
@@ -129,8 +132,8 @@ The three directives are the Go face of the Rust SDK's `export!`, `stream!` and 
 - **The merge**: `*udf.EventRecord` for each of the two records the event hands over, read-only (the
   `RecordReader` methods, `SourceID`, `BinLastUpdateTime(name)` and `BinSourceID(name)`, the `BinNames`
   and `DeletedBins` iterators, `Deleted(name)`, `WithBins(out)` to keep the rest of a record under a few decided bins). What the server says of the merge is on the record it is true of: `incoming.IsDelete()`,
-  `incoming.IsPartial()`, `current.IsTombstone()`, and `UsesBinConvergence()` on
-  either. `udf.PairOf(current, incoming)` is the two side by side, a `udf.Pair`, read into
+  `incoming.IsPartial()` and `current.IsTombstone()`. The server gives a time and a source for every bin
+  of both sides. `udf.PairOf(current, incoming)` is the two side by side, a `udf.Pair`, read into
   `udf.Both[T]` (its sides are `Current` and `Incoming`) with `IncomingIsNewer`, `Newer`, `Older`,
   `Ordered`, `CurrentOrIncoming`, `IncomingOrCurrent`, `Merge`, and `udf.Max` / `Min` / `Sum` over a
   `Both` (`Sum`, like `Max` and `Min`, answers false when neither side has the bin, and wraps on overflow); the `Pair` readers answer an
@@ -170,8 +173,8 @@ module (`-panic=trap`), and the host reports only that it trapped: return an `er
 - `examples/twopset` and `examples/lwwset`: steps 3 and 4 of the book's CRDT tutorial, a set with
   removals (two lists merged by union, `sort.Strings` for canonical bytes) and a set with re-adds (two maps
   of `udf.Now()` stamps merged by the later stamp); both return a `*udf.List` of members.
-- `examples/registers`: a record whose every bin is a last-writer-wins register, stamped by the server
-  under bin convergence; the `xdr-merge` handler reads `BinLastUpdateTime` and `BinSourceID`, walks
+- `examples/registers`: a record whose every bin is a last-writer-wins register, stamped by the server;
+  the `xdr-merge` handler reads `BinLastUpdateTime` and `BinSourceID`, walks
   `BinNames` and `DeletedBins`, and merges the one bin that is not a register, `seen`, by the larger number.
 - `examples/crdt`: the active-active CRDT of the design note, rule for rule the same as the Rust one, held
   to the same nine dry-run scenarios by `tests/src/events.rs`.

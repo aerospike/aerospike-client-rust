@@ -7,7 +7,8 @@
 //! malformed one this file can make.
 //!
 //! The incoming record says what to do in two bins: `do`, a name from the table in `answer`, and `n`, a
-//! number that answer uses (how many bins, how deep, which TTL). A record with no `do` gets `policy`.
+//! number that answer uses (how many bins, how deep, which TTL). A record with no `do` gets `policy`. An
+//! answer carries no TTL, so the ones that send a `ttl` key are malformed: the server fails the handler.
 //!
 //! Written against the host calls directly, not the SDK's types, because most of these answers are ones the
 //! SDK's `Resolution` cannot express. The signature export is the SDK's, so that the server accepts the
@@ -167,6 +168,12 @@ unsafe fn answer() -> i32 {
         b"spin" => loop {
             core::hint::black_box(0);
         },
+        // Grows its memory a mebibyte at a time until the server refuses, then aborts, as a guest allocator
+        // that cannot grow does: a failure the server counts as the memory limit.
+        b"oom" => {
+            while core::arch::wasm32::memory_grow(0, 16) != usize::MAX {}
+            core::arch::wasm32::unreachable()
+        }
         b"fail" => {
             host_fail(b"the probe was told to fail".as_ptr(), 26);
             return 1;
@@ -186,14 +193,16 @@ unsafe fn answer() -> i32 {
         b"m-verdict-int" => answer_map(val_int(5), 0, 0),
         b"m-verdict-nul" => answer_map(string(b"record\0x"), one_bin(val_int(1)), 0),
 
-        // A verdict by name: the three there are, and ones there are not.
-        b"policy" | b"keep-local" | b"take-remote" | b"delete" | b"record" | b"banana" | b"" | b"KEEP-LOCAL" => {
+        // A verdict by name: the ones there are, and ones there are not.
+        b"policy" | b"keep-local" | b"take-remote" | b"delete" | b"expunge" | b"record" | b"banana" | b""
+        | b"KEEP-LOCAL" => {
             result_str(what.as_ptr(), what.len() as u32);
         }
         b"m-keep" => answer_map(string(b"keep-local"), one_bin(val_int(1)), 0),
         b"m-take" => answer_map(string(b"take-remote"), 0, 0),
         b"m-take-ttl" => answer_map(string(b"take-remote"), 0, val_int(n)),
         b"m-delete" => answer_map(string(b"delete"), one_bin(val_int(1)), 0),
+        b"m-expunge" => answer_map(string(b"expunge"), 0, 0),
 
         // A record, with bins that are not bins.
         b"r-nobins" => answer_map(string(b"record"), 0, 0),
@@ -318,7 +327,7 @@ unsafe fn answer() -> i32 {
             record(one_bin(val_geojson(b"not a document".as_ptr(), 14)));
         }
 
-        // A record with a time to live of `n`, and with one that is not a number.
+        // A record with a time to live of `n`, and with one that is not a number. Both are malformed now.
         b"r-ttl" => answer_map(string(b"record"), one_bin(val_int(1)), val_int(n)),
         b"r-ttl-str" => answer_map(string(b"record"), one_bin(val_int(1)), string(b"soon")),
 

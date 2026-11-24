@@ -39,9 +39,9 @@ event! {
 
         let out = as_udf::map(1)?;
 
-        out.insert("counts", counts.into_map()?)?;
+        out.insert("counts", &counts.into_map()?)?;
 
-        Ok(Resolution::Record { bins: incoming.with_bins(out)?, ttl: None })
+        Ok(Resolution::Record { bins: incoming.with_bins(out)? })
     }
 }
 ```
@@ -146,7 +146,7 @@ event-set:event=xdr-merge;namespace=test;set=counters;module=counter;function=me
 ```
 
 The dry run on one cluster checks the laws: `execute_udf(key, "__event__", "xdr-merge", [{"counts":
-{"dc1": 1, "dc2": 5}}, {"ttl": 0, "src-id": 2}])` against a record this site counted to 3 answers
+{"dc1": 1, "dc2": 5}}, {"src-id": 2}])` against a record this site counted to 3 answers
 `{"dc1": 3, "dc2": 5}` with `symmetric` and `idempotent` true; with a third record it also answers
 `associative`. The test suite does this for the Rust, Java, Go and C++ modules (`counter_merge_converges`),
 and runs all four across two real clusters shipping to each other (`counter_converges_two_clusters`): dc1

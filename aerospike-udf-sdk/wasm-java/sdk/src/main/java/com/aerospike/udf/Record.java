@@ -684,7 +684,6 @@ public final class Record implements RecordReader {
      * The record's remaining time to live, in seconds. 0 for a record that never expires, and for one that
      * does not exist.
      */
-    @Override
     public long ttl() {
         return Natives.ttl();
     }

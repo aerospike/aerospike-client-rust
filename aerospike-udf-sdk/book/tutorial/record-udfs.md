@@ -17,8 +17,8 @@ The record is a bank account:
 
 Three rules hold in every language, and every step leans on them:
 
-1. **A read borrows.** A value read from the record stays in the record. It is valid until the call ends
-   or the bin it came from is written.
+1. **A read borrows.** A value read from the record stays in the record. It is valid until the call ends,
+   even after the bin it came from is written again, the record is deleted, or a save fails.
 2. **A write is staged.** Setting a bin changes nothing on the server until the function saves the record.
 3. **A failure is a message.** A function that fails hands the client an error with the text it chose.
 
@@ -157,13 +157,13 @@ carries it out when the call returns, so inside the call the record still answer
 | --- | --- | --- | --- | --- | --- |
 | Take the record | `rec: &mut Record` or `&Record`, first | `rec *udf.Record`, first | implied | `udf::Record& rec` or `const udf::Record&`, first | `Record rec`, first |
 | Read a bin of any kind | `rec.bin(name)` | `rec.Get(name)` | `as_udf_rec_bin(name, &v)` | `rec.get(name)` | `rec.get(name)` |
-| Integer with a default | `rec.int_or(name, d)?` | `rec.IntOr(name, d)` (and an `error`) | `as_udf_rec_int_or(name, d)` | `rec.int_or(name, d)` | `rec.getInt(name, d)` |
+| Integer with a default | `rec.int_or(name, d)?` | `rec.IntOr(name, d)` (and an `error`) | `as_udf_rec_int_or(name, d, &n)` | `rec.int_or(name, d)` | `rec.getInt(name, d)` |
 | Required, typed | `rec.bin(name)?` then `.int()?` `.double()?` `.bool()?` `.string()?` | `rec.Bin(name)` then `Int()` `Double()` `Bool()` `String()` | test `v.kind`, read `v.payload` | `rec.bin(name)` then `as_int()` `as_double()` `as_bool()` `as_string<N>()` | `rec.bin(name)` then `asInt()` `asDouble()` `asBool()` `asString()` |
 | Write a bin | `rec.set(name, v)` | `rec.Set(name, v)` | `as_udf_rec_set_int` `as_udf_rec_set_string` ... | `rec.set(name, v)` | `rec.set(name, v)` |
 | Save | `rec.save()` | `rec.Save()` | `as_udf_rec_save()` | `rec.save()` | `rec.save()` |
 | Fail the call | `Err(Error::Custom(msg))` | return an `error` | `return as_udf_fail_str(msg)` | `return udf::error(status, msg)` | `throw new UdfException(msg)` |
-| Walk a list | `.list()?.iter()` | `rec.List(name)` then `range v.List()` | cursor | `for (udf::Value v : rec.list(name))` | `for (Value v : rec.bin(name).asList())` |
-| Walk a map | `.map()?.entries()` | `rec.Map(name)` then `range v.Map()` | cursor, key then value | `for (udf::Entry e : rec.map(name))` | `for (MapValue.Entry e : rec.bin(name).asMap())` |
+| Walk a list | `.list()?.iter()` | `rec.List(name)` then `range v.List()` | cursor | `if (auto l = UDF_TRY(rec.list(name)))` then `for (udf::Value v : *l)` | `for (Value v : rec.bin(name).asList())` |
+| Walk a map | `.map()?.entries()` | `rec.Map(name)` then `range v.Map()` | cursor, key then value | `if (auto m = UDF_TRY(rec.map(name)))` then `for (udf::Entry e : *m)` | `for (MapValue.Entry e : rec.bin(name).asMap())` |
 | Look up a key | `map.get(key)` | `value.Lookup(key)` | `as_udf_coll_get(...)` | `value.get(key)` | `map.get(key)` |
 | One element of a list | `list.at(i)` | `value.Index(i)` | `as_udf_list_at(&list, i)` | `value.at(i)` | `list.get(i)` |
 | Build a list | `as_udf::list(n)`, `push`, `extend` | `udf.NewList(n)`, `Add`, `AddAll` | `as_udf_list_new`, `as_udf_list_push_*` | `udf::List`, `add`, `add_all` | `Udf.list()`, `add`, `addAll` |

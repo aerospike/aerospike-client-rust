@@ -20,7 +20,6 @@ import com.aerospike.udf.On;
 import com.aerospike.udf.Record;
 import com.aerospike.udf.Resolution;
 import com.aerospike.udf.Udf;
-import com.aerospike.udf.UdfException;
 import com.aerospike.udf.Value;
 
 /**
@@ -28,8 +27,8 @@ import com.aerospike.udf.Value;
  * server's. The same module as aerospike-udf-sdk/wasm-rust/examples/registers.
  *
  * <p>{@code examples/lwwset} keeps a timestamp per element inside the record, and its own UDFs write
- * them. A namespace with bin convergence ({@code conflict-resolve-writes true}) already keeps one per
- * bin: when the bin was last written, and by which cluster. An xdr-merge handler reads the two with
+ * them. The server already keeps one per bin: when the bin was last written, and by which cluster. An
+ * xdr-merge handler reads the two with
  * {@link EventRecord#binLastUpdateTime} and {@link EventRecord#binSourceId}, and that pair is a
  * register's stamp: the later write wins, and of two writes in the same millisecond, the one from the
  * cluster with the larger id.
@@ -40,14 +39,14 @@ import com.aerospike.udf.Value;
  * ({@link EventRecord#deletedBins} lists it), so a delete that is the later write stays a delete, and one
  * that is the earlier write does not undo what came after it.
  *
- * <p>The server does that much by itself under bin convergence. The handler exists for the one bin that
- * is not a register: {@code seen}, the highest message number this user has read on any device. Its
- * merge is the larger number, whichever side wrote last, which no policy that picks a side can express.
- * It has the module's only write UDF, {@code saw(n)}, which never lowers it: a merge can keep a maximum
- * only if the writes kept it too.
+ * <p>A set bound to a handler never uses the server's bin convergence, so the handler does that part
+ * itself. It is here for the one bin that is not a register: {@code seen}, the highest message number this
+ * user has read on any device. Its merge is the larger number, whichever side wrote last, which no policy
+ * that picks a side can express. It has the module's only write UDF, {@code saw(n)}, which never lowers
+ * it: a merge can keep a maximum only if the writes kept it too.
  *
  * <pre>
- * event-set:event=xdr-merge;namespace=testbc;set=settings;module=registers;function=merge_settings;on-failure=abandon
+ * event-set:event=xdr-merge;namespace=test;set=settings;module=registers;function=merge_settings;on-failure=abandon
  * </pre>
  */
 public final class Registers {
@@ -120,12 +119,6 @@ public final class Registers {
     /** The merge: {@code seen} is the larger number; every other bin is the side that wrote it last. */
     @On.XdrMerge("merge_settings")
     static Resolution mergeSettings(EventRecord current, EventRecord incoming) {
-        // Without bin convergence there is no stamp per bin, and a merge that pretended otherwise would
-        // decide every bin by the record's time. Failing hands the write to the binding's `on-failure`.
-        if (!current.usesBinConvergence()) {
-            throw new UdfException("registers need a namespace with conflict-resolve-writes");
-        }
-
         MapBuilder out = Udf.map(16);
 
         if (current.has(SEEN) || incoming.has(SEEN)) {

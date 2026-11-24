@@ -92,7 +92,10 @@ at compile time, inside `javac`, before TeaVM runs.
   the merge of an incoming XDR write with the current record. The parameters are what it hands over,
   `(EventRecord current, EventRecord incoming)`, the record as it is on this cluster and the one that
   arrived over XDR, and the return is its answer, a `Resolution`: `keepLocal()`, `takeRemote()`,
-  `policy()`, `delete()` or `record(bins[, ttl])`. A handler with other parameters or another return is a
+  `policy()`, `delete()`, `expunge()` or `record(bins)`. `delete()` leaves a durable tombstone, so a late
+  write cannot bring the record back; `expunge()` removes it outright. Neither is shipped to the other
+  cluster. No answer carries a TTL: the merged record takes the later of the two records' expirations. A
+  handler with other parameters or another return is a
   compile error that states this shape.
 - **Instance methods.** An exported method may be an instance method; the generated class then builds one
   instance of the module's class (a no-argument constructor it can reach) and calls through it, so state
@@ -155,8 +158,8 @@ per export, and `main`. Name it as the TeaVM `mainClass`; the annotated class ne
 - **Events**: `EventRecord` for each side of a merge (the same readers as `Record`, plus `binNames()`,
   `deletedBins()`, `binLastUpdateTime` / `binSourceId`, and `withBins(out)` to keep the rest of a record
   under a few decided bins; and what the merge says of one side: `isDelete()` and `isPartial()` of
-  the incoming write, `isTombstone()` of the current record, `usesBinConvergence()` of
-  either), `Resolution` for the answer, and the merge itself through `Pair.of(current, incoming)` (`Pair`
+  the incoming write, `isTombstone()` of the current record; the server gives a time and a source for
+  every bin of both sides), `Resolution` for the answer, and the merge itself through `Pair.of(current, incoming)` (`Pair`
   and `Both` with `current`, `incoming`, `newer`, `older`, `ordered`, `max`, `min`, `merge`, `sumInt`
   (null when neither side has the bin, as `max` and `min`), `withNewer`, which leaves out a bin the later side deleted). A handler in the raw form reads the two records with `Pair.decode(args, argc)` and
   returns a resolution's `deliver()`. `examples/resolver` is the worked example, held to the same
@@ -238,8 +241,8 @@ the call the same way, and `Udf.fail(message)` is the status-code way to say why
 - `examples/twopset` and `examples/lwwset`: steps 3 and 4 of the book's CRDT tutorial, a set with
   removals (two sorted lists merged by union) and a set with re-adds (two maps of `Udf.now()` stamps merged
   by the later stamp); both return a `ListBuilder` of members from `@Function` methods.
-- `examples/registers`: a record whose bins are last-writer-wins registers stamped by the server, on a
-  namespace with bin convergence; the handler reads `binLastUpdateTime` and `binSourceId` per bin, keeps
+- `examples/registers`: a record whose bins are last-writer-wins registers stamped by the server; the
+  handler reads `binLastUpdateTime` and `binSourceId` per bin, keeps
   a delete that is the later write, and merges the one bin that is not a register (`seen`) by the larger
   number.
 - `examples/crdt`: the active-active CRDT of the design note, rule for rule the same as the Rust one, held to

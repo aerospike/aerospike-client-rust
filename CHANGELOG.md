@@ -11,6 +11,8 @@
     input is an `ErrorKind::InvalidArgument`. `Vector::float16_from_f32` builds a `float16` vector
     from `f32` elements, rounded to nearest with ties to even, and `Vector::float16_as_f32` reads one
     back exactly; an element that rounds to an infinity (a magnitude of 65520 or more) is refused.
+  * `ResultCode::XdrMergeAbandoned` (33): an incoming XDR write that its `xdr-merge` handler failed on,
+    abandoned under the binding's `on-failure=abandon`. Only an XDR source sees it.
   * `Error::message` returns the bare text an error was built with, without the result code, node,
     cause chain and kind prefix that `base_message` and `Display` add, for embedding in another
     message.

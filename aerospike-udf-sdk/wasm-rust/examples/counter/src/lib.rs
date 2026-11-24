@@ -97,7 +97,7 @@ event! {
 
         out.insert("counts", &counts.into_map()?)?;
 
-        Ok(Resolution::Record { bins: incoming.with_bins(out)?, ttl: None })
+        Ok(Resolution::Record { bins: incoming.with_bins(out)? })
     }
 }
 

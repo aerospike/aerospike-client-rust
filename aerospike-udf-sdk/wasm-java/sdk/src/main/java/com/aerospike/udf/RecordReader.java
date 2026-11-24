@@ -102,9 +102,6 @@ public interface RecordReader {
     /** The record's generation: how many times it has been written. */
     long generation();
 
-    /** The record's time to live, in seconds. */
-    long ttl();
-
     /**
      * When the record was last written, in milliseconds since the Citrusleaf epoch, 2010-01-01T00:00:00Z
      * (Unix milliseconds minus 1 262 304 000 000).

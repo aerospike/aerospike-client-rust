@@ -12,12 +12,12 @@ call.
 ## What the engine is
 
 `mod-wamr` embeds the [WebAssembly Micro Runtime](https://github.com/bytecodealliance/wasm-micro-runtime)
-in the server, in C. A module is compiled **ahead of time** to native code by `wamrc` when it is
-registered, on a background thread, and cached under a hash of its bytes so a restart loads it compiled
-and compiles nothing. Until its build is ready a module runs in WAMR's interpreter, which is roughly Lua
-speed; compiled, it runs at native speed. A module written to use 128-bit SIMD compiles to NEON or SSE,
-and a stream UDF written that way measured level with a native plugin and fourteen to nineteen times faster
-than Lua on a vector top-k.
+in the server, in C. Which tier runs a module is fixed by the server's architecture, not configured: on
+x86-64, WAMR's **Fast JIT** compiles each function to machine code in the server's memory when the module
+is loaded; on aarch64, which is for development, WAMR's interpreter runs it, within a factor of two of
+Lua on compute. The Fast JIT has no SIMD, so a module built with `simd128` is refused at registration on
+an x86-64 node. [Configuration](configuration.md#the-fast-jit) has the details, and [How the engine runs
+a module](engine.md) what is measured.
 
 The engine implements the same five hooks Lua does (`validate`, `apply_record`, `apply_stream`, `update`,
 `destroy`), so from the rest of the server's point of view it is one more language. Dispatch is by the
@@ -45,9 +45,11 @@ cross 128 values per call in both directions, and a guest decides what it needs.
 C is freestanding; Go brings TinyGo's runtime. A module is tens of kilobytes.
 
 **No WASI.** The engine is built without the WebAssembly System Interface and without WAMR's builtin
-libc: a module's only imports are the record natives, so it has no file system, no clock, no randomness,
-no sockets and no stdio, whatever it was compiled from. That is the sandbox, and it is also what lets an
-`xdr-merge` handler be trusted to compute the same answer on every cluster. The SDKs therefore target
+libc: a module's only imports are the record natives, so it has no file system, no randomness, no
+sockets and no stdio, whatever it was compiled from, and no clock of its own. The one time it can read is
+the server's, through the `current_time` native, in a record or stream UDF; in an `xdr-merge` handler
+that native is refused, which is what lets a handler be trusted to compute the same answer on every
+cluster. The SDKs therefore target
 `wasm32-unknown-unknown`, not `wasm32-wasi`. (WAMR itself implements WASI Preview 1 and could be built
 with it; Preview 2 and the component model it does not implement.) The one exception is Java, whose
 runtime asks the host for its own logging, clock and `Math` functions under `teavm` and `teavmMath`; the
@@ -97,6 +99,6 @@ reach, what stops it, and where the design is still weak. [Record UDFs](record-u
 start writing; its Rust chapter walks through a real
 module. [Stream UDFs](stream-udfs/README.md) is short, because a stream UDF is a record UDF with two
 entry points and one rule about state. [The `xdr-merge` event](events/README.md) is the third part: the
-binding, what a handler sees and may answer, how to check a merge, and then the language chapters. The [CRDT tutorial](crdt/README.md) is the last part: five data structures that two clusters
-can both write and still agree on, built step by step on the `xdr-merge` event, each step in all four
-languages.
+binding, what a handler sees and may answer, how to deploy it, and then the language chapters. The
+[CRDT tutorial](crdt/README.md) is the last part: six data structures that two clusters can both write
+and still agree on, built step by step on the `xdr-merge` event, each step in four languages.

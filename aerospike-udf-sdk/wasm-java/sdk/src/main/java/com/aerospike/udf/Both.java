@@ -55,8 +55,7 @@ public final class Both<T> {
     }
 
     /**
-     * Whether the incoming side wrote this bin later: by the bin's LUT where the server keeps one, the
-     * record's otherwise, and on a tie by source id - the order the server's own bin convergence uses, so
+     * Whether the incoming side wrote this bin later: by the bin's LUT, and on a tie by source id, so
      * "newer" means the same on both DCs even when the clocks agreed to the millisecond.
      */
     public boolean incomingIsNewer() {

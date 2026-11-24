@@ -15,8 +15,8 @@
 //! `tests/src/xdr_merge_limits.rs` gives the same answers inside real XDR writes, which needs two
 //! clusters. This file needs one node: the dry run (`execute_udf(key, "__event__", "xdr-merge", ...)`)
 //! runs the bound handler against the stored record and a described incoming one, takes its answer
-//! through the same checks a live merge does (`interpret`, `bins_are_bins`, the verdict and the time to
-//! live), and merges again with the sides swapped, with the incoming record again and, given a third
+//! through the same checks a live merge does (`interpret`, `bins_are_bins`, the verdict, and no time to
+//! live: a merge never sets one), and merges again with the sides swapped, with the incoming record again and, given a third
 //! record, both ways round with that one. So it reaches the server's handling of a hostile answer
 //! without XDR - which is what makes it the test to run under a sanitizer build of the server.
 //!
@@ -45,14 +45,16 @@ const BIN_CONVERGENCE_NS: &str = "testbc";
 enum Dry {
     /// The handler failed, or its answer is not one the server takes: the dry run fails with the reason.
     Failed,
-    /// The handler deferred to the namespace's policy, which the dry run reports as a failure of its own.
+    /// `{verdict: policy}`: on a bound set, which never converges bins, the incoming write applied.
     Policy,
     /// `{verdict: keep-local}`.
     KeepLocal,
     /// `{verdict: record}`, the bins a write would store.
     Record,
-    /// `{verdict: delete}`.
+    /// `{verdict: delete}`: removed, leaving a durable tombstone.
     Delete,
+    /// `{verdict: expunge}`: removed outright.
+    Expunge,
 }
 
 impl Dry {
@@ -93,16 +95,13 @@ const CASES: &[(Option<&str>, i64, Dry)] = &[
     (Some("m-keep"), 0, Dry::KeepLocal),
     (Some("take-remote"), 0, Dry::Record),
     (Some("m-take"), 0, Dry::Record),
-    (Some("m-take-ttl"), 100, Dry::Record),
     (Some("delete"), 0, Dry::Delete),
     (Some("m-delete"), 0, Dry::Delete),
+    (Some("m-expunge"), 0, Dry::Expunge),
     // A record.
     (Some("r-ok"), 7, Dry::Record),
     (Some("r-kinds"), 0, Dry::Record),
     (Some("r-15"), 0, Dry::Record),
-    (Some("r-ttl"), 100, Dry::Record),
-    (Some("r-ttl"), 0, Dry::Record),
-    (Some("r-ttl"), 0xffff_ffff, Dry::Record),
     (Some("r-deep"), 30, Dry::Record),
     (Some("r-deep"), 60, Dry::Record),
     (Some("r-big"), 64, Dry::Record),
@@ -111,12 +110,18 @@ const CASES: &[(Option<&str>, i64, Dry)] = &[
     // handle table grows as its memory allows, so the handler builds all of them, and the server refuses
     // the record for its count of bins ("more bins than a record holds").
     (Some("r-many"), 40000, Dry::Failed),
-    // A record that cannot be stored as it is given.
+    // A merge never sets the expiration: the server keeps the later of the two (R84), so an answer with a
+    // TTL, any TTL, is one it cannot take.
+    (Some("r-ttl"), 100, Dry::Failed),
+    (Some("r-ttl"), 0, Dry::Failed),
+    (Some("r-ttl"), 0xffff_ffff, Dry::Failed),
     (Some("r-ttl"), -1, Dry::Failed),
     (Some("r-ttl"), 0x1_0000_0000, Dry::Failed),
     (Some("r-ttl"), i64::MIN, Dry::Failed),
+    (Some("m-take-ttl"), 100, Dry::Failed),
     (Some("m-take-ttl"), -5, Dry::Failed),
     (Some("r-ttl-str"), 0, Dry::Failed),
+    // A record that cannot be stored as it is given.
     (Some("r-long"), 0, Dry::Failed),
     (Some("r-nul"), 0, Dry::Failed),
     (Some("r-noname"), 0, Dry::Failed),
@@ -182,10 +187,10 @@ fn bins_of(what: Option<&str>, n: i64, extra: &str) -> HashMap<Value, Value> {
     bins
 }
 
-/// A side's metadata. On the bin-convergence namespace it carries per-bin times and sources too, as an
-/// incoming write there does.
+/// A side's metadata: its source, and with `per_bin` each bin's time and source, as a write that ships
+/// bin times carries them.
 fn meta_of(bins: &HashMap<Value, Value>, src_id: i64, lut: i64, per_bin: bool) -> HashMap<Value, Value> {
-    let mut meta = HashMap::from([(Value::from("ttl"), Value::from(0)), (Value::from("src-id"), Value::from(src_id))]);
+    let mut meta = HashMap::from([(Value::from("src-id"), Value::from(src_id))]);
 
     if per_bin {
         let luts: HashMap<Value, Value> = bins.keys().map(|k| (k.clone(), Value::from(lut))).collect();
@@ -225,6 +230,8 @@ fn classify(result: &aerospike::Result<Option<Value>>) -> (Option<Dry>, String) 
                 "keep-local" => Some(Dry::KeepLocal),
                 "record" => Some(Dry::Record),
                 "delete" => Some(Dry::Delete),
+                "expunge" => Some(Dry::Expunge),
+                "policy" => Some(Dry::Policy),
                 _ => None,
             };
 
@@ -232,11 +239,7 @@ fn classify(result: &aerospike::Result<Option<Value>>) -> (Option<Dry>, String) 
         }
         Ok(None) => (None, "no answer".into()),
         Err(e) => {
-            let detail = format!("{e}");
-
-            if detail.contains("deferred to the policy") {
-                (Some(Dry::Policy), "policy".into())
-            } else if matches!(e.kind(), ErrorKind::UdfBadResponse) {
+            if matches!(e.kind(), ErrorKind::UdfBadResponse) {
                 let short: String = e.base_message().chars().take(200).collect();
 
                 (Some(Dry::Failed), format!("failed: {short}"))

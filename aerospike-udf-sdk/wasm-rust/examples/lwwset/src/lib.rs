@@ -107,7 +107,7 @@ event! {
             out.insert(bin, &stamps.into_map()?)?;
         }
 
-        Ok(Resolution::Record { bins: incoming.with_bins(out)?, ttl: None })
+        Ok(Resolution::Record { bins: incoming.with_bins(out)? })
     }
 }
 

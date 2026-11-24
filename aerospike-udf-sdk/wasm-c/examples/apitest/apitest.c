@@ -1015,14 +1015,13 @@ static int32_t put_names(int32_t out, const char* key, const as_udf_value* names
 	return names->kind == AS_UDF_ABSENT ? AS_UDF_OK : as_udf_map_put_value(out, key, names);
 }
 
-/* Put a list of four integers and two booleans under `key`. */
+/* Put a list of three integers and two booleans under `key`. */
 static int32_t put_meta(int32_t out, const char* key, const as_udf_event_record* r, bool flag1, bool flag2)
 {
-	int32_t list = as_udf_list_new(6);
+	int32_t list = as_udf_list_new(5);
 	if (list <= 0) return AS_UDF_ERR;
 	int32_t rc = as_udf_list_push_int(list, r->generation);
 	if (rc == AS_UDF_OK) rc = as_udf_list_push_int(list, r->last_update_time);
-	if (rc == AS_UDF_OK) rc = as_udf_list_push_int(list, r->ttl);
 	if (rc == AS_UDF_OK) rc = as_udf_list_push_int(list, r->source_id);
 	if (rc == AS_UDF_OK) rc = as_udf_list_push_bool(list, flag1);
 	if (rc == AS_UDF_OK) rc = as_udf_list_push_bool(list, flag2);
@@ -1070,7 +1069,7 @@ AS_UDF_EVENT_XDR_MERGE(merge_api)
 	if (rc == AS_UDF_OK) rc = put_names(out, "i_names", &incoming.bin_names);
 	if (rc == AS_UDF_OK) rc = put_names(out, "c_del", &current.deleted_bins);
 	if (rc == AS_UDF_OK) rc = put_names(out, "i_del", &incoming.deleted_bins);
-	if (rc == AS_UDF_OK) rc = put_meta(out, "c_meta", &current, current.is_tombstone, current.uses_bin_convergence);
+	if (rc == AS_UDF_OK) rc = put_meta(out, "c_meta", &current, current.is_tombstone, current.is_partial);
 	if (rc == AS_UDF_OK) rc = put_meta(out, "i_meta", &incoming, incoming.is_delete, incoming.is_partial);
 	if (rc == AS_UDF_OK) {
 		rc = put_two(out, "blut", as_udf_event_bin_last_update_time(&current, "s"),
@@ -1081,7 +1080,7 @@ AS_UDF_EVENT_XDR_MERGE(merge_api)
 	}
 	if (rc != AS_UDF_OK) return fail_parts("merge_api", -1, "", "could not build the record: ", true, rc);
 
-	return as_udf_resolve_record(out, -1);
+	return as_udf_resolve_record(out);
 }
 
 /*==========================================================

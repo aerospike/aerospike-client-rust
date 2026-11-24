@@ -1804,7 +1804,7 @@ impl Record {
     /// ```ignore
     /// rec.set("visits", visits + 1)?;                 // an i64
     /// rec.set("name", "alice")?;                      // a &str
-    /// rec.set("tags", list)?;                         // a built List or Map
+    /// rec.set("tags", &list)?;                        // a built List or Map, by reference
     /// rec.set("backup", rec.bin("profile")?)?;        // a value read from the record
     /// rec.save()?;
     /// ```
@@ -3545,7 +3545,6 @@ pub struct EventRecord {
     which: i32,
     generation: i64,
     last_update_time: i64,
-    ttl: i64,
     source_id: i64,
     bin_names: Coll,
     deleted_bins: Coll,
@@ -3554,7 +3553,6 @@ pub struct EventRecord {
     delete: bool,
     partial: bool,
     tombstone: bool,
-    bin_convergence: bool,
 }
 
 impl EventRecord {
@@ -3688,12 +3686,6 @@ impl EventRecord {
         self.last_update_time
     }
 
-    /// This side's time to live, in seconds; 0 for a record that does not expire.
-    #[must_use]
-    pub fn ttl(&self) -> i64 {
-        self.ttl
-    }
-
     /// The XDR source id of the DC that wrote this version (`src-id` in that cluster's XDR configuration). It
     /// is the tie-break between two sides written at the same time; see [`Both::incoming_is_newer`].
     #[must_use]
@@ -3717,15 +3709,14 @@ impl EventRecord {
         !self.deleted_bins.is_empty()
     }
 
-    /// When this side last wrote the bin, where the server keeps a time per bin: under bin convergence
-    /// ([`uses_bin_convergence`](EventRecord::uses_bin_convergence)). It is in milliseconds since the
-    /// Citrusleaf epoch, 2010-01-01T00:00:00Z: Unix milliseconds minus 1 262 304 000 000. It covers a bin this
-    /// side deleted as well. This is what decides a bin under the `bin-lut` policy, so a merge that orders the
-    /// sides per bin agrees with the policy on the bins it does not merge.
+    /// When this side last wrote the bin, in milliseconds since the Citrusleaf epoch,
+    /// 2010-01-01T00:00:00Z: Unix milliseconds minus 1 262 304 000 000. The server gives a time for every
+    /// bin of both sides, a bin this side deleted included. For a write that came from another cluster it
+    /// is the time that cluster shipped, or, where it shipped none, the time the write arrived here.
     ///
-    /// Where the server keeps no time for the bin, the answer is the record's
-    /// [`last_update_time`](EventRecord::last_update_time), which in an `xdr-merge` is 0 on both sides: the
-    /// two sides then tie on time, and [`Both::incoming_is_newer`] falls to the source id.
+    /// A bin this side neither has nor deleted has no time, and the answer is the record's
+    /// [`last_update_time`](EventRecord::last_update_time), which in an `xdr-merge` is 0: the side that has
+    /// the bin is then the newer.
     #[must_use]
     pub fn bin_last_update_time(&self, name: &str) -> i64 {
         self.bin_last_update_times
@@ -3734,8 +3725,8 @@ impl EventRecord {
             .unwrap_or(self.last_update_time)
     }
 
-    /// The source id of the DC that wrote the bin, where the server keeps one per bin; this side's
-    /// [`source_id`](EventRecord::source_id) otherwise.
+    /// The source id of the DC that wrote the bin. The server gives one for every bin of both sides; for a
+    /// bin this side neither has nor deleted, the answer is this side's [`source_id`](EventRecord::source_id).
     #[must_use]
     pub fn bin_source_id(&self, name: &str) -> i64 {
         self.bin_source_ids
@@ -3765,16 +3756,6 @@ impl EventRecord {
         self.tombstone
     }
 
-    /// Whether the policy the handler stands in for is bin convergence (`bin-lut`) rather than a plain
-    /// apply of the incoming bins (`replace`). Only under bin convergence does the server keep a time
-    /// per bin, so a time-based merge asks this before trusting
-    /// [`bin_last_update_time`](EventRecord::bin_last_update_time). It is a fact about the merge, and both
-    /// records give the same answer.
-    #[must_use]
-    pub fn uses_bin_convergence(&self) -> bool {
-        self.bin_convergence
-    }
-
     /// A new record built from this one's bins with `overrides` on top: every bin of this record goes in
     /// unless the map already has it. The bins travel by position, never through the guest. `overrides` is
     /// the map returned, filled in; it is what goes into [`Resolution::Record`].
@@ -3789,7 +3770,7 @@ impl EventRecord {
     ///
     /// out.insert("merged", true)?;
     ///
-    /// Ok(Resolution::Record { bins: winner.with_bins(out)?, ttl: None })
+    /// Ok(Resolution::Record { bins: winner.with_bins(out)? })
     /// ```
     ///
     /// Only bins this record has go in. A bin it deleted is not one of them (see
@@ -3834,7 +3815,7 @@ impl EventRecord {
 
 /// The two sides of a merge, read bin by bin into a [`Both`]. Made by [`Pair::of`].
 ///
-/// A handler that merges some bins itself and wants the rest as the policy would have left them reads the
+/// A handler that merges some bins itself and leaves the rest to the last writer of each reads the
 /// bins it knows through the pair and finishes with [`with_newer`](Pair::with_newer):
 ///
 /// ```ignore
@@ -3849,7 +3830,7 @@ impl EventRecord {
 ///     out.insert("total", total)?;
 /// }
 ///
-/// Ok(Resolution::Record { bins: pair.with_newer(out)?, ttl: None })
+/// Ok(Resolution::Record { bins: pair.with_newer(out)? })
 /// ```
 ///
 /// Each reader is the [`EventRecord`] reader of the same name asked of both sides. `Pair` is `Copy`.
@@ -3926,9 +3907,9 @@ impl Pair {
         Ok(self.both(name, side(&self.current)?, side(&self.incoming)?))
     }
 
-    /// Every bin either side has that `overrides` lacks, from the side that wrote it later - which is what
-    /// the policy would have kept - so a handler merges the bins it knows about and leaves the rest as they
-    /// would have been. Symmetric: both DCs order the two sides the same way.
+    /// Every bin either side has that `overrides` lacks, from the side that wrote it later, so a handler
+    /// merges the bins it knows about and leaves the rest to the last writer of each. Symmetric: both DCs
+    /// order the two sides the same way.
     ///
     /// `overrides` is the map returned, filled in, and is what goes into [`Resolution::Record`]. A bin
     /// already in it is left as the handler set it. A bin that exists on one side only is taken from that
@@ -3963,8 +3944,8 @@ impl Pair {
         Ok(overrides)
     }
 
-    /// Whether the incoming side wrote the bin `name` later than the current side, per bin: the order the
-    /// `bin-lut` policy uses. The later [`bin_last_update_time`](EventRecord::bin_last_update_time) wins, and
+    /// Whether the incoming side wrote the bin `name` later than the current side, per bin. The later
+    /// [`bin_last_update_time`](EventRecord::bin_last_update_time) wins, and
     /// on equal times the greater [`bin_source_id`](EventRecord::bin_source_id); see
     /// [`Both::incoming_is_newer`].
     #[must_use]
@@ -4014,10 +3995,8 @@ pub struct Both<T> {
 }
 
 impl<T> Both<T> {
-    /// Whether the incoming side wrote this bin later: by the bin's last update time where the server
-    /// keeps one, the record's otherwise, and on a tie by source id - the order the server's own bin
-    /// convergence uses, so "newer" means the same on both DCs even when the clocks agreed to the
-    /// millisecond.
+    /// Whether the incoming side wrote this bin later: by the bin's last update time, and on a tie by
+    /// source id, so "newer" means the same on both DCs even when the clocks agreed to the millisecond.
     #[must_use]
     pub fn incoming_is_newer(&self) -> bool {
         self.incoming_last_update_time > self.current_last_update_time
@@ -4124,35 +4103,39 @@ impl Both<f64> {
 ///
 /// out.insert("visits", pair.int("visits")?.max().unwrap_or(0))?;
 ///
-/// Ok(Resolution::Record { bins: pair.with_newer(out)?, ttl: None })
+/// Ok(Resolution::Record { bins: pair.with_newer(out)? })
 /// ```
 ///
-/// A [`Map`] of bins converts to `Resolution::Record` with `ttl: None`, so `Ok(bins.into())` is enough.
+/// A [`Map`] of bins converts to `Resolution::Record`, so `Ok(bins.into())` is enough.
+///
+/// A handler answers no time to live: the server gives the merged record the later of the two records'
+/// expirations, and a record that never expires wins.
 pub enum Resolution {
     /// Keep the current record; the incoming write is dropped.
     KeepLocal,
     /// Apply the incoming write whole, as if it had won every bin.
     TakeRemote,
-    /// Let the namespace's policy decide, as it would have without the event.
+    /// Do what the server would have done without the handler. A set bound to a handler never uses bin
+    /// convergence, so this applies the incoming write, as [`Resolution::TakeRemote`] does.
     Policy,
-    /// The final record is no record: it is removed on this cluster. The other cluster decides for itself,
+    /// The final record is no record: it is removed on this cluster, leaving a durable tombstone so that a
+    /// late write cannot bring it back. The delete is not shipped: the other cluster decides for itself,
     /// so a merge that deletes has to delete on both sides for the two to agree.
     Delete,
+    /// The record is removed on this cluster outright, with no tombstone, so a later write creates it
+    /// again. Like [`Resolution::Delete`], it is not shipped to the other cluster.
+    Expunge,
     /// The final record: these bins, whole - a bin not in the map, or set to nil, is deleted. **At least
     /// one bin must be left**: a record of no bins is the handler's failure, not a deletion, so that a
     /// merge which built nothing by mistake does not remove what it merged. Say [`Resolution::Delete`]
-    /// to remove the record. With the bins comes
-    /// optionally a TTL with a write's meaning: seconds, `0` for the namespace default,
-    /// `u32::MAX` for never expire, subject to the namespace's rule on TTL reductions. `None` keeps the
-    /// TTL the incoming write asked for.
-    Record { bins: Map, ttl: Option<u32> },
+    /// to remove the record.
+    Record { bins: Map },
 }
 
-/// A map of bins as the final record, with the TTL the incoming write asked for: [`Resolution::Record`]
-/// with `ttl: None`.
+/// A map of bins as the final record: [`Resolution::Record`].
 impl From<Map> for Resolution {
     fn from(bins: Map) -> Self {
-        Resolution::Record { bins, ttl: None }
+        Resolution::Record { bins }
     }
 }
 
@@ -4170,8 +4153,6 @@ pub fn xdr_merge_inputs(args_handle: i32, argc: i32) -> Result<(EventRecord, Eve
     let need = |m: &Coll, key: &str| m.get(key)?.ok_or(Error::Absent);
     let maybe = |m: &Coll, key: &str| m.get(key).ok().flatten();
 
-    let mut kbuf = [0u8; 16];
-    let bin_convergence = maybe(&merge, "policy").is_some_and(|v| v.as_str(&mut kbuf) == Ok("bin-lut"));
     // A stored list that is empty: the server always sends `empty` for this purpose.
     let empty = need(&merge, "empty")?.list()?;
 
@@ -4187,7 +4168,6 @@ pub fn xdr_merge_inputs(args_handle: i32, argc: i32) -> Result<(EventRecord, Eve
             // Absent for an xdr-merge side: each cluster sets its own, and a merge must not read them.
             generation: int("gen"),
             last_update_time: int("lut"),
-            ttl: int("ttl"),
             source_id: need(&m, "src-id")?.int()?,
             bin_names,
             deleted_bins: match maybe(&m, "deleted") {
@@ -4199,7 +4179,6 @@ pub fn xdr_merge_inputs(args_handle: i32, argc: i32) -> Result<(EventRecord, Eve
             delete: incoming && flag("deleted-record"),
             partial: incoming && flag("partial"),
             tombstone: !incoming && flag("tombstone"),
-            bin_convergence,
         })
     };
 
@@ -4214,14 +4193,11 @@ pub fn deliver_resolution(r: Result<Resolution, Error>) -> i32 {
         Ok(Resolution::TakeRemote) => result(&Value::from("take-remote")),
         Ok(Resolution::Policy) => result(&Value::from("policy")),
         Ok(Resolution::Delete) => result(&Value::from("delete")),
-        Ok(Resolution::Record { bins, ttl }) => (|| {
-            let out = map(3)?;
+        Ok(Resolution::Expunge) => result(&Value::from("expunge")),
+        Ok(Resolution::Record { bins }) => (|| {
+            let out = map(2)?;
 
             out.insert("verdict", "record")?.insert("bins", &bins)?;
-
-            if let Some(ttl) = ttl {
-                out.insert("ttl", i64::from(ttl))?;
-            }
 
             result(&out.as_value())
         })(),
@@ -4424,7 +4400,7 @@ macro_rules! stream {
 ///             out.insert("visits", visits)?;
 ///         }
 ///
-///         Ok(Resolution::Record { bins: pair.with_newer(out)?, ttl: None })
+///         Ok(Resolution::Record { bins: pair.with_newer(out)? })
 ///     }
 /// }
 /// ```

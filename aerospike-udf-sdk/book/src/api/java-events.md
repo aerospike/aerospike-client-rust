@@ -46,14 +46,16 @@ public final class Resolution
 ```
 
 What an `xdr-merge` handler returns: the Java face of the Rust SDK's `Resolution`. Keep the
-current record, apply the incoming write whole, let the namespace's policy decide, remove the record, or
-the final record.
+current record, apply the incoming write whole, do what the server would have done without the handler,
+remove the record, or the final record.
 
 ```java
 return Resolution.keepLocal();                               // drop the incoming write
-return Resolution.record(pair.withNewer(out));               // these bins, the incoming TTL
-return Resolution.record(out, 3600);                         // these bins, expiring in an hour
+return Resolution.record(pair.withNewer(out));               // these bins
 ```
+
+No answer carries a TTL. The server gives the merged record the later of the two records' expirations,
+and a record that never expires wins.
 
 A resolution is checked by the server before it is taken, and one it does not accept is the handler's
 failure, which the binding's `on-failure` setting decides.
@@ -82,7 +84,8 @@ record.
 public static Resolution policy()
 ```
 
-Let the namespace's policy decide, as it would have without the event.
+Do what the server would have done without the handler. A set bound to a handler never uses bin
+convergence, so this applies the incoming write, as `takeRemote` does.
 
 #### `Resolution.delete`
 
@@ -90,9 +93,19 @@ Let the namespace's policy decide, as it would have without the event.
 public static Resolution delete()
 ```
 
-Remove the record on this cluster. The other cluster decides for itself, so a merge that deletes has
-to delete on both sides for the two to agree. A record resolution with no bins left in it is not
-this: it is the handler's failure.
+Remove the record on this cluster and leave a durable tombstone, so a late write cannot bring it back.
+The delete is not shipped: the other cluster decides for itself, so a merge that deletes has to delete
+on both sides for the two to agree. A record resolution with no bins left in it is not this: it is the
+handler's failure.
+
+#### `Resolution.expunge`
+
+```java
+public static Resolution expunge()
+```
+
+Remove the record on this cluster outright, with no tombstone, so a later write creates it again. Like
+`delete`, it is not shipped to the other cluster.
 
 #### `Resolution.record`
 
@@ -100,22 +113,12 @@ this: it is the handler's failure.
 public static Resolution record(MapBuilder bins)
 ```
 
-The final record: these bins, whole - a bin not in the map, or set to nil, is deleted - keeping the TTL
-the incoming write asked for. The map's keys are the bin names, so each is a string of 1 to 15 bytes.
-At least one bin must be left: an empty map, or one whose values are all nil, is the handler's failure
-and not a deletion, which is what `delete` is for. The builder is not used up and may still be
-added to before the handler returns; it is read after the handler returns, so it must not be closed
-(nor made in a try-with-resources block) in the handler.
-
-#### `Resolution.record`
-
-```java
-public static Resolution record(MapBuilder bins, long ttl)
-```
-
-As `record(MapBuilder)`, with the record's TTL in seconds, which has a write's meaning: 0 for
-the namespace default. A negative `ttl` is the same as giving none: the TTL the incoming write
-asked for is kept.
+The final record: these bins, whole - a bin not in the map, or set to nil, is deleted. The map's keys
+are the bin names, so each is a string of 1 to 15 bytes. At least one bin must be left: an empty map,
+or one whose values are all nil, is the handler's failure and not a deletion, which is what
+`delete` is for. The builder is not used up and may still be added to before the handler
+returns; it is read after the handler returns, so it must not be closed (nor made in a
+try-with-resources block) in the handler.
 
 #### `Resolution.deliver`
 
@@ -135,7 +138,7 @@ public String verdict()
 ```
 
 The verdict word as the server reads it: `keep-local`, `take-remote`, `policy`,
-`delete` or `record`.
+`delete`, `expunge` or `record`.
 
 #### `EventRecord`
 
@@ -146,7 +149,7 @@ public final class EventRecord implements RecordReader
 One record an event hands over: each side of a merge, the current record and the incoming write. It is
 read-only, and it reads like the record of a call - the same readers, through
 `RecordReader` - with what an event adds: the names of its bins, the bins this side deleted,
-where the server keeps them, when and by whom each bin was last written, and the few facts about the
+when and by whom each bin was last written, and the few facts about the
 merge that are facts about one side (`isDelete` and `isPartial` of the incoming write,
 `isTombstone` of the current record). One asked of the side it is not about answers false.
 
@@ -193,14 +196,6 @@ public long lastUpdateTime()
 
 When the record was last written. It is 0 on both sides of an `xdr-merge`, for the reason
 `generation` is; `binLastUpdateTime` is the time a merge orders by.
-
-#### `EventRecord.ttl`
-
-```java
-public long ttl()
-```
-
-This side's time to live, in seconds; 0 for a record that does not expire.
 
 #### `EventRecord.sourceId`
 
@@ -254,11 +249,11 @@ public long binLastUpdateTime(String name)
 ```
 
 When this side last wrote the bin, in milliseconds since the Citrusleaf epoch, 2010-01-01T00:00:00Z
-(Unix milliseconds minus 1 262 304 000 000), for comparing with the other side's: the bin's own time
-where the server keeps one (`usesBinConvergence` says whether it is meaningful), and
-`lastUpdateTime` otherwise, also for a bin this side does not have. The record's time is 0 in an
-`xdr-merge`, so where no per-bin time is kept every bin answers 0 on both sides and only
-`binSourceId` tells them apart.
+(Unix milliseconds minus 1 262 304 000 000), for comparing with the other side's. The server gives a
+time for every bin of both sides, a bin the side deleted included: for a write that came from another
+cluster, the time that cluster shipped, or, where it shipped none, the time the write arrived here. A
+bin this side neither has nor deleted gets `lastUpdateTime`, which is 0 in an
+`xdr-merge`.
 
 #### `EventRecord.binSourceId`
 
@@ -266,8 +261,8 @@ where the server keeps one (`usesBinConvergence` says whether it is meaningful),
 public long binSourceId(String name)
 ```
 
-The source id of the data centre that last wrote the bin on this side: the bin's own where the server
-keeps one, the record's `sourceId` otherwise, also for a bin this side does not have.
+The source id of the data centre that last wrote the bin on this side. The server gives one for every
+bin of both sides; a bin with none of its own gets the record's `sourceId`.
 
 #### `EventRecord.isDelete`
 
@@ -294,15 +289,6 @@ public boolean isTombstone()
 ```
 
 Whether this is a current record that exists but has no bins. False of the incoming write.
-
-#### `EventRecord.usesBinConvergence`
-
-```java
-public boolean usesBinConvergence()
-```
-
-Whether per-bin timestamps are meaningful in this merge, for a time-based merge that wants to check
-before trusting `binLastUpdateTime`. The same answer on both records.
 
 #### `EventRecord.get`
 
@@ -668,10 +654,8 @@ it, is null. The way to carry a bin into the answer without caring what it holds
 public boolean incomingIsNewer(String name)
 ```
 
-Whether the incoming side wrote `name` later: by the bin's time where the server keeps one, and
-on a tie (which is every bin when it keeps none) by the larger source id. It is the order the server's
-own bin convergence uses, and both clusters compute it alike. It reads no bin, so it also answers for a
-bin neither side has.
+Whether the incoming side wrote `name` later: by the bin's time, and on a tie by the larger source
+id. Both clusters compute it alike. It reads no bin, so it also answers for a bin neither side has.
 
 #### `Pair.withNewer`
 
@@ -680,8 +664,8 @@ public MapBuilder withNewer(MapBuilder overrides)
 ```
 
 Puts into `overrides` every bin either side has that it lacks, from the side that wrote the bin
-later - which is what the policy would have kept - so a handler merges the bins it knows about and
-leaves the rest as they would have been. Symmetric: both DCs order the two sides the same way.
+later, so a handler merges the bins it knows about and leaves the rest to the last writer of each.
+Symmetric: both DCs order the two sides the same way.
 
 A delete is a write like any other. When the side that wrote a bin later deleted it (the bin is in
 that side's `EventRecord.deletedBins`), the bin is left out of the answer, which is how a
@@ -733,8 +717,7 @@ The incoming write's value, or null when it has no such bin or the bin is nil.
 public boolean incomingIsNewer()
 ```
 
-Whether the incoming side wrote this bin later: by the bin's LUT where the server keeps one, the
-record's otherwise, and on a tie by source id - the order the server's own bin convergence uses, so
+Whether the incoming side wrote this bin later: by the bin's LUT, and on a tie by source id, so
 "newer" means the same on both DCs even when the clocks agreed to the millisecond.
 
 #### `Both.newer`

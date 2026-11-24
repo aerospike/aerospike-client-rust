@@ -677,13 +677,12 @@ as_udf::stream! {
 // The merge handler.
 //
 
-/// `[generation, last_update_time, ttl, source_id, a, b]` of one side.
+/// `[generation, last_update_time, source_id, a, b]` of one side.
 fn side_meta(side: &EventRecord, a: bool, b: bool) -> Result<as_udf::List, Error> {
-    let out = as_udf::list(6)?;
+    let out = as_udf::list(5)?;
 
     out.push(side.generation())?
         .push(side.last_update_time())?
-        .push(side.ttl())?
         .push(side.source_id())?
         .push(a)?
         .push(b)?;
@@ -742,10 +741,7 @@ as_udf::event! {
             .insert("i_names", names(incoming.bin_names()))?
             .insert("c_del", names(current.deleted_bins()))?
             .insert("i_del", names(incoming.deleted_bins()))?
-            .insert(
-                "c_meta",
-                &side_meta(&current, current.is_tombstone(), current.uses_bin_convergence())?,
-            )?
+            .insert("c_meta", &side_meta(&current, current.is_tombstone(), current.is_partial())?)?
             .insert("i_meta", &side_meta(&incoming, incoming.is_delete(), incoming.is_partial())?)?
             .insert(
                 "blut",
@@ -753,7 +749,7 @@ as_udf::event! {
             )?
             .insert("bsrc", &sides(current.bin_source_id("s"), incoming.bin_source_id("s"))?)?;
 
-        Ok(Resolution::Record { bins: out, ttl: None })
+        Ok(Resolution::Record { bins: out })
     }
 }
 

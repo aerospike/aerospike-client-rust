@@ -189,26 +189,28 @@ const CASES: &[(&str, i64, Want)] = &[
     ("take-remote", 0, Want::Taken),
     ("m-keep", 0, Want::Kept),
     ("m-take", 0, Want::Taken),
-    ("m-take-ttl", 100, Want::Taken),
     ("delete", 0, Want::Gone),
     ("m-delete", 0, Want::Gone),
+    ("m-expunge", 0, Want::Gone),
     // A record.
     ("r-ok", 7, Want::Record(&["merged"])),
     ("r-kinds", 0, Want::Record(&["i", "d", "t", "s", "e", "b", "g", "l", "m"])),
     ("r-15", 0, Want::Record(&["0123456789abcde"])),
-    ("r-ttl", 100, Want::Record(&["merged"])),
-    ("r-ttl", 0, Want::Record(&["merged"])),
-    ("r-ttl", 0xffff_ffff, Want::Record(&["merged"])),
     ("r-deep", 30, Want::Record(&["merged"])),
     ("r-deep", 60, Want::Record(&["merged"])),
     ("r-big", 64, Want::Record(&["merged"])),
     ("r-many", 100, Want::Record(&[])),
-    // A record that cannot be stored as it is given.
+    // A merge never sets the expiration (R84): an answer with a TTL is the handler's failure.
+    ("r-ttl", 100, Want::Failed),
+    ("r-ttl", 0, Want::Failed),
+    ("r-ttl", 0xffff_ffff, Want::Failed),
     ("r-ttl", -1, Want::Failed),
     ("r-ttl", 0x1_0000_0000, Want::Failed),
     ("r-ttl", i64::MIN, Want::Failed),
+    ("m-take-ttl", 100, Want::Failed),
     ("m-take-ttl", -5, Want::Failed),
     ("r-ttl-str", 0, Want::Failed),
+    // A record that cannot be stored as it is given.
     ("r-long", 0, Want::Failed),
     ("r-nul", 0, Want::Failed),
     ("r-noname", 0, Want::Failed),
@@ -470,9 +472,9 @@ async fn a_signature_that_is_not_one_is_refused() {
 //
 
 /// The handler runs for an incoming XDR write to a record that exists, and for an incoming XDR delete:
-/// not for a local write, and not for an XDR write that creates the record. And a merged record goes
-/// back only when it holds something the other cluster lacks: with handlers on both sides, it goes back
-/// once, the other side lands on the same record, and the exchange stops there.
+/// not for a local write, and not for an XDR write that creates the record. And a merge ships nothing with
+/// forward off (R38), even when its record holds something the other cluster lacks: the probe's record
+/// answer is a value of its own, which stays on the cluster that merged.
 #[aerospike_macro::test]
 async fn a_merge_fires_once_and_settles() {
     let Some((c1, c2)) = clients("a_merge_fires_once_and_settles").await else { return };
@@ -506,26 +508,22 @@ async fn a_merge_fires_once_and_settles() {
 
     assert_eq!(outcome(&merged), "record", "dc2 merged to {}", describe(&merged));
 
-    // dc2's record is not dc1's write, so it goes back to dc1 once. dc1's handler, given it, answers the
-    // same record, which is then the incoming one: nothing is sent again, and both clusters hold it.
-    let settled = wait_for(&c1, &key, SHIP_LAG, |b| outcome(b) == "record").await;
-
-    assert_eq!(outcome(&settled), "record", "dc1 holds {}", describe(&settled));
-    assert_eq!(bins(&c1, &key).await, bins(&c2, &key).await, "both clusters hold the merged record");
-    assert_eq!(counter(&c2, set_name, "shipped-back").await, 1, "dc2's merge went back once");
-
-    // Left alone, nothing more happens.
+    // dc2's record is not dc1's write, and it is not sent back: dc1 keeps the write it made, and no merge
+    // fires there. (A handler that keeps the contract computes the same record on both sides; this one
+    // does not, which is why the clusters differ here, and why shipping back would never stop.)
     let (f1, f2) = (counter(&c1, set_name, "fired").await, counter(&c2, set_name, "fired").await);
 
     aerospike_rt::sleep(Duration::from_secs(4)).await;
 
+    let dc1 = bins(&c1, &key).await;
+
+    assert_ne!(outcome(&dc1), "record", "dc2's merge reached dc1: {}", describe(&dc1));
     assert_eq!(
         (counter(&c1, set_name, "fired").await, counter(&c2, set_name, "fired").await),
         (f1, f2),
         "merges went on with nothing being written"
     );
     assert_eq!(f2, 1, "one incoming write on dc2 is one merge");
-    assert_eq!(counter(&c1, set_name, "shipped-back").await, 0, "dc1's merge brought nothing dc2 lacks");
 
     // A delete that arrives over XDR is offered to the handler too, and with `policy` it deletes.
     c1.delete(&write, &key).await.unwrap();

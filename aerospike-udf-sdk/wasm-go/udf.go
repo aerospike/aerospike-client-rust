@@ -541,12 +541,6 @@ func mapPutStr(m int32, key, value string) int32 {
 	return mapPutStrStr(m, strptr(key), int32(len(key)), strptr(value), int32(len(value)))
 }
 
-// mapPutInt puts an integer under a string key in a built map. The status is Err when m is not a built
-// map.
-func mapPutInt(m int32, key string, value int64) int32 {
-	return mapPutStrInt(m, strptr(key), int32(len(key)), value)
-}
-
 // mapPutHandle puts a value held by handle (a built collection, or a value the host made) under a string
 // key in a built map. The status is Err when m is not a built map or value is not a usable handle.
 func mapPutHandle(m int32, key string, value int32) int32 {
@@ -693,20 +687,18 @@ type EventRecord struct {
 	which              int32 // 0 current, 1 incoming
 	generation         int64
 	lastUpdateTime     int64
-	ttl                int64
 	sourceID           int64
 	binNames           Value // list of bin names
 	deletedBins        Value // list of bin names this side deleted; Absent kind when none
-	binLastUpdateTimes Value // map name -> last update time per bin, when the server keeps one; Absent kind otherwise
+	binLastUpdateTimes Value // map name -> last update time per bin; Absent kind if the server sent none
 	binSourceIDs       Value // map name -> source id, likewise
 
 	// What the server says of the merge, each kept on the record it is true of and read through the
 	// method of the same name. On the other record they are the zero value, so the method answers false
 	// or walks nothing.
-	isDelete       bool
-	partial        bool
-	tombstone      bool
-	binConvergence bool
+	isDelete  bool
+	partial   bool
+	tombstone bool
 }
 
 // The event's description is a map the server built, read with these: an entry that is missing or of
@@ -768,7 +760,6 @@ func eventSide(description Value, key string, which int32, out *EventRecord) boo
 	out.which = which
 	out.generation = mapInt(m, "gen", 0)
 	out.lastUpdateTime = mapInt(m, "lut", 0)
-	out.ttl = mapInt(m, "ttl", 0)
 	out.sourceID = mapInt(m, "src-id", 0)
 	out.binNames = mapGet(m, "bins")
 	out.deletedBins = mapGet(m, "deleted")
@@ -811,9 +802,6 @@ func DecodeMerge(args, argc int32, current, incoming *EventRecord) bool {
 	if !eventSide(a[0], "current", 0, current) || !eventSide(a[0], "incoming", 1, incoming) {
 		return false
 	}
-	convergence := StringIs(mapGet(a[0], "policy"), "bin-lut")
-	current.binConvergence = convergence
-	incoming.binConvergence = convergence
 	current.tombstone = mapBool(mapGet(a[0], "current"), "tombstone")
 	side := mapGet(a[0], "incoming")
 	incoming.partial = mapBool(side, "partial")
@@ -821,22 +809,21 @@ func DecodeMerge(args, argc int32, current, incoming *EventRecord) bool {
 	return true
 }
 
-// BinLastUpdateTime is when this side last wrote the bin, where the server keeps a time per bin, and
-// the record's LastUpdateTime otherwise. It is in milliseconds since the Citrusleaf epoch,
+// BinLastUpdateTime is when this side last wrote the bin, in milliseconds since the Citrusleaf epoch,
 // 2010-01-01T00:00:00Z (Unix milliseconds minus 1 262 304 000 000), like LastUpdateTime. It is for
-// ordering the two sides of one bin, which is what decides a bin under bin convergence;
-// Pair.IncomingIsNewer and Both.Newer do that with it.
+// ordering the two sides of one bin; Pair.IncomingIsNewer and Both.Newer do that with it.
 //
-// The server keeps a time per bin only under bin convergence (UsesBinConvergence). Without it this
-// is the record's time, which an xdr-merge reports as 0 on both sides, so nothing can be ordered by
-// it. name need not be a bin the side has: a bin with no time of its own gets the record's.
+// The server gives a time for every bin of both sides, a bin the side deleted included. For a write
+// that came from another cluster it is the time that cluster shipped, or, where it shipped none, the
+// time the write arrived here. name need not be a bin the side has: a bin with no time of its own
+// gets the record's, which an xdr-merge reports as 0, so the side that has the bin is the newer.
 func (r *EventRecord) BinLastUpdateTime(name string) int64 {
 	return mapInt(r.binLastUpdateTimes, name, r.lastUpdateTime)
 }
 
-// BinSourceID is the source id of the cluster that last wrote the bin on this side, where the server
-// keeps one per bin (under bin convergence), and the record's SourceID otherwise. It is the tie-break
-// when two sides wrote a bin at the same time.
+// BinSourceID is the source id of the cluster that last wrote the bin on this side. The server gives
+// one for every bin of both sides; a bin with none of its own gets the record's SourceID. It is the
+// tie-break when two sides wrote a bin at the same time.
 func (r *EventRecord) BinSourceID(name string) int64 {
 	return mapInt(r.binSourceIDs, name, r.sourceID)
 }
@@ -893,10 +880,9 @@ func EachString(list Value, buf []byte, fn func(name []byte, v Value)) error {
 	}
 }
 
-// resolveRecord returns the final record: bins (a built map; a bin absent or nil is deleted) and a TTL
-// with a write's meaning, or -1 to keep the one the incoming write asked for.
-func resolveRecord(bins int32, ttl int64) int32 {
-	out := NewMap(3)
+// resolveRecord returns the final record: bins, a built map in which a bin absent or nil is deleted.
+func resolveRecord(bins int32) int32 {
+	out := NewMap(2)
 	if out.err != nil {
 		return Fail("resolve: could not build the resolution")
 	}
@@ -905,9 +891,6 @@ func resolveRecord(bins int32, ttl int64) int32 {
 	rc := mapPutStr(out.handle, "verdict", "record")
 	if rc == OK {
 		rc = mapPutHandle(out.handle, "bins", bins)
-	}
-	if rc == OK && ttl >= 0 {
-		rc = mapPutInt(out.handle, "ttl", ttl)
 	}
 	if rc != OK {
 		return Fail("resolve: could not build the resolution")

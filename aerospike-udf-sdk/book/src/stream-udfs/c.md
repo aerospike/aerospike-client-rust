@@ -56,7 +56,7 @@ are all refused there. `_end` runs after the last record and has no record to re
 `examples/vector/vector.c` is the full-size example; `make SIMD=1` builds it with `-msimd128`. Its stream half:
 
 ```c
-{{#include ../../../wasm-c/examples/vector/vector.c:335:384}}
+{{#include ../../../wasm-c/examples/vector/vector.c:stream}}
 ```
 
 ## API reference

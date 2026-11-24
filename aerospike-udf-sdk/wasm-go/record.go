@@ -110,8 +110,6 @@ type RecordReader interface {
 	BinCount() int64
 	// Generation is the record's modification count; 0 on either side of an xdr-merge.
 	Generation() int64
-	// TTL is the record's time to live, in seconds; 0 when it does not expire.
-	TTL() int64
 	// LastUpdateTime is when the record was last written, in milliseconds since the Citrusleaf epoch,
 	// 2010-01-01T00:00:00Z (Unix milliseconds minus 1 262 304 000 000); 0 on either side of an
 	// xdr-merge, and on a key with no record.

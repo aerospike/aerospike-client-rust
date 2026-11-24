@@ -126,9 +126,10 @@ tag; a tie goes to the removal; the write UDFs stamp with `now()`, which the han
 
 `registers*.wasm`, in the same four languages, is step 6: a record whose bins are last-writer-wins
 registers stamped by the server (`examples/registers`), with one bin, `seen`, kept as a maximum by the
-UDF `saw`. Its merge reads each bin's last-update time and source id, which only a namespace with
-`conflict-resolve-writes true` keeps: `registers_merge_converges` and `registers_converge_two_clusters`
-use the namespace `testbc` and skip themselves where there is none. `AEROSPIKE_REGISTERS_MODULE` makes
+UDF `saw`. Its merge reads each bin's last-update time and source id, which a set bound to a handler
+keeps whatever the namespace's settings: `registers_merge_converges` runs it on `testbc`, where the
+other sets converge bins, and on `test`, and `registers_converge_two_clusters` uses `testbc`, which ships
+each bin's time; both skip themselves where there is no `testbc`. `AEROSPIKE_REGISTERS_MODULE` makes
 the two-cluster test run one compiled module of your choice instead of the four.
 
 ## The CRDT

@@ -1251,8 +1251,8 @@ AS_UDF_IMPORT(event_bin_value) int32_t as_udf_event_bin_value(int32_t which, con
 
 /* One of the two records of an xdr-merge, as as_udf_event_decode fills it: its metadata, its bin names, and the
  * facts of the merge that are about this record. Read-only: its bins are read with the `as_udf_event_` functions
- * and nothing writes it; the handler's answer is what changes the record. `ttl` is in seconds. `source_id` is the
- * XDR source id of the cluster that wrote this version. `generation` and `last_update_time` are 0 on both records
+ * and nothing writes it; the handler's answer is what changes the record. `source_id` is the XDR source id of the
+ * cluster that wrote this version. `generation` and `last_update_time` are 0 on both records
  * of an xdr-merge: each cluster has its own, so a merge that read them could not converge, and it is the per-bin
  * times that order the two sides. A metadata field the server did not send is 0. The list and map fields are
  * values to read by position, of kind AS_UDF_ABSENT when the server sent none; read the per-bin maps through
@@ -1268,16 +1268,14 @@ typedef struct as_udf_event_record_s {
 	int32_t which;            /* 0 current, 1 incoming */
 	int64_t generation;
 	int64_t last_update_time;
-	int64_t ttl;
 	int64_t source_id;
 	as_udf_value bin_names;   /* list of bin names */
 	as_udf_value deleted_bins; /* list of bin names this side deleted; AS_UDF_ABSENT, not an empty list, when none */
-	as_udf_value bin_last_update_times; /* map name -> last-update time, per bin, when the server keeps one (else AS_UDF_ABSENT) */
+	as_udf_value bin_last_update_times; /* map name -> last-update time, per bin (AS_UDF_ABSENT if the server sent none) */
 	as_udf_value bin_source_ids; /* map name -> source id, likewise */
 	bool is_delete;           /* incoming: the write is a record delete, so this record has no bins */
 	bool is_partial;          /* incoming: the write carries only the bins that changed */
 	bool is_tombstone;        /* current: the record exists but has no bins */
-	bool uses_bin_convergence; /* either, the same on both: per-bin LUTs are meaningful */
 } as_udf_event_record;
 
 /* The entry under a NUL-terminated string key of a stored map, as a value. Of kind AS_UDF_ABSENT when there is no
@@ -1366,11 +1364,9 @@ static inline bool as_udf_event_side(const as_udf_value* description, const char
 {
 	as_udf_value m = as_udf_map_get(description, key);
 	if (m.kind != AS_UDF_MAP) return false;
-	as_udf_value policy = as_udf_map_get(description, "policy");
 	out->which = which;
 	as_udf_map_int_or(&m, "gen", 0, &out->generation);
 	as_udf_map_int_or(&m, "lut", 0, &out->last_update_time);
-	as_udf_map_int_or(&m, "ttl", 0, &out->ttl);
 	as_udf_map_int_or(&m, "src-id", 0, &out->source_id);
 	out->bin_names = as_udf_map_get(&m, "bins");
 	out->deleted_bins = as_udf_map_get(&m, "deleted");
@@ -1379,7 +1375,6 @@ static inline bool as_udf_event_side(const as_udf_value* description, const char
 	out->is_delete = which == 1 && as_udf_event_flag(&m, "deleted-record");
 	out->is_partial = which == 1 && as_udf_event_flag(&m, "partial");
 	out->is_tombstone = which == 0 && as_udf_event_flag(&m, "tombstone");
-	out->uses_bin_convergence = as_udf_string_is(&policy, "bin-lut");
 	return out->bin_names.kind == AS_UDF_LIST;
 }
 
@@ -1566,10 +1561,12 @@ static inline bool as_udf_event_deleted_any(const as_udf_event_record* r)
 }
 
 /* When this side last wrote the bin, as the server's timestamp for it, in milliseconds since the Citrusleaf
- * epoch, 2010-01-01T00:00:00Z (Unix milliseconds minus 1262304000000): the bin's own where the server keeps one
- * (see `uses_bin_convergence`), the record's `last_update_time` otherwise, also for a bin the record does not
- * have; in an xdr-merge the record's is 0. `name` is NUL-terminated. A number to order the two sides by, not to
- * compare with a clock, which a handler does not have. */
+ * epoch, 2010-01-01T00:00:00Z (Unix milliseconds minus 1262304000000). The server gives a time for every bin of
+ * both sides, a bin the side deleted included: for a write that came from another cluster, the time that cluster
+ * shipped, or, where it shipped none, the time the write arrived here. A bin with no time of its own, one the
+ * record neither has nor deleted, gets the record's `last_update_time`, which in an xdr-merge is 0. `name` is
+ * NUL-terminated. A number to order the two sides by, not to compare with a clock, which a handler does not
+ * have. */
 static inline int64_t as_udf_event_bin_last_update_time(const as_udf_event_record* r, const char* name)
 {
 	int64_t t = r->last_update_time;
@@ -1577,8 +1574,9 @@ static inline int64_t as_udf_event_bin_last_update_time(const as_udf_event_recor
 	return t;
 }
 
-/* The id of the XDR source that last wrote the bin on this side: the bin's own where the server keeps one, the
- * record's source id otherwise. What breaks a tie between equal last-update times. */
+/* The id of the XDR source that last wrote the bin on this side. The server gives one for every bin of both
+ * sides; a bin with none of its own gets the record's source id. What breaks a tie between equal last-update
+ * times. */
 static inline int64_t as_udf_event_bin_source_id(const as_udf_event_record* r, const char* name)
 {
 	int64_t id = r->source_id;
@@ -1586,10 +1584,9 @@ static inline int64_t as_udf_event_bin_source_id(const as_udf_event_record* r, c
 	return id;
 }
 
-/* Whether the incoming record wrote the bin later than the current one: by last-update time, then by source id,
- * the order the server's bin convergence uses. Both clusters see the same two times and ids, so both give the
- * same side as newer whichever of them is `current`: a rule built on this is symmetric. False when the two are
- * equal in both. */
+/* Whether the incoming record wrote the bin later than the current one: by last-update time, then by source id.
+ * Both clusters see the same two times and ids, so both give the same side as newer whichever of them is
+ * `current`: a rule built on this is symmetric. False when the two are equal in both. */
 static inline bool as_udf_event_incoming_is_newer(const as_udf_event_record* current, const as_udf_event_record* incoming, const char* name)
 {
 	int64_t ct = as_udf_event_bin_last_update_time(current, name);
@@ -1639,7 +1636,7 @@ static inline bool as_udf_list_has_string(const as_udf_value* list, const char* 
  * ```c
  * int32_t out = as_udf_map_new(8);
  * as_udf_map_put_string_int(out, "visits", 6, visits);
- * return as_udf_resolve_record(as_udf_event_with_bins(&incoming, out), -1);
+ * return as_udf_resolve_record(as_udf_event_with_bins(&incoming, out));
  * ```
  */
 static inline int32_t as_udf_event_with_bins(const as_udf_event_record* r, int32_t overrides)
@@ -1672,37 +1669,42 @@ static inline int32_t as_udf_resolve_keep_local(void) { as_udf_result_string("ke
 /* Answer `take-remote`: the incoming write is applied, its bins over the current record. Sets the call's result
  * and returns 0, the status the handler returns: `return as_udf_resolve_take_remote();`. */
 static inline int32_t as_udf_resolve_take_remote(void) { as_udf_result_string("take-remote", 11); return 0; }
-/* Answer `policy`: the namespace's conflict policy decides, as it would have without a handler. The answer for
- * the cases a handler has no opinion on. Sets the call's result and returns 0, the status the handler returns:
+/* Answer `policy`: what the server would have done without a handler. A set bound to a handler never uses bin
+ * convergence, so this applies the incoming write, as `take-remote` does. The answer for the cases a handler has
+ * no opinion on. Sets the call's result and returns 0, the status the handler returns:
  * `return as_udf_resolve_policy();`. */
 static inline int32_t as_udf_resolve_policy(void) { as_udf_result_string("policy", 6); return 0; }
-/* Answer `delete`: the record is removed on this cluster. The other cluster decides for itself, so a merge that
- * deletes has to delete on both sides for the two to agree. A record answer with no bins left in it is not this:
- * it is the handler's failure. Sets the call's result and returns 0, the status the handler returns: `return
+/* Answer `delete`: the record is removed on this cluster and a durable tombstone is left, so a late write cannot
+ * bring it back. The delete is not shipped: the other cluster decides for itself, so a merge that deletes has to
+ * delete on both sides for the two to agree. A record answer with no bins left in it is not this: it is the
+ * handler's failure. Sets the call's result and returns 0, the status the handler returns: `return
  * as_udf_resolve_delete();`. */
 static inline int32_t as_udf_resolve_delete(void) { as_udf_result_string("delete", 6); return 0; }
+/* Answer `expunge`: the record is removed on this cluster outright, with no tombstone, so a later write creates
+ * it again. Like `delete`, it is not shipped to the other cluster. Sets the call's result and returns 0, the
+ * status the handler returns: `return as_udf_resolve_expunge();`. */
+static inline int32_t as_udf_resolve_expunge(void) { as_udf_result_string("expunge", 7); return 0; }
 
 /* Answer with the final record. `bins` is the handle of a built map from bin name to value: the record is left
  * with exactly these bins, a bin that is absent from the map or nil in it is deleted, and at least one bin must
- * remain. `ttl` is the record's time to live in seconds with a write's meaning (0 for the namespace default), or
- * -1 to keep the one the incoming write asked for. Returns the status the handler returns: 0, or non-zero with
- * the call failed when the answer could not be built.
+ * remain. No answer carries a TTL: the server gives the merged record the later of the two records' expirations,
+ * and a record that never expires wins. Returns the status the handler returns: 0, or non-zero with the call
+ * failed when the answer could not be built.
  * ```c
  * int32_t out = as_udf_map_new(4);
  * int64_t a, b;
  * if (as_udf_event_int_or(&current, "visits", 0, &a) != AS_UDF_OK) return as_udf_fail_str("visits is not an integer");
  * if (as_udf_event_int_or(&incoming, "visits", 0, &b) != AS_UDF_OK) return as_udf_fail_str("visits is not an integer");
  * as_udf_map_put_string_int(out, "visits", 6, a > b ? a : b);
- * return as_udf_resolve_record(out, -1);
+ * return as_udf_resolve_record(out);
  * ```
  */
-static inline int32_t as_udf_resolve_record(int32_t bins, int64_t ttl)
+static inline int32_t as_udf_resolve_record(int32_t bins)
 {
-	int32_t out = as_udf_map_new(3);
+	int32_t out = as_udf_map_new(2);
 	if (out <= 0) return as_udf_fail_str("resolve: could not build the resolution");
 	int32_t rc = as_udf_map_put_string_string(out, "verdict", 7, "record", 6);
 	if (rc == AS_UDF_OK) rc = as_udf_map_put_string_handle(out, "bins", 4, bins);
-	if (rc == AS_UDF_OK && ttl >= 0) rc = as_udf_map_put_string_int(out, "ttl", 3, ttl);
 	if (rc != AS_UDF_OK) {
 		as_udf_handle_close(out);
 		return as_udf_fail_str("resolve: could not build the record answer");

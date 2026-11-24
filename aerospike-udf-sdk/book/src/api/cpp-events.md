@@ -35,14 +35,6 @@ When the record was last written, in milliseconds since the Citrusleaf epoch, 20
 both sides of an xdr-merge, for the same reason as generation(); bin_last_update_time() is what orders the
 two sides.
 
-#### `EventRecord::ttl`
-
-```cpp
-int64_t ttl() const
-```
-
-The record's time to live in seconds; 0 when it does not expire.
-
 #### `EventRecord::source_id`
 
 ```cpp
@@ -93,9 +85,11 @@ int64_t bin_last_update_time(StrView name) const
 ```
 
 When this side last wrote the bin, as the server's timestamp for it, in milliseconds since the Citrusleaf
-epoch, 2010-01-01T00:00:00Z (Unix milliseconds minus 1262304000000): the bin's own where the server keeps
-one (uses_bin_convergence()), the record's otherwise, which is 0 in an xdr-merge, also for a bin the record
-does not have. A number to order the two sides by, not to compare with a clock. The name is cut to 63 bytes.
+epoch, 2010-01-01T00:00:00Z (Unix milliseconds minus 1262304000000). The server gives a time for every bin of
+both sides, a bin the side deleted included: for a write that came from another cluster, the time that
+cluster shipped, or, where it shipped none, the time the write arrived here. A bin the record neither has
+nor deleted gets the record's time, which is 0 in an xdr-merge. A number to order the two sides by, not to
+compare with a clock. The name is cut to 63 bytes.
 
 #### `EventRecord::bin_source_id`
 
@@ -103,8 +97,8 @@ does not have. A number to order the two sides by, not to compare with a clock. 
 int64_t bin_source_id(StrView name) const
 ```
 
-The source id of this side's last write of the bin: the bin's own where the server keeps one, the
-record's otherwise. The name is cut to 63 bytes.
+The source id of this side's last write of the bin. The server gives one for every bin of both sides; a bin
+with none of its own gets the record's. The name is cut to 63 bytes.
 
 #### `EventRecord::is_delete`
 
@@ -131,15 +125,6 @@ bool is_tombstone() const
 ```
 
 Whether the current record is a tombstone: it exists but has no bins. False on the incoming record.
-
-#### `EventRecord::uses_bin_convergence`
-
-```cpp
-bool uses_bin_convergence() const
-```
-
-Whether per-bin timestamps are meaningful, for a time-based merge to check before it trusts
-bin_last_update_time(). The same answer on both records.
 
 #### `EventRecord::with_bins`
 
@@ -184,8 +169,7 @@ if (udf::Optional<udf::Value> profile = pair.bin("profile").newer()) out.put("pr
 bool incoming_is_newer() const
 ```
 
-Whether the incoming side wrote this bin later: by the bin's last-update time, then source id - the
-order the server's own bin convergence uses.
+Whether the incoming side wrote this bin later: by the bin's last-update time, then source id.
 
 #### `Both::newer`
 
@@ -432,8 +416,9 @@ Takes the incoming write: its bins are applied over the current record.
 static Resolution policy()
 ```
 
-Leaves the outcome to the namespace's conflict policy, as if there were no handler. The answer for the
-cases a handler has no opinion on.
+Does what the server would have done without a handler. A set bound to a handler never uses bin
+convergence, so this applies the incoming write, as take_remote() does. The answer for the cases a
+handler has no opinion on.
 
 #### `Resolution::delete_record`
 
@@ -441,26 +426,36 @@ cases a handler has no opinion on.
 static Resolution delete_record()
 ```
 
-Removes the record on this cluster. The other cluster decides for itself, so a merge that deletes
-has to delete on both sides for the two to agree. (`delete` is a keyword, as for Record.)
+Removes the record on this cluster and leaves a durable tombstone, so a late write cannot bring it back.
+The delete is not shipped: the other cluster decides for itself, so a merge that deletes has to delete on
+both sides for the two to agree. (`delete` is a keyword, as for Record.)
+
+#### `Resolution::expunge`
+
+```cpp
+static Resolution expunge()
+```
+
+Removes the record on this cluster outright, with no tombstone, so a later write creates it again. Like
+delete_record(), it is not shipped to the other cluster.
 
 #### `Resolution::record`
 
 ```cpp
-static Resolution record(Map& bins, int64_t ttl = -1)
+static Resolution record(Map& bins)
 ```
 
 The final record: these bins, whole. The record is left with exactly the bins of the map; a bin absent from
 it or nil in it is deleted. At least one bin must be left: a record of no bins is the handler's failure,
-not a deletion, which is delete_record(). `ttl` is the record's time to live in seconds, 0 for the
-namespace default; -1, the default, keeps the incoming write's. A failure the map kept from one of its puts
-fails the call when the resolution is delivered. The resolution takes the map over, so it outlives the
-handler's own Map, which is left null: `record(pair.with_newer(out))` is the usual form.
+not a deletion, which is delete_record(). No answer carries a TTL: the server gives the merged record the
+later of the two records' expirations. A failure the map kept from one of its puts fails the call when the
+resolution is delivered. The resolution takes the map over, so it outlives the handler's own Map, which is
+left null: `record(pair.with_newer(out))` is the usual form.
 
 #### `Resolution::record`
 
 ```cpp
-static Resolution record(Map&& bins, int64_t ttl = -1)
+static Resolution record(Map&& bins)
 ```
 
 The same, for a map made in place.
@@ -472,8 +467,7 @@ int32_t deliver() const
 ```
 
 Delivers the resolution and returns the status the export returns: the verdict word, or for record()
-the final bins and TTL. Fails the call instead when the bins map kept a failure. The generated export
-calls it.
+the final bins. Fails the call instead when the bins map kept a failure. The generated export calls it.
 
 #### `UDF_ON_XDR_MERGE`
 

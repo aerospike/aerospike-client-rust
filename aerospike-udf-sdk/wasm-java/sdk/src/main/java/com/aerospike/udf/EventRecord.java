@@ -18,7 +18,7 @@ import org.teavm.interop.Address;
  * One record an event hands over: each side of a merge, the current record and the incoming write. It is
  * read-only, and it reads like the record of a call - the same readers, through
  * {@link RecordReader} - with what an event adds: the names of its bins, the bins this side deleted,
- * where the server keeps them, when and by whom each bin was last written, and the few facts about the
+ * when and by whom each bin was last written, and the few facts about the
  * merge that are facts about one side ({@link #isDelete} and {@link #isPartial} of the incoming write,
  * {@link #isTombstone} of the current record). One asked of the side it is not about answers false.
  *
@@ -53,7 +53,6 @@ public final class EventRecord implements RecordReader {
     private int which;
     private long generation;
     private long lastUpdateTime;
-    private long ttl;
     private long sourceId;
     private Value bins = Maps.NOTHING;
     private Value deleted = Maps.NOTHING;
@@ -62,7 +61,6 @@ public final class EventRecord implements RecordReader {
     private boolean delete;
     private boolean partial;
     private boolean tombstone;
-    private boolean binConvergence;
 
     /** What the typed readers read into, so that they allocate nothing. */
     private final Value v = new Value();
@@ -90,12 +88,6 @@ public final class EventRecord implements RecordReader {
     @Override
     public long lastUpdateTime() {
         return lastUpdateTime;
-    }
-
-    /** This side's time to live, in seconds; 0 for a record that does not expire. */
-    @Override
-    public long ttl() {
-        return ttl;
     }
 
     /**
@@ -138,19 +130,19 @@ public final class EventRecord implements RecordReader {
 
     /**
      * When this side last wrote the bin, in milliseconds since the Citrusleaf epoch, 2010-01-01T00:00:00Z
-     * (Unix milliseconds minus 1 262 304 000 000), for comparing with the other side's: the bin's own time
-     * where the server keeps one ({@link #usesBinConvergence} says whether it is meaningful), and
-     * {@link #lastUpdateTime} otherwise, also for a bin this side does not have. The record's time is 0 in an
-     * {@code xdr-merge}, so where no per-bin time is kept every bin answers 0 on both sides and only
-     * {@link #binSourceId} tells them apart.
+     * (Unix milliseconds minus 1 262 304 000 000), for comparing with the other side's. The server gives a
+     * time for every bin of both sides, a bin the side deleted included: for a write that came from another
+     * cluster, the time that cluster shipped, or, where it shipped none, the time the write arrived here. A
+     * bin this side neither has nor deleted gets {@link #lastUpdateTime}, which is 0 in an
+     * {@code xdr-merge}.
      */
     public long binLastUpdateTime(String name) {
         return Maps.getInt(binLastUpdateTimes, name, lastUpdateTime);
     }
 
     /**
-     * The source id of the data centre that last wrote the bin on this side: the bin's own where the server
-     * keeps one, the record's {@link #sourceId} otherwise, also for a bin this side does not have.
+     * The source id of the data centre that last wrote the bin on this side. The server gives one for every
+     * bin of both sides; a bin with none of its own gets the record's {@link #sourceId}.
      */
     public long binSourceId(String name) {
         return Maps.getInt(binSourceIds, name, sourceId);
@@ -175,14 +167,6 @@ public final class EventRecord implements RecordReader {
     /** Whether this is a current record that exists but has no bins. False of the incoming write. */
     public boolean isTombstone() {
         return tombstone;
-    }
-
-    /**
-     * Whether per-bin timestamps are meaningful in this merge, for a time-based merge that wants to check
-     * before trusting {@link #binLastUpdateTime}. The same answer on both records.
-     */
-    public boolean usesBinConvergence() {
-        return binConvergence;
     }
 
     //==========================================================
@@ -574,11 +558,7 @@ public final class EventRecord implements RecordReader {
             return false;
         }
 
-        boolean binConvergence = Maps.is(desc, "policy", "bin-lut");
-
-        current.binConvergence = binConvergence;
         current.tombstone = Maps.getBool(cur, "tombstone");
-        incoming.binConvergence = binConvergence;
         incoming.partial = Maps.getBool(inc, "partial");
         incoming.delete = Maps.getBool(inc, "deleted-record");
 
@@ -594,7 +574,6 @@ public final class EventRecord implements RecordReader {
         this.which = which;
         generation = Maps.getInt(m, "gen", 0);
         lastUpdateTime = Maps.getInt(m, "lut", 0);
-        ttl = Maps.getInt(m, "ttl", 0);
         sourceId = Maps.getInt(m, "src-id", 0);
         bins = Maps.get(m, "bins");
         deleted = Maps.get(m, "deleted");

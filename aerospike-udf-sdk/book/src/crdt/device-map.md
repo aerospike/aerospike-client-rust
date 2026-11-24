@@ -94,7 +94,7 @@ event! {
         }
         best.sort();
         ...
-        Ok(Resolution::Record { bins: current.with_bins(out)?, ttl: None })
+        Ok(Resolution::Record { bins: current.with_bins(out)? })
     }
 }
 ```
@@ -144,8 +144,13 @@ xdr {
 }
 ```
 
-Bin convergence (`conflict-resolve-writes`) is not needed and not wanted: the merge decides every bin
-itself. Every incoming XDR write to an existing subscriber runs the merge; a create bypasses it.
+Bin convergence (`conflict-resolve-writes`) does not apply: a set bound to a handler never uses it, and
+the merge decides every bin itself. Every incoming XDR write to an existing subscriber runs the merge; a create bypasses it.
+
+The rest of what a bound set needs is in [Deployment](../events/README.md#deployment): `forward false`,
+`disable-eviction true` on the set, a tombstone lifetime longer than any outage, and no record deletes or
+one-sided truncates. `event-list` shows `settings-warnings=0` on each cluster when its settings are
+right. Subscribers are written only through the UDFs below, so a merge always finds the shape it expects.
 
 ## Checking it with the dry run
 
@@ -157,11 +162,11 @@ nothing, and reports the three laws checked on the stored bytes of the results:
 let answer = client
     .execute_udf(&WritePolicy::default(), &key, "__event__", "xdr-merge", &[
         Value::from(incoming_bins),
-        Value::from(HashMap::from([(Value::from("ttl"), Value::from(0)), (Value::from("src-id"), Value::from(2))])),
+        Value::from(HashMap::from([(Value::from("src-id"), Value::from(2))])),
         Value::from(other_bins),   // optional: the third record for associativity
     ])
     .await?;
-// answer: {verdict, bins, ttl, symmetric, idempotent, associative}
+// answer: {verdict, bins, symmetric, idempotent, associative}
 ```
 
 - **symmetric**: merging (current, incoming) and (incoming, current) gives the same record, so the two
@@ -315,7 +320,7 @@ Then let the dry run tell you whether the laws hold, and the two-cluster test wh
 practice.
 
 One more step follows, for the case this one deliberately avoided: [step 6](registers.md) trusts the
-clock again, and reads the per-bin stamps the server keeps on a namespace with bin convergence.
+clock again, and reads the per-bin stamps the server keeps for every bin.
 
 ## The sources
 

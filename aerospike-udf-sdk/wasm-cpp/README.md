@@ -74,7 +74,10 @@ built. Keep the status, or copy the text, to hold an error longer than that.
 - **`UDF_ON_XDR_MERGE(name)`**: an `xdr-merge` event handler, with the event's two parameters under
   fixed names (`current`, the record as it is on this cluster, and `incoming`, the one that arrived over
   XDR) and returning a `udf::Result<udf::Resolution>`: `keep_local()`, `take_remote()`, `policy()`,
-  `delete_record()` or `record(bins[, ttl])`. The two records are read-only `udf::EventRecord`s, whose C
+  `delete_record()`, `expunge()` or `record(bins)`. `delete_record()` leaves a durable tombstone, so a
+  late write cannot bring the record back; `expunge()` removes it outright. Neither is shipped to the
+  other cluster. No answer carries a TTL: the merged record takes the later of the two records'
+  expirations. The two records are read-only `udf::EventRecord`s, whose C
   struct is private: everything about them is a method.
 - **The raw form**: `UDF_FUNCTION_RAW(name, "(params)")` and `UDF_STREAM_RAW(name, "(record)", "(end)")`
   declare `(int32_t args, int32_t argc)` functions exported as they are, for a hot path that reads its
@@ -134,13 +137,14 @@ built. Keep the status, or copy the text, to hold an error longer than that.
 - **What is not about the record** stays in the namespace: `udf::now`, `udf::log`, `udf::fail`,
   `udf::result`.
 - **The `xdr-merge` event**: `udf::EventRecord` for each of the two records the event hands over (the
-  reading methods of `ReadRecord`; `generation()`, `last_update_time()`, `ttl()`, `source_id()`,
+  reading methods of `ReadRecord`; `generation()`, `last_update_time()`, `source_id()`,
   `is_incoming()`;
   `bin_names()`, `deleted_bins()`, `deleted_any()`; `bin_last_update_time(name)` and `bin_source_id(name)`;
   `with_bins(out)` to keep the rest of a record under a few decided bins) and `udf::Resolution` for the
   answer. What the server says of the merge is asked of the
   record it is about: `incoming.is_delete()`, `incoming.is_partial()`,
-  `current.is_tombstone()`, and `uses_bin_convergence()` on either. The merge bin by bin goes through
+  `current.is_tombstone()`. The server gives a time and a source for every bin of both sides. The merge
+  bin by bin goes through
   `udf::Pair pair = udf::Pair::of(current, incoming);`: its typed readers (`as_int`, `as_double`,
   `as_bool`, `as_string<N>`, `as_blob<N>`, `list`, `map`) each give a `Result<Both<T>>`, an error when a
   side holds another kind, and `bin` a `Both<Value>`, with the two sides
@@ -166,8 +170,8 @@ built. Keep the status, or copy the text, to hold an error longer than that.
 - `examples/twopset` and `examples/lwwset`: steps 3 and 4 of the book's CRDT tutorial, a set with
   removals (two sorted `Text<32>` arrays merged by union) and a set with re-adds (two maps of `udf::now()`
   stamps merged by the later stamp); both return `udf::Result<udf::List>` of members.
-- `examples/registers`: a record whose bins are last-writer-wins registers stamped by the server, on a
-  namespace with bin convergence: the handler asks each side for `bin_last_update_time(name)` and
+- `examples/registers`: a record whose bins are last-writer-wins registers stamped by the server: the
+  handler asks each side for `bin_last_update_time(name)` and
   `bin_source_id(name)`, keeps the later write bin by bin (a delete included, from `deleted_bins()`), and
   merges the one bin that is not a register, `seen`, by the larger number.
 - `examples/crdt`: the active-active CRDT of the design note, rule for rule the same as the Rust one, held
