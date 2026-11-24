@@ -148,6 +148,20 @@ mod config_file_example;
 #[allow(dead_code)]
 mod discovery_example;
 
+// The three include the files under `examples/xdr/` they share, each its own
+// copy here.
+#[path = "../../examples/xdr_compare_records.rs"]
+#[allow(dead_code, clippy::duplicate_mod)]
+mod xdr_compare_records_example;
+
+#[path = "../../examples/xdr_crdt_two_clusters.rs"]
+#[allow(dead_code, clippy::duplicate_mod)]
+mod xdr_crdt_two_clusters_example;
+
+#[path = "../../examples/xdr_merge_laws.rs"]
+#[allow(dead_code, clippy::duplicate_mod)]
+mod xdr_merge_laws_example;
+
 #[aerospike_macro::test]
 async fn example_crud() {
     // The example opens its own client, so wait for the suite's one-time
@@ -388,4 +402,23 @@ async fn example_config_file() {
 async fn example_discovery() {
     common::ensure_clean_namespace();
     discovery_example::run().await;
+}
+
+// The two-cluster examples use the clusters `AEROSPIKE_XDR_DC1` and
+// `AEROSPIKE_XDR_DC2` name, not the suite's, and skip without them; an error
+// is a difference between the clusters or a broken merge.
+#[aerospike_macro::test]
+async fn example_xdr_compare_records() {
+    xdr_compare_records_example::run().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn example_xdr_crdt_two_clusters() {
+    xdr_crdt_two_clusters_example::run().await.unwrap();
+}
+
+#[aerospike_macro::test]
+async fn example_xdr_merge_laws() {
+    common::ensure_clean_namespace();
+    xdr_merge_laws_example::run().await.unwrap();
 }

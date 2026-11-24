@@ -25,6 +25,7 @@ use aerospike::*;
 use std::collections::HashMap;
 
 const COUNTER: &[u8] = include_bytes!("../fixtures/wasm/counter_cpp.wasm");
+const PNCOUNTER: &[u8] = include_bytes!("../fixtures/wasm/pncounter_cpp.wasm");
 const FIXTURE: &[u8] = include_bytes!("../fixtures/wasm/udf_cpp.wasm");
 
 /// The entries of a map value, whichever map flavour the client decoded it as.
@@ -90,35 +91,29 @@ async fn cpp_generated_exports_decode_arguments() {
 
     let write = WritePolicy::default();
 
-    // `UDF_FUNCTION(increment, Result<int64_t>, Text<32> site, int64_t n)` describes itself from its types.
+    // `UDF_FUNCTION(increment, Result<int64_t>, Record& rec, int64_t n)` describes itself from its types. The record is not an argument, and neither is
+    // the site: it is the cluster's src-id, which the function asks the server for.
     assert_eq!(
         client.execute_udf(&write, &key, package, "__udf_sig_increment", &[]).await.unwrap(),
-        Some(Value::from("fn increment(site: str[32], n: int) -> value"))
+        Some(Value::from("fn increment(n: int) -> value"))
     );
     assert_eq!(
         client.execute_udf(&write, &key, package, "__udf_sig_value", &[]).await.unwrap(),
         Some(Value::from("fn value() -> value"))
     );
 
-    // A matching call: the arguments reach the method typed, and its return is the result.
+    // A matching call: the argument reaches the function typed, and its return is the result.
     assert_eq!(
-        client
-            .execute_udf(&write, &key, package, "increment", &[Value::from("dc1"), Value::from(3)])
-            .await
-            .unwrap(),
+        client.execute_udf(&write, &key, package, "increment", &[Value::from(3)]).await.unwrap(),
         Some(Value::Int(3))
     );
     assert_eq!(client.execute_udf(&write, &key, package, "value", &[]).await.unwrap(), Some(Value::Int(3)));
 
-    // Rejected before the method runs, naming the argument, the way the Rust macro does.
+    // Rejected before the function runs, naming the argument, the way the Rust macro does.
     let rejections = [
-        (vec![Value::from("dc1")], "increment: argument 2 (n) is missing"),
-        (vec![Value::from("dc1"), Value::from("x")], "increment: argument 2 (n) is not an int"),
-        (vec![Value::from(1), Value::from(2)], "increment: argument 1 (site) is not a string"),
-        (
-            vec![Value::from("dc1"), Value::from(1), Value::from(2)],
-            "increment takes at most 2 arguments, got 3",
-        ),
+        (vec![], "increment: argument 1 (n) is missing"),
+        (vec![Value::from("x")], "increment: argument 1 (n) is not an int"),
+        (vec![Value::from(1), Value::from(2)], "increment takes at most 1 arguments, got 2"),
         (vec![Value::from(1)], "value takes at most 0 arguments, got 1"),
     ];
 
@@ -133,14 +128,21 @@ async fn cpp_generated_exports_decode_arguments() {
         assert!(text.contains(want), "{function}({args:?}): {text}");
     }
 
-    // A string longer than the Text<32> parameter is rejected before the body, as a Rust Str<32> is.
+    // A failure of the function's own fails the call with its message: the PN-Counter refuses a negative
+    // amount, on a record of its own.
+    let refusing = &format!("cpp_pncounter_{}", common::rand_str(6));
+
+    register(&client, PNCOUNTER, refusing).await.unwrap();
+
     let text = client
-        .execute_udf(&write, &key, package, "increment", &[Value::from("s".repeat(40)), Value::from(1)])
+        .execute_udf(&write, &as_key!(namespace, set_name, 2), refusing, "decrement", &[Value::from(-2)])
         .await
-        .expect_err("a too-long string must be rejected")
+        .expect_err("a negative amount must fail the call")
         .to_string();
 
-    assert!(text.contains("increment: argument 1 (site) is 40 bytes, at most 32"), "{text}");
+    assert!(text.contains("the amount must not be negative"), "{text}");
+
+    let _ = client.remove_udf(&AdminPolicy::default(), &format!("{refusing}.wasm")).await;
 
     // None of that touched the record.
     assert_eq!(client.execute_udf(&write, &key, package, "value", &[]).await.unwrap(), Some(Value::Int(3)));

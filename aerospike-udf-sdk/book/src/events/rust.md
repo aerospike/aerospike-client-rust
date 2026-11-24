@@ -69,7 +69,9 @@ They are ordinary methods of `EventRecord`; asked of the other side they answer 
 sides into a `Both<T>`, whose members are `current` and `incoming`, with the merges a resolver reaches for, `max`, `min`, `sum` (`None` when neither side has the bin, as `max` and `min`; it wraps on overflow), `merge(f)`, and the
 orderings `newer`, `older`, `ordered()`, which compare the bin's own last update time on each side and then the source
 id, so they are symmetric. `pair.incoming_is_newer(name)` is the
-same test for a bin by name; `pair.with_newer(overrides)` fills in every bin the handler did not decide
+same test for a bin by name. A `Both<Coll>` of a map or list bin also has the data-only merges:
+`max_per_key()`, `sorted_union()`, `counter_merge()` and `lww_by_version()`, which are also free functions
+over two values, beside `counter_total`. `pair.with_newer(overrides)` fills in every bin the handler did not decide
 from the newer side, last writer wins per bin: a bin the newer side deleted (it is in that side's
 `deleted_bins()`) stays deleted, rather than coming back from the older side.
 

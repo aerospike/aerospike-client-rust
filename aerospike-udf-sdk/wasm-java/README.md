@@ -153,7 +153,7 @@ per export, and `main`. Name it as the TeaVM `mainClass`; the annotated class ne
   `Resolution.record`, which is read after the handler returns. A call is bounded by its memory on the
   server, not by a count of handles, so a loop that builds and closes a collection per turn runs as long
   as that memory lasts.
-- **`Udf`**: what is not about the record: `now()`, `log`, the builder factories, and for a function in
+- **`Udf`**: what is not about the record: `now()`, `clusterSrcId()`, `log`, the builder factories, and for a function in
   the raw form the `result*` calls and `fail`.
 - **Events**: `EventRecord` for each side of a merge (the same readers as `Record`, plus `binNames()`,
   `deletedBins()`, `binLastUpdateTime` / `binSourceId`, and `withBins(out)` to keep the rest of a record

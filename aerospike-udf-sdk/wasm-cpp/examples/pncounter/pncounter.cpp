@@ -17,8 +17,9 @@
 //
 // The grow-only counter cannot subtract: a decrement would shrink a site's entry, and the per-site maximum
 // would throw the shrink away. So this module never subtracts. The record keeps two maps of site -> amount,
-// inc and dec, and both only ever grow: increment("dc1", 3) adds to inc["dc1"], decrement("dc1", 1) adds to
-// dec["dc1"], and the counter's value is the sum of inc minus the sum of dec. The merge is the grow-only
+// inc and dec, and both only ever grow. A site is the cluster's XDR src-id as a decimal string: on the cluster
+// with src-id 1, increment(3) adds to inc["1"], decrement(1) adds to dec["1"], and the counter's value is the
+// sum of inc minus the sum of dec. The merge is the grow-only
 // counter's, run over each map on its own: for every site, the larger amount.
 //
 // What it cannot do is hold a floor: two sites that each see a stock of one and each take one merge to
@@ -158,14 +159,39 @@ static udf::Result<int64_t> value_of(const udf::Record& rec)
 	return added - t.total();
 }
 
-// Adds n to this site's entry of one map and saves; answers the counter's value.
-static udf::Result<int64_t> grow(udf::Record& rec, udf::StrView bin, const Site& site, int64_t n)
+// This cluster's site: its XDR src-id, as the decimal string the amounts are keyed by. The server knows which
+// cluster runs the write, so no client can count under another cluster's entry.
+static udf::Result<Site> this_site()
+{
+	int64_t id = UDF_TRY(udf::cluster_src_id());
+
+	if (id <= 0) return udf::error(AS_UDF_ERR, "no XDR src-id on this cluster: set src-id in its xdr stanza");
+
+	char digits[20];
+	int n = 0;
+	Site site;
+
+	while (id > 0) {
+		digits[n++] = (char)('0' + id % 10);
+		id /= 10;
+	}
+	while (n > 0) site.buf[site.len++] = digits[--n];
+	site.buf[site.len] = '\0';
+
+	return site;
+}
+
+// Adds n to this cluster's entry of one map and saves; answers the counter's value.
+static udf::Result<int64_t> grow(udf::Record& rec, udf::StrView bin, int64_t n)
 {
 	if (n < 0) return udf::error(AS_UDF_ERR, "the amount must not be negative: an entry only grows");
 
 	static Table t;
 
 	UDF_TRY(load(rec, bin, t));
+
+	Site site = UDF_TRY(this_site());
+
 	UDF_TRY(t.add(site.view(), n));
 	UDF_TRY(rec.set(bin, t.to_map()));
 	UDF_TRY(rec.save());
@@ -173,17 +199,16 @@ static udf::Result<int64_t> grow(udf::Record& rec, udf::StrView bin, const Site&
 	return value_of(rec);
 }
 
-// Adds n to this site's increments. Returns the counter's value. The site is a Text<32>, so a longer name
-// is rejected before the body runs, as the Rust module's Str<32> rejects it.
-UDF_FUNCTION(increment, udf::Result<int64_t>, udf::Record& rec, Site site, int64_t n)
+// Adds n to this cluster's increments, under its src-id. Returns the counter's value.
+UDF_FUNCTION(increment, udf::Result<int64_t>, udf::Record& rec, int64_t n)
 {
-	return grow(rec, INC, site, n);
+	return grow(rec, INC, n);
 }
 
-// Adds n to this site's decrements. Returns the counter's value.
-UDF_FUNCTION(decrement, udf::Result<int64_t>, udf::Record& rec, Site site, int64_t n)
+// Adds n to this cluster's decrements, under its src-id. Returns the counter's value.
+UDF_FUNCTION(decrement, udf::Result<int64_t>, udf::Record& rec, int64_t n)
 {
-	return grow(rec, DEC, site, n);
+	return grow(rec, DEC, n);
 }
 
 // The counter's value: the sum of every site's increments minus the sum of every site's decrements.

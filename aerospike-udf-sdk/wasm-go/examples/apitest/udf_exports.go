@@ -290,6 +290,60 @@ var udfSig_cmp = []byte("fn cmp(a: str, b: str) -> value\x00")
 //export __udf_sig_cmp
 func udfSigFn_cmp() int32 { return udf.Signature(&udfSig_cmp) }
 
+//export mrg
+func udfExport_mrg(args, argc int32) int32 {
+	var a [3]udf.Value
+	n := udf.Args(args, argc, a[:])
+	if err := udf.Arity("mrg", 3, argc); err != nil {
+		return udf.FailErr(err)
+	}
+	p0, err := udf.ArgString(a[:], n, 0, "mrg", "how")
+	if err != nil {
+		return udf.FailErr(err)
+	}
+	p1, err := udf.ArgValue(a[:], n, 1, "mrg", "a")
+	if err != nil {
+		return udf.FailErr(err)
+	}
+	p2, err := udf.ArgValue(a[:], n, 2, "mrg", "b")
+	if err != nil {
+		return udf.FailErr(err)
+	}
+	r, err := mrg(p0, p1, p2)
+	if err != nil {
+		return udf.FailErr(err)
+	}
+	if err := udf.ResultList(r); err != nil {
+		return udf.FailErr(err)
+	}
+	return 0
+}
+
+var udfSig_mrg = []byte("fn mrg(how: str, a: any, b: any) -> value\x00")
+
+//export __udf_sig_mrg
+func udfSigFn_mrg() int32 { return udf.Signature(&udfSig_mrg) }
+
+//export src_id
+func udfExport_src_id(args, argc int32) int32 {
+	if err := udf.Arity("src_id", 0, argc); err != nil {
+		return udf.FailErr(err)
+	}
+	r, err := srcID()
+	if err != nil {
+		return udf.FailErr(err)
+	}
+	if err := udf.ResultList(r); err != nil {
+		return udf.FailErr(err)
+	}
+	return 0
+}
+
+var udfSig_src_id = []byte("fn src_id() -> value\x00")
+
+//export __udf_sig_src_id
+func udfSigFn_src_id() int32 { return udf.Signature(&udfSig_src_id) }
+
 //export agg_record
 func udfRecord_agg(args, argc int32) int32 {
 	if err := udf.Arity("agg", 0, argc); err != nil {

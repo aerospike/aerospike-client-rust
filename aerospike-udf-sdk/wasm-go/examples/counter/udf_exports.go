@@ -24,20 +24,16 @@ func udfSigFn_merge_counter() int32 { return udf.Signature(&udfSig_merge_counter
 
 //export increment
 func udfExport_increment(args, argc int32) int32 {
-	var a [2]udf.Value
+	var a [1]udf.Value
 	n := udf.Args(args, argc, a[:])
-	if err := udf.Arity("increment", 2, argc); err != nil {
+	if err := udf.Arity("increment", 1, argc); err != nil {
 		return udf.FailErr(err)
 	}
-	p0, err := udf.ArgString(a[:], n, 0, "increment", "site")
+	p0, err := udf.ArgInt(a[:], n, 0, "increment", "n")
 	if err != nil {
 		return udf.FailErr(err)
 	}
-	p1, err := udf.ArgInt(a[:], n, 1, "increment", "n")
-	if err != nil {
-		return udf.FailErr(err)
-	}
-	r, err := increment(udf.CurrentRecord(), p0, p1)
+	r, err := increment(udf.CurrentRecord(), p0)
 	if err != nil {
 		return udf.FailErr(err)
 	}
@@ -45,7 +41,7 @@ func udfExport_increment(args, argc int32) int32 {
 	return 0
 }
 
-var udfSig_increment = []byte("fn increment(site: str, n: int) -> value\x00")
+var udfSig_increment = []byte("fn increment(n: int) -> value\x00")
 
 //export __udf_sig_increment
 func udfSigFn_increment() int32 { return udf.Signature(&udfSig_increment) }

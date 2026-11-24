@@ -43,6 +43,11 @@ The `crud_sync` example is the exception — it requires the `sync` feature, whi
 * `tls` — a TLS connection with rustls (CA roots, optional client certificate) and `AuthMode` (internal, PKI); needs the `tls` feature and a TLS-enabled server, skips otherwise
 * `transaction` — multi-record transactions: commit and abort (server 8.0+, strong-consistency namespace)
 * `udf` — register a Lua UDF, execute per-record, and run background UDFs
+* `xdr_compare_records` — scan one set on two clusters (`AEROSPIKE_XDR_DC1`, `AEROSPIKE_XDR_DC2`) and report every record missing on one side or different by value, with its digest and user key; exits 1 when they differ. Works for any set; skips without the two clusters
+* `xdr_crdt_two_clusters` — the device map CRDT (`xdr-merge` handler, Enterprise event system) between two clusters: random concurrent changes on both, then every record compared as `xdr_compare_records` does; skips without the two clusters or the event system
+* `xdr_merge_laws` — random inputs for an `xdr-merge` handler through the server's dry run on one cluster, reporting any that is not symmetric, idempotent and associative; seeded and replayable (`XDR_LAWS_SEED`); skips without the event system
+
+The `xdr_*` examples share `examples/xdr/` (not an example of its own) and document their settings at the top of each file.
 
 Stream-UDF aggregations (average, sum) are covered through `query_aggregate`.
 Every example except `crud_sync` is async; the client is async-native, so the

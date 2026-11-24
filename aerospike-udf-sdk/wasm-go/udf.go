@@ -101,6 +101,9 @@ func mapHasI(handle int32, key int64) int32
 //go:wasmimport aerospike coll_size
 func collSize(handle int32) int32
 
+//go:wasmimport aerospike pack_handle
+func packHandle(handle int32) int32
+
 //go:wasmimport aerospike list_new
 func listNew(capacity int32) int32
 

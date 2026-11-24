@@ -660,3 +660,353 @@ func Min[T cmp.Ordered](b Both[T]) (T, bool) {
 func Sum[T int64 | float64](b Both[T]) (T, bool) {
 	return b.Merge(func(l, r T) T { return l + r })
 }
+
+//==========================================================
+// Merge building blocks: the merges of collections a convergent handler is built from. Each takes a
+// Both[Value], as Pair.Map and Pair.List read one; a write UDF that merges two values of its own builds
+// the Both by hand, a side it does not have left with HasCurrent or HasIncoming false.
+//
+
+// MaxPerKey is the per-key maximum of a map bin on both sides: a new map with every key of either side,
+// each under the larger of its two values, or under its one value when only one side has the key. It is
+// built on the host, so it is ordered by key and both clusters build the same bytes. It is false when
+// neither side has the bin.
+//
+// A side that is missing, absent or nil does not count. A side that is there must be a map whose keys
+// are strings or integers and whose values are integers; anything else is an error with Status
+// TypeMismatch, a side that is not a map included: a merge does not guess what a double or a nested map
+// should become. Status Refused is the host not building the map.
+//
+//	counts, err := pair.Map("counts")
+//	if err != nil {
+//		return udf.Resolution{}, err
+//	}
+//	merged, ok, err := udf.MaxPerKey(counts)
+//	if err != nil {
+//		return udf.Resolution{}, err
+//	}
+//	if ok {
+//		out.Put("counts", merged)
+//	}
+//
+// It is symmetric (the same map with the sides swapped), idempotent (merging a map with itself, or with
+// a merge it is part of, changes nothing) and associative (three sides merge to the same map in any
+// order): the laws a convergent merge needs. It is the merge of any map of values that only grow;
+// CounterMerge is the same merge under the name of the structure it serves.
+func MaxPerKey(b Both[Value]) (*Map, bool, error) {
+	a, hasA, err := mergeSide(b.Current, b.HasCurrent, KindMap, "a map")
+	if err != nil {
+		return nil, false, err
+	}
+	c, hasC, err := mergeSide(b.Incoming, b.HasIncoming, KindMap, "a map")
+	if err != nil {
+		return nil, false, err
+	}
+	if !hasA && !hasC {
+		return nil, false, nil
+	}
+
+	out := NewMap(int(a.Len + c.Len))
+	pairs := make([]Value, 0, 2*int(a.Len+c.Len))
+
+	// Every key of the first side, under the larger of its values on the two sides.
+	if hasA {
+		for key, value := range a.Map() {
+			most, err := value.Int()
+			if err == nil {
+				err = mergeKey(key)
+			}
+			if err == nil && hasC {
+				var other Value
+				var ok bool
+				other, ok, err = valueUnder(c, key)
+				if err == nil && ok {
+					var n int64
+					n, err = other.Int()
+					most = max(most, n)
+				}
+			}
+			if err != nil {
+				out.Close()
+				return nil, false, err
+			}
+			pairs = append(pairs, key, IntValue(most))
+		}
+	}
+
+	// Then the keys only the second side has.
+	if hasC {
+		for key, value := range c.Map() {
+			count, err := value.Int()
+			if err == nil {
+				err = mergeKey(key)
+			}
+			var ok bool
+			if err == nil && hasA {
+				_, ok, err = valueUnder(a, key)
+			}
+			if err != nil {
+				out.Close()
+				return nil, false, err
+			}
+			if !ok {
+				pairs = append(pairs, key, IntValue(count))
+			}
+		}
+	}
+
+	if err := out.PutEntries(pairs).Err(); err != nil {
+		out.Close()
+		return nil, false, err
+	}
+	return out, true, nil
+}
+
+// SortedUnion is the union of a list bin on both sides as a set: a new list with every element of
+// either side once, sorted, so both clusters build the same bytes whatever order the elements arrived
+// in. It is false when neither side has the bin.
+//
+// The elements are integers, strings or blobs: the kinds the server keys a map by, since the host sorts
+// them as a map built on it sorts its keys. Integers come first, by value, then strings and then blobs,
+// each by its bytes. An integer and a string are never the same element, however they read.
+//
+// A side that is missing, absent or nil does not count. A side that is there must be a list of those
+// kinds; anything else is an error with Status TypeMismatch: a side that is not a list, or an element
+// of another kind (a double, a nested list or map, nil). Status Refused is the host not building the
+// list.
+//
+//	tags, err := pair.List("tags")
+//	if err != nil {
+//		return udf.Resolution{}, err
+//	}
+//	union, ok, err := udf.SortedUnion(tags)
+//	if err != nil {
+//		return udf.Resolution{}, err
+//	}
+//	if ok {
+//		out.Put("tags", union)
+//	}
+//
+// It is symmetric, idempotent and associative: the merge of a set that only grows. A removal needs a
+// second set, as the 2P-Set of the CRDT tutorial keeps one.
+func SortedUnion(b Both[Value]) (*List, bool, error) {
+	a, hasA, err := mergeSide(b.Current, b.HasCurrent, KindList, "a list")
+	if err != nil {
+		return nil, false, err
+	}
+	c, hasC, err := mergeSide(b.Incoming, b.HasIncoming, KindList, "a list")
+	if err != nil {
+		return nil, false, err
+	}
+	if !hasA && !hasC {
+		return nil, false, nil
+	}
+
+	// A map built on the host keeps its keys once each and in order: the elements go in as its keys,
+	// and come out as the list.
+	pairs := make([]Value, 0, 2*int(a.Len+c.Len))
+	for _, s := range [2]Value{a, c} {
+		for e := range s.List() {
+			if e.Kind != KindInt && e.Kind != KindStr && e.Kind != KindBlob {
+				return nil, false, e.kindError("an integer, a string or a blob")
+			}
+			pairs = append(pairs, e, BoolValue(true))
+		}
+	}
+
+	set := NewMap(len(pairs) / 2).PutEntries(pairs)
+	defer set.Close()
+	if err := set.Err(); err != nil {
+		return nil, false, err
+	}
+
+	out := NewList(set.Len())
+	if n := set.Len(); n > 0 {
+		src := packHandle(set.handle)
+		if src <= 0 {
+			out.Close()
+			return nil, false, errorf(Refused, "could not read the union back: the call has spent the memory it may hold on the server")
+		}
+		keys := make([]Value, 0, n)
+		for key := range (Value{Kind: KindMap, Len: uint32(n), Payload: int64(src) << 32}).Map() {
+			keys = append(keys, key)
+		}
+		out.AddValues(keys)
+	}
+	if err := out.Err(); err != nil {
+		out.Close()
+		return nil, false, err
+	}
+	return out, true, nil
+}
+
+// CounterMerge is the merge of a per-origin counter: a map of origin to count, each origin's count
+// raised only by the cluster it names, merged by the larger count per origin. It is MaxPerKey under the
+// name of the structure: the same rules, the same errors, and false when neither side has the bin.
+// CounterTotal reads the counter's value.
+//
+//	hits, err := pair.Map("hits")
+//	if err != nil {
+//		return udf.Resolution{}, err
+//	}
+//	merged, ok, err := udf.CounterMerge(hits)
+//
+// It is symmetric, idempotent and associative. A count that goes down is not a count this merges: a
+// PN-Counter keeps a second counter for the decrements.
+func CounterMerge(b Both[Value]) (*Map, bool, error) {
+	return MaxPerKey(b)
+}
+
+// CounterTotal is the value of a per-origin counter: the sum of its counts, wrapping on overflow. It is 0
+// for a counter that is absent or nil. The error has Status TypeMismatch when the value is not a map,
+// or when a key is not a string or an integer or a count is not an integer, as for CounterMerge. A
+// built counter (CounterMerge's answer) is read with its Value.
+//
+//	hits, _, err := rec.Map("hits")
+//	if err != nil {
+//		return 0, err
+//	}
+//	return udf.CounterTotal(hits)
+func CounterTotal(v Value) (int64, error) {
+	if v.Kind == KindHandle {
+		src := packHandle(int32(v.Payload))
+		if src <= 0 {
+			return 0, errorf(Refused, "could not read the counter: the call has spent the memory it may hold on the server")
+		}
+		n := collSize(int32(v.Payload))
+		if n <= 0 {
+			return 0, nil
+		}
+		v = Value{Kind: KindMap, Len: uint32(n), Payload: int64(src) << 32}
+	}
+	m, has, err := mergeSide(v, true, KindMap, "a map")
+	if err != nil || !has {
+		return 0, err
+	}
+	var total int64
+	for key, count := range m.Map() {
+		if err := mergeKey(key); err != nil {
+			return 0, err
+		}
+		n, err := count.Int()
+		if err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	return total, nil
+}
+
+// LwwByVersion is last writer wins by an application version, on a bin that holds a [version, value]
+// list on both sides: the side with the higher version, as it is, to write back. Two equal versions are
+// decided by the lists' stored bytes, the greater winning, so both clusters pick the same side; two
+// lists with the same bytes are the same either way. It is false when neither side has the bin.
+//
+// A side that is missing, absent or nil does not count. A side that is there must be a list of exactly
+// two elements whose first is an integer; anything else is an error with Status TypeMismatch. The value
+// may be of any kind.
+//
+//	price, err := pair.List("price") // the write UDF sets [version + 1, price] in one write
+//	if err != nil {
+//		return udf.Resolution{}, err
+//	}
+//	if winner, ok, err := udf.LwwByVersion(price); err != nil {
+//		return udf.Resolution{}, err
+//	} else if ok {
+//		out.Put("price", winner)
+//	}
+//
+// It is symmetric, idempotent and associative: it is the larger of the two by version, then by bytes,
+// which is a total order. The version is the application's, raised by every write that changes the
+// value, so no clock decides.
+func LwwByVersion(b Both[Value]) (Value, bool, error) {
+	none := Value{Kind: KindAbsent}
+	a, hasA, err := mergeSide(b.Current, b.HasCurrent, KindList, "a list")
+	if err != nil {
+		return none, false, err
+	}
+	c, hasC, err := mergeSide(b.Incoming, b.HasIncoming, KindList, "a list")
+	if err != nil {
+		return none, false, err
+	}
+	var va, vc int64
+	if hasA {
+		if va, err = lwwVersion(a); err != nil {
+			return none, false, err
+		}
+	}
+	if hasC {
+		if vc, err = lwwVersion(c); err != nil {
+			return none, false, err
+		}
+	}
+	switch {
+	case !hasA && !hasC:
+		return none, false, nil
+	case !hasC:
+		return a, true, nil
+	case !hasA:
+		return c, true, nil
+	case va != vc:
+		if va > vc {
+			return a, true, nil
+		}
+		return c, true, nil
+	}
+	order, err := CmpStored(a, c)
+	if err != nil {
+		return none, false, err
+	}
+	if order >= 0 {
+		return a, true, nil
+	}
+	return c, true, nil
+}
+
+// mergeSide is one side of a merge of collections: the value and true; false when it is missing,
+// absent or nil; an error with Status TypeMismatch when it is of another kind than want.
+func mergeSide(v Value, has bool, want Kind, what string) (Value, bool, error) {
+	if !has || v.IsNull() {
+		return Value{Kind: KindAbsent}, false, nil
+	}
+	if v.Kind != want {
+		return Value{Kind: KindAbsent}, false, v.kindError(what)
+	}
+	return v, true, nil
+}
+
+// mergeKey is nil for a key a map merge takes: a string or an integer.
+func mergeKey(key Value) error {
+	if key.Kind != KindInt && key.Kind != KindStr {
+		return key.kindError("a string or an integer key")
+	}
+	return nil
+}
+
+// valueUnder is the entry under key, a key read from another map, in the map m.
+func valueUnder(m Value, key Value) (Value, bool, error) {
+	if key.Kind == KindInt {
+		return m.LookupInt(key.Payload)
+	}
+	text, err := key.String()
+	if err != nil {
+		return Value{Kind: KindAbsent}, false, err
+	}
+	return m.Lookup(text)
+}
+
+// lwwVersion is the version of a [version, value] list; an error with Status TypeMismatch for any other
+// shape.
+func lwwVersion(l Value) (int64, error) {
+	if l.Len != 2 {
+		return 0, errorf(TypeMismatch, "the value is not a [version, value] list")
+	}
+	first, ok, err := l.Index(0)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, errorf(TypeMismatch, "the value is not a [version, value] list")
+	}
+	return first.Int()
+}

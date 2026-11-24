@@ -87,6 +87,18 @@ fn read<'a, T: Into<Value<'a>>>(r: Result<Option<T>, Error>) -> Result<Output<'s
     }
 }
 
+/// What a builder gave, as `read` answers a reader: a list or map built on the host goes in by reference.
+fn built<T>(r: Result<Option<T>, Error>) -> Result<Output<'static>, Error>
+where
+    for<'b> &'b T: Into<Value<'b>>,
+{
+    match r {
+        Ok(Some(value)) => some(&value),
+        Ok(None) => only("none"),
+        Err(e) => only(tag(e)),
+    }
+}
+
 /// What a reader with a default gave: `["some", value]`, or the error's tag.
 fn read_or<'a, T: Into<Value<'a>>>(r: Result<T, Error>) -> Result<Output<'static>, Error> {
     match r {
@@ -631,6 +643,26 @@ as_udf::export! {
             Err(e) => only(tag(e)),
         }
     }
+
+    /// One merge building block on two values, a nil one missing: `["some", merged]`, `["none"]` when it
+    /// answers nothing, or the error's tag. `counter_total` reads `a` alone.
+    fn mrg(how: String, a: Value, b: Value) -> Result<Output, Error> {
+        let (a, b) = (Some(a), Some(b));
+
+        match how.as_str() {
+            "max_per_key" => built(as_udf::max_per_key(a, b)),
+            "sorted_union" => built(as_udf::sorted_union(a, b)),
+            "counter_merge" => built(as_udf::counter_merge(a, b)),
+            "counter_total" => read_or(as_udf::counter_total(a)),
+            "lww_by_version" => read(as_udf::lww_by_version(a, b)),
+            _ => Err(Error::Custom("mrg: unknown how")),
+        }
+    }
+
+    /// This cluster's XDR src-id: `["some", id]`, 0 when it has none.
+    fn src_id() -> Result<Output, Error> {
+        read_or(as_udf::cluster_src_id())
+    }
 }
 
 //==========================================================
@@ -748,6 +780,31 @@ as_udf::event! {
                 &sides(current.bin_last_update_time("s"), incoming.bin_last_update_time("s"))?,
             )?
             .insert("bsrc", &sides(current.bin_source_id("s"), incoming.bin_source_id("s"))?)?;
+
+        // The merge building blocks, on the bins they are for: `cm` a counter (a map of integers), `ul` a
+        // list taken as a set, `lv` a `[version, value]` list. A bin neither side has adds nothing.
+        if let Some(merged) = pair.map("cm")?.max_per_key()? {
+            out.insert("mpk", &merged)?;
+        }
+
+        if let Some(counter) = pair.map("cm")?.counter_merge()? {
+            out.insert("ctot", as_udf::counter_total(Some(counter.as_value()))?)?;
+            out.insert("cnt", &counter)?;
+        }
+
+        if let Some(union) = pair.list("ul")?.sorted_union()? {
+            out.insert("union", &union)?;
+        }
+
+        if let Some(winner) = pair.list("lv")?.lww_by_version()? {
+            out.insert("lww", Value::List(winner))?;
+        }
+
+        // The cluster's src-id is refused to a handler, as the clock is.
+        out.insert("src_id", match as_udf::cluster_src_id() {
+            Ok(_) => "answered",
+            Err(e) => tag(e),
+        })?;
 
         Ok(Resolution::Record { bins: out })
     }

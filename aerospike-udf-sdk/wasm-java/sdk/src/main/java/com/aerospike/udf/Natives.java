@@ -63,6 +63,9 @@ final class Natives {
     @Import(module = "aerospike", name = "coll_size")
     static native int collSize(int handle);
 
+    @Import(module = "aerospike", name = "pack_handle")
+    static native int packHandle(int handle);
+
     // Metadata.
 
     @Import(module = "aerospike", name = "gen")
@@ -88,6 +91,9 @@ final class Natives {
 
     @Import(module = "aerospike", name = "current_time")
     static native long currentTime();
+
+    @Import(module = "aerospike", name = "cluster_src_id")
+    static native long clusterSrcId();
 
     // Writing.
 

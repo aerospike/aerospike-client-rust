@@ -2486,6 +2486,29 @@ The server's clock, in milliseconds since the Unix epoch (1970-01-01 UTC). -1 in
 which is refused the clock because a merge that read it could not converge. Not on the scale of
 `Record.lastUpdateTime`, which counts from 2010.
 
+#### `Udf.clusterSrcId`
+
+```java
+public static long clusterSrcId()
+```
+
+This cluster's XDR source id: the `src-id` of its `xdr` stanza, 1 to 255, which XDR stamps
+on every write it ships from here. 0 when the cluster has none: Community Edition, or no `src-id`
+configured. -1 inside an event handler, which is refused it as it is the clock: the answer depends on
+which cluster runs the merge, and a merge that read it could not converge. A handler has each side's id
+on its records (`EventRecord.sourceId`).
+
+A write UDF tags what it writes with it, so a per-origin structure (a counter, a set of stamps) keys
+each cluster's share by the same id XDR reports, with no argument for a client to get wrong.
+
+```java
+long site = Udf.clusterSrcId();
+
+if (site <= 0) {
+    throw new UdfException("increment: this cluster has no XDR src-id");
+}
+```
+
 #### `Udf.log`
 
 ```java

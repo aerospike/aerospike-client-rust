@@ -18,9 +18,8 @@ licence to register modules from people the cluster does not trust.
 - **Calling a record UDF** needs what calling a Lua UDF needs: the UDF-apply permission, which the
   `read-write-udf` role has, on the record's namespace or set. A UDF call is checked for that permission,
   not for the write permission.
-- The `xdr-merge` event is an Enterprise feature gated by a feature key, and **that check is commented out
-  for now**, because no issued key carries it yet. Until it is restored, an Enterprise server with any
-  key accepts event bindings.
+- The `xdr-merge` event is part of Enterprise Edition, with no feature key of its own. Binding a handler
+  needs `event-admin` on a server with security enabled (see [the event's chapter](events/README.md)).
 
 The machine is inside the trust boundary. Anyone who can write to the server's directories can replace
 the server itself, so files on disk are trusted, with one consequence, for a server built with the

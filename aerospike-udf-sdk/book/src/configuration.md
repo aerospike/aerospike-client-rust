@@ -28,11 +28,8 @@ All five are read once, at start. There is nothing to set for the compiler: it i
 The UDF directory is not set here: the server keeps one directory of registered UDF files, named by the
 `mod-lua` stanza's `user-path`, and `mod-wamr` reads the same one.
 
-WASM UDFs themselves need no feature key. The `xdr-merge` event does: `asdb-event-system true` in the
-Enterprise feature key file (`feature-key-file`, or `FEATURE_KEY_FILE` in the container), alongside
-`asdb-xdr` and the others. Without it the server starts, runs UDFs, and refuses every event binding; see
-[the event's chapter](events/README.md). For now the check is commented out, since no issued key carries
-it yet.
+Neither WASM UDFs nor the `xdr-merge` event need a feature key. The event is part of Enterprise
+Edition, as XDR is; see [the event's chapter](events/README.md).
 
 ## The Fast JIT
 

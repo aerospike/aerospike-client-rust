@@ -173,6 +173,8 @@ extern "C" {
     fn record_size() -> i64;
     fn numbins() -> i64;
     fn current_time() -> i64;
+    #[link_name = "cluster_src_id"]
+    fn raw_cluster_src_id() -> i64;
     #[link_name = "set_ttl"]
     fn raw_set_ttl(seconds: i32) -> i32;
     #[link_name = "set_name"]
@@ -1320,6 +1322,11 @@ impl Coll {
     }
 
     fn get_str(&self, key: &str) -> Result<Option<Value<'static>>, Error> {
+        self.get_bytes(key.as_bytes())
+    }
+
+    // A string key by its bytes, which need not be UTF-8: a key read from another map is compared as stored.
+    fn get_bytes(&self, key: &[u8]) -> Result<Option<Value<'static>>, Error> {
         let (src, at) = self.position()?;
         let mut raw = [0u8; VALUE_SZ];
         let rc = unsafe {
@@ -2835,6 +2842,34 @@ pub fn now() -> Result<i64, Error> {
     Ok(t)
 }
 
+/// This cluster's XDR source id: the `src-id` of the `xdr` stanza, 1 to 255, which XDR stamps on every write
+/// it ships from here. `Ok(0)` when the cluster has none: Community Edition, or no `src-id` configured.
+/// Available to record and stream UDFs.
+///
+/// A write UDF tags what it writes with it, so a per-origin structure (a counter, a set of stamps) keys each
+/// cluster's share by the same id XDR reports in [`EventRecord::source_id`], with no argument for a client to
+/// get wrong.
+///
+/// ```ignore
+/// let site = as_udf::cluster_src_id()?;
+///
+/// if site == 0 {
+///     return Err(Error::Custom("increment: this cluster has no XDR src-id"));
+/// }
+/// ```
+///
+/// `Err(Refused)` in an event handler, as for [`now`]: the answer depends on which cluster runs the merge,
+/// and a merge that reads it cannot converge. A handler has each side's id on its records.
+pub fn cluster_src_id() -> Result<i64, Error> {
+    let id = unsafe { raw_cluster_src_id() };
+
+    if id < 0 {
+        return Err(Error::Refused);
+    }
+
+    Ok(id)
+}
+
 /// Write a line to the server log, under the UDF context. For diagnosing a UDF, not for data: it returns
 /// nothing and cannot fail.
 ///
@@ -4090,6 +4125,328 @@ impl Both<f64> {
     }
 }
 
+impl Both<Coll> {
+    /// [`max_per_key`] of a map bin on both sides, as [`Pair::map`] reads it: every key of either side, each
+    /// with the larger of its two integers. `Ok(None)` when neither side has the bin.
+    ///
+    /// ```ignore
+    /// if let Some(counts) = pair.map("counts")?.max_per_key()? {
+    ///     out.insert("counts", &counts)?;
+    /// }
+    /// ```
+    ///
+    /// Symmetric, idempotent and associative, so the two clusters converge on the same bytes. For a `Both`
+    /// of maps: on one read with [`Pair::list`] it pairs up the elements.
+    pub fn max_per_key(self) -> Result<Option<Map>, Error> {
+        max_per_key_of(self.current, self.incoming)
+    }
+
+    /// [`sorted_union`] of a list bin on both sides, as [`Pair::list`] reads it: every element of either
+    /// side once, sorted. `Ok(None)` when neither side has the bin.
+    ///
+    /// ```ignore
+    /// if let Some(tags) = pair.list("tags")?.sorted_union()? {
+    ///     out.insert("tags", &tags)?;
+    /// }
+    /// ```
+    ///
+    /// Symmetric, idempotent and associative. For a `Both` of lists.
+    pub fn sorted_union(self) -> Result<Option<List>, Error> {
+        sorted_union_of(self.current, self.incoming)
+    }
+
+    /// [`counter_merge`] of a counter bin on both sides, as [`Pair::map`] reads it: a map of origin to count,
+    /// merged by the larger count per origin. `Ok(None)` when neither side has the bin; [`counter_total`]
+    /// reads the merged counter's value.
+    ///
+    /// ```ignore
+    /// if let Some(hits) = pair.map("hits")?.counter_merge()? {
+    ///     out.insert("hits", &hits)?;
+    /// }
+    /// ```
+    ///
+    /// Symmetric, idempotent and associative. For a `Both` of maps.
+    pub fn counter_merge(self) -> Result<Option<Map>, Error> {
+        max_per_key_of(self.current, self.incoming)
+    }
+
+    /// [`lww_by_version`] of a `[version, value]` bin on both sides, as [`Pair::list`] reads it: the side
+    /// with the higher version, ties broken by the stored bytes. `Ok(None)` when neither side has the bin.
+    ///
+    /// ```ignore
+    /// if let Some(price) = pair.list("price")?.lww_by_version()? {
+    ///     out.insert("price", Value::List(price))?;
+    /// }
+    /// ```
+    ///
+    /// Symmetric, idempotent and associative. For a `Both` of lists.
+    pub fn lww_by_version(self) -> Result<Option<Coll>, Error> {
+        lww_by_version_of(self.current, self.incoming)
+    }
+}
+
+// Merge building blocks: the merges of collections a convergent handler is built from. Each takes the two
+// sides as values, either of which may be missing, so a write UDF can use one too; `Both<Coll>` has each for
+// the bin of a `Pair`.
+
+/// The per-key maximum of two maps: a new map with every key of either side, each under the larger of its
+/// two values, or under its one value when only one side has the key. Built on the host, so it is ordered
+/// by key and both clusters build the same bytes. `Ok(None)` when both sides are missing.
+///
+/// A side is `None`, or [`Value::Nil`], when it is missing; otherwise it must be a map whose keys are
+/// strings or integers and whose values are integers. Anything else is `Err(WrongType)`, a side that is not
+/// a map included: a merge does not guess what a double or a nested map should become. `Err(Refused)` when
+/// the host does not build the map.
+///
+/// ```ignore
+/// let merged = as_udf::max_per_key(rec.get("seen")?, Some(theirs))?;
+/// ```
+///
+/// Symmetric (`max_per_key(a, b)` and `max_per_key(b, a)` are the same map), idempotent (merging a map
+/// with itself, or with a merge it is part of, changes nothing) and associative (three sides merge to the
+/// same map in any order): the laws a convergent merge needs. It is the merge of any map of values that
+/// only grow; [`counter_merge`] is the same merge under the name of the structure it serves.
+pub fn max_per_key(current: Option<Value<'_>>, incoming: Option<Value<'_>>) -> Result<Option<Map>, Error> {
+    max_per_key_of(map_side(current)?, map_side(incoming)?)
+}
+
+/// The union of two lists as a set: a new list with every element of either side once, sorted, so both
+/// clusters build the same bytes whatever order the elements arrived in. `Ok(None)` when both sides are
+/// missing.
+///
+/// The elements are integers, strings or blobs: the kinds the server keys a map by, since the host sorts
+/// them as a map built on it sorts its keys. Integers come first, by value, then strings and then blobs,
+/// each by its bytes. An integer and a string are never the same element, however they read.
+///
+/// A side is `None`, or [`Value::Nil`], when it is missing; otherwise it must be a list of those kinds.
+/// Anything else is `Err(WrongType)`: a side that is not a list, or an element of another kind (a double, a
+/// nested list or map, nil). `Err(Refused)` when the host does not build the list.
+///
+/// Symmetric, idempotent and associative: the merge of a set that only grows. A removal needs a second
+/// set, as the 2P-Set of the CRDT tutorial keeps one.
+pub fn sorted_union(current: Option<Value<'_>>, incoming: Option<Value<'_>>) -> Result<Option<List>, Error> {
+    sorted_union_of(list_side(current)?, list_side(incoming)?)
+}
+
+/// The merge of a per-origin counter: a map of origin to count, each origin's count raised only by the
+/// cluster it names, merged by the larger count per origin. It is [`max_per_key`] under the name of the
+/// structure: the same rules, the same errors, and `Ok(None)` when both sides are missing.
+/// [`counter_total`] reads the counter's value.
+///
+/// ```ignore
+/// let counts = as_udf::counter_merge(current.get("hits")?, incoming.get("hits")?)?;
+/// ```
+///
+/// Symmetric, idempotent and associative. A count that goes down is not a count this merges: a
+/// PN-Counter keeps a second counter for the decrements.
+pub fn counter_merge(current: Option<Value<'_>>, incoming: Option<Value<'_>>) -> Result<Option<Map>, Error> {
+    max_per_key_of(map_side(current)?, map_side(incoming)?)
+}
+
+/// The value of a per-origin counter: the sum of its counts, wrapping on overflow. `Ok(0)` for a missing
+/// counter (`None` or [`Value::Nil`]). `Err(WrongType)` when it is not a map, or when a key is not a string
+/// or an integer or a count is not an integer, as for [`counter_merge`].
+///
+/// ```ignore
+/// let total = as_udf::counter_total(rec.get("hits")?)?;
+/// ```
+pub fn counter_total(counter: Option<Value<'_>>) -> Result<i64, Error> {
+    let Some(counts) = map_side(counter)? else {
+        return Ok(0);
+    };
+    let mut total = 0i64;
+
+    for entry in counts.entries() {
+        let (key, count) = entry?;
+
+        merge_key(&key)?;
+        total = total.wrapping_add(count.int()?);
+    }
+
+    Ok(total)
+}
+
+/// Last writer wins by an application version: of two `[version, value]` lists, the one with the higher
+/// version, as it is, to write back. Two equal versions are decided by the lists' stored bytes, the greater
+/// winning, so both clusters pick the same side; two lists with the same bytes are the same either way.
+/// `Ok(None)` when both sides are missing.
+///
+/// A side is `None`, or [`Value::Nil`], when it is missing; otherwise it must be a list of exactly two
+/// elements whose first is an integer (`Err(WrongType)` for anything else). The value may be of any kind.
+///
+/// ```ignore
+/// // The write UDF moves the version and the value in one write: rec.set("price", &[version + 1, price]).
+/// if let Some(price) = as_udf::lww_by_version(current.get("price")?, incoming.get("price")?)? {
+///     out.insert("price", price)?;
+/// }
+/// ```
+///
+/// Symmetric, idempotent and associative: it is the larger of the two by version, then by bytes, which is
+/// a total order. The version is the application's, raised by every write that changes the value, so no
+/// clock decides.
+pub fn lww_by_version<'a>(current: Option<Value<'a>>, incoming: Option<Value<'a>>) -> Result<Option<Value<'a>>, Error> {
+    Ok(lww_by_version_of(list_side(current)?, list_side(incoming)?)?.map(Value::List))
+}
+
+// One side of a map merge: the map, `None` when the side is missing, `Err(WrongType)` for anything else.
+fn map_side(side: Option<Value<'_>>) -> Result<Option<Coll>, Error> {
+    match side {
+        None | Some(Value::Nil) => Ok(None),
+        Some(Value::Map(coll)) => Ok(Some(coll)),
+        Some(_) => Err(Error::WrongType),
+    }
+}
+
+// One side of a list merge, likewise.
+fn list_side(side: Option<Value<'_>>) -> Result<Option<Coll>, Error> {
+    match side {
+        None | Some(Value::Nil) => Ok(None),
+        Some(Value::List(coll)) => Ok(Some(coll)),
+        Some(_) => Err(Error::WrongType),
+    }
+}
+
+// A key a map merge takes: a string or an integer.
+fn merge_key(key: &Value<'_>) -> Result<(), Error> {
+    match key {
+        Value::Int(_) | Value::String(_) => Ok(()),
+        _ => Err(Error::WrongType),
+    }
+}
+
+// The longest string key looked up by its bytes, in one import call. A longer one is found by comparing it
+// with each key of the other map, which needs no buffer.
+const MERGE_KEY_INLINE: usize = 256;
+
+// The value under `key`, a key read from another map, in the map `coll`: `Ok(None)` when there is none.
+fn value_under(coll: &Coll, key: &Value<'_>) -> Result<Option<Value<'static>>, Error> {
+    match key {
+        Value::Int(k) => coll.get_int(*k),
+        Value::String(text) if text.len() <= MERGE_KEY_INLINE => {
+            let mut buf = [0u8; MERGE_KEY_INLINE];
+
+            coll.get_bytes(text.bytes(&mut buf)?)
+        }
+        Value::String(_) => {
+            for entry in coll.entries() {
+                let (k, v) = entry?;
+
+                if matches!(k, Value::String(_)) && k.cmp_stored(key)? == core::cmp::Ordering::Equal {
+                    return Ok(Some(v));
+                }
+            }
+
+            Ok(None)
+        }
+        _ => Err(Error::WrongType),
+    }
+}
+
+fn max_per_key_of(a: Option<Coll>, b: Option<Coll>) -> Result<Option<Map>, Error> {
+    if a.is_none() && b.is_none() {
+        return Ok(None);
+    }
+
+    let out = map(a.map_or(0, |c| c.len()) + b.map_or(0, |c| c.len()))?;
+
+    // Every key of the first side, under the larger of its values on the two sides.
+    if let Some(a) = a {
+        for entry in a.entries() {
+            let (key, value) = entry?;
+            let mut most = value.int()?;
+
+            merge_key(&key)?;
+
+            if let Some(b) = b {
+                if let Some(other) = value_under(&b, &key)? {
+                    most = most.max(other.int()?);
+                }
+            }
+
+            out.put(&key, &Value::Int(most))?;
+        }
+    }
+
+    // Then the keys only the second side has.
+    if let Some(b) = b {
+        for entry in b.entries() {
+            let (key, value) = entry?;
+            let count = value.int()?;
+
+            merge_key(&key)?;
+
+            if let Some(a) = a {
+                if value_under(&a, &key)?.is_some() {
+                    continue;
+                }
+            }
+
+            out.put(&key, &Value::Int(count))?;
+        }
+    }
+
+    Ok(Some(out))
+}
+
+// An element a sorted union takes: an integer, a string or a blob, the kinds a map built on the host is
+// keyed by.
+fn set_element(v: Value<'_>) -> Result<Value<'_>, Error> {
+    match v {
+        Value::Int(_) | Value::String(_) | Value::Blob(_) => Ok(v),
+        _ => Err(Error::WrongType),
+    }
+}
+
+fn sorted_union_of(a: Option<Coll>, b: Option<Coll>) -> Result<Option<List>, Error> {
+    if a.is_none() && b.is_none() {
+        return Ok(None);
+    }
+
+    // A map built on the host keeps its keys once each and in order: the elements go in as its keys, and
+    // come out as the list.
+    let set = map(a.map_or(0, |c| c.len()) + b.map_or(0, |c| c.len()))?;
+
+    for side in [a, b].into_iter().flatten() {
+        set.extend(side.iter().map(|item| Ok((set_element(item?)?, Value::Bool(true)))))?;
+    }
+
+    let keys = Coll::Built(set.handle);
+    let out = list(keys.len())?;
+
+    out.extend(keys.entries().map(|entry| entry.map(|(key, _)| key)))?;
+
+    Ok(Some(out))
+}
+
+// The version of a `[version, value]` list: `Err(WrongType)` for any other shape.
+fn lww_version(side: &Coll) -> Result<i64, Error> {
+    if side.len() != 2 {
+        return Err(Error::WrongType);
+    }
+
+    side.at(0)?.ok_or(Error::WrongType)?.int()
+}
+
+fn lww_by_version_of(a: Option<Coll>, b: Option<Coll>) -> Result<Option<Coll>, Error> {
+    match (a, b) {
+        (None, None) => Ok(None),
+        (Some(one), None) | (None, Some(one)) => {
+            lww_version(&one)?;
+
+            Ok(Some(one))
+        }
+        (Some(a), Some(b)) => {
+            let (va, vb) = (lww_version(&a)?, lww_version(&b)?);
+            let a_wins = match va.cmp(&vb) {
+                core::cmp::Ordering::Equal => a.cmp_bytes(&b)? != core::cmp::Ordering::Less,
+                order => order == core::cmp::Ordering::Greater,
+            };
+
+            Ok(Some(if a_wins { a } else { b }))
+        }
+    }
+}
+
 /// What an `xdr-merge` handler answers: which record this cluster ends up with. A handler returns
 /// `Ok(resolution)`; an `Err` fails the merge with the error's message.
 ///
@@ -4772,5 +5129,39 @@ mod tests {
         }
         assert_eq!(m.as_str().len(), MESSAGE_CAP);
         assert!(m.as_str().ends_with("..."), "and the cut is marked");
+    }
+
+    /// The merge building blocks decide a missing side and a side of the wrong kind before they ask the
+    /// host anything: nil is missing, and a side of another kind is `WrongType`. (What they do with the
+    /// host is held by the `apitest` modules, on a server.)
+    #[test]
+    fn merge_sides_are_checked_before_the_host_is_asked() {
+        let list = Value::List(Coll::Stored { src: 1, at: 0, len: 0 });
+        let map = Value::Map(Coll::Stored { src: 1, at: 0, len: 0 });
+
+        assert_eq!(map_side(None), Ok(None));
+        assert_eq!(map_side(Some(Value::Nil)), Ok(None));
+        assert_eq!(map_side(Some(map)), Ok(Some(Coll::Stored { src: 1, at: 0, len: 0 })));
+        assert_eq!(map_side(Some(list)), Err(Error::WrongType));
+        assert_eq!(map_side(Some(Value::Int(1))), Err(Error::WrongType));
+        assert_eq!(list_side(Some(Value::Nil)), Ok(None));
+        assert_eq!(list_side(Some(list)), Ok(Some(Coll::Stored { src: 1, at: 0, len: 0 })));
+        assert_eq!(list_side(Some(map)), Err(Error::WrongType));
+        assert_eq!(list_side(Some(Value::from("x"))), Err(Error::WrongType));
+
+        // A map merge takes string and integer keys only.
+        assert_eq!(merge_key(&Value::Int(1)), Ok(()));
+        assert_eq!(merge_key(&Value::from("site")), Ok(()));
+        assert_eq!(merge_key(&Value::Double(1.0)), Err(Error::WrongType));
+        assert_eq!(merge_key(&list), Err(Error::WrongType));
+
+        // A sorted union takes integers, strings and blobs.
+        assert_eq!(set_element(Value::Int(1)), Ok(Value::Int(1)));
+        assert_eq!(set_element(Value::from("a")), Ok(Value::from("a")));
+        assert_eq!(set_element(Value::from(&b"a"[..])), Ok(Value::from(&b"a"[..])));
+        assert_eq!(set_element(Value::Nil), Err(Error::WrongType));
+        assert_eq!(set_element(Value::Bool(true)), Err(Error::WrongType));
+        assert_eq!(set_element(Value::Double(1.5)), Err(Error::WrongType));
+        assert_eq!(set_element(list), Err(Error::WrongType));
     }
 }

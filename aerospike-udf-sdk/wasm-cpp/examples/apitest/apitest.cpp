@@ -801,6 +801,77 @@ UDF_FUNCTION(cmp, udf::Result<udf::List>, const udf::Record& rec, const Str& a, 
 }
 
 //==========================================================
+// mrg(how, a, b): one merge building block on two values, a nil one missing.
+//
+
+// What a merge answered, into `out`: "some" and the value, "none" for nothing, or the tag of its error.
+template <class T>
+static void merged(udf::List& out, udf::Result<udf::Optional<T>> r)
+{
+	if (!r) {
+		out.add(tag(r.error().status));
+	}
+	else if (!*r) {
+		out.add("none");
+	}
+	else {
+		out.add("some").add(**r);
+	}
+}
+
+UDF_FUNCTION(mrg, udf::Result<udf::List>, const Str& how, udf::Value a, udf::Value b)
+{
+	udf::List out(2);
+
+	if (how == "max_per_key") {
+		merged(out, udf::max_per_key(a, b));
+	}
+	else if (how == "sorted_union") {
+		merged(out, udf::sorted_union(a, b));
+	}
+	else if (how == "counter_merge") {
+		merged(out, udf::counter_merge(a, b));
+	}
+	else if (how == "counter_total") {
+		udf::Result<int64_t> total = udf::counter_total(a);
+
+		if (total) {
+			out.add("some").add(*total);
+		}
+		else {
+			out.add(tag(total.error().status));
+		}
+	}
+	else if (how == "lww_by_version") {
+		merged(out, udf::lww_by_version(a, b));
+	}
+	else {
+		return udf::error(AS_UDF_ERR, "mrg: unknown how");
+	}
+
+	return out;
+}
+
+//==========================================================
+// src_id(): this cluster's XDR src-id, 0 when it has none.
+//
+
+UDF_FUNCTION(src_id, udf::Result<udf::List>)
+{
+	udf::List out(2);
+	udf::Result<int64_t> id = udf::cluster_src_id();
+
+	if (id) {
+		out.add("some").add(*id);
+	}
+	else {
+		out.add(tag(id.error().status));
+	}
+
+	return out;
+}
+
+//==========================================================
 // agg: a stream UDF. One instance sees every record, so the state is two statics.
 //
 
@@ -895,6 +966,25 @@ UDF_ON_XDR_MERGE(merge_api)
 
 	bsrc.add(current.bin_source_id("s")).add(incoming.bin_source_id("s"));
 	out.put("bsrc", bsrc);
+
+	// The merge building blocks, on the bins they are for: `cm` a counter (a map of integers), `ul` a list taken
+	// as a set, `lv` a `[version, value]` list. A bin neither side has adds nothing.
+	udf::Both<udf::Value> cm = UDF_TRY(pair.map("cm"));
+
+	if (udf::Optional<udf::Map> merged = UDF_TRY(cm.max_per_key())) out.put("mpk", *merged);
+
+	if (udf::Optional<udf::Map> counter = UDF_TRY(cm.counter_merge())) {
+		out.put("ctot", UDF_TRY(udf::counter_total(*counter)));
+		out.put("cnt", *counter);
+	}
+
+	if (udf::Optional<udf::List> set = UDF_TRY(UDF_TRY(pair.list("ul")).sorted_union())) out.put("union", *set);
+	if (udf::Optional<udf::Value> winner = UDF_TRY(UDF_TRY(pair.list("lv")).lww_by_version())) out.put("lww", *winner);
+
+	// The cluster's src-id is refused to a handler, as the clock is.
+	udf::Result<int64_t> id = udf::cluster_src_id();
+
+	out.put("src_id", id ? "answered" : tag(id.error().status));
 
 	return udf::Resolution::record(out);
 }

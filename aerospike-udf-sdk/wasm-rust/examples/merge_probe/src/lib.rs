@@ -344,6 +344,43 @@ extern "C" {
 }
 
 //==========================================================
+// The stamp of a value the handler computed (R33).
+//
+// A second instrument, written with the SDK since it reads per-bin stamps. `x` merges by the larger value
+// and `c` is that value plus 1000: computed from `x` alone, so the merge converges, and a value neither side
+// holds until a merge makes it, which the server stamps by the rule for computed values. A dry run whose incoming record carries a `stamps` bin asks instead for the
+// current record's stamps of `c` and `x`, answered as the bins `c_lut`, `c_src`, `x_lut` and `x_src`, so that
+// a test can read what each cluster stored.
+//
+
+// The macro reads `EventRecord`, `Resolution` and `Error` in the signature as its own; the body names one.
+use as_udf::Resolution;
+
+as_udf::event! {
+    on xdr_merge
+    fn stamps(current: EventRecord, incoming: EventRecord) -> Result<Resolution, Error> {
+        let out = as_udf::map(4)?;
+
+        if incoming.has("stamps") {
+            out.insert("c_lut", current.bin_last_update_time("c"))?;
+            out.insert("c_src", current.bin_source_id("c"))?;
+            out.insert("x_lut", current.bin_last_update_time("x"))?;
+            out.insert("x_src", current.bin_source_id("x"))?;
+
+            return Ok(Resolution::Record { bins: out });
+        }
+
+        let mine = current.int("x")?.unwrap_or(0);
+        let theirs = incoming.int("x")?.unwrap_or(0);
+
+        out.insert("x", mine.max(theirs))?;
+        out.insert("c", mine.max(theirs) + 1000)?;
+
+        Ok(Resolution::Record { bins: out })
+    }
+}
+
+//==========================================================
 // Signatures that are not signatures.
 //
 // The server asks a function's signature export what the function is before it binds it to an event: the

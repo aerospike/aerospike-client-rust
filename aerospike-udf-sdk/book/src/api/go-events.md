@@ -897,3 +897,146 @@ merge that stores it and then meets the same write again adds it again. It is fo
 that belong to different clusters, never for merging two copies of one count, which is what Max is
 for.
 
+#### `MaxPerKey`
+
+```go
+func MaxPerKey(b Both[Value]) (*Map, bool, error)
+```
+
+MaxPerKey is the per-key maximum of a map bin on both sides: a new map with every key of either side,
+each under the larger of its two values, or under its one value when only one side has the key. It is
+built on the host, so it is ordered by key and both clusters build the same bytes. It is false when
+neither side has the bin.
+
+A side that is missing, absent or nil does not count. A side that is there must be a map whose keys
+are strings or integers and whose values are integers; anything else is an error with Status
+TypeMismatch, a side that is not a map included: a merge does not guess what a double or a nested map
+should become. Status Refused is the host not building the map.
+
+```go
+counts, err := pair.Map("counts")
+if err != nil {
+	return udf.Resolution{}, err
+}
+merged, ok, err := udf.MaxPerKey(counts)
+if err != nil {
+	return udf.Resolution{}, err
+}
+if ok {
+	out.Put("counts", merged)
+}
+```
+
+It is symmetric (the same map with the sides swapped), idempotent (merging a map with itself, or with
+a merge it is part of, changes nothing) and associative (three sides merge to the same map in any
+order): the laws a convergent merge needs. It is the merge of any map of values that only grow;
+CounterMerge is the same merge under the name of the structure it serves.
+
+#### `SortedUnion`
+
+```go
+func SortedUnion(b Both[Value]) (*List, bool, error)
+```
+
+SortedUnion is the union of a list bin on both sides as a set: a new list with every element of
+either side once, sorted, so both clusters build the same bytes whatever order the elements arrived
+in. It is false when neither side has the bin.
+
+The elements are integers, strings or blobs: the kinds the server keys a map by, since the host sorts
+them as a map built on it sorts its keys. Integers come first, by value, then strings and then blobs,
+each by its bytes. An integer and a string are never the same element, however they read.
+
+A side that is missing, absent or nil does not count. A side that is there must be a list of those
+kinds; anything else is an error with Status TypeMismatch: a side that is not a list, or an element
+of another kind (a double, a nested list or map, nil). Status Refused is the host not building the
+list.
+
+```go
+tags, err := pair.List("tags")
+if err != nil {
+	return udf.Resolution{}, err
+}
+union, ok, err := udf.SortedUnion(tags)
+if err != nil {
+	return udf.Resolution{}, err
+}
+if ok {
+	out.Put("tags", union)
+}
+```
+
+It is symmetric, idempotent and associative: the merge of a set that only grows. A removal needs a
+second set, as the 2P-Set of the CRDT tutorial keeps one.
+
+#### `CounterMerge`
+
+```go
+func CounterMerge(b Both[Value]) (*Map, bool, error)
+```
+
+CounterMerge is the merge of a per-origin counter: a map of origin to count, each origin's count
+raised only by the cluster it names, merged by the larger count per origin. It is MaxPerKey under the
+name of the structure: the same rules, the same errors, and false when neither side has the bin.
+CounterTotal reads the counter's value.
+
+```go
+hits, err := pair.Map("hits")
+if err != nil {
+	return udf.Resolution{}, err
+}
+merged, ok, err := udf.CounterMerge(hits)
+```
+
+It is symmetric, idempotent and associative. A count that goes down is not a count this merges: a
+PN-Counter keeps a second counter for the decrements.
+
+#### `CounterTotal`
+
+```go
+func CounterTotal(v Value) (int64, error)
+```
+
+CounterTotal is the value of a per-origin counter: the sum of its counts, wrapping on overflow. It is 0
+for a counter that is absent or nil. The error has Status TypeMismatch when the value is not a map,
+or when a key is not a string or an integer or a count is not an integer, as for CounterMerge. A
+built counter (CounterMerge's answer) is read with its Value.
+
+```go
+hits, _, err := rec.Map("hits")
+if err != nil {
+	return 0, err
+}
+return udf.CounterTotal(hits)
+```
+
+#### `LwwByVersion`
+
+```go
+func LwwByVersion(b Both[Value]) (Value, bool, error)
+```
+
+LwwByVersion is last writer wins by an application version, on a bin that holds a [version, value]
+list on both sides: the side with the higher version, as it is, to write back. Two equal versions are
+decided by the lists' stored bytes, the greater winning, so both clusters pick the same side; two
+lists with the same bytes are the same either way. It is false when neither side has the bin.
+
+A side that is missing, absent or nil does not count. A side that is there must be a list of exactly
+two elements whose first is an integer; anything else is an error with Status TypeMismatch. The value
+may be of any kind.
+
+```go
+price, err := pair.List("price") // the write UDF sets [version + 1, price] in one write
+if err != nil {
+	return udf.Resolution{}, err
+}
+if winner, ok, err := udf.LwwByVersion(price); err != nil {
+	return udf.Resolution{}, err
+} else if ok {
+	out.Put("price", winner)
+}
+```
+
+It is symmetric, idempotent and associative: it is the larger of the two by version, then by bytes,
+which is a total order. The version is the application's, raised by every write that changes the
+value, so no clock decides.
+

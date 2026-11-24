@@ -273,6 +273,18 @@ required-features = ["async", "dynamic-config"]
 name = "discovery"
 required-features = ["async"]
 
+[[example]]
+name = "xdr_compare_records"
+required-features = ["async"]
+
+[[example]]
+name = "xdr_crdt_two_clusters"
+required-features = ["async"]
+
+[[example]]
+name = "xdr_merge_laws"
+required-features = ["async"]
+
 
 
 

@@ -10,10 +10,10 @@ four steps after it change the data and keep the pattern.
 
 A plain integer bin cannot be merged: if dc1 adds 2 and dc2 adds 5 to a counter at 3, the two records
 say 5 and 8, and neither is the answer. So the record keeps **one count per site**, in a map bin
-`counts`:
+`counts`. A site is a cluster, named by its XDR `src-id` as a decimal string:
 
 ```text
-counts: {"dc1": 5, "dc2": 5}
+counts: {"1": 5, "2": 5}
 ```
 
 Each data centre adds only to its own entry, and the counter's value is the sum of the entries. The two
@@ -48,7 +48,9 @@ event! {
 
 `Counts` is a small table of `(site, count)` pairs whose `offer` keeps the larger count for a site;
 `offer_all` walks a stored map's entries into it. Every other bin is the incoming one's
-(`incoming.with_bins`), which is what XDR would have written on its own.
+(`incoming.with_bins`), which is what XDR would have written on its own. Every SDK also has this merge
+ready-made: `counter_merge` gives the merged map of two sides and `counter_total` its value. The example
+writes it out, so the pattern is in view.
 
 The same in Java:
 
@@ -67,7 +69,7 @@ static Resolution mergeCounter(EventRecord current, EventRecord incoming) {
 the Rust `entries()` loop, `toMap` builds a `MapBuilder`, and `incoming.withBins(out)` is
 `incoming.with_bins(out)`. The annotation is the export: the processor generates the `merge_counter` export
 that decodes the event into the three parameters and delivers the `Resolution`, and its signature. The
-two write UDFs are `@Function("increment")` on `static long increment(Record rec, String site, long n)` and
+two write UDFs are `@Function("increment")` on `static long increment(Record rec, long n)` and
 `@Function("value")` on `static long value(Record rec)`, their arguments decoded and their returns delivered
 the same way. The record is the first parameter: `rec.getMap("counts", null)` reads the `counts` bin,
 `rec.set` stages the new map, and `rec.save()` writes it.
@@ -94,8 +96,8 @@ func mergeCounter(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 `table` is a `map[string]int64` whose `offer` keeps the larger count, `offerRecord` reads the `counts` bin
 of either side, `offerAll` ranges over the stored map (`for k, v := range stored.Map()`), and the `//udf:on` directive is the export: `udfgen` writes the
 `merge_counter` trampoline that decodes the event and delivers the `Resolution`, and its signature. The
-write UDFs are `//udf:function increment` on `func increment(rec *udf.Record, site string, n int64) (int64,
-error)` and `//udf:function value`. The record is the first parameter: `offerRecord` reads its `counts` bin
+write UDFs are `//udf:function increment` on `func increment(rec *udf.Record, n int64) (int64, error)`
+and `//udf:function value`. The record is the first parameter: `offerRecord` reads its `counts` bin
 too, since a `udf.RecordReader` is either kind of record, `rec.Set` stages the new map, and `rec.Save()`
 writes it.
 
@@ -124,17 +126,22 @@ UDF_ON_XDR_MERGE(merge_counter)
 keeps the larger count and whose `offer_all` ranges over the stored map (`for (udf::Entry e :
 stored.map())`); `load` offers the `counts` bin of a record, either side of the merge or the record a UDF
 runs on; `UDF_ON_XDR_MERGE` is the export, writing the `merge_counter` trampoline and its signature.
-The write UDFs are `UDF_FUNCTION(increment, udf::Result<int64_t>, udf::Record& rec, Site site, int64_t n)`
-and `UDF_FUNCTION(value, udf::Result<int64_t>, const udf::Record& rec)`, the `Text<32>` site bounding the
-name as the Rust `Str<32>` does. The record is the first parameter: `rec.set` stages the `counts` bin, and
+The write UDFs are `UDF_FUNCTION(increment, udf::Result<int64_t>, udf::Record& rec, int64_t n)`
+and `UDF_FUNCTION(value, udf::Result<int64_t>, const udf::Record& rec)`. The record is the first parameter: `rec.set` stages the `counts` bin, and
 `rec.save()` writes it.
 
 ## The write UDFs
 
-`increment(site, n)` reads the map, adds `n` to the site's entry (creating it if the site is new), stores
+`increment(n)` reads the map, adds `n` to this cluster's entry (creating it if the entry is new), stores
 the map and saves the record, answering the new total; `value()` answers the sum. Every application write goes
 through `increment`, which is the only invariant this CRDT needs: a site touches its own entry and never
 lowers it.
+
+The site is not an argument. `increment` asks the server for its cluster's `src-id` (`cluster_src_id()` in
+every SDK) and counts under it, so no client can add to another cluster's entry by passing the wrong name.
+A cluster with no `src-id` (Community Edition, or none configured) has no entry to count under, and
+`increment` fails there with a message saying so. A merge handler may not ask: the answer depends on
+which cluster runs it.
 
 ## Deploying and checking it
 
@@ -146,8 +153,8 @@ event-set:event=xdr-merge;namespace=test;set=counters;module=counter;function=me
 ```
 
 The dry run on one cluster checks the laws: `execute_udf(key, "__event__", "xdr-merge", [{"counts":
-{"dc1": 1, "dc2": 5}}, {"src-id": 2}])` against a record this site counted to 3 answers
-`{"dc1": 3, "dc2": 5}` with `symmetric` and `idempotent` true; with a third record it also answers
+{"1": 1, "2": 5}}, {"src-id": 2}])` against a record the cluster with src-id 1 counted to 3 answers
+`{"1": 3, "2": 5}` with `symmetric` and `idempotent` true; with a third record it also answers
 `associative`. The test suite does this for the Rust, Java, Go and C++ modules (`counter_merge_converges`),
 and runs all four across two real clusters shipping to each other (`counter_converges_two_clusters`): dc1
 adds 2 while dc2 adds 5, and both sides land on 10.

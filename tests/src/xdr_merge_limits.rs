@@ -753,7 +753,7 @@ async fn members_of(client: &Client, key: &Key, package: &str) -> Option<Vec<Str
 /// end on the same value, and it must be the one the operations add up to.
 ///
 /// A counter's entry for a site is only ever written on that site, which is the rule the counters rest
-/// on, so dc1 writes as `dc1` and dc2 as `dc2`.
+/// on: each cluster's write counts under that cluster's src-id, which the write UDF asks the server for.
 #[aerospike_macro::test]
 async fn random_operations_converge_on_the_value_they_add_up_to() {
     let Some((c1, c2)) = clients("random_operations_converge_on_the_value_they_add_up_to").await else { return };
@@ -799,7 +799,7 @@ async fn random_operations_converge_on_the_value_they_add_up_to() {
 
                 async move {
                     client
-                        .execute_udf(&write, &key, &package, verb, &[Value::from(site), Value::from(n)])
+                        .execute_udf(&write, &key, &package, verb, &[Value::from(n)])
                         .await
                         .unwrap_or_else(|e| panic!("seed {seed}: {verb}({site}, {n}): {e:?}"));
                 }

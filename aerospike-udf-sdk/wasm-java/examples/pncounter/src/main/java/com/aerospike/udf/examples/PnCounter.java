@@ -29,8 +29,9 @@ import com.aerospike.udf.UdfException;
  *
  * <p>The grow-only counter cannot subtract: a decrement would shrink a site's entry, and the per-site
  * maximum would throw the shrink away. So this module never subtracts. The record keeps two maps of
- * {@code site -> amount}, {@code inc} and {@code dec}, and both only ever grow: {@code increment("dc1", 3)}
- * adds to {@code inc["dc1"]}, {@code decrement("dc1", 1)} adds to {@code dec["dc1"]}, and the counter's
+ * {@code site -> amount}, {@code inc} and {@code dec}, and both only ever grow. A site is the cluster's XDR
+ * src-id as a decimal string: on the cluster with src-id 1, {@code increment(3)} adds to {@code inc["1"]},
+ * {@code decrement(1)} adds to {@code dec["1"]}, and the counter's
  * value is the sum of {@code inc} minus the sum of {@code dec}. The merge is the grow-only counter's, run
  * over each map on its own: for every site, the larger amount.
  *
@@ -39,7 +40,6 @@ import com.aerospike.udf.UdfException;
  */
 public final class PnCounter {
     private static final int MAX_SITES = 64;
-    private static final int SITE_MAX = 32;
     private static final String INC = "inc";
     private static final String DEC = "dec";
 
@@ -154,16 +154,27 @@ public final class PnCounter {
         return added - TABLE.total();
     }
 
-    /** Adds n to this site's entry of one map and saves; answers the counter's value. */
-    private static long grow(Record rec, String bin, String site, long n) {
-        // The Rust module bounds the site name with a Str<32>; the same limit, as a check.
-        if (site.length() > SITE_MAX) {
-            throw new UdfException("the site name is too long");
+    /**
+     * This cluster's site: its XDR src-id, as the decimal string the amounts are keyed by. The server knows which
+     * cluster runs the write, so no client can count under another cluster's entry.
+     */
+    private static String thisSite() {
+        long id = Udf.clusterSrcId();
+
+        if (id <= 0) {
+            throw new UdfException("no XDR src-id on this cluster: set src-id in its xdr stanza");
         }
 
+        return Long.toString(id);
+    }
+
+    /** Adds n to this cluster's entry of one map and saves; answers the counter's value. */
+    private static long grow(Record rec, String bin, long n) {
         if (n < 0) {
             throw new UdfException("the amount must not be negative: an entry only grows");
         }
+
+        String site = thisSite();
 
         load(rec, bin);
         TABLE.add(site, n);
@@ -173,16 +184,16 @@ public final class PnCounter {
         return valueOf(rec);
     }
 
-    /** Adds n to this site's increments. Returns the counter's value. */
+    /** Adds n to this cluster's increments, under its src-id. Returns the counter's value. */
     @Function("increment")
-    static long increment(Record rec, String site, long n) {
-        return grow(rec, INC, site, n);
+    static long increment(Record rec, long n) {
+        return grow(rec, INC, n);
     }
 
-    /** Adds n to this site's decrements. Returns the counter's value. */
+    /** Adds n to this cluster's decrements, under its src-id. Returns the counter's value. */
     @Function("decrement")
-    static long decrement(Record rec, String site, long n) {
-        return grow(rec, DEC, site, n);
+    static long decrement(Record rec, long n) {
+        return grow(rec, DEC, n);
     }
 
     /** The counter's value: the sum of every site's increments minus the sum of every site's decrements. */

@@ -3,8 +3,9 @@
 //!
 //! The grow-only counter of `examples/counter` cannot subtract: a decrement would shrink a site's entry,
 //! and the per-site maximum would throw the shrink away. So this module never subtracts. The record keeps
-//! two maps of `site -> amount`, `inc` and `dec`, and both only ever grow: `increment("dc1", 3)` adds to
-//! `inc["dc1"]`, `decrement("dc1", 1)` adds to `dec["dc1"]`, and the counter's value is the sum of `inc`
+//! two maps of `site -> amount`, `inc` and `dec`, and both only ever grow. A site is the cluster's XDR
+//! src-id as a decimal string: on the cluster with src-id 1, `increment(3)` adds to `inc["1"]`,
+//! `decrement(1)` adds to `dec["1"]`, and the counter's value is the sum of `inc`
 //! minus the sum of `dec`. The merge is the grow-only counter's, run over each map on its own: for every
 //! site, the larger amount. Both maps converge for the reason the single map did, so their difference
 //! does too.
@@ -132,15 +133,36 @@ fn value_of(rec: &Record) -> Result<i64, Error> {
     Ok(stored(rec, "inc")?.total() - stored(rec, "dec")?.total())
 }
 
-/// Adds `n` to this site's entry of one map and saves; answers the counter's value.
-fn grow(rec: &mut Record, bin: &str, site: &str, n: i64) -> Result<i64, Error> {
+/// This cluster's site: its XDR src-id, as the decimal string the amounts are keyed by. The server knows
+/// which cluster runs the write, so no client can count under another cluster's entry.
+fn this_site() -> Result<Site, Error> {
+    let mut id = as_udf::cluster_src_id()?;
+
+    if id <= 0 {
+        return Err(Error::Custom("no XDR src-id on this cluster: set src-id in its xdr stanza"));
+    }
+
+    let mut digits = [0u8; 20];
+    let mut at = digits.len();
+
+    while id > 0 {
+        at -= 1;
+        digits[at] = b'0' + (id % 10) as u8;
+        id /= 10;
+    }
+
+    Site::new(core::str::from_utf8(&digits[at..]).map_err(|_| Error::Malformed)?)
+}
+
+/// Adds `n` to this cluster's entry of one map and saves; answers the counter's value.
+fn grow(rec: &mut Record, bin: &str, n: i64) -> Result<i64, Error> {
     if n < 0 {
         return Err(Error::Custom("the amount must not be negative: an entry only grows"));
     }
 
     let mut counts = stored(rec, bin)?;
 
-    counts.add(Site::new(site)?, n)?;
+    counts.add(this_site()?, n)?;
     rec.set(bin, &counts.into_map()?)?;
 
     rec.save()?;
@@ -149,14 +171,14 @@ fn grow(rec: &mut Record, bin: &str, site: &str, n: i64) -> Result<i64, Error> {
 }
 
 export! {
-    /// Adds `n` to this site's increments. Returns the counter's value.
-    fn increment(rec: &mut Record, site: &str, n: i64) -> Result<Value, Error> {
-        Ok(Value::Int(grow(rec, "inc", site, n)?))
+    /// Adds `n` to this cluster's increments, under its src-id. Returns the counter's value.
+    fn increment(rec: &mut Record, n: i64) -> Result<Value, Error> {
+        Ok(Value::Int(grow(rec, "inc", n)?))
     }
 
-    /// Adds `n` to this site's decrements. Returns the counter's value.
-    fn decrement(rec: &mut Record, site: &str, n: i64) -> Result<Value, Error> {
-        Ok(Value::Int(grow(rec, "dec", site, n)?))
+    /// Adds `n` to this cluster's decrements, under its src-id. Returns the counter's value.
+    fn decrement(rec: &mut Record, n: i64) -> Result<Value, Error> {
+        Ok(Value::Int(grow(rec, "dec", n)?))
     }
 
     /// The counter's value: the sum of every site's increments minus the sum of every site's decrements.

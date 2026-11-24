@@ -815,3 +815,191 @@ public Double sumDouble()
 The sum of a `Both<Double>`; the one that exists when only one does, and null when neither does,
 as `max` and `min`. Only for a `Both<Double>`: on any other it is a bad cast.
 
+#### `Both.maxPerKey`
+
+```java
+public MapBuilder maxPerKey()
+```
+
+Value) of a map bin on both sides, as `Pair.getMap` reads it: every key
+of either side, each with the larger of its two integers; null when neither side has the bin.
+
+```java
+MapBuilder counts = pair.getMap("counts").maxPerKey();
+
+if (counts != null) {
+    out.put("counts", counts);
+}
+```
+
+Symmetric, idempotent and associative, so the two clusters converge on the same bytes. For a
+`Both<MapValue>`.
+
+#### `Both.sortedUnion`
+
+```java
+public ListBuilder sortedUnion()
+```
+
+Value) of a list bin on both sides, as `Pair.getList` reads it: every
+element of either side once, sorted; null when neither side has the bin.
+
+```java
+ListBuilder tags = pair.getList("tags").sortedUnion();
+
+if (tags != null) {
+    out.put("tags", tags);
+}
+```
+
+Symmetric, idempotent and associative. For a `Both<ListValue>`.
+
+#### `Both.counterMerge`
+
+```java
+public MapBuilder counterMerge()
+```
+
+Value) of a counter bin on both sides, as `Pair.getMap` reads it: a map
+of origin to count, merged by the larger count per origin; null when neither side has the bin.
+`counterTotal` reads the merged counter's value.
+
+```java
+MapBuilder hits = pair.getMap("hits").counterMerge();
+
+if (hits != null) {
+    out.put("hits", hits);
+}
+```
+
+Symmetric, idempotent and associative. For a `Both<MapValue>`.
+
+#### `Both.lwwByVersion`
+
+```java
+public Value lwwByVersion()
+```
+
+Value) of a `[version, value]` bin on both sides, as
+`Pair.getList` reads it: the side with the higher version, ties broken by the stored bytes; null
+when neither side has the bin.
+
+```java
+Value price = pair.getList("price").lwwByVersion();
+
+if (price != null) {
+    out.put("price", price);
+}
+```
+
+Symmetric, idempotent and associative. For a `Both<ListValue>`.
+
+#### `Both.maxPerKey`
+
+```java
+public static MapBuilder maxPerKey(Value current, Value incoming)
+```
+
+The per-key maximum of two maps: a new map with every key of either side, each under the larger of its
+two values, or under its one value when only one side has the key. Built on the host, so it is ordered
+by key and both clusters build the same bytes. Null when both sides are missing.
+
+A side is missing when it is null, absent or nil; otherwise it must be a map whose keys are strings
+or integers and whose values are integers. Anything else throws `UdfException`
+(`LowLevel.TYPE_MISMATCH`), a side that is not a map included: a merge does not guess what a double
+or a nested map should become. It throws with `LowLevel.REFUSED` when the host does not build the
+map.
+
+```java
+MapBuilder merged = Both.maxPerKey(rec.get("seen"), theirs);
+```
+
+Symmetric (`maxPerKey(a, b)` and `maxPerKey(b, a)` are the same map), idempotent (merging
+a map with itself, or with a merge it is part of, changes nothing) and associative (three sides merge to
+the same map in any order): the laws a convergent merge needs. It is the merge of any map of values that
+only grow; Value) is the same merge under the name of the structure it
+serves.
+
+#### `Both.sortedUnion`
+
+```java
+public static ListBuilder sortedUnion(Value current, Value incoming)
+```
+
+The union of two lists as a set: a new list with every element of either side once, sorted, so both
+clusters build the same bytes whatever order the elements arrived in. Null when both sides are missing.
+
+The elements are integers, strings or blobs: the kinds the server keys a map by, since the host
+sorts them as a map built on it sorts its keys. Integers come first, by value, then strings and then
+blobs, each by its bytes. An integer and a string are never the same element, however they read.
+
+A side is missing when it is null, absent or nil; otherwise it must be a list of those kinds.
+Anything else throws `UdfException` (`LowLevel.TYPE_MISMATCH`): a side that is not a list,
+or an element of another kind (a double, a nested list or map, nil). It throws with
+`LowLevel.REFUSED` when the host does not build the list.
+
+Symmetric, idempotent and associative: the merge of a set that only grows. A removal needs a second
+set, as the 2P-Set of the CRDT tutorial keeps one.
+
+#### `Both.counterMerge`
+
+```java
+public static MapBuilder counterMerge(Value current, Value incoming)
+```
+
+The merge of a per-origin counter: a map of origin to count, each origin's count raised only by the
+cluster it names, merged by the larger count per origin. It is Value) under
+the name of the structure: the same rules, the same exceptions, and null when both sides are missing.
+`counterTotal` reads the counter's value.
+
+```java
+MapBuilder counts = Both.counterMerge(current.get("hits"), incoming.get("hits"));
+```
+
+Symmetric, idempotent and associative. A count that goes down is not a count this merges: a
+PN-Counter keeps a second counter for the decrements.
+
+#### `Both.counterTotal`
+
+```java
+public static long counterTotal(Value counter)
+```
+
+The value of a per-origin counter: the sum of its counts, wrapping on overflow as `long` addition
+does. 0 for a missing counter (null, absent or nil). Throws `UdfException`
+(`LowLevel.TYPE_MISMATCH`) when it is not a map, or when a key is not a string or an integer or a
+count is not an integer, as for Value). A built map
+(`MapBuilder.asValue`) is read too, so a merged counter's total needs no second read.
+
+```java
+long total = Both.counterTotal(rec.get("hits"));
+```
+
+#### `Both.lwwByVersion`
+
+```java
+public static Value lwwByVersion(Value current, Value incoming)
+```
+
+Last writer wins by an application version: of two `[version, value]` lists, the one with the
+higher version, as it is, to write back. Two equal versions are decided by the lists' stored bytes, the
+greater winning, so both clusters pick the same side; two lists with the same bytes are the same either
+way. Null when both sides are missing.
+
+A side is missing when it is null, absent or nil; otherwise it must be a list of exactly two elements
+whose first is an integer (anything else throws `UdfException`, `LowLevel.TYPE_MISMATCH`).
+The value may be of any kind.
+
+```java
+// The write UDF moves the version and the value in one write: [version + 1, price].
+Value price = Both.lwwByVersion(current.get("price"), incoming.get("price"));
+
+if (price != null) {
+    out.put("price", price);
+}
+```
+
+Symmetric, idempotent and associative: it is the larger of the two by version, then by bytes, which
+is a total order. The version is the application's, raised by every write that changes the value, so no
+clock decides.
+

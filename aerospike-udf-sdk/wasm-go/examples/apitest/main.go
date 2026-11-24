@@ -636,6 +636,53 @@ func cmpBins(rec *udf.Record, a string, b string) (*udf.List, error) {
 	return orAnswer(udf.CmpStored(x, y))
 }
 
+// both is two values as the two sides of a merge, a nil one missing.
+func both(a, b udf.Value) udf.Both[udf.Value] {
+	return udf.Both[udf.Value]{Current: a, Incoming: b, HasCurrent: !a.IsNull(), HasIncoming: !b.IsNull()}
+}
+
+// built is what a builder of the merges gave, as answer reads a reader.
+func built[T *udf.Map | *udf.List](v T, ok bool, err error) (*udf.List, error) {
+	if err != nil {
+		return only(tag(err))
+	}
+	if !ok {
+		return only("none")
+	}
+	return some(v)
+}
+
+// One merge building block on two values, a nil one missing: ["some", merged], ["none"] when it answers
+// nothing, or the status of the error. counter_total reads a alone.
+//
+//udf:function mrg
+func mrg(how string, a udf.Value, b udf.Value) (*udf.List, error) {
+	switch how {
+	case "max_per_key":
+		return built(udf.MaxPerKey(both(a, b)))
+	case "sorted_union":
+		return built(udf.SortedUnion(both(a, b)))
+	case "counter_merge":
+		return built(udf.CounterMerge(both(a, b)))
+	case "counter_total":
+		return orAnswer(udf.CounterTotal(a))
+	case "lww_by_version":
+		return answer(udf.LwwByVersion(both(a, b)))
+	}
+	return nil, errors.New("mrg: unknown how")
+}
+
+// This cluster's XDR src-id: ["some", id], 0 when it has none, or "refused" where it is refused.
+//
+//udf:function src_id
+func srcID() (*udf.List, error) {
+	id := udf.ClusterSrcID()
+	if id < 0 {
+		return only("refused")
+	}
+	return some(id)
+}
+
 // Agg counts and adds up the integer bin n of every record of a stream.
 type Agg struct {
 	count int64
@@ -736,6 +783,63 @@ func mergeAPI(current, incoming *udf.EventRecord) (udf.Resolution, error) {
 	out.Put("bsrc", udf.NewList(2).
 		Add(current.BinSourceID("s")).
 		Add(incoming.BinSourceID("s")))
+
+	// The merge building blocks, on the bins they are for: cm a counter (a map of integers), ul a list
+	// taken as a set, lv a [version, value] list. A bin neither side has adds nothing.
+	cm, err := pair.Map("cm")
+	if err != nil {
+		return udf.Resolution{}, err
+	}
+	merged, ok, err := udf.MaxPerKey(cm)
+	if err != nil {
+		return udf.Resolution{}, err
+	}
+	if ok {
+		out.Put("mpk", merged)
+	}
+	counter, ok, err := udf.CounterMerge(cm)
+	if err != nil {
+		return udf.Resolution{}, err
+	}
+	if ok {
+		total, err := udf.CounterTotal(counter.Value())
+		if err != nil {
+			return udf.Resolution{}, err
+		}
+		out.Put("ctot", total)
+		out.Put("cnt", counter)
+	}
+
+	ul, err := pair.List("ul")
+	if err != nil {
+		return udf.Resolution{}, err
+	}
+	union, ok, err := udf.SortedUnion(ul)
+	if err != nil {
+		return udf.Resolution{}, err
+	}
+	if ok {
+		out.Put("union", union)
+	}
+
+	lv, err := pair.List("lv")
+	if err != nil {
+		return udf.Resolution{}, err
+	}
+	winner, ok, err := udf.LwwByVersion(lv)
+	if err != nil {
+		return udf.Resolution{}, err
+	}
+	if ok {
+		out.Put("lww", winner)
+	}
+
+	// The cluster's src-id is refused to a handler, as the clock is.
+	if udf.ClusterSrcID() < 0 {
+		out.Put("src_id", "refused")
+	} else {
+		out.Put("src_id", "answered")
+	}
 
 	return udf.Resolve(out), out.Err()
 }

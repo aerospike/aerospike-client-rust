@@ -64,7 +64,13 @@ record's values for a bin the side neither has nor deleted.
 source id, so both clusters answer the same. When nothing but the data tells two
 values apart, `as_udf_cmp_stored(&a, &b, &order)` compares their stored bytes without copying either: the
 status is `AS_UDF_TYPE_MISMATCH` for a value that is not stored, and `order` is exactly -1, 0 or 1, and
-`as_udf_stored_bytes` copies them out. `as_udf_list_has_string` searches a stored list of strings, and
+`as_udf_stored_bytes` copies them out. `as_udf_max_per_key`, `as_udf_sorted_union`, `as_udf_counter_merge`,
+`as_udf_counter_total` and `as_udf_lww_by_version` are the data-only merges of two map or list values.
+They are built on `as_udf_map_find(&m, &key, &out)`, which looks up in a stored map a key read from another
+map, a string by its bytes and an integer by its value. It is public because every inline function in the
+header is API, and it is the one lookup a merge of two maps needs: the key in hand is a value, not a C
+string.
+`as_udf_list_has_string` searches a stored list of strings, and
 `as_udf_map_put_value(out, name, &v)` puts a value read from either side into the map being built, by
 position.
 

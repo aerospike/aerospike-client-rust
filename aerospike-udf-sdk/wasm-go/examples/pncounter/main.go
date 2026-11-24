@@ -15,8 +15,9 @@
 //
 // The grow-only counter cannot subtract: a decrement would shrink a site's entry, and the per-site maximum
 // would throw the shrink away. So this module never subtracts. The record keeps two maps of site -> amount,
-// inc and dec, and both only ever grow: increment("dc1", 3) adds to inc["dc1"], decrement("dc1", 1) adds to
-// dec["dc1"], and the counter's value is the sum of inc minus the sum of dec. The merge is the grow-only
+// inc and dec, and both only ever grow. A site is the cluster's XDR src-id as a decimal string: on the
+// cluster with src-id 1, increment(3) adds to inc["1"], decrement(1) adds to dec["1"], and the counter's
+// value is the sum of inc minus the sum of dec. The merge is the grow-only
 // counter's, run over each map on its own: for every site, the larger amount.
 //
 // What it cannot do is hold a floor: two sites that each see a stock of one and each take one merge to
@@ -29,11 +30,10 @@ package main
 
 import (
 	"errors"
+	"strconv"
 
 	udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk/wasm-go"
 )
-
-const siteMax = 32
 
 // The per-site amounts of one map, gathered from one or both sides: for every site, the larger amount seen.
 type table map[string]int64
@@ -142,18 +142,29 @@ func valueOf(rec *udf.Record) (int64, error) {
 	return added.total() - taken.total(), nil
 }
 
-// Adds n to this site's entry of one map and saves; answers the counter's value.
-func grow(rec *udf.Record, bin string, site string, n int64) (int64, error) {
-	// The Rust module bounds the site name with a Str<32>; the same limit, as a check.
-	if len(site) > siteMax {
-		return 0, errors.New("the site name is too long")
+// thisSite is this cluster's site: its XDR src-id, as the decimal string the amounts are keyed by. The
+// server knows which cluster runs the write, so no client can count under another cluster's entry.
+func thisSite() (string, error) {
+	id := udf.ClusterSrcID()
+	if id <= 0 {
+		return "", errors.New("no XDR src-id on this cluster: set src-id in its xdr stanza")
 	}
 
+	return strconv.FormatInt(id, 10), nil
+}
+
+// Adds n to this cluster's entry of one map and saves; answers the counter's value.
+func grow(rec *udf.Record, bin string, n int64) (int64, error) {
 	if n < 0 {
 		return 0, errors.New("the amount must not be negative: an entry only grows")
 	}
 
 	t, err := stored(rec, bin)
+	if err != nil {
+		return 0, err
+	}
+
+	site, err := thisSite()
 	if err != nil {
 		return 0, err
 	}
@@ -171,18 +182,18 @@ func grow(rec *udf.Record, bin string, site string, n int64) (int64, error) {
 	return valueOf(rec)
 }
 
-// Adds n to this site's increments. Returns the counter's value.
+// Adds n to this cluster's increments, under its src-id. Returns the counter's value.
 //
 //udf:function increment
-func increment(rec *udf.Record, site string, n int64) (int64, error) {
-	return grow(rec, "inc", site, n)
+func increment(rec *udf.Record, n int64) (int64, error) {
+	return grow(rec, "inc", n)
 }
 
-// Adds n to this site's decrements. Returns the counter's value.
+// Adds n to this cluster's decrements, under its src-id. Returns the counter's value.
 //
 //udf:function decrement
-func decrement(rec *udf.Record, site string, n int64) (int64, error) {
-	return grow(rec, "dec", site, n)
+func decrement(rec *udf.Record, n int64) (int64, error) {
+	return grow(rec, "dec", n)
 }
 
 // The counter's value: the sum of every site's increments minus the sum of every site's decrements.

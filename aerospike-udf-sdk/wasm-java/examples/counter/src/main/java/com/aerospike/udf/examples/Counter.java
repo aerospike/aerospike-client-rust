@@ -27,7 +27,8 @@ import com.aerospike.udf.UdfException;
  * same module as aerospike-udf-sdk/wasm-rust/examples/counter.
  *
  * <p>One bin, {@code counts}, holds a map of {@code site -> count}. Each data centre adds only to its own
- * entry ({@code increment("dc1", 3)}), and the counter's value is the sum of every entry ({@code value()}).
+ * entry, keyed by its XDR src-id as a decimal string ({@code increment(3)} on the cluster with src-id 1 adds to
+ * {@code counts["1"]}), and the counter's value is the sum of every entry ({@code value()}).
  * When a write from one site arrives at the other, {@code merge_counter} keeps, for every site, the larger
  * of the two counts. A site's count only ever grows, so the larger one is always the later one: the merge
  * needs no clock, no LUT and no writer id, and it is commutative, idempotent and associative by
@@ -39,7 +40,6 @@ import com.aerospike.udf.UdfException;
  */
 public final class Counter {
     private static final int MAX_SITES = 64;
-    private static final int SITE_MAX = 32;
 
     /** The per-site counts gathered from one or both sides. */
     private static final String[] sites = new String[MAX_SITES];
@@ -122,13 +122,24 @@ public final class Counter {
         offerAll(rec.getMap("counts", null));
     }
 
-    /** Adds n to this site's count. Returns the counter's value. */
-    @Function("increment")
-    static long increment(Record rec, String site, long n) {
-        // The Rust module bounds the site name with a Str<32>; the same limit, as a check.
-        if (site.length() > SITE_MAX) {
-            throw new UdfException("increment: the site name is too long");
+    /**
+     * This cluster's site: its XDR src-id, as the decimal string the counts are keyed by. The server knows which
+     * cluster runs the write, so no client can count under another cluster's entry.
+     */
+    private static String thisSite() {
+        long id = Udf.clusterSrcId();
+
+        if (id <= 0) {
+            throw new UdfException("no XDR src-id on this cluster: set src-id in its xdr stanza");
         }
+
+        return Long.toString(id);
+    }
+
+    /** Adds n to this cluster's count, under its src-id. Returns the counter's value. */
+    @Function("increment")
+    static long increment(Record rec, long n) {
+        String site = thisSite();
 
         stored(rec);
 

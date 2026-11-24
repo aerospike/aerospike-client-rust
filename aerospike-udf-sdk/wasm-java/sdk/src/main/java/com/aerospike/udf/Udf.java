@@ -61,6 +61,28 @@ public final class Udf {
     }
 
     /**
+     * This cluster's XDR source id: the {@code src-id} of its {@code xdr} stanza, 1 to 255, which XDR stamps
+     * on every write it ships from here. 0 when the cluster has none: Community Edition, or no {@code src-id}
+     * configured. -1 inside an event handler, which is refused it as it is the clock: the answer depends on
+     * which cluster runs the merge, and a merge that read it could not converge. A handler has each side's id
+     * on its records ({@link EventRecord#sourceId}).
+     *
+     * <p>A write UDF tags what it writes with it, so a per-origin structure (a counter, a set of stamps) keys
+     * each cluster's share by the same id XDR reports, with no argument for a client to get wrong.
+     *
+     * <pre>
+     * long site = Udf.clusterSrcId();
+     *
+     * if (site &lt;= 0) {
+     *     throw new UdfException("increment: this cluster has no XDR src-id");
+     * }
+     * </pre>
+     */
+    public static long clusterSrcId() {
+        return Natives.clusterSrcId();
+    }
+
+    /**
      * Writes one line to the server's log at {@link #LOG_WARN}, {@link #LOG_INFO} or {@link #LOG_DEBUG}; any
      * other {@code level} is taken as debug. The message is data to the server: control characters are
      * escaped, so it cannot forge a line, and what does not fit in about 500 bytes is cut. A call may write

@@ -13,8 +13,9 @@
 // The smallest CRDT in Go: a grow-only counter, merged across data centres by the xdr-merge event. The
 // same module as aerospike-udf-sdk/wasm-rust/examples/counter.
 //
-// One bin, counts, holds a map of site -> count. Each data centre adds only to its own entry
-// (increment("dc1", 3)), and the counter's value is the sum of every entry (value()). When a write from one
+// One bin, counts, holds a map of site -> count. Each data centre adds only to its own entry, keyed by
+// its XDR src-id as a decimal string (increment(3) on the cluster with src-id 1 adds to counts["1"]),
+// and the counter's value is the sum of every entry (value()). When a write from one
 // site arrives at the other, merge_counter keeps, for every site, the larger of the two counts. A site's
 // count only ever grows, so the larger one is always the later one: the merge needs no clock, no LUT and
 // no writer id, and it is commutative, idempotent and associative by construction, which the server's dry
@@ -27,11 +28,10 @@ package main
 
 import (
 	"errors"
+	"strconv"
 
 	udf "github.com/aerospike/aerospike-client-rust/aerospike-udf-sdk/wasm-go"
 )
-
-const siteMax = 32
 
 // The per-site counts gathered from one or both sides: for every site, the larger count seen.
 type table map[string]int64
@@ -123,16 +123,27 @@ func stored(rec *udf.Record) (table, error) {
 	return t, nil
 }
 
-// Adds n to this site's count. Returns the counter's value.
-//
-//udf:function increment
-func increment(rec *udf.Record, site string, n int64) (int64, error) {
-	// The Rust module bounds the site name with a Str<32>; the same limit, as a check.
-	if len(site) > siteMax {
-		return 0, errors.New("increment: the site name is too long")
+// thisSite is this cluster's site: its XDR src-id, as the decimal string the counts are keyed by. The server
+// knows which cluster runs the write, so no client can count under another cluster's entry.
+func thisSite() (string, error) {
+	id := udf.ClusterSrcID()
+	if id <= 0 {
+		return "", errors.New("no XDR src-id on this cluster: set src-id in its xdr stanza")
 	}
 
+	return strconv.FormatInt(id, 10), nil
+}
+
+// Adds n to this cluster's count, under its src-id. Returns the counter's value.
+//
+//udf:function increment
+func increment(rec *udf.Record, n int64) (int64, error) {
 	t, err := stored(rec)
+	if err != nil {
+		return 0, err
+	}
+
+	site, err := thisSite()
 	if err != nil {
 		return 0, err
 	}

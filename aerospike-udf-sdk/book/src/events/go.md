@@ -110,7 +110,8 @@ into a `udf.Both[T]`, the Rust SDK's `Pair` and `Both`: `pair.Int(name)`, `Doubl
 `Newer()` and `Older()`; `Ordered()` as (older, newer); `Merge(f)`; `CurrentOrIncoming()`, `IncomingOrCurrent()`.
 `udf.Max`, `udf.Min` and `udf.Sum` are functions over a `Both`, since a method cannot add the ordering
 constraint; `Sum`, like `Max` and `Min`, answers false when neither side has the bin, and an integer sum
-wraps on overflow.
+wraps on overflow. `udf.MaxPerKey`, `udf.SortedUnion`, `udf.CounterMerge` and `udf.LwwByVersion` are the
+data-only merges of a map or list bin, over a `Both[udf.Value]`, and `udf.CounterTotal` reads a counter.
 `pair.WithNewer(out)` fills in every bin the handler had no opinion on from the side that
 wrote it later, which is symmetric, and `pair.IncomingIsNewer(name)` orders one bin. When the side that
 wrote a bin later deleted it, `WithNewer` leaves the bin out, so the delete stands. `rec.DeletedAny()` says

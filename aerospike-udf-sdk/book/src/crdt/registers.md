@@ -344,8 +344,9 @@ own local writes carry when they ship:
   cluster holds, and no local write ships it.
 - **This cluster's value, kept** is left exactly as it was. If it had not been shipped yet, because the
   merge landed first, it still ships with its own write.
-- **A value the handler computed**, which is neither side's, is stamped as a write made here. The other
-  cluster's handler, given the same two inputs, computes the same value without it.
+- **A value the handler computed**, which is neither side's, is stamped as a write made here, but with
+  the time of the later of the two inputs' stamps, never this cluster's clock. The other cluster's
+  handler, given the same two inputs, computes the same value at the same time without it.
 
 The second case is what the two-cluster test of this step exposed: a merge used to mark every bin as
 arrived from the other cluster, so a local write that was still waiting to ship when a merge landed was
@@ -378,7 +379,9 @@ back.
 The clock is back. A stamp is as good as the clock of the cluster that wrote it, and everything
 [step 4](lwwset.md#where-the-stamps-come-from) says about a cluster whose clock runs behind applies
 here, to every bin. What this step saves is the bookkeeping: no stamps in the record, no UDF on the
-write path for a register, no removal structure that grows.
+write path for a register, no removal structure that grows. A register that cannot trust the clock keeps
+a version of the application's beside its value instead, in one `[version, value]` list bin, and the SDKs'
+`lww_by_version` merges it: the higher version wins, and a tie goes to the greater stored bytes.
 
 And a register is replaced whole. Two clusters that each add an entry to one map bin lose one of the two
 entries, because the bin has one stamp. A value that has to be merged inside is not a register, and

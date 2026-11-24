@@ -440,6 +440,18 @@ AS_UDF_IMPORT(numbins) int64_t as_udf_rec_bin_count(void);
  * is refused: a decision that reads it cannot converge across clusters. Not about the record, and not on the
  * scale of as_udf_rec_last_update_time, which counts from 2010: subtract 1262304000000 from this to compare. */
 AS_UDF_IMPORT(current_time) int64_t as_udf_now(void);
+/* This cluster's XDR source id: the `src-id` of its `xdr` stanza, 1 to 255, which XDR stamps on every write it
+ * ships from here. 0 when the cluster has none: Community Edition, or no `src-id` configured. A write UDF keys
+ * what it writes by it, so a per-origin structure (a counter, a set of stamps) keys each cluster's share by the
+ * id XDR reports for that cluster, with no argument for a client to get wrong. Returns -1 in an event handler,
+ * where it is refused as the clock is: the answer depends on which cluster runs the merge, and a merge that reads
+ * it cannot converge. A handler has each side's id on its records.
+ * ```c
+ * int64_t site = as_udf_cluster_src_id();
+ * if (site <= 0) return as_udf_fail_str("no XDR src-id on this cluster: set src-id in its xdr stanza");
+ * ```
+ */
+AS_UDF_IMPORT(cluster_src_id) int64_t as_udf_cluster_src_id(void);
 /* Set the time to live the record's write will carry, in seconds, with a client write's meaning: 0 for the
  * namespace default, and -1 (all 32 bits set) for a record that never expires. It takes effect with the write,
  * so follow it with as_udf_rec_save. On a key with no record it creates nothing by itself: a save with a TTL set
@@ -1659,6 +1671,337 @@ static inline int32_t as_udf_event_with_bins(const as_udf_event_record* r, int32
 		ok = rc == AS_UDF_OK && as_udf_map_put_string_value(overrides, name, len, &v) == AS_UDF_OK;
 	}
 	return ok ? overrides : 0;
+}
+
+/* Merge building blocks: the merges of collections a convergent handler is built from. Each takes the two sides
+ * as values, either of which may be missing (NULL, or of kind AS_UDF_ABSENT or AS_UDF_NIL), so a write UDF can
+ * use one on a bin and an argument as well. */
+
+/* The value under `key`, a key read from another map, in the stored map `m`, into `out`: a string key is matched
+ * by its bytes, an integer key by its value, and never one by the other. Returns AS_UDF_OK; AS_UDF_NOT_FOUND, with
+ * `out` of kind AS_UDF_ABSENT, when there is no such key or `m` is not a map; AS_UDF_TYPE_MISMATCH for a key that
+ * is neither a string nor an integer; AS_UDF_REFUSED when the call's memory has no room for the walk a long key
+ * needs. A string key of up to 256 bytes is looked up in one host call; a longer one is compared with each key
+ * of `m` (as_udf_cmp_stored), which needs no buffer. An entry that holds nil is found, with kind AS_UDF_NIL. */
+static inline int32_t as_udf_map_find(const as_udf_value* m, const as_udf_value* key, as_udf_value* out)
+{
+	out->kind = AS_UDF_ABSENT;
+	out->len = 0;
+	out->payload = 0;
+	if (key->kind != AS_UDF_INT && key->kind != AS_UDF_STR) return AS_UDF_TYPE_MISMATCH;
+	if (m->kind != AS_UDF_MAP) return AS_UDF_NOT_FOUND;
+	if (key->kind == AS_UDF_INT) {
+		return as_udf_coll_get_int(as_udf_value_src(m), as_udf_value_at(m), key->payload, out, (int32_t)sizeof(*out));
+	}
+	char buf[256];
+	int32_t n = as_udf_bytes(key, buf, (int32_t)sizeof(buf));
+	if (n >= 0) return as_udf_coll_get(as_udf_value_src(m), as_udf_value_at(m), buf, n, out, (int32_t)sizeof(*out));
+	if (n > AS_UDF_NEEDED_BASE) return n;
+	int32_t cur = as_udf_cursor_enter_at(as_udf_value_src(m), as_udf_value_at(m));
+	if (cur <= 0) return AS_UDF_REFUSED;
+	as_udf_value w[32];
+	int32_t rc = AS_UDF_NOT_FOUND;
+	for (int32_t got; rc == AS_UDF_NOT_FOUND && (got = as_udf_cursor_values(cur, w, (int32_t)sizeof(w))) != 0;) {
+		if (got < 0) {
+			rc = got;
+			break;
+		}
+		for (int32_t i = 0; i + 1 < got; i += 2) {
+			int32_t order;
+			if (w[i].kind == AS_UDF_STR && as_udf_cmp_stored(&w[i], key, &order) == AS_UDF_OK && order == 0) {
+				*out = w[i + 1];
+				rc = AS_UDF_OK;
+				break;
+			}
+		}
+		if (got < 32) break;
+	}
+	as_udf_cursor_close(cur);
+	return rc;
+}
+
+/* The per-key maximum of two maps: a new map with every key of either side, each under the larger of its two
+ * values, or under its one value when only one side has the key. Built on the host, so it is ordered by key and
+ * both clusters build the same bytes. A side is missing when it is NULL, absent or nil; otherwise it must be a map
+ * whose keys are strings or integers and whose values are integers. Returns AS_UDF_OK with the map's handle in
+ * `*map` (close it once it is stored or put); AS_UDF_NOT_FOUND when both sides are missing; AS_UDF_TYPE_MISMATCH
+ * for anything else, a side that is not a map included, since a merge does not guess what a double or a nested map
+ * should become; AS_UDF_REFUSED when the host does not build the map. Nothing is left open on a failure.
+ *
+ * Symmetric (the two sides swapped give the same map), idempotent (merging a map with itself, or with a merge it is
+ * part of, changes nothing) and associative (three sides merge to the same map in any order): the laws a
+ * convergent merge needs. It is the merge of any map of values that only grow; as_udf_counter_merge is the same
+ * merge under the name of the structure it serves.
+ * ```c
+ * as_udf_value mine, theirs;
+ * int32_t merged;
+ * if (as_udf_event_map(&current, "seen", &mine) == AS_UDF_TYPE_MISMATCH ||
+ * 		as_udf_event_map(&incoming, "seen", &theirs) == AS_UDF_TYPE_MISMATCH) return as_udf_fail_str("seen is not a map");
+ * int32_t rc = as_udf_max_per_key(&mine, &theirs, &merged);
+ * if (rc == AS_UDF_OK) as_udf_map_put_string_handle(out, "seen", 4, merged);
+ * else if (rc != AS_UDF_NOT_FOUND) return as_udf_fail_str("seen is not a map of integers");
+ * ```
+ */
+static inline int32_t as_udf_max_per_key(const as_udf_value* current, const as_udf_value* incoming, int32_t* map)
+{
+	const as_udf_value* sides[2] = { current, incoming };
+	bool there[2];
+	for (int32_t k = 0; k < 2; k++) {
+		there[k] = sides[k] != NULL && sides[k]->kind != AS_UDF_ABSENT && sides[k]->kind != AS_UDF_NIL;
+		if (there[k] && sides[k]->kind != AS_UDF_MAP) return AS_UDF_TYPE_MISMATCH;
+	}
+	if (! there[0] && ! there[1]) return AS_UDF_NOT_FOUND;
+	int32_t out = as_udf_map_new((int32_t)((there[0] ? sides[0]->len : 0) + (there[1] ? sides[1]->len : 0)));
+	if (out <= 0) return AS_UDF_REFUSED;
+	int32_t rc = AS_UDF_OK;
+	/* Every key of the first side under the larger of its values on the two sides; then the keys only the second
+	 * side has. */
+	for (int32_t k = 0; rc == AS_UDF_OK && k < 2; k++) {
+		if (! there[k]) continue;
+		const as_udf_value* other = there[1 - k] ? sides[1 - k] : NULL;
+		int32_t cur = as_udf_cursor_enter_at(as_udf_value_src(sides[k]), as_udf_value_at(sides[k]));
+		if (cur <= 0) {
+			rc = AS_UDF_REFUSED;
+			break;
+		}
+		as_udf_value w[32];
+		for (int32_t got; rc == AS_UDF_OK && (got = as_udf_cursor_values(cur, w, (int32_t)sizeof(w))) != 0;) {
+			if (got < 0) {
+				rc = got;
+				break;
+			}
+			for (int32_t i = 0; rc == AS_UDF_OK && i + 1 < got; i += 2) {
+				if (w[i + 1].kind != AS_UDF_INT || (w[i].kind != AS_UDF_INT && w[i].kind != AS_UDF_STR)) {
+					rc = AS_UDF_TYPE_MISMATCH;
+					break;
+				}
+				int64_t most = w[i + 1].payload;
+				if (other != NULL) {
+					as_udf_value theirs;
+					int32_t found = as_udf_map_find(other, &w[i], &theirs);
+					if (found == AS_UDF_OK) {
+						/* The second side's key is in already, from the first side. */
+						if (k == 1) continue;
+						if (theirs.kind != AS_UDF_INT) {
+							rc = AS_UDF_TYPE_MISMATCH;
+							break;
+						}
+						if (theirs.payload > most) most = theirs.payload;
+					}
+					else if (found != AS_UDF_NOT_FOUND) {
+						rc = found;
+						break;
+					}
+				}
+				as_udf_value entry[2] = { w[i], as_udf_v_int(most) };
+				if (as_udf_map_put_entries(out, entry, (int32_t)sizeof(entry)) != 1) rc = AS_UDF_REFUSED;
+			}
+			if (got < 32) break;
+		}
+		as_udf_cursor_close(cur);
+	}
+	if (rc != AS_UDF_OK) {
+		as_udf_handle_close(out);
+		return rc;
+	}
+	*map = out;
+	return AS_UDF_OK;
+}
+
+/* The union of two lists as a set: a new list with every element of either side once, sorted, so both clusters
+ * build the same bytes whatever order the elements arrived in. The elements are integers, strings or blobs: the
+ * kinds the server keys a map by, since the host sorts them as a map built on it sorts its keys. Integers come
+ * first, by value, then strings and then blobs, each by its bytes; an integer and a string are never the same
+ * element, however they read. A side is missing when it is NULL, absent or nil; otherwise it must be a list of
+ * those kinds. Returns AS_UDF_OK with the list's handle in `*list`; AS_UDF_NOT_FOUND when both sides are missing;
+ * AS_UDF_TYPE_MISMATCH for a side that is not a list or an element of another kind (a double, a nested list or
+ * map, nil); AS_UDF_REFUSED when the host does not build the list.
+ *
+ * Symmetric, idempotent and associative: the merge of a set that only grows. A removal needs a second set, as the
+ * 2P-Set of the CRDT tutorial keeps one.
+ * ```c
+ * int32_t tags;
+ * if (as_udf_sorted_union(&mine, &theirs, &tags) == AS_UDF_OK) as_udf_map_put_string_handle(out, "tags", 4, tags);
+ * ```
+ */
+static inline int32_t as_udf_sorted_union(const as_udf_value* current, const as_udf_value* incoming, int32_t* list)
+{
+	const as_udf_value* sides[2] = { current, incoming };
+	bool there[2];
+	for (int32_t k = 0; k < 2; k++) {
+		there[k] = sides[k] != NULL && sides[k]->kind != AS_UDF_ABSENT && sides[k]->kind != AS_UDF_NIL;
+		if (there[k] && sides[k]->kind != AS_UDF_LIST) return AS_UDF_TYPE_MISMATCH;
+	}
+	if (! there[0] && ! there[1]) return AS_UDF_NOT_FOUND;
+	/* A map built on the host keeps its keys once each and in order: the elements go in as its keys, and come out
+	 * as the list. */
+	int32_t set = as_udf_map_new((int32_t)((there[0] ? sides[0]->len : 0) + (there[1] ? sides[1]->len : 0)));
+	if (set <= 0) return AS_UDF_REFUSED;
+	int32_t rc = AS_UDF_OK;
+	as_udf_value w[32], entries[64];
+	for (int32_t k = 0; rc == AS_UDF_OK && k < 2; k++) {
+		if (! there[k]) continue;
+		int32_t cur = as_udf_cursor_enter_at(as_udf_value_src(sides[k]), as_udf_value_at(sides[k]));
+		if (cur <= 0) {
+			rc = AS_UDF_REFUSED;
+			break;
+		}
+		for (int32_t got; rc == AS_UDF_OK && (got = as_udf_cursor_values(cur, w, (int32_t)sizeof(w))) != 0;) {
+			if (got < 0) {
+				rc = got;
+				break;
+			}
+			int32_t n = 0;
+			for (int32_t i = 0; i < got; i++) {
+				if (w[i].kind != AS_UDF_INT && w[i].kind != AS_UDF_STR && w[i].kind != AS_UDF_BLOB) {
+					rc = AS_UDF_TYPE_MISMATCH;
+					break;
+				}
+				entries[2 * n] = w[i];
+				entries[2 * n + 1] = as_udf_v_bool(true);
+				n++;
+			}
+			if (rc == AS_UDF_OK && n > 0 && as_udf_map_put_entries(set, entries, n * (int32_t)sizeof(entries[0]) * 2) != n) {
+				rc = AS_UDF_REFUSED;
+			}
+			if (got < 32) break;
+		}
+		as_udf_cursor_close(cur);
+	}
+	int32_t out = 0;
+	if (rc == AS_UDF_OK) {
+		int32_t packed = as_udf_pack_handle(set);
+		int32_t cur = packed > 0 ? as_udf_cursor_enter_at(packed, 0) : 0;
+		out = cur > 0 ? as_udf_list_new(as_udf_coll_size(set)) : 0;
+		if (out <= 0) rc = AS_UDF_REFUSED;
+		for (int32_t got; rc == AS_UDF_OK && (got = as_udf_cursor_values(cur, w, (int32_t)sizeof(w))) != 0;) {
+			if (got < 0) {
+				rc = got;
+				break;
+			}
+			int32_t n = 0;
+			for (int32_t i = 0; i < got; i += 2) entries[n++] = w[i];
+			if (as_udf_list_push_values(out, entries, n * (int32_t)sizeof(entries[0])) != n) rc = AS_UDF_REFUSED;
+			if (got < 32) break;
+		}
+		if (cur > 0) as_udf_cursor_close(cur);
+		if (packed > 0) as_udf_handle_close(packed);
+	}
+	as_udf_handle_close(set);
+	if (rc != AS_UDF_OK) {
+		if (out > 0) as_udf_handle_close(out);
+		return rc;
+	}
+	*list = out;
+	return AS_UDF_OK;
+}
+
+/* The merge of a per-origin counter: a map of origin to count, each origin's count raised only by the cluster it
+ * names, merged by the larger count per origin. It is as_udf_max_per_key under the name of the structure: the same
+ * rules, the same statuses, and AS_UDF_NOT_FOUND when both sides are missing. as_udf_counter_total reads the
+ * counter's value. Symmetric, idempotent and associative. A count that goes down is not a count this merges: a
+ * PN-Counter keeps a second counter for the decrements.
+ * ```c
+ * int32_t hits;
+ * if (as_udf_counter_merge(&mine, &theirs, &hits) == AS_UDF_OK) as_udf_map_put_string_handle(out, "hits", 4, hits);
+ * ```
+ */
+static inline int32_t as_udf_counter_merge(const as_udf_value* current, const as_udf_value* incoming, int32_t* map)
+{
+	return as_udf_max_per_key(current, incoming, map);
+}
+
+/* The value of a per-origin counter: the sum of its counts, wrapping on overflow, into `total`. A missing counter
+ * (NULL, absent or nil) counts 0. Returns AS_UDF_OK; AS_UDF_TYPE_MISMATCH, with `total` untouched, when it is not a
+ * map, or when a key is not a string or an integer or a count is not an integer, as for as_udf_counter_merge;
+ * AS_UDF_REFUSED when the call's memory has no room for the walk.
+ * ```c
+ * as_udf_value hits;
+ * int64_t total;
+ * if (as_udf_rec_map("hits", &hits) == AS_UDF_TYPE_MISMATCH || as_udf_counter_total(&hits, &total) != AS_UDF_OK) {
+ * 	return as_udf_fail_str("hits is not a counter");
+ * }
+ * ```
+ */
+static inline int32_t as_udf_counter_total(const as_udf_value* counter, int64_t* total)
+{
+	if (counter == NULL || counter->kind == AS_UDF_ABSENT || counter->kind == AS_UDF_NIL) {
+		*total = 0;
+		return AS_UDF_OK;
+	}
+	if (counter->kind != AS_UDF_MAP) return AS_UDF_TYPE_MISMATCH;
+	int32_t cur = as_udf_cursor_enter_at(as_udf_value_src(counter), as_udf_value_at(counter));
+	if (cur <= 0) return AS_UDF_REFUSED;
+	as_udf_value w[32];
+	uint64_t sum = 0;
+	int32_t rc = AS_UDF_OK;
+	for (int32_t got; rc == AS_UDF_OK && (got = as_udf_cursor_values(cur, w, (int32_t)sizeof(w))) != 0;) {
+		if (got < 0) {
+			rc = got;
+			break;
+		}
+		for (int32_t i = 0; i + 1 < got; i += 2) {
+			if (w[i + 1].kind != AS_UDF_INT || (w[i].kind != AS_UDF_INT && w[i].kind != AS_UDF_STR)) {
+				rc = AS_UDF_TYPE_MISMATCH;
+				break;
+			}
+			sum += (uint64_t)w[i + 1].payload;
+		}
+		if (got < 32) break;
+	}
+	as_udf_cursor_close(cur);
+	if (rc == AS_UDF_OK) *total = (int64_t)sum;
+	return rc;
+}
+
+/* Last writer wins by an application version: of two `[version, value]` lists, the one with the higher version,
+ * as it is, to write back, into `winner`. Two equal versions are decided by the lists' stored bytes, the greater
+ * winning, so both clusters pick the same side; two lists with the same bytes are the same either way. A side is
+ * missing when it is NULL, absent or nil; otherwise it must be a list of exactly two elements whose first is an
+ * integer. The value may be of any kind. Returns AS_UDF_OK; AS_UDF_NOT_FOUND when both sides are missing;
+ * AS_UDF_TYPE_MISMATCH for a side of any other shape.
+ *
+ * Symmetric, idempotent and associative: it is the larger of the two by version, then by bytes, which is a total
+ * order. The version is the application's, raised by every write that changes the value, so no clock decides.
+ * The write UDF moves the version and the value in one write.
+ * ```c
+ * as_udf_value price;
+ * if (as_udf_lww_by_version(&mine, &theirs, &price) == AS_UDF_OK) as_udf_map_put_value(out, "price", &price);
+ * ```
+ */
+static inline int32_t as_udf_lww_by_version(const as_udf_value* current, const as_udf_value* incoming, as_udf_value* winner)
+{
+	const as_udf_value* sides[2] = { current, incoming };
+	bool there[2];
+	int64_t version[2] = { 0, 0 };
+	for (int32_t k = 0; k < 2; k++) {
+		there[k] = sides[k] != NULL && sides[k]->kind != AS_UDF_ABSENT && sides[k]->kind != AS_UDF_NIL;
+		if (there[k] && sides[k]->kind != AS_UDF_LIST) return AS_UDF_TYPE_MISMATCH;
+	}
+	for (int32_t k = 0; k < 2; k++) {
+		if (! there[k]) continue;
+		if (sides[k]->len != 2) return AS_UDF_TYPE_MISMATCH;
+		as_udf_value first = as_udf_list_at(sides[k], 0);
+		if (first.kind != AS_UDF_INT) return AS_UDF_TYPE_MISMATCH;
+		version[k] = first.payload;
+	}
+	if (! there[0] && ! there[1]) return AS_UDF_NOT_FOUND;
+	if (! there[1] || ! there[0]) {
+		*winner = *sides[there[0] ? 0 : 1];
+		return AS_UDF_OK;
+	}
+	bool current_wins;
+	if (version[0] != version[1]) {
+		current_wins = version[0] > version[1];
+	}
+	else {
+		int32_t order;
+		int32_t rc = as_udf_cmp_stored(sides[0], sides[1], &order);
+		if (rc != AS_UDF_OK) return rc;
+		current_wins = order >= 0;
+	}
+	*winner = *sides[current_wins ? 0 : 1];
+	return AS_UDF_OK;
 }
 
 /* The verdicts. Each returns the status the handler returns. */

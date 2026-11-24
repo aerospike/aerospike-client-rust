@@ -144,6 +144,114 @@ struct Ordered
 The two sides of a bin in the order both clusters agree on, as Both::ordered() gives them: the side that
 wrote the bin earlier, then the side that wrote it later. `auto [older, newer] = both.ordered();`
 
+#### `max_per_key`
+
+```cpp
+inline Result<Optional<Map>> max_per_key(const Optional<Value>& current, const Optional<Value>& incoming)
+```
+
+The per-key maximum of two maps: a new map with every key of either side, each under the larger of its two
+values, or under its one value when only one side has the key. Built on the host, so it is ordered by key and
+both clusters build the same bytes. Nothing when both sides are missing.
+
+A side is missing when it is empty, absent or nil; otherwise it must be a map whose keys are strings or
+integers and whose values are integers. Anything else is an error of status AS_UDF_TYPE_MISMATCH, a side that
+is not a map included: a merge does not guess what a double or a nested map should become. The status is the
+host's when it does not build the map.
+
+Symmetric (`max_per_key(a, b)` and `max_per_key(b, a)` are the same map), idempotent (merging a map with
+itself, or with a merge it is part of, changes nothing) and associative (three sides merge to the same map in
+any order): the laws a convergent merge needs. It is the merge of any map of values that only grow;
+counter_merge() is the same merge under the name of the structure it serves.
+
+```cpp
+udf::Optional<udf::Map> seen = UDF_TRY(udf::max_per_key(rec.get("seen"), theirs));
+```
+
+#### `sorted_union`
+
+```cpp
+inline Result<Optional<List>> sorted_union(const Optional<Value>& current, const Optional<Value>& incoming)
+```
+
+The union of two lists as a set: a new list with every element of either side once, sorted, so both clusters
+build the same bytes whatever order the elements arrived in. Nothing when both sides are missing.
+
+The elements are integers, strings or blobs: the kinds the server keys a map by, since the host sorts them as a
+map built on it sorts its keys. Integers come first, by value, then strings and then blobs, each by its bytes.
+An integer and a string are never the same element, however they read.
+
+A side is missing when it is empty, absent or nil; otherwise it must be a list of those kinds. Anything else
+is an error of status AS_UDF_TYPE_MISMATCH: a side that is not a list, or an element of another kind (a double,
+a nested list or map, nil). The status is the host's when it does not build the list.
+
+Symmetric, idempotent and associative: the merge of a set that only grows. A removal needs a second set, as
+the 2P-Set of the CRDT tutorial keeps one.
+
+#### `counter_merge`
+
+```cpp
+inline Result<Optional<Map>> counter_merge(const Optional<Value>& current, const Optional<Value>& incoming)
+```
+
+The merge of a per-origin counter: a map of origin to count, each origin's count raised only by the cluster it
+names, merged by the larger count per origin. It is max_per_key() under the name of the structure: the same
+rules, the same errors, and nothing when both sides are missing. counter_total() reads the counter's value.
+
+Symmetric, idempotent and associative. A count that goes down is not a count this merges: a PN-Counter keeps
+a second counter for the decrements.
+
+```cpp
+udf::Optional<udf::Map> hits = UDF_TRY(udf::counter_merge(current.get("hits"), incoming.get("hits")));
+```
+
+#### `counter_total`
+
+```cpp
+inline Result<int64_t> counter_total(const Optional<Value>& counter)
+```
+
+The value of a per-origin counter: the sum of its counts, wrapping on overflow. 0 for a missing counter (empty,
+absent or nil). An error of status AS_UDF_TYPE_MISMATCH when it is not a map, or when a key is not a string or
+an integer or a count is not an integer, as for counter_merge().
+
+```cpp
+int64_t total = UDF_TRY(udf::counter_total(rec.get("hits")));
+```
+
+#### `counter_total`
+
+```cpp
+inline Result<int64_t> counter_total(const Map& counter)
+```
+
+The value of a counter built in the call, such as the one counter_merge() answers: counter_total() of the map
+as it is now.
+
+#### `lww_by_version`
+
+```cpp
+inline Result<Optional<Value>> lww_by_version(const Optional<Value>& current, const Optional<Value>& incoming)
+```
+
+Last writer wins by an application version: of two `[version, value]` lists, the one with the higher version,
+as it is, to write back. Two equal versions are decided by the lists' stored bytes, the greater winning, so
+both clusters pick the same side; two lists with the same bytes are the same either way. Nothing when both
+sides are missing.
+
+A side is missing when it is empty, absent or nil; otherwise it must be a list of exactly two elements whose
+first is an integer (an error of status AS_UDF_TYPE_MISMATCH for anything else). The value may be of any kind.
+
+Symmetric, idempotent and associative: it is the larger of the two by version, then by bytes, which is a total
+order. The version is the application's, raised by every write that changes the value, so no clock decides.
+
+```cpp
+// The write UDF moves the version and the value in one write: a list of [version + 1, price].
+if (udf::Optional<udf::Value> price = UDF_TRY(udf::lww_by_version(current.get("price"), incoming.get("price")))) {
+	out.put("price", *price);
+}
+```
+
 #### `Both`
 
 ```cpp
@@ -249,6 +357,49 @@ The sum of both sides, or the one value there is (a missing side counts as zero)
 has the bin, as for max() and min(), so a handler leaves out a bin neither side has rather than writing a 0
 nobody wrote. An integer sum wraps on overflow (two's complement), as it would in Rust's release builds,
 rather than being undefined.
+
+#### `Both::max_per_key`
+
+```cpp
+Result<Optional<Map>> max_per_key() const
+```
+
+The merges of collections, for a Both&lt;Value&gt; as Pair::map(), Pair::list() and Pair::bin() make one; they go
+by the values alone. udf::max_per_key() of the two sides: every key of either map, each with the larger of its
+two integers; nothing when neither side has the bin. Symmetric, idempotent and associative.
+
+```cpp
+udf::Both<udf::Value> counts = UDF_TRY(pair.map("counts"));
+if (udf::Optional<udf::Map> merged = UDF_TRY(counts.max_per_key())) out.put("counts", *merged);
+```
+
+#### `Both::sorted_union`
+
+```cpp
+Result<Optional<List>> sorted_union() const
+```
+
+udf::sorted_union() of the two sides: every element of either list once, sorted; nothing when neither side has
+the bin. Symmetric, idempotent and associative.
+
+#### `Both::counter_merge`
+
+```cpp
+Result<Optional<Map>> counter_merge() const
+```
+
+udf::counter_merge() of the two sides: a per-origin counter merged by the larger count per origin; nothing when
+neither side has the bin. udf::counter_total() reads the merged counter's value. Symmetric, idempotent and
+associative.
+
+#### `Both::lww_by_version`
+
+```cpp
+Result<Optional<Value>> lww_by_version() const
+```
+
+udf::lww_by_version() of the two sides: of two `[version, value]` lists, the one with the higher version, ties
+broken by the stored bytes; nothing when neither side has the bin. Symmetric, idempotent and associative.
 
 #### `Pair`
 

@@ -1986,6 +1986,24 @@ The server's wall clock in milliseconds since the Unix epoch, or -1 inside an ev
 refused: a merge that reads it cannot converge. Not on the scale of Record::last_update_time(), which counts
 from 2010.
 
+#### `cluster_src_id`
+
+```cpp
+inline Result<int64_t> cluster_src_id()
+```
+
+This cluster's XDR source id: the `src-id` of the `xdr` stanza, 1 to 255, which XDR stamps on every write it
+ships from here. 0 when the cluster has none: Community Edition, or no `src-id` configured. A write UDF tags
+what it writes with it, so a per-origin structure (a counter, a set of stamps) keys each cluster's share by the
+same id XDR reports in EventRecord::source_id(), with no argument for a client to get wrong. An error of status
+AS_UDF_REFUSED in an event handler, as the clock is refused there: the answer depends on which cluster runs the
+merge, and a merge that reads it cannot converge. A handler has each side's id on its records.
+
+```cpp
+int64_t site = UDF_TRY(udf::cluster_src_id());
+if (site == 0) return udf::error(AS_UDF_ERR, "increment: this cluster has no XDR src-id");
+```
+
 #### `fail`
 
 ```cpp

@@ -35,7 +35,8 @@ and it is the rule the device map's removal markers in step 5 follow.
 Both lists are kept **sorted and without duplicates**. The server checks the three laws by comparing the
 merged records' stored bytes, and decides that a merge changed nothing the same way, so the same set
 must always be the same bytes. A list that depended on insertion order would fail the symmetry check
-even though the sets were equal.
+even though the sets were equal. The SDKs' `sorted_union` is this merge for one list: the union of two lists of
+integers, strings or blobs, sorted and without duplicates.
 
 ## The merge
 

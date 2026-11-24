@@ -17,12 +17,13 @@ So the record keeps **two** maps of `site -> amount`, one of increments and one 
 only ever grow:
 
 ```text
-inc: {"dc1": 7, "dc2": 4}
-dec: {"dc1": 2, "dc2": 0}
+inc: {"1": 7, "2": 4}
+dec: {"1": 2, "2": 0}
 ```
 
-The counter's value is the sum of `inc` minus the sum of `dec`, here 9. An increment at dc1 adds to
-`inc["dc1"]`, a decrement at dc1 adds to `dec["dc1"]`. The merge is the counter's, applied to each map
+The counter's value is the sum of `inc` minus the sum of `dec`, here 9. A site is a cluster's XDR `src-id`, as for
+the counter: an increment on the cluster with src-id 1 adds to `inc["1"]`, a decrement there adds to
+`dec["1"]`. The merge is the counter's, applied to each map
 separately: for every site, keep the larger amount. Both maps are grow-only counters, so the merge
 inherits their properties, and the pair converges. The server's dry run checks the three laws on the
 real bytes of both maps at once.
@@ -135,14 +136,15 @@ UDF_ON_XDR_MERGE(merge_pncounter)
 
 ## The write UDFs
 
-Three exports instead of two. `increment(site, n)` adds `n` to the site's entry of `inc`,
-`decrement(site, n)` adds `n` to the site's entry of `dec`, and `value()` answers the difference of the
+Three exports instead of two. `increment(n)` adds `n` to this cluster's entry of `inc`,
+`decrement(n)` adds `n` to its entry of `dec`, and `value()` answers the difference of the
 two sums. Both writes go through one helper that loads the map, adds, stores it and saves the record, and both
-answer the counter's new value.
+answer the counter's new value. The entry is the cluster's `src-id`, which the helper asks the server for,
+as the counter's `increment` does; a cluster with none refuses the write.
 
 The helper refuses a negative `n`. That is the invariant of this CRDT: an entry only grows, and a caller
-who wants to subtract must say so by calling `decrement`. Letting `increment("dc1", -2)` through would
-shrink `inc["dc1"]` and reintroduce exactly the lost update the second map exists to prevent. The Rust
+who wants to subtract must say so by calling `decrement`. Letting `increment(-2)` through would
+shrink `inc["1"]` and reintroduce exactly the lost update the second map exists to prevent. The Rust
 module says it in one line, and the other three say the same:
 
 ```rust
@@ -160,9 +162,9 @@ event-set:event=xdr-merge;namespace=test;set=stock;module=pncounter;function=mer
 ```
 
 `pncounter_merge_converges` in `tests/src/events.rs` runs the four modules through the dry run on one
-node: a site that added three and took one holds `inc {"dc1": 3}, dec {"dc1": 1}`; an incoming record
-with `inc {"dc1": 1, "dc2": 5}, dec {"dc2": 2}` merges to `inc {"dc1": 3, "dc2": 5}, dec {"dc1": 1,
-"dc2": 2}`, with `symmetric` and `idempotent` true, and `associative` too once a third site's record is
+node: the cluster with src-id 1 added three and took one, so it holds `inc {"1": 3}, dec {"1": 1}`; an
+incoming record with `inc {"1": 1, "dc2": 5}, dec {"dc2": 2}` merges to `inc {"1": 3, "dc2": 5}, dec {"1":
+1, "dc2": 2}`, with `symmetric` and `idempotent` true, and `associative` too once a third site's record is
 added. It also checks that `increment` refuses a negative amount and leaves the record alone, and that
 taking five from a stock of two answers minus three.
 

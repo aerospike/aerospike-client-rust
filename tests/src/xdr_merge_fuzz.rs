@@ -433,10 +433,10 @@ async fn the_counters_tell_the_outcomes_apart() {
     // merge on dc2 takes dc1's count as it comes.
     register(&c1, COUNTER, counter_pkg).await;
     register(&c2, COUNTER, counter_pkg).await;
-    c1.execute_udf(&write, &ckey, counter_pkg, "increment", &[Value::from("dc1"), Value::from(1)]).await.unwrap();
+    c1.execute_udf(&write, &ckey, counter_pkg, "increment", &[Value::from(1)]).await.unwrap();
     assert!(wait_for(&c2, &ckey, SHIP_LAG, |b| b.is_some()).await.is_some());
     bind(&c2, set_counter, counter_pkg, "merge_counter", "").await;
-    c1.execute_udf(&write, &ckey, counter_pkg, "increment", &[Value::from("dc1"), Value::from(2)]).await.unwrap();
+    c1.execute_udf(&write, &ckey, counter_pkg, "increment", &[Value::from(2)]).await.unwrap();
     assert_eq!(wait_counter(&c2, set_counter, "took-incoming", 1).await, 1, "dc1's write taken as it came");
     assert_eq!(counter(&c2, set_counter, "combined").await, 0);
 
@@ -587,7 +587,7 @@ async fn a_client_cannot_call_a_handler() {
 
     assert!(again.contains("is an event handler"), "{again}");
 
-    c1.execute_udf(&write, &key, package, "increment", &[Value::from("dc1"), Value::from(2)]).await.unwrap();
+    c1.execute_udf(&write, &key, package, "increment", &[Value::from(2)]).await.unwrap();
     assert!(matches!(c1.execute_udf(&write, &key, package, "value", &[]).await, Ok(Some(Value::Int(2)))));
 
     let _ = c1.delete(&write, &key).await;
@@ -954,7 +954,7 @@ async fn fuzz_counters_through_holds_outages_and_rebinding() {
                 expected[k] += n1;
                 expected[k2] += n2;
 
-                let (a1, a2) = ([Value::from("dc1"), Value::from(n1)], [Value::from("dc2"), Value::from(n2)]);
+                let (a1, a2) = ([Value::from(n1)], [Value::from(n2)]);
                 let (r1, r2) = futures::join!(
                     c1.execute_udf(&write, key, package, "increment", &a1),
                     c2.execute_udf(&write, other, package, "increment", &a2)
@@ -1047,9 +1047,12 @@ async fn fuzz_client_calls_to_handlers() {
         match function {
             "merge_counter" => assert!(text.contains("is an event handler"), "round {round}: {arguments:?}: {text}"),
             "__udf_sig_merge_counter" => assert!(text.contains("event xdr-merge/"), "round {round}: {text}"),
-            "increment" if arguments.len() == 2 && arguments[0] == Value::from("dc1") => {
+            // `increment(n)` adds to this cluster's own entry; a site argument is a wrong argument now.
+            "increment" if arguments.len() == 1 && matches!(arguments[0], Value::Int(_)) => {
                 assert!(answer.is_ok(), "round {round}: {text}");
-                total += 3;
+                if let Value::Int(n) = arguments[0] {
+                    total += n;
+                }
             }
             "value" => {
                 assert!(!text.contains("is an event handler"), "round {round}: {text}");
@@ -1291,6 +1294,55 @@ async fn a_bound_set_gets_no_bin_convergence() {
     let _ = c2.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
 }
 
+/// Item 32 (R28): a bound set ignores `conflict-resolve-writes` for a whole-record replace too. With it on,
+/// the namespace refuses every replace before the hook; a bound set's record takes a client's replace, and
+/// a replace XDR ships reaches the handler instead of being dropped at the source as an ordinary abandon.
+#[aerospike_macro::test]
+async fn a_replace_into_a_bound_set_is_not_refused_under_convergence() {
+    let Some((c1, c2)) = clients("a_replace_into_a_bound_set_is_not_refused_under_convergence").await else { return };
+    let _guard = ns_lock().lock().await;
+    let package = &format!("probe_{}", common::rand_str(6));
+    let set_name = &format!("rpl_{}", common::rand_str(6));
+    let key = as_key!(NS, set_name.as_str(), 1);
+    let write = write_policy();
+    let mut replace = write_policy();
+
+    replace.record_exists_action = RecordExistsAction::Replace;
+    register(&c2, PROBE, package).await;
+    seed_record(&c1, &c2, &key, &[as_bin!("base", 1)]).await;
+    bind(&c2, set_name, package, "probe", "").await;
+    info_ok(&c2, &format!("set-config:context=namespace;id={NS};conflict-resolve-writes=true")).await;
+    dc_ns_set(&c1, "dc2", NS, "write-policy=replace").await;
+
+    let result = async {
+        let local = c2.put(&replace, &key, &[as_bin!("base", 2)]).await;
+        let fired = counter(&c2, set_name, "fired").await;
+        let abandoned = xdr_stat(&c1, NS, "abandoned").await;
+
+        c1.put(&write, &key, &[as_bin!("do", "r-ok"), as_bin!("n", 7)]).await.unwrap();
+
+        let merged = wait_for(&c2, &key, SHIP_LAG, |b| b.as_ref().is_some_and(|b| b.get("merged") == Some(&Value::from(7))))
+            .await;
+
+        shipped(&c1, NS).await;
+
+        (local, counter(&c2, set_name, "fired").await - fired, xdr_stat(&c1, NS, "abandoned").await - abandoned, merged)
+    }
+    .await;
+
+    dc_ns_set(&c1, "dc2", NS, "write-policy=auto").await;
+    info_ok(&c2, &format!("set-config:context=namespace;id={NS};conflict-resolve-writes=false")).await;
+
+    let (local, fired, abandoned, merged) = result;
+
+    assert!(local.is_ok(), "a client replace into the bound set was refused: {local:?}");
+    assert_eq!(fired, 1, "the shipped replace reached the handler");
+    assert_eq!(abandoned, 0, "the source dropped nothing");
+    assert!(merged.is_some(), "the merge's answer stands on dc2");
+
+    cleanup(&c1, &c2, set_name, &[key], &[package]).await;
+}
+
 /// Item 24 (R40, R42): a merge that fails under `abandon` answers a result code of its own, with a
 /// sub-code for each cause, which the source counts as `merge_abandoned` and the destination by cause: a
 /// trap, a time limit, the memory limit, an answer that cannot be applied, and a refused source id (dc1
@@ -1344,6 +1396,202 @@ async fn each_failure_cause_is_abandoned_and_counted() {
     assert_eq!(c["fired"], 4, "a refused source is not run: {c:?}");
 
     cleanup(&c1, &c2, set_name, &[key], &[package]).await;
+}
+
+/// Item 31 (PRD open question 5): a write that creates a record of a bound set is not offered to the handler,
+/// but its source id is checked as a merge's is. dc1 is made to send dc2's own id: under `abandon` the create
+/// is refused, counted in `fail-source` and, at the source, as `merge_abandoned`; under `policy` it is
+/// counted and applied.
+#[aerospike_macro::test]
+async fn a_create_from_a_refused_source_is_refused() {
+    let Some((c1, c2)) = clients("a_create_from_a_refused_source_is_refused").await else { return };
+    let _guard = ns_lock().lock().await;
+    let package = &format!("probe_{}", common::rand_str(6));
+    let set_name = &format!("crt_{}", common::rand_str(6));
+    let write = write_policy();
+    let mut results = Vec::new();
+
+    register(&c2, PROBE, package).await;
+
+    for (i, on_failure) in ["abandon", "policy"].into_iter().enumerate() {
+        let key = as_key!(NS, set_name.as_str(), i as i64);
+
+        bind(&c2, set_name, package, "probe", &format!(";on-failure={on_failure}")).await;
+
+        let abandoned = xdr_stat(&c1, NS, "merge_abandoned").await;
+        let refused = counter(&c2, set_name, "fail-source").await;
+
+        info_ok(&c1, "set-config:context=xdr;src-id=2").await;
+        c1.put(&write, &key, &[as_bin!("base", 1)]).await.unwrap();
+
+        let counted = wait_counter(&c2, set_name, "fail-source", refused + 1).await - refused;
+
+        shipped(&c1, NS).await;
+        info_ok(&c1, "set-config:context=xdr;src-id=1").await;
+
+        let created = bins(&c2, &key).await.is_some();
+
+        results.push((on_failure, counted, xdr_stat(&c1, NS, "merge_abandoned").await - abandoned, created, key));
+    }
+
+    let keys: Vec<Key> = results.iter().map(|r| r.4.clone()).collect();
+
+    cleanup(&c1, &c2, set_name, &keys, &[package]).await;
+
+    for (on_failure, counted, abandoned, created, _) in results {
+        assert_eq!(counted, 1, "{on_failure}: the refused create is counted in fail-source");
+
+        if on_failure == "abandon" {
+            assert_eq!(abandoned, 1, "abandon: dc1 counts the create abandoned");
+            assert!(!created, "abandon: dc2 has no record");
+        } else {
+            assert_eq!(abandoned, 0, "policy: dc1 counts no abandon");
+            assert!(created, "policy: the create is applied");
+        }
+    }
+}
+
+/// Item 33 (R33): a value the handler computed takes the time of the later of the two inputs' stamps, not the
+/// merging cluster's clock, so two clusters that merge the same two writes store the same time. Its source is
+/// the merging cluster's own: XDR carries one source id per write, the sender's, so that is what a ship of the
+/// value says it is anyway.
+/// Both clusters bind the probe's `stamps` handler (`x` by the larger, `c` that value plus 1000).
+///
+/// First one merge, on `holdrec` with `ship-record-lut`: dc1 writes `x`, dc2 merges it and computes `c`,
+/// which neither side had, so `c` takes the later of the two sides' latest stamps: dc1's write's, the stamp
+/// `x` takes. Then a merge on each side, on `holdbc`, which ships each bin's own time: both clusters hold
+/// their ships for three seconds and write `x` at once, and each merges the other's write. Per-bin times are
+/// what makes the two sides' stamps the same: `ship-record-lut` stamps every shipped bin with the record's
+/// time, which a merge on the sender advances. A dry run on each cluster reads the stamps it stored.
+#[aerospike_macro::test]
+async fn a_computed_value_is_stamped_the_same_on_both_clusters() {
+    let Some((c1, c2)) = clients("a_computed_value_is_stamped_the_same_on_both_clusters").await else { return };
+    let _guard = ns_lock().lock().await;
+    let (rec_ns, bin_ns) = ("holdrec", "holdbc");
+    let package = &format!("probe_{}", common::rand_str(6));
+    let set_name = &format!("stm_{}", common::rand_str(6));
+    let (once, both) = (as_key!(rec_ns, set_name.as_str(), 1), as_key!(bin_ns, set_name.as_str(), 2));
+    let write = write_policy();
+
+    for c in [&c1, &c2] {
+        register(c, PROBE, package).await;
+    }
+
+    for (key, ns) in [(&once, rec_ns), (&both, bin_ns)] {
+        c1.put(&write, key, &[as_bin!("x", 0)]).await.unwrap();
+        assert!(wait_for(&c2, key, SHIP_LAG, |b| b.is_some()).await.is_some(), "the seed reached dc2");
+        shipped(&c1, ns).await;
+
+        for c in [&c1, &c2] {
+            let command =
+                format!("event-set:event=xdr-merge;namespace={ns};set={set_name};module={package};function=stamps");
+
+            assert_eq!(info(c, &command).await, "ok");
+        }
+    }
+
+    dc_ns_set(&c1, "dc2", rec_ns, "ship-record-lut=true").await;
+
+    let result = async {
+        // One merge, on dc2.
+        c1.put(&write, &once, &[as_bin!("x", 1)]).await.unwrap();
+
+        let merged_once = wait_for(&c2, &once, SHIP_LAG, |b| b.as_ref().is_some_and(|b| b.contains_key("c"))).await;
+
+        shipped(&c1, rec_ns).await;
+
+        let single = dry_stamps(&c2, &once).await;
+
+        // dc1 holds its ships of `holdbc` already; dc2 is made to. Then both clusters write at once.
+        dc_ns_set(&c2, "dc1", bin_ns, "hot-key-ms=3000").await;
+        dc_ns_set(&c2, "dc1", bin_ns, "delay-ms=3000").await;
+
+        let (x1, x2) = ([as_bin!("x", 1)], [as_bin!("x", 2)]);
+        let (w1, w2) = futures::join!(c1.put(&write, &both, &x1), c2.put(&write, &both, &x2));
+
+        w1.unwrap();
+        w2.unwrap();
+
+        let mut merged = vec![merged_once];
+
+        for c in [&c1, &c2] {
+            merged.push(wait_for(c, &both, SHIP_LAG, |b| b.as_ref().is_some_and(|b| b.contains_key("c"))).await);
+        }
+
+        shipped(&c1, bin_ns).await;
+
+        let deadline = Instant::now() + SHIP_LAG;
+
+        while xdr_stat_to(&c2, "dc1", bin_ns, "in_queue").await + xdr_stat_to(&c2, "dc1", bin_ns, "in_progress").await
+            != 0
+        {
+            assert!(Instant::now() < deadline, "dc2 did not finish shipping {bin_ns}");
+            aerospike_rt::sleep(Duration::from_millis(200)).await;
+        }
+
+        aerospike_rt::sleep(Duration::from_millis(500)).await;
+
+        let pair = [dry_stamps(&c1, &both).await, dry_stamps(&c2, &both).await];
+
+        (merged, single, pair, bins(&c1, &both).await, bins(&c2, &both).await)
+    }
+    .await;
+
+    dc_ns_set(&c1, "dc2", rec_ns, "ship-record-lut=false").await;
+    dc_ns_set(&c2, "dc1", bin_ns, "delay-ms=0").await;
+    dc_ns_set(&c2, "dc1", bin_ns, "hot-key-ms=100").await;
+
+    for c in [&c1, &c2] {
+        for (key, ns) in [(&once, rec_ns), (&both, bin_ns)] {
+            let _ = info(c, &format!("event-remove:event=xdr-merge;namespace={ns};set={set_name}")).await;
+            let _ = c.delete(&write, key).await;
+        }
+
+        let _ = c.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
+    }
+
+    let (merged, single, pair, on1, on2) = result;
+    let [c_lut, c_src, x_lut, x_src] = single;
+
+    assert!(merged.iter().all(Option::is_some), "each merge computed c: {merged:?}");
+    assert_eq!(c_lut, x_lut, "one merge: c takes the time of dc1's write, the incoming x's, not dc2's clock");
+    assert_eq!((c_src, x_src), (Value::from(2), Value::from(1)), "one merge: c is dc2's own write, x is dc1's");
+
+    assert_eq!(on1, on2, "both clusters hold the same record");
+    assert_eq!(on1.as_ref().and_then(|b| b.get("c").cloned()), Some(Value::from(1002)), "{on1:?}");
+    assert_eq!(pair[0][..2], pair[1][..2], "the stamp of c: dc1 {:?} | dc2 {:?}", pair[0], pair[1]);
+}
+
+/// The stamps of `c` and `x` a cluster stored for `key`, read by a dry run of the probe's `stamps` handler:
+/// `[c_lut, c_src, x_lut, x_src]`.
+async fn dry_stamps(client: &Client, key: &Key) -> [Value; 4] {
+    let incoming: HashMap<Value, Value> = HashMap::from([(Value::from("stamps"), Value::from(1))]);
+    let meta: HashMap<Value, Value> = HashMap::from([(Value::from("src-id"), Value::from(3))]);
+    let answer = client
+        .execute_udf(&write_policy(), key, "__event__", "xdr-merge", &[Value::from(incoming), Value::from(meta)])
+        .await;
+    let bins = match &answer {
+        Ok(Some(answer)) => map_entry(answer, "bins"),
+        _ => None,
+    };
+
+    ["c_lut", "c_src", "x_lut", "x_src"].map(|name| {
+        bins.as_ref()
+            .and_then(|b| map_entry(b, name))
+            .unwrap_or_else(|| panic!("no {name} in the dry run's answer: {answer:?}"))
+    })
+}
+
+/// A map value's entry, whichever map variant holds it.
+fn map_entry(map: &Value, key: &str) -> Option<Value> {
+    let key = Value::from(key);
+
+    match map {
+        Value::HashMap(m) => m.get(&key).cloned(),
+        Value::OrderedMap(m) => m.get(&key).cloned(),
+        Value::SortedMap(m) => m.get(&key).cloned(),
+        _ => None,
+    }
 }
 
 /// Items 25 and 26 (R44, R32): a write that carries no time is counted as one, and `ship-record-lut`
@@ -1426,6 +1674,44 @@ async fn delete_leaves_a_tombstone_and_expunge_does_not() {
     let _ = c2.remove_udf(&AdminPolicy::default(), &format!("{package}.wasm")).await;
 }
 
+/// R29: a tombstone is a record that exists here, so an incoming write to it is offered to the handler,
+/// not applied as a create. dc2 deletes the record durably, the delete reaches dc1, and dc1's next write
+/// is merged on dc2 against the tombstone.
+#[aerospike_macro::test]
+async fn a_tombstone_is_offered_to_the_handler() {
+    let Some((c1, c2)) = clients("a_tombstone_is_offered_to_the_handler").await else { return };
+    let _guard = ns_lock().lock().await;
+    let package = &format!("probe_{}", common::rand_str(6));
+    let set_name = &format!("tmb_{}", common::rand_str(6));
+    let key = as_key!(NS, set_name.as_str(), 1);
+    let write = write_policy();
+    let mut durable = write_policy();
+
+    durable.durable_delete = true;
+    register(&c2, PROBE, package).await;
+    seed_record(&c1, &c2, &key, &[as_bin!("base", 1)]).await;
+    bind(&c2, set_name, package, "probe", "").await;
+
+    c2.delete(&durable, &key).await.unwrap();
+    assert!(wait_for(&c1, &key, SHIP_LAG, |b| b.is_none()).await.is_none(), "the delete reached dc1");
+
+    let stats = info(&c2, &format!("sets/{NS}/{set_name}")).await;
+
+    assert!(stats.contains("tombstones=1"), "dc2 holds a tombstone: {stats}");
+
+    let fired = counter(&c2, set_name, "fired").await;
+
+    c1.put(&write, &key, &[as_bin!("do", "r-ok"), as_bin!("n", 3)]).await.unwrap();
+
+    assert_eq!(wait_counter(&c2, set_name, "fired", fired + 1).await, fired + 1, "the write was merged");
+
+    let merged = wait_for(&c2, &key, SHIP_LAG, |b| b.as_ref().is_some_and(|b| b.contains_key("merged"))).await;
+
+    assert!(merged.is_some(), "the merge's answer stands on dc2: {merged:?}");
+
+    cleanup(&c1, &c2, set_name, &[key], &[package]).await;
+}
+
 /// Item 27 (R83): for a namespace with a binding, each cluster warns about its own outbound XDR settings
 /// that are not allowed, and about a bound set without `disable-eviction`, refusing nothing. `event-list`
 /// counts what the log warns of, so each setting is put on and taken off again here.
@@ -1474,14 +1760,13 @@ async fn settings_a_binding_does_not_allow_are_warned_of() {
         assert_eq!(warnings(rows(&c2).await), base, "{off} takes the warning away");
     }
 
-    // Whole-record replace while conflict-resolve-writes is on.
+    // Whole-record replace while conflict-resolve-writes is on: allowed since item 32, a bound set ignores it.
     info_ok(&c2, &format!("set-config:context=namespace;id={NS};conflict-resolve-writes=true")).await;
 
     let warned = warnings(rows(&c2).await);
 
     info_ok(&c2, &format!("set-config:context=namespace;id={NS};conflict-resolve-writes=false")).await;
-    assert_eq!(warned, base + 1, "bin-policy all with write-policy auto while conflict-resolve-writes is on");
-    assert_eq!(warnings(rows(&c2).await), base);
+    assert_eq!(warned, base, "bin-policy all with write-policy auto is allowed under conflict-resolve-writes");
 
     // Warned of, not refused: the binding is still there and still merges.
     c1.put(&write_policy(), &key, &[as_bin!("do", "r-ok"), as_bin!("n", 1)]).await.unwrap();
@@ -1586,7 +1871,7 @@ async fn a_merge_survives_the_other_cluster_going_down() {
         );
     }
 
-    c1.execute_udf(&write, &key, package, "increment", &[Value::from("dc1"), Value::from(1)]).await.unwrap();
+    c1.execute_udf(&write, &key, package, "increment", &[Value::from(1)]).await.unwrap();
     assert!(wait_for(&c2, &key, SHIP_LAG, |b| b.is_some()).await.is_some());
 
     // The longest hold there is, so that dc2 is down before dc1's ship leaves.
@@ -1594,8 +1879,8 @@ async fn a_merge_survives_the_other_cluster_going_down() {
     dc_ns_set(&c1, "dc2", "holdrec", "delay-ms=5000").await;
 
     // dc1's write is held; dc2's lands on dc1 and is merged; then dc2 goes down before dc1's ship leaves.
-    c1.execute_udf(&write, &key, package, "increment", &[Value::from("dc1"), Value::from(2)]).await.unwrap();
-    c2.execute_udf(&write, &key, package, "increment", &[Value::from("dc2"), Value::from(5)]).await.unwrap();
+    c1.execute_udf(&write, &key, package, "increment", &[Value::from(2)]).await.unwrap();
+    c2.execute_udf(&write, &key, package, "increment", &[Value::from(5)]).await.unwrap();
 
     let deadline = Instant::now() + SHIP_LAG;
 

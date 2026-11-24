@@ -855,6 +855,80 @@ public final class ApiTest {
     }
 
     //==========================================================
+    // mrg: one merge building block on two values, a nil one missing.
+    //
+
+    /** What mrg answers to a merge it does not know. */
+    private static final Object UNKNOWN = new Object();
+
+    @Function("mrg")
+    static ListBuilder mrg(String how, Value a, Value b) {
+        // Only the merge is in the try, as in rd: what it throws carries the status.
+        Object got;
+
+        try {
+            switch (how) {
+            case "max_per_key":
+                got = Both.maxPerKey(a, b);
+                break;
+            case "sorted_union":
+                got = Both.sortedUnion(a, b);
+                break;
+            case "counter_merge":
+                got = Both.counterMerge(a, b);
+                break;
+            case "counter_total":
+                got = Both.counterTotal(a);
+                break;
+            case "lww_by_version":
+                got = Both.lwwByVersion(a, b);
+                break;
+            default:
+                got = UNKNOWN;
+            }
+        }
+        catch (UdfException e) {
+            return tag(status(e));
+        }
+
+        if (got == UNKNOWN) {
+            throw new UdfException("mrg: unknown how");
+        }
+
+        if (got == null) {
+            return tag("none");
+        }
+
+        ListBuilder out = some();
+
+        if (got instanceof MapBuilder) {
+            out.add((MapBuilder) got);
+        }
+        else if (got instanceof ListBuilder) {
+            out.add((ListBuilder) got);
+        }
+        else if (got instanceof Long) {
+            out.add(((Long) got).longValue());
+        }
+        else {
+            out.add((Value) got);
+        }
+
+        return out;
+    }
+
+    //==========================================================
+    // src_id: this cluster's XDR src-id.
+    //
+
+    @Function("src_id")
+    static ListBuilder srcId() {
+        long id = Udf.clusterSrcId();
+
+        return id < 0 ? tag("refused") : some().add(id);
+    }
+
+    //==========================================================
     // merge_api: everything an xdr-merge handler is told, answered as a record.
     //
 
@@ -919,6 +993,36 @@ public final class ApiTest {
                 .add(incoming.sourceId()).add(incoming.isDelete()).add(incoming.isPartial()));
         out.put("blut", Udf.list(2).add(current.binLastUpdateTime("s")).add(incoming.binLastUpdateTime("s")));
         out.put("bsrc", Udf.list(2).add(current.binSourceId("s")).add(incoming.binSourceId("s")));
+
+        // The merge building blocks, on the bins they are for: cm a counter (a map of integers), ul a list
+        // taken as a set, lv a [version, value] list. A bin neither side has adds nothing.
+        MapBuilder merged = pair.getMap("cm").maxPerKey();
+
+        if (merged != null) {
+            out.put("mpk", merged);
+        }
+
+        MapBuilder counter = pair.getMap("cm").counterMerge();
+
+        if (counter != null) {
+            out.put("ctot", Both.counterTotal(counter.asValue()));
+            out.put("cnt", counter);
+        }
+
+        ListBuilder union = pair.getList("ul").sortedUnion();
+
+        if (union != null) {
+            out.put("union", union);
+        }
+
+        Value winner = pair.getList("lv").lwwByVersion();
+
+        if (winner != null) {
+            out.put("lww", winner);
+        }
+
+        // The cluster's src-id is refused to a handler, as the clock is.
+        out.put("src_id", Udf.clusterSrcId() < 0 ? "refused" : "answered");
 
         return Resolution.record(out);
     }

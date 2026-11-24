@@ -71,7 +71,9 @@ holds nil; `getList` and `getMap` give a `ListValue` and a `MapValue`), and `Bot
 resolver reaches for: `incomingIsNewer()`, by the bin's LUT and then source id; `newer()` and `older()`, and `ordered()`, the two as a list, older first, for a
 merge whose result depends on the order; `max()`, `min()`, `merge(f)`, `sumInt()` and `sumDouble()` (null
 when neither side has the bin, as `max()` and `min()`; `sumInt()` wraps on overflow);
-`currentOrIncoming()`, `incomingOrCurrent()`. `pair.withNewer(out)` fills in every bin the handler had no
+`currentOrIncoming()`, `incomingOrCurrent()`; and for a map or list bin the data-only merges
+`maxPerKey()`, `sortedUnion()`, `counterMerge()` and `lwwByVersion()`, also static over two `Value`s beside
+`Both.counterTotal`. `pair.withNewer(out)` fills in every bin the handler had no
 opinion on from the side that wrote it later, which is symmetric, and leaves out a bin that side deleted
 (rather than bring the older side's value back); `pair.incomingIsNewer(name)` orders
 one bin.

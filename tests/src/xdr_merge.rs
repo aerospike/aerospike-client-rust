@@ -356,7 +356,7 @@ async fn counter_converges_two_clusters() {
         }
 
         // Born on dc1, reaches dc2 as a create.
-        c1.execute_udf(&write, &key, package, "increment", &[Value::from("dc1"), Value::from(3)]).await.unwrap();
+        c1.execute_udf(&write, &key, package, "increment", &[Value::from(3)]).await.unwrap();
 
         let deadline = std::time::Instant::now() + SHIP_LAG;
 
@@ -366,8 +366,8 @@ async fn counter_converges_two_clusters() {
         }
 
         // Both sites count at once; each merges the other's write by keeping the larger count per site.
-        let a = [Value::from("dc1"), Value::from(2)];
-        let b = [Value::from("dc2"), Value::from(5)];
+        let a = [Value::from(2)];
+        let b = [Value::from(5)];
         let (r1, r2) = futures::join!(
             c1.execute_udf(&write, &key, package, "increment", &a),
             c2.execute_udf(&write, &key, package, "increment", &b),
@@ -427,7 +427,7 @@ async fn pncounter_converges_two_clusters() {
         }
 
         // Born on dc1 with three in stock, reaches dc2 as a create.
-        c1.execute_udf(&write, &key, package, "increment", &[Value::from("dc1"), Value::from(3)]).await.unwrap();
+        c1.execute_udf(&write, &key, package, "increment", &[Value::from(3)]).await.unwrap();
 
         let deadline = std::time::Instant::now() + SHIP_LAG;
 
@@ -437,8 +437,8 @@ async fn pncounter_converges_two_clusters() {
         }
 
         // dc1 takes two while dc2 adds five; each merges the other's write map by map.
-        let a = [Value::from("dc1"), Value::from(2)];
-        let b = [Value::from("dc2"), Value::from(5)];
+        let a = [Value::from(2)];
+        let b = [Value::from(5)];
         let (r1, r2) = futures::join!(
             c1.execute_udf(&write, &key, package, "decrement", &a),
             c2.execute_udf(&write, &key, package, "increment", &b),
@@ -460,8 +460,8 @@ async fn pncounter_converges_two_clusters() {
         }
 
         // No floor: both sides take four at once from a stock of six, and both end at minus two.
-        let a = [Value::from("dc1"), Value::from(4)];
-        let b = [Value::from("dc2"), Value::from(4)];
+        let a = [Value::from(4)];
+        let b = [Value::from(4)];
         let (r1, r2) = futures::join!(
             c1.execute_udf(&write, &key, package, "decrement", &a),
             c2.execute_udf(&write, &key, package, "decrement", &b),
@@ -942,8 +942,23 @@ async fn the_dry_run_answers_what_the_live_merge_does() {
                 ("c", APITEST_C),
                 ("cpp", APITEST_CPP),
             ],
-            current: vec![("n", Value::from(4)), ("s", Value::from("here")), ("only_c", Value::from(1))],
-            written: vec![("n", Value::from(9)), ("s", Value::from("there")), ("only_i", Value::from(2))],
+            // `cm`, `ul` and `lv` are for the merge building blocks: a counter, a set, a versioned value.
+            current: vec![
+                ("n", Value::from(4)),
+                ("s", Value::from("here")),
+                ("only_c", Value::from(1)),
+                ("cm", hmap(&[("1", Value::from(3)), ("2", Value::from(1))])),
+                ("ul", Value::from(vec![Value::from(3), Value::from("a")])),
+                ("lv", Value::from(vec![Value::from(1), Value::from("x")])),
+            ],
+            written: vec![
+                ("n", Value::from(9)),
+                ("s", Value::from("there")),
+                ("only_i", Value::from(2)),
+                ("cm", hmap(&[("2", Value::from(5)), ("3", Value::from(4))])),
+                ("ul", Value::from(vec![Value::from("b"), Value::from(3)])),
+                ("lv", Value::from(vec![Value::from(2), Value::from("y")])),
+            ],
         },
     ];
 
@@ -1125,7 +1140,7 @@ async fn counter_survives_the_races(namespace: &str) {
     let set_name = &format!("race_{}", crate::common::rand_str(6));
     let package = &format!("counter_race_{}", crate::common::rand_str(6));
     let key = as_key!(namespace, set_name, "page");
-    let increment = |site: &str, n: i64| [Value::from(site), Value::from(n)];
+    let increment = |n: i64| [Value::from(n)];
 
     for c in [&c1, &c2] {
         register_module(c, COUNTER, package).await;
@@ -1136,12 +1151,12 @@ async fn counter_survives_the_races(namespace: &str) {
     }
 
     // Born on dc1, reaches dc2 as a create once the hold is over.
-    c1.execute_udf(&write, &key, package, "increment", &increment("dc1", 3)).await.unwrap();
+    c1.execute_udf(&write, &key, package, "increment", &increment(3)).await.unwrap();
     converge_counter(&c1, &c2, &key, package, 3, SHIP_LAG, &format!("{namespace} create")).await;
 
     // The hold: dc1's write waits; dc2's is merged on dc1 first.
-    c1.execute_udf(&write, &key, package, "increment", &increment("dc1", 2)).await.unwrap();
-    c2.execute_udf(&write, &key, package, "increment", &increment("dc2", 5)).await.unwrap();
+    c1.execute_udf(&write, &key, package, "increment", &increment(2)).await.unwrap();
+    c2.execute_udf(&write, &key, package, "increment", &increment(5)).await.unwrap();
     // The merge on dc1 is submitted as an XDR write and ships nothing (R38): dc2 has dc1's change from
     // dc1's own held write, which carries the merged record once the hold is over.
     converge_counter(&c1, &c2, &key, package, 10, SHIP_LAG, &format!("{namespace} hold")).await;
@@ -1150,8 +1165,8 @@ async fn counter_survives_the_races(namespace: &str) {
     let dc_ns = format!("set-config:context=xdr;dc=dc2;namespace={namespace}");
 
     info_ok(&c1, &format!("{dc_ns};action=remove")).await;
-    c1.execute_udf(&write, &key, package, "increment", &increment("dc1", 1)).await.unwrap();
-    c2.execute_udf(&write, &key, package, "increment", &increment("dc2", 1)).await.unwrap();
+    c1.execute_udf(&write, &key, package, "increment", &increment(1)).await.unwrap();
+    c2.execute_udf(&write, &key, package, "increment", &increment(1)).await.unwrap();
 
     let deadline = std::time::Instant::now() + SHIP_LAG;
 

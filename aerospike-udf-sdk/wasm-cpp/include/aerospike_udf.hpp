@@ -31,7 +31,9 @@
 // The record a UDF is called on is an object, udf::Record, that the function takes as its first parameter:
 // `udf::Record& rec` to write it, `const udf::Record& rec` to read it, and no such parameter when it does
 // not touch the record. Everything about the record is a method on it; what stays in the namespace is what
-// is not about the record: now(), log(), fail(), result() and the Map and List builders.
+// is not about the record: now(), cluster_src_id(), log(), fail(), result(), the Map and List builders, and
+// the merges of collections an xdr-merge handler is built from (max_per_key(), sorted_union(), counter_merge(),
+// counter_total(), lww_by_version()).
 //
 // The stack. Text<N> and Bytes<N> hold their bytes inline, so a parameter, a local or a returned value of one is
 // N bytes of the wasm stack, and a generated export holds every parameter at once, plus a copy on the way into
@@ -1757,6 +1759,24 @@ struct RecordAccess {
 // from 2010.
 inline int64_t now() { return as_udf_now(); }
 
+// This cluster's XDR source id: the `src-id` of the `xdr` stanza, 1 to 255, which XDR stamps on every write it
+// ships from here. 0 when the cluster has none: Community Edition, or no `src-id` configured. A write UDF tags
+// what it writes with it, so a per-origin structure (a counter, a set of stamps) keys each cluster's share by the
+// same id XDR reports in EventRecord::source_id(), with no argument for a client to get wrong. An error of status
+// AS_UDF_REFUSED in an event handler, as the clock is refused there: the answer depends on which cluster runs the
+// merge, and a merge that reads it cannot converge. A handler has each side's id on its records.
+//
+// ```cpp
+// int64_t site = UDF_TRY(udf::cluster_src_id());
+// if (site == 0) return udf::error(AS_UDF_ERR, "increment: this cluster has no XDR src-id");
+// ```
+inline Result<int64_t> cluster_src_id()
+{
+	int64_t id = as_udf_cluster_src_id();
+	if (id < 0) return Error{AS_UDF_REFUSED, "cluster_src_id: refused in an event handler"};
+	return id;
+}
+
 // Fails the call with a message, which the client receives as the UDF's error (the first 511 bytes of it), and
 // returns the non-zero status an export returns. For the raw form, where the function is the export: `return
 // udf::fail("sum: no list bin");`. A function declared with UDF_FUNCTION fails by returning an Error instead, and
@@ -1950,6 +1970,268 @@ struct Ordered {
 	Optional<T> newer;
 };
 
+namespace detail {
+
+// One side of a merge of collections: nothing when it is missing (empty, absent or nil), the value when it is
+// a stored map (`want_map`) or list, and a type-mismatch error for anything else.
+inline Result<Optional<Value>> merge_side(const Optional<Value>& side, bool want_map)
+{
+	if (!side || side->is_null()) return Optional<Value>();
+	if (want_map ? !side->is_map() : !side->is_list()) {
+		return Error{AS_UDF_TYPE_MISMATCH, want_map ? "a side of the merge is not a map" : "a side of the merge is not a list"};
+	}
+	return Optional<Value>(*side);
+}
+
+// A key a map merge takes: a string or an integer.
+inline Ok merge_key(const Value& key)
+{
+	if (!key.is_int() && !key.is_string()) return Error{AS_UDF_TYPE_MISMATCH, "a key of the merge is not a string or an integer"};
+	return {};
+}
+
+// A value a map merge takes: an integer.
+inline Result<int64_t> merge_count(const Value& v)
+{
+	if (!v.is_int()) return Error{AS_UDF_TYPE_MISMATCH, "a value of the merge is not an integer"};
+	return (int64_t)v.payload;
+}
+
+// The longest string key looked up by its bytes in one host call. A longer one is found by comparing it with
+// each key of the other map, which needs no buffer.
+constexpr int32_t merge_key_inline = 256;
+
+// The value under `key`, a key read from another map, in the stored map `map`: nothing when there is none.
+inline Result<Optional<Value>> value_under(const Value& map, const Value& key)
+{
+	if (key.is_int()) return map.get((int64_t)key.payload);
+	if (!key.is_string()) return Error{AS_UDF_TYPE_MISMATCH, "a key of the merge is not a string or an integer"};
+	if (key.size() <= merge_key_inline) {
+		char buf[merge_key_inline];
+		int32_t n = UDF_TRY(key.bytes_into(buf, merge_key_inline));
+		return map.get(StrView(buf, n));
+	}
+	for (Entry e : map.map()) {
+		if (!e.key.is_string()) continue;
+		if (UDF_TRY(e.key.cmp_stored(key)) == 0) return Optional<Value>(e.value);
+	}
+	return Optional<Value>();
+}
+
+// A built map or list read back by position: a packed copy of it, at offset 0 of a source of its own. Close the
+// source (as_udf_handle_close(v.src())) once nothing read from it is in use.
+inline Result<Value> packed(int32_t handle, int32_t kind)
+{
+	int32_t src = as_udf_pack_handle(handle);
+	if (src <= 0) return Error{AS_UDF_REFUSED, "could not read back a built collection"};
+	Value v;
+	v.as_udf_value::kind = kind;
+	v.len = (uint32_t)as_udf_coll_size(handle);
+	v.payload = (int64_t)src << 32;
+	return v;
+}
+
+inline Result<Optional<Map>> max_per_key_of(const Optional<Value>& a, const Optional<Value>& b)
+{
+	if (!a && !b) return Optional<Map>();
+
+	Map out((a ? a->size() : 0) + (b ? b->size() : 0));
+
+	// Every key of the first side, under the larger of its values on the two sides.
+	if (a) {
+		for (Entry e : a->map()) {
+			int64_t most = UDF_TRY(merge_count(e.value));
+			UDF_TRY(merge_key(e.key));
+			if (b) {
+				if (Optional<Value> other = UDF_TRY(value_under(*b, e.key))) {
+					int64_t theirs = UDF_TRY(merge_count(*other));
+					if (theirs > most) most = theirs;
+				}
+			}
+			Value pair[2] = {e.key, Value::of(most)};
+			out.put_entries(pair, 2);
+		}
+	}
+
+	// Then the keys only the second side has.
+	if (b) {
+		for (Entry e : b->map()) {
+			int64_t count = UDF_TRY(merge_count(e.value));
+			UDF_TRY(merge_key(e.key));
+			if (a && UDF_TRY(value_under(*a, e.key))) continue;
+			Value pair[2] = {e.key, Value::of(count)};
+			out.put_entries(pair, 2);
+		}
+	}
+
+	UDF_TRY(out.result());
+	return Optional<Map>(static_cast<Map&&>(out));
+}
+
+// The version of a `[version, value]` list, or a type-mismatch error for any other shape.
+inline Result<int64_t> lww_version(const Value& side)
+{
+	Optional<Value> version = side.size() == 2 ? side.at(0) : Optional<Value>();
+	if (!version || !version->is_int()) return Error{AS_UDF_TYPE_MISMATCH, "a side of the merge is not a [version, value] list"};
+	return (int64_t)version->payload;
+}
+
+} // namespace detail
+
+// The per-key maximum of two maps: a new map with every key of either side, each under the larger of its two
+// values, or under its one value when only one side has the key. Built on the host, so it is ordered by key and
+// both clusters build the same bytes. Nothing when both sides are missing.
+//
+// A side is missing when it is empty, absent or nil; otherwise it must be a map whose keys are strings or
+// integers and whose values are integers. Anything else is an error of status AS_UDF_TYPE_MISMATCH, a side that
+// is not a map included: a merge does not guess what a double or a nested map should become. The status is the
+// host's when it does not build the map.
+//
+// Symmetric (`max_per_key(a, b)` and `max_per_key(b, a)` are the same map), idempotent (merging a map with
+// itself, or with a merge it is part of, changes nothing) and associative (three sides merge to the same map in
+// any order): the laws a convergent merge needs. It is the merge of any map of values that only grow;
+// counter_merge() is the same merge under the name of the structure it serves.
+//
+// ```cpp
+// udf::Optional<udf::Map> seen = UDF_TRY(udf::max_per_key(rec.get("seen"), theirs));
+// ```
+inline Result<Optional<Map>> max_per_key(const Optional<Value>& current, const Optional<Value>& incoming)
+{
+	Optional<Value> a = UDF_TRY(detail::merge_side(current, true));
+	Optional<Value> b = UDF_TRY(detail::merge_side(incoming, true));
+	return detail::max_per_key_of(a, b);
+}
+
+// The union of two lists as a set: a new list with every element of either side once, sorted, so both clusters
+// build the same bytes whatever order the elements arrived in. Nothing when both sides are missing.
+//
+// The elements are integers, strings or blobs: the kinds the server keys a map by, since the host sorts them as a
+// map built on it sorts its keys. Integers come first, by value, then strings and then blobs, each by its bytes.
+// An integer and a string are never the same element, however they read.
+//
+// A side is missing when it is empty, absent or nil; otherwise it must be a list of those kinds. Anything else
+// is an error of status AS_UDF_TYPE_MISMATCH: a side that is not a list, or an element of another kind (a double,
+// a nested list or map, nil). The status is the host's when it does not build the list.
+//
+// Symmetric, idempotent and associative: the merge of a set that only grows. A removal needs a second set, as
+// the 2P-Set of the CRDT tutorial keeps one.
+inline Result<Optional<List>> sorted_union(const Optional<Value>& current, const Optional<Value>& incoming)
+{
+	Optional<Value> a = UDF_TRY(detail::merge_side(current, false));
+	Optional<Value> b = UDF_TRY(detail::merge_side(incoming, false));
+	if (!a && !b) return Optional<List>();
+
+	// A map built on the host keeps its keys once each and in order: the elements go in as its keys, and come
+	// out as the list.
+	Map set((a ? a->size() : 0) + (b ? b->size() : 0));
+	const Optional<Value>* sides[2] = {&a, &b};
+
+	for (const Optional<Value>* side : sides) {
+		if (!*side) continue;
+		for (Value v : (*side)->list()) {
+			if (!v.is_int() && !v.is_string() && !v.is_blob()) {
+				return Error{AS_UDF_TYPE_MISMATCH, "an element of the union is not an integer, a string or a blob"};
+			}
+			Value pair[2] = {v, Value::of(true)};
+			set.put_entries(pair, 2);
+		}
+	}
+	UDF_TRY(set.result());
+
+	Value keys = UDF_TRY(detail::packed(set.handle(), AS_UDF_MAP));
+	List out(keys.size());
+
+	for (Entry e : keys.map()) out.add(e.key);
+	as_udf_handle_close(keys.src());
+	UDF_TRY(out.result());
+	return Optional<List>(static_cast<List&&>(out));
+}
+
+// The merge of a per-origin counter: a map of origin to count, each origin's count raised only by the cluster it
+// names, merged by the larger count per origin. It is max_per_key() under the name of the structure: the same
+// rules, the same errors, and nothing when both sides are missing. counter_total() reads the counter's value.
+//
+// Symmetric, idempotent and associative. A count that goes down is not a count this merges: a PN-Counter keeps
+// a second counter for the decrements.
+//
+// ```cpp
+// udf::Optional<udf::Map> hits = UDF_TRY(udf::counter_merge(current.get("hits"), incoming.get("hits")));
+// ```
+inline Result<Optional<Map>> counter_merge(const Optional<Value>& current, const Optional<Value>& incoming)
+{
+	return max_per_key(current, incoming);
+}
+
+// The value of a per-origin counter: the sum of its counts, wrapping on overflow. 0 for a missing counter (empty,
+// absent or nil). An error of status AS_UDF_TYPE_MISMATCH when it is not a map, or when a key is not a string or
+// an integer or a count is not an integer, as for counter_merge().
+//
+// ```cpp
+// int64_t total = UDF_TRY(udf::counter_total(rec.get("hits")));
+// ```
+inline Result<int64_t> counter_total(const Optional<Value>& counter)
+{
+	Optional<Value> counts = UDF_TRY(detail::merge_side(counter, true));
+	int64_t total = 0;
+
+	if (!counts) return total;
+	for (Entry e : counts->map()) {
+		UDF_TRY(detail::merge_key(e.key));
+		total = detail::wrapping_add(total, UDF_TRY(detail::merge_count(e.value)));
+	}
+	return total;
+}
+
+// The value of a counter built in the call, such as the one counter_merge() answers: counter_total() of the map
+// as it is now.
+inline Result<int64_t> counter_total(const Map& counter)
+{
+	UDF_TRY(counter.result());
+	Value counts = UDF_TRY(detail::packed(counter.handle(), AS_UDF_MAP));
+	Result<int64_t> total = counter_total(Optional<Value>(counts));
+	as_udf_handle_close(counts.src());
+	return total;
+}
+
+// Last writer wins by an application version: of two `[version, value]` lists, the one with the higher version,
+// as it is, to write back. Two equal versions are decided by the lists' stored bytes, the greater winning, so
+// both clusters pick the same side; two lists with the same bytes are the same either way. Nothing when both
+// sides are missing.
+//
+// A side is missing when it is empty, absent or nil; otherwise it must be a list of exactly two elements whose
+// first is an integer (an error of status AS_UDF_TYPE_MISMATCH for anything else). The value may be of any kind.
+//
+// Symmetric, idempotent and associative: it is the larger of the two by version, then by bytes, which is a total
+// order. The version is the application's, raised by every write that changes the value, so no clock decides.
+//
+// ```cpp
+// // The write UDF moves the version and the value in one write: a list of [version + 1, price].
+// if (udf::Optional<udf::Value> price = UDF_TRY(udf::lww_by_version(current.get("price"), incoming.get("price")))) {
+// 	out.put("price", *price);
+// }
+// ```
+inline Result<Optional<Value>> lww_by_version(const Optional<Value>& current, const Optional<Value>& incoming)
+{
+	Optional<Value> a = UDF_TRY(detail::merge_side(current, false));
+	Optional<Value> b = UDF_TRY(detail::merge_side(incoming, false));
+
+	if (!a && !b) return Optional<Value>();
+	if (!b) {
+		UDF_TRY(detail::lww_version(*a));
+		return a;
+	}
+	if (!a) {
+		UDF_TRY(detail::lww_version(*b));
+		return b;
+	}
+
+	int64_t va = UDF_TRY(detail::lww_version(*a));
+	int64_t vb = UDF_TRY(detail::lww_version(*b));
+	bool a_wins = va != vb ? va > vb : UDF_TRY(a->cmp_stored(*b)) >= 0;
+
+	return a_wins ? a : b;
+}
+
 struct Pair;
 
 // A bin on both sides of a merge, either of which may be missing: the Rust SDK's `Both<T>`. Made by a Pair, which
@@ -2008,6 +2290,42 @@ struct Both {
 	// nobody wrote. An integer sum wraps on overflow (two's complement), as it would in Rust's release builds,
 	// rather than being undefined.
 	Optional<T> sum() const { return merge([](const T& c, const T& i) { return detail::wrapping_add(c, i); }); }
+
+	// The merges of collections, for a Both<Value> as Pair::map(), Pair::list() and Pair::bin() make one; they go
+	// by the values alone. udf::max_per_key() of the two sides: every key of either map, each with the larger of its
+	// two integers; nothing when neither side has the bin. Symmetric, idempotent and associative.
+	//
+	// ```cpp
+	// udf::Both<udf::Value> counts = UDF_TRY(pair.map("counts"));
+	// if (udf::Optional<udf::Map> merged = UDF_TRY(counts.max_per_key())) out.put("counts", *merged);
+	// ```
+	Result<Optional<Map>> max_per_key() const
+		requires detail::is_same<T, Value>
+	{
+		return udf::max_per_key(current, incoming);
+	}
+	// udf::sorted_union() of the two sides: every element of either list once, sorted; nothing when neither side has
+	// the bin. Symmetric, idempotent and associative.
+	Result<Optional<List>> sorted_union() const
+		requires detail::is_same<T, Value>
+	{
+		return udf::sorted_union(current, incoming);
+	}
+	// udf::counter_merge() of the two sides: a per-origin counter merged by the larger count per origin; nothing when
+	// neither side has the bin. udf::counter_total() reads the merged counter's value. Symmetric, idempotent and
+	// associative.
+	Result<Optional<Map>> counter_merge() const
+		requires detail::is_same<T, Value>
+	{
+		return udf::counter_merge(current, incoming);
+	}
+	// udf::lww_by_version() of the two sides: of two `[version, value]` lists, the one with the higher version, ties
+	// broken by the stored bytes; nothing when neither side has the bin. Symmetric, idempotent and associative.
+	Result<Optional<Value>> lww_by_version() const
+		requires detail::is_same<T, Value>
+	{
+		return udf::lww_by_version(current, incoming);
+	}
 
 private:
 	friend struct Pair;

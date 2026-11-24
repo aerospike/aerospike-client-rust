@@ -60,6 +60,20 @@ automatically; in Go and C it is one line.
 A function can read the record's generation, TTL, last-update time, set name, user key (when stored) and
 digest, set the TTL, and tell whether the record exists. It can write to the server log at three levels.
 
+It can also read two things about the node it runs on, and an `xdr-merge` handler can read neither:
+
+- **The clock** (`now()` in Rust, the same call by its language's name elsewhere). A record UDF works on
+  one record on one cluster, and reading the time there is what Lua UDFs have always done, so the call
+  stays for record and stream UDFs. A handler must decide the same way on both clusters, and two clocks
+  never agree, so it is refused there. A write UDF that stores the time in a bin a merge later reads hands
+  the merge the clock all the same; a merge that must not depend on clocks keeps versions instead (see
+  [Clock skew](../events/README.md#clock-skew)).
+- **The cluster's XDR source id** (`cluster_src_id()`, `ClusterSrcID()`, `clusterSrcId()`), 1 to 255, or
+  0 when the cluster has none. A write UDF uses it to tag what it writes as this cluster's, as the CRDT
+  counters do, with no site name passed in by the client to get wrong. Refused in a handler for the
+  clock's reason. Rust and C++ return an error there; C, Go and Java answer -1, as their clocks do, since
+  their other metadata calls answer a number too.
+
 ## Limits
 
 A record UDF runs under the transaction's deadline and is stopped by the watchdog when that expires. It

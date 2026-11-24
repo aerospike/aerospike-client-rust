@@ -1849,6 +1849,29 @@ Now is the server's clock, in milliseconds since the Unix epoch. Inside an event
 refused and answers -1: a merge that reads the clock cannot come out the same on both clusters.
 It is not on the scale of Record.LastUpdateTime, which counts from 2010.
 
+#### `ClusterSrcID`
+
+```go
+func ClusterSrcID() int64
+```
+
+ClusterSrcID is this cluster's XDR source id: the src-id of its xdr stanza, 1 to 255, which XDR
+stamps on every write it ships from here. It is 0 when the cluster has none: Community Edition, or no
+src-id configured. A write UDF tags what it writes with it, so a per-origin structure (a counter, a
+set of stamps) keys each cluster's share by the same id XDR reports in EventRecord.SourceID, with no
+argument for a client to get wrong.
+
+Inside an event handler it is refused and answers -1, as Now is: the answer depends on which cluster
+runs the merge, and a merge that reads it cannot converge. A handler has each side's id on its
+records.
+
+```go
+site := udf.ClusterSrcID()
+if site <= 0 {
+	return 0, errors.New("increment: this cluster has no XDR src-id")
+}
+```
+
 #### `Arity`
 
 ```go

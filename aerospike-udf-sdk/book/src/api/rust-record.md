@@ -2021,6 +2021,31 @@ It is not on the scale of `Record::last_update_time` and `EventRecord::bin_last_
 count milliseconds from the Citrusleaf epoch, 2010-01-01T00:00:00Z: add 1 262 304 000 000 to a last-update
 time to compare it with this.
 
+#### `cluster_src_id`
+
+```rust
+pub fn cluster_src_id() -> Result<i64, Error>
+```
+
+This cluster's XDR source id: the `src-id` of the `xdr` stanza, 1 to 255, which XDR stamps on every write
+it ships from here. `Ok(0)` when the cluster has none: Community Edition, or no `src-id` configured.
+Available to record and stream UDFs.
+
+A write UDF tags what it writes with it, so a per-origin structure (a counter, a set of stamps) keys each
+cluster's share by the same id XDR reports in `EventRecord::source_id`, with no argument for a client to
+get wrong.
+
+```rust
+let site = as_udf::cluster_src_id()?;
+
+if site == 0 {
+    return Err(Error::Custom("increment: this cluster has no XDR src-id"));
+}
+```
+
+`Err(Refused)` in an event handler, as for `now`: the answer depends on which cluster runs the merge,
+and a merge that reads it cannot converge. A handler has each side's id on its records.
+
 #### `log`
 
 ```rust

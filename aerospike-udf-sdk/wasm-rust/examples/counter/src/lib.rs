@@ -1,7 +1,8 @@
 //! The smallest CRDT: a grow-only counter, merged across data centres by the `xdr-merge` event.
 //!
-//! One bin, `counts`, holds a map of `site -> count`. Each data centre adds only to its own entry
-//! (`increment("dc1", 3)`), and the counter's value is the sum of every entry (`value()`). When a write
+//! One bin, `counts`, holds a map of `site -> count`. Each data centre adds only to its own entry, keyed by
+//! its XDR src-id as a decimal string (`increment(3)` on the cluster with src-id 1 adds to `counts["1"]`),
+//! and the counter's value is the sum of every entry (`value()`). When a write
 //! from one site arrives at the other, `merge_counter` keeps, for every site, the larger of the two counts.
 //! A site's count only ever grows, so the larger one is always the later one: the merge needs no clock, no
 //! last update time and no writer id, and it is commutative, idempotent and associative by construction,
@@ -110,11 +111,32 @@ fn stored(rec: &Record) -> Result<Counts, Error> {
     Ok(counts)
 }
 
+/// This cluster's site: its XDR src-id, as the decimal string the counts are keyed by. The server knows
+/// which cluster runs the write, so no client can count under another cluster's entry.
+fn this_site() -> Result<Site, Error> {
+    let mut id = as_udf::cluster_src_id()?;
+
+    if id <= 0 {
+        return Err(Error::Custom("no XDR src-id on this cluster: set src-id in its xdr stanza"));
+    }
+
+    let mut digits = [0u8; 20];
+    let mut at = digits.len();
+
+    while id > 0 {
+        at -= 1;
+        digits[at] = b'0' + (id % 10) as u8;
+        id /= 10;
+    }
+
+    Site::new(core::str::from_utf8(&digits[at..]).map_err(|_| Error::Malformed)?)
+}
+
 export! {
-    /// Adds `n` to this site's count. Returns the counter's value.
-    fn increment(rec: &mut Record, site: &str, n: i64) -> Result<Value, Error> {
+    /// Adds `n` to this cluster's count, under its src-id. Returns the counter's value.
+    fn increment(rec: &mut Record, n: i64) -> Result<Value, Error> {
         let mut counts = stored(rec)?;
-        let site = Site::new(site)?;
+        let site = this_site()?;
         let mut found = false;
 
         for slot in counts.sites[..counts.n].iter_mut().flatten() {

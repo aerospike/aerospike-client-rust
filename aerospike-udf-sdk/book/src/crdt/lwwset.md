@@ -26,7 +26,8 @@ ever removed, can at least be overridden rather than only appended to.
 
 A stamp only ever grows for a tag on the site that writes it, so the later stamp is the later write,
 and the merge is the PN-Counter's per-key maximum over each map. Both maps converge for the reason the
-counters did, and so does the member set computed from them.
+counters did, and so does the member set computed from them. The SDKs' `max_per_key` is that merge of
+two maps of integers, ready-made.
 
 {{#include diagrams/lwwset-race.svg}}
 

@@ -126,6 +126,19 @@ async fn info(client: &Client, command: &str) -> String {
         .unwrap_or_else(|| panic!("no answer to {command:?}: {answers:?}"))
 }
 
+/// This cluster's XDR src-id as the decimal string the counters key their sites by, from its XDR
+/// configuration; `None` when it has none.
+async fn src_id(client: &Client) -> Option<String> {
+    let answers = client.info(&AdminPolicy::default(), &["get-config:context=xdr"]).await.ok()?;
+
+    answers
+        .values()
+        .flat_map(|answer| answer.split(';'))
+        .find_map(|item| item.strip_prefix("src-id="))
+        .filter(|id| id.parse::<i64>().is_ok_and(|id| id > 0))
+        .map(str::to_string)
+}
+
 /// Whether this server has the event system: the commands exist, and the feature key allows them.
 async fn supported(client: &Client) -> bool {
     let answer = info(client, "event-list").await;
@@ -782,6 +795,13 @@ async fn counter_merge_converges() {
         return;
     }
 
+    // This cluster counts under its src-id; the other sites of the dry run are made up.
+    let Some(here) = src_id(&client).await else {
+        skipped("counter_merge_converges", "this cluster has no XDR src-id");
+        return;
+    };
+    let here = here.as_str();
+
     for (lang, module) in [("rust", COUNTER), ("java", COUNTER_JAVA), ("go", COUNTER_GO), ("cpp", COUNTER_CPP)] {
         let set_name = &common::rand_str(10);
         let package = &format!("counter_{lang}_{}", common::rand_str(6));
@@ -811,16 +831,16 @@ async fn counter_merge_converges() {
         };
 
         // This site counted three; the other site's copy of this site is stale (1) and it counted five itself.
-        assert_eq!(client.execute_udf(&write, &key, package, "increment", &[Value::from("dc1"), Value::from(3)]).await.unwrap(), Some(Value::Int(3)), "{lang}");
+        assert_eq!(client.execute_udf(&write, &key, package, "increment", &[Value::from(3)]).await.unwrap(), Some(Value::Int(3)), "{lang}");
         assert_eq!(client.execute_udf(&write, &key, package, "value", &[]).await.unwrap(), Some(Value::Int(3)), "{lang}");
 
-        let bins = crdt_merge(&client, &key, counts(&[("dc1", 1), ("dc2", 5)]), None, "counter: concurrent").await;
-        assert_eq!(merged_counts(&bins), vec![("dc1".into(), 3), ("dc2".into(), 5)], "{lang}");
+        let bins = crdt_merge(&client, &key, counts(&[(here, 1), ("dc2", 5)]), None, "counter: concurrent").await;
+        assert_eq!(merged_counts(&bins), vec![(here.into(), 3), ("dc2".into(), 5)], "{lang}");
 
         // A third site: the dry run checks associativity with it (asserted inside crdt_merge) and still
         // answers the merge of current and incoming.
-        let bins = crdt_merge(&client, &key, counts(&[("dc1", 1), ("dc2", 5)]), Some(counts(&[("dc1", 4), ("dc3", 2)])), "counter: three sites").await;
-        assert_eq!(merged_counts(&bins), vec![("dc1".into(), 3), ("dc2".into(), 5)], "{lang}");
+        let bins = crdt_merge(&client, &key, counts(&[(here, 1), ("dc2", 5)]), Some(counts(&[(here, 4), ("dc3", 2)])), "counter: three sites").await;
+        assert_eq!(merged_counts(&bins), vec![(here.into(), 3), ("dc2".into(), 5)], "{lang}");
 
         assert_eq!(info(&client, &remove_command("xdr-merge", namespace, set_name)).await, "ok");
         let _ = client.delete(&write, &key).await;
@@ -840,6 +860,13 @@ async fn pncounter_merge_converges() {
         skipped("pncounter_merge_converges", "no event commands on this server");
         return;
     }
+
+    // This cluster counts under its src-id; the other sites of the dry run are made up.
+    let Some(here) = src_id(&client).await else {
+        skipped("pncounter_merge_converges", "this cluster has no XDR src-id");
+        return;
+    };
+    let here = here.as_str();
 
     for (lang, module) in [("rust", PNCOUNTER), ("java", PNCOUNTER_JAVA), ("go", PNCOUNTER_GO), ("cpp", PNCOUNTER_CPP)] {
         let set_name = &common::rand_str(10);
@@ -871,34 +898,34 @@ async fn pncounter_merge_converges() {
         };
 
         // This site added three and took one; an entry only grows, so a negative amount is refused.
-        assert_eq!(client.execute_udf(&write, &key, package, "increment", &[Value::from("dc1"), Value::from(3)]).await.unwrap(), Some(Value::Int(3)), "{lang}");
-        assert_eq!(client.execute_udf(&write, &key, package, "decrement", &[Value::from("dc1"), Value::from(1)]).await.unwrap(), Some(Value::Int(2)), "{lang}");
+        assert_eq!(client.execute_udf(&write, &key, package, "increment", &[Value::from(3)]).await.unwrap(), Some(Value::Int(3)), "{lang}");
+        assert_eq!(client.execute_udf(&write, &key, package, "decrement", &[Value::from(1)]).await.unwrap(), Some(Value::Int(2)), "{lang}");
         assert_eq!(client.execute_udf(&write, &key, package, "value", &[]).await.unwrap(), Some(Value::Int(2)), "{lang}");
 
-        let err = client.execute_udf(&write, &key, package, "increment", &[Value::from("dc1"), Value::from(-2)]).await.unwrap_err();
+        let err = client.execute_udf(&write, &key, package, "increment", &[Value::from(-2)]).await.unwrap_err();
         assert!(err.to_string().contains("must not be negative"), "{lang}: {err:?}");
         assert_eq!(client.execute_udf(&write, &key, package, "value", &[]).await.unwrap(), Some(Value::Int(2)), "{lang}: a refused write changes nothing");
 
         // The other site's copy of this site is stale (1 added, nothing taken); it added five and took two
         // itself. Each map merges on its own, so the merged value is 8 - 3.
-        let bins = crdt_merge(&client, &key, record(&[("dc1", 1), ("dc2", 5)], &[("dc2", 2)]), None, "pncounter: concurrent").await;
-        assert_eq!(merged(&bins, "inc"), vec![("dc1".into(), 3), ("dc2".into(), 5)], "{lang}");
-        assert_eq!(merged(&bins, "dec"), vec![("dc1".into(), 1), ("dc2".into(), 2)], "{lang}");
+        let bins = crdt_merge(&client, &key, record(&[(here, 1), ("dc2", 5)], &[("dc2", 2)]), None, "pncounter: concurrent").await;
+        assert_eq!(merged(&bins, "inc"), vec![(here.into(), 3), ("dc2".into(), 5)], "{lang}");
+        assert_eq!(merged(&bins, "dec"), vec![(here.into(), 1), ("dc2".into(), 2)], "{lang}");
 
         // A third site, for associativity.
         let bins = crdt_merge(
             &client,
             &key,
-            record(&[("dc1", 1), ("dc2", 5)], &[("dc2", 2)]),
-            Some(record(&[("dc1", 4), ("dc3", 2)], &[("dc3", 1)])),
+            record(&[(here, 1), ("dc2", 5)], &[("dc2", 2)]),
+            Some(record(&[(here, 4), ("dc3", 2)], &[("dc3", 1)])),
             "pncounter: three sites",
         )
         .await;
-        assert_eq!(merged(&bins, "inc"), vec![("dc1".into(), 3), ("dc2".into(), 5)], "{lang}");
-        assert_eq!(merged(&bins, "dec"), vec![("dc1".into(), 1), ("dc2".into(), 2)], "{lang}");
+        assert_eq!(merged(&bins, "inc"), vec![(here.into(), 3), ("dc2".into(), 5)], "{lang}");
+        assert_eq!(merged(&bins, "dec"), vec![(here.into(), 1), ("dc2".into(), 2)], "{lang}");
 
         // No floor: taking more than was ever added is a legitimate state, not an error.
-        assert_eq!(client.execute_udf(&write, &key, package, "decrement", &[Value::from("dc1"), Value::from(5)]).await.unwrap(), Some(Value::Int(-3)), "{lang}");
+        assert_eq!(client.execute_udf(&write, &key, package, "decrement", &[Value::from(5)]).await.unwrap(), Some(Value::Int(-3)), "{lang}");
 
         assert_eq!(info(&client, &remove_command("xdr-merge", namespace, set_name)).await, "ok");
         let _ = client.delete(&write, &key).await;

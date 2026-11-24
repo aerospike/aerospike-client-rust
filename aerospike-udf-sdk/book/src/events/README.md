@@ -14,18 +14,10 @@ a merge before trusting it. The chapters after it are the languages. To learn it
 [CRDT tutorial](../crdt/README.md) builds six merges in six steps, from a counter to a device map and a
 record of registers.
 
-## Edition and feature key
+## Edition
 
-The event system is an Enterprise feature, gated by the feature key `asdb-event-system`. A Community
-server answers every `event-*` command with `enterprise only` and runs no hooks. An Enterprise server
-whose feature key file does not carry `asdb-event-system true` logs once at startup that the event system
-is inert, ignores any bindings it finds in SMD (with a warning), and answers the commands and
-the dry run with `feature key does not allow the event system`; UDFs are
-unaffected. The key is read once at startup, with the other keys.
-
-> Until issued feature keys carry `asdb-event-system`, the check is commented out in `as_event_init`
-> and every Enterprise server behaves as if the key were present. The key is already parsed and the
-> rest of the gate is in place, so enforcing it is restoring one line.
+The event system is part of Enterprise Edition, with no feature key of its own. A Community server
+answers every `event-*` command with `enterprise only` and runs no hooks.
 
 ## Bindings
 
@@ -61,6 +53,18 @@ event-list[:namespace=test]
 event-kinds
 ```
 
+**Why a command, not the configuration file.** A binding names a module, and modules are registered
+through the cluster's metadata (SMD). A binding kept there too reaches every node the same way the module
+does, so the two cannot disagree between nodes, and it changes without a restart or an edit on each node.
+A binding in each node's configuration file could name a module one node does not have, or differ from
+node to node, and no node would know. `event-list` shows the bindings with their counters, which a file
+could not.
+
+**Why `on-failure=policy` and not `apply-incoming`.** `policy` is the event's one word for "what the
+server would have done without a handler": the description's `policy` entry, the `policy` answer and this
+setting all mean it. For a bound set, which has no bin convergence, that is the incoming write applied, as
+`take-remote` applies it.
+
 `event-list` prints one row per binding with its parameters and counters. `event-kinds` prints the kind
 with its contract version. `udf-remove` refuses a module a binding refers to. A client cannot call a
 handler as a record UDF: the call is refused before the handler runs.
@@ -85,7 +89,7 @@ event=xdr-merge:namespace=test:set=subscribers:name=xdr_merge:order=0:module=crd
 | `policy` | `policy` answers |
 | `fallback` | failures, each counted once more by its cause: `fail-timeout` (stopped at its time limit), `fail-error` (trapped, failed, or could not run), `fail-memory` (refused memory it asked for), `fail-answer` (answered what cannot be taken), `fail-source` (the write's source id was refused, or this cluster's own is 0; the handler is not called, so this one is not in `fired`) |
 | `abandoned` | failures that dropped the incoming write (`on-failure=abandon`) |
-| `avg-us`, `max-us` | time in the handler, every call: the mean and the longest, in microseconds |
+| `avg-us`, `max-us` | time in the handler, every call: the mean and the longest, in microseconds. Two numbers rather than a histogram: they cost the write path two atomic updates and show a slow handler; a distribution waits for a need the two cannot answer |
 
 A dry run does not count. Counters are per node and reset at restart; a binding set again keeps them.
 
@@ -105,13 +109,14 @@ a removed key or a new answer vocabulary does, and a module built against the ol
 ## What a handler sees and answers
 
 Fires on every incoming XDR write to a record that exists on this node, live or tombstone, before any of
-the write's ops are applied, with both records in hand; a create (no record here) bypasses it, and an
-incoming XDR delete reaches it from the delete path with `deleted-record` set. Enterprise only, since XDR
-is.
+the write's ops are applied, with both records in hand; a create (no record here) bypasses it, though not
+the source check below, and an incoming XDR delete reaches it from the delete path with `deleted-record`
+set. Enterprise only, since XDR is.
 
 **A bound set has no bin convergence.** Sets with a handler and sets without one share a namespace; a set
 with one gets no bin convergence whatever `conflict-resolve-writes` says, and behaves the same with it
-on, off, or changed while running. Nothing is refused by time before the handler sees it, a local write
+on, off, or changed while running. Nothing is refused by time before the handler sees it, a replace is not
+refused because the namespace converges bins, a local write
 is never refused because a bin arrived with a later time, and every bin keeps its own time and source
 whatever XDR ships. A set without a handler in the same namespace converges bins as it always has.
 
@@ -124,6 +129,12 @@ for it. A write whose source id is 0 or this cluster's own, and every write whil
 `src-id` is 0, is not offered to the handler: it is a failure, counted in `fail-source`, and `on-failure`
 decides. `event-set` refuses a binding while `src-id` is 0, and a binding that reaches such a node through
 the cluster's metadata is kept but merges nothing until `src-id` is set.
+
+A write that would create a record of a bound set is checked the same way, though no handler runs for it:
+from a refused source it is counted in `fail-source` and logged, and `on-failure` decides, so under
+`abandon` the record is not created and the source counts the write in `merge_abandoned`. A misconfigured
+source would otherwise seed the set with records no merge ever accepted, which the next merge would then
+treat as this cluster's own.
 
 **A write that cannot conflict skips the handler.** When everything the current record holds came from
 the same cluster as the incoming write, by XDR, at or before the incoming write's time, with no local
@@ -148,10 +159,25 @@ shipped with it (the bin's own under `ship-bin-luts`, the record's under `ship-r
 the source shipped no time, the time the write arrived here. The `mode` entry is not shown to a handler:
 a merge is a function of the two records, and should answer the same in a dry run.
 
+**An arrival time is not marked as one.** A handler cannot tell a bin stamped with the time it arrived
+from one stamped with a time the other cluster shipped. A handler that decides by time needs the source to
+ship times, which [Deployment](#deployment) requires, so an arrival time means a link that is set up
+wrong: the `no-times` counter and the settings warnings tell the operator, which a mark in the payload
+would tell only the handler, and the handler could not fix the link.
+
+**`ship-bin-luts` gives exact times, `ship-record-lut` a coarser one.** Under `ship-record-lut` every bin
+of a shipped write takes the record's time, which any write to the record advances, a merge on the sender
+included. The other cluster then holds a later time for a bin than the cluster that wrote it. A handler
+that decides by time, and needs the two clusters to compare the same times, should run with
+`bin-policy only-changed` and `ship-bin-luts true`.
+
 A `record` answer equal to the current record writes nothing and answers the source `lost-conflict`,
 which it counts as success; so does `keep-local`. One that differs replaces the record, each bin stamped
 by where its value came from; `take-remote` and `policy` are written the same way, and one that leaves
-the record as it is counts as `keep-local` and answers `lost-conflict` too.
+the record as it is counts as `keep-local` and answers `lost-conflict` too. So is the incoming write
+applied under `on-failure=policy`: it goes through the same path as a merge, so its bins carry the stamps
+a `take-remote` would give them, and a later merge on either cluster compares the same times whether the
+write was merged or applied after a failure.
 
 An incoming delete is answered the same way, with three differences. `take-remote` and `policy` are the
 delete, as the incoming delete made it; `delete` and `expunge` say how the record goes. `keep-local` keeps
@@ -172,8 +198,15 @@ the record as it stands, merge included. For that the merge stamps what it write
   leaves it marked local, so a ship of it that is still waiting, a retry and a recovery all still send it.
 - **Each bin**: a bin whose value is the incoming one takes the incoming time and source; a bin whose
   value is this cluster's own is left as it was, so a local write that had not been shipped yet still
-  is; a value the handler computed, which is neither side's, is stamped as a write made here, at the
-  merge's time.
+  is; a value both sides hold takes the later of the two stamps. A value the handler computed, which is
+  neither side's, takes the time of the later of the two sides' stamps for that bin, or, when neither
+  side has the bin, of the later of the two sides' latest stamps; it is never the merging cluster's
+  clock, so the two clusters, merging the same two writes, store the same time, and a handler that
+  decides by time compares the same values on both sides. Its source is this cluster's own: XDR carries
+  one source id per write, the sender's, so a computed value this cluster ships on arrives as this
+  cluster's whatever it stored, and stamped its own it arrives as stored. Where both clusters compute it,
+  each stores its own id beside the same time until the next ship of the bin settles both on the later
+  stamp, as for any value both hold.
 
 A handler that keeps the contract computes the same record on both sides, so nothing more needs to
 travel. One that does not - that appends the incoming list to the current one, say - leaves the two
@@ -212,6 +245,13 @@ helpers do; it needs the source to ship times (`bin-policy only-changed` with `s
 `ship-record-lut`), and it inherits the clocks' skew (see [Clock skew](#clock-skew)). The data-only way
 keeps versions and removal markers in the record and breaks ties on the stored bytes (`cmp_stored` in the
 SDKs), so the merge is a function of the data alone; `examples/crdt` is this, and it needs no times.
+Every SDK has the common data-only merges ready-made, each symmetric, idempotent and associative:
+`max_per_key` (two maps of integers), `sorted_union` (two lists as a set), `counter_merge` and
+`counter_total` (a per-origin counter), and `lww_by_version` (a `[version, value]` list, ties on the
+stored bytes). Their limits are the host's. `sorted_union` takes integer, string and blob elements only:
+the host sorts them, since an element read from a list has no stored bytes of its own to compare, and any
+other kind is a type mismatch rather than an order one cluster might not share. `max_per_key` takes string
+and integer keys only, since the host looks a key up by those and has no lookup by a blob key.
 
 **The dry run.** `execute_udf(key, "__event__", "xdr-merge", [incoming bins, incoming metadata, other
 bins, other metadata])`, the last two optional, runs the binding of the record's set against the real
@@ -238,14 +278,17 @@ success by the source. It is the check that the dry run cannot make.
 
 The preview supports two clusters that ship to each other, set up new: bindings and XDR in place on both
 before the first record is written. More clusters, relays and clusters that already hold data are not
-supported yet.
+supported yet. A relay is the reason: with `forward` on and changed bins shipped, a merge's bins keep the
+times the sender gave them, earlier than the relay's last ship, so the relay does not forward them; and a
+relay ships every bin it forwards under its own source id. Both change what a merge on the far cluster
+compares, and neither is settled without a three-cluster simulation.
 
 **Required, on both clusters:**
 
 - A distinct, non-zero `src-id` in each cluster's `xdr` stanza.
 - `forward false` (the default) for the namespace. A merge ships nothing only with forward off.
 - `bin-policy all` or `only-changed`. A time-based handler also needs times: `only-changed` with
-  `ship-bin-luts true`, or `ship-record-lut true`.
+  `ship-bin-luts true` (exact), or `ship-record-lut true` (the record's time on every bin).
 - The same module, at the same version, bound on both clusters to the same scope.
 - `disable-eviction true` on every bound set. Eviction removes a record on one cluster only, and the
   other cluster's next write then recreates it there with only the bins it changed.
@@ -260,9 +303,6 @@ the binding is made and whenever one of them changes, and `event-list` shows how
 - `bin-policy changed-and-specified` or `no-bins`: the other side would merge against bins it never
   received.
 - Any `ignore-bin`, for the same reason.
-- `bin-policy all` with `write-policy auto` or `replace` while the namespace has
-  `conflict-resolve-writes true`: every shipped write is then a replace, which the namespace refuses
-  before the handler sees it.
 - A bound set without `disable-eviction true`.
 
 **Truncate on both clusters or on neither.** A truncate is not shipped; one cluster's records would come
@@ -321,14 +361,17 @@ hand.
 | 2 `time-limit` | the handler was stopped at its time limit | `fail-timeout` |
 | 3 `memory-limit` | the handler was refused memory it asked for: `max-memory`, or the node's `max-total-memory` | `fail-memory` |
 | 4 `invalid-answer` | the handler answered something that cannot be applied | `fail-answer` |
-| 5 `source-refused` | the write's source id was missing, 0 or this cluster's own, or this cluster's own is 0 | `fail-source` |
+| 5 `source-refused` | the write's source id was missing, 0 or this cluster's own, or this cluster's own is 0; a write that would create a record included | `fail-source` |
 
 The source counts these writes in `merge_abandoned`. The destination logs each one with the record's
 namespace, set, digest and user key, and the cause.
 
 **The repair.** Find the records: the failure log names them, and a comparison of the two clusters'
-records, by value, finds the ones a contract-breaking handler left apart. For each, decide which
-record is right, fix the cause, and then **touch the record on the cluster that holds the right one**. A
+records, by value, finds the ones a contract-breaking handler left apart. The Rust client's
+`xdr_compare_records` example is that comparison: it scans one set on both clusters and prints each
+record that is on one side only or differs by value, with its digest and its user key when the record
+stores one. Run it when nothing writes to the set, or run it twice. For each record, decide which
+copy is right, fix the cause, and then **touch the record on the cluster that holds the right one**. A
 touch is a local write: it marks every bin changed and ships the record, and the other cluster's handler
 merges it as any incoming write. A handler that keeps the contract then lands both clusters on the same
 record.
@@ -342,8 +385,8 @@ record.
   transaction thread, and a read of the record's bins that a replacing write would otherwise skip. Bind
   to the set, not the namespace.
 - **Logs.** A handler's failure is a ticker warning naming the binding and the reason.
-- **What a handler cannot do.** Read or write another record, read the clock, or reach anything outside
-  the two records it was handed.
+- **What a handler cannot do.** Read or write another record, read the clock, read which cluster it runs
+  on (`cluster_src_id` is refused to it), or reach anything outside the two records it was handed.
 
 ## Writing a handler
 

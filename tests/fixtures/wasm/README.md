@@ -104,11 +104,23 @@ fixture doubles as the negative case: binding one of its UDFs is refused because
 and Go SDKs (`examples/resolver` in each), rebuilt with `make` in each SDK directory like the vector
 modules; `resolvers_in_three_languages_agree` holds them all, with the Java one, to one answer.
 
+## The apitest modules
+
+`apitest.wasm`, `apitest_go.wasm`, `apitest_c.wasm`, `apitest_cpp.wasm` and `apitest_java.wasm` are the
+conformance module of each SDK (`examples/apitest`), written to one specification and held to one
+answer by `tests/src/udf_conform.rs`. Besides the record API they call the merge building blocks on their
+arguments (`mrg`: `max_per_key`, `sorted_union`, `counter_merge`, `counter_total`, `lww_by_version`),
+answer the cluster's src-id (`src_id`), and run the same merges as an `xdr-merge` handler
+(`merge_api`, on the bins `cm`, `ul` and `lv`). Rebuild the Rust one as above (crate
+`aerospike-udf-apitest`) and the others with `make` in their SDK directories.
+
 ## The counter
 
 `counter.wasm`, `counter_java.wasm`, `counter_go.wasm` and `counter_cpp.wasm` are the smallest CRDT, a
 grow-only counter (`examples/counter` in the Rust, Java, Go and C++ SDKs): one entry per site, the merge
-keeps the larger count per site. `counter_merge_converges` runs all four through the dry run;
+keeps the larger count per site. A site is the cluster's XDR src-id as a decimal string, which the write
+UDFs ask the server for (`cluster_src_id`): `increment(n)` takes no site, and fails on a cluster with no
+src-id. `counter_merge_converges` runs all four through the dry run;
 `tests/src/xdr_merge.rs` runs them across two live clusters.
 
 `pncounter.wasm`, `pncounter_java.wasm`, `pncounter_go.wasm` and `pncounter_cpp.wasm` are the counter that

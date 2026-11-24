@@ -968,6 +968,88 @@ cmp(int32_t args, int32_t argc)
 AS_UDF_SIGNATURE(cmp, "fn cmp(a: str[65536], b: str[65536]) -> value")
 
 /*==========================================================
+ * mrg(how, a, b): one merge building block on two values, a nil one missing. ["some", merged], ["none"] when it
+ * answers nothing, or the status's tag. counter_total reads `a` alone.
+ */
+
+/* What a building block that builds a list or map gave: the handle's value, nothing, or the status's tag. */
+static void out_built(int32_t rc, int32_t handle)
+{
+	out_text(rc == AS_UDF_OK ? "some" : read_tag(rc));
+	if (rc == AS_UDF_OK) {
+		as_udf_value v = as_udf_v_handle(handle);
+		out_value(&v);
+		as_udf_handle_close(handle);
+	}
+}
+
+AS_UDF_EXPORT(mrg) int32_t
+mrg(int32_t args, int32_t argc)
+{
+	as_udf_value a[3];
+	if (! arity("mrg", argc, 3)) return 1;
+	int32_t n = as_udf_args(args, argc, a, 3);
+	if (! arg_is_string("mrg", a, n, 0, "how")) return 1;
+	if (n < 2) return arg_fail("mrg", 1, "a", "is missing");
+	if (n < 3) return arg_fail("mrg", 2, "b", "is missing");
+	const as_udf_value* how = &a[0];
+	int32_t handle = 0, rc;
+
+	out_new();
+
+	if (as_udf_string_is(how, "max_per_key")) {
+		rc = as_udf_max_per_key(&a[1], &a[2], &handle);
+		out_built(rc, handle);
+	}
+	else if (as_udf_string_is(how, "sorted_union")) {
+		rc = as_udf_sorted_union(&a[1], &a[2], &handle);
+		out_built(rc, handle);
+	}
+	else if (as_udf_string_is(how, "counter_merge")) {
+		rc = as_udf_counter_merge(&a[1], &a[2], &handle);
+		out_built(rc, handle);
+	}
+	else if (as_udf_string_is(how, "counter_total")) {
+		int64_t total;
+		rc = as_udf_counter_total(&a[1], &total);
+		out_text(rc == AS_UDF_OK ? "some" : tag_of(rc));
+		if (rc == AS_UDF_OK) out_int(total);
+	}
+	else if (as_udf_string_is(how, "lww_by_version")) {
+		as_udf_value winner;
+		rc = as_udf_lww_by_version(&a[1], &a[2], &winner);
+		out_text(rc == AS_UDF_OK ? "some" : read_tag(rc));
+		if (rc == AS_UDF_OK) out_value(&winner);
+	}
+	else {
+		return as_udf_fail_str("mrg: unknown how");
+	}
+
+	return out_done("mrg");
+}
+AS_UDF_SIGNATURE(mrg, "fn mrg(how: str, a: any, b: any) -> value")
+
+/*==========================================================
+ * src_id(): this cluster's XDR src-id, ["some", id], 0 when it has none.
+ */
+
+AS_UDF_EXPORT(src_id) int32_t
+src_id(int32_t args, int32_t argc)
+{
+	(void)args;
+	if (! arity("src_id", argc, 0)) return 1;
+
+	int64_t id = as_udf_cluster_src_id();
+
+	out_new();
+	out_text(id < 0 ? "refused" : "some");
+	if (id >= 0) out_int(id);
+
+	return out_done("src_id");
+}
+AS_UDF_SIGNATURE(src_id, "fn src_id() -> value")
+
+/*==========================================================
  * agg: a stream UDF. The whole stream shares one instance, so the state is two statics.
  */
 
@@ -1078,6 +1160,62 @@ AS_UDF_EVENT_XDR_MERGE(merge_api)
 	if (rc == AS_UDF_OK) {
 		rc = put_two(out, "bsrc", as_udf_event_bin_source_id(&current, "s"), as_udf_event_bin_source_id(&incoming, "s"));
 	}
+	if (rc != AS_UDF_OK) return fail_parts("merge_api", -1, "", "could not build the record: ", true, rc);
+
+	/* The merge building blocks, on the bins they are for: `cm` a counter (a map of integers), `ul` a list taken as
+	 * a set, `lv` a `[version, value]` list. A bin neither side has adds nothing. */
+	as_udf_value cm[2], ul[2], lv[2];
+	for (int32_t i = 0; i < 2; i++) {
+		int32_t got[3] = { as_udf_event_map(sides[i], "cm", &cm[i]), as_udf_event_list(sides[i], "ul", &ul[i]),
+				as_udf_event_list(sides[i], "lv", &lv[i]) };
+		if (got[0] == AS_UDF_TYPE_MISMATCH) return as_udf_fail_str("merge_api: cm is not a map");
+		if (got[1] == AS_UDF_TYPE_MISMATCH) return as_udf_fail_str("merge_api: ul is not a list");
+		if (got[2] == AS_UDF_TYPE_MISMATCH) return as_udf_fail_str("merge_api: lv is not a list");
+		/* A side without the bin is a missing side. A read that did not answer AS_UDF_OK leaves its value not to
+		 * be read, so it is marked here rather than looked at. */
+		as_udf_value* read[3] = { &cm[i], &ul[i], &lv[i] };
+		for (int32_t k = 0; k < 3; k++) {
+			if (got[k] != AS_UDF_OK) read[k]->kind = AS_UDF_ABSENT;
+		}
+	}
+
+	int32_t merged;
+	rc = as_udf_max_per_key(&cm[0], &cm[1], &merged);
+	if (rc == AS_UDF_OK) {
+		rc = as_udf_map_put_string_handle(out, "mpk", 3, merged);
+		as_udf_handle_close(merged);
+	}
+	if (rc != AS_UDF_OK && rc != AS_UDF_NOT_FOUND) return fail_parts("merge_api", -1, "", "max_per_key: ", true, rc);
+
+	rc = as_udf_counter_merge(&cm[0], &cm[1], &merged);
+	if (rc == AS_UDF_OK) {
+		/* The merged counter's total, read from a packed copy of it as from any stored map. */
+		int32_t packed = as_udf_pack_handle(merged);
+		as_udf_value counter = { AS_UDF_MAP, (uint32_t)as_udf_coll_size(merged), (int64_t)packed << 32 };
+		int64_t total = 0;
+		rc = packed > 0 ? as_udf_counter_total(&counter, &total) : AS_UDF_REFUSED;
+		if (packed > 0) as_udf_handle_close(packed);
+		if (rc == AS_UDF_OK) rc = as_udf_map_put_string_int(out, "ctot", 4, total);
+		if (rc == AS_UDF_OK) rc = as_udf_map_put_string_handle(out, "cnt", 3, merged);
+		as_udf_handle_close(merged);
+	}
+	if (rc != AS_UDF_OK && rc != AS_UDF_NOT_FOUND) return fail_parts("merge_api", -1, "", "counter_merge: ", true, rc);
+
+	rc = as_udf_sorted_union(&ul[0], &ul[1], &merged);
+	if (rc == AS_UDF_OK) {
+		rc = as_udf_map_put_string_handle(out, "union", 5, merged);
+		as_udf_handle_close(merged);
+	}
+	if (rc != AS_UDF_OK && rc != AS_UDF_NOT_FOUND) return fail_parts("merge_api", -1, "", "sorted_union: ", true, rc);
+
+	as_udf_value winner;
+	rc = as_udf_lww_by_version(&lv[0], &lv[1], &winner);
+	if (rc == AS_UDF_OK) rc = as_udf_map_put_value(out, "lww", &winner);
+	if (rc != AS_UDF_OK && rc != AS_UDF_NOT_FOUND) return fail_parts("merge_api", -1, "", "lww_by_version: ", true, rc);
+
+	/* The cluster's src-id is refused to a handler, as the clock is. */
+	const char* src = as_udf_cluster_src_id() < 0 ? "refused" : "answered";
+	rc = as_udf_map_put_string_string(out, "src_id", 6, src, as_udf_strlen(src));
 	if (rc != AS_UDF_OK) return fail_parts("merge_api", -1, "", "could not build the record: ", true, rc);
 
 	return as_udf_resolve_record(out);

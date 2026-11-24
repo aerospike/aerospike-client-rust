@@ -152,6 +152,14 @@ The rest of what a bound set needs is in [Deployment](../events/README.md#deploy
 one-sided truncates. `event-list` shows `settings-warnings=0` on each cluster when its settings are
 right. Subscribers are written only through the UDFs below, so a merge always finds the shape it expects.
 
+To try it on clusters of your own, the Rust client has three programs in its `examples/` directory.
+`xdr_crdt_two_clusters` registers this module on two clusters and binds it to a new set on both. It
+changes random devices on both clusters at once, waits for XDR to ship, and compares every record.
+`xdr_compare_records` is that comparison on its own, for any set: it reports each record that is on one
+cluster only or differs by value. `xdr_merge_laws` needs one cluster. It builds random records through
+the write UDFs and runs each through the dry run described below, reporting any input that breaks a law.
+The random runs print their seed, and run again from it. The settings are at the top of each file.
+
 ## Checking it with the dry run
 
 Both clusters are needed to see the merge fire, but one is enough to check that it is a CRDT. The dry

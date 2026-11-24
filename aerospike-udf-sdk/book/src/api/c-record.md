@@ -762,6 +762,23 @@ The server's wall clock, in milliseconds since the Unix epoch. Returns -1 in an 
 is refused: a decision that reads it cannot converge across clusters. Not about the record, and not on the
 scale of as_udf_rec_last_update_time, which counts from 2010: subtract 1262304000000 from this to compare.
 
+#### `cluster_src_id`
+
+```c
+int64_t as_udf_cluster_src_id(void)
+```
+
+This cluster's XDR source id: the `src-id` of its `xdr` stanza, 1 to 255, which XDR stamps on every write it
+ships from here. 0 when the cluster has none: Community Edition, or no `src-id` configured. A write UDF keys
+what it writes by it, so a per-origin structure (a counter, a set of stamps) keys each cluster's share by the
+id XDR reports for that cluster, with no argument for a client to get wrong. Returns -1 in an event handler,
+where it is refused as the clock is: the answer depends on which cluster runs the merge, and a merge that reads
+it cannot converge. A handler has each side's id on its records.
+```c
+int64_t site = as_udf_cluster_src_id();
+if (site <= 0) return as_udf_fail_str("no XDR src-id on this cluster: set src-id in its xdr stanza");
+```
+
 #### `set_ttl`
 
 ```c

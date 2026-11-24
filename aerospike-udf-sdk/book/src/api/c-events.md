@@ -373,6 +373,124 @@ as_udf_map_put_string_int(out, "visits", 6, visits);
 return as_udf_resolve_record(as_udf_event_with_bins(&incoming, out));
 ```
 
+#### `as_udf_map_find`
+
+```c
+int32_t as_udf_map_find(const as_udf_value* m, const as_udf_value* key, as_udf_value* out)
+```
+
+The value under `key`, a key read from another map, in the stored map `m`, into `out`: a string key is matched
+by its bytes, an integer key by its value, and never one by the other. Returns AS_UDF_OK; AS_UDF_NOT_FOUND, with
+`out` of kind AS_UDF_ABSENT, when there is no such key or `m` is not a map; AS_UDF_TYPE_MISMATCH for a key that
+is neither a string nor an integer; AS_UDF_REFUSED when the call's memory has no room for the walk a long key
+needs. A string key of up to 256 bytes is looked up in one host call; a longer one is compared with each key
+of `m` (as_udf_cmp_stored), which needs no buffer. An entry that holds nil is found, with kind AS_UDF_NIL.
+
+#### `as_udf_max_per_key`
+
+```c
+int32_t as_udf_max_per_key(const as_udf_value* current, const as_udf_value* incoming, int32_t* map)
+```
+
+The per-key maximum of two maps: a new map with every key of either side, each under the larger of its two
+values, or under its one value when only one side has the key. Built on the host, so it is ordered by key and
+both clusters build the same bytes. A side is missing when it is NULL, absent or nil; otherwise it must be a map
+whose keys are strings or integers and whose values are integers. Returns AS_UDF_OK with the map's handle in
+`*map` (close it once it is stored or put); AS_UDF_NOT_FOUND when both sides are missing; AS_UDF_TYPE_MISMATCH
+for anything else, a side that is not a map included, since a merge does not guess what a double or a nested map
+should become; AS_UDF_REFUSED when the host does not build the map. Nothing is left open on a failure.
+
+Symmetric (the two sides swapped give the same map), idempotent (merging a map with itself, or with a merge it is
+part of, changes nothing) and associative (three sides merge to the same map in any order): the laws a
+convergent merge needs. It is the merge of any map of values that only grow; as_udf_counter_merge is the same
+merge under the name of the structure it serves.
+```c
+as_udf_value mine, theirs;
+int32_t merged;
+if (as_udf_event_map(&current, "seen", &mine) == AS_UDF_TYPE_MISMATCH ||
+		as_udf_event_map(&incoming, "seen", &theirs) == AS_UDF_TYPE_MISMATCH) return as_udf_fail_str("seen is not a map");
+int32_t rc = as_udf_max_per_key(&mine, &theirs, &merged);
+if (rc == AS_UDF_OK) as_udf_map_put_string_handle(out, "seen", 4, merged);
+else if (rc != AS_UDF_NOT_FOUND) return as_udf_fail_str("seen is not a map of integers");
+```
+
+#### `as_udf_sorted_union`
+
+```c
+int32_t as_udf_sorted_union(const as_udf_value* current, const as_udf_value* incoming, int32_t* list)
+```
+
+The union of two lists as a set: a new list with every element of either side once, sorted, so both clusters
+build the same bytes whatever order the elements arrived in. The elements are integers, strings or blobs: the
+kinds the server keys a map by, since the host sorts them as a map built on it sorts its keys. Integers come
+first, by value, then strings and then blobs, each by its bytes; an integer and a string are never the same
+element, however they read. A side is missing when it is NULL, absent or nil; otherwise it must be a list of
+those kinds. Returns AS_UDF_OK with the list's handle in `*list`; AS_UDF_NOT_FOUND when both sides are missing;
+AS_UDF_TYPE_MISMATCH for a side that is not a list or an element of another kind (a double, a nested list or
+map, nil); AS_UDF_REFUSED when the host does not build the list.
+
+Symmetric, idempotent and associative: the merge of a set that only grows. A removal needs a second set, as the
+2P-Set of the CRDT tutorial keeps one.
+```c
+int32_t tags;
+if (as_udf_sorted_union(&mine, &theirs, &tags) == AS_UDF_OK) as_udf_map_put_string_handle(out, "tags", 4, tags);
+```
+
+#### `as_udf_counter_merge`
+
+```c
+int32_t as_udf_counter_merge(const as_udf_value* current, const as_udf_value* incoming, int32_t* map)
+```
+
+The merge of a per-origin counter: a map of origin to count, each origin's count raised only by the cluster it
+names, merged by the larger count per origin. It is as_udf_max_per_key under the name of the structure: the same
+rules, the same statuses, and AS_UDF_NOT_FOUND when both sides are missing. as_udf_counter_total reads the
+counter's value. Symmetric, idempotent and associative. A count that goes down is not a count this merges: a
+PN-Counter keeps a second counter for the decrements.
+```c
+int32_t hits;
+if (as_udf_counter_merge(&mine, &theirs, &hits) == AS_UDF_OK) as_udf_map_put_string_handle(out, "hits", 4, hits);
+```
+
+#### `as_udf_counter_total`
+
+```c
+int32_t as_udf_counter_total(const as_udf_value* counter, int64_t* total)
+```
+
+The value of a per-origin counter: the sum of its counts, wrapping on overflow, into `total`. A missing counter
+(NULL, absent or nil) counts 0. Returns AS_UDF_OK; AS_UDF_TYPE_MISMATCH, with `total` untouched, when it is not a
+map, or when a key is not a string or an integer or a count is not an integer, as for as_udf_counter_merge;
+AS_UDF_REFUSED when the call's memory has no room for the walk.
+```c
+as_udf_value hits;
+int64_t total;
+if (as_udf_rec_map("hits", &hits) == AS_UDF_TYPE_MISMATCH || as_udf_counter_total(&hits, &total) != AS_UDF_OK) {
+	return as_udf_fail_str("hits is not a counter");
+}
+```
+
+#### `as_udf_lww_by_version`
+
+```c
+int32_t as_udf_lww_by_version(const as_udf_value* current, const as_udf_value* incoming, as_udf_value* winner)
+```
+
+Last writer wins by an application version: of two `[version, value]` lists, the one with the higher version,
+as it is, to write back, into `winner`. Two equal versions are decided by the lists' stored bytes, the greater
+winning, so both clusters pick the same side; two lists with the same bytes are the same either way. A side is
+missing when it is NULL, absent or nil; otherwise it must be a list of exactly two elements whose first is an
+integer. The value may be of any kind. Returns AS_UDF_OK; AS_UDF_NOT_FOUND when both sides are missing;
+AS_UDF_TYPE_MISMATCH for a side of any other shape.
+
+Symmetric, idempotent and associative: it is the larger of the two by version, then by bytes, which is a total
+order. The version is the application's, raised by every write that changes the value, so no clock decides.
+The write UDF moves the version and the value in one write.
+```c
+as_udf_value price;
+if (as_udf_lww_by_version(&mine, &theirs, &price) == AS_UDF_OK) as_udf_map_put_value(out, "price", &price);
+```
+
 #### `as_udf_resolve_keep_local`
 
 ```c

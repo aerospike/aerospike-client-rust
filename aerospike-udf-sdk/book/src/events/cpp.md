@@ -88,7 +88,9 @@ last-update time and then source id; `newer()` and
 `older()`, and `ordered()` for both at once (`auto [older, newer] = both.ordered();`); `max()`, `min()`,
 `sum()` (the one value when only one side has the bin, nothing when neither has it, as for `max()` and
 `min()`, and an integer sum wraps rather than overflowing), `merge(f)`;
-`current_or_incoming()`, `incoming_or_current()`.
+`current_or_incoming()`, `incoming_or_current()`. A `Both<Value>` of a map or list bin also has the
+data-only merges `max_per_key()`, `sorted_union()`, `counter_merge()` and `lww_by_version()`, which are
+free functions in `udf` too, beside `counter_total`.
 `pair.with_newer(out)` fills in every bin the handler had no opinion on from the side that wrote it
 later, which is symmetric; a bin the newer side deleted stays deleted (it goes in as nil), so the other
 side's copy does not come back. `pair.incoming_is_newer(name)` orders one bin, and `deleted_any()` on a

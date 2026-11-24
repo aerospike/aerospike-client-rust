@@ -249,8 +249,8 @@ fn mk_value(what: &str, n: i64) -> Value {
     }
 }
 
-/// The table.
-fn cases() -> Vec<Case> {
+/// The table. `src_id` is the cluster's XDR src-id, which `src_id` answers: 0 when it has none.
+fn cases(src_id: i64) -> Vec<Case> {
     use Rec::{NoRecord, Stored};
 
     let mut out = Vec::new();
@@ -522,6 +522,99 @@ fn cases() -> Vec<Case> {
         out.push(case(format!("val {name}"), Stored, "val", vec![v], is(list(answer)), same()));
     }
 
+    // mrg: the merge building blocks, on arguments; a nil side is a missing one. Every merge is run with
+    // its sides swapped, and against itself, since a merge both clusters run has to be symmetric and
+    // idempotent.
+    let counts_a = map(vec![(s("dc1"), i(3)), (s("dc2"), i(1)), (i(7), i(2))]);
+    let counts_b = map(vec![(s("dc2"), i(5)), (s("dc3"), i(4))]);
+    let counts_ab = map(vec![(s("dc1"), i(3)), (s("dc2"), i(5)), (s("dc3"), i(4)), (i(7), i(2))]);
+    // A key longer than the SDKs look up by their bytes in one host call.
+    let long = "k".repeat(300);
+    let nil = Value::Nil;
+
+    for how in ["max_per_key", "counter_merge"] {
+        out.extend([
+            case(format!("mrg {how}"), Stored, "mrg", vec![s(how), counts_a.clone(), counts_b.clone()], is(some(counts_ab.clone())), same()),
+            case(format!("mrg {how} swapped"), Stored, "mrg", vec![s(how), counts_b.clone(), counts_a.clone()], is(some(counts_ab.clone())), same()),
+            case(format!("mrg {how} itself"), Stored, "mrg", vec![s(how), counts_a.clone(), counts_a.clone()], is(some(counts_a.clone())), same()),
+            case(format!("mrg {how} current only"), Stored, "mrg", vec![s(how), counts_a.clone(), nil.clone()], is(some(counts_a.clone())), same()),
+            case(format!("mrg {how} incoming only"), Stored, "mrg", vec![s(how), nil.clone(), counts_b.clone()], is(some(counts_b.clone())), same()),
+            case(format!("mrg {how} neither"), Stored, "mrg", vec![s(how), nil.clone(), nil.clone()], is(tag("none")), same()),
+            case(format!("mrg {how} empty"), Stored, "mrg", vec![s(how), map(vec![]), nil.clone()], is(some(map(vec![]))), same()),
+            case(
+                format!("mrg {how} long key"),
+                Stored,
+                "mrg",
+                vec![s(how), map(vec![(s(&long), i(2)), (s("a"), i(1))]), map(vec![(s(&long), i(5))])],
+                is(some(map(vec![(s(&long), i(5)), (s("a"), i(1))]))),
+                same(),
+            ),
+            case(format!("mrg {how} double"), Stored, "mrg", vec![s(how), map(vec![(s("dc1"), f(1.5))]), nil.clone()], is(tag("wrong")), same()),
+            case(format!("mrg {how} double on the other side"), Stored, "mrg", vec![s(how), counts_a.clone(), map(vec![(s("dc1"), f(1.5))])], is(tag("wrong")), same()),
+            case(format!("mrg {how} string value"), Stored, "mrg", vec![s(how), nil.clone(), map(vec![(s("dc9"), s("x"))])], is(tag("wrong")), same()),
+            case(format!("mrg {how} blob key"), Stored, "mrg", vec![s(how), map(vec![(blob(&[1]), i(1))]), nil.clone()], is(tag("wrong")), same()),
+            case(format!("mrg {how} blob key on the other side"), Stored, "mrg", vec![s(how), counts_a.clone(), map(vec![(blob(&[1]), i(1))])], is(tag("wrong")), same()),
+            case(format!("mrg {how} a list"), Stored, "mrg", vec![s(how), list(vec![s("dc1"), i(1)]), nil.clone()], is(tag("wrong")), same()),
+            case(format!("mrg {how} an integer"), Stored, "mrg", vec![s(how), nil.clone(), i(1)], is(tag("wrong")), same()),
+        ]);
+    }
+
+    out.extend([
+        case("mrg counter_total", Stored, "mrg", vec![s("counter_total"), counts_ab.clone(), nil.clone()], is(some(i(14))), same()),
+        case("mrg counter_total missing", Stored, "mrg", vec![s("counter_total"), nil.clone(), nil.clone()], is(some(i(0))), same()),
+        case("mrg counter_total empty", Stored, "mrg", vec![s("counter_total"), map(vec![]), nil.clone()], is(some(i(0))), same()),
+        case("mrg counter_total wraps", Stored, "mrg", vec![s("counter_total"), map(vec![(s("a"), i(i64::MAX)), (s("b"), i(2))]), nil.clone()], is(some(i(i64::MIN + 1))), same()),
+        case("mrg counter_total double", Stored, "mrg", vec![s("counter_total"), map(vec![(s("a"), f(1.5))]), nil.clone()], is(tag("wrong")), same()),
+        case("mrg counter_total blob key", Stored, "mrg", vec![s("counter_total"), map(vec![(blob(&[1]), i(1))]), nil.clone()], is(tag("wrong")), same()),
+        case("mrg counter_total a list", Stored, "mrg", vec![s("counter_total"), list(vec![i(1)]), nil.clone()], is(tag("wrong")), same()),
+    ]);
+
+    // The union's elements are what a map is keyed by, and come out as a key-ordered map orders its keys:
+    // integers by value, then strings, then blobs, each by its bytes.
+    let mixed_a = list(vec![i(3), s("b"), i(-1), s("a"), blob(&[2]), s("ab")]);
+    let mixed_b = list(vec![s("a"), i(2), blob(&[1]), i(-1), s("")]);
+    let mixed_ab = list(vec![i(-1), i(2), i(3), s(""), s("a"), s("ab"), s("b"), blob(&[1]), blob(&[2])]);
+
+    out.extend([
+        case("mrg sorted_union", Stored, "mrg", vec![s("sorted_union"), mixed_a.clone(), mixed_b.clone()], is(some(mixed_ab.clone())), same()),
+        case("mrg sorted_union swapped", Stored, "mrg", vec![s("sorted_union"), mixed_b.clone(), mixed_a.clone()], is(some(mixed_ab.clone())), same()),
+        case("mrg sorted_union itself", Stored, "mrg", vec![s("sorted_union"), mixed_ab.clone(), mixed_ab.clone()], is(some(mixed_ab.clone())), same()),
+        case("mrg sorted_union duplicates", Stored, "mrg", vec![s("sorted_union"), list(vec![i(2), i(1), i(2)]), list(vec![i(1)])], is(some(list(vec![i(1), i(2)]))), same()),
+        case("mrg sorted_union current only", Stored, "mrg", vec![s("sorted_union"), list(vec![s("b"), s("a")]), nil.clone()], is(some(list(vec![s("a"), s("b")]))), same()),
+        case("mrg sorted_union incoming only", Stored, "mrg", vec![s("sorted_union"), nil.clone(), list(vec![])], is(some(list(vec![]))), same()),
+        case("mrg sorted_union neither", Stored, "mrg", vec![s("sorted_union"), nil.clone(), nil.clone()], is(tag("none")), same()),
+        case("mrg sorted_union a double", Stored, "mrg", vec![s("sorted_union"), list(vec![i(1), f(1.5)]), nil.clone()], is(tag("wrong")), same()),
+        case("mrg sorted_union a boolean", Stored, "mrg", vec![s("sorted_union"), nil.clone(), list(vec![b(true)])], is(tag("wrong")), same()),
+        case("mrg sorted_union a nested list", Stored, "mrg", vec![s("sorted_union"), list(vec![s("a")]), list(vec![list(vec![i(1)])])], is(tag("wrong")), same()),
+        case("mrg sorted_union a nil", Stored, "mrg", vec![s("sorted_union"), list(vec![Value::Nil]), nil.clone()], is(tag("wrong")), same()),
+        case("mrg sorted_union a map", Stored, "mrg", vec![s("sorted_union"), map(vec![(s("a"), i(1))]), nil.clone()], is(tag("wrong")), same()),
+        case("mrg sorted_union a string", Stored, "mrg", vec![s("sorted_union"), nil.clone(), s("a")], is(tag("wrong")), same()),
+    ]);
+
+    // lww_by_version: the higher version, then the greater stored bytes.
+    let lww = |version: i64, v: Value| list(vec![i(version), v]);
+    let doc = || map(vec![(s("a"), i(1))]);
+
+    out.extend([
+        case("mrg lww_by_version", Stored, "mrg", vec![s("lww_by_version"), lww(2, s("x")), lww(1, s("y"))], is(some(lww(2, s("x")))), same()),
+        case("mrg lww_by_version swapped", Stored, "mrg", vec![s("lww_by_version"), lww(1, s("y")), lww(2, s("x"))], is(some(lww(2, s("x")))), same()),
+        case("mrg lww_by_version tie", Stored, "mrg", vec![s("lww_by_version"), lww(1, s("b")), lww(1, s("a"))], is(some(lww(1, s("b")))), same()),
+        case("mrg lww_by_version tie swapped", Stored, "mrg", vec![s("lww_by_version"), lww(1, s("a")), lww(1, s("b"))], is(some(lww(1, s("b")))), same()),
+        case("mrg lww_by_version tie on integers", Stored, "mrg", vec![s("lww_by_version"), lww(1, i(3)), lww(1, i(5))], is(some(lww(1, i(5)))), same()),
+        case("mrg lww_by_version itself", Stored, "mrg", vec![s("lww_by_version"), lww(4, doc()), lww(4, doc())], is(some(lww(4, doc()))), same()),
+        case("mrg lww_by_version negative", Stored, "mrg", vec![s("lww_by_version"), lww(-1, s("x")), lww(0, s("y"))], is(some(lww(0, s("y")))), same()),
+        case("mrg lww_by_version incoming only", Stored, "mrg", vec![s("lww_by_version"), nil.clone(), lww(1, s("a"))], is(some(lww(1, s("a")))), same()),
+        case("mrg lww_by_version neither", Stored, "mrg", vec![s("lww_by_version"), nil.clone(), nil.clone()], is(tag("none")), same()),
+        case("mrg lww_by_version one element", Stored, "mrg", vec![s("lww_by_version"), list(vec![i(1)]), nil.clone()], is(tag("wrong")), same()),
+        case("mrg lww_by_version three elements", Stored, "mrg", vec![s("lww_by_version"), lww(1, s("a")), list(vec![i(1), i(2), i(3)])], is(tag("wrong")), same()),
+        case("mrg lww_by_version a string version", Stored, "mrg", vec![s("lww_by_version"), list(vec![s("v"), s("x")]), nil.clone()], is(tag("wrong")), same()),
+        case("mrg lww_by_version a map", Stored, "mrg", vec![s("lww_by_version"), nil.clone(), map(vec![(i(1), s("a"))])], is(tag("wrong")), same()),
+        case("mrg unknown how", Stored, "mrg", vec![s("median"), nil.clone(), nil.clone()], fails("mrg: unknown how"), same()),
+    ]);
+
+    // src_id: the cluster's XDR src-id, the same in every language.
+    out.push(case("src_id", Stored, "src_id", vec![], is(some(i(src_id))), same()));
+
     out
 }
 
@@ -624,8 +717,15 @@ async fn the_five_apitest_modules_agree_on_the_server() {
     ops.push(operations::hll::init(&operations::hll::HllPolicy::default(), "h", 8));
 
     let mut problems = Vec::new();
+    // The cluster's src-id, from its XDR configuration; none on a server without one.
+    let xdr = client.info(&AdminPolicy::default(), &["get-config:context=xdr"]).await.unwrap_or_default();
+    let src_id = xdr
+        .values()
+        .flat_map(|answer| answer.split(';'))
+        .find_map(|item| item.strip_prefix("src-id=").and_then(|id| id.parse::<i64>().ok()))
+        .unwrap_or(0);
 
-    for (number, c) in cases().iter().enumerate() {
+    for (number, c) in cases(src_id).iter().enumerate() {
         let mut runs: Vec<(&str, Run)> = Vec::new();
 
         for (lang, package) in &packages {
@@ -785,7 +885,7 @@ async fn the_five_apitest_modules_agree_on_the_server() {
 
 #[test]
 fn the_table_builds() {
-    let table = cases();
+    let table = cases(0);
     let mut names = HashMap::new();
 
     for c in &table {

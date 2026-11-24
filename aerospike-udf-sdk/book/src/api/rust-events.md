@@ -567,6 +567,178 @@ pub fn sum(self) -> Option<f64>
 The sum; the one that exists when only one side has the bin, and `None` when neither does, as `max`
 and `min`. Right only when each side holds its own DC's share.
 
+#### `Both::max_per_key`
+
+```rust
+pub fn max_per_key(self) -> Result<Option<Map>, Error>
+```
+
+`max_per_key` of a map bin on both sides, as `Pair::map` reads it: every key of either side, each
+with the larger of its two integers. `Ok(None)` when neither side has the bin.
+
+```rust
+if let Some(counts) = pair.map("counts")?.max_per_key()? {
+    out.insert("counts", &counts)?;
+}
+```
+
+Symmetric, idempotent and associative, so the two clusters converge on the same bytes. For a `Both`
+of maps: on one read with `Pair::list` it pairs up the elements.
+
+#### `Both::sorted_union`
+
+```rust
+pub fn sorted_union(self) -> Result<Option<List>, Error>
+```
+
+`sorted_union` of a list bin on both sides, as `Pair::list` reads it: every element of either
+side once, sorted. `Ok(None)` when neither side has the bin.
+
+```rust
+if let Some(tags) = pair.list("tags")?.sorted_union()? {
+    out.insert("tags", &tags)?;
+}
+```
+
+Symmetric, idempotent and associative. For a `Both` of lists.
+
+#### `Both::counter_merge`
+
+```rust
+pub fn counter_merge(self) -> Result<Option<Map>, Error>
+```
+
+`counter_merge` of a counter bin on both sides, as `Pair::map` reads it: a map of origin to count,
+merged by the larger count per origin. `Ok(None)` when neither side has the bin; `counter_total`
+reads the merged counter's value.
+
+```rust
+if let Some(hits) = pair.map("hits")?.counter_merge()? {
+    out.insert("hits", &hits)?;
+}
+```
+
+Symmetric, idempotent and associative. For a `Both` of maps.
+
+#### `Both::lww_by_version`
+
+```rust
+pub fn lww_by_version(self) -> Result<Option<Coll>, Error>
+```
+
+`lww_by_version` of a `[version, value]` bin on both sides, as `Pair::list` reads it: the side
+with the higher version, ties broken by the stored bytes. `Ok(None)` when neither side has the bin.
+
+```rust
+if let Some(price) = pair.list("price")?.lww_by_version()? {
+    out.insert("price", Value::List(price))?;
+}
+```
+
+Symmetric, idempotent and associative. For a `Both` of lists.
+
+#### `max_per_key`
+
+```rust
+pub fn max_per_key(current: Option<Value<'_>>, incoming: Option<Value<'_>>) -> Result<Option<Map>, Error>
+```
+
+The per-key maximum of two maps: a new map with every key of either side, each under the larger of its
+two values, or under its one value when only one side has the key. Built on the host, so it is ordered
+by key and both clusters build the same bytes. `Ok(None)` when both sides are missing.
+
+A side is `None`, or `Value::Nil`, when it is missing; otherwise it must be a map whose keys are
+strings or integers and whose values are integers. Anything else is `Err(WrongType)`, a side that is not
+a map included: a merge does not guess what a double or a nested map should become. `Err(Refused)` when
+the host does not build the map.
+
+```rust
+let merged = as_udf::max_per_key(rec.get("seen")?, Some(theirs))?;
+```
+
+Symmetric (`max_per_key(a, b)` and `max_per_key(b, a)` are the same map), idempotent (merging a map
+with itself, or with a merge it is part of, changes nothing) and associative (three sides merge to the
+same map in any order): the laws a convergent merge needs. It is the merge of any map of values that
+only grow; `counter_merge` is the same merge under the name of the structure it serves.
+
+#### `sorted_union`
+
+```rust
+pub fn sorted_union(current: Option<Value<'_>>, incoming: Option<Value<'_>>) -> Result<Option<List>, Error>
+```
+
+The union of two lists as a set: a new list with every element of either side once, sorted, so both
+clusters build the same bytes whatever order the elements arrived in. `Ok(None)` when both sides are
+missing.
+
+The elements are integers, strings or blobs: the kinds the server keys a map by, since the host sorts
+them as a map built on it sorts its keys. Integers come first, by value, then strings and then blobs,
+each by its bytes. An integer and a string are never the same element, however they read.
+
+A side is `None`, or `Value::Nil`, when it is missing; otherwise it must be a list of those kinds.
+Anything else is `Err(WrongType)`: a side that is not a list, or an element of another kind (a double, a
+nested list or map, nil). `Err(Refused)` when the host does not build the list.
+
+Symmetric, idempotent and associative: the merge of a set that only grows. A removal needs a second
+set, as the 2P-Set of the CRDT tutorial keeps one.
+
+#### `counter_merge`
+
+```rust
+pub fn counter_merge(current: Option<Value<'_>>, incoming: Option<Value<'_>>) -> Result<Option<Map>, Error>
+```
+
+The merge of a per-origin counter: a map of origin to count, each origin's count raised only by the
+cluster it names, merged by the larger count per origin. It is `max_per_key` under the name of the
+structure: the same rules, the same errors, and `Ok(None)` when both sides are missing.
+`counter_total` reads the counter's value.
+
+```rust
+let counts = as_udf::counter_merge(current.get("hits")?, incoming.get("hits")?)?;
+```
+
+Symmetric, idempotent and associative. A count that goes down is not a count this merges: a
+PN-Counter keeps a second counter for the decrements.
+
+#### `counter_total`
+
+```rust
+pub fn counter_total(counter: Option<Value<'_>>) -> Result<i64, Error>
+```
+
+The value of a per-origin counter: the sum of its counts, wrapping on overflow. `Ok(0)` for a missing
+counter (`None` or `Value::Nil`). `Err(WrongType)` when it is not a map, or when a key is not a string
+or an integer or a count is not an integer, as for `counter_merge`.
+
+```rust
+let total = as_udf::counter_total(rec.get("hits")?)?;
+```
+
+#### `lww_by_version`
+
+```rust
+pub fn lww_by_version<'a>(current: Option<Value<'a>>, incoming: Option<Value<'a>>) -> Result<Option<Value<'a>>, Error>
+```
+
+Last writer wins by an application version: of two `[version, value]` lists, the one with the higher
+version, as it is, to write back. Two equal versions are decided by the lists' stored bytes, the greater
+winning, so both clusters pick the same side; two lists with the same bytes are the same either way.
+`Ok(None)` when both sides are missing.
+
+A side is `None`, or `Value::Nil`, when it is missing; otherwise it must be a list of exactly two
+elements whose first is an integer (`Err(WrongType)` for anything else). The value may be of any kind.
+
+```rust
+// The write UDF moves the version and the value in one write: rec.set("price", &[version + 1, price]).
+if let Some(price) = as_udf::lww_by_version(current.get("price")?, incoming.get("price")?)? {
+    out.insert("price", price)?;
+}
+```
+
+Symmetric, idempotent and associative: it is the larger of the two by version, then by bytes, which is
+a total order. The version is the application's, raised by every write that changes the value, so no
+clock decides.
+
 #### `Resolution`
 
 ```rust
