@@ -112,12 +112,8 @@ pub(crate) enum ExpOp {
     IntRscan = 41,
     Min = 50,
     Max = 51,
-    /// Squared Euclidean distance between two VECTOR operands.
-    VectorEuclideanDistance = 52,
-    /// Dot product between two VECTOR operands.
-    VectorDotProduct = 53,
-    /// Cosine similarity between two VECTOR operands.
-    VectorCosineSimilarity = 54,
+    /// Distance between two VECTOR operands; the metric is its first argument.
+    VectorDistance = 52,
     DigestModulo = 64,
     // 65 DEVICE_SIZE and 73 MEMORY_SIZE are the pre-7.0 size expressions;
     // the client builds RECORD_SIZE instead.
@@ -400,17 +396,18 @@ impl Expression {
                 // The name - Raw String is needed instead of the msgpack String that the pack_value method would use.
                 size += pack_raw_string(buf, &self.val.clone().unwrap().to_string());
             }
-            ExpOp::VectorEuclideanDistance
-            | ExpOp::VectorDotProduct
-            | ExpOp::VectorCosineSimilarity => {
-                // Layout: array[3] = [VECTOR_*_DIST, vector-bin, full-vector BLOB].
+            ExpOp::VectorDistance => {
+                // Layout: array[4] = [VECTOR_DISTANCE, metric, vector-bin, full-vector BLOB].
+                // The metric is a plain integer (0 squared Euclidean, 1 dot
+                // product, 2 cosine similarity) carried in `flags`.
                 // The builders keep the query as a `Value::Vector`, whose data
                 // is shared between clones, and it is written here in the BLOB
                 // form the server expects; a `Value::Blob` of the wire bytes,
                 // which an older or hand-built expression may carry, packs to
                 // the same bytes.
-                size += pack_array_begin(buf, 3);
+                size += pack_array_begin(buf, 4);
                 size += pack_integer(buf, cmd as i64);
+                size += pack_integer(buf, self.flags.unwrap());
                 size += self.bin.as_ref().unwrap().pack(buf)?;
                 size += match self.val.as_ref().unwrap() {
                     Value::Vector(query) => {
@@ -464,16 +461,7 @@ impl Expression {
     pub(crate) fn pack(&self, buf: &mut Option<&mut Buffer>) -> Result<usize> {
         // Vector expressions encode their query as a BLOB.
         if let Some(buf) = buf.as_deref_mut() {
-            if self.module == Some(ExpType::Vector)
-                || matches!(
-                    self.cmd,
-                    Some(
-                        ExpOp::VectorEuclideanDistance
-                            | ExpOp::VectorDotProduct
-                            | ExpOp::VectorCosineSimilarity
-                    )
-                )
-            {
+            if self.module == Some(ExpType::Vector) || self.cmd == Some(ExpOp::VectorDistance) {
                 buf.mark_vector();
             }
         }

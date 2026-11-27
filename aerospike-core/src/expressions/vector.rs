@@ -28,35 +28,45 @@ use crate::Value;
 ///
 /// Incompatible vectors evaluate as unknown.
 pub fn euclidean_squared_distance(query: &Vector, bin: Expression) -> Expression {
-    build_distance(ExpOp::VectorEuclideanDistance, query, bin)
+    build_distance(DistanceMetric::EuclideanSquared, query, bin)
 }
 
 /// Creates a dot-product expression. Larger is more similar.
 ///
 /// Incompatible vectors evaluate as unknown.
 pub fn dot_product(query: &Vector, bin: Expression) -> Expression {
-    build_distance(ExpOp::VectorDotProduct, query, bin)
+    build_distance(DistanceMetric::DotProduct, query, bin)
 }
 
 /// Creates a cosine-similarity expression. Larger is more similar.
 ///
 /// Incompatible vectors evaluate as unknown.
 pub fn cosine_similarity(query: &Vector, bin: Expression) -> Expression {
-    build_distance(ExpOp::VectorCosineSimilarity, query, bin)
+    build_distance(DistanceMetric::CosineSimilarity, query, bin)
 }
 
-/// Builds the three-element vector-distance expression form.
+/// The metric argument of the vector-distance op, as the server numbers it.
+/// The codes match `as_vector_distance_metric` in the C client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DistanceMetric {
+    EuclideanSquared = 0,
+    DotProduct = 1,
+    CosineSimilarity = 2,
+}
+
+/// Builds the four-element vector-distance expression form,
+/// `[VECTOR_DISTANCE, metric, bin, query]`.
 ///
 /// The query travels as a `Value::Vector` sharing the caller's element data,
 /// so cloning the expression (a batch does it once per key) is a refcount
 /// and comparing two clones is a pointer test. The packer writes it in the
 /// BLOB form the server expects.
-fn build_distance(opcode: ExpOp, query: &Vector, bin: Expression) -> Expression {
+fn build_distance(metric: DistanceMetric, query: &Vector, bin: Expression) -> Expression {
     Expression::new(
-        Some(opcode),
+        Some(ExpOp::VectorDistance),
         Some(Value::Vector(query.clone())),
         Some(bin),
-        None,
+        Some(metric as i64),
         None,
         None,
     )
@@ -103,10 +113,10 @@ mod tests {
         let query = Vector::float32(vec![1.0, -2.5]);
         let built = euclidean_squared_distance(&query, vector_bin("v".to_string()));
         let by_hand = Expression::new(
-            Some(ExpOp::VectorEuclideanDistance),
+            Some(ExpOp::VectorDistance),
             Some(Value::Blob(query.wire_bytes())),
             Some(vector_bin("v".to_string())),
-            None,
+            Some(DistanceMetric::EuclideanSquared as i64),
             None,
             None,
         );
@@ -138,31 +148,48 @@ mod tests {
         }
     }
 
+    // Every metric packs as `[52, metric, bin, query]`: one op code, the
+    // metric as a plain integer right after it (0 squared Euclidean, 1 dot
+    // product, 2 cosine similarity), then the operands in their usual order.
+    // The retired op codes 53 and 54 are never emitted.
     #[test]
-    fn distance_builders_use_distinct_opcodes_and_full_vector_literals() {
+    fn distance_builders_encode_one_opcode_with_the_metric_and_full_vector_literals() {
         let query = Vector::float32(vec![1.0]);
-        for (exp, opcode) in [
+        for (name, exp, metric) in [
             (
+                "euclidean_squared_distance",
                 euclidean_squared_distance(&query, vector_bin("v".to_string())),
-                0x34,
+                0x00,
             ),
-            (dot_product(&query, vector_bin("v".to_string())), 0x35),
-            (cosine_similarity(&query, vector_bin("v".to_string())), 0x36),
+            (
+                "dot_product",
+                dot_product(&query, vector_bin("v".to_string())),
+                0x01,
+            ),
+            (
+                "cosine_similarity",
+                cosine_similarity(&query, vector_bin("v".to_string())),
+                0x02,
+            ),
         ] {
             let expected = [
-                0x93, // array(3)
-                opcode, 0x93, 0x51, 0x0a, 0xa1, 0x76, // vector bin "v"
+                0x94,   // array(4)
+                0x34,   // op 52, VECTOR_DISTANCE, for every metric
+                metric, // metric, a positive fixint
+                0x93, 0x51, 0x0a, 0xa1, 0x76, // vector bin "v"
                 0xab, 0x04, // BLOB particle, 10-byte complete VECTOR wire value
-                0x01, 0x03, 0x01, 0x00, 0x00, 0x00, // VECTOR header: version, type, dimensions
+                0x01, 0x03, 0x01, 0x00, 0x00, 0x00, // VECTOR header: version, type, dims
                 0x00, 0x00, 0x80, 0x3f, // float32 1.0, little-endian
             ];
 
+            let size = exp.size().expect("vector distance expr should size");
+            assert_eq!(size, expected.len(), "{name}: packed size");
             let mut buf = Buffer::new(usize::MAX);
-            buf.resize_buffer(expected.len()).unwrap();
+            buf.resize_buffer(size).unwrap();
             buf.data_offset = 0;
             exp.pack(&mut Some(&mut buf))
                 .expect("vector distance expr should pack");
-            assert_eq!(&buf.data_buffer[..expected.len()], &expected);
+            assert_eq!(&buf.data_buffer[..size], &expected, "{name}: packed bytes");
         }
     }
 
