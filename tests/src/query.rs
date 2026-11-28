@@ -2676,3 +2676,682 @@ async fn query_resumes_from_a_serialized_cursor() {
         "{pages} pages for {RECORDS} records at 17 per page"
     );
 }
+
+/// CLIENT-5998: the server's query run-time guardrail (`query-max-run-time-ms`)
+/// and Top-K retry rules.
+///
+/// - The guardrail ends a long scan, query or Top-K with `QUERY_TIMEOUT`
+///   (212) and the client does not retry it; the client's total timeout
+///   still ends a query with `TIMEOUT` (9); with the guardrail off nothing
+///   changes.
+/// - Once a node has a Top-K request, a failed reply (socket timeout,
+///   closed connection) ends the query with the error and no rows: a retry
+///   would re-run every node's scan. A failure before the request reached
+///   the node is retried, and the query then returns its full result.
+/// - A Top-K never returns a partial result: an error on one node means no
+///   rows, even when the other nodes answered.
+/// - A plain scan or query keeps today's behaviour in every case.
+///
+/// Each test writes its own set, so the per-set guardrail and the server
+/// job count (`query-show`) belong to that test alone. Guardrail tests skip
+/// on a server without `query-max-run-time-ms`, Top-K tests on a cluster
+/// without Top-K, and multi-node tests on a single node.
+mod guardrails_and_top_k_retries {
+    use super::*;
+    use aerospike::query::{CollectionIndexType, IndexType, Order, OrderByType};
+    use std::collections::{BTreeMap, HashSet};
+
+    const RECORDS: i64 = 400;
+    const K: u32 = 10;
+    /// How long a throttled run takes on every node.
+    const RUN: Duration = Duration::from_secs(4);
+    /// The longest deadline the tests set (guardrail or total timeout).
+    const DEADLINE: Duration = Duration::from_secs(1);
+    /// How late a run may end after the deadline that stopped it. Generous
+    /// for slow machines, yet a run that was not stopped (about `RUN`) can
+    /// never fall inside it.
+    const MARGIN: Duration = Duration::from_millis(1500);
+    const _: () = assert!(DEADLINE.as_millis() + MARGIN.as_millis() < RUN.as_millis());
+    /// The most a test waits for the server or the client to reach a state.
+    const SETTLE: Duration = Duration::from_secs(10);
+    const SERVER_QUERY_TIMEOUT: i32 = 212;
+    const TIMEOUT: i32 = 9;
+    /// The command loop's "gave up after N tries" wrapper.
+    const MAX_RETRIES_EXCEEDED: i32 = -11;
+
+    /// Scores are distinct and not in key order, so a wrong merge shows up.
+    fn score(id: i64) -> i64 {
+        (id * 7919) % 100_003
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Kind {
+        Scan,
+        Query,
+        TopK,
+    }
+
+    struct Fixture {
+        client: Client,
+        set: String,
+    }
+
+    impl Fixture {
+        /// Writes `RECORDS` records and an index on `score` into a new set.
+        async fn new(client: Client) -> Self {
+            let set = format!("guardrail_{}", common::rand_str(8));
+            let wp = WritePolicy::default();
+            for id in 0..RECORDS {
+                let key = Key::new(common::namespace(), set.as_str(), Value::from(id)).unwrap();
+                client
+                    .put(&wp, &key, &[as_bin!("id", id), as_bin!("score", score(id))])
+                    .await
+                    .unwrap();
+            }
+            client
+                .create_index_on_bin(
+                    &AdminPolicy::default(),
+                    common::namespace(),
+                    &set,
+                    "score",
+                    &format!("{set}_score"),
+                    IndexType::Numeric,
+                    CollectionIndexType::Default,
+                    None,
+                )
+                .await
+                .unwrap()
+                .wait_till_complete(None)
+                .await
+                .unwrap();
+            Fixture { client, set }
+        }
+
+        /// Drops the index and the records, as the other query tests do, so
+        /// stale indexes don't pile up in the test namespace.
+        async fn cleanup(self) {
+            let apolicy = AdminPolicy::default();
+            let index = format!("{}_score", self.set);
+            let _ = self.client.drop_index(&apolicy, common::namespace(), &self.set, &index).await;
+            let _ = self.client.truncate(&apolicy, common::namespace(), &self.set, 0).await;
+        }
+
+        fn statement(&self, kind: Kind) -> Statement {
+            let mut stmt = Statement::new(common::namespace(), self.set.as_str(), Bins::from(["id", "score"]));
+            match kind {
+                Kind::Scan => (),
+                Kind::Query => stmt.set_filter(Filter::range("score", 0, 1_000_000)),
+                Kind::TopK => {
+                    stmt.set_order_by("score", OrderByType::Integer, Order::Desc);
+                    stmt.set_top_k(K);
+                }
+            }
+            stmt
+        }
+
+        /// A policy whose run takes about `RUN` on every node.
+        fn throttled(&self) -> QueryPolicy {
+            let nodes = self.client.nodes().len() as u64;
+            let mut policy = QueryPolicy::default();
+            policy.records_per_second = (RECORDS as u64 / nodes / RUN.as_secs()).max(1) as u32;
+            policy.base_policy.max_retries = 3;
+            policy
+        }
+
+        /// Sets this set's guardrail on `nodes` (0 turns it off).
+        async fn set_limit(&self, nodes: &[Arc<Node>], ms: u64) {
+            let command = format!(
+                "set-config:context=namespace;id={};set={};query-max-run-time-ms={ms}",
+                common::namespace(),
+                self.set
+            );
+            for node in nodes {
+                assert_eq!(info(node, &command).await, "ok", "{command} on {}", node.name());
+            }
+        }
+
+        /// Server jobs of this set, per node, by transaction id.
+        async fn jobs(&self) -> BTreeMap<String, BTreeMap<String, String>> {
+            let mut all = BTreeMap::new();
+            for node in self.client.nodes() {
+                let mut jobs = BTreeMap::new();
+                let set_field = format!(":set={}:", self.set);
+                for job in info(&node, "query-show").await.split(';').filter(|j| j.contains(&set_field)) {
+                    let field = |name: &str| job.split(':').find_map(|f| f.strip_prefix(name)).unwrap_or("").to_string();
+                    jobs.insert(field("trid="), field("status="));
+                }
+                all.insert(node.name().to_string(), jobs);
+            }
+            all
+        }
+
+        /// Waits until a job of this set is active on every node, so a step
+        /// that must land mid-run doesn't depend on how fast the query starts.
+        async fn wait_until_running(&self) {
+            let start = Instant::now();
+            loop {
+                let running = self.client.nodes().len();
+                let active = self.active_jobs_per_node().await;
+                if active.len() == running && active.values().all(|&n| n > 0) {
+                    return;
+                }
+                assert!(start.elapsed() < SETTLE, "the query never started on every node: {active:?}");
+                aerospike_rt::sleep(Duration::from_millis(50)).await;
+            }
+        }
+
+        async fn active_jobs_per_node(&self) -> BTreeMap<String, usize> {
+            self.jobs()
+                .await
+                .into_iter()
+                .map(|(node, js)| (node, js.values().filter(|s| s.starts_with("active")).count()))
+                .collect()
+        }
+
+        /// Runs the query and returns what the application saw, plus how
+        /// many server jobs it started on each node.
+        async fn run(&self, policy: &QueryPolicy, kind: Kind) -> Outcome {
+            let before = self.jobs().await;
+            let start = Instant::now();
+            let mut ids = Vec::new();
+            let mut errors = Vec::new();
+            let mut stream = self
+                .client
+                .query(policy, PartitionFilter::all(), self.statement(kind))
+                .await
+                .unwrap()
+                .into_stream();
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(record) => ids.push(match record.bins["id"] {
+                        Value::Int(id) => id,
+                        ref other => panic!("id bin: {other:?}"),
+                    }),
+                    Err(e) => errors.push(e),
+                }
+            }
+            let elapsed = start.elapsed();
+            // A job stays `active` for a moment after the client returns.
+            aerospike_rt::sleep(Duration::from_millis(300)).await;
+            let after = self.jobs().await;
+            let jobs = after
+                .iter()
+                .map(|(node, js)| {
+                    let old = before.get(node).cloned().unwrap_or_default();
+                    (node.clone(), js.keys().filter(|t| !old.contains_key(*t)).count())
+                })
+                .collect();
+            Outcome { kind, ids, errors, elapsed, jobs }
+        }
+    }
+
+    async fn info(node: &Node, command: &str) -> String {
+        // Empty for a node that is down (the server-close test kills one).
+        node.info(&AdminPolicy::default(), &[command])
+            .await
+            .ok()
+            .and_then(|reply| reply.get(command).cloned())
+            .unwrap_or_default()
+    }
+
+    /// Whether the server has the guardrail and the namespace leaves it off,
+    /// so a set's limit is the only one in force.
+    async fn guardrail_available(client: &Client) -> bool {
+        let config = format!("get-config:context=namespace;id={}", common::namespace());
+        for node in client.nodes() {
+            let reply = info(&node, &config).await;
+            match reply.split(';').find_map(|f| f.strip_prefix("query-max-run-time-ms=")) {
+                Some("0") => (),
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    /// The best `K` ids, best first, from the data the fixture wrote.
+    fn expected_top_k() -> Vec<i64> {
+        let mut all: Vec<(i64, i64)> = (0..RECORDS).map(|id| (score(id), id)).collect();
+        all.sort_unstable_by(|a, b| b.cmp(a));
+        all.into_iter().take(K as usize).map(|(_, id)| id).collect()
+    }
+
+    struct Outcome {
+        kind: Kind,
+        ids: Vec<i64>,
+        errors: Vec<Error>,
+        elapsed: Duration,
+        jobs: BTreeMap<String, usize>,
+    }
+
+    impl Outcome {
+        /// The query completed: every record (or the exact top `K`), once.
+        fn assert_complete(&self) {
+            assert!(self.errors.is_empty(), "{:?}: unexpected errors {:?}", self.kind, self.errors);
+            match self.kind {
+                Kind::TopK => assert_eq!(self.ids, expected_top_k(), "top-k is not the expected list"),
+                Kind::Scan | Kind::Query => {
+                    let unique: HashSet<_> = self.ids.iter().collect();
+                    assert_eq!(self.ids.len(), unique.len(), "{:?}: duplicate records", self.kind);
+                    assert_eq!(unique.len(), RECORDS as usize, "{:?}: missing records", self.kind);
+                }
+            }
+        }
+
+        /// The query failed, every error's code in `codes`. A Top-K stops at
+        /// its first failure, so it reports exactly one error and no rows. A
+        /// scan or query reports each failed node's error, as today (at most
+        /// one per node), and keeps only rows it wrote, once each.
+        fn assert_failed(&self, codes: &[i32]) {
+            let nodes = self.jobs.len().max(1);
+            if self.kind == Kind::TopK {
+                assert_eq!(self.errors.len(), 1, "TopK: expected one error, got {:?}", self.errors);
+            } else {
+                assert!(
+                    (1..=nodes).contains(&self.errors.len()),
+                    "{:?}: expected 1..={nodes} errors, got {:?}",
+                    self.kind,
+                    self.errors
+                );
+            }
+            for e in &self.errors {
+                let code = e.result_code();
+                assert!(codes.contains(&code), "{:?}: code {code} not in {codes:?}: {e}", self.kind);
+            }
+            if self.kind == Kind::TopK {
+                assert!(self.ids.is_empty(), "partial top-k: {} rows with {}", self.ids.len(), self.errors[0]);
+            } else {
+                let unique: HashSet<_> = self.ids.iter().collect();
+                assert_eq!(self.ids.len(), unique.len(), "{:?}: duplicate records", self.kind);
+                assert!(unique.iter().all(|id| (0..RECORDS).contains(*id)));
+            }
+        }
+
+        /// Ended within `MARGIN` after `deadline`.
+        fn assert_ended_at(&self, deadline: Duration) {
+            assert!(
+                self.elapsed >= deadline && self.elapsed < deadline + MARGIN,
+                "{:?}: ended after {:?}, expected about {:?}",
+                self.kind,
+                self.elapsed,
+                deadline
+            );
+        }
+
+        /// Every node ran the query exactly once: nothing was retried.
+        fn assert_ran_once(&self) {
+            assert!(self.jobs.values().all(|&n| n == 1), "{:?}: jobs per node {:?}", self.kind, self.jobs);
+        }
+    }
+
+    async fn fixture(kind: Kind) -> Option<Fixture> {
+        let client = if kind == Kind::TopK { top_k_client().await? } else { common::client().await };
+        Some(Fixture::new(client).await)
+    }
+
+    /// The guardrail against the total timeout, and with no guardrail: the
+    /// same table for a scan, a query and a Top-K.
+    async fn guardrail_and_total_timeout(kind: Kind) {
+        let Some(f) = fixture(kind).await else { return };
+        let nodes = f.client.nodes();
+        if !guardrail_available(&f.client).await {
+            println!("skipped: no query-max-run-time-ms, or the namespace sets one");
+            return;
+        }
+        let with_total = |ms: u32| {
+            let mut policy = f.throttled();
+            policy.base_policy.total_timeout = ms;
+            policy
+        };
+
+        // Guardrail off, no total timeout: runs to the end.
+        let o = f.run(&with_total(0), kind).await;
+        o.assert_complete();
+        o.assert_ran_once();
+
+        // Guardrail off, total timeout first: the existing client timeout.
+        let o = f.run(&with_total(1000), kind).await;
+        o.assert_failed(&[TIMEOUT]);
+        o.assert_ended_at(DEADLINE);
+        o.assert_ran_once();
+
+        // Guardrail, no total timeout: the server ends it with 212.
+        f.set_limit(&nodes, 1000).await;
+        let o = f.run(&with_total(0), kind).await;
+        o.assert_failed(&[SERVER_QUERY_TIMEOUT]);
+        o.assert_ended_at(DEADLINE);
+        o.assert_ran_once();
+
+        // Guardrail before the total timeout: 212.
+        let o = f.run(&with_total(3000), kind).await;
+        o.assert_failed(&[SERVER_QUERY_TIMEOUT]);
+        o.assert_ended_at(DEADLINE);
+        o.assert_ran_once();
+
+        // Total timeout before the guardrail. The request carries the
+        // client's 1 s deadline, so client and server race to end it.
+        f.set_limit(&nodes, 3000).await;
+        let o = f.run(&with_total(1000), kind).await;
+        o.assert_failed(&[TIMEOUT, SERVER_QUERY_TIMEOUT]);
+        o.assert_ended_at(DEADLINE);
+        o.assert_ran_once();
+
+        // Guardrail turned off again: runs to the end.
+        f.set_limit(&nodes, 0).await;
+        let o = f.run(&with_total(0), kind).await;
+        o.assert_complete();
+        o.assert_ran_once();
+        f.cleanup().await;
+    }
+
+    #[aerospike_macro::test]
+    async fn a_scan_stops_at_the_guardrail_or_the_total_timeout_without_retrying() {
+        guardrail_and_total_timeout(Kind::Scan).await;
+    }
+
+    #[aerospike_macro::test]
+    async fn a_query_stops_at_the_guardrail_or_the_total_timeout_without_retrying() {
+        guardrail_and_total_timeout(Kind::Query).await;
+    }
+
+    #[aerospike_macro::test]
+    async fn a_top_k_stops_at_the_guardrail_or_the_total_timeout_without_retrying() {
+        guardrail_and_total_timeout(Kind::TopK).await;
+    }
+
+    /// A socket timeout after the request was sent: a Top-K fails once with
+    /// no rows; a scan and a query keep retrying, as today.
+    #[aerospike_macro::test]
+    async fn a_socket_timeout_ends_a_top_k_but_a_scan_or_query_retries() {
+        let Some(f) = fixture(Kind::TopK).await else { return };
+        let mut policy = f.throttled();
+        policy.base_policy.socket_timeout = 500;
+
+        let o = f.run(&policy, Kind::TopK).await;
+        o.assert_failed(&[TIMEOUT]);
+        assert!(
+            matches!(o.errors[0].kind(), ErrorKind::Timeout),
+            "{}",
+            o.errors[0]
+        );
+        o.assert_ended_at(Duration::from_millis(500));
+        o.assert_ran_once();
+
+        // With no retries the command loop reports -11 ("Timeout after 1
+        // tries") on top, as for every command; the socket timeout (9) is
+        // its cause.
+        let mut no_retries = policy.clone();
+        no_retries.base_policy.max_retries = 0;
+        let o = f.run(&no_retries, Kind::TopK).await;
+        o.assert_failed(&[TIMEOUT, MAX_RETRIES_EXCEEDED]);
+        let e = &o.errors[0];
+        let timed_out = matches!(e.kind(), ErrorKind::Timeout)
+            && (e.result_code() == TIMEOUT || e.cause().is_some_and(|c| c.result_code() == TIMEOUT));
+        assert!(timed_out, "expected a socket timeout underneath: {e}");
+        o.assert_ran_once();
+
+        for kind in [Kind::Scan, Kind::Query] {
+            let o = f.run(&policy, kind).await;
+            assert!(!o.errors.is_empty(), "{kind:?}: expected the retries to run out");
+            assert!(o.jobs.values().all(|&n| n > 1), "{kind:?}: not retried: {:?}", o.jobs);
+        }
+        f.cleanup().await;
+    }
+
+    /// A client whose per-node error-rate breaker opens after one error and
+    /// closes again every two tends.
+    async fn breaker_client() -> Option<Client> {
+        let mut policy = common::client_policy().clone();
+        policy.max_error_rate = 1;
+        policy.error_rate_window = 2;
+        let client = Client::new(&policy, &common::hosts().to_string()).await.unwrap();
+        if cluster_supports_top_k(&client) {
+            Some(client)
+        } else {
+            client.close().await.unwrap();
+            None
+        }
+    }
+
+    /// Waits for the tend thread to reset `node`'s error count, however long
+    /// tends take on this machine.
+    async fn wait_for_breaker_to_close(node: &Node) {
+        let start = Instant::now();
+        while node.error_rate_count() > 0 {
+            assert!(start.elapsed() < SETTLE, "{}: breaker never closed", node.name());
+            aerospike_rt::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Opens `node`'s breaker: its next command fails with MaxErrorRate
+    /// before a connection is taken or anything is sent.
+    fn open_breaker(node: &Node) {
+        for _ in 0..3 {
+            node.incr_error_rate();
+        }
+    }
+
+    /// One node fails before the request reaches it: the round is retried,
+    /// and once the node answers the query returns its full, exact result.
+    #[aerospike_macro::test]
+    async fn a_node_that_failed_before_sending_is_retried_and_the_result_is_complete() {
+        let Some(client) = breaker_client().await else { return };
+        let f = Fixture::new(client).await;
+        let victim = f.client.nodes().pop().unwrap();
+        let mut policy = QueryPolicy::default();
+        policy.base_policy.max_retries = 5;
+        policy.base_policy.sleep_between_retries = 1000;
+
+        for kind in [Kind::TopK, Kind::Query, Kind::Scan] {
+            wait_for_breaker_to_close(&victim).await;
+            open_breaker(&victim);
+            let o = f.run(&policy, kind).await;
+            o.assert_complete();
+            assert!(o.elapsed >= Duration::from_millis(900), "{kind:?}: no retry round ({:?})", o.elapsed);
+            assert_eq!(o.jobs[victim.name()], 1, "{kind:?}: the victim ran once it recovered");
+        }
+        f.cleanup().await;
+    }
+
+    /// One node keeps failing before the request reaches it: a Top-K ends
+    /// with the error and no rows, even though the other nodes answered.
+    #[aerospike_macro::test]
+    async fn a_top_k_whose_node_never_recovers_returns_no_rows() {
+        let Some(client) = breaker_client().await else { return };
+        let f = Fixture::new(client).await;
+        let victim = f.client.nodes().pop().unwrap();
+        let mut policy = QueryPolicy::default();
+        policy.base_policy.max_retries = 2;
+        policy.base_policy.sleep_between_retries = 300;
+
+        let keep_open = {
+            let victim = victim.clone();
+            aerospike_rt::spawn(async move {
+                loop {
+                    open_breaker(&victim);
+                    aerospike_rt::sleep(Duration::from_millis(50)).await;
+                }
+            })
+        };
+        let o = f.run(&policy, Kind::TopK).await;
+        keep_open.abort();
+        assert_eq!(o.errors.len(), 1, "{:?}", o.errors);
+        assert!(o.ids.is_empty(), "partial top-k: {} rows", o.ids.len());
+        assert_eq!(o.jobs[victim.name()], 0);
+        f.cleanup().await;
+    }
+
+    /// Sets `order-by-jobs-limit` on `nodes` and returns each node's
+    /// previous value; `None` if the server doesn't have the setting.
+    async fn set_jobs_limit(nodes: &[Arc<Node>], limit: &str) -> Option<Vec<String>> {
+        let mut previous = Vec::new();
+        for node in nodes {
+            let config = info(node, "get-config:context=service").await;
+            previous.push(config.split(';').find_map(|f| f.strip_prefix("order-by-jobs-limit="))?.to_string());
+            let command = format!("set-config:context=service;order-by-jobs-limit={limit}");
+            assert_eq!(info(node, &command).await, "ok", "{command} on {}", node.name());
+        }
+        Some(previous)
+    }
+
+    /// The Top-K job limit: with one Top-K running on every node and the
+    /// limit at 1, a second Top-K is refused with 22 (FORBIDDEN). It reaches
+    /// the app as one error with no rows and is not retried, while the first
+    /// Top-K and a plain query running at the same time are unaffected.
+    #[aerospike_macro::test]
+    async fn a_top_k_over_the_job_limit_is_refused_with_22_and_not_retried() {
+        const FORBIDDEN: i32 = 22;
+        let Some(f) = fixture(Kind::TopK).await else { return };
+        let nodes = f.client.nodes();
+        let Some(previous) = set_jobs_limit(&nodes, "1").await else {
+            println!("skipped: no order-by-jobs-limit");
+            f.cleanup().await;
+            return;
+        };
+        let mut policy = f.throttled();
+        // The server's "retry later" text is opt-in (subcode and message).
+        policy.base_policy.error_detail_verbosity = 2;
+
+        let first = f.run(&policy, Kind::TopK);
+        let second_and_query = async {
+            f.wait_until_running().await; // the first is running on every node
+            let second = f.run(&policy, Kind::TopK).await;
+            let query = f.run(&policy, Kind::Query).await;
+            (second, query)
+        };
+        let (first, (second, query)) = futures::future::join(first, second_and_query).await;
+
+        for (node, value) in nodes.iter().zip(&previous) {
+            let command = format!("set-config:context=service;order-by-jobs-limit={value}");
+            assert_eq!(info(node, &command).await, "ok");
+        }
+
+        second.assert_failed(&[FORBIDDEN]);
+        let message = second.errors[0].server_message().unwrap_or_default().to_string();
+        assert!(
+            message.contains("order-by-jobs-limit") && message.contains("retry later"),
+            "the server's detail should reach the app: {}",
+            second.errors[0]
+        );
+        assert!(second.jobs.values().all(|&n| n <= 1), "refused Top-K was retried: {:?}", second.jobs);
+        first.assert_complete();
+        query.assert_complete();
+        f.cleanup().await;
+    }
+
+    /// Guardrail and job limit together: with the limit at 1, a Top-K the
+    /// guardrail stops (212) frees its slot, so the next Top-K is admitted
+    /// and completes instead of being refused with 22.
+    #[aerospike_macro::test]
+    async fn a_top_k_stopped_by_the_guardrail_frees_its_job_slot() {
+        let Some(f) = fixture(Kind::TopK).await else { return };
+        let nodes = f.client.nodes();
+        if !guardrail_available(&f.client).await {
+            println!("skipped: no query-max-run-time-ms, or the namespace sets one");
+            f.cleanup().await;
+            return;
+        }
+        let Some(previous) = set_jobs_limit(&nodes, "1").await else {
+            println!("skipped: no order-by-jobs-limit");
+            f.cleanup().await;
+            return;
+        };
+        let policy = f.throttled();
+
+        f.set_limit(&nodes, 1000).await;
+        let stopped = f.run(&policy, Kind::TopK).await;
+        f.set_limit(&nodes, 0).await;
+        let next = f.run(&policy, Kind::TopK).await;
+
+        for (node, value) in nodes.iter().zip(&previous) {
+            let command = format!("set-config:context=service;order-by-jobs-limit={value}");
+            assert_eq!(info(node, &command).await, "ok");
+        }
+
+        stopped.assert_failed(&[SERVER_QUERY_TIMEOUT]);
+        stopped.assert_ran_once();
+        next.assert_complete();
+        next.assert_ran_once();
+        f.cleanup().await;
+    }
+
+    /// A node closes the connection while a Top-K waits for its reply: the
+    /// query fails once with no rows, and no node runs it a second time.
+    ///
+    /// Opt-in: it kills a node. Set `AEROSPIKE_KILL_NODE_CMD` to a shell
+    /// command that stops one node of a 2+ node cluster (for example
+    /// `docker restart c5998-n3`) and run with `--ignored`.
+    #[aerospike_macro::test]
+    #[ignore = "kills a node; needs AEROSPIKE_KILL_NODE_CMD"]
+    async fn a_top_k_whose_connection_the_server_closes_is_not_retried() {
+        let Ok(kill) = std::env::var("AEROSPIKE_KILL_NODE_CMD") else {
+            println!("skipped: AEROSPIKE_KILL_NODE_CMD not set");
+            return;
+        };
+        let Some(f) = fixture(Kind::TopK).await else { return };
+        if f.client.nodes().len() < 2 {
+            println!("skipped: needs two or more nodes");
+            return;
+        }
+        let policy = f.throttled();
+        let killer = async {
+            f.wait_until_running().await; // the request reached every node
+            let status = std::process::Command::new("sh").arg("-c").arg(&kill).status().unwrap();
+            assert!(status.success(), "{kill}: {status}");
+        };
+
+        let (o, ()) = futures::future::join(f.run(&policy, Kind::TopK), killer).await;
+        assert_eq!(o.errors.len(), 1, "{:?}", o.errors);
+        assert!(o.ids.is_empty(), "partial top-k: {} rows", o.ids.len());
+        // The surviving nodes each ran it once; the killed one shows none.
+        assert!(o.jobs.values().all(|&n| n <= 1), "re-run: {:?}", o.jobs);
+        wait_for_cluster(&f.client, o.jobs.len()).await;
+        f.cleanup().await;
+    }
+
+    /// Waits until the client sees `size` nodes again and no node has
+    /// migrations left, so the tests after a node restart find every
+    /// partition owned.
+    async fn wait_for_cluster(client: &Client, size: usize) {
+        let start = Instant::now();
+        loop {
+            let nodes = client.nodes();
+            let mut settled = nodes.len() == size;
+            for node in &nodes {
+                let stats = info(node, "statistics").await;
+                settled &= stats.contains(&format!("cluster_size={size};"))
+                    && stats.contains("migrate_partitions_remaining=0;");
+            }
+            if settled {
+                return;
+            }
+            assert!(start.elapsed() < Duration::from_secs(60), "cluster did not recover to {size} nodes");
+            aerospike_rt::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    /// One node rejects the query (its own guardrail): a Top-K returns the
+    /// error and none of the other nodes' rows; a query keeps the rows it
+    /// streamed, as today. Needs two or more nodes.
+    #[aerospike_macro::test]
+    async fn a_top_k_rejected_by_one_node_returns_no_partial_result() {
+        let Some(f) = fixture(Kind::TopK).await else { return };
+        let nodes = f.client.nodes();
+        if nodes.len() < 2 || !guardrail_available(&f.client).await {
+            println!("skipped: needs two or more nodes with query-max-run-time-ms");
+            return;
+        }
+        let victim = nodes.last().unwrap().clone();
+        f.set_limit(std::slice::from_ref(&victim), 500).await;
+        let policy = f.throttled();
+
+        let o = f.run(&policy, Kind::TopK).await;
+        o.assert_failed(&[SERVER_QUERY_TIMEOUT]);
+        o.assert_ran_once();
+
+        let o = f.run(&policy, Kind::Query).await;
+        o.assert_failed(&[SERVER_QUERY_TIMEOUT]);
+        assert!(!o.ids.is_empty(), "the query should keep the rows the other nodes streamed");
+        f.set_limit(&[victim], 0).await;
+        f.cleanup().await;
+    }
+}

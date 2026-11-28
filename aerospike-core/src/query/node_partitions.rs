@@ -38,6 +38,10 @@ pub struct NodePartitions {
     pub(crate) record_max: u64,
     pub(crate) disallowed_count: u64,
     pub(crate) parts_unavailable: u64,
+    /// A Top-K node's reply failed after the node received the request.
+    /// The node has already run its scan, so the query must not be sent
+    /// again: a retry would scan every record once more.
+    pub(crate) top_k_reply_lost: bool,
     /// The id of `parts[0]`: a partition's id is its offset plus this, fixed
     /// at construction, so the request builder reads it without a lock.
     partition_begin: usize,
@@ -59,6 +63,7 @@ impl NodePartitions {
             record_max: 0,
             disallowed_count: 0,
             parts_unavailable: 0,
+            top_k_reply_lost: false,
             partition_begin,
         }
     }

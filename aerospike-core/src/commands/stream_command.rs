@@ -484,6 +484,31 @@ impl Command for StreamCommand {
     }
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
+        let result = self.parse_replies(conn).await;
+        if let Err(e) = &result {
+            if top_k_reply_lost(self.top_k_buffer.is_some(), e) {
+                self.node_partitions.top_k_reply_lost = true;
+            }
+        }
+        result
+    }
+}
+
+/// Whether a failed reply ends a Top-K query instead of being retried.
+///
+/// `parse_result` runs only after the request was written, so the node has
+/// received the Top-K and run (or is running) its whole scan. An error that
+/// the command loop would otherwise retry — a socket timeout, a closed or
+/// reset connection, a retryable server code — would re-run that scan on
+/// every node. A plain query or scan resumes from its cursor instead, so it
+/// keeps retrying.
+fn top_k_reply_lost(is_top_k: bool, err: &Error) -> bool {
+    is_top_k && crate::commands::should_retry(err)
+}
+
+impl StreamCommand {
+    /// Reads the node's reply messages until the last one.
+    async fn parse_replies(&mut self, conn: &mut Connection) -> Result<()> {
         let mut status = true;
 
         while status {
@@ -576,5 +601,49 @@ impl Command for StreamCommand {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod top_k_reply_lost_tests {
+    use super::top_k_reply_lost;
+    use crate::errors::Error;
+    use crate::ResultCode;
+
+    fn server(rc: ResultCode) -> Error {
+        Error::server_error(rc, "node", None)
+    }
+
+    #[test]
+    fn a_top_k_reply_failure_the_command_loop_would_retry_ends_the_query() {
+        for err in [
+            Error::timeout("Timeout reading from the network connection"),
+            Error::connection("buffered_read: failed to fill whole buffer"),
+            server(ResultCode::Timeout),
+            server(ResultCode::DeviceOverload),
+            server(ResultCode::KeyBusy),
+        ] {
+            assert!(top_k_reply_lost(true, &err), "{err}");
+        }
+    }
+
+    #[test]
+    fn a_server_rejection_is_not_a_lost_reply() {
+        // These already end the query without a retry.
+        for rc in [ResultCode::QueryTimeout, ResultCode::FailForbidden, ResultCode::IndexNotFound] {
+            assert!(!top_k_reply_lost(true, &server(rc)), "{rc:?}");
+        }
+    }
+
+    #[test]
+    fn a_plain_query_or_scan_never_loses_its_reply() {
+        for err in [
+            Error::timeout("t"),
+            Error::connection("c"),
+            server(ResultCode::Timeout),
+            server(ResultCode::QueryTimeout),
+        ] {
+            assert!(!top_k_reply_lost(false, &err), "{err}");
+        }
     }
 }
