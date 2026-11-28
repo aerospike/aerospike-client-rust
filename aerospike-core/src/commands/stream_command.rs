@@ -450,8 +450,12 @@ impl Command for StreamCommand {
         // `unreachable!()` on the assumption that only `QueryCommand`
         // drives a `StreamCommand`; implementing it here keeps any direct
         // driver from panicking and from sending a zero timeout.
-        let server_timeout = self.sink.tracker().server_timeout();
-        conn.buffer.write_timeout(server_timeout);
+        let tracker = self.sink.tracker();
+        conn.buffer.write_timeout(tracker.server_timeout());
+        // A Top-K with no timeouts waits at most 10 s per read instead of 30 s.
+        if let Some(ms) = top_k_read_timeout(self.top_k_buffer.is_some(), tracker.has_no_timeouts()) {
+            conn.set_socket_timeout(None, ms);
+        }
         Ok(())
     }
 
@@ -484,6 +488,38 @@ impl Command for StreamCommand {
     }
 
     async fn parse_result(&mut self, conn: &mut Connection) -> Result<()> {
+        let result = self.parse_replies(conn).await;
+        if let Err(e) = &result {
+            if top_k_reply_lost(self.top_k_buffer.is_some(), e) {
+                self.node_partitions.top_k_reply_lost = true;
+            }
+        }
+        result
+    }
+}
+
+const TOP_K_DEFAULT_READ_TIMEOUT_MS: u32 = 10_000;
+
+/// The connection read timeout for a Top-K whose socket and total timeouts are both 0.
+fn top_k_read_timeout(is_top_k: bool, no_timeouts: bool) -> Option<u32> {
+    (is_top_k && no_timeouts).then_some(TOP_K_DEFAULT_READ_TIMEOUT_MS)
+}
+
+/// Whether a failed reply ends a Top-K query instead of being retried.
+///
+/// `parse_result` runs only after the request was written, so the node has
+/// received the Top-K and run (or is running) its whole scan. An error that
+/// the command loop would otherwise retry — a socket timeout, a closed or
+/// reset connection, a retryable server code — would re-run that scan on
+/// every node. A plain query or scan resumes from its cursor instead, so it
+/// keeps retrying.
+fn top_k_reply_lost(is_top_k: bool, err: &Error) -> bool {
+    is_top_k && crate::commands::should_retry(err)
+}
+
+impl StreamCommand {
+    /// Reads the node's reply messages until the last one.
+    async fn parse_replies(&mut self, conn: &mut Connection) -> Result<()> {
         let mut status = true;
 
         while status {
@@ -576,5 +612,61 @@ impl Command for StreamCommand {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod top_k_reply_lost_tests {
+    use super::top_k_reply_lost;
+    use crate::errors::Error;
+    use crate::ResultCode;
+
+    fn server(rc: ResultCode) -> Error {
+        Error::server_error(rc, "node", None)
+    }
+
+    #[test]
+    fn a_top_k_reply_failure_the_command_loop_would_retry_ends_the_query() {
+        for err in [
+            Error::timeout("Timeout reading from the network connection"),
+            Error::connection("buffered_read: failed to fill whole buffer"),
+            server(ResultCode::Timeout),
+            server(ResultCode::DeviceOverload),
+            server(ResultCode::KeyBusy),
+        ] {
+            assert!(top_k_reply_lost(true, &err), "{err}");
+        }
+    }
+
+    #[test]
+    fn a_server_rejection_is_not_a_lost_reply() {
+        // These already end the query without a retry.
+        for rc in [ResultCode::QueryTimeout, ResultCode::FailForbidden, ResultCode::IndexNotFound] {
+            assert!(!top_k_reply_lost(true, &server(rc)), "{rc:?}");
+        }
+    }
+
+    #[test]
+    fn a_top_k_with_no_timeouts_reads_for_at_most_10_seconds() {
+        assert_eq!(super::top_k_read_timeout(true, true), Some(10_000));
+    }
+
+    #[test]
+    fn a_top_k_with_a_timeout_or_a_plain_query_keeps_its_read_timeout() {
+        assert_eq!(super::top_k_read_timeout(true, false), None, "Top-K with a socket or total timeout");
+        assert_eq!(super::top_k_read_timeout(false, true), None, "plain query or scan with 0/0");
+        assert_eq!(super::top_k_read_timeout(false, false), None, "plain query or scan with timeouts");
+    }
+
+    #[test]
+    fn a_plain_query_or_scan_never_loses_its_reply() {
+        for err in [
+            Error::timeout("t"),
+            Error::connection("c"),
+            server(ResultCode::Timeout),
+            server(ResultCode::QueryTimeout),
+        ] {
+            assert!(!top_k_reply_lost(false, &err), "{err}");
+        }
     }
 }

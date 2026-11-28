@@ -263,6 +263,11 @@ impl TrackerShared {
         &self.partitions
     }
 
+    /// Whether the query's policy set neither a socket nor a total timeout.
+    pub(crate) fn has_no_timeouts(&self) -> bool {
+        self.socket_timeout.load(Ordering::Relaxed) == 0 && self.total_timeout.load(Ordering::Relaxed) == 0
+    }
+
     /// The timeout written into a stream request's header.
     pub(crate) fn server_timeout(&self) -> u32 {
         if self.total_timeout.load(Ordering::Relaxed) > 0 {

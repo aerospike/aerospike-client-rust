@@ -2319,6 +2319,7 @@ impl Client {
         loop {
             let mut timed_out = false;
             let mut faulted = false;
+            let mut top_k_stopped = false;
             {
                 if let Err(e) = tracker.assign_partitions_to_nodes(&cluster, &namespace) {
                     sink.fatal(e).await;
@@ -2402,35 +2403,37 @@ impl Client {
                         };
 
                         let (result, node_partition) = outcome;
+                        let reply_lost = node_partition.top_k_reply_lost;
                         returned.push(node_partition);
-                        match result {
-                            // Socket I/O errors now surface as Error::Connection (was Error::Io).
-                            Err(e)
-                                if matches!(
-                                    e.kind(),
-                                    ErrorKind::Timeout | ErrorKind::Io(_) | ErrorKind::Connection
-                                ) =>
-                            {
-                                timed_out = true;
-                            }
+                        let Err(e) = result else {
+                            continue;
+                        };
+                        match NodeFailure::classify(top_k.is_some(), reply_lost, &e) {
+                            NodeFailure::Retry => timed_out = true,
                             // A cancelled or aborted stream: its partitions
                             // still hold undelivered records, so the round
                             // must not be treated as cleanly complete — the
                             // cursor's `done` flag is a promise that a resume
                             // has nothing left to fetch.
-                            Err(e) if matches!(e.kind(), ErrorKind::StreamTerminated) => {
+                            NodeFailure::Faulted => {
                                 faulted = true;
                                 tracker.partition_error();
                                 err_sink.err(e).await;
                             }
-                            // A genuine error (a server rejection, say) ends
-                            // the query as before: deterministic failures are
-                            // not retried.
-                            Err(e) => {
+                            NodeFailure::Fatal => {
                                 tracker.partition_error();
                                 err_sink.err(e).await;
                             }
-                            Ok(()) => (),
+                            // The app gets this node's error and nothing
+                            // else: one error per query, and no rows from
+                            // the nodes that did answer.
+                            NodeFailure::TopKStopped => {
+                                tracker.partition_error();
+                                if !top_k_stopped {
+                                    top_k_stopped = true;
+                                    err_sink.fatal(e).await;
+                                }
+                            }
                         }
                     }
                     tracker.restore_node_partitions(returned);
@@ -2438,6 +2441,12 @@ impl Client {
                     tracker.restore_node_partitions(list);
                 }
             };
+
+            // The error is already with the app; a partial Top-K must not
+            // follow it, and the query must not run again.
+            if top_k_stopped {
+                return;
+            }
 
             let done = tracker.is_complete(policy, timed_out, faulted);
             match (done, sink.is_active()) {
@@ -3896,6 +3905,43 @@ impl Client {
     }
 }
 
+/// What a query round does with one node's failed command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NodeFailure {
+    /// Run the node's partitions again in the next round.
+    Retry,
+    /// The stream was cancelled or aborted: report it, and don't call the
+    /// round complete.
+    Faulted,
+    /// A failure a retry wouldn't fix: report it.
+    Fatal,
+    /// A Top-K query that can't go on: report the error, deliver no rows
+    /// and run no further round.
+    TopKStopped,
+}
+
+impl NodeFailure {
+    /// `reply_lost` is the node's [`NodePartitions::top_k_reply_lost`]: its
+    /// Top-K reply failed after the request was sent.
+    fn classify(is_top_k: bool, reply_lost: bool, err: &Error) -> Self {
+        if reply_lost {
+            return Self::TopKStopped;
+        }
+        match err.kind() {
+            // Failures before the request reached the node (no node for a
+            // partition, the error-rate breaker, no connection, a failed
+            // write) and, for a plain query or scan, failures reading the
+            // reply. Socket I/O errors surface as `Connection`.
+            ErrorKind::Timeout | ErrorKind::Io(_) | ErrorKind::Connection => Self::Retry,
+            ErrorKind::StreamTerminated => Self::Faulted,
+            // A server rejection (212, 22, ...) on one node: the other
+            // nodes' rows would be a partial Top-K.
+            _ if is_top_k => Self::TopKStopped,
+            _ => Self::Fatal,
+        }
+    }
+}
+
 #[cfg(test)]
 mod top_k_execution_tests {
     //! Tests for the Top-K query's client-side checks and result delivery.
@@ -3973,6 +4019,86 @@ mod top_k_execution_tests {
             Arc::new(Vec::new()),
             0,
         )
+    }
+
+    // ---- NodeFailure: what a round does with one node's failure ----
+
+    use super::NodeFailure;
+    use crate::{Error, ResultCode};
+
+    fn server(rc: ResultCode) -> Error {
+        Error::server_error(rc, "node", None)
+    }
+
+    /// The wrapper SingleCommand returns for any failure it would retry.
+    fn wrapped(cause: Error) -> Error {
+        cause.wrap(Error::timeout("Timeout"))
+    }
+
+    #[test]
+    fn a_top_k_whose_reply_was_lost_stops_whatever_the_error() {
+        for err in [
+            wrapped(Error::timeout("read")),
+            wrapped(Error::connection("eof")),
+            server(ResultCode::Timeout),
+        ] {
+            assert_eq!(
+                NodeFailure::classify(true, true, &err),
+                NodeFailure::TopKStopped,
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_top_k_that_failed_before_sending_is_retried() {
+        // No node for a partition, the error-rate breaker, no connection,
+        // a failed write: SingleCommand wraps each as Timeout and the flag
+        // stays unset.
+        for cause in [
+            Error::connection("connect refused"),
+            Error::client_error("max error rate"),
+        ] {
+            assert_eq!(
+                NodeFailure::classify(true, false, &wrapped(cause)),
+                NodeFailure::Retry
+            );
+        }
+    }
+
+    #[test]
+    fn a_top_k_rejected_by_one_node_stops_with_no_partial_result() {
+        for rc in [ResultCode::QueryTimeout, ResultCode::FailForbidden] {
+            assert_eq!(
+                NodeFailure::classify(true, false, &server(rc)),
+                NodeFailure::TopKStopped
+            );
+        }
+    }
+
+    #[test]
+    fn a_plain_query_or_scan_keeps_todays_handling() {
+        assert_eq!(
+            NodeFailure::classify(false, false, &wrapped(Error::timeout("read"))),
+            NodeFailure::Retry
+        );
+        assert_eq!(
+            NodeFailure::classify(false, false, &wrapped(Error::connection("eof"))),
+            NodeFailure::Retry
+        );
+        assert_eq!(
+            NodeFailure::classify(false, false, &server(ResultCode::QueryTimeout)),
+            NodeFailure::Fatal
+        );
+        assert_eq!(
+            NodeFailure::classify(false, false, &Error::stream_terminated(None)),
+            NodeFailure::Faulted
+        );
+    }
+
+    #[test]
+    fn a_new_node_partition_set_has_not_lost_a_reply() {
+        assert!(!node_partitions(crate::Version::default()).top_k_reply_lost);
     }
 
     #[test]
