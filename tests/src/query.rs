@@ -2734,14 +2734,20 @@ mod guardrails_and_top_k_retries {
     struct Fixture {
         client: Client,
         set: String,
+        records: i64,
     }
 
     impl Fixture {
         /// Writes `RECORDS` records and an index on `score` into a new set.
         async fn new(client: Client) -> Self {
+            Self::with_records(client, RECORDS).await
+        }
+
+        /// Writes `records` records and an index on `score` into a new set.
+        async fn with_records(client: Client, records: i64) -> Self {
             let set = format!("guardrail_{}", common::rand_str(8));
             let wp = WritePolicy::default();
-            for id in 0..RECORDS {
+            for id in 0..records {
                 let key = Key::new(common::namespace(), set.as_str(), Value::from(id)).unwrap();
                 client
                     .put(&wp, &key, &[as_bin!("id", id), as_bin!("score", score(id))])
@@ -2764,7 +2770,7 @@ mod guardrails_and_top_k_retries {
                 .wait_till_complete(None)
                 .await
                 .unwrap();
-            Fixture { client, set }
+            Fixture { client, set, records }
         }
 
         /// Drops the index and the records, as the other query tests do, so
@@ -2881,7 +2887,7 @@ mod guardrails_and_top_k_retries {
                     (node.clone(), js.keys().filter(|t| !old.contains_key(*t)).count())
                 })
                 .collect();
-            Outcome { kind, ids, errors, elapsed, jobs }
+            Outcome { kind, records: self.records, ids, errors, elapsed, jobs }
         }
     }
 
@@ -2909,14 +2915,15 @@ mod guardrails_and_top_k_retries {
     }
 
     /// The best `K` ids, best first, from the data the fixture wrote.
-    fn expected_top_k() -> Vec<i64> {
-        let mut all: Vec<(i64, i64)> = (0..RECORDS).map(|id| (score(id), id)).collect();
+    fn expected_top_k(records: i64) -> Vec<i64> {
+        let mut all: Vec<(i64, i64)> = (0..records).map(|id| (score(id), id)).collect();
         all.sort_unstable_by(|a, b| b.cmp(a));
         all.into_iter().take(K as usize).map(|(_, id)| id).collect()
     }
 
     struct Outcome {
         kind: Kind,
+        records: i64,
         ids: Vec<i64>,
         errors: Vec<Error>,
         elapsed: Duration,
@@ -2928,11 +2935,11 @@ mod guardrails_and_top_k_retries {
         fn assert_complete(&self) {
             assert!(self.errors.is_empty(), "{:?}: unexpected errors {:?}", self.kind, self.errors);
             match self.kind {
-                Kind::TopK => assert_eq!(self.ids, expected_top_k(), "top-k is not the expected list"),
+                Kind::TopK => assert_eq!(self.ids, expected_top_k(self.records), "top-k is not the expected list"),
                 Kind::Scan | Kind::Query => {
                     let unique: HashSet<_> = self.ids.iter().collect();
                     assert_eq!(self.ids.len(), unique.len(), "{:?}: duplicate records", self.kind);
-                    assert_eq!(unique.len(), RECORDS as usize, "{:?}: missing records", self.kind);
+                    assert_eq!(unique.len(), self.records as usize, "{:?}: missing records", self.kind);
                 }
             }
         }
@@ -2962,7 +2969,7 @@ mod guardrails_and_top_k_retries {
             } else {
                 let unique: HashSet<_> = self.ids.iter().collect();
                 assert_eq!(self.ids.len(), unique.len(), "{:?}: duplicate records", self.kind);
-                assert!(unique.iter().all(|id| (0..RECORDS).contains(*id)));
+                assert!(unique.iter().all(|id| (0..self.records).contains(*id)));
             }
         }
 
@@ -3094,6 +3101,46 @@ mod guardrails_and_top_k_retries {
             assert!(!o.errors.is_empty(), "{kind:?}: expected the retries to run out");
             assert!(o.jobs.values().all(|&n| n > 1), "{kind:?}: not retried: {:?}", o.jobs);
         }
+        f.cleanup().await;
+    }
+
+    /// A Top-K with socket and total 0 fails with 9 after 10 s, once, no rows.
+    /// A Top-K with its own socket timeout, and a 0/0 plain query, complete.
+    #[aerospike_macro::test]
+    async fn a_top_k_with_no_timeouts_waits_at_most_10_seconds_for_its_reply() {
+        const TOP_K_READ_TIMEOUT: Duration = Duration::from_secs(10);
+        // The server's throttle bottoms out near 4 s for 400 records, so use
+        // 1 600 per node at 100/s (~16 s) to run past 10 s.
+        let Some(client) = top_k_client().await else { return };
+        let nodes = client.nodes().len() as i64;
+        let f = Fixture::with_records(client, 1_600 * nodes).await;
+        let mut policy = QueryPolicy::default();
+        policy.records_per_second = 100;
+        policy.base_policy.max_retries = 3;
+        // The default socket timeout is 30 s; this rule is for an app that
+        // sets both to 0 (as the Python SDK does by default).
+        policy.base_policy.socket_timeout = 0;
+        policy.base_policy.total_timeout = 0;
+
+        let o = f.run(&policy, Kind::TopK).await;
+        o.assert_failed(&[TIMEOUT]);
+        o.assert_ended_at(TOP_K_READ_TIMEOUT);
+        o.assert_ran_once();
+        assert_eq!(
+            (policy.base_policy.socket_timeout, policy.base_policy.total_timeout),
+            (0, 0),
+            "the policy must not change"
+        );
+
+        let mut own_timeout = policy.clone();
+        own_timeout.base_policy.socket_timeout = 30_000;
+        let o = f.run(&own_timeout, Kind::TopK).await;
+        o.assert_complete();
+        o.assert_ran_once();
+
+        let o = f.run(&policy, Kind::Query).await;
+        o.assert_complete();
+        o.assert_ran_once();
         f.cleanup().await;
     }
 
